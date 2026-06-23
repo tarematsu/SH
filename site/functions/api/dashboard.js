@@ -23,6 +23,22 @@ function jstDayRange(now = Date.now()) {
   return { previousStart: todayStart - 24 * 60 * 60 * 1000, todayStart };
 }
 
+
+function inferArtistFromDisplayTitle(displayTitle, title) {
+  const display = String(displayTitle || '').trim();
+  const knownTitle = String(title || '').trim();
+  if (!display) return null;
+  for (const separator of [' — ', ' – ', ' - ', ' · ', ' • ']) {
+    const index = display.lastIndexOf(separator);
+    if (index <= 0) continue;
+    const left = display.slice(0, index).trim();
+    const right = display.slice(index + separator.length).trim();
+    if (!right || /^JP[A-Z0-9]{8,}$/i.test(right)) continue;
+    if (!knownTitle || left === knownTitle || display.startsWith(`${knownTitle}${separator}`)) return right;
+  }
+  return null;
+}
+
 function computePlayback(queue, now = Date.now()) {
   if (!queue.length) return { currentIndex: -1, progressMs: 0 };
   const start = num(queue[0].start_time);
@@ -158,13 +174,20 @@ export async function onRequestGet(context) {
     const playback = computePlayback(queue);
     const startIndex = Math.max(0, playback.currentIndex);
     const visibleQueue = queue.slice(startIndex);
-    const enrichedQueue = visibleQueue.map((track, index) => ({
-      ...track,
-      display_title: track.display_title || track.title || track.spotify_id || '曲情報取得待ち',
-      spotify_url: track.spotify_url || (track.spotify_id ? `https://open.spotify.com/track/${track.spotify_id}` : null),
-      is_current: startIndex + index === playback.currentIndex,
-      progress_ms: startIndex + index === playback.currentIndex ? playback.progressMs : 0,
-    }));
+    const enrichedQueue = visibleQueue.map((track, index) => {
+      const artist = String(track.artist || '').trim();
+      const validArtist = artist && !/^JP[A-Z0-9]{8,}$/i.test(artist)
+        ? artist
+        : inferArtistFromDisplayTitle(track.display_title, track.title);
+      return {
+        ...track,
+        artist: validArtist || null,
+        display_title: track.display_title || track.title || track.spotify_id || '曲情報取得待ち',
+        spotify_url: track.spotify_url || (track.spotify_id ? `https://open.spotify.com/track/${track.spotify_id}` : null),
+        is_current: startIndex + index === playback.currentIndex,
+        progress_ms: startIndex + index === playback.currentIndex ? playback.progressMs : 0,
+      };
+    });
 
     const raw = safeJson(latest?.raw_json, {});
     const channel = raw || {};

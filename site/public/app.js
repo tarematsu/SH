@@ -159,7 +159,7 @@ function renderNowDisplay(track, progressMs = 0) {
   }
 
   const title = track.title || track.display_title || track.spotify_id || '曲名不明';
-  const artist = track.artist || 'アーティスト情報なし';
+  const artist = inferredArtist(track) || 'アーティスト情報を取得中';
   const spotifyUrl = track.spotify_url || (track.spotify_id ? `https://open.spotify.com/track/${track.spotify_id}` : '');
   const durationMs = Math.max(0, Number(track.duration_ms) || 0);
   const safeProgress = Math.min(durationMs || Infinity, Math.max(0, Number(progressMs) || 0));
@@ -294,7 +294,7 @@ function renderQueue(queue, totalItems) {
     row.innerHTML = `
       <span class="queue-no">${index + 1}</span>
       <img src="${track.thumbnail_url || ''}" alt="" ${track.thumbnail_url ? '' : 'hidden'}>
-      <span class="queue-copy"><strong>${escapeText(track.title || track.display_title || track.spotify_id || '曲名不明')}</strong><small>${escapeText(track.artist || 'アーティスト情報なし')}</small></span>
+      <span class="queue-copy"><strong>${escapeText(track.title || track.display_title || track.spotify_id || '曲名不明')}</strong><small>${escapeText(inferredArtist(track) || 'アーティスト情報を取得中')}</small></span>
       <span class="queue-duration">${duration(track.duration_ms)}</span>`;
     return row;
   }));
@@ -339,7 +339,6 @@ async function refresh() {
     if (latest.accent_color) document.documentElement.style.setProperty('--accent', latest.accent_color);
 
     el('online').textContent = number(latest.online_member_count);
-    el('listeners').textContent = number(latest.listener_count);
     el('members').textContent = number(latest.total_member_count);
     el('totalListens').textContent = number(latest.total_listens);
     renderDailyDelta('membersDelta', data.daily_change?.total_member_count);
