@@ -78,9 +78,7 @@ footer { color: var(--muted); text-align: center; font-size: .7rem; padding: 15p
 @media (max-width: 900px) { .hero { align-items:flex-start; }.hero-side { flex-direction:column; align-items:flex-end; }.metrics { grid-template-columns:repeat(3,minmax(0,1fr)); }.metric-main { grid-column:auto; }.main-grid { grid-template-columns:1fr; }.queue-list { grid-template-columns:1fr; } }
 @media (max-width: 560px) { .container { padding: 8px; }.hero { padding:12px; flex-direction:column; }.hero-side { width:100%; align-items:flex-start; }.actions { justify-content:flex-start; }.channel-image { width:52px;height:52px; }.main-grid .panel, section.panel { padding:13px; }.metrics { grid-template-columns:repeat(3,minmax(0,1fr)); gap:6px; }.metric { padding:10px 8px; min-width:0; }.metric strong { font-size:clamp(1.2rem,7vw,1.65rem); }.metric-detail { font-size:.66rem; }.metric-detail b { font-size:.8rem; }.legend { display:none; } }
 
-.player-actions{display:flex;gap:.5rem;align-items:center;flex-wrap:wrap}
 button.spotify-link{font:inherit;cursor:pointer}
-.spotify-embed{margin-top:1rem;min-height:152px}
 
 /* Queue/goal layout patch */
 .queue-panel { min-width: 0; }
@@ -123,11 +121,16 @@ button.spotify-link{font:inherit;cursor:pointer}
 .hero-side > .small { width: 100%; text-align: right; }
 .metrics { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .metric-main { grid-column: auto; }
-.spotify-embed { margin-top: 0; min-height: 152px; }
-.spotify-embed iframe { display:block; width:100%; border:0; border-radius:12px; }
 .now-playing .section-head { margin-bottom: 10px; }
 @media (max-width:560px) {
   .hero-side > .small { text-align:left; }
   .metric span { font-size:.68rem; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   .metric small { margin-left:2px; font-size:.65rem; }
+}
+
+/* graph stability/performance */
+.chart-panel { contain: layout paint; }
+.chart-panel canvas { min-height: 250px; max-height: 360px; }
+@media (prefers-reduced-motion: reduce) {
+  .progress i, .queue-item { transition: none; }
 }

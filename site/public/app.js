@@ -1,23 +1,9 @@
 
-let spotifyController = null;
-let pendingSpotifyUri = null;
-window.onSpotifyIframeApiReady = (IFrameAPI) => {
-  const element = document.getElementById('spotifyEmbed');
-  const uri = pendingSpotifyUri || 'spotify:track:6p0awehpa8bAujabY1DZJz';
-  IFrameAPI.createController(element, { uri, width: '100%', height: 152 }, (controller) => {
-    spotifyController = controller;
-  });
-};
-
-function loadSpotifyTrack(track) {
-  const id = track?.spotify_id;
-  const embed = el('spotifyEmbed');
-  if (!id) { embed.hidden = true; pendingSpotifyUri = null; return; }
-  const uri = `spotify:track:${id}`;
-  pendingSpotifyUri = uri;
-  embed.hidden = false;
-  spotifyController?.loadUri(uri);
-}
+let lastHistoryRows = [];
+let refreshInFlight = false;
+let refreshAbortController = null;
+let resizeTimer = null;
+let lastRenderSignature = '';
 
 const el = (id) => document.getElementById(id);
 const number = (value) => value == null ? '-' : Number(value).toLocaleString('ja-JP');
@@ -34,58 +20,116 @@ function setImage(element, src) {
   else element.hidden = true;
 }
 
-function drawChart(rows) {
+function downsampleRows(rows, maxPoints = 240) {
+  if (!Array.isArray(rows)) return [];
+  const valid = rows.filter(row => Number.isFinite(Number(row?.observed_at)));
+  if (valid.length <= maxPoints) return valid;
+  const step = (valid.length - 1) / (maxPoints - 1);
+  return Array.from({ length: maxPoints }, (_, i) => valid[Math.round(i * step)]);
+}
+
+function drawChart(rows = lastHistoryRows) {
   const canvas = el('chart');
-  const dpr = window.devicePixelRatio || 1;
-  const width = canvas.clientWidth || 1000;
-  const height = Math.max(250, Math.min(360, width * 0.3));
-  canvas.width = width * dpr;
-  canvas.height = height * dpr;
-  const ctx = canvas.getContext('2d');
-  ctx.scale(dpr, dpr);
+  if (!canvas) return;
+
+  const sampled = downsampleRows(rows);
+  if (!sampled.length) {
+    // 一時的なAPI失敗やresizeでは、既存グラフを消さない
+    return;
+  }
+  lastHistoryRows = sampled;
+
+  const rect = canvas.getBoundingClientRect();
+  const width = Math.max(320, Math.round(rect.width || canvas.clientWidth || 1000));
+  const height = Math.max(250, Math.min(360, Math.round(width * 0.3)));
+  const dpr = Math.min(2, window.devicePixelRatio || 1);
+  const pixelWidth = Math.round(width * dpr);
+  const pixelHeight = Math.round(height * dpr);
+
+  if (canvas.width !== pixelWidth) canvas.width = pixelWidth;
+  if (canvas.height !== pixelHeight) canvas.height = pixelHeight;
+  canvas.style.height = `${height}px`;
+
+  const ctx = canvas.getContext('2d', { alpha: true });
+  if (!ctx) return;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.clearRect(0, 0, width, height);
-  if (!rows.length) return;
 
   const pad = { left: 46, right: 18, top: 20, bottom: 34 };
   const series = [
     { key: 'online_member_count', css: '--accent' },
     { key: 'listener_count', css: '--accent-2' },
   ];
-  const all = rows.flatMap(r => series.map(s => Number(r[s.key]))).filter(Number.isFinite);
+  const all = sampled.flatMap(r => series.map(s => Number(r[s.key]))).filter(Number.isFinite);
   if (!all.length) return;
   const min = Math.max(0, Math.min(...all) - 10);
   const max = Math.max(...all) + 10;
   const range = Math.max(1, max - min);
 
+  const styles = getComputedStyle(document.documentElement);
   ctx.font = '12px system-ui';
-  ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--muted');
+  ctx.fillStyle = styles.getPropertyValue('--muted').trim() || '#aaa3b5';
   ctx.strokeStyle = 'rgba(255,255,255,.08)';
   ctx.lineWidth = 1;
   for (let i = 0; i <= 4; i++) {
     const y = pad.top + (height - pad.top - pad.bottom) * i / 4;
-    ctx.beginPath(); ctx.moveTo(pad.left, y); ctx.lineTo(width - pad.right, y); ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(pad.left, y);
+    ctx.lineTo(width - pad.right, y);
+    ctx.stroke();
     ctx.fillText(String(Math.round(max - range * i / 4)), 5, y + 4);
   }
 
-  series.forEach((s) => {
-    const color = getComputedStyle(document.documentElement).getPropertyValue(s.css).trim();
+  series.forEach((seriesItem) => {
+    const color = styles.getPropertyValue(seriesItem.css).trim();
     ctx.strokeStyle = color;
     ctx.lineWidth = 2.5;
+    ctx.lineJoin = 'round';
+    ctx.lineCap = 'round';
     ctx.beginPath();
-    rows.forEach((row, index) => {
-      const value = Number(row[s.key]);
-      const x = pad.left + index * (width - pad.left - pad.right) / Math.max(1, rows.length - 1);
+    let started = false;
+    sampled.forEach((row, index) => {
+      const value = Number(row[seriesItem.key]);
+      if (!Number.isFinite(value)) return;
+      const x = pad.left + index * (width - pad.left - pad.right) / Math.max(1, sampled.length - 1);
       const y = height - pad.bottom - (value - min) * (height - pad.top - pad.bottom) / range;
-      index ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
+      if (!started) {
+        ctx.moveTo(x, y);
+        started = true;
+      } else {
+        ctx.lineTo(x, y);
+      }
     });
-    ctx.stroke();
+    if (started) ctx.stroke();
   });
 
-  const first = rows[0]?.observed_at;
-  const last = rows.at(-1)?.observed_at;
-  ctx.fillText(first ? new Date(first).toLocaleTimeString('ja-JP', {hour:'2-digit',minute:'2-digit'}) : '', pad.left, height - 9);
-  const label = last ? new Date(last).toLocaleTimeString('ja-JP', {hour:'2-digit',minute:'2-digit'}) : '';
+  const first = sampled[0]?.observed_at;
+  const last = sampled.at(-1)?.observed_at;
+  ctx.fillText(first ? new Date(Number(first)).toLocaleTimeString('ja-JP', { hour:'2-digit', minute:'2-digit' }) : '', pad.left, height - 9);
+  const label = last ? new Date(Number(last)).toLocaleTimeString('ja-JP', { hour:'2-digit', minute:'2-digit' }) : '';
   ctx.fillText(label, width - pad.right - ctx.measureText(label).width, height - 9);
+}
+
+function renderNow(track) {
+  const box = el('nowPlaying');
+  if (!box) return;
+  if (!track) {
+    box.className = 'now-content empty';
+    box.textContent = 'キュー情報がありません';
+    return;
+  }
+  const title = track.title || track.display_title || track.spotify_id || '曲名不明';
+  const artist = track.artist || 'アーティスト情報なし';
+  const progress = Math.min(100, (Number(track.progress_ms) || 0) / Math.max(1, Number(track.duration_ms) || 1) * 100);
+  box.className = 'now-content';
+  box.innerHTML = `
+    <img class="cover" src="${track.thumbnail_url || ''}" alt="" ${track.thumbnail_url ? '' : 'hidden'}>
+    <div class="track-copy">
+      <h3>${escapeText(title)}</h3>
+      <p>${escapeText(artist)}</p>
+      <div class="track-meta"><span>${duration(track.progress_ms)} / ${duration(track.duration_ms)}</span><span>ISRC ${escapeText(track.isrc || '-')}</span></div>
+      <div class="progress track-progress"><i style="width:${progress}%"></i></div>
+    </div>`;
 }
 
 function renderQueue(queue, totalItems) {
@@ -124,42 +168,77 @@ function renderPrediction(prediction, current, goal) {
 }
 
 async function refresh() {
-  const response = await fetch('/api/dashboard', { cache: 'no-store' });
-  if (!response.ok) throw new Error(`API error: ${response.status}`);
-  const data = await response.json();
-  if (!data.ok) throw new Error(data.error || 'API error');
-  const latest = data.latest || {};
+  if (refreshInFlight) return;
+  refreshInFlight = true;
+  refreshAbortController?.abort();
+  refreshAbortController = new AbortController();
 
-  el('channelName').textContent = latest.channel_name || 'Buddies';
-  el('description').textContent = latest.description || latest.artist_name || '';
-  setImage(el('channelImage'), latest.channel_image || latest.logo_image);
-  setImage(el('hostImage'), latest.host_image);
-  if (latest.accent_color) document.documentElement.style.setProperty('--accent', latest.accent_color);
+  try {
+    const response = await fetch('/api/dashboard', {
+      cache: 'no-store',
+      signal: refreshAbortController.signal,
+      headers: { 'accept': 'application/json' },
+    });
+    if (!response.ok) throw new Error(`API error: ${response.status}`);
+    const data = await response.json();
+    if (!data.ok) throw new Error(data.error || 'API error');
+    const latest = data.latest || {};
 
-  el('online').textContent = number(latest.online_member_count);
-  el('listeners').textContent = number(latest.listener_count);
-  el('members').textContent = number(latest.total_member_count);
-  el('totalListens').textContent = number(latest.total_listens);
-  el('host').textContent = latest.host_handle ? `@${latest.host_handle}` : '-';
-  el('updated').textContent = `最終取得 ${dateTime(latest.observed_at)}`;
+    el('channelName').textContent = latest.channel_name || 'Buddies';
+    el('description').textContent = latest.description || latest.artist_name || '';
+    setImage(el('channelImage'), latest.channel_image || latest.logo_image);
+    setImage(el('hostImage'), latest.host_image);
+    if (latest.accent_color) document.documentElement.style.setProperty('--accent', latest.accent_color);
 
-  const count = Number(latest.current_stream_count) || 0;
-  const goal = Number(latest.stream_goal) || 0;
-  const pct = goal ? Math.min(100, count / goal * 100) : 0;
-  el('streamCount').textContent = number(count);
-  el('streamGoal').textContent = number(goal);
-  el('goalBar').style.width = `${pct}%`;
-  el('goalPercent').textContent = `${pct.toFixed(2)}%`;
-  el('goalRemaining').textContent = goal ? `残り ${number(Math.max(0, goal - count))}` : '-';
-  renderPrediction(data.goal_prediction, count, goal);
+    el('online').textContent = number(latest.online_member_count);
+    el('listeners').textContent = number(latest.listener_count);
+    el('members').textContent = number(latest.total_member_count);
+    el('totalListens').textContent = number(latest.total_listens);
+    el('host').textContent = latest.host_handle ? `@${latest.host_handle}` : '-';
+    el('updated').textContent = `最終取得 ${dateTime(latest.observed_at)}`;
 
-  const current = data.queue.find(t => t.is_current) || data.queue[0] || null;
-  loadSpotifyTrack(current);
-  renderQueue(data.queue, data.queue_status?.total_items);
-  drawChart(data.history || []);
+    const count = Number(latest.current_stream_count) || 0;
+    const goal = Number(latest.stream_goal) || 0;
+    const pct = goal ? Math.min(100, count / goal * 100) : 0;
+    el('streamCount').textContent = number(count);
+    el('streamGoal').textContent = number(goal);
+    el('goalBar').style.width = `${pct}%`;
+    el('goalPercent').textContent = `${pct.toFixed(2)}%`;
+    el('goalRemaining').textContent = goal ? `残り ${number(Math.max(0, goal - count))}` : '-';
+    renderPrediction(data.goal_prediction, count, goal);
+
+    const queue = Array.isArray(data.queue) ? data.queue : [];
+    const current = queue.find(t => t.is_current) || queue[0] || null;
+    renderNow(current);
+    renderQueue(queue, data.queue_status?.total_items);
+
+    const history = Array.isArray(data.history) ? data.history : [];
+    if (history.length) {
+      const signature = `${history.length}:${history[0]?.observed_at}:${history.at(-1)?.observed_at}:${history.at(-1)?.online_member_count}:${history.at(-1)?.listener_count}`;
+      if (signature !== lastRenderSignature) {
+        lastRenderSignature = signature;
+        lastHistoryRows = history;
+        requestAnimationFrame(() => drawChart(history));
+      }
+    }
+  } catch (error) {
+    if (error?.name !== 'AbortError') console.error(error);
+    // 失敗時は前回表示・前回グラフをそのまま維持
+  } finally {
+    refreshInFlight = false;
+  }
 }
 
-refresh().catch(console.error);
-setInterval(() => refresh().catch(console.error), 60_000);
-window.addEventListener('resize', () => drawChart([]));
+refresh();
+setInterval(() => {
+  if (!document.hidden) refresh();
+}, 60_000);
 
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden) refresh();
+});
+
+window.addEventListener('resize', () => {
+  clearTimeout(resizeTimer);
+  resizeTimer = setTimeout(() => drawChart(lastHistoryRows), 180);
+}, { passive: true });
