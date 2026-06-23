@@ -41,6 +41,68 @@ function decodeCursor(value) {
   }
 }
 
+function safeText(value, max = 80) {
+  return String(value || '').trim().slice(0, max);
+}
+
+async function loadRanking(requestUrl, env) {
+  const from = requestUrl.searchParams.get('from') || '2024-06-01';
+  const to = requestUrl.searchParams.get('to') || new Date().toISOString().slice(0, 10);
+  const rankingType = safeText(requestUrl.searchParams.get('ranking_type'), 50);
+  const channel = safeText(requestUrl.searchParams.get('channel'), 100);
+  const limit = Math.min(Math.max(Number(requestUrl.searchParams.get('limit')) || 500, 20), 1000);
+
+  let sql = `SELECT ranking_date,observed_at,ranking_type,rank,channel_name,channel_alias,
+listener_count,member_count,total_listens,source_sheet,quality_score,quality_flags
+FROM sh_channel_rankings
+WHERE ranking_date>=? AND ranking_date<=?`;
+  const binds = [from, to];
+
+  if (rankingType) {
+    sql += ' AND ranking_type=?';
+    binds.push(rankingType);
+  }
+  if (channel) {
+    sql += ' AND (channel_name LIKE ? OR channel_alias LIKE ?)';
+    binds.push(`%${channel}%`, `%${channel}%`);
+  }
+
+  sql += ' ORDER BY ranking_date ASC, rank ASC LIMIT ?';
+  binds.push(limit);
+
+  try {
+    const result = await env.DB.prepare(sql).bind(...binds).all();
+    const rows = result.results || [];
+    const types = [...new Set(rows.map((row) => row.ranking_type).filter(Boolean))].sort();
+    const channels = [...new Set(rows.map((row) => row.channel_name).filter(Boolean))];
+    return json({
+      ok: true,
+      mode: 'ranking',
+      from,
+      to,
+      rows,
+      ranking_types: types,
+      channel_count: channels.length,
+      truncated: rows.length >= limit,
+    }, 200, { 'cache-control': 'public, max-age=300, s-maxage=900' });
+  } catch (error) {
+    // ランキングテーブル未作成時も履歴ページ全体を壊さない。
+    if (/no such table/i.test(error?.message || '')) {
+      return json({
+        ok: true,
+        mode: 'ranking',
+        from,
+        to,
+        rows: [],
+        ranking_types: [],
+        channel_count: 0,
+        setup_required: true,
+      });
+    }
+    throw error;
+  }
+}
+
 export async function onRequestGet({ request, env }) {
   if (!env.DB) return json({ ok: false, error: 'DB binding missing' }, 500);
 
@@ -50,10 +112,11 @@ export async function onRequestGet({ request, env }) {
     const from = url.searchParams.get('from') || '2024-06-01';
     const to = url.searchParams.get('to') || new Date().toISOString().slice(0, 10);
 
+    if (mode === 'ranking') return loadRanking(url, env);
+
     if (mode === 'raw') {
       const fromTs = parseDateStart(from, '2024-06-01');
       const requestedToTs = addDays(parseDateStart(to, new Date().toISOString().slice(0, 10)), 1);
-      // 誤操作で長期間の54万行を走査しないよう、詳細表示は最大31日。
       const toTs = Math.min(requestedToTs, addDays(fromTs, 31));
       const limit = Math.min(Math.max(Number(url.searchParams.get('limit')) || 200, 20), 500);
       const cursor = decodeCursor(url.searchParams.get('cursor'));
@@ -94,16 +157,8 @@ WHERE observed_at>=? AND observed_at<?`;
        ORDER BY period_key ASC LIMIT ?`,
     ).bind(from, to, limit).all();
 
-    // 集計テーブルは最大でも数百行。追加のCOUNT/MAX SQLを発行せずJSで要約する。
     const rows = result.results || [];
-    const importRun = url.searchParams.get('include_import') === '1'
-      ? await env.DB.prepare(
-          `SELECT imported_at,source_rows,accepted_rows,skipped_rows,duplicate_rows,warning_rows
-           FROM sh_history_import_runs ORDER BY imported_at DESC LIMIT 1`,
-        ).first()
-      : null;
-
-    return json({ ok: true, mode, from, to, rows, import: importRun });
+    return json({ ok: true, mode, from, to, rows });
   } catch (error) {
     return json({ ok: false, error: error?.message || 'history error' }, 500, {
       'cache-control': 'no-store',
