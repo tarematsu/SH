@@ -134,3 +134,20 @@ button.spotify-link{font:inherit;cursor:pointer}
 @media (prefers-reduced-motion: reduce) {
   .progress i, .queue-item { transition: none; }
 }
+
+
+/* animated now playing + Spotify link */
+.now-content.clickable {
+  cursor: pointer;
+  border-radius: 14px;
+  transition: background .16s ease, transform .16s ease;
+}
+.now-content.clickable:hover { background: rgba(255,255,255,.035); }
+.now-content.clickable:active { transform: scale(.995); }
+.now-content.clickable:focus-visible { outline: 2px solid var(--accent); outline-offset: 5px; }
+.spotify-open-hint { display:block; margin-top:9px; color:var(--muted); font-size:.68rem; }
+#nowPlayingTime { font-variant-numeric: tabular-nums; }
+#nowPlayingBar { transition: width 1s linear; }
+@media (prefers-reduced-motion: reduce) {
+  .now-content.clickable, #nowPlayingBar { transition: none; }
+}

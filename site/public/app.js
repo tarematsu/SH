@@ -4,6 +4,8 @@ let refreshInFlight = false;
 let refreshAbortController = null;
 let resizeTimer = null;
 let lastRenderSignature = '';
+let nowPlayingTimer = null;
+let nowPlayingState = null;
 
 const el = (id) => document.getElementById(id);
 const number = (value) => value == null ? '-' : Number(value).toLocaleString('ja-JP');
@@ -110,26 +112,83 @@ function drawChart(rows = lastHistoryRows) {
   ctx.fillText(label, width - pad.right - ctx.measureText(label).width, height - 9);
 }
 
+function stopNowPlayingTimer() {
+  if (nowPlayingTimer) clearInterval(nowPlayingTimer);
+  nowPlayingTimer = null;
+  nowPlayingState = null;
+}
+
+function updateNowPlayingProgress() {
+  if (!nowPlayingState) return;
+  const elapsed = Date.now() - nowPlayingState.renderedAt;
+  const currentMs = Math.min(
+    nowPlayingState.durationMs,
+    Math.max(0, nowPlayingState.baseProgressMs + elapsed),
+  );
+  const percent = nowPlayingState.durationMs
+    ? Math.min(100, currentMs / nowPlayingState.durationMs * 100)
+    : 0;
+  const time = el('nowPlayingTime');
+  const bar = el('nowPlayingBar');
+  if (time) time.textContent = `${duration(currentMs)} / ${duration(nowPlayingState.durationMs)}`;
+  if (bar) bar.style.width = `${percent}%`;
+}
+
 function renderNow(track) {
   const box = el('nowPlaying');
   if (!box) return;
+  stopNowPlayingTimer();
   if (!track) {
     box.className = 'now-content empty';
+    box.removeAttribute('role');
+    box.removeAttribute('tabindex');
+    box.removeAttribute('title');
     box.textContent = 'キュー情報がありません';
     return;
   }
   const title = track.title || track.display_title || track.spotify_id || '曲名不明';
   const artist = track.artist || 'アーティスト情報なし';
-  const progress = Math.min(100, (Number(track.progress_ms) || 0) / Math.max(1, Number(track.duration_ms) || 1) * 100);
-  box.className = 'now-content';
+  const spotifyUrl = track.spotify_url || (track.spotify_id ? `https://open.spotify.com/track/${track.spotify_id}` : '');
+  const durationMs = Math.max(0, Number(track.duration_ms) || 0);
+  const baseProgressMs = Math.min(durationMs || Infinity, Math.max(0, Number(track.progress_ms) || 0));
+  const progress = durationMs ? Math.min(100, baseProgressMs / durationMs * 100) : 0;
+  box.className = `now-content${spotifyUrl ? ' clickable' : ''}`;
+  if (spotifyUrl) {
+    box.setAttribute('role', 'link');
+    box.setAttribute('tabindex', '0');
+    box.setAttribute('title', 'Spotifyで開く');
+  } else {
+    box.removeAttribute('role');
+    box.removeAttribute('tabindex');
+    box.removeAttribute('title');
+  }
   box.innerHTML = `
     <img class="cover" src="${track.thumbnail_url || ''}" alt="" ${track.thumbnail_url ? '' : 'hidden'}>
     <div class="track-copy">
       <h3>${escapeText(title)}</h3>
       <p>${escapeText(artist)}</p>
-      <div class="track-meta"><span>${duration(track.progress_ms)} / ${duration(track.duration_ms)}</span><span>ISRC ${escapeText(track.isrc || '-')}</span></div>
-      <div class="progress track-progress"><i style="width:${progress}%"></i></div>
+      <div class="track-meta"><span id="nowPlayingTime">${duration(baseProgressMs)} / ${duration(durationMs)}</span><span>ISRC ${escapeText(track.isrc || '-')}</span></div>
+      <div class="progress track-progress"><i id="nowPlayingBar" style="width:${progress}%"></i></div>
+      ${spotifyUrl ? '<small class="spotify-open-hint">クリックしてSpotifyで開く</small>' : ''}
     </div>`;
+
+  if (spotifyUrl) {
+    const openSpotify = () => window.open(spotifyUrl, '_blank', 'noopener,noreferrer');
+    box.onclick = openSpotify;
+    box.onkeydown = (event) => {
+      if (event.key === 'Enter' || event.key === ' ') {
+        event.preventDefault();
+        openSpotify();
+      }
+    };
+  } else {
+    box.onclick = null;
+    box.onkeydown = null;
+  }
+
+  nowPlayingState = { baseProgressMs, durationMs, renderedAt: Date.now() };
+  updateNowPlayingProgress();
+  nowPlayingTimer = setInterval(updateNowPlayingProgress, 1000);
 }
 
 function renderQueue(queue, totalItems) {
