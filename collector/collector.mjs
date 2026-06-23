@@ -3,10 +3,15 @@ import WebSocket from 'ws';
 import fetchCookie from 'fetch-cookie';
 import { CookieJar } from 'tough-cookie';
 import os from 'node:os';
+import fs from 'node:fs/promises';
+import path from 'node:path';
+import crypto from 'node:crypto';
 
 const API_BASE = 'https://production1.stationhead.com';
 const PUSHER_KEY = '982c86a21530b654bfb2';
 const PUSHER_URL = `wss://realtime-production.stationhead.com/app/${PUSHER_KEY}?protocol=7&client=js&version=7.4.0&flash=false`;
+
+const SESSION_FILE = path.resolve(process.cwd(), '.stationhead-session.json');
 
 const cookieJar = new CookieJar();
 const sessionFetch = fetchCookie(fetch, cookieJar);
@@ -34,6 +39,9 @@ let runtime = {
   ws: null,
   reconnectTimer: null,
   stopped: false,
+  authToken: config.stationheadAuthToken || '',
+  deviceUid: config.stationheadDeviceUid || '',
+  authRefreshPromise: null,
 };
 
 const levelRank = { debug: 10, info: 20, warn: 30, error: 40 };
@@ -62,51 +70,137 @@ const BROWSER_HEADERS = {
   'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36',
 };
 
-async function warmUpSession() {
-  if (config.stationheadCookie) {
-    await cookieJar.setCookie(config.stationheadCookie, API_BASE);
-  }
+function normalizeBearer(value) {
+  return String(value || '').replace(/^Bearer\s+/i, '').trim();
+}
 
-  // Stationhead creates an anonymous guest session in the browser before API access.
-  await sessionFetch(`https://www.stationhead.com/c/${encodeURIComponent(config.channelAlias)}`, {
-    headers: {
-      ...BROWSER_HEADERS,
-      accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
-      origin: undefined,
-      referer: undefined,
-    },
-    redirect: 'follow',
-    signal: AbortSignal.timeout(20_000),
-  }).catch((error) => log('warn', 'web warmup failed', error.message));
-
-  for (const path of ['/timestamp', '/me/country']) {
-    await sessionFetch(`${API_BASE}${path}`, {
-      headers: BROWSER_HEADERS,
-      signal: AbortSignal.timeout(20_000),
-    }).catch((error) => log('warn', `API warmup failed ${path}`, error.message));
+function jwtExpiryMs(token) {
+  try {
+    const part = token.split('.')[1];
+    if (!part) return 0;
+    const normalized = part.replace(/-/g, '+').replace(/_/g, '/');
+    const payload = JSON.parse(Buffer.from(normalized, 'base64').toString('utf8'));
+    return Number(payload.exp || 0) * 1000;
+  } catch {
+    return 0;
   }
 }
 
-function stationheadApiHeaders(extra = {}) {
-  const headers = {
+async function loadSavedSession() {
+  try {
+    const saved = JSON.parse(await fs.readFile(SESSION_FILE, 'utf8'));
+    if (!runtime.deviceUid && saved.device_uid) runtime.deviceUid = saved.device_uid;
+    if (!runtime.authToken && saved.auth_token) runtime.authToken = normalizeBearer(saved.auth_token);
+  } catch (error) {
+    if (error.code !== 'ENOENT') log('warn', 'session file read failed', error.message);
+  }
+  if (!runtime.deviceUid) runtime.deviceUid = crypto.randomUUID();
+}
+
+async function saveSession() {
+  const payload = {
+    device_uid: runtime.deviceUid,
+    auth_token: runtime.authToken,
+    expires_at: jwtExpiryMs(runtime.authToken) || null,
+    updated_at: Date.now(),
+  };
+  await fs.writeFile(SESSION_FILE, `${JSON.stringify(payload, null, 2)}\n`, { mode: 0o600 })
+    .catch((error) => log('warn', 'session file write failed', error.message));
+}
+
+async function captureAuthorization(response) {
+  const value = response.headers.get('authorization');
+  const token = normalizeBearer(value);
+  if (token && token !== runtime.authToken) {
+    runtime.authToken = token;
+    await saveSession();
+    const expires = jwtExpiryMs(token);
+    log('info', `Stationhead guest token refreshed${expires ? ` exp=${new Date(expires).toISOString()}` : ''}`);
+  }
+}
+
+function stationheadApiHeaders(extra = {}, includeAuth = true) {
+  return {
     ...BROWSER_HEADERS,
     'app-platform': 'web',
     'app-version': config.stationheadAppVersion,
     'content-type': 'application/json',
-    ...(config.stationheadDeviceUid ? { 'sth-device-uid': config.stationheadDeviceUid } : {}),
-    ...(config.stationheadAuthToken ? { authorization: `Bearer ${config.stationheadAuthToken}` } : {}),
+    ...(runtime.deviceUid ? { 'sth-device-uid': runtime.deviceUid } : {}),
+    ...(includeAuth && runtime.authToken ? { authorization: `Bearer ${runtime.authToken}` } : {}),
     ...(config.stationheadCookie ? { cookie: config.stationheadCookie } : {}),
     ...extra,
   };
-  return headers;
 }
 
-async function fetchJson(url, options = {}) {
+async function requestStationhead(url, options = {}, includeAuth = true) {
   const response = await sessionFetch(url, {
     ...options,
-    headers: stationheadApiHeaders(options.headers || {}),
+    headers: stationheadApiHeaders(options.headers || {}, includeAuth),
     signal: AbortSignal.timeout(20_000),
   });
+  await captureAuthorization(response);
+  return response;
+}
+
+async function refreshGuestAuth(force = false) {
+  if (runtime.authRefreshPromise) return runtime.authRefreshPromise;
+  runtime.authRefreshPromise = (async () => {
+    const expires = jwtExpiryMs(runtime.authToken);
+    if (!force && runtime.authToken && (!expires || expires - Date.now() > 60 * 60 * 1000)) return;
+
+    log('info', force ? 'refreshing Stationhead guest authentication' : 'Stationhead token near expiry; refreshing');
+
+    await sessionFetch(`https://www.stationhead.com/c/${encodeURIComponent(config.channelAlias)}`, {
+      headers: {
+        ...BROWSER_HEADERS,
+        accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+        origin: undefined,
+        referer: undefined,
+      },
+      redirect: 'follow',
+      signal: AbortSignal.timeout(20_000),
+    }).catch((error) => log('warn', 'web warmup failed', error.message));
+
+    // Public bootstrap endpoints expose a newly issued/rotated guest token in
+    // the Authorization response header. Probe without the stale token first.
+    const probes = ['/timestamp', '/me/country', `/channels/alias/${encodeURIComponent(config.channelAlias)}`];
+    const previous = runtime.authToken;
+    runtime.authToken = '';
+    for (const endpoint of probes) {
+      try {
+        const response = await requestStationhead(`${API_BASE}${endpoint}`, { method: 'GET' }, false);
+        await response.arrayBuffer().catch(() => {});
+        if (runtime.authToken) break;
+      } catch (error) {
+        log('debug', `auth probe failed ${endpoint}`, error.message);
+      }
+    }
+
+    if (!runtime.authToken) {
+      runtime.authToken = previous;
+      if (!runtime.authToken) throw new Error('Stationhead guest token could not be acquired automatically');
+      log('warn', 'automatic guest-token refresh returned no token; using saved token until rejected');
+    }
+    await saveSession();
+  })().finally(() => {
+    runtime.authRefreshPromise = null;
+  });
+  return runtime.authRefreshPromise;
+}
+
+async function warmUpSession() {
+  await loadSavedSession();
+  if (config.stationheadCookie) await cookieJar.setCookie(config.stationheadCookie, API_BASE);
+  await refreshGuestAuth(false);
+}
+
+async function fetchJson(url, options = {}, allowRetry = true) {
+  let response = await requestStationhead(url, options, true);
+  if (response.status === 401 && allowRetry) {
+    await response.arrayBuffer().catch(() => {});
+    await refreshGuestAuth(true);
+    response = await requestStationhead(url, options, true);
+  }
   if (!response.ok) {
     const body = await response.text().catch(() => '');
     throw new Error(`${response.status} ${response.statusText}: ${url}${body ? ` | ${body.slice(0, 300)}` : ''}`);
@@ -424,19 +518,10 @@ function connectWebSocket() {
   });
 }
 
-function validateStationheadAuth() {
-  if (!config.stationheadAuthToken) {
-    throw new Error('STATIONHEAD_AUTH_TOKEN is required');
-  }
-  if (!config.stationheadDeviceUid) {
-    throw new Error('STATIONHEAD_DEVICE_UID is required');
-  }
-  log('info', `Stationhead auth loaded token=${config.stationheadAuthToken.length}chars device=${config.stationheadDeviceUid.slice(0, 8)}... appVersion=${config.stationheadAppVersion} collector=${config.collectorId}`);
-}
-
 async function main() {
   const once = process.argv.includes('--once');
   await warmUpSession();
+  log('info', `Stationhead session ready token=${runtime.authToken.length}chars device=${runtime.deviceUid.slice(0, 8)}... appVersion=${config.stationheadAppVersion} collector=${config.collectorId}`);
   await pollOnce();
   if (once) return;
 
