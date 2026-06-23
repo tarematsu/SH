@@ -127,6 +127,36 @@ async function saveQueue(db, observedAt, data) {
   await db.batch(statements);
 }
 
+
+async function saveTrackMetadata(db, observedAt, data) {
+  const tracks = Array.isArray(data?.tracks) ? data.tracks : [];
+  if (!tracks.length) return;
+
+  const statements = tracks
+    .filter((t) => t?.spotify_id)
+    .map((t) => db.prepare(`
+      INSERT INTO sh_track_metadata (
+        spotify_id, title, artist, display_title, thumbnail_url, spotify_url,
+        source, fetched_at, raw_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(spotify_id) DO UPDATE SET
+        title = excluded.title,
+        artist = excluded.artist,
+        display_title = excluded.display_title,
+        thumbnail_url = excluded.thumbnail_url,
+        spotify_url = excluded.spotify_url,
+        source = excluded.source,
+        fetched_at = excluded.fetched_at,
+        raw_json = excluded.raw_json
+    `).bind(
+      text(t.spotify_id), text(t.title), text(t.artist), text(t.display_title),
+      text(t.thumbnail_url), text(t.spotify_url), text(t.source || 'spotify_oembed'),
+      num(t.fetched_at) ?? observedAt, rawJson(t.raw)
+    ));
+
+  if (statements.length) await db.batch(statements);
+}
+
 async function saveWsEvent(db, observedAt, data) {
   await db.prepare(`
     INSERT INTO sh_raw_events (
@@ -183,6 +213,9 @@ export async function onRequestPost(context) {
       case 'queue':
         await saveQueue(env.DB, observedAt, data);
         break;
+      case 'track_metadata':
+        await saveTrackMetadata(env.DB, observedAt, data);
+        break;
       case 'ws_event':
       case 'raw_event':
       case 'realtime':
@@ -199,10 +232,32 @@ export async function onRequestPost(context) {
   }
 }
 
-export async function onRequestGet() {
+export async function onRequestGet(context) {
+  const { request, env } = context;
+  const url = new URL(request.url);
+
+  if (url.searchParams.get('type') === 'track_lookup') {
+    if (!authorized(request, env)) {
+      return json({ ok: false, error: 'unauthorized' }, 401);
+    }
+    if (!env.DB) return json({ ok: false, error: 'DB binding missing' }, 500);
+
+    const ids = [...new Set((url.searchParams.get('ids') || '')
+      .split(',').map((v) => v.trim()).filter(Boolean))].slice(0, 100);
+    if (!ids.length) return json({ ok: true, tracks: [] });
+
+    const placeholders = ids.map(() => '?').join(',');
+    const result = await env.DB.prepare(`
+      SELECT spotify_id, title, artist, display_title, thumbnail_url, spotify_url, source, fetched_at
+      FROM sh_track_metadata
+      WHERE spotify_id IN (${placeholders})
+    `).bind(...ids).all();
+    return json({ ok: true, tracks: result.results || [] });
+  }
+
   return json({
     ok: true,
     endpoint: 'stationhead ingest',
-    acceptedTypes: ['snapshot', 'comments', 'queue', 'ws_event'],
+    acceptedTypes: ['snapshot', 'comments', 'queue', 'track_metadata', 'ws_event'],
   });
 }

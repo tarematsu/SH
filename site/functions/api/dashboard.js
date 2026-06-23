@@ -16,40 +16,6 @@ const num = (value) => {
   return Number.isFinite(n) ? n : null;
 };
 
-async function spotifyMetadata(id) {
-  if (!id) return null;
-  const trackUrl = `https://open.spotify.com/track/${encodeURIComponent(id)}`;
-  try {
-    const response = await fetch(
-      `https://open.spotify.com/oembed?url=${encodeURIComponent(trackUrl)}`,
-      { headers: { accept: 'application/json' } },
-    );
-    if (!response.ok) {
-      return { spotify_id: id, spotify_url: trackUrl, title: id };
-    }
-
-    const data = await response.json();
-    const rawTitle = data.title || '';
-    const cleaned = rawTitle
-      .replace(/\s*\|\s*Spotify\s*$/i, '')
-      .replace(/\s*-\s*song and lyrics by\s*/i, ' — ')
-      .trim();
-    const [title, ...artistParts] = cleaned.split(/\s+—\s+/);
-
-    return {
-      spotify_id: id,
-      spotify_url: trackUrl,
-      title: title || rawTitle || id,
-      artist: artistParts.join(' — ') || null,
-      display_title: cleaned || rawTitle || id,
-      thumbnail_url: data.thumbnail_url || null,
-    };
-  } catch (error) {
-    console.warn('spotify metadata failed', id, error?.message || error);
-    return { spotify_id: id, spotify_url: trackUrl, title: id };
-  }
-}
-
 function computePlayback(queue, now = Date.now()) {
   if (!queue.length) return { currentIndex: -1, progressMs: 0, elapsedMs: 0 };
   const start = num(queue[0].start_time);
@@ -107,12 +73,15 @@ export async function onRequestGet(context) {
     let queue = [];
     if (latestQueue) {
       const result = await db.prepare(`
-        SELECT observed_at, station_id, queue_id, start_time, position,
-               queue_track_id, stationhead_track_id, spotify_id, apple_music_id,
-               deezer_id, isrc, duration_ms, preview_url, bite_count
-        FROM sh_queue_items
-        WHERE station_id = ? AND start_time = ?
-        ORDER BY position ASC
+        SELECT q.observed_at, q.station_id, q.queue_id, q.start_time, q.position,
+               q.queue_track_id, q.stationhead_track_id, q.spotify_id, q.apple_music_id,
+               q.deezer_id, q.isrc, q.duration_ms, q.preview_url, q.bite_count,
+               m.title, m.artist, m.display_title, m.thumbnail_url, m.spotify_url,
+               m.fetched_at AS metadata_fetched_at
+        FROM sh_queue_items q
+        LEFT JOIN sh_track_metadata m ON m.spotify_id = q.spotify_id
+        WHERE q.station_id = ? AND q.start_time = ?
+        ORDER BY q.position ASC
         LIMIT 80
       `).bind(latestQueue.station_id, latestQueue.start_time).all();
       queue = result.results || [];
@@ -120,11 +89,11 @@ export async function onRequestGet(context) {
 
     const playback = computePlayback(queue);
     const startIndex = Math.max(0, playback.currentIndex);
-    const visibleQueue = queue.slice(startIndex, startIndex + 13);
-    const metadata = await Promise.all(visibleQueue.map((track) => spotifyMetadata(track.spotify_id)));
+    const visibleQueue = queue.slice(startIndex, startIndex + 20);
     const enrichedQueue = visibleQueue.map((track, index) => ({
       ...track,
-      ...metadata[index],
+      display_title: track.display_title || track.title || track.spotify_id || '曲情報取得待ち',
+      spotify_url: track.spotify_url || (track.spotify_id ? `https://open.spotify.com/track/${track.spotify_id}` : null),
       is_current: startIndex + index === playback.currentIndex,
       progress_ms: startIndex + index === playback.currentIndex ? playback.progressMs : 0,
     }));
@@ -161,6 +130,6 @@ export async function onRequestGet(context) {
     });
   } catch (error) {
     console.error(error);
-    return json({ ok: false, error: error?.message || 'dashboard error', stack: error?.stack || null }, 500);
+    return json({ ok: false, error: error?.message || 'dashboard error' }, 500);
   }
 }
