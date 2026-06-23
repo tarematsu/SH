@@ -22,16 +22,12 @@
         </div>
       </div>
       <div class="hero-side">
-        <div class="health-wrap">
-          <span id="liveBadge" class="live-badge">確認中</span>
-          <span id="health" class="status-warn">読み込み中</span>
-          <span id="updated" class="muted small">-</span>
-        </div>
         <div class="actions">
           <a class="action primary" href="https://www.stationhead.com/c/buddies" target="_blank" rel="noopener">Buddiesを開く</a>
           <a class="action" href="https://apps.apple.com/jp/app/stationhead/id1076117681" target="_blank" rel="noopener">App Store</a>
           <a class="action" href="https://play.google.com/store/apps/details?id=com.stationhead.app" target="_blank" rel="noopener">Google Play</a>
         </div>
+        <span id="updated" class="muted small">-</span>
       </div>
     </header>
 
@@ -49,9 +45,7 @@
       <article class="panel now-playing">
         <div class="section-head">
           <div><p class="eyebrow">NOW PLAYING</p><h2>再生中</h2></div>
-          <div class="player-actions"><button id="playCurrent" class="spotify-link" type="button">このページで再生</button><a id="spotifyLink" class="spotify-link" target="_blank" rel="noopener">Spotifyで開く</a></div>
         </div>
-        <div id="nowPlaying" class="now-content empty">曲情報を取得中...</div>
         <div id="spotifyEmbed" class="spotify-embed" hidden></div>
       </article>
 
@@ -87,7 +81,6 @@
       <canvas id="chart" width="1200" height="360"></canvas>
     </section>
 
-    <footer>データは約1分ごとに更新されます。曲情報はD1に保存され、同じSpotify IDは再取得しません。</footer>
   </main>
   <script src="https://open.spotify.com/embed/iframe-api/v1" async></script>
   <script src="/app.js" defer></script>

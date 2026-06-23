@@ -88,27 +88,6 @@ function drawChart(rows) {
   ctx.fillText(label, width - pad.right - ctx.measureText(label).width, height - 9);
 }
 
-function renderNow(track) {
-  const box = el('nowPlaying');
-  if (!track) {
-    box.className = 'now-content empty';
-    box.textContent = 'キュー情報がありません';
-    el('spotifyLink').hidden = true;
-    return;
-  }
-  el('spotifyLink').hidden = !track.spotify_url;
-  el('spotifyLink').href = track.spotify_url || '#';
-  box.className = 'now-content';
-  box.innerHTML = `
-    <img class="cover" src="${track.thumbnail_url || ''}" alt="" ${track.thumbnail_url ? '' : 'hidden'}>
-    <div class="track-copy">
-      <h3>${escapeText(track.title || track.display_title || track.spotify_id || '曲名不明')}</h3>
-      <p>${escapeText(track.artist || 'アーティスト情報なし')}</p>
-      <div class="track-meta"><span>${duration(track.progress_ms)} / ${duration(track.duration_ms)}</span><span>ISRC ${escapeText(track.isrc || '-')}</span></div>
-      <div class="progress track-progress"><i style="width:${Math.min(100, (track.progress_ms || 0) / Math.max(1, track.duration_ms || 1) * 100)}%"></i></div>
-    </div>`;
-}
-
 function renderQueue(queue, totalItems) {
   el('queueCount').textContent = `${number(totalItems ?? queue.length)}曲`;
   const upcoming = queue.filter(t => !t.is_current);
@@ -164,15 +143,6 @@ async function refresh() {
   el('host').textContent = latest.host_handle ? `@${latest.host_handle}` : '-';
   el('updated').textContent = `最終取得 ${dateTime(latest.observed_at)}`;
 
-  const live = Boolean(latest.is_broadcasting);
-  el('liveBadge').textContent = live ? '● LIVE' : 'OFF AIR';
-  el('liveBadge').className = `live-badge ${live ? 'on' : ''}`;
-
-  const ageMinutes = latest.observed_at ? (Date.now() - Number(latest.observed_at)) / 60000 : Infinity;
-  const health = el('health');
-  health.className = ageMinutes <= 2.5 ? 'status-ok' : ageMinutes <= 6 ? 'status-warn' : 'status-stop';
-  health.textContent = ageMinutes <= 2.5 ? '監視正常' : ageMinutes <= 6 ? '取得遅延' : '停止の可能性';
-
   const count = Number(latest.current_stream_count) || 0;
   const goal = Number(latest.stream_goal) || 0;
   const pct = goal ? Math.min(100, count / goal * 100) : 0;
@@ -184,15 +154,12 @@ async function refresh() {
   renderPrediction(data.goal_prediction, count, goal);
 
   const current = data.queue.find(t => t.is_current) || data.queue[0] || null;
-  renderNow(current);
   loadSpotifyTrack(current);
   renderQueue(data.queue, data.queue_status?.total_items);
   drawChart(data.history || []);
 }
 
-refresh().catch((error) => { el('health').textContent = error.message; el('health').className = 'status-stop'; });
+refresh().catch(console.error);
 setInterval(() => refresh().catch(console.error), 60_000);
 window.addEventListener('resize', () => drawChart([]));
 
-
-el('playCurrent')?.addEventListener('click', () => spotifyController?.play());

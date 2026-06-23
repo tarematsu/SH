@@ -389,7 +389,7 @@ function cleanSpotifyTitle(rawTitle) {
 }
 
 async function lookupStoredTrackMetadata(ids) {
-  if (!ids.length) return new Set();
+  if (!ids.length) return new Map();
   const url = new URL(config.ingestUrl);
   url.searchParams.set('type', 'track_lookup');
   url.searchParams.set('ids', ids.join(','));
@@ -402,51 +402,104 @@ async function lookupStoredTrackMetadata(ids) {
     throw new Error(`track lookup failed ${response.status}: ${body.slice(0, 300)}`);
   }
   const data = await response.json();
-  return new Set((data.tracks || []).map((t) => t.spotify_id));
+  return new Map((data.tracks || []).map((t) => [t.spotify_id, t]));
 }
 
-async function fetchSpotifyMetadata(spotifyId) {
-  const spotifyUrl = `https://open.spotify.com/track/${encodeURIComponent(spotifyId)}`;
-  const url = `https://open.spotify.com/oembed?url=${encodeURIComponent(spotifyUrl)}`;
+function highResolutionArtwork(url) {
+  if (!url) return null;
+  return String(url)
+    .replace(/\/\d+x\d+bb\./, '/600x600bb.')
+    .replace(/\/\d+x\d+-\d+\./, '/600x600-75.');
+}
+
+async function fetchAppleMetadata(track) {
+  if (!track?.apple_music_id) return null;
+  const url = `https://itunes.apple.com/lookup?id=${encodeURIComponent(track.apple_music_id)}&country=JP&entity=song`;
   const response = await fetch(url, {
     headers: { accept: 'application/json' },
     signal: AbortSignal.timeout(20_000),
   });
-  if (!response.ok) {
-    log('warn', `Spotify metadata failed id=${spotifyId} status=${response.status}`);
-    return null;
-  }
+  if (!response.ok) return null;
   const raw = await response.json();
-  const parsed = cleanSpotifyTitle(raw.title);
+  const item = (raw.results || []).find((v) => v.kind === 'song') || raw.results?.[0];
+  if (!item?.trackName || !item?.artistName) return null;
   return {
-    spotify_id: spotifyId,
-    spotify_url: spotifyUrl,
-    title: parsed.title,
-    artist: parsed.artist,
-    display_title: parsed.display_title,
-    thumbnail_url: raw.thumbnail_url || null,
-    source: 'spotify_oembed',
-    fetched_at: Date.now(),
+    title: item.trackName,
+    artist: item.artistName,
+    display_title: `${item.trackName} — ${item.artistName}`,
+    thumbnail_url: highResolutionArtwork(item.artworkUrl100 || item.artworkUrl60),
+    source: 'apple_itunes_lookup',
     raw,
   };
 }
 
-async function enrichNewTracks(queue, observedAt) {
-  const ids = [...new Set((queue?.tracks || []).map((t) => t.spotify_id).filter(Boolean))];
-  if (!ids.length) return;
+async function fetchSpotifyMetadata(track) {
+  const spotifyId = track?.spotify_id;
+  if (!spotifyId) return null;
+  const spotifyUrl = `https://open.spotify.com/track/${encodeURIComponent(spotifyId)}`;
 
-  const stored = await lookupStoredTrackMetadata(ids);
-  const missing = ids.filter((id) => !stored.has(id));
+  // Apple Music ID gives a reliable artistName/trackName without OAuth.
+  const apple = await fetchAppleMetadata(track).catch((error) => {
+    log('warn', `Apple metadata error id=${track.apple_music_id || '-'} ${error.message}`);
+    return null;
+  });
+
+  let spotifyRaw = null;
+  try {
+    const url = `https://open.spotify.com/oembed?url=${encodeURIComponent(spotifyUrl)}`;
+    const response = await fetch(url, {
+      headers: { accept: 'application/json' },
+      signal: AbortSignal.timeout(20_000),
+    });
+    if (response.ok) spotifyRaw = await response.json();
+  } catch (error) {
+    log('warn', `Spotify oEmbed error id=${spotifyId} ${error.message}`);
+  }
+
+  if (!apple && !spotifyRaw?.title) {
+    log('warn', `Track metadata unavailable spotify=${spotifyId} apple=${track.apple_music_id || '-'}`);
+    return null;
+  }
+
+  const parsed = cleanSpotifyTitle(spotifyRaw?.title);
+  return {
+    spotify_id: spotifyId,
+    spotify_url: spotifyUrl,
+    title: apple?.title || parsed.title,
+    artist: apple?.artist || parsed.artist || null,
+    display_title: apple?.display_title || parsed.display_title,
+    thumbnail_url: apple?.thumbnail_url || spotifyRaw?.thumbnail_url || null,
+    source: apple ? 'apple_itunes_lookup+spotify_oembed' : 'spotify_oembed',
+    fetched_at: Date.now(),
+    raw: { apple: apple?.raw || null, spotify: spotifyRaw },
+  };
+}
+
+async function enrichNewTracks(queue, observedAt) {
+  const sourceTracks = [...new Map(
+    (queue?.tracks || [])
+      .filter((t) => t.spotify_id)
+      .map((t) => [t.spotify_id, t])
+  ).values()];
+  if (!sourceTracks.length) return;
+
+  const stored = await lookupStoredTrackMetadata(sourceTracks.map((t) => t.spotify_id));
+  const incomplete = (value) => {
+    if (!value) return true;
+    const artist = String(value.artist || '').trim();
+    return !value.title || !artist || /^JP[A-Z0-9]{8,}$/i.test(artist);
+  };
+  const missing = sourceTracks.filter((track) => incomplete(stored.get(track.spotify_id)));
   if (!missing.length) {
-    log('debug', `track metadata cache hit ${ids.length}/${ids.length}`);
+    log('debug', `track metadata cache hit ${sourceTracks.length}/${sourceTracks.length}`);
     return;
   }
 
   const tracks = [];
   for (let i = 0; i < missing.length; i += 3) {
     const chunk = missing.slice(i, i + 3);
-    const results = await Promise.all(chunk.map((id) => fetchSpotifyMetadata(id).catch((error) => {
-      log('warn', `Spotify metadata error id=${id}`, error.message);
+    const results = await Promise.all(chunk.map((track) => fetchSpotifyMetadata(track).catch((error) => {
+      log('warn', `Track metadata error id=${track.spotify_id}`, error.message);
       return null;
     })));
     tracks.push(...results.filter(Boolean));
@@ -454,7 +507,7 @@ async function enrichNewTracks(queue, observedAt) {
 
   if (tracks.length) {
     await ingest('track_metadata', { tracks }, observedAt);
-    log('info', `track metadata saved new=${tracks.length} cached=${stored.size}`);
+    log('info', `track metadata saved refreshed=${tracks.length} cached=${stored.size}`);
   }
 }
 
