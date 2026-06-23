@@ -19,6 +19,22 @@ const duration = (ms) => {
 };
 const escapeText = (value) => String(value ?? '');
 
+
+function renderDailyDelta(elementId, value) {
+  const node = el(elementId);
+  if (!node) return;
+  const n = Number(value);
+  if (!Number.isFinite(n)) {
+    node.hidden = true;
+    node.textContent = '';
+    return;
+  }
+  const sign = n > 0 ? '+' : n < 0 ? '−' : '±';
+  node.textContent = `前日 ${sign}${number(Math.abs(n))}`;
+  node.className = `daily-delta ${n > 0 ? 'positive' : n < 0 ? 'negative' : 'neutral'}`;
+  node.hidden = false;
+}
+
 function setImage(element, src) {
   if (src) { element.src = src; element.hidden = false; }
   else element.hidden = true;
@@ -326,6 +342,8 @@ async function refresh() {
     el('listeners').textContent = number(latest.listener_count);
     el('members').textContent = number(latest.total_member_count);
     el('totalListens').textContent = number(latest.total_listens);
+    renderDailyDelta('membersDelta', data.daily_change?.total_member_count);
+    renderDailyDelta('listensDelta', data.daily_change?.total_listens);
     el('host').textContent = latest.host_handle ? `@${latest.host_handle}` : '-';
     el('updated').textContent = `最終取得 ${dateTime(latest.observed_at)}`;
 

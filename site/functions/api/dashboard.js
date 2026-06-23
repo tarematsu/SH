@@ -16,6 +16,13 @@ const num = (value) => {
   return Number.isFinite(n) ? n : null;
 };
 
+
+function jstDayRange(now = Date.now()) {
+  const shifted = new Date(now + 9 * 60 * 60 * 1000);
+  const todayStart = Date.UTC(shifted.getUTCFullYear(), shifted.getUTCMonth(), shifted.getUTCDate()) - 9 * 60 * 60 * 1000;
+  return { previousStart: todayStart - 24 * 60 * 60 * 1000, todayStart };
+}
+
 function computePlayback(queue, now = Date.now()) {
   if (!queue.length) return { currentIndex: -1, progressMs: 0 };
   const start = num(queue[0].start_time);
@@ -116,6 +123,15 @@ export async function onRequestGet(context) {
       LIMIT 1500
     `).all();
 
+    const { previousStart, todayStart } = jstDayRange();
+    const previousDay = await db.prepare(`
+      SELECT observed_at, total_member_count, total_listens
+      FROM sh_channel_snapshots
+      WHERE observed_at >= ? AND observed_at < ?
+      ORDER BY observed_at DESC
+      LIMIT 1
+    `).bind(previousStart, todayStart).first();
+
     const latestQueue = await db.prepare(`
       SELECT station_id, queue_id, start_time, is_paused, observed_at
       FROM sh_queue_snapshots
@@ -173,6 +189,15 @@ export async function onRequestGet(context) {
         current_stream_count: latest.current_stream_count ?? streaming.current_stream_count ?? null,
       } : null,
       history: history.results || [],
+      daily_change: previousDay && latest ? {
+        baseline_observed_at: previousDay.observed_at,
+        total_member_count: num(latest.total_member_count) != null && num(previousDay.total_member_count) != null
+          ? num(latest.total_member_count) - num(previousDay.total_member_count)
+          : null,
+        total_listens: num(latest.total_listens) != null && num(previousDay.total_listens) != null
+          ? num(latest.total_listens) - num(previousDay.total_listens)
+          : null,
+      } : null,
       goal_prediction: prediction,
       queue: enrichedQueue,
       queue_status: latestQueue ? {
