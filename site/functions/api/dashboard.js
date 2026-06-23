@@ -19,36 +19,35 @@ const num = (value) => {
 async function spotifyMetadata(id) {
   if (!id) return null;
   const trackUrl = `https://open.spotify.com/track/${encodeURIComponent(id)}`;
-  const request = new Request(`https://open.spotify.com/oembed?url=${encodeURIComponent(trackUrl)}`);
-  const cache = caches.default;
-  let response = await cache.match(request);
-
-  if (!response) {
-    response = await fetch(request, { headers: { accept: 'application/json' } });
-    if (response.ok) {
-      const cached = new Response(response.clone().body, response);
-      cached.headers.set('Cache-Control', 'public, max-age=604800');
-      await cache.put(request, cached);
+  try {
+    const response = await fetch(
+      `https://open.spotify.com/oembed?url=${encodeURIComponent(trackUrl)}`,
+      { headers: { accept: 'application/json' } },
+    );
+    if (!response.ok) {
+      return { spotify_id: id, spotify_url: trackUrl, title: id };
     }
+
+    const data = await response.json();
+    const rawTitle = data.title || '';
+    const cleaned = rawTitle
+      .replace(/\s*\|\s*Spotify\s*$/i, '')
+      .replace(/\s*-\s*song and lyrics by\s*/i, ' — ')
+      .trim();
+    const [title, ...artistParts] = cleaned.split(/\s+—\s+/);
+
+    return {
+      spotify_id: id,
+      spotify_url: trackUrl,
+      title: title || rawTitle || id,
+      artist: artistParts.join(' — ') || null,
+      display_title: cleaned || rawTitle || id,
+      thumbnail_url: data.thumbnail_url || null,
+    };
+  } catch (error) {
+    console.warn('spotify metadata failed', id, error?.message || error);
+    return { spotify_id: id, spotify_url: trackUrl, title: id };
   }
-
-  if (!response.ok) return { spotify_id: id, spotify_url: trackUrl };
-  const data = await response.json();
-  const rawTitle = data.title || '';
-  const cleaned = rawTitle
-    .replace(/\s*\|\s*Spotify\s*$/i, '')
-    .replace(/\s*-\s*song and lyrics by\s*/i, ' — ')
-    .trim();
-  const [title, ...artistParts] = cleaned.split(/\s+—\s+/);
-
-  return {
-    spotify_id: id,
-    spotify_url: trackUrl,
-    title: title || rawTitle || id,
-    artist: artistParts.join(' — ') || null,
-    display_title: cleaned || rawTitle || id,
-    thumbnail_url: data.thumbnail_url || null,
-  };
 }
 
 function computePlayback(queue, now = Date.now()) {
@@ -121,7 +120,7 @@ export async function onRequestGet(context) {
 
     const playback = computePlayback(queue);
     const startIndex = Math.max(0, playback.currentIndex);
-    const visibleQueue = queue.slice(startIndex, startIndex + 20);
+    const visibleQueue = queue.slice(startIndex, startIndex + 13);
     const metadata = await Promise.all(visibleQueue.map((track) => spotifyMetadata(track.spotify_id)));
     const enrichedQueue = visibleQueue.map((track, index) => ({
       ...track,
@@ -162,6 +161,6 @@ export async function onRequestGet(context) {
     });
   } catch (error) {
     console.error(error);
-    return json({ ok: false, error: error?.message || 'dashboard error' }, 500);
+    return json({ ok: false, error: error?.message || 'dashboard error', stack: error?.stack || null }, 500);
   }
 }
