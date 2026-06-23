@@ -13,7 +13,7 @@
     <div>
       <p class="eyebrow">BUDDIES DATA ARCHIVE</p>
       <h1>データ履歴</h1>
-      <span>過去の推移・集計・チャンネルランキングを確認できます</span>
+      <span>過去の集計と週間リーダーボードを確認できます</span>
     </div>
     <a class="back" href="/">現在の状況へ</a>
   </header>
@@ -23,12 +23,12 @@
     <button data-mode="weekly" class="active">週次</button>
     <button data-mode="monthly">月次</button>
     <button data-mode="raw">詳細</button>
-    <button data-mode="ranking">ランキング</button>
+    <button data-mode="ranking">週間リーダーボード</button>
   </nav>
 
   <section class="guide" id="guide">
     <strong>週次集計</strong>
-    <span>週ごとの最大同接、再生数増加、メンバー増加を軽量に表示します。</span>
+    <span>週ごとの最大同接、再生数増加、メンバー増加を表示します。</span>
   </section>
 
   <section class="controls">
@@ -40,11 +40,14 @@
     </div>
     <label>開始<input id="from" type="date" value="2024-06-01"></label>
     <label>終了<input id="to" type="date"></label>
-    <label id="rankingTypeWrap" hidden>種類
-      <select id="rankingType"><option value="">すべて</option></select>
+    <label id="rankingScopeWrap" hidden>表示対象
+      <select id="rankingScope">
+        <option value="featured">注目ホスト2名</option>
+        <option value="all">全ホスト</option>
+      </select>
     </label>
-    <label id="channelWrap" hidden>チャンネル
-      <input id="channel" type="search" placeholder="チャンネル名で絞り込み">
+    <label id="hostWrap" hidden>ホスト検索
+      <input id="host" type="search" placeholder="ホスト名を入力">
     </label>
     <button id="load" class="primary">表示を更新</button>
   </section>
@@ -81,6 +84,22 @@
     </div>
     <div class="table"><table><thead id="thead"></thead><tbody id="tbody"></tbody></table></div>
     <div class="more"><button id="more" hidden>次の200件</button></div>
+  </section>
+
+  <section class="panel" id="rankingWeeklyPanel" hidden>
+    <div class="head">
+      <div>
+        <p class="section-kicker">BUDDIES WEEKLY METRICS</p>
+        <h2>Buddies週間実績（参考）</h2>
+      </div>
+    </div>
+    <p class="panel-note">以下は各ホスト個人の実績ではなく、Buddiesチャンネル全体の週次集計です。</p>
+    <div class="table weekly-metrics-table">
+      <table>
+        <thead id="weeklyThead"></thead>
+        <tbody id="weeklyTbody"></tbody>
+      </table>
+    </div>
   </section>
 </main>
 <script src="/history/history.js" defer></script>

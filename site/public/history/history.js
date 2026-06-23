@@ -2,6 +2,7 @@ const $ = (selector) => document.querySelector(selector);
 const $$ = (selector) => [...document.querySelectorAll(selector)];
 const CACHE_MS = 10 * 60 * 1000;
 const MAX_CHART_POINTS = 240;
+const FEATURED_HOSTS = ['sakuramankai', 'sakurazaka46jp'];
 
 let current = [];
 let currentMode = 'weekly';
@@ -11,10 +12,10 @@ let resizeTimer = null;
 
 const MODE_HELP = {
   daily: ['日次集計', '1日ごとの最大同接、再生数増加、メンバー増加を表示します。'],
-  weekly: ['週次集計', '週ごとの最大同接、再生数増加、メンバー増加を軽量に表示します。'],
+  weekly: ['週次集計', '週ごとの最大同接、再生数増加、メンバー増加を表示します。'],
   monthly: ['月次集計', '月ごとの長期推移を少ない読み取り量で表示します。'],
   raw: ['詳細データ', '元の記録を200件ずつ表示します。検索範囲は最大31日です。'],
-  ranking: ['チャンネルランキング', '順位はランキングシート、週間再生数・メンバー増加・平均同接は元の詳細履歴から算出します。'],
+  ranking: ['週間リーダーボード', 'Stationheadで放送しているホストの週次順位です。初期表示は注目ホスト2名です。'],
 };
 
 const SUMMARY_LABELS = {
@@ -32,9 +33,13 @@ const RAW_LABELS = {
 };
 
 const RANKING_LABELS = {
-  ranking_date: '日付', ranking_type: 'ランキング種別', rank: '順位',
-  channel_name: 'チャンネル', channel_alias: '別名', listener_count: '平均同接',
-  member_count: '週間メンバー増加', total_listens: '週間再生数', source_sheet: '順位データ出典', quality_score: '順位データ品質',
+  ranking_date: '週', host_name: 'ホスト', rank: '順位', previous_rank: '前週順位',
+  rank_change: '前週比', source_sheet: '順位データ出典', quality_score: '品質',
+};
+
+const WEEKLY_METRIC_LABELS = {
+  ranking_date: '週', stream_growth: '週間再生数', member_growth: '週間メンバー増加',
+  listener_avg: '平均同接', listener_min: '最小同接', listener_max: '最大同接',
 };
 
 const fmt = (value) => value == null || value === ''
@@ -53,17 +58,17 @@ function setMode(mode) {
   const [title, description] = MODE_HELP[mode];
   $('#guide').innerHTML = `<strong>${title}</strong><span>${description}</span>`;
   const ranking = mode === 'ranking';
-  $('#rankingTypeWrap').hidden = !ranking;
-  $('#channelWrap').hidden = !ranking;
+  $('#rankingScopeWrap').hidden = !ranking;
+  $('#hostWrap').hidden = !ranking;
+  $('#rankingWeeklyPanel').hidden = !ranking;
+  $('#metric').hidden = ranking;
   $('#metric').disabled = mode === 'raw';
   $('#chartPanel').hidden = mode === 'raw';
-  $('#chartTitle').textContent = ranking ? '順位推移' : '推移グラフ';
+  $('#chartTitle').textContent = ranking ? '注目ホストの順位推移' : '推移グラフ';
   $('#chartFoot').textContent = ranking
-    ? 'チャンネル名で絞り込むと、そのチャンネルの順位推移を表示します。'
+    ? '順位は1位が上です。全ホスト表示時はホスト検索で絞り込むと推移を表示します。'
     : '値が大きいほどグラフの上に表示されます。';
-  $('#tableTitle').textContent = ranking ? 'ランキング一覧' : mode === 'raw' ? '詳細データ一覧' : '集計データ一覧';
-  if (ranking) $('#metric').value = 'rank';
-  else if ($('#metric').value === 'rank') $('#metric').value = 'listener_max';
+  $('#tableTitle').textContent = ranking ? '週間リーダーボード' : mode === 'raw' ? '詳細データ一覧' : '集計データ一覧';
 }
 
 function applyPreset(days) {
@@ -85,10 +90,9 @@ function sampleRows(rows, max = MAX_CHART_POINTS) {
   return sampled;
 }
 
-function draw(rows, key) {
+function prepareCanvas() {
   const canvas = $('#chart');
   const ctx = canvas.getContext('2d');
-  const source = sampleRows(rows);
   const dpr = Math.min(devicePixelRatio || 1, 1.5);
   const width = canvas.clientWidth || 1000;
   const height = canvas.clientHeight || 330;
@@ -96,10 +100,15 @@ function draw(rows, key) {
   canvas.height = Math.round(height * dpr);
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.clearRect(0, 0, width, height);
+  return { ctx, width, height };
+}
 
-  const ranking = currentMode === 'ranking';
-  const points = source.map((row, index) => ({ x: index, y: Number(row[key]), row }))
+function draw(rows, key) {
+  const { ctx, width, height } = prepareCanvas();
+  const source = sampleRows(rows);
+  const points = source.map((row, index) => ({ x: index, y: Number(row[key]) }))
     .filter((point) => Number.isFinite(point.y));
+
   if (points.length < 2) {
     ctx.fillStyle = '#aaa3b5';
     ctx.font = '14px system-ui';
@@ -107,15 +116,11 @@ function draw(rows, key) {
     return;
   }
 
-  let min = Infinity;
-  let max = -Infinity;
-  for (const point of points) {
-    if (point.y < min) min = point.y;
-    if (point.y > max) max = point.y;
-  }
-
+  let min = Math.min(...points.map((point) => point.y));
+  let max = Math.max(...points.map((point) => point.y));
   const padding = 34;
   const span = max - min || 1;
+
   ctx.strokeStyle = '#ffffff18';
   ctx.lineWidth = 1;
   for (let i = 0; i < 5; i++) {
@@ -129,19 +134,83 @@ function draw(rows, key) {
   points.forEach((point, index) => {
     const x = padding + (width - padding * 2) * (point.x / (source.length - 1 || 1));
     const ratio = (point.y - min) / span;
-    const y = ranking
-      ? padding + ratio * (height - padding * 2)
-      : height - padding - ratio * (height - padding * 2);
+    const y = height - padding - ratio * (height - padding * 2);
     index ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
   });
   ctx.stroke();
 
   ctx.fillStyle = '#aaa3b5';
   ctx.font = '11px system-ui';
-  const top = ranking ? min : max;
-  const bottom = ranking ? max : min;
-  ctx.fillText(fmt(top), 4, 16);
-  ctx.fillText(fmt(bottom), 4, height - 8);
+  ctx.fillText(fmt(max), 4, 16);
+  ctx.fillText(fmt(min), 4, height - 8);
+}
+
+function drawRanking(rows) {
+  const { ctx, width, height } = prepareCanvas();
+  const groups = new Map();
+  for (const row of rows) {
+    const host = row.host_name;
+    const rank = Number(row.rank);
+    if (!host || !Number.isFinite(rank)) continue;
+    if (!groups.has(host)) groups.set(host, []);
+    groups.get(host).push({ date: row.ranking_date, rank });
+  }
+
+  const hosts = [...groups.keys()].slice(0, 5);
+  if (!hosts.length) {
+    ctx.fillStyle = '#aaa3b5';
+    ctx.font = '14px system-ui';
+    ctx.fillText('表示できる順位データがありません', 20, 34);
+    return;
+  }
+
+  const dates = [...new Set(hosts.flatMap((host) => groups.get(host).map((point) => point.date)))].sort();
+  const allRanks = hosts.flatMap((host) => groups.get(host).map((point) => point.rank));
+  const minRank = Math.min(...allRanks);
+  const maxRank = Math.max(...allRanks);
+  const span = maxRank - minRank || 1;
+  const padding = 42;
+  const colors = ['#f6c7d9', '#9ec5ff', '#c7f6d4', '#ffd39e', '#d5b7ff'];
+
+  ctx.strokeStyle = '#ffffff18';
+  ctx.lineWidth = 1;
+  for (let i = 0; i < 5; i++) {
+    const y = padding + (height - padding * 2) * i / 4;
+    ctx.beginPath(); ctx.moveTo(padding, y); ctx.lineTo(width - padding, y); ctx.stroke();
+  }
+
+  hosts.forEach((host, hostIndex) => {
+    const byDate = new Map(groups.get(host).map((point) => [point.date, point.rank]));
+    ctx.strokeStyle = colors[hostIndex];
+    ctx.lineWidth = 2.5;
+    ctx.beginPath();
+    let started = false;
+    dates.forEach((date, index) => {
+      const rank = byDate.get(date);
+      if (!Number.isFinite(rank)) return;
+      const x = padding + (width - padding * 2) * (index / (dates.length - 1 || 1));
+      const ratio = (rank - minRank) / span;
+      const y = padding + ratio * (height - padding * 2);
+      if (started) ctx.lineTo(x, y);
+      else { ctx.moveTo(x, y); started = true; }
+    });
+    ctx.stroke();
+  });
+
+  ctx.fillStyle = '#aaa3b5';
+  ctx.font = '11px system-ui';
+  ctx.fillText(`${minRank}位`, 4, 16);
+  ctx.fillText(`${maxRank}位`, 4, height - 8);
+
+  ctx.font = '12px system-ui';
+  hosts.forEach((host, index) => {
+    const x = Math.max(padding, width - 190);
+    const y = 18 + index * 18;
+    ctx.fillStyle = colors[index];
+    ctx.fillRect(x, y - 8, 10, 3);
+    ctx.fillStyle = '#f7f4fb';
+    ctx.fillText(host, x + 16, y - 3);
+  });
 }
 
 function columnsFor(mode) {
@@ -156,6 +225,14 @@ function labelsFor(mode) {
   return SUMMARY_LABELS;
 }
 
+function rankChangeDisplay(value) {
+  const change = Number(value);
+  if (!Number.isFinite(change)) return { text: '—', className: '' };
+  if (change > 0) return { text: `↑${change}`, className: 'rank-up' };
+  if (change < 0) return { text: `↓${Math.abs(change)}`, className: 'rank-down' };
+  return { text: '→0', className: 'rank-same' };
+}
+
 function renderTable(rows, mode, append = false) {
   const columns = columnsFor(mode);
   const labels = labelsFor(mode);
@@ -168,6 +245,10 @@ function renderTable(rows, mode, append = false) {
   for (const row of rows) {
     const tr = document.createElement('tr');
     tr.innerHTML = columns.map((column) => {
+      if (mode === 'ranking' && column === 'rank_change') {
+        const change = rankChangeDisplay(row[column]);
+        return `<td class="${change.className}">${change.text}</td>`;
+      }
       const value = row[column];
       const display = typeof value === 'number' ? fmt(value) : escapeHtml(value);
       const rankClass = mode === 'ranking' && column === 'rank' ? ' class="rank-cell"' : '';
@@ -178,18 +259,30 @@ function renderTable(rows, mode, append = false) {
   $('#tbody').appendChild(fragment);
 }
 
+function renderWeeklyMetrics(rows = []) {
+  const columns = Object.keys(WEEKLY_METRIC_LABELS);
+  $('#weeklyThead').innerHTML = `<tr>${columns.map((column) => `<th>${WEEKLY_METRIC_LABELS[column]}</th>`).join('')}</tr>`;
+  const fragment = document.createDocumentFragment();
+  for (const row of rows) {
+    const tr = document.createElement('tr');
+    tr.innerHTML = columns.map((column) => `<td>${column === 'ranking_date' ? escapeHtml(row[column]) : fmt(row[column])}</td>`).join('');
+    fragment.appendChild(tr);
+  }
+  $('#weeklyTbody').replaceChildren(fragment);
+}
+
 function updateSummary(rows, mode) {
   if (mode === 'ranking') {
     const ranks = rows.map((row) => Number(row.rank)).filter(Number.isFinite);
-    const channels = new Set(rows.map((row) => row.channel_name).filter(Boolean));
+    const hosts = new Set(rows.map((row) => row.host_name).filter(Boolean));
     const dates = new Set(rows.map((row) => row.ranking_date).filter(Boolean));
-    $('#periodLabel').textContent = 'ランキング記録';
+    $('#periodLabel').textContent = '順位記録';
     $('#maxLabel').textContent = '最高順位';
-    $('#streamLabel').textContent = 'チャンネル数';
-    $('#memberLabel').textContent = '対象日数';
+    $('#streamLabel').textContent = '表示ホスト';
+    $('#memberLabel').textContent = '対象週';
     $('#periods').textContent = fmt(rows.length);
     $('#maxListener').textContent = ranks.length ? `${Math.min(...ranks)}位` : '—';
-    $('#streamGrowth').textContent = fmt(channels.size);
+    $('#streamGrowth').textContent = fmt(hosts.size);
     $('#memberGrowth').textContent = fmt(dates.size);
     return;
   }
@@ -213,7 +306,7 @@ function updateSummary(rows, mode) {
   $('#memberGrowth').textContent = mode === 'raw' ? '—' : fmt(memberGrowth);
 }
 
-function cacheKey(mode, from, to, extra = '') { return `history:v3:${mode}:${from}:${to}:${extra}`; }
+function cacheKey(mode, from, to, extra = '') { return `history:v5:${mode}:${from}:${to}:${extra}`; }
 function readCache(key) {
   try {
     const entry = JSON.parse(sessionStorage.getItem(key));
@@ -225,12 +318,11 @@ function writeCache(key, data) {
   try { sessionStorage.setItem(key, JSON.stringify({ savedAt: Date.now(), data })); } catch {}
 }
 
-function populateRankingTypes(types = []) {
-  const select = $('#rankingType');
-  const selected = select.value;
-  select.innerHTML = '<option value="">すべて</option>' + types
-    .map((type) => `<option value="${escapeHtml(type)}">${escapeHtml(type)}</option>`).join('');
-  if ([...select.options].some((option) => option.value === selected)) select.value = selected;
+function shouldShowRankingChart(rows) {
+  const scope = $('#rankingScope').value;
+  const search = $('#host').value.trim();
+  const hostCount = new Set(rows.map((row) => row.host_name).filter(Boolean)).size;
+  return scope === 'featured' || Boolean(search) || hostCount <= 5;
 }
 
 async function load({ append = false } = {}) {
@@ -239,9 +331,9 @@ async function load({ append = false } = {}) {
   const mode = currentMode;
   const from = $('#from').value;
   const to = $('#to').value;
-  const rankingType = mode === 'ranking' ? $('#rankingType').value : '';
-  const channel = mode === 'ranking' ? $('#channel').value.trim() : '';
-  const extra = `${rankingType}:${channel}`;
+  const scope = mode === 'ranking' ? $('#rankingScope').value : '';
+  const host = mode === 'ranking' ? $('#host').value.trim() : '';
+  const extra = `${scope}:${host}`;
   const key = cacheKey(mode, from, to, extra);
   $('#notice').textContent = append ? '続きを読み込み中…' : '読み込み中…';
 
@@ -255,8 +347,8 @@ async function load({ append = false } = {}) {
       }
       if (mode === 'ranking') {
         params.set('limit', '5000');
-        if (rankingType) params.set('ranking_type', rankingType);
-        if (channel) params.set('channel', channel);
+        params.set('scope', scope);
+        if (host) params.set('host', host);
       }
       const response = await fetch(`/api/history?${params}`, { cache: mode === 'raw' ? 'no-store' : 'default' });
       data = await response.json();
@@ -264,24 +356,36 @@ async function load({ append = false } = {}) {
       if (!append && mode !== 'raw') writeCache(key, data);
     }
 
-    if (mode === 'ranking') populateRankingTypes(data.ranking_types || []);
     if (append) current.push(...(data.rows || []));
     else current = data.rows || [];
     nextCursor = data.next_cursor || null;
 
     updateSummary(current, mode);
     renderTable(data.rows || [], mode, append);
-    const showRankingChart = mode === 'ranking' && Boolean($('#channel').value.trim());
-    $('#chartPanel').hidden = mode === 'raw' || (mode === 'ranking' && !showRankingChart);
-    if (showRankingChart) draw(current, 'rank');
-    else if (mode !== 'raw') draw(current, $('#metric').value);
     $('#more').hidden = mode !== 'raw' || !data.has_more;
 
+    if (mode === 'ranking') {
+      renderWeeklyMetrics(data.weekly_metrics || []);
+      $('#rankingWeeklyPanel').hidden = false;
+      const showChart = shouldShowRankingChart(current);
+      $('#chartPanel').hidden = !showChart;
+      if (showChart) drawRanking(current);
+    } else {
+      $('#rankingWeeklyPanel').hidden = true;
+      $('#chartPanel').hidden = mode === 'raw';
+      if (mode !== 'raw') draw(current, $('#metric').value);
+    }
+
     if (mode === 'ranking' && data.setup_required) {
-      $('#notice').textContent = 'ランキングテーブルは作成済みですが、まだランキングデータがありません。別SQLを投入するとここに表示されます。';
+      $('#notice').textContent = '週間リーダーボードのデータがまだありません。ランキングSQLを投入してください。';
     } else if (mode === 'ranking') {
-      const suffix = data.truncated ? '（最大5000件まで表示。チャンネル名で絞り込めます）' : '';
-      $('#notice').textContent = `${fmt(current.length)}件のランキング記録を表示 ${suffix}`;
+      const selected = host
+        ? `「${host}」を検索`
+        : scope === 'featured'
+          ? `${FEATURED_HOSTS.join('・')}を表示`
+          : '全ホストを表示';
+      const suffix = data.truncated ? '（最大5000件）' : '';
+      $('#notice').textContent = `${selected}：${fmt(current.length)}件 ${suffix}`;
     } else if (mode === 'raw') {
       $('#notice').textContent = `${fmt(current.length)}件を表示中（200件ずつ取得）`;
     } else {
@@ -311,8 +415,11 @@ $$('.range-presets button').forEach((button) => {
 $('#load').onclick = () => { nextCursor = null; load(); };
 $('#more').onclick = () => load({ append: true });
 $('#metric').onchange = () => { if (currentMode !== 'ranking') draw(current, $('#metric').value); };
-$('#rankingType').onchange = () => load();
-$('#channel').addEventListener('keydown', (event) => { if (event.key === 'Enter') load(); });
+$('#rankingScope').onchange = () => {
+  $('#host').value = '';
+  load();
+};
+$('#host').addEventListener('keydown', (event) => { if (event.key === 'Enter') load(); });
 $('#csv').onclick = () => {
   if (!current.length) return;
   const columns = columnsFor(currentMode);
@@ -330,7 +437,7 @@ $('#csv').onclick = () => {
 addEventListener('resize', () => {
   clearTimeout(resizeTimer);
   resizeTimer = setTimeout(() => {
-    if (currentMode === 'ranking') draw(current, 'rank');
+    if (currentMode === 'ranking' && !$('#chartPanel').hidden) drawRanking(current);
     else if (currentMode !== 'raw') draw(current, $('#metric').value);
   }, 180);
 });
