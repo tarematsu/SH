@@ -1,0 +1,13 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "stationhead-monitor",
+  "compatibility_date": "2026-06-23",
+  "pages_build_output_dir": "./public",
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "stationhead-monitor",
+      "database_id": "5d5f0d47-7951-4900-821a-e1907c7e890b"
+    }
+  ]
+}
