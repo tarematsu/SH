@@ -141,7 +141,7 @@ export async function onRequestGet(context) {
 
     const playback = computePlayback(queue);
     const startIndex = Math.max(0, playback.currentIndex);
-    const visibleQueue = queue.slice(startIndex, startIndex + 20);
+    const visibleQueue = queue.slice(startIndex);
     const enrichedQueue = visibleQueue.map((track, index) => ({
       ...track,
       display_title: track.display_title || track.title || track.spotify_id || '曲情報取得待ち',

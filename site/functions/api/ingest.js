@@ -181,6 +181,7 @@ async function saveHeartbeat(db, observedAt, data) {
   ).run();
 }
 
+
 export async function onRequestPost({ request, env }) {
   if (!authorized(request, env)) return json({ ok: false, error: 'unauthorized' }, 401);
   if (!env.DB) return json({ ok: false, error: 'DB binding missing' }, 500);

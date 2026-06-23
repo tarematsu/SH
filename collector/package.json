@@ -1,6 +1,6 @@
 {
   "name": "stationhead-local-collector",
-  "version": "1.0.1",
+  "version": "1.1.0",
   "private": true,
   "type": "module",
   "scripts": {
@@ -11,6 +11,7 @@
     "dotenv": "^16.4.7",
     "ws": "^8.18.0",
     "fetch-cookie": "^3.1.0",
-    "tough-cookie": "^5.1.2"
+    "tough-cookie": "^5.1.2",
+    "playwright-core": "^1.53.0"
   }
 }

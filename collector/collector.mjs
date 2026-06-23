@@ -25,8 +25,8 @@ const config = {
   enableWebSocket: String(process.env.ENABLE_WEBSOCKET ?? 'true').toLowerCase() === 'true',
   logLevel: process.env.LOG_LEVEL || 'info',
   stationheadCookie: process.env.STATIONHEAD_COOKIE || '',
-  stationheadAuthToken: process.env.STATIONHEAD_AUTH_TOKEN || '',
-  stationheadDeviceUid: process.env.STATIONHEAD_DEVICE_UID || '',
+  chromePath: process.env.CHROME_PATH || '',
+  authBrowserTimeoutMs: numberEnv('AUTH_BROWSER_TIMEOUT_MS', 45_000),
   stationheadAppVersion: process.env.STATIONHEAD_APP_VERSION || '1.0.0',
   collectorId: process.env.COLLECTOR_ID || os.hostname(),
   collectorVersion: '1.2.0',
@@ -39,8 +39,8 @@ let runtime = {
   ws: null,
   reconnectTimer: null,
   stopped: false,
-  authToken: config.stationheadAuthToken || '',
-  deviceUid: config.stationheadDeviceUid || '',
+  authToken: '',
+  deviceUid: '',
   authRefreshPromise: null,
 };
 
@@ -142,46 +142,99 @@ async function requestStationhead(url, options = {}, includeAuth = true) {
   return response;
 }
 
+function chromeCandidates() {
+  const candidates = [
+    config.chromePath,
+    process.env.PROGRAMFILES ? path.join(process.env.PROGRAMFILES, 'Google', 'Chrome', 'Application', 'chrome.exe') : '',
+    process.env['PROGRAMFILES(X86)'] ? path.join(process.env['PROGRAMFILES(X86)'], 'Google', 'Chrome', 'Application', 'chrome.exe') : '',
+    process.env.LOCALAPPDATA ? path.join(process.env.LOCALAPPDATA, 'Google', 'Chrome', 'Application', 'chrome.exe') : '',
+    '/usr/bin/google-chrome',
+    '/usr/bin/google-chrome-stable',
+    '/usr/bin/chromium',
+    '/usr/bin/chromium-browser',
+  ];
+  return [...new Set(candidates.filter(Boolean))];
+}
+
+async function findChromeExecutable() {
+  for (const candidate of chromeCandidates()) {
+    try {
+      await fs.access(candidate);
+      return candidate;
+    } catch {}
+  }
+  return '';
+}
+
+async function acquireGuestAuthWithBrowser() {
+  const { chromium } = await import('playwright-core');
+  const executablePath = await findChromeExecutable();
+  if (!executablePath) {
+    throw new Error('Chrome/Chromium not found. Set CHROME_PATH in collector/.env');
+  }
+
+  const browser = await chromium.launch({
+    executablePath,
+    headless: true,
+    args: ['--disable-dev-shm-usage', '--no-first-run', '--no-default-browser-check'],
+  });
+
+  try {
+    const context = await browser.newContext({ locale: 'ja-JP' });
+    const page = await context.newPage();
+    const target = `${API_BASE}/channels/alias/${encodeURIComponent(config.channelAlias)}`;
+
+    const credentialsPromise = new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error('Timed out waiting for Stationhead guest authentication')), config.authBrowserTimeoutMs);
+      const inspect = async (response) => {
+        if (response.url() !== target || response.request().method() !== 'GET' || response.status() !== 200) return;
+        const headers = await response.request().allHeaders();
+        const token = normalizeBearer(headers.authorization);
+        const deviceUid = String(headers['sth-device-uid'] || '').trim();
+        if (!token || !deviceUid) return;
+        clearTimeout(timer);
+        resolve({ token, deviceUid });
+      };
+      page.on('response', inspect);
+    });
+
+    await page.goto(`https://www.stationhead.com/c/${encodeURIComponent(config.channelAlias)}`, {
+      waitUntil: 'domcontentloaded',
+      timeout: config.authBrowserTimeoutMs,
+    });
+
+    const credentials = await credentialsPromise;
+    runtime.authToken = credentials.token;
+    runtime.deviceUid = credentials.deviceUid;
+    await saveSession();
+    const expires = jwtExpiryMs(runtime.authToken);
+    log('info', `Stationhead guest auth acquired via Chrome${expires ? ` exp=${new Date(expires).toISOString()}` : ''}`);
+  } finally {
+    await browser.close().catch(() => {});
+  }
+}
+
 async function refreshGuestAuth(force = false) {
   if (runtime.authRefreshPromise) return runtime.authRefreshPromise;
   runtime.authRefreshPromise = (async () => {
     const expires = jwtExpiryMs(runtime.authToken);
-    if (!force && runtime.authToken && (!expires || expires - Date.now() > 60 * 60 * 1000)) return;
+    if (!force && runtime.authToken && expires - Date.now() > 60 * 60 * 1000) return;
 
-    log('info', force ? 'refreshing Stationhead guest authentication' : 'Stationhead token near expiry; refreshing');
+    const previousToken = runtime.authToken;
+    const previousDeviceUid = runtime.deviceUid;
+    log('info', force ? 'acquiring fresh Stationhead guest authentication' : 'Stationhead token near expiry; acquiring fresh authentication');
 
-    await sessionFetch(`https://www.stationhead.com/c/${encodeURIComponent(config.channelAlias)}`, {
-      headers: {
-        ...BROWSER_HEADERS,
-        accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
-        origin: undefined,
-        referer: undefined,
-      },
-      redirect: 'follow',
-      signal: AbortSignal.timeout(20_000),
-    }).catch((error) => log('warn', 'web warmup failed', error.message));
-
-    // Public bootstrap endpoints expose a newly issued/rotated guest token in
-    // the Authorization response header. Probe without the stale token first.
-    const probes = ['/timestamp', '/me/country', `/channels/alias/${encodeURIComponent(config.channelAlias)}`];
-    const previous = runtime.authToken;
-    runtime.authToken = '';
-    for (const endpoint of probes) {
-      try {
-        const response = await requestStationhead(`${API_BASE}${endpoint}`, { method: 'GET' }, false);
-        await response.arrayBuffer().catch(() => {});
-        if (runtime.authToken) break;
-      } catch (error) {
-        log('debug', `auth probe failed ${endpoint}`, error.message);
+    try {
+      await acquireGuestAuthWithBrowser();
+    } catch (error) {
+      runtime.authToken = previousToken;
+      runtime.deviceUid = previousDeviceUid;
+      if (previousToken && jwtExpiryMs(previousToken) > Date.now() + 5 * 60 * 1000) {
+        log('warn', `fresh guest authentication failed; continuing with saved token: ${error.message}`);
+        return;
       }
+      throw error;
     }
-
-    if (!runtime.authToken) {
-      runtime.authToken = previous;
-      if (!runtime.authToken) throw new Error('Stationhead guest token could not be acquired automatically');
-      log('warn', 'automatic guest-token refresh returned no token; using saved token until rejected');
-    }
-    await saveSession();
   })().finally(() => {
     runtime.authRefreshPromise = null;
   });
@@ -191,7 +244,7 @@ async function refreshGuestAuth(force = false) {
 async function warmUpSession() {
   await loadSavedSession();
   if (config.stationheadCookie) await cookieJar.setCookie(config.stationheadCookie, API_BASE);
-  await refreshGuestAuth(false);
+  await refreshGuestAuth(true);
 }
 
 async function fetchJson(url, options = {}, allowRetry = true) {
@@ -519,6 +572,7 @@ function connectWebSocket() {
 }
 
 async function main() {
+  await initializeSpotifyPlaylistSync();
   const once = process.argv.includes('--once');
   await warmUpSession();
   log('info', `Stationhead session ready token=${runtime.authToken.length}chars device=${runtime.deviceUid.slice(0, 8)}... appVersion=${config.stationheadAppVersion} collector=${config.collectorId}`);

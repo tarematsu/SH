@@ -77,3 +77,43 @@ canvas { width: 100%; display: block; }
 footer { color: var(--muted); text-align: center; font-size: .7rem; padding: 15px 0 2px; }
 @media (max-width: 900px) { .hero { align-items:flex-start; }.hero-side { flex-direction:column; align-items:flex-end; }.metrics { grid-template-columns:1fr 1fr; }.metric-main { grid-column:1/-1; }.main-grid { grid-template-columns:1fr; }.queue-list { grid-template-columns:1fr; } }
 @media (max-width: 560px) { .container { padding: 8px; }.hero { padding:12px; flex-direction:column; }.hero-side { width:100%; align-items:flex-start; }.health-wrap { align-items:flex-start; }.actions { justify-content:flex-start; }.channel-image { width:52px;height:52px; }.main-grid .panel, section.panel { padding:13px; }.now-content { grid-template-columns:82px minmax(0,1fr); gap:11px; }.cover { width:82px; }.track-meta span:last-child { display:none; }.metrics { grid-template-columns:1fr 1fr; }.metric { padding:11px; }.legend { display:none; } }
+
+.player-actions{display:flex;gap:.5rem;align-items:center;flex-wrap:wrap}
+button.spotify-link{font:inherit;cursor:pointer}
+.spotify-embed{margin-top:1rem;min-height:152px}
+
+/* Queue/goal layout patch */
+.queue-panel { min-width: 0; }
+.queue-slider-wrap { position: relative; }
+.queue-list {
+  display: block;
+  max-height: 310px; /* 約5曲分 */
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+  padding-right: 5px;
+  scroll-snap-type: y proximity;
+}
+.queue-item {
+  min-height: 58px;
+  margin-bottom: 4px;
+  scroll-snap-align: start;
+  border: 1px solid transparent;
+}
+.queue-item:last-child { margin-bottom: 0; }
+.queue-hint { margin-top: 8px; color: var(--muted); font-size: .68rem; text-align: right; }
+.queue-list::-webkit-scrollbar { width: 8px; }
+.queue-list::-webkit-scrollbar-track { background: rgba(255,255,255,.035); border-radius: 999px; }
+.queue-list::-webkit-scrollbar-thumb { background: rgba(246,199,217,.38); border-radius: 999px; }
+.goal-layout { display: grid; grid-template-columns: minmax(0,1.3fr) minmax(240px,.8fr) auto; gap: 18px; align-items: center; }
+.goal-layout .prediction-card { margin-top: 0; }
+.goal-layout .host { padding-left: 4px; min-width: 150px; }
+@media (max-width: 900px) {
+  .goal-layout { grid-template-columns: 1fr 1fr; }
+  .goal-layout .host { grid-column: 1 / -1; }
+}
+@media (max-width: 560px) {
+  .goal-layout { grid-template-columns: 1fr; gap: 12px; }
+  .goal-layout .host { grid-column: auto; }
+  .queue-list { max-height: 290px; }
+}

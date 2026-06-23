@@ -1,3 +1,24 @@
+
+let spotifyController = null;
+let pendingSpotifyUri = null;
+window.onSpotifyIframeApiReady = (IFrameAPI) => {
+  const element = document.getElementById('spotifyEmbed');
+  const uri = pendingSpotifyUri || 'spotify:track:6p0awehpa8bAujabY1DZJz';
+  IFrameAPI.createController(element, { uri, width: '100%', height: 152 }, (controller) => {
+    spotifyController = controller;
+  });
+};
+
+function loadSpotifyTrack(track) {
+  const id = track?.spotify_id;
+  const embed = el('spotifyEmbed');
+  if (!id) { embed.hidden = true; pendingSpotifyUri = null; return; }
+  const uri = `spotify:track:${id}`;
+  pendingSpotifyUri = uri;
+  embed.hidden = false;
+  spotifyController?.loadUri(uri);
+}
+
 const el = (id) => document.getElementById(id);
 const number = (value) => value == null ? '-' : Number(value).toLocaleString('ja-JP');
 const dateTime = (value) => value ? new Date(Number(value)).toLocaleString('ja-JP', { month:'numeric', day:'numeric', hour:'2-digit', minute:'2-digit', second:'2-digit' }) : '-';
@@ -90,7 +111,7 @@ function renderNow(track) {
 
 function renderQueue(queue, totalItems) {
   el('queueCount').textContent = `${number(totalItems ?? queue.length)}曲`;
-  const upcoming = queue.filter(t => !t.is_current).slice(0, 12);
+  const upcoming = queue.filter(t => !t.is_current);
   const box = el('queue');
   if (!upcoming.length) { box.innerHTML = '<p class="muted">次の曲はありません。</p>'; return; }
   box.replaceChildren(...upcoming.map((track, index) => {
@@ -102,7 +123,7 @@ function renderQueue(queue, totalItems) {
     row.innerHTML = `
       <span class="queue-no">${index + 1}</span>
       <img src="${track.thumbnail_url || ''}" alt="" ${track.thumbnail_url ? '' : 'hidden'}>
-      <span class="queue-copy"><strong>${escapeText(track.title || track.display_title || track.spotify_id || '曲名不明')}</strong><small>${escapeText(track.artist || track.isrc || '')}</small></span>
+      <span class="queue-copy"><strong>${escapeText(track.title || track.display_title || track.spotify_id || '曲名不明')}</strong><small>${escapeText(track.artist || 'アーティスト情報なし')}</small></span>
       <span class="queue-duration">${duration(track.duration_ms)}</span>`;
     return row;
   }));
@@ -164,6 +185,7 @@ async function refresh() {
 
   const current = data.queue.find(t => t.is_current) || data.queue[0] || null;
   renderNow(current);
+  loadSpotifyTrack(current);
   renderQueue(data.queue, data.queue_status?.total_items);
   drawChart(data.history || []);
 }
@@ -171,3 +193,6 @@ async function refresh() {
 refresh().catch((error) => { el('health').textContent = error.message; el('health').className = 'status-stop'; });
 setInterval(() => refresh().catch(console.error), 60_000);
 window.addEventListener('resize', () => drawChart([]));
+
+
+el('playCurrent')?.addEventListener('click', () => spotifyController?.play());
