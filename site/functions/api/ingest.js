@@ -1,4 +1,4 @@
-function json(data, status = 200) {
+﻿function json(data, status = 200) {
   return new Response(JSON.stringify(data), {
     status,
     headers: { 'content-type': 'application/json; charset=utf-8' },
@@ -27,7 +27,7 @@ function rawJson(value) {
 
 async function saveSnapshot(db, observedAt, d) {
   await db.prepare(`
-    INSERT INTO channel_snapshots (
+    INSERT INTO sh_channel_snapshots (
       observed_at, channel_id, channel_alias, channel_name, station_id,
       is_launched, is_broadcasting, chat_status,
       listener_count, online_member_count, total_member_count, guest_count,
@@ -44,9 +44,9 @@ async function saveSnapshot(db, observedAt, d) {
 }
 
 async function saveComments(db, observedAt, data) {
-  const comments = Array.isArray(data?.comments) ? data.comments : [];
-  const statements = comments.map((c) => db.prepare(`
-    INSERT INTO comments (
+  const sh_comments = Array.isArray(data?.sh_comments) ? data.sh_comments : [];
+  const statements = sh_comments.map((c) => db.prepare(`
+    INSERT INTO sh_comments (
       id, observed_at, station_id, account_id, handle, text, text_with_xml,
       chat_time, chat_time_ms, all_access_chat, boost_chat, active_stream_days,
       followers, following, emoji, raw_json
@@ -75,12 +75,12 @@ async function saveQueue(db, observedAt, data) {
   const tracks = Array.isArray(data?.tracks) ? data.tracks : [];
 
   await db.prepare(`
-    INSERT INTO queue_snapshots (observed_at, station_id, queue_id, start_time, is_paused, raw_json)
+    INSERT INTO sh_queue_snapshots (observed_at, station_id, queue_id, start_time, is_paused, raw_json)
     VALUES (?, ?, ?, ?, ?, ?)
   `).bind(observedAt, stationId, queueId, startTime, bool(data?.is_paused), rawJson(data?.raw)).run();
 
   const statements = tracks.map((t) => db.prepare(`
-    INSERT INTO queue_items (
+    INSERT INTO sh_queue_items (
       observed_at, station_id, queue_id, start_time, position,
       queue_track_id, stationhead_track_id, spotify_id, apple_music_id,
       deezer_id, isrc, duration_ms, preview_url, bite_count, raw_json
@@ -106,7 +106,7 @@ async function saveQueue(db, observedAt, data) {
 
 async function saveWsEvent(db, observedAt, data) {
   await db.prepare(`
-    INSERT INTO raw_events (observed_at, source, channel, event, data_json, raw_json)
+    INSERT INTO sh_raw_events (observed_at, source, channel, event, data_json, raw_json)
     VALUES (?, 'websocket', ?, ?, ?, ?)
   `).bind(observedAt, text(data?.channel), text(data?.event), rawJson(data?.data), rawJson(data?.raw)).run();
 
@@ -114,7 +114,7 @@ async function saveWsEvent(db, observedAt, data) {
   const d = data?.data || {};
   if (event === 'listenerCount' || event === 'onlineMemberCount' || event === 'streamingPartyUpdated') {
     await db.prepare(`
-      INSERT INTO realtime_metrics (
+      INSERT INTO sh_realtime_metrics (
         observed_at, event, listener_count, online_member_count,
         stream_goal, current_stream_count, account_id, change_type, raw_json
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -143,7 +143,7 @@ export async function onRequestPost(context) {
 
   try {
     if (type === 'snapshot') await saveSnapshot(env.DB, observedAt, data);
-    else if (type === 'comments') await saveComments(env.DB, observedAt, data);
+    else if (type === 'sh_comments') await saveComments(env.DB, observedAt, data);
     else if (type === 'queue') await saveQueue(env.DB, observedAt, data);
     else if (type === 'ws_event') await saveWsEvent(env.DB, observedAt, data);
     else return json({ ok: false, error: `unknown type: ${type}` }, 400);
@@ -157,3 +157,4 @@ export async function onRequestPost(context) {
 export async function onRequestGet() {
   return json({ ok: true, endpoint: 'stationhead ingest' });
 }
+
