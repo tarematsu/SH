@@ -3,35 +3,71 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#111019">
   <title>Buddies Station Monitor</title>
   <link rel="stylesheet" href="/style.css">
 </head>
 <body>
+  <div class="backdrop"></div>
   <main class="container">
-    <header>
-      <h1>Buddies Station Monitor</h1>
-      <p id="health">読み込み中...</p>
+    <header class="hero panel">
+      <div class="identity">
+        <img id="channelImage" class="channel-image" alt="Buddies">
+        <div>
+          <p class="eyebrow">STATIONHEAD LIVE MONITOR</p>
+          <h1 id="channelName">Buddies</h1>
+          <p id="description" class="muted">読み込み中...</p>
+        </div>
+      </div>
+      <div class="health-wrap">
+        <span id="liveBadge" class="live-badge">確認中</span>
+        <span id="health" class="status-warn">読み込み中</span>
+        <span id="updated" class="muted small">-</span>
+      </div>
     </header>
 
-    <section class="cards">
-      <article><span>状態</span><strong id="status">-</strong></article>
-      <article><span>再生数</span><strong id="plays">-</strong></article>
-      <article><span>コメント数</span><strong id="commentCount">-</strong></article>
-      <article><span>最終取得</span><strong id="updated">-</strong></article>
+    <section class="metrics" aria-label="現在の指標">
+      <article class="metric"><span>現在のリスナー</span><strong id="listeners">-</strong><small>人</small></article>
+      <article class="metric"><span>オンライン</span><strong id="online">-</strong><small>人</small></article>
+      <article class="metric"><span>総メンバー</span><strong id="members">-</strong><small>人</small></article>
+      <article class="metric"><span>累計 Listen</span><strong id="totalListens">-</strong><small>回</small></article>
+    </section>
+
+    <section class="main-grid">
+      <article class="panel now-playing">
+        <div class="section-head">
+          <div><p class="eyebrow">NOW PLAYING</p><h2>再生中</h2></div>
+          <a id="spotifyLink" class="spotify-link" target="_blank" rel="noopener">Spotifyで開く</a>
+        </div>
+        <div id="nowPlaying" class="now-content empty">曲情報を取得中...</div>
+      </article>
+
+      <article class="panel goal-panel">
+        <div class="section-head"><div><p class="eyebrow">STREAMING GOAL</p><h2>ストリーム目標</h2></div></div>
+        <div class="goal-numbers"><strong id="streamCount">-</strong><span>/ <b id="streamGoal">-</b></span></div>
+        <div class="progress"><i id="goalBar"></i></div>
+        <div class="goal-foot"><span id="goalPercent">-</span><span id="goalRemaining">-</span></div>
+        <hr>
+        <div class="host"><img id="hostImage" alt=""><div><small>配信ホスト</small><strong id="host">-</strong></div></div>
+      </article>
     </section>
 
     <section class="panel">
-      <h2>直近24時間</h2>
-      <canvas id="chart" width="1000" height="320"></canvas>
+      <div class="section-head"><div><p class="eyebrow">UP NEXT</p><h2>今後の再生予定</h2></div><span id="queueCount" class="chip">-</span></div>
+      <div id="queue" class="queue-list"></div>
+    </section>
+
+    <section class="panel chart-panel">
+      <div class="section-head"><div><p class="eyebrow">LAST 24 HOURS</p><h2>リスナー推移</h2></div><div class="legend"><span>● リスナー</span><span>● オンライン</span></div></div>
+      <canvas id="chart" width="1200" height="360"></canvas>
     </section>
 
     <section class="panel">
-      <h2>最新コメント</h2>
-      <table>
-        <thead><tr><th>時刻</th><th>投稿者</th><th>コメント</th></tr></thead>
-        <tbody id="comments"></tbody>
-      </table>
+      <div class="section-head"><div><p class="eyebrow">LIVE CHAT</p><h2>最新コメント</h2></div><span id="commentCount" class="chip">-</span></div>
+      <div id="comments" class="comments"></div>
     </section>
+
+    <footer>データは約1分ごとに更新されます。曲名・画像はSpotify oEmbedから取得します。</footer>
   </main>
   <script src="/app.js" defer></script>
 </body>
