@@ -19,16 +19,26 @@
           <p id="description" class="muted">読み込み中...</p>
         </div>
       </div>
-      <div class="health-wrap">
-        <span id="liveBadge" class="live-badge">確認中</span>
-        <span id="health" class="status-warn">読み込み中</span>
-        <span id="updated" class="muted small">-</span>
+      <div class="hero-side">
+        <div class="health-wrap">
+          <span id="liveBadge" class="live-badge">確認中</span>
+          <span id="health" class="status-warn">読み込み中</span>
+          <span id="updated" class="muted small">-</span>
+        </div>
+        <div class="actions">
+          <a class="action primary" href="https://www.stationhead.com/c/buddies" target="_blank" rel="noopener">Buddiesを開く</a>
+          <a class="action" href="https://apps.apple.com/jp/app/stationhead/id1076117681" target="_blank" rel="noopener">App Store</a>
+          <a class="action" href="https://play.google.com/store/apps/details?id=com.stationhead.app" target="_blank" rel="noopener">Google Play</a>
+        </div>
       </div>
     </header>
 
     <section class="metrics" aria-label="現在の指標">
-      <article class="metric"><span>現在のリスナー</span><strong id="listeners">-</strong><small>人</small></article>
-      <article class="metric"><span>オンライン</span><strong id="online">-</strong><small>人</small></article>
+      <article class="metric metric-main">
+        <span>オンライン</span>
+        <strong id="online">-</strong><small>人</small>
+        <div class="metric-detail">うちリスナー <b id="listeners">-</b> 人</div>
+      </article>
       <article class="metric"><span>総メンバー</span><strong id="members">-</strong><small>人</small></article>
       <article class="metric"><span>累計 Listen</span><strong id="totalListens">-</strong><small>回</small></article>
     </section>
@@ -47,6 +57,12 @@
         <div class="goal-numbers"><strong id="streamCount">-</strong><span>/ <b id="streamGoal">-</b></span></div>
         <div class="progress"><i id="goalBar"></i></div>
         <div class="goal-foot"><span id="goalPercent">-</span><span id="goalRemaining">-</span></div>
+        <div class="prediction-card">
+          <small>予測到達日時</small>
+          <strong id="goalEta">計算中</strong>
+          <span id="goalRate">-</span>
+          <em id="goalConfidence">-</em>
+        </div>
         <hr>
         <div class="host"><img id="hostImage" alt=""><div><small>配信ホスト</small><strong id="host">-</strong></div></div>
       </article>
@@ -58,16 +74,11 @@
     </section>
 
     <section class="panel chart-panel">
-      <div class="section-head"><div><p class="eyebrow">LAST 24 HOURS</p><h2>リスナー推移</h2></div><div class="legend"><span>● リスナー</span><span>● オンライン</span></div></div>
+      <div class="section-head"><div><p class="eyebrow">LAST 24 HOURS</p><h2>オンライン推移</h2></div><div class="legend"><span>● オンライン</span><span>● リスナー</span></div></div>
       <canvas id="chart" width="1200" height="360"></canvas>
     </section>
 
-    <section class="panel">
-      <div class="section-head"><div><p class="eyebrow">LIVE CHAT</p><h2>最新コメント</h2></div><span id="commentCount" class="chip">-</span></div>
-      <div id="comments" class="comments"></div>
-    </section>
-
-    <footer>データは約1分ごとに更新されます。曲名・画像はSpotify oEmbedから取得します。</footer>
+    <footer>データは約1分ごとに更新されます。曲情報はD1に保存され、同じSpotify IDは再取得しません。</footer>
   </main>
   <script src="/app.js" defer></script>
 </body>

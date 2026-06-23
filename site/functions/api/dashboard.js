@@ -17,9 +17,9 @@ const num = (value) => {
 };
 
 function computePlayback(queue, now = Date.now()) {
-  if (!queue.length) return { currentIndex: -1, progressMs: 0, elapsedMs: 0 };
+  if (!queue.length) return { currentIndex: -1, progressMs: 0 };
   const start = num(queue[0].start_time);
-  if (!start) return { currentIndex: 0, progressMs: 0, elapsedMs: 0 };
+  if (!start) return { currentIndex: 0, progressMs: 0 };
 
   const elapsedMs = Math.max(0, now - start);
   let cursor = 0;
@@ -29,12 +29,72 @@ function computePlayback(queue, now = Date.now()) {
       return {
         currentIndex: i,
         progressMs: Math.max(0, Math.min(duration, elapsedMs - cursor)),
-        elapsedMs,
       };
     }
     cursor += duration;
   }
-  return { currentIndex: queue.length - 1, progressMs: 0, elapsedMs };
+  return { currentIndex: queue.length - 1, progressMs: 0 };
+}
+
+function linearRegressionPrediction(rows, goal, now = Date.now()) {
+  const points = rows
+    .map((r) => ({ t: num(r.observed_at), y: num(r.current_stream_count) }))
+    .filter((p) => p.t != null && p.y != null)
+    .sort((a, b) => a.t - b.t);
+
+  if (!goal || points.length < 5) return null;
+  const firstT = points[0].t;
+  const spanMs = points.at(-1).t - firstT;
+  if (spanMs < 15 * 60_000) return null;
+
+  const deduped = [];
+  let lastBucket = null;
+  for (const p of points) {
+    const bucket = Math.floor(p.t / 60_000);
+    if (bucket === lastBucket) deduped[deduped.length - 1] = p;
+    else deduped.push(p);
+    lastBucket = bucket;
+  }
+
+  const xs = deduped.map((p) => (p.t - firstT) / 3_600_000);
+  const ys = deduped.map((p) => p.y);
+  const xMean = xs.reduce((a, b) => a + b, 0) / xs.length;
+  const yMean = ys.reduce((a, b) => a + b, 0) / ys.length;
+  let cov = 0;
+  let varX = 0;
+  for (let i = 0; i < xs.length; i += 1) {
+    cov += (xs[i] - xMean) * (ys[i] - yMean);
+    varX += (xs[i] - xMean) ** 2;
+  }
+  if (varX <= 0) return null;
+
+  const ratePerHour = cov / varX;
+  if (!Number.isFinite(ratePerHour) || ratePerHour <= 0) return null;
+  const intercept = yMean - ratePerHour * xMean;
+
+  let ssRes = 0;
+  let ssTot = 0;
+  for (let i = 0; i < xs.length; i += 1) {
+    const predicted = intercept + ratePerHour * xs[i];
+    ssRes += (ys[i] - predicted) ** 2;
+    ssTot += (ys[i] - yMean) ** 2;
+  }
+  const r2 = ssTot > 0 ? Math.max(0, Math.min(1, 1 - ssRes / ssTot)) : 0;
+  const latest = deduped.at(-1).y;
+  const remaining = Math.max(0, goal - latest);
+  const hoursRemaining = remaining / ratePerHour;
+  const eta = remaining === 0 ? now : now + hoursRemaining * 3_600_000;
+  const confidence = r2 >= 0.9 && spanMs >= 6 * 3_600_000 ? 'high' : r2 >= 0.65 ? 'medium' : 'low';
+
+  return {
+    eta,
+    rate_per_hour: ratePerHour,
+    remaining,
+    r2,
+    confidence,
+    sample_count: deduped.length,
+    span_hours: spanMs / 3_600_000,
+  };
 }
 
 export async function onRequestGet(context) {
@@ -54,14 +114,6 @@ export async function onRequestGet(context) {
       WHERE observed_at >= (unixepoch('now', '-24 hours') * 1000)
       ORDER BY observed_at ASC
       LIMIT 1500
-    `).all();
-
-    const comments = await db.prepare(`
-      SELECT id, observed_at, account_id, handle, text, chat_time_ms,
-             all_access_chat, boost_chat, active_stream_days, followers, emoji
-      FROM sh_comments
-      ORDER BY COALESCE(chat_time_ms, observed_at) DESC
-      LIMIT 60
     `).all();
 
     const latestQueue = await db.prepare(`
@@ -103,6 +155,8 @@ export async function onRequestGet(context) {
     const station = channel.current_station || {};
     const owner = station.owner || {};
     const streaming = station.streaming_party || {};
+    const goal = latest?.stream_goal ?? streaming.stream_goal ?? null;
+    const prediction = linearRegressionPrediction(history.results || [], num(goal));
 
     return json({
       ok: true,
@@ -115,11 +169,11 @@ export async function onRequestGet(context) {
         channel_image: channel.images?.medium?.url || null,
         logo_image: channel.images?.logo?.medium?.url || null,
         host_image: owner.thumbnail?.url || owner.medium?.url || null,
-        stream_goal: latest.stream_goal ?? streaming.stream_goal ?? null,
+        stream_goal: goal,
         current_stream_count: latest.current_stream_count ?? streaming.current_stream_count ?? null,
       } : null,
       history: history.results || [],
-      comments: comments.results || [],
+      goal_prediction: prediction,
       queue: enrichedQueue,
       queue_status: latestQueue ? {
         ...latestQueue,

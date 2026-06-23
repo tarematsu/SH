@@ -2,6 +2,7 @@ import 'dotenv/config';
 import WebSocket from 'ws';
 import fetchCookie from 'fetch-cookie';
 import { CookieJar } from 'tough-cookie';
+import os from 'node:os';
 
 const API_BASE = 'https://production1.stationhead.com';
 const PUSHER_KEY = '982c86a21530b654bfb2';
@@ -22,6 +23,8 @@ const config = {
   stationheadAuthToken: process.env.STATIONHEAD_AUTH_TOKEN || '',
   stationheadDeviceUid: process.env.STATIONHEAD_DEVICE_UID || '',
   stationheadAppVersion: process.env.STATIONHEAD_APP_VERSION || '1.0.0',
+  collectorId: process.env.COLLECTOR_ID || os.hostname(),
+  collectorVersion: '1.2.0',
 };
 
 let runtime = {
@@ -118,7 +121,7 @@ async function ingest(type, data, observedAt = Date.now()) {
       'content-type': 'application/json',
       authorization: `Bearer ${config.ingestSecret}`,
     },
-    body: JSON.stringify({ type, observed_at: observedAt, data }),
+    body: JSON.stringify({ type, observed_at: observedAt, collector_id: config.collectorId, data }),
     signal: AbortSignal.timeout(20_000),
   });
   if (!response.ok) {
@@ -310,6 +313,13 @@ async function enrichNewTracks(queue, observedAt) {
 
 async function pollOnce() {
   const observedAt = Date.now();
+  await ingest('collector_heartbeat', {
+    collector_id: config.collectorId,
+    hostname: os.hostname(),
+    version: config.collectorVersion,
+    channel_alias: config.channelAlias,
+    websocket_enabled: config.enableWebSocket,
+  }, observedAt);
   const channelUrl = `${API_BASE}/channels/alias/${encodeURIComponent(config.channelAlias)}`;
   const channel = await fetchJson(channelUrl);
   extractIds(channel);
@@ -421,7 +431,7 @@ function validateStationheadAuth() {
   if (!config.stationheadDeviceUid) {
     throw new Error('STATIONHEAD_DEVICE_UID is required');
   }
-  log('info', `Stationhead auth loaded token=${config.stationheadAuthToken.length}chars device=${config.stationheadDeviceUid.slice(0, 8)}... appVersion=${config.stationheadAppVersion}`);
+  log('info', `Stationhead auth loaded token=${config.stationheadAuthToken.length}chars device=${config.stationheadDeviceUid.slice(0, 8)}... appVersion=${config.stationheadAppVersion} collector=${config.collectorId}`);
 }
 
 async function main() {

@@ -115,3 +115,13 @@ CREATE TABLE IF NOT EXISTS sh_track_metadata (
   raw_json TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_sh_track_metadata_fetched_at ON sh_track_metadata(fetched_at DESC);
+
+CREATE TABLE IF NOT EXISTS sh_collector_heartbeats (
+  collector_id TEXT PRIMARY KEY,
+  first_seen_at INTEGER NOT NULL,
+  last_seen_at INTEGER NOT NULL,
+  hostname TEXT,
+  version TEXT,
+  metadata_json TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_sh_collector_heartbeats_last_seen ON sh_collector_heartbeats(last_seen_at DESC);

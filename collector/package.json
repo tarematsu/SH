@@ -1,0 +1,16 @@
+{
+  "name": "stationhead-local-collector",
+  "version": "1.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node collector.mjs",
+    "once": "node collector.mjs --once"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.7",
+    "ws": "^8.18.0",
+    "fetch-cookie": "^3.1.0",
+    "tough-cookie": "^5.1.2"
+  }
+}

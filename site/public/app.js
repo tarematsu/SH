@@ -1,6 +1,7 @@
 const el = (id) => document.getElementById(id);
 const number = (value) => value == null ? '-' : Number(value).toLocaleString('ja-JP');
 const dateTime = (value) => value ? new Date(Number(value)).toLocaleString('ja-JP', { month:'numeric', day:'numeric', hour:'2-digit', minute:'2-digit', second:'2-digit' }) : '-';
+const etaDateTime = (value) => value ? new Date(Number(value)).toLocaleString('ja-JP', { month:'long', day:'numeric', weekday:'short', hour:'2-digit', minute:'2-digit' }) : '予測データ不足';
 const duration = (ms) => {
   const sec = Math.max(0, Math.floor((Number(ms) || 0) / 1000));
   return `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, '0')}`;
@@ -16,18 +17,18 @@ function drawChart(rows) {
   const canvas = el('chart');
   const dpr = window.devicePixelRatio || 1;
   const width = canvas.clientWidth || 1000;
-  const height = Math.max(260, Math.min(380, width * 0.32));
+  const height = Math.max(250, Math.min(360, width * 0.3));
   canvas.width = width * dpr;
   canvas.height = height * dpr;
   const ctx = canvas.getContext('2d');
   ctx.scale(dpr, dpr);
   ctx.clearRect(0, 0, width, height);
-
   if (!rows.length) return;
+
   const pad = { left: 46, right: 18, top: 20, bottom: 34 };
   const series = [
-    { key: 'listener_count', css: '--accent' },
-    { key: 'online_member_count', css: '--accent-2' },
+    { key: 'online_member_count', css: '--accent' },
+    { key: 'listener_count', css: '--accent-2' },
   ];
   const all = rows.flatMap(r => series.map(s => Number(r[s.key]))).filter(Number.isFinite);
   if (!all.length) return;
@@ -107,19 +108,19 @@ function renderQueue(queue, totalItems) {
   }));
 }
 
-function renderComments(comments) {
-  el('commentCount').textContent = `${number(comments.length)}件`;
-  const box = el('comments');
-  if (!comments.length) { box.innerHTML = '<p class="muted">コメントはありません。</p>'; return; }
-  box.replaceChildren(...comments.map((comment) => {
-    const item = document.createElement('article');
-    item.className = 'comment';
-    const flags = [comment.all_access_chat ? 'All Access' : '', comment.boost_chat ? 'Boost' : ''].filter(Boolean);
-    item.innerHTML = `
-      <div class="avatar">${escapeText(comment.emoji || (comment.handle || '?').slice(0,1).toUpperCase())}</div>
-      <div><div class="comment-head"><strong>@${escapeText(comment.handle || 'guest')}</strong>${flags.map(f => `<span class="tag">${f}</span>`).join('')}<time>${dateTime(comment.chat_time_ms || comment.observed_at)}</time></div><p>${escapeText(comment.text)}</p></div>`;
-    return item;
-  }));
+function renderPrediction(prediction, current, goal) {
+  if (!prediction) {
+    el('goalEta').textContent = current >= goal && goal > 0 ? '目標達成済み' : '予測データ不足';
+    el('goalRate').textContent = '最低15分以上の履歴が必要です';
+    el('goalConfidence').textContent = '-';
+    el('goalConfidence').className = '';
+    return;
+  }
+  el('goalEta').textContent = etaDateTime(prediction.eta);
+  el('goalRate').textContent = `平均 +${number(Math.round(prediction.rate_per_hour))} /時`;
+  const labels = { high: '信頼度 高', medium: '信頼度 中', low: '信頼度 低' };
+  el('goalConfidence').textContent = labels[prediction.confidence] || '参考値';
+  el('goalConfidence').className = `confidence ${prediction.confidence || 'low'}`;
 }
 
 async function refresh() {
@@ -135,8 +136,8 @@ async function refresh() {
   setImage(el('hostImage'), latest.host_image);
   if (latest.accent_color) document.documentElement.style.setProperty('--accent', latest.accent_color);
 
-  el('listeners').textContent = number(latest.listener_count);
   el('online').textContent = number(latest.online_member_count);
+  el('listeners').textContent = number(latest.listener_count);
   el('members').textContent = number(latest.total_member_count);
   el('totalListens').textContent = number(latest.total_listens);
   el('host').textContent = latest.host_handle ? `@${latest.host_handle}` : '-';
@@ -159,14 +160,14 @@ async function refresh() {
   el('goalBar').style.width = `${pct}%`;
   el('goalPercent').textContent = `${pct.toFixed(2)}%`;
   el('goalRemaining').textContent = goal ? `残り ${number(Math.max(0, goal - count))}` : '-';
+  renderPrediction(data.goal_prediction, count, goal);
 
   const current = data.queue.find(t => t.is_current) || data.queue[0] || null;
   renderNow(current);
   renderQueue(data.queue, data.queue_status?.total_items);
-  renderComments(data.comments || []);
   drawChart(data.history || []);
 }
 
 refresh().catch((error) => { el('health').textContent = error.message; el('health').className = 'status-stop'; });
 setInterval(() => refresh().catch(console.error), 60_000);
-window.addEventListener('resize', () => refresh().catch(console.error));
+window.addEventListener('resize', () => drawChart([]));
