@@ -572,7 +572,6 @@ function connectWebSocket() {
 }
 
 async function main() {
-  await initializeSpotifyPlaylistSync();
   const once = process.argv.includes('--once');
   await warmUpSession();
   log('info', `Stationhead session ready token=${runtime.authToken.length}chars device=${runtime.deviceUid.slice(0, 8)}... appVersion=${config.stationheadAppVersion} collector=${config.collectorId}`);
