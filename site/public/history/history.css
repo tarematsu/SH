@@ -83,3 +83,20 @@ tbody tr:hover td{background:#ffffff08}
   .hero{padding:15px}
   .back{padding:8px 11px;font-size:.78rem}
 }
+
+.cards strong small{display:block;margin-top:4px;color:var(--muted);font-size:.72rem;font-weight:650;line-height:1.35}
+.chart-axis-dates{display:flex;justify-content:space-between;gap:12px;margin-top:2px;color:var(--muted);font-size:.72rem;font-variant-numeric:tabular-nums}
+.chart-detail{min-height:52px;margin-top:8px;padding:10px 12px;border:1px solid var(--line);border-radius:11px;background:#100e17;color:var(--muted);font-size:.78rem}
+.chart-detail time{display:block;color:var(--accent);font-weight:850;margin-bottom:7px;font-variant-numeric:tabular-nums}
+.chart-detail-values{display:flex;gap:10px;flex-wrap:wrap}
+.chart-detail-values>div{display:flex;align-items:center;gap:8px;min-width:180px}
+.chart-detail-values strong{color:var(--text);font-size:.76rem}
+.chart-detail-values span{margin-left:auto;color:var(--accent);font-size:.9rem;font-weight:900}
+#chart{touch-action:pan-y;cursor:crosshair}
+.rank-out{color:var(--muted);font-weight:850}
+.out-of-rank-row td{color:#8d8796;background:#ffffff02}
+.out-of-rank-row td:first-child{background:#1b1826}
+@media(max-width:560px){
+  .chart-detail-values>div{min-width:100%}
+  .chart-axis-dates{font-size:.68rem}
+}

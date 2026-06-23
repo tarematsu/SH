@@ -73,7 +73,14 @@
         <option value="member_end">メンバー</option>
       </select>
     </div>
-    <canvas id="chart" width="1200" height="420"></canvas>
+    <canvas id="chart" width="1200" height="420" aria-label="時系列グラフ"></canvas>
+    <div class="chart-axis-dates" aria-label="表示期間">
+      <span id="chartStartDate">—</span>
+      <span id="chartEndDate">—</span>
+    </div>
+    <div class="chart-detail" id="chartDetail" aria-live="polite">
+      <span>グラフをタッチまたはクリックすると、その時点の詳細を表示します。</span>
+    </div>
     <div class="chart-foot" id="chartFoot">値が大きいほどグラフの上に表示されます。</div>
   </section>
 
