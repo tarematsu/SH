@@ -165,7 +165,7 @@ function renderNowDisplay(track, progressMs = 0) {
     <div class="track-copy">
       <h3>${escapeText(title)}</h3>
       <p>${escapeText(artist)}</p>
-      <div class="track-meta"><span id="nowPlayingTime">${duration(safeProgress)} / ${duration(durationMs)}</span><span>ISRC ${escapeText(track.isrc || '-')}</span></div>
+      <div class="track-meta"><span id="nowPlayingTime">${duration(safeProgress)} / ${duration(durationMs)}</span></div>
       <div class="progress track-progress"><i id="nowPlayingBar" style="width:${progress}%"></i></div>
       ${spotifyUrl ? '<small class="spotify-open-hint">クリックしてSpotifyで開く</small>' : ''}
     </div>`;
