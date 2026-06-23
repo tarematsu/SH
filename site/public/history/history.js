@@ -59,7 +59,7 @@ function setMode(mode) {
   $('#chartPanel').hidden = mode === 'raw';
   $('#chartTitle').textContent = ranking ? '順位推移' : '推移グラフ';
   $('#chartFoot').textContent = ranking
-    ? 'ランキングは1位が上になるように表示します。'
+    ? 'チャンネル名で絞り込むと、そのチャンネルの順位推移を表示します。'
     : '値が大きいほどグラフの上に表示されます。';
   $('#tableTitle').textContent = ranking ? 'ランキング一覧' : mode === 'raw' ? '詳細データ一覧' : '集計データ一覧';
   if (ranking) $('#metric').value = 'rank';
@@ -254,7 +254,7 @@ async function load({ append = false } = {}) {
         if (append && nextCursor) params.set('cursor', nextCursor);
       }
       if (mode === 'ranking') {
-        params.set('limit', '1000');
+        params.set('limit', '5000');
         if (rankingType) params.set('ranking_type', rankingType);
         if (channel) params.set('channel', channel);
       }
@@ -271,15 +271,16 @@ async function load({ append = false } = {}) {
 
     updateSummary(current, mode);
     renderTable(data.rows || [], mode, append);
-    $('#chartPanel').hidden = mode === 'raw';
-    if (mode === 'ranking') draw(current, 'rank');
+    const showRankingChart = mode === 'ranking' && Boolean($('#channel').value.trim());
+    $('#chartPanel').hidden = mode === 'raw' || (mode === 'ranking' && !showRankingChart);
+    if (showRankingChart) draw(current, 'rank');
     else if (mode !== 'raw') draw(current, $('#metric').value);
     $('#more').hidden = mode !== 'raw' || !data.has_more;
 
     if (mode === 'ranking' && data.setup_required) {
       $('#notice').textContent = 'ランキングテーブルは作成済みですが、まだランキングデータがありません。別SQLを投入するとここに表示されます。';
     } else if (mode === 'ranking') {
-      const suffix = data.truncated ? '（最大1000件まで表示）' : '';
+      const suffix = data.truncated ? '（最大5000件まで表示。チャンネル名で絞り込めます）' : '';
       $('#notice').textContent = `${fmt(current.length)}件のランキング記録を表示 ${suffix}`;
     } else if (mode === 'raw') {
       $('#notice').textContent = `${fmt(current.length)}件を表示中（200件ずつ取得）`;

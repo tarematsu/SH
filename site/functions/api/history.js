@@ -50,7 +50,7 @@ async function loadRanking(requestUrl, env) {
   const to = requestUrl.searchParams.get('to') || new Date().toISOString().slice(0, 10);
   const rankingType = safeText(requestUrl.searchParams.get('ranking_type'), 50);
   const channel = safeText(requestUrl.searchParams.get('channel'), 100);
-  const limit = Math.min(Math.max(Number(requestUrl.searchParams.get('limit')) || 500, 20), 1000);
+  const limit = Math.min(Math.max(Number(requestUrl.searchParams.get('limit')) || 5000, 20), 10000);
 
   let sql = `SELECT
 r.ranking_date,r.observed_at,r.ranking_type,r.rank,r.channel_name,r.channel_alias,
@@ -73,7 +73,9 @@ WHERE r.ranking_date>=? AND r.ranking_date<=?`;
     binds.push(`%${channel}%`, `%${channel}%`);
   }
 
-  sql += ' ORDER BY r.ranking_date ASC, r.rank ASC LIMIT ?';
+  sql += channel
+    ? ' ORDER BY r.ranking_date ASC, r.rank ASC LIMIT ?'
+    : ' ORDER BY r.ranking_date DESC, r.rank ASC LIMIT ?';
   binds.push(limit);
 
   try {
