@@ -52,22 +52,28 @@ async function loadRanking(requestUrl, env) {
   const channel = safeText(requestUrl.searchParams.get('channel'), 100);
   const limit = Math.min(Math.max(Number(requestUrl.searchParams.get('limit')) || 500, 20), 1000);
 
-  let sql = `SELECT ranking_date,observed_at,ranking_type,rank,channel_name,channel_alias,
-listener_count,member_count,total_listens,source_sheet,quality_score,quality_flags
-FROM sh_channel_rankings
-WHERE ranking_date>=? AND ranking_date<=?`;
+  let sql = `SELECT
+r.ranking_date,r.observed_at,r.ranking_type,r.rank,r.channel_name,r.channel_alias,
+w.listener_avg AS listener_count,
+w.member_growth AS member_count,
+w.stream_growth AS total_listens,
+w.listener_min,w.listener_max,w.sample_count,w.reliable_sample_count,
+r.source_sheet,r.quality_score,r.quality_flags
+FROM sh_channel_rankings r
+LEFT JOIN sh_weekly_summary w ON w.period_key=r.ranking_date
+WHERE r.ranking_date>=? AND r.ranking_date<=?`;
   const binds = [from, to];
 
   if (rankingType) {
-    sql += ' AND ranking_type=?';
+    sql += ' AND r.ranking_type=?';
     binds.push(rankingType);
   }
   if (channel) {
-    sql += ' AND (channel_name LIKE ? OR channel_alias LIKE ?)';
+    sql += ' AND (r.channel_name LIKE ? OR r.channel_alias LIKE ?)';
     binds.push(`%${channel}%`, `%${channel}%`);
   }
 
-  sql += ' ORDER BY ranking_date ASC, rank ASC LIMIT ?';
+  sql += ' ORDER BY r.ranking_date ASC, r.rank ASC LIMIT ?';
   binds.push(limit);
 
   try {
@@ -84,6 +90,7 @@ WHERE ranking_date>=? AND ranking_date<=?`;
       ranking_types: types,
       channel_count: channels.length,
       truncated: rows.length >= limit,
+      weekly_metrics_source: 'original_history',
     }, 200, { 'cache-control': 'public, max-age=300, s-maxage=900' });
   } catch (error) {
     // ランキングテーブル未作成時も履歴ページ全体を壊さない。

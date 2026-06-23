@@ -14,7 +14,7 @@ const MODE_HELP = {
   weekly: ['週次集計', '週ごとの最大同接、再生数増加、メンバー増加を軽量に表示します。'],
   monthly: ['月次集計', '月ごとの長期推移を少ない読み取り量で表示します。'],
   raw: ['詳細データ', '元の記録を200件ずつ表示します。検索範囲は最大31日です。'],
-  ranking: ['チャンネルランキング', '日付別の順位とチャンネルごとの順位推移を表示します。'],
+  ranking: ['チャンネルランキング', '順位はランキングシート、週間再生数・メンバー増加・平均同接は元の詳細履歴から算出します。'],
 };
 
 const SUMMARY_LABELS = {
@@ -33,8 +33,8 @@ const RAW_LABELS = {
 
 const RANKING_LABELS = {
   ranking_date: '日付', ranking_type: 'ランキング種別', rank: '順位',
-  channel_name: 'チャンネル', channel_alias: '別名', listener_count: 'リスナー',
-  member_count: 'メンバー', total_listens: '累計聴取回数', source_sheet: '出典', quality_score: '品質',
+  channel_name: 'チャンネル', channel_alias: '別名', listener_count: '平均同接',
+  member_count: '週間メンバー増加', total_listens: '週間再生数', source_sheet: '順位データ出典', quality_score: '順位データ品質',
 };
 
 const fmt = (value) => value == null || value === ''
