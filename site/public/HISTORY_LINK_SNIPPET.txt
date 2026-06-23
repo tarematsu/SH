@@ -1,0 +1,2 @@
+メインページの .actions 内に追加:
+<a class="action" href="/history/">過去データ</a>

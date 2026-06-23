@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="robots" content="noindex,nofollow,noarchive">
+  <title>Buddies 過去データ</title>
+  <link rel="stylesheet" href="/history/history.css">
+</head>
+<body>
+<main class="wrap">
+  <header>
+    <div><p>BUDDIES ARCHIVE</p><h1>過去データ</h1><span>集計済みデータを中心に軽量表示</span></div>
+    <a href="/">現在の状況へ</a>
+  </header>
+
+  <section class="controls">
+    <label>集計
+      <select id="mode">
+        <option value="daily">日次</option>
+        <option value="weekly" selected>週次</option>
+        <option value="monthly">月次</option>
+        <option value="raw">詳細（最大31日）</option>
+      </select>
+    </label>
+    <label>開始<input id="from" type="date" value="2024-06-01"></label>
+    <label>終了<input id="to" type="date"></label>
+    <button id="load">表示</button>
+  </section>
+
+  <section id="notice" class="notice">読み込み中…</section>
+
+  <section class="cards">
+    <article><span>期間</span><strong id="periods">-</strong></article>
+    <article><span>最大同接</span><strong id="maxListener">-</strong></article>
+    <article><span>再生数増加</span><strong id="streamGrowth">-</strong></article>
+    <article><span>メンバー増加</span><strong id="memberGrowth">-</strong></article>
+  </section>
+
+  <section class="panel" id="chartPanel">
+    <div class="head"><h2>推移</h2>
+      <select id="metric">
+        <option value="listener_max">最大同接</option>
+        <option value="listener_avg">平均同接</option>
+        <option value="stream_growth">再生数増加</option>
+        <option value="member_growth">メンバー増加</option>
+        <option value="stream_end">総再生数</option>
+        <option value="member_end">メンバー</option>
+      </select>
+    </div>
+    <canvas id="chart" width="1200" height="420"></canvas>
+  </section>
+
+  <section class="panel">
+    <div class="head"><h2>データ一覧</h2><button id="csv">CSV</button></div>
+    <div class="table"><table><thead id="thead"></thead><tbody id="tbody"></tbody></table></div>
+    <div class="more"><button id="more" hidden>次の200件</button></div>
+  </section>
+</main>
+<script src="/history/history.js" defer></script>
+</body></html>

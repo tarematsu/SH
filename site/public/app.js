@@ -19,6 +19,25 @@ const duration = (ms) => {
 };
 const escapeText = (value) => String(value ?? '');
 
+function inferredArtist(track) {
+  const direct = String(track?.artist || '').trim();
+  if (direct && !/^JP[A-Z0-9]{8,}$/i.test(direct)) return direct;
+
+  const display = String(track?.display_title || '').trim();
+  const title = String(track?.title || '').trim();
+  if (!display) return '';
+
+  for (const separator of [' — ', ' – ', ' - ', ' · ', ' • ']) {
+    const index = display.lastIndexOf(separator);
+    if (index <= 0) continue;
+    const left = display.slice(0, index).trim();
+    const right = display.slice(index + separator.length).trim();
+    if (!right || /^JP[A-Z0-9]{8,}$/i.test(right)) continue;
+    if (!title || left === title || display.startsWith(`${title}${separator}`)) return right;
+  }
+  return '';
+}
+
 
 function renderDailyDelta(elementId, value) {
   const node = el(elementId);
@@ -301,18 +320,17 @@ function renderQueue(queue, totalItems) {
 }
 
 function renderPrediction(prediction, current, goal) {
+  const eta = el('goalEta');
+  const rate = el('goalRate');
+  if (!eta || !rate) return;
+
   if (!prediction) {
-    el('goalEta').textContent = current >= goal && goal > 0 ? '目標達成済み' : '予測データ不足';
-    el('goalRate').textContent = '最低15分以上の履歴が必要です';
-    el('goalConfidence').textContent = '-';
-    el('goalConfidence').className = '';
+    eta.textContent = current >= goal && goal > 0 ? '目標達成済み' : '予測データ不足';
+    rate.textContent = '最低15分以上の履歴が必要です';
     return;
   }
-  el('goalEta').textContent = etaDateTime(prediction.eta);
-  el('goalRate').textContent = `平均 +${number(Math.round(prediction.rate_per_hour))} /時`;
-  const labels = { high: '信頼度 高', medium: '信頼度 中', low: '信頼度 低' };
-  el('goalConfidence').textContent = labels[prediction.confidence] || '参考値';
-  el('goalConfidence').className = `confidence ${prediction.confidence || 'low'}`;
+  eta.textContent = etaDateTime(prediction.eta);
+  rate.textContent = `平均 +${number(Math.round(prediction.rate_per_hour))} /時`;
 }
 
 async function refresh() {
@@ -357,8 +375,9 @@ async function refresh() {
     renderPrediction(data.goal_prediction, count, goal);
 
     const queue = Array.isArray(data.queue) ? data.queue : [];
-    const currentIndex = Math.max(0, queue.findIndex(t => t.is_current));
-    const current = queue[currentIndex] || null;
+    const foundCurrentIndex = queue.findIndex(t => t.is_current);
+    const currentIndex = foundCurrentIndex >= 0 ? foundCurrentIndex : (queue.length ? 0 : -1);
+    const current = currentIndex >= 0 ? queue[currentIndex] : null;
     renderNow(current, queue, currentIndex);
 
     const history = Array.isArray(data.history) ? data.history : [];
@@ -371,7 +390,13 @@ async function refresh() {
       }
     }
   } catch (error) {
-    if (error?.name !== 'AbortError') console.error(error);
+    if (error?.name !== 'AbortError') {
+      console.error(error);
+      const description = el('description');
+      if (description && description.textContent === '読み込み中...') {
+        description.textContent = 'データ取得に失敗しました。次回更新で再試行します。';
+      }
+    }
     // 失敗時は前回表示・前回グラフをそのまま維持
   } finally {
     refreshInFlight = false;
