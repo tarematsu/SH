@@ -6,6 +6,8 @@ let resizeTimer = null;
 let lastRenderSignature = '';
 let nowPlayingTimer = null;
 let nowPlayingState = null;
+let playbackQueue = [];
+let simulatedCurrentIndex = -1;
 
 const el = (id) => document.getElementById(id);
 const number = (value) => value == null ? '-' : Number(value).toLocaleString('ja-JP');
@@ -115,43 +117,38 @@ function drawChart(rows = lastHistoryRows) {
 function stopNowPlayingTimer() {
   if (nowPlayingTimer) clearInterval(nowPlayingTimer);
   nowPlayingTimer = null;
-  nowPlayingState = null;
 }
 
-function updateNowPlayingProgress() {
-  if (!nowPlayingState) return;
-  const elapsed = Date.now() - nowPlayingState.renderedAt;
-  const currentMs = Math.min(
-    nowPlayingState.durationMs,
-    Math.max(0, nowPlayingState.baseProgressMs + elapsed),
-  );
-  const percent = nowPlayingState.durationMs
-    ? Math.min(100, currentMs / nowPlayingState.durationMs * 100)
-    : 0;
-  const time = el('nowPlayingTime');
-  const bar = el('nowPlayingBar');
-  if (time) time.textContent = `${duration(currentMs)} / ${duration(nowPlayingState.durationMs)}`;
-  if (bar) bar.style.width = `${percent}%`;
+function currentSimulatedTrack() {
+  return simulatedCurrentIndex >= 0 ? playbackQueue[simulatedCurrentIndex] || null : null;
 }
 
-function renderNow(track) {
+function openTrackOnSpotify(track) {
+  const spotifyUrl = track?.spotify_url || (track?.spotify_id ? `https://open.spotify.com/track/${track.spotify_id}` : '');
+  if (spotifyUrl) window.open(spotifyUrl, '_blank', 'noopener,noreferrer');
+}
+
+function renderNowDisplay(track, progressMs = 0) {
   const box = el('nowPlaying');
   if (!box) return;
-  stopNowPlayingTimer();
   if (!track) {
     box.className = 'now-content empty';
     box.removeAttribute('role');
     box.removeAttribute('tabindex');
     box.removeAttribute('title');
+    box.onclick = null;
+    box.onkeydown = null;
     box.textContent = 'キュー情報がありません';
     return;
   }
+
   const title = track.title || track.display_title || track.spotify_id || '曲名不明';
   const artist = track.artist || 'アーティスト情報なし';
   const spotifyUrl = track.spotify_url || (track.spotify_id ? `https://open.spotify.com/track/${track.spotify_id}` : '');
   const durationMs = Math.max(0, Number(track.duration_ms) || 0);
-  const baseProgressMs = Math.min(durationMs || Infinity, Math.max(0, Number(track.progress_ms) || 0));
-  const progress = durationMs ? Math.min(100, baseProgressMs / durationMs * 100) : 0;
+  const safeProgress = Math.min(durationMs || Infinity, Math.max(0, Number(progressMs) || 0));
+  const progress = durationMs ? Math.min(100, safeProgress / durationMs * 100) : 0;
+
   box.className = `now-content${spotifyUrl ? ' clickable' : ''}`;
   if (spotifyUrl) {
     box.setAttribute('role', 'link');
@@ -162,31 +159,107 @@ function renderNow(track) {
     box.removeAttribute('tabindex');
     box.removeAttribute('title');
   }
+
   box.innerHTML = `
     <img class="cover" src="${track.thumbnail_url || ''}" alt="" ${track.thumbnail_url ? '' : 'hidden'}>
     <div class="track-copy">
       <h3>${escapeText(title)}</h3>
       <p>${escapeText(artist)}</p>
-      <div class="track-meta"><span id="nowPlayingTime">${duration(baseProgressMs)} / ${duration(durationMs)}</span><span>ISRC ${escapeText(track.isrc || '-')}</span></div>
+      <div class="track-meta"><span id="nowPlayingTime">${duration(safeProgress)} / ${duration(durationMs)}</span><span>ISRC ${escapeText(track.isrc || '-')}</span></div>
       <div class="progress track-progress"><i id="nowPlayingBar" style="width:${progress}%"></i></div>
       ${spotifyUrl ? '<small class="spotify-open-hint">クリックしてSpotifyで開く</small>' : ''}
     </div>`;
 
   if (spotifyUrl) {
-    const openSpotify = () => window.open(spotifyUrl, '_blank', 'noopener,noreferrer');
-    box.onclick = openSpotify;
+    box.onclick = () => openTrackOnSpotify(track);
     box.onkeydown = (event) => {
       if (event.key === 'Enter' || event.key === ' ') {
         event.preventDefault();
-        openSpotify();
+        openTrackOnSpotify(track);
       }
     };
   } else {
     box.onclick = null;
     box.onkeydown = null;
   }
+}
 
+function renderSimulatedQueue() {
+  const queueForDisplay = playbackQueue.map((track, index) => ({
+    ...track,
+    is_current: index === simulatedCurrentIndex,
+  }));
+  renderQueue(queueForDisplay, playbackQueue.length);
+}
+
+function advanceSimulatedTrack(carryMs = 0) {
+  if (simulatedCurrentIndex < 0) return false;
+  let nextIndex = simulatedCurrentIndex + 1;
+  let remaining = Math.max(0, carryMs);
+
+  while (nextIndex < playbackQueue.length) {
+    const nextDuration = Math.max(0, Number(playbackQueue[nextIndex]?.duration_ms) || 0);
+    if (!nextDuration || remaining < nextDuration) break;
+    remaining -= nextDuration;
+    nextIndex += 1;
+  }
+
+  if (nextIndex >= playbackQueue.length) {
+    nowPlayingState = null;
+    simulatedCurrentIndex = -1;
+    renderNowDisplay(null);
+    renderSimulatedQueue();
+    return false;
+  }
+
+  simulatedCurrentIndex = nextIndex;
+  nowPlayingState = {
+    baseProgressMs: remaining,
+    durationMs: Math.max(0, Number(playbackQueue[nextIndex]?.duration_ms) || 0),
+    renderedAt: Date.now(),
+  };
+  renderNowDisplay(currentSimulatedTrack(), remaining);
+  renderSimulatedQueue();
+  return true;
+}
+
+function updateNowPlayingProgress() {
+  if (!nowPlayingState) return;
+  const elapsed = Date.now() - nowPlayingState.renderedAt;
+  let currentMs = Math.max(0, nowPlayingState.baseProgressMs + elapsed);
+
+  if (nowPlayingState.durationMs > 0 && currentMs >= nowPlayingState.durationMs) {
+    const carryMs = currentMs - nowPlayingState.durationMs;
+    if (!advanceSimulatedTrack(carryMs)) return;
+    currentMs = nowPlayingState.baseProgressMs;
+  }
+
+  const percent = nowPlayingState.durationMs
+    ? Math.min(100, currentMs / nowPlayingState.durationMs * 100)
+    : 0;
+  const time = el('nowPlayingTime');
+  const bar = el('nowPlayingBar');
+  if (time) time.textContent = `${duration(currentMs)} / ${duration(nowPlayingState.durationMs)}`;
+  if (bar) bar.style.width = `${percent}%`;
+}
+
+function renderNow(track, queue = [], currentIndex = 0) {
+  stopNowPlayingTimer();
+  playbackQueue = Array.isArray(queue) ? queue.slice() : [];
+  simulatedCurrentIndex = track ? Math.max(0, currentIndex) : -1;
+
+  if (!track) {
+    nowPlayingState = null;
+    renderNowDisplay(null);
+    renderSimulatedQueue();
+    return;
+  }
+
+  const durationMs = Math.max(0, Number(track.duration_ms) || 0);
+  const baseProgressMs = Math.min(durationMs || Infinity, Math.max(0, Number(track.progress_ms) || 0));
   nowPlayingState = { baseProgressMs, durationMs, renderedAt: Date.now() };
+  renderNowDisplay(track, baseProgressMs);
+  renderSimulatedQueue();
   updateNowPlayingProgress();
   nowPlayingTimer = setInterval(updateNowPlayingProgress, 1000);
 }
@@ -267,9 +340,9 @@ async function refresh() {
     renderPrediction(data.goal_prediction, count, goal);
 
     const queue = Array.isArray(data.queue) ? data.queue : [];
-    const current = queue.find(t => t.is_current) || queue[0] || null;
-    renderNow(current);
-    renderQueue(queue, data.queue_status?.total_items);
+    const currentIndex = Math.max(0, queue.findIndex(t => t.is_current));
+    const current = queue[currentIndex] || null;
+    renderNow(current, queue, currentIndex);
 
     const history = Array.isArray(data.history) ? data.history : [];
     if (history.length) {
