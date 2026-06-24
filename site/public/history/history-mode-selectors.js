@@ -51,7 +51,7 @@
     const tracks=mode==='tracks';
     const ranking=mode==='ranking';
     const broadcasts=mode==='broadcasts';
-    controls.hidden=broadcasts;
+    controls.hidden=ranking||broadcasts;
     setStandardControlsVisible(!(tracks||ranking||broadcasts));
     trackControls.hidden=!tracks;
     if(rankingScopeTabs)rankingScopeTabs.hidden=true;
