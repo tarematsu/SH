@@ -11,33 +11,17 @@ export async function onRequestGet({request,env}){
   const fromTs=ts(from),toTs=ts(to)+86400000;
   if(!Number.isFinite(fromTs)||!Number.isFinite(toTs)||toTs<=fromTs)return out({ok:false,error:'invalid date range'},400);
   try{
-    const current=await env.DB.prepare(`WITH timed AS (
-      SELECT q.*,
-        q.start_time + COALESCE(SUM(COALESCE(q.duration_ms,0)) OVER (
-          PARTITION BY q.station_id,q.start_time ORDER BY q.position
-          ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING
-        ),0) AS played_at
-      FROM sh_queue_items q
-      WHERE q.start_time>=? AND q.start_time<?
-    )
-    SELECT
-      strftime('%Y-%m-%d',played_at/1000,'unixepoch') AS play_date,
-      spotify_id,apple_music_id,isrc,stationhead_track_id,queue_track_id,
-      NULL AS title,NULL AS artist,
-      MAX(COALESCE(
-        bite_count,
-        CAST(json_extract(raw_json,'$.bite_count') AS INTEGER),
-        CAST(json_extract(raw_json,'$.track.bite_count') AS INTEGER),
-        CAST(json_extract(raw_json,'$.like_count') AS INTEGER),
-        CAST(json_extract(raw_json,'$.likes') AS INTEGER),
-        CAST(json_extract(raw_json,'$.いいね数') AS INTEGER)
-      )) AS like_count,
-      MAX(observed_at) AS observed_at,
-      'collector' AS source
-    FROM timed
-    WHERE played_at>=? AND played_at<?
-    GROUP BY play_date,spotify_id,apple_music_id,isrc,stationhead_track_id,queue_track_id
-    HAVING like_count IS NOT NULL`).bind(fromTs-604800000,toTs,fromTs,toTs).all();
+    let realtime=[];
+    try{
+      const result=await env.DB.prepare(`SELECT
+        strftime('%Y-%m-%d',observed_at/1000,'unixepoch') AS play_date,
+        spotify_id,apple_music_id,isrc,stationhead_track_id,queue_track_id,
+        NULL AS title,NULL AS artist,like_count,observed_at,source
+      FROM sh_track_like_observations
+      WHERE observed_at>=? AND observed_at<?
+      ORDER BY observed_at ASC`).bind(fromTs,toTs).all();
+      realtime=result.results||[];
+    }catch(error){if(!/no such table/i.test(String(error?.message||'')))throw error;}
 
     let historical=[];
     try{
@@ -49,11 +33,9 @@ export async function onRequestGet({request,env}){
       WHERE observed_at>=? AND observed_at<?
       ORDER BY observed_at ASC`).bind(fromTs,toTs).all();
       historical=result.results||[];
-    }catch(error){
-      if(!/no such table/i.test(String(error?.message||'')))throw error;
-    }
+    }catch(error){if(!/no such table/i.test(String(error?.message||'')))throw error;}
 
-    return out({ok:true,from,to,rows:[...(current.results||[]),...historical]});
+    return out({ok:true,from,to,rows:[...historical,...realtime]});
   }catch(error){
     return out({ok:false,error:error?.message||'track likes error'},500);
   }
