@@ -32,6 +32,87 @@ function bestText(...values) {
   return candidates.find((value) => !looksLikeId(value)) || candidates[0] || null;
 }
 
+function parseSpotifyTitle(value) {
+  const cleaned = cleanText(value)?.replace(/\s*\|\s*Spotify\s*$/i, '') || null;
+  if (!cleaned) return { title: null, artist: null };
+  const songLyrics = cleaned.match(/^(.*?)\s*-\s*song and lyrics by\s*(.+)$/i);
+  if (songLyrics) return { title: cleanText(songLyrics[1]), artist: cleanText(songLyrics[2]) };
+  return { title: cleaned, artist: null };
+}
+
+async function fetchJson(url) {
+  const response = await fetch(url, {
+    headers: { accept: 'application/json' },
+    signal: AbortSignal.timeout(8000),
+  });
+  if (!response.ok) return null;
+  return response.json().catch(() => null);
+}
+
+async function resolveExternal(row) {
+  if (row.apple_music_id) {
+    for (const country of ['JP', 'US']) {
+      const params = new URLSearchParams({ id: String(row.apple_music_id), entity: 'song', country });
+      const raw = await fetchJson(`https://itunes.apple.com/lookup?${params}`);
+      const item = raw?.results?.find((value) => value.kind === 'song' && value.trackName && value.artistName)
+        || raw?.results?.find((value) => value.trackName && value.artistName);
+      if (item) return { title: item.trackName, artist: item.artistName, source: `apple_${country}` };
+    }
+  }
+
+  if (row.spotify_id) {
+    const spotifyUrl = `https://open.spotify.com/track/${encodeURIComponent(row.spotify_id)}`;
+    const raw = await fetchJson(`https://open.spotify.com/oembed?url=${encodeURIComponent(spotifyUrl)}`);
+    if (raw?.title) {
+      const parsed = parseSpotifyTitle(raw.title);
+      return {
+        title: parsed.title,
+        artist: cleanText(raw.author_name || raw.author) || parsed.artist,
+        spotify_url: spotifyUrl,
+        source: 'spotify_oembed',
+      };
+    }
+  }
+  return null;
+}
+
+function needsExternal(row) {
+  const title = bestText(row.title, row.raw_title, row.display_title);
+  const artist = bestText(row.artist, row.raw_artist);
+  return !title || looksLikeId(title) || !artist || looksLikeId(artist);
+}
+
+async function enrichRows(rows) {
+  const targets = new Map();
+  for (const row of rows) {
+    if (!needsExternal(row)) continue;
+    const key = `${row.spotify_id || ''}|${row.apple_music_id || ''}`;
+    if (key !== '|') targets.set(key, row);
+    if (targets.size >= 40) break;
+  }
+
+  const resolved = new Map();
+  const entries = [...targets.entries()];
+  for (let i = 0; i < entries.length; i += 4) {
+    const chunk = entries.slice(i, i + 4);
+    const values = await Promise.all(chunk.map(async ([key, row]) => [key, await resolveExternal(row)]));
+    for (const [key, value] of values) if (value) resolved.set(key, value);
+  }
+
+  return rows.map((row) => {
+    const key = `${row.spotify_id || ''}|${row.apple_music_id || ''}`;
+    const value = resolved.get(key);
+    if (!value) return row;
+    return {
+      ...row,
+      title: bestText(value.title, row.title, row.raw_title, row.display_title),
+      artist: bestText(value.artist, row.artist, row.raw_artist),
+      spotify_url: row.spotify_url || value.spotify_url || null,
+      metadata_source: value.source,
+    };
+  });
+}
+
 function mergeRows(rows) {
   const merged = new Map();
   for (const row of rows) {
@@ -132,7 +213,7 @@ export async function onRequestGet({ request, env }) {
     ORDER BY p.played_at ASC
     LIMIT ?`).bind(fromTs - 604800000, toTs, fromTs, toTs, limit * 8 + 1).all();
 
-    const sourceRows = result.results || [];
+    const sourceRows = await enrichRows(result.results || []);
     const rows = mergeRows(sourceRows);
     const truncated = rows.length > limit;
     return out({
@@ -142,7 +223,7 @@ export async function onRequestGet({ request, env }) {
       to,
       rows: truncated ? rows.slice(0, limit) : rows,
       truncated,
-      method: 'queue_timeline_title_artist_merge',
+      method: 'queue_timeline_title_artist_merge_with_external_backfill',
     });
   } catch (error) {
     if (/no such table|no such column|malformed JSON/i.test(String(error?.message || ''))) {
