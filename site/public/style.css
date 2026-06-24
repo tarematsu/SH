@@ -87,7 +87,7 @@ button.spotify-link{font:inherit;cursor:pointer}
 .queue-slider-wrap { position: relative; }
 .queue-list {
   display: block;
-  max-height: 310px; /* 約5曲分 */
+  max-height: 310px;
   overflow-y: auto;
   overscroll-behavior: contain;
   scrollbar-gutter: stable;
@@ -139,7 +139,6 @@ button.spotify-link{font:inherit;cursor:pointer}
   .progress i, .queue-item { transition: none; }
 }
 
-
 .daily-delta { margin-top: 5px; font-size: .76rem; font-weight: 700; font-variant-numeric: tabular-nums; }
 .daily-delta.positive { color: #73e6a2; }
 .daily-delta.negative { color: #ff8f9a; }
@@ -147,4 +146,18 @@ button.spotify-link{font:inherit;cursor:pointer}
 @media (max-width: 560px) {
   .daily-delta { font-size: .64rem; white-space: nowrap; }
   .metric > span { white-space: normal; line-height: 1.2; min-height: 2.4em; }
+}
+
+/* Header navigation alignment */
+.history-link { align-self: center; white-space: nowrap; }
+@media (min-width: 561px) {
+  .hero { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; }
+}
+@media (max-width: 900px) {
+  .hero { align-items: center; }
+}
+@media (max-width: 560px) {
+  .hero { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; }
+  .hero-side { grid-column: 1 / -1; width: 100%; align-items: flex-start; }
+  .history-link { grid-column: 2; grid-row: 1; justify-self: end; }
 }
