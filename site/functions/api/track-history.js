@@ -1,11 +1,11 @@
 const H = {
   'content-type': 'application/json; charset=utf-8',
-  'cache-control': 'public, max-age=60, s-maxage=300',
+  'cache-control': 'public, max-age=300, s-maxage=900, stale-while-revalidate=3600',
 };
 const out = (value, status = 200) => new Response(JSON.stringify(value), { status, headers: H });
-const day = () => new Date(Date.now() + 32400000).toISOString().slice(0, 10);
+const day = () => new Date().toISOString().slice(0, 10);
 const valid = (value) => /^\d{4}-\d{2}-\d{2}$/.test(value || '');
-const ts = (value) => Date.parse(`${value}T00:00:00+09:00`);
+const ts = (value) => Date.parse(`${value}T00:00:00Z`);
 
 function cleanText(value) {
   const text = String(value || '').normalize('NFKC').replace(/\s+/g, ' ').trim();
@@ -30,87 +30,6 @@ function canonical(value) {
 function bestText(...values) {
   const candidates = values.map(cleanText).filter(Boolean);
   return candidates.find((value) => !looksLikeId(value)) || candidates[0] || null;
-}
-
-function parseSpotifyTitle(value) {
-  const cleaned = cleanText(value)?.replace(/\s*\|\s*Spotify\s*$/i, '') || null;
-  if (!cleaned) return { title: null, artist: null };
-  const songLyrics = cleaned.match(/^(.*?)\s*-\s*song and lyrics by\s*(.+)$/i);
-  if (songLyrics) return { title: cleanText(songLyrics[1]), artist: cleanText(songLyrics[2]) };
-  return { title: cleaned, artist: null };
-}
-
-async function fetchJson(url) {
-  const response = await fetch(url, {
-    headers: { accept: 'application/json' },
-    signal: AbortSignal.timeout(8000),
-  });
-  if (!response.ok) return null;
-  return response.json().catch(() => null);
-}
-
-async function resolveExternal(row) {
-  if (row.apple_music_id) {
-    for (const country of ['JP', 'US']) {
-      const params = new URLSearchParams({ id: String(row.apple_music_id), entity: 'song', country });
-      const raw = await fetchJson(`https://itunes.apple.com/lookup?${params}`);
-      const item = raw?.results?.find((value) => value.kind === 'song' && value.trackName && value.artistName)
-        || raw?.results?.find((value) => value.trackName && value.artistName);
-      if (item) return { title: item.trackName, artist: item.artistName, source: `apple_${country}` };
-    }
-  }
-
-  if (row.spotify_id) {
-    const spotifyUrl = `https://open.spotify.com/track/${encodeURIComponent(row.spotify_id)}`;
-    const raw = await fetchJson(`https://open.spotify.com/oembed?url=${encodeURIComponent(spotifyUrl)}`);
-    if (raw?.title) {
-      const parsed = parseSpotifyTitle(raw.title);
-      return {
-        title: parsed.title,
-        artist: cleanText(raw.author_name || raw.author) || parsed.artist,
-        spotify_url: spotifyUrl,
-        source: 'spotify_oembed',
-      };
-    }
-  }
-  return null;
-}
-
-function needsExternal(row) {
-  const title = bestText(row.title, row.raw_title, row.display_title);
-  const artist = bestText(row.artist, row.raw_artist);
-  return !title || looksLikeId(title) || !artist || looksLikeId(artist);
-}
-
-async function enrichRows(rows) {
-  const targets = new Map();
-  for (const row of rows) {
-    if (!needsExternal(row)) continue;
-    const key = `${row.spotify_id || ''}|${row.apple_music_id || ''}`;
-    if (key !== '|') targets.set(key, row);
-    if (targets.size >= 40) break;
-  }
-
-  const resolved = new Map();
-  const entries = [...targets.entries()];
-  for (let i = 0; i < entries.length; i += 4) {
-    const chunk = entries.slice(i, i + 4);
-    const values = await Promise.all(chunk.map(async ([key, row]) => [key, await resolveExternal(row)]));
-    for (const [key, value] of values) if (value) resolved.set(key, value);
-  }
-
-  return rows.map((row) => {
-    const key = `${row.spotify_id || ''}|${row.apple_music_id || ''}`;
-    const value = resolved.get(key);
-    if (!value) return row;
-    return {
-      ...row,
-      title: bestText(value.title, row.title, row.raw_title, row.display_title),
-      artist: bestText(value.artist, row.artist, row.raw_artist),
-      spotify_url: row.spotify_url || value.spotify_url || null,
-      metadata_source: value.source,
-    };
-  });
 }
 
 function mergeRows(rows) {
@@ -158,30 +77,35 @@ function mergeRows(rows) {
 export async function onRequestGet({ request, env }) {
   if (!env.DB) return out({ ok: false, error: 'DB binding missing' }, 500);
   const url = new URL(request.url);
-  const from = valid(url.searchParams.get('from')) ? url.searchParams.get('from') : '2024-05-01';
-  const to = valid(url.searchParams.get('to')) ? url.searchParams.get('to') : day();
-  const fromTs = ts(from);
-  const toTs = ts(to) + 86400000;
-  const limit = Math.min(Math.max(+url.searchParams.get('limit') || 10000, 100), 20000);
-  if (!Number.isFinite(fromTs) || !Number.isFinite(toTs) || toTs <= fromTs) {
-    return out({ ok: false, error: 'invalid date range' }, 400);
-  }
 
   try {
-    const result = await env.DB.prepare(`WITH p AS (
+    if (url.searchParams.get('latest') === '1') {
+      const latest = await env.DB.prepare(`SELECT strftime('%Y-%m-%d', MAX(start_time) / 1000, 'unixepoch') AS play_date
+        FROM sh_queue_items`).first();
+      return out({ ok: true, latest_date: latest?.play_date || null, timezone: 'UTC' });
+    }
+
+    const from = valid(url.searchParams.get('from')) ? url.searchParams.get('from') : '2024-05-01';
+    const to = valid(url.searchParams.get('to')) ? url.searchParams.get('to') : day();
+    const fromTs = ts(from);
+    const toTs = ts(to) + 86400000;
+    const limit = Math.min(Math.max(+url.searchParams.get('limit') || 10000, 100), 20000);
+    if (!Number.isFinite(fromTs) || !Number.isFinite(toTs) || toTs <= fromTs) {
+      return out({ ok: false, error: 'invalid date range' }, 400);
+    }
+
+    const result = await env.DB.prepare(`WITH timed AS (
       SELECT q.*,
-        q.start_time + COALESCE((
-          SELECT SUM(COALESCE(x.duration_ms, 0))
-          FROM sh_queue_items x
-          WHERE x.station_id = q.station_id
-            AND x.start_time = q.start_time
-            AND x.position < q.position
+        q.start_time + COALESCE(SUM(COALESCE(q.duration_ms, 0)) OVER (
+          PARTITION BY q.station_id, q.start_time
+          ORDER BY q.position
+          ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING
         ), 0) AS played_at
       FROM sh_queue_items q
       WHERE q.start_time >= ? AND q.start_time < ?
     )
     SELECT
-      strftime('%Y-%m-%d', p.played_at / 1000, 'unixepoch', '+9 hours') AS play_date,
+      strftime('%Y-%m-%d', p.played_at / 1000, 'unixepoch') AS play_date,
       p.played_at,
       p.position,
       p.queue_track_id,
@@ -207,27 +131,27 @@ export async function onRequestGet({ request, env }) {
         NULLIF(json_extract(p.raw_json, '$.artist'), ''),
         NULLIF(json_extract(p.raw_json, '$.artists[0].name'), '')
       ) AS raw_artist
-    FROM p
+    FROM timed p
     LEFT JOIN sh_track_metadata m ON m.spotify_id = p.spotify_id
     WHERE p.played_at >= ? AND p.played_at < ?
     ORDER BY p.played_at ASC
     LIMIT ?`).bind(fromTs - 604800000, toTs, fromTs, toTs, limit * 8 + 1).all();
 
-    const sourceRows = await enrichRows(result.results || []);
-    const rows = mergeRows(sourceRows);
+    const rows = mergeRows(result.results || []);
     const truncated = rows.length > limit;
     return out({
       ok: true,
       mode: 'tracks',
       from,
       to,
+      timezone: 'UTC',
       rows: truncated ? rows.slice(0, limit) : rows,
       truncated,
-      method: 'queue_timeline_title_artist_merge_with_external_backfill',
+      method: 'queue_timeline_window_sum_title_artist_merge',
     });
   } catch (error) {
     if (/no such table|no such column|malformed JSON/i.test(String(error?.message || ''))) {
-      return out({ ok: true, mode: 'tracks', from, to, rows: [], setup_required: true });
+      return out({ ok: true, mode: 'tracks', rows: [], setup_required: true, timezone: 'UTC' });
     }
     return out({ ok: false, error: error?.message || 'track history error' }, 500);
   }
