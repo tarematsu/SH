@@ -24,8 +24,19 @@ function defaultPriority(kind) {
 export function sourceIdentity(body, defaults = {}) {
   const collectorId = String(body?.collector_id || defaults.collectorId || 'unknown').trim().slice(0, 200) || 'unknown';
   const inferredKind = inferCollectorKind(collectorId);
-  const collectorKind = String(body?.collector_kind || defaults.collectorKind || inferredKind).trim().slice(0, 50) || inferredKind;
-  const parsedPriority = Number(body?.source_priority ?? defaults.sourcePriority ?? defaultPriority(collectorKind));
+  const requestedKind = String(body?.collector_kind || defaults.collectorKind || '').trim().toLowerCase();
+  const collectorKind = !requestedKind || requestedKind === 'external' || requestedKind === 'unknown'
+    ? inferredKind
+    : requestedKind.slice(0, 50);
+
+  const explicitPriority = body?.source_priority;
+  const fallbackPriority = defaults.sourcePriority;
+  const shouldInferPriority = explicitPriority === undefined
+    && (fallbackPriority === undefined || Number(fallbackPriority) === 50)
+    && collectorKind !== 'unknown';
+  const parsedPriority = Number(
+    explicitPriority ?? (shouldInferPriority ? defaultPriority(collectorKind) : fallbackPriority ?? defaultPriority(collectorKind)),
+  );
   const sourcePriority = Number.isFinite(parsedPriority)
     ? Math.max(0, Math.min(1000, Math.trunc(parsedPriority)))
     : defaultPriority(collectorKind);
