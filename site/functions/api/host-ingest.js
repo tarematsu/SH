@@ -1,3 +1,5 @@
+import { claimWrite, hourBucket, minuteBucket, payloadHash, sourceIdentity } from '../lib/ingest-claim.js';
+
 function json(data, status = 200) {
   return new Response(JSON.stringify(data), {
     status,
@@ -28,6 +30,46 @@ function text(value) {
 
 function rawJson(value) {
   return JSON.stringify(value ?? null);
+}
+
+function stationClaimPayload(data) {
+  return {
+    session_id: num(data.session_id),
+    station_id: num(data.station_id),
+    broadcast_id: num(data.broadcast_id),
+    is_broadcasting: bool(data.is_broadcasting),
+    status: text(data.status),
+    chat_status: text(data.chat_status),
+    listener_count: num(data.listener_count),
+    guest_count: num(data.guest_count),
+    total_listens: num(data.total_listens),
+    channel_id: num(data.channel_id),
+    channel_alias: text(data.channel_alias),
+    current_track_id: num(data.current_track_id),
+    current_spotify_id: text(data.current_spotify_id),
+    queue_id: num(data.queue_id),
+    queue_start_time: num(data.queue_start_time),
+  };
+}
+
+function queueClaimPayload(data) {
+  return {
+    session_id: num(data.session_id),
+    station_id: num(data.station_id),
+    queue_id: num(data.queue_id),
+    start_time: num(data.start_time),
+    is_paused: bool(data.is_paused),
+    current_track_id: num(data.current_track_id),
+    current_spotify_id: text(data.current_spotify_id),
+    tracks: (Array.isArray(data.tracks) ? data.tracks : []).map((track) => ({
+      position: num(track.position),
+      queue_track_id: num(track.queue_track_id),
+      stationhead_track_id: num(track.stationhead_track_id),
+      spotify_id: text(track.spotify_id),
+      apple_music_id: text(track.apple_music_id),
+      duration_ms: num(track.duration_ms),
+    })),
+  };
 }
 
 async function saveProfile(db, observedAt, data) {
@@ -107,37 +149,68 @@ async function confirmSession(db, observedAt, data) {
     .bind(num(data.confirmed_at) ?? observedAt, observedAt, num(data.session_id)).run();
 }
 
+async function recalculateSessionListeners(db, sessionId, observedAt, data) {
+  const aggregates = await db.prepare(`SELECT
+      MAX(listener_count) AS peak,
+      SUM(CASE WHEN listener_count IS NULL THEN 0 ELSE listener_count END) AS listener_sum,
+      SUM(CASE WHEN listener_count IS NULL THEN 0 ELSE 1 END) AS sample_count,
+      AVG(listener_count) AS average_listeners
+    FROM sh_host_station_snapshots WHERE session_id=?`)
+    .bind(sessionId).first();
+
+  await db.prepare(`UPDATE sh_host_broadcast_sessions
+    SET account_id=COALESCE(?,account_id),broadcast_id=COALESCE(?,broadcast_id),
+        peak_listeners=?,listener_sum=?,listener_sample_count=?,average_listeners=?,
+        total_listens_end=COALESCE(?,total_listens_end),last_observed_at=?
+    WHERE id=?`)
+    .bind(
+      num(data.account_id),
+      num(data.broadcast_id),
+      num(aggregates?.peak),
+      num(aggregates?.listener_sum) ?? 0,
+      num(aggregates?.sample_count) ?? 0,
+      num(aggregates?.average_listeners),
+      num(data.total_listens),
+      observedAt,
+      sessionId,
+    ).run();
+}
+
 async function saveStationSnapshot(db, observedAt, data) {
-  const listener = num(data.listener_count);
-  await db.prepare(`
-    INSERT INTO sh_host_station_snapshots (
-      session_id, observed_at, source_scope, handle, account_id,
-      station_id, broadcast_id, broadcast_start_time, is_broadcasting,
-      status, chat_status, listener_count, guest_count, total_listens,
-      channel_id, channel_alias, current_track_id, current_spotify_id,
-      queue_id, queue_start_time, comment_velocity, raw_json
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).bind(
-    num(data.session_id), observedAt, text(data.source_scope), text(data.handle), num(data.account_id),
+  const sessionId = num(data.session_id);
+  const bucket = minuteBucket(observedAt);
+  const values = [
+    sessionId, observedAt, text(data.source_scope), text(data.handle), num(data.account_id),
     num(data.station_id), num(data.broadcast_id), num(data.broadcast_start_time), bool(data.is_broadcasting),
-    text(data.status), text(data.chat_status), listener, num(data.guest_count), num(data.total_listens),
+    text(data.status), text(data.chat_status), num(data.listener_count), num(data.guest_count), num(data.total_listens),
     num(data.channel_id), text(data.channel_alias), num(data.current_track_id), text(data.current_spotify_id),
     num(data.queue_id), num(data.queue_start_time), num(data.comment_velocity), rawJson(data.raw),
-  ).run();
+  ];
 
-  await db.prepare(`
-    UPDATE sh_host_broadcast_sessions
-    SET account_id=COALESCE(?,account_id), broadcast_id=COALESCE(?,broadcast_id),
-        peak_listeners=CASE WHEN ? IS NULL THEN peak_listeners
-          WHEN peak_listeners IS NULL OR ?>peak_listeners THEN ? ELSE peak_listeners END,
-        listener_sum=listener_sum+CASE WHEN ? IS NULL THEN 0 ELSE ? END,
-        listener_sample_count=listener_sample_count+CASE WHEN ? IS NULL THEN 0 ELSE 1 END,
-        total_listens_end=COALESCE(?,total_listens_end), last_observed_at=?
-    WHERE id=?
-  `).bind(
-    num(data.account_id), num(data.broadcast_id), listener, listener, listener,
-    listener, listener, listener, num(data.total_listens), observedAt, num(data.session_id),
-  ).run();
+  const updated = await db.prepare(`UPDATE sh_host_station_snapshots SET
+      session_id=?,observed_at=?,source_scope=?,handle=?,account_id=?,station_id=?,
+      broadcast_id=?,broadcast_start_time=?,is_broadcasting=?,status=?,chat_status=?,
+      listener_count=?,guest_count=?,total_listens=?,channel_id=?,channel_alias=?,
+      current_track_id=?,current_spotify_id=?,queue_id=?,queue_start_time=?,
+      comment_velocity=COALESCE(?,comment_velocity),raw_json=?
+    WHERE id=(SELECT id FROM sh_host_station_snapshots
+      WHERE session_id=? AND observed_at>=? AND observed_at<?
+      ORDER BY observed_at DESC,id DESC LIMIT 1)`)
+    .bind(...values, sessionId, bucket, bucket + 60000).run();
+
+  if (Number(updated?.meta?.changes || 0) === 0) {
+    await db.prepare(`
+      INSERT INTO sh_host_station_snapshots (
+        session_id, observed_at, source_scope, handle, account_id,
+        station_id, broadcast_id, broadcast_start_time, is_broadcasting,
+        status, chat_status, listener_count, guest_count, total_listens,
+        channel_id, channel_alias, current_track_id, current_spotify_id,
+        queue_id, queue_start_time, comment_velocity, raw_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).bind(...values).run();
+  }
+
+  await recalculateSessionListeners(db, sessionId, observedAt, data);
 }
 
 async function saveQueue(db, observedAt, data) {
@@ -163,6 +236,7 @@ async function saveQueue(db, observedAt, data) {
         spotify_id=excluded.spotify_id,apple_music_id=excluded.apple_music_id,
         deezer_id=excluded.deezer_id,isrc=excluded.isrc,duration_ms=excluded.duration_ms,
         preview_url=excluded.preview_url,bite_count=excluded.bite_count,raw_json=excluded.raw_json
+      WHERE excluded.raw_json IS NOT sh_host_queue_items.raw_json
     `).bind(
       sessionId, observedAt, num(data.station_id), num(data.queue_id), num(data.start_time), num(track.position),
       num(track.queue_track_id), num(track.stationhead_track_id), text(track.spotify_id), text(track.apple_music_id),
@@ -193,6 +267,7 @@ async function saveComments(db, observedAt, data) {
         chat_time_ms=excluded.chat_time_ms,all_access_chat=excluded.all_access_chat,
         boost_chat=excluded.boost_chat,followers=excluded.followers,following=excluded.following,
         active_stream_days=excluded.active_stream_days,emoji=excluded.emoji,raw_json=excluded.raw_json
+      WHERE excluded.raw_json IS NOT sh_host_comments.raw_json
     `).bind(
       sessionId, num(comment.comment_id), observedAt, num(comment.station_id), num(comment.account_id), text(comment.handle),
       text(comment.text), text(comment.text_with_xml), num(comment.chat_time), num(comment.chat_time_ms), bool(comment.all_access_chat),
@@ -241,14 +316,9 @@ async function saveWsEvent(db, observedAt, data) {
     .bind(num(data.session_id), observedAt, num(data.station_id), text(data.channel), eventName, rawJson(compactData)).run();
 
   if (eventName === 'listenerCount') {
-    const listener = num(data.data?.listener_count ?? data.data?.count);
-    if (listener !== null) {
-      await db.prepare(`UPDATE sh_host_broadcast_sessions SET
-          peak_listeners=CASE WHEN peak_listeners IS NULL OR ?>peak_listeners THEN ? ELSE peak_listeners END,
-          listener_sum=listener_sum+?, listener_sample_count=listener_sample_count+1,
-          last_observed_at=? WHERE id=?`)
-        .bind(listener, listener, listener, observedAt, num(data.session_id)).run();
-    }
+    await recalculateSessionListeners(db, num(data.session_id), observedAt, {
+      listener_count: num(data.data?.listener_count ?? data.data?.count),
+    });
   }
   return true;
 }
@@ -265,6 +335,68 @@ async function closeSession(db, observedAt, data) {
       observedAt, rawJson(data.raw), sessionId).run();
 }
 
+async function claimForType(db, type, observedAt, data, source) {
+  if (type === 'host_profile_snapshot') {
+    const scope = text(data.source_scope) || 'profile_monitor';
+    const handle = text(data.handle) || 'unknown';
+    const sessionId = num(data.session_id);
+    const bucket = sessionId ? minuteBucket(observedAt) : hourBucket(observedAt);
+    const key = sessionId
+      ? `profile:${scope}:${handle}:session:${sessionId}:minute:${bucket}`
+      : `profile:${scope}:${handle}:hour:${bucket}`;
+    return claimWrite(db, {
+      dedupeKey: key,
+      dataType: type,
+      ...source,
+      observedAt,
+      payload: {
+        account_id: num(data.account_id),
+        followers: num(data.followers),
+        following: num(data.following),
+        total_streams: num(data.total_streams),
+        active_stream_days: num(data.active_stream_days),
+      },
+    });
+  }
+
+  if (type === 'solo_station_snapshot') {
+    return claimWrite(db, {
+      dedupeKey: `solo:${num(data.session_id) ?? 0}:minute:${minuteBucket(observedAt)}`,
+      dataType: type,
+      ...source,
+      observedAt,
+      payload: stationClaimPayload(data),
+    });
+  }
+
+  if (type === 'solo_queue') {
+    const payload = queueClaimPayload(data);
+    const hash = await payloadHash(payload);
+    return claimWrite(db, {
+      dedupeKey: `solo:${num(data.session_id) ?? 0}:queue:${num(data.start_time) ?? 0}:hash:${hash}`,
+      dataType: type,
+      ...source,
+      observedAt,
+      payload,
+      hash,
+    });
+  }
+
+  if (type === 'solo_ws_event') {
+    const hash = await payloadHash({ event: data.event, channel: data.channel, data: data.data });
+    return claimWrite(db, {
+      dedupeKey: `solo:${num(data.session_id) ?? 0}:ws:${Math.floor(observedAt / 5000) * 5000}:${hash}`,
+      dataType: type,
+      ...source,
+      observedAt,
+      payload: data,
+      hash,
+    });
+  }
+
+  return null;
+}
+
 export async function onRequestPost({ request, env }) {
   if (!authorized(request, env)) return json({ ok: false, error: 'unauthorized' }, 401);
   if (!env.DB) return json({ ok: false, error: 'DB binding missing' }, 500);
@@ -273,24 +405,41 @@ export async function onRequestPost({ request, env }) {
   const type = body?.type;
   const observedAt = num(body?.observed_at) ?? Date.now();
   const data = body?.data ?? {};
+  const source = sourceIdentity(body, {
+    collectorId: body?.collector_id,
+    collectorKind: 'external',
+  });
+
   try {
+    const claim = await claimForType(env.DB, type, observedAt, data, source);
+    if (claim && !claim.accepted) {
+      return json({
+        ok: true,
+        type,
+        accepted: false,
+        duplicate: claim.duplicate,
+        claim_reason: claim.reason,
+      });
+    }
+
     switch (type) {
-      case 'host_profile_snapshot': await saveProfile(env.DB, observedAt, data); return json({ ok: true, type });
+      case 'host_profile_snapshot': await saveProfile(env.DB, observedAt, data); break;
       case 'solo_session_open': {
         const row = await openSession(env.DB, observedAt, data);
-        return json({ ok: true, type, session_id: row?.id ?? null });
+        return json({ ok: true, type, accepted: true, session_id: row?.id ?? null });
       }
-      case 'solo_session_confirm': await confirmSession(env.DB, observedAt, data); return json({ ok: true, type });
-      case 'solo_station_snapshot': await saveStationSnapshot(env.DB, observedAt, data); return json({ ok: true, type });
-      case 'solo_queue': await saveQueue(env.DB, observedAt, data); return json({ ok: true, type });
-      case 'solo_comments': await saveComments(env.DB, observedAt, data); return json({ ok: true, type });
+      case 'solo_session_confirm': await confirmSession(env.DB, observedAt, data); break;
+      case 'solo_station_snapshot': await saveStationSnapshot(env.DB, observedAt, data); break;
+      case 'solo_queue': await saveQueue(env.DB, observedAt, data); break;
+      case 'solo_comments': await saveComments(env.DB, observedAt, data); break;
       case 'solo_ws_event': {
         const stored = await saveWsEvent(env.DB, observedAt, data);
-        return json({ ok: true, type, stored });
+        return json({ ok: true, type, accepted: true, stored });
       }
-      case 'solo_session_close': await closeSession(env.DB, observedAt, data); return json({ ok: true, type });
+      case 'solo_session_close': await closeSession(env.DB, observedAt, data); break;
       default: return json({ ok: false, error: `unknown type: ${type}` }, 400);
     }
+    return json({ ok: true, type, accepted: true });
   } catch (error) {
     console.error(error);
     return json({ ok: false, error: error?.message || 'database error' }, 500);
