@@ -49,6 +49,10 @@ button,input,select{font:inherit}
 .panel-note{margin:-2px 0 12px;color:var(--muted);font-size:.78rem;line-height:1.6}
 .chart-foot{color:var(--muted);font-size:.72rem;margin-top:6px}
 canvas{width:100%;height:330px;display:block}
+.chart-legend{display:flex;gap:7px 12px;align-items:center;overflow-x:auto;padding:7px 2px 3px;color:var(--muted);font-size:.68rem;scrollbar-width:thin}
+.chart-legend:empty{display:none}
+.chart-legend span{display:inline-flex;align-items:center;gap:5px;flex:0 0 auto;max-width:310px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.chart-legend i,.broadcast-detail-values i{display:inline-block;width:9px;height:9px;border-radius:999px;flex:0 0 auto}
 .table{overflow:auto;max-height:600px;content-visibility:auto;contain-intrinsic-size:600px;border:1px solid var(--line);border-radius:12px}
 .weekly-metrics-table{max-height:420px}
 table{width:100%;border-collapse:collapse;font-size:.76rem;white-space:nowrap}
@@ -90,6 +94,7 @@ tbody tr:hover td{background:#ffffff08}
 .chart-detail-values>div{display:flex;align-items:center;gap:8px;min-width:180px}
 .chart-detail-values strong{color:var(--text);font-size:.76rem}
 .chart-detail-values span{margin-left:auto;color:var(--accent);font-size:.9rem;font-weight:900}
+.broadcast-detail-values>div{min-width:min(100%,320px)}
 #chart{touch-action:pan-y;cursor:crosshair}
 .rank-out{color:var(--muted);font-weight:850}
 .out-of-rank-row td{color:#8d8796;background:#ffffff02}
@@ -97,6 +102,7 @@ tbody tr:hover td{background:#ffffff08}
 @media(max-width:560px){
   .chart-detail-values>div{min-width:100%}
   .chart-axis-dates{font-size:.68rem}
+  .chart-legend span{max-width:230px}
 }
 
 @media(max-width:560px){.mode-tabs{gap:3px;padding:4px}.mode-tabs button{padding:7px 8px;font-size:.72rem}.mode-tabs button[data-mode=ranking]{flex-basis:118px}}
