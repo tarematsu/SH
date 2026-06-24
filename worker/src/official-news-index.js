@@ -10,6 +10,12 @@ function positive(value, fallback) {
   return Number.isFinite(number) && number > 0 ? number : fallback;
 }
 
+function finite(value) {
+  if (value === undefined || value === null || value === '') return null;
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+}
+
 function config(env) {
   return {
     checkIntervalMs: positive(env.OFFICIAL_NEWS_CHECK_INTERVAL_MS, 30 * 60 * 1000),
@@ -17,6 +23,7 @@ function config(env) {
     lateWindowMs: positive(env.OFFICIAL_NEWS_LATE_WINDOW_MS, 90 * 60 * 1000),
     endConfirmPolls: positive(env.OFFICIAL_NEWS_END_CONFIRM_POLLS, 5),
     articleLimit: Math.min(positive(env.OFFICIAL_NEWS_ARTICLE_LIMIT, 20), 40),
+    bodyScanCount: Math.min(positive(env.OFFICIAL_NEWS_BODY_SCAN_COUNT, 5), 10),
     handle: env.OFFICIAL_NEWS_STATIONHEAD_HANDLE || 'sakurazaka46jp',
     appVersion: env.STATIONHEAD_APP_VERSION || '1.0.0',
     requestTimeoutMs: Math.min(positive(env.REQUEST_TIMEOUT_MS, 20_000), 30_000),
@@ -52,10 +59,10 @@ function articleLinks(html, limit) {
   while ((match = pattern.exec(html)) && links.length < limit) {
     const href = new URL(match[1], NEWS_ORIGIN).toString();
     const newsId = href.match(/\/news\/detail\/([^/?#]+)/i)?.[1];
-    const title = stripHtml(match[2]);
-    if (!newsId || seen.has(newsId) || !/station\s*head/i.test(title)) continue;
+    const listTitle = stripHtml(match[2]);
+    if (!newsId || seen.has(newsId)) continue;
     seen.add(newsId);
-    links.push({ newsId, href, listTitle: title });
+    links.push({ newsId, href, listTitle });
   }
   return links;
 }
@@ -63,6 +70,15 @@ function articleLinks(html, limit) {
 function articleTitle(html, fallback) {
   const title = stripHtml(html.match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1] || fallback || '');
   return title.replace(/\s*\|\s*ニュース\s*\|\s*櫻坂46公式サイト\s*$/i, '').trim() || fallback;
+}
+
+function articleContent(html, title) {
+  const text = stripHtml(html);
+  const end = text.indexOf('NEW ENTRY');
+  const articleArea = end >= 0 ? text.slice(0, end) : text;
+  const titleIndex = articleArea.lastIndexOf(title);
+  const start = titleIndex >= 0 ? Math.max(0, titleIndex - 80) : Math.max(0, articleArea.length - 12000);
+  return articleArea.slice(start).trim();
 }
 
 function publishedDate(text) {
@@ -80,9 +96,7 @@ function scheduleTimes(text, fallbackYear) {
   const values = new Set();
   const full = /(20\d{2})年\s*(\d{1,2})月\s*(\d{1,2})日(?:\s*[（(][^）)]*[）)])?\s*(\d{1,2})\s*[:：]\s*(\d{2})/g;
   let match;
-  while ((match = full.exec(text))) {
-    values.add(jstTimestamp(...match.slice(1, 6).map(Number)));
-  }
+  while ((match = full.exec(text))) values.add(jstTimestamp(...match.slice(1, 6).map(Number)));
 
   const partial = /(?<!\d)(\d{1,2})月\s*(\d{1,2})日(?:\s*[（(][^）)]*[）)])?\s*(\d{1,2})\s*[:：]\s*(\d{2})/g;
   while ((match = partial.exec(text))) {
@@ -151,25 +165,24 @@ async function checkOfficialNews(env, cfg, now) {
   try {
     const response = await timedFetch(NEWS_LIST_URL, {
       headers: { accept: 'text/html,application/xhtml+xml', 'user-agent': 'stationhead-monitor/1.0' },
+      cf: { cacheEverything: true, cacheTtl: Math.floor(cfg.checkIntervalMs / 1000) },
     }, cfg.requestTimeoutMs);
     if (!response.ok) throw new Error(`official news list HTTP ${response.status}`);
     const html = await response.text();
     const links = articleLinks(html, cfg.articleLimit);
+    const candidates = links.filter((link, index) => index < cfg.bodyScanCount || /station\s*head/i.test(link.listTitle));
 
-    for (const link of links) {
-      const known = await env.DB.prepare(`SELECT id FROM sh_official_news_announcements WHERE news_id=? LIMIT 1`)
-        .bind(link.newsId).first();
-      if (known?.id) continue;
-
+    for (const link of candidates) {
       const detailResponse = await timedFetch(link.href, {
         headers: { accept: 'text/html,application/xhtml+xml', 'user-agent': 'stationhead-monitor/1.0' },
+        cf: { cacheEverything: true, cacheTtl: Math.floor(cfg.checkIntervalMs / 1000) },
       }, cfg.requestTimeoutMs);
       if (!detailResponse.ok) throw new Error(`official news detail ${link.newsId} HTTP ${detailResponse.status}`);
       const detailHtml = await detailResponse.text();
-      const text = stripHtml(detailHtml);
+      const title = articleTitle(detailHtml, link.listTitle);
+      const text = articleContent(detailHtml, title);
       if (!/station\s*head/i.test(text)) continue;
 
-      const title = articleTitle(detailHtml, link.listTitle);
       const date = publishedDate(text);
       const year = Number(date?.slice(0, 4)) || new Date(now + 9 * 3600000).getUTCFullYear();
       const times = scheduleTimes(text, year);
@@ -238,10 +251,10 @@ async function stationRequest(path, cfg, session, options = {}) {
 function stationIdentity(station) {
   const broadcast = station?.broadcast || {};
   return {
-    stationId: Number(station?.id ?? broadcast?.station_id) || null,
-    broadcastId: Number(broadcast?.id) || null,
-    broadcastStartTime: Number(broadcast?.start_time) || null,
-    channelId: Number(station?.channel?.id) || null,
+    stationId: finite(station?.id ?? broadcast?.station_id),
+    broadcastId: finite(broadcast?.id),
+    broadcastStartTime: finite(broadcast?.start_time),
+    channelId: finite(station?.channel?.id),
     channelAlias: station?.channel?.alias || null,
   };
 }
@@ -250,14 +263,14 @@ function normalizeComments(payload) {
   const candidates = [payload, payload?.items, payload?.data?.items, payload?.chats?.items, payload?.chats];
   const items = candidates.find(Array.isArray) || [];
   return items.map((chat) => ({
-    commentId: Number(chat?.id) || null,
-    accountId: Number(chat?.account_id ?? chat?.account?.id) || null,
+    commentId: finite(chat?.id),
+    accountId: finite(chat?.account_id ?? chat?.account?.id),
     handle: chat?.account?.handle || null,
     text: chat?.text || null,
-    chatTime: Number(chat?.chat_time) || null,
-    chatTimeMs: Number(chat?.chat_time_ms) || null,
+    chatTime: finite(chat?.chat_time),
+    chatTimeMs: finite(chat?.chat_time_ms),
     raw: chat,
-  })).filter((comment) => comment.commentId);
+  })).filter((comment) => comment.commentId != null);
 }
 
 async function fetchComments(stationId, cfg, session) {
@@ -287,9 +300,9 @@ async function saveProbe(env, announcement, station, active, now) {
        channel_alias=excluded.channel_alias,queue_json=excluded.queue_json,raw_json=excluded.raw_json`)
     .bind(
       announcement.id, now, minute, identity.stationId, identity.broadcastId, identity.broadcastStartTime,
-      active ? 1 : 0, Number(station?.listener_count) || null, Number(station?.guest_count) || null,
-      Number(station?.total_listens) || null, station?.status || null, station?.chat_status || null,
-      identity.channelId, identity.channelAlias, JSON.stringify(station?.queue ?? null), JSON.stringify(station ?? null),
+      active ? 1 : 0, finite(station?.listener_count), finite(station?.guest_count), finite(station?.total_listens),
+      station?.status || null, station?.chat_status || null, identity.channelId, identity.channelAlias,
+      JSON.stringify(station?.queue ?? null), JSON.stringify(station ?? null),
     ).run();
   return identity;
 }
@@ -307,6 +320,10 @@ async function saveComments(env, announcementId, stationId, comments, now) {
 }
 
 async function dueAnnouncements(env, cfg, now) {
+  await env.DB.prepare(`UPDATE sh_official_news_announcements SET status='missed',updated_at=?
+      WHERE status='scheduled' AND scheduled_at IS NOT NULL AND scheduled_at<?`)
+    .bind(now, now - cfg.lateWindowMs).run();
+
   return (await env.DB.prepare(`SELECT * FROM sh_official_news_announcements
       WHERE scheduled_at IS NOT NULL AND (
         (status='scheduled' AND scheduled_at>=? AND scheduled_at<=?)
@@ -330,7 +347,7 @@ async function probeAnnouncements(env, cfg, now) {
     station?.is_broadcasting
     && station?.broadcast
     && identity.stationId
-    && identity.stationId !== Number(buddies?.station_id || 0)
+    && identity.stationId !== finite(buddies?.station_id)
   );
 
   for (const announcement of announcements) {
@@ -357,9 +374,6 @@ async function probeAnnouncements(env, cfg, now) {
       await env.DB.prepare(`UPDATE sh_official_news_announcements SET
           inactive_streak=?,status=CASE WHEN ?>=? THEN 'ended' ELSE status END,updated_at=? WHERE id=?`)
         .bind(streak, streak, cfg.endConfirmPolls, now, announcement.id).run();
-    } else if (now > Number(announcement.scheduled_at) + cfg.lateWindowMs) {
-      await env.DB.prepare(`UPDATE sh_official_news_announcements SET status='missed',updated_at=? WHERE id=?`)
-        .bind(now, announcement.id).run();
     }
   }
 }
@@ -388,8 +402,8 @@ async function health(env, baseResponse) {
     ]);
     return new Response(JSON.stringify({
       ...base,
-      official_news_last_check_at: Number(state?.last_check_at || 0) || null,
-      official_news_last_success_at: Number(state?.last_success_at || 0) || null,
+      official_news_last_check_at: finite(state?.last_check_at),
+      official_news_last_success_at: finite(state?.last_success_at),
       official_news_last_error: state?.last_error || null,
       official_news_upcoming_count: Number(upcoming?.count || 0),
       official_news_active_count: Number(active?.count || 0),
