@@ -1,7 +1,7 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "stationhead-monitor-collector",
-  "main": "src/resilient-index.js",
+  "main": "src/adaptive-chat-index.js",
   "compatibility_date": "2026-06-24",
   "compatibility_flags": ["nodejs_compat"],
   "workers_dev": true,
