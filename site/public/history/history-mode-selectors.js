@@ -10,6 +10,7 @@
   const rankingWeekWrap = $('#rankingWeekWrap');
   const trackDate = $('#trackDate');
   const rankingWeek = $('#rankingWeek');
+  const loadButton = $('#load');
 
   function isoWeekValue(date = new Date()) {
     const local = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
@@ -74,9 +75,11 @@
     baseSetMode(mode);
     const tracks = mode === 'tracks';
     const ranking = mode === 'ranking';
-    setStandardControlsVisible(!tracks && !ranking);
+    const dedicated = tracks || ranking;
+    setStandardControlsVisible(!dedicated);
     trackDateWrap.hidden = !tracks;
     rankingWeekWrap.hidden = !ranking;
+    loadButton.hidden = dedicated;
     $('#rankingScopeWrap').hidden = true;
     $('#hostWrap').hidden = true;
     $('#rankingScope').value = 'all';
