@@ -2,14 +2,14 @@
 <html lang="ja">
 <head>
   <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex,nofollow,noarchive">
-  <title>Buddies データ履歴</title><link rel="stylesheet" href="/history/history.css"><link rel="stylesheet" href="/design-system.css">
+  <title>Buddies 過去データ</title><link rel="stylesheet" href="/history/history.css"><link rel="stylesheet" href="/design-system.css">
   <style>
-    .hero .back{align-self:center;white-space:nowrap}.track-controls{display:flex;gap:8px;align-items:center;flex-wrap:nowrap;max-width:100%;overflow-x:auto;scrollbar-width:thin}.track-controls>label{flex:0 0 auto!important}.track-controls>label:first-child{display:flex;align-items:center;gap:8px}.track-controls .week-check{display:flex;align-items:center;gap:6px;min-height:38px;padding:4px 8px;border:1px solid var(--line);border-radius:9px;background:var(--panel2);font-weight:800}.track-controls .week-check input{width:auto;min-width:0;margin:0}.chart-legend{display:flex;flex-wrap:wrap;gap:8px 14px;min-width:0;max-width:100%;overflow:visible}.chart-legend span{display:inline-flex;align-items:flex-start;gap:6px;min-width:0;max-width:100%;white-space:normal;overflow-wrap:anywhere;word-break:break-word}.chart-legend i{width:10px;height:10px;border-radius:50%;flex:0 0 10px;margin-top:.3em}#notice{display:none!important}
-    @media(max-width:760px){.hero{align-items:center}.track-controls{width:auto}.chart-legend{display:grid;grid-template-columns:minmax(0,1fr);width:100%}.chart-legend span{width:100%;box-sizing:border-box}}
+    .hero .back{align-self:center;white-space:nowrap}.controls.track-mode{padding-block:8px;align-items:center}.track-controls{display:flex;gap:8px;align-items:center;flex-wrap:nowrap;max-width:100%;min-height:38px;overflow-x:auto;scrollbar-width:thin}.track-controls>label{flex:0 0 auto!important;min-height:38px}.track-controls>label:first-child{display:flex;align-items:center;gap:8px;line-height:1}.track-controls #trackDate{height:38px;min-height:38px}.track-controls .week-check{display:flex;align-items:center;gap:6px;height:38px;min-height:38px;padding:4px 8px;border:1px solid var(--line);border-radius:9px;background:var(--panel2);font-weight:800}.track-controls .week-check input{width:auto;min-width:0;margin:0}.chart-legend{display:flex;flex-wrap:wrap;gap:8px 14px;min-width:0;max-width:100%;overflow:visible}.chart-legend span{display:inline-flex;align-items:flex-start;gap:6px;min-width:0;max-width:100%;white-space:normal;overflow-wrap:anywhere;word-break:break-word}.chart-legend i{width:10px;height:10px;border-radius:50%;flex:0 0 10px;margin-top:.3em}#notice{display:none!important}
+    @media(max-width:760px){.hero{align-items:center}.controls.track-mode{padding-block:7px}.track-controls{width:auto}.chart-legend{display:grid;grid-template-columns:minmax(0,1fr);width:100%}.chart-legend span{width:100%;box-sizing:border-box}}
   </style>
 </head>
 <body><main class="wrap">
-  <header class="hero"><div><p class="eyebrow">BUDDIES DATA ARCHIVE</p><h1>データ履歴</h1></div><a class="back" href="/">現在の状況へ</a></header>
+  <header class="hero"><div><p class="eyebrow">BUDDIES DATA ARCHIVE</p><h1>過去データ</h1></div><a class="back" href="/">現在の状況へ</a></header>
   <nav class="mode-tabs" aria-label="表示種類"><button data-mode="daily">日次</button><button data-mode="weekly" class="active">週次</button><button data-mode="monthly">月次</button><button data-mode="tracks">再生曲</button><button data-mode="broadcasts">公式ステヘ</button><button data-mode="ranking">リーダーボード</button></nav>
   <section class="guide" id="guide"><strong>週次集計</strong><span>週ごとの最大同接、再生数増加、メンバー増加を表示します。</span></section>
   <section class="controls" id="historyControls">
