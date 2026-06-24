@@ -15,10 +15,13 @@
     return baseDisplayCell(key,row,mode);
   };
 
+  const canon=value=>String(value||'').normalize('NFKC').toLocaleLowerCase('ja-JP').replace(/[\s\u3000]+/g,'').replace(/[‐‑‒–—―ー−-]/g,'-');
   function identityKeys(row){
     const keys=[];
-    for(const value of row?.source_ids||[])if(value)keys.push(String(value));
-    for(const key of ['spotify_id','apple_music_id','isrc','stationhead_track_id','queue_track_id'])if(row?.[key])keys.push(String(row[key]));
+    for(const value of row?.source_ids||[])if(value)keys.push(`id:${String(value)}`);
+    for(const key of ['spotify_id','apple_music_id','isrc','stationhead_track_id','queue_track_id'])if(row?.[key])keys.push(`id:${String(row[key])}`);
+    if(row?.title)keys.push(`name:${canon(row.title)}|artist:${canon(row.artist)}`);
+    if(row?.title)keys.push(`name:${canon(row.title)}`);
     return keys;
   }
 
@@ -43,7 +46,8 @@
       const data=await response.json();
       if(!response.ok||!data.ok)return;
       const map=new Map();
-      for(const row of data.rows||[])for(const key of identityKeys(row))map.set(`${row.play_date}|${key}`,row.like_count);
+      const rows=[...(data.rows||[])].sort((a,b)=>Number(a.observed_at||0)-Number(b.observed_at||0));
+      for(const row of rows)for(const key of identityKeys(row))map.set(`${row.play_date}|${key}`,row.like_count);
       current=current.map(row=>{
         let like=null;
         for(const key of identityKeys(row)){const value=map.get(`${row.play_date}|${key}`);if(value!=null){like=value;break;}}
