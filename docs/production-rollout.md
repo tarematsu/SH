@@ -21,6 +21,8 @@ npx wrangler d1 execute stationhead-monitor --remote --file=..\database\migratio
 npx wrangler deploy --config .\wrangler.jsonc
 ```
 
+The Pages project is expected to deploy from the GitHub `main` branch. Confirm the Pages deployment before enabling local failover.
+
 ## Verify Worker
 
 ```powershell
@@ -63,7 +65,7 @@ No `local collector started` line should appear while the cloud lease is healthy
 
 ## Simultaneous-run check
 
-Run the local Collector in active mode for at least two minutes:
+Stop the auto supervisor first, then run the local Collector in active mode for at least two minutes:
 
 ```powershell
 npm run start:active
