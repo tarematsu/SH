@@ -4,13 +4,14 @@
     title: '曲名',
     artist: 'アーティスト',
     play_count: '再生回数',
+    daily_share: 'その日の割合',
     first_played_at: '最初の再生',
     last_played_at: '最後の再生',
   };
 
   MODE_HELP.tracks = [
     '日別再生曲',
-    'キューの開始時刻と各曲の長さから、1日ごとの曲別再生回数を表示します。',
+    '各日の延べ曲数と、各曲がその日の再生全体に占める割合を表示します。',
   ];
 
   const baseSetMode = setMode;
@@ -20,6 +21,37 @@
   const baseUpdateSummary = updateSummary;
   const baseDraw = draw;
   const baseLoad = load;
+
+  function withDailyTotals(rows) {
+    const totals = new Map();
+    for (const row of rows) {
+      totals.set(row.play_date, (totals.get(row.play_date) || 0) + (finiteNumber(row.play_count) || 0));
+    }
+
+    const result = [];
+    let previousDate = null;
+    for (const row of rows) {
+      const total = totals.get(row.play_date) || 0;
+      if (row.play_date !== previousDate) {
+        result.push({
+          _daily_total: true,
+          play_date: row.play_date,
+          title: 'この日の延べ曲数',
+          artist: '—',
+          play_count: total,
+          daily_share: 100,
+          first_played_at: null,
+          last_played_at: null,
+        });
+        previousDate = row.play_date;
+      }
+      result.push({
+        ...row,
+        daily_share: total > 0 ? (finiteNumber(row.play_count) || 0) / total * 100 : 0,
+      });
+    }
+    return result;
+  }
 
   setMode = function setModeWithTracks(mode) {
     baseSetMode(mode);
@@ -42,8 +74,14 @@
   displayCell = function displayTrackCell(key, row, mode) {
     if (mode !== 'tracks') return baseDisplayCell(key, row, mode);
     if (key === 'play_date') return formatDate(row[key]);
-    if (key === 'first_played_at' || key === 'last_played_at') return formatDate(row[key], true);
+    if (key === 'first_played_at' || key === 'last_played_at') {
+      return row._daily_total ? '—' : formatDate(row[key], true);
+    }
     if (key === 'play_count') return `${fmt(row[key])}回`;
+    if (key === 'daily_share') {
+      const value = finiteNumber(row[key]);
+      return value == null ? '—' : `${value.toLocaleString('ja-JP', { maximumFractionDigits: 1 })}%`;
+    }
     const value = row[key];
     return value == null || value === '' ? '—' : String(value);
   };
@@ -84,14 +122,18 @@
     $('#notice').textContent = '読み込み中…';
 
     try {
-      const params = new URLSearchParams({ from, to, limit: '10000', v: '1' });
+      const params = new URLSearchParams({ from, to, limit: '10000', v: '2' });
       const response = await fetch(`/api/track-history?${params}`, { cache: 'no-store' });
       const data = await response.json();
       if (!response.ok || !data.ok) throw new Error(data.error || `HTTP ${response.status}`);
 
       current = data.rows || [];
       updateSummary(current, 'tracks');
-      renderTable(current, 'tracks', false);
+      renderTable(withDailyTotals(current), 'tracks', false);
+      $('#tbody').querySelectorAll('tr').forEach((row, index) => {
+        const source = withDailyTotals(current)[index];
+        if (source?._daily_total) row.classList.add('daily-total-row');
+      });
       $('#more').hidden = true;
       $('#chartPanel').hidden = true;
       $('#rankingWeeklyPanel').hidden = true;
