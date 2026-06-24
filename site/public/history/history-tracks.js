@@ -1,6 +1,6 @@
 (() => {
   const TRACK_LABELS={play_date:'日付',title:'曲名',artist:'アーティスト',play_count:'再生回数',daily_share:'その日の割合',first_played_at:'最初の再生',last_played_at:'最後の再生'};
-  MODE_HELP.tracks=['再生曲','UTC基準で、選択した日または月曜日始まりの週の再生曲を表示します。'];
+  MODE_HELP.tracks=['再生曲','選択した日または月曜日始まりの週の再生曲を表示します。'];
   const baseSetMode=setMode,baseVisibleKeys=visibleKeys,baseLabelsFor=labelsFor,baseDisplayCell=displayCell,baseUpdateSummary=updateSummary,baseDraw=draw,baseLoad=load;
   const TRACK_CACHE_MS=10*60*1000;
 
@@ -9,7 +9,7 @@
   function readCache(key){try{const value=JSON.parse(sessionStorage.getItem(key));return value&&Date.now()-value.at<TRACK_CACHE_MS?value.data:null;}catch{return null;}}
   function writeCache(key,data){try{sessionStorage.setItem(key,JSON.stringify({at:Date.now(),data}));}catch{}}
 
-  setMode=function(mode){baseSetMode(mode);if(mode!=='tracks')return;$('#metric').hidden=true;$('#metric').disabled=true;$('#chartPanel').hidden=true;$('#tableTitle').textContent='再生曲（UTC）';$('#rankingWeeklyPanel').hidden=true;};
+  setMode=function(mode){baseSetMode(mode);if(mode!=='tracks')return;$('#metric').hidden=true;$('#metric').disabled=true;$('#chartPanel').hidden=true;$('#tableTitle').textContent='再生曲';$('#rankingWeeklyPanel').hidden=true;};
   visibleKeys=(mode)=>mode==='tracks'?Object.keys(TRACK_LABELS):baseVisibleKeys(mode);
   labelsFor=(mode)=>mode==='tracks'?TRACK_LABELS:baseLabelsFor(mode);
   displayCell=function(key,row,mode){if(mode!=='tracks')return baseDisplayCell(key,row,mode);if(key==='play_date')return formatDate(row[key]);if(key==='first_played_at'||key==='last_played_at')return row._daily_total?'—':formatDate(row[key],true);if(key==='play_count')return `${fmt(row[key])}回`;if(key==='daily_share'){const value=finiteNumber(row[key]);return value==null?'—':`${value.toLocaleString('ja-JP',{maximumFractionDigits:1})}%`;}const value=row[key];return value==null||value===''?'—':String(value);};
