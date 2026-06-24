@@ -36,9 +36,9 @@ BEGIN
        AND excluded.stream_end>=COALESCE(excluded.stream_start,sh_weekly_summary.stream_start)
       THEN excluded.stream_end-COALESCE(excluded.stream_start,sh_weekly_summary.stream_start)
       ELSE sh_weekly_summary.stream_growth END,
-    quality_score=MAX(sh_weekly_summary.quality_score,excluded.quality_score),
+    quality_score=MAX(COALESCE(sh_weekly_summary.quality_score,0),excluded.quality_score),
     quality_flags=CASE
-      WHEN instr(sh_weekly_summary.quality_flags,'stationhead_email_recap')>0
+      WHEN instr(COALESCE(sh_weekly_summary.quality_flags,''),'stationhead_email_recap')>0
         THEN sh_weekly_summary.quality_flags
       WHEN json_valid(sh_weekly_summary.quality_flags)
         THEN json_insert(sh_weekly_summary.quality_flags,'$[#]','stationhead_email_recap')
@@ -81,9 +81,9 @@ BEGIN
        AND excluded.stream_end>=COALESCE(excluded.stream_start,sh_weekly_summary.stream_start)
       THEN excluded.stream_end-COALESCE(excluded.stream_start,sh_weekly_summary.stream_start)
       ELSE sh_weekly_summary.stream_growth END,
-    quality_score=MAX(sh_weekly_summary.quality_score,excluded.quality_score),
+    quality_score=MAX(COALESCE(sh_weekly_summary.quality_score,0),excluded.quality_score),
     quality_flags=CASE
-      WHEN instr(sh_weekly_summary.quality_flags,'stationhead_email_recap')>0
+      WHEN instr(COALESCE(sh_weekly_summary.quality_flags,''),'stationhead_email_recap')>0
         THEN sh_weekly_summary.quality_flags
       WHEN json_valid(sh_weekly_summary.quality_flags)
         THEN json_insert(sh_weekly_summary.quality_flags,'$[#]','stationhead_email_recap')
