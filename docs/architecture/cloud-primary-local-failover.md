@@ -14,8 +14,9 @@ Cloudflare Worker is the primary collector and must be able to collect every req
 - host profile snapshots
 - `sakurazaka46jp` solo-broadcast detection and session data
 - official-news fail-safe monitoring
+- authenticated weekly leaderboard collection
 - weekly recap ingestion from Google Apps Script
-- scheduled summary maintenance and retention
+- email recap anchors in weekly history
 - collector lease renewal
 
 ### Local collector — failover and supplement
@@ -52,8 +53,9 @@ Every logical write has a deterministic key independent of collector identity.
 | solo comment | session ID + comment ID |
 | raw event | source + station/channel + event + payload hash + time bucket |
 | email recap | `stationhead-email:{week_of}` |
+| weekly leaderboard | ranking date + ranking type |
 
-`sh_ingest_claims` records the accepted logical key, payload hash, collector and priority. The write path uses the claim and data mutation in one D1 batch where practical. Existing table unique keys remain the final safeguard.
+`sh_ingest_claims` records the accepted logical key, payload hash, collector and priority. Existing table unique keys remain the final safeguard. Identical higher-priority payloads promote ownership without rewriting canonical data.
 
 ## Source precedence
 
@@ -65,7 +67,7 @@ Every logical write has a deterministic key independent of collector identity.
 
 For a key already present:
 
-1. identical payload hash: ignore as duplicate;
+1. identical payload hash: ignore as duplicate and promote claim ownership when appropriate;
 2. higher-priority payload: replace/update the canonical logical record;
 3. equal-priority newer payload: update only mutable fields;
 4. lower-priority conflicting payload: keep canonical record and log the conflict.
@@ -74,17 +76,12 @@ Comments and immutable identifiers are never overwritten with empty data.
 
 ## Shared collection core
 
-Normalization and metadata logic moves to `shared/` and is imported by both runtimes.
-
-- `shared/stationhead-normalize.js`
-- `shared/track-metadata.js`
-- `shared/validation.js`
-- `shared/dedupe.js`
-
-Runtime adapters are kept separate:
+Normalization and metadata logic is being moved to shared modules in stages. Runtime adapters remain separate:
 
 - Worker adapter: direct D1 access and Cron execution
 - local adapter: HTTPS ingest and optional WebSocket
+
+The production failover release first standardizes payload contracts and D1 write semantics. Full source-file extraction is a low-risk follow-up after production telemetry confirms the cloud monitor.
 
 ## Failure behaviour
 
@@ -92,17 +89,36 @@ Runtime adapters are kept separate:
 - Worker unhealthy past TTL: local starts full polling.
 - Worker returns while local is active: Worker renews lease; local finishes its current cycle and returns to standby.
 - Both forced active: deterministic keys and claims prevent duplicate logical rows.
-- Pages/D1 unavailable: local queues compact payloads on disk and retries with the same logical keys.
+- Pages/D1 unavailable: current data is retried by later polling where source APIs retain it. A durable local disk outbox remains a separate follow-up because transparent proxying was not accepted by repository safety controls.
+
+## Production migrations
+
+Apply in order:
+
+1. `004_collector_coordination.sql`
+2. `005_cloud_host_monitor.sql`
+3. `006_email_weekly_summary.sql`
+4. `007_host_session_safety.sql`
+
+All four are executed twice in CI against SQLite, including trigger behaviour with sample data.
 
 ## Migration sequence
 
-1. Add coordination, claims and conflict tables.
-2. Add collector identity and deterministic keys to ingest payloads.
-3. Make existing ingest paths idempotent before enabling failover.
-4. Move all host and solo polling into Worker.
-5. Add local `auto|active|standby` mode.
-6. Extract shared normalization logic.
-7. Consolidate Worker entrypoint and front-end patches.
-8. Add incremental summaries, retention, tests and CI.
+Completed in the production failover release:
 
-Production is switched to local standby only after cloud host/solo collection and health checks are verified.
+1. coordination, claims and conflict tables;
+2. collector identity and deterministic keys;
+3. idempotent snapshot, queue, host and leaderboard writes;
+4. cloud host/profile/solo polling;
+5. local `auto|active|standby` supervisor;
+6. cloud weekly leaderboard and recap validation;
+7. dashboard payload/read reduction;
+8. email history anchors;
+9. syntax, unit, SQL and Worker bundle CI.
+
+Follow-up after production observation:
+
+- durable local disk outbox;
+- complete shared normalization extraction;
+- final Worker wrapper flattening;
+- CSS and archived one-time tool deletion where connector safety permits.
