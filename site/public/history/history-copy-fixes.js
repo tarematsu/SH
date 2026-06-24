@@ -32,6 +32,40 @@
     return values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : null;
   };
 
+  let broadcastMinimumRequest = 0;
+  const readBroadcastSeriesCache = (from, to) => {
+    try {
+      const stored = JSON.parse(sessionStorage.getItem(`broadcast-series:v1:${from}:${to}`));
+      return stored && Date.now() - stored.at < 15 * 60 * 1000 ? stored.data : null;
+    } catch {
+      return null;
+    }
+  };
+
+  const updateBroadcastMinimum = async () => {
+    const requestId = ++broadcastMinimumRequest;
+    const from = $('#from').value;
+    const to = $('#to').value;
+    $('#periods').textContent = '—';
+    try {
+      let data = readBroadcastSeriesCache(from, to);
+      if (!data) {
+        const params = new URLSearchParams({ from, to });
+        const response = await fetch(`/api/broadcast-series?${params}`, {
+          headers: { accept: 'application/json' },
+        });
+        data = await response.json();
+        if (!response.ok || !data.ok) throw new Error(data.error || `API ${response.status}`);
+      }
+      if (requestId !== broadcastMinimumRequest || currentMode !== 'broadcasts') return;
+      const listeners = (data.series || []).flatMap((item) =>
+        (item.points || []).map((point) => finiteNumber(point?.[1])).filter((value) => value != null));
+      $('#periods').textContent = listeners.length ? fmt(Math.min(...listeners)) : '—';
+    } catch {
+      if (requestId === broadcastMinimumRequest && currentMode === 'broadcasts') $('#periods').textContent = '—';
+    }
+  };
+
   const originalUpdateSummary = updateSummary;
   updateSummary = function updateSummaryWithAverages(rows, mode) {
     originalUpdateSummary(rows, mode);
@@ -54,10 +88,11 @@
 
     if (mode !== 'broadcasts') return;
 
-    $('#periodLabel').textContent = '放送数';
+    $('#periodLabel').textContent = '最小同接';
     $('#maxLabel').textContent = '最大同接';
     $('#streamLabel').textContent = '平均同接';
     $('#memberLabel').textContent = '平均放送時間';
+    updateBroadcastMinimum();
 
     const weighted = rows.reduce((result, row) => {
       const average = finiteNumber(row.listener_avg);
