@@ -2,27 +2,35 @@
   const target = document.getElementById('onlineRange24h');
   if (!target) return;
 
+  let lastText = '';
+
   function render() {
     const cutoff = Date.now() - 86400000;
-    const values = (Array.isArray(lastHistoryRows) ? lastHistoryRows : [])
-      .filter((row) => Number(row && row.observed_at) >= cutoff)
-      .map((row) => Number(row && row.online_member_count))
-      .filter((value) => Number.isFinite(value));
+    const rows = Array.isArray(lastHistoryRows) ? lastHistoryRows : [];
+    let minimum = Infinity;
+    let maximum = -Infinity;
 
-    if (!values.length) {
-      target.hidden = true;
-      target.textContent = '';
-      return;
+    for (const row of rows) {
+      if (Number(row?.observed_at) < cutoff) continue;
+      const value = Number(row?.online_member_count);
+      if (!Number.isFinite(value)) continue;
+      if (value < minimum) minimum = value;
+      if (value > maximum) maximum = value;
     }
 
-    const minimum = Math.min(...values).toLocaleString('ja-JP');
-    const maximum = Math.max(...values).toLocaleString('ja-JP');
-    target.innerHTML = `<span>24時間最低 ${minimum}</span><span>24時間最高 ${maximum}</span>`;
-    target.hidden = false;
+    const next = Number.isFinite(minimum)
+      ? `<span>24時間最低 ${minimum.toLocaleString('ja-JP')}</span><span>24時間最高 ${maximum.toLocaleString('ja-JP')}</span>`
+      : '<span>24時間最低 -</span><span>24時間最高 -</span>';
+
+    if (next !== lastText) {
+      lastText = next;
+      target.innerHTML = next;
+    }
   }
 
   render();
-  setTimeout(render, 1000);
-  setTimeout(render, 3000);
-  setInterval(render, 30000);
+  setTimeout(render, 1200);
+  setInterval(() => {
+    if (!document.hidden) render();
+  }, 60000);
 })();
