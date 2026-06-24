@@ -1,7 +1,7 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "stationhead-monitor-collector",
-  "main": "src/browser-index.js",
+  "main": "src/browser-index-v2.js",
   "compatibility_date": "2026-06-24",
   "compatibility_flags": ["nodejs_compat"],
   "workers_dev": true,
@@ -18,7 +18,7 @@
     "COLLECTOR_ID": "cloudflare-worker",
     "METADATA_LIMIT": 3,
     "REQUEST_TIMEOUT_MS": 15000,
-    "BROWSER_TIMEOUT_MS": 40000,
+    "BROWSER_TIMEOUT_MS": 50000,
     "AUTH_REFRESH_BEFORE_MS": 3600000,
     "AUTH_REFRESH_COOLDOWN_MS": 300000,
     "AUTH_FAILURE_BACKOFF_MS": 900000,
