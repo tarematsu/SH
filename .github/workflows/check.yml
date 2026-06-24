@@ -23,8 +23,10 @@ jobs:
         run: |
           find collector worker site tools scripts -type f \( -name '*.js' -o -name '*.mjs' \) -print0 2>/dev/null \
             | xargs -0 -r -n1 node --check
-      - name: Run lightweight unit tests
+      - name: Run JavaScript unit tests
         run: node --test tests/*.test.mjs
+      - name: Run SQL migration integration tests
+        run: python3 -m unittest tests/sql_migrations_test.py -v
       - name: Install Worker tooling
         working-directory: worker
         run: npm install --no-audit --no-fund
