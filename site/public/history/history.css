@@ -60,6 +60,8 @@ th,td{padding:9px 10px;border-bottom:1px solid var(--line);text-align:right}
 th:first-child,td:first-child{text-align:left;position:sticky;left:0;background:var(--panel);z-index:1}
 th{position:sticky;top:0;background:var(--panel);color:var(--muted);z-index:2}
 tbody tr:hover td{background:#ffffff08}
+.daily-total-row td{background:color-mix(in srgb,var(--accent) 10%,var(--panel));font-weight:850;color:var(--accent)}
+.daily-total-row td:first-child{background:color-mix(in srgb,var(--accent) 10%,var(--panel))}
 .rank-cell{font-weight:900;color:var(--accent)}
 .rank-up{font-weight:800;color:var(--up)}
 .rank-down{font-weight:800;color:var(--down)}
