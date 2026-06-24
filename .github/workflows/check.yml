@@ -1,0 +1,33 @@
+name: check
+
+on:
+  push:
+    branches:
+      - main
+      - refactor/cloud-primary-local-failover
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  syntax-and-bundle:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Check JavaScript syntax
+        run: |
+          find collector worker site tools scripts -type f \( -name '*.js' -o -name '*.mjs' \) -print0 2>/dev/null \
+            | xargs -0 -r -n1 node --check
+      - name: Run lightweight unit tests
+        run: node --test tests/*.test.mjs
+      - name: Install Worker tooling
+        working-directory: worker
+        run: npm install --no-audit --no-fund
+      - name: Bundle Worker without deploying
+        working-directory: worker
+        run: npx wrangler deploy --dry-run --outdir=dist-dry-run
