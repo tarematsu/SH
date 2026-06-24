@@ -63,6 +63,28 @@ SELECT observed_at,current_stream_count AS stream_count,'live' AS reference_sour
 FROM sh_channel_snapshots
 WHERE current_stream_count IS NOT NULL;
 
+DROP TABLE IF EXISTS temp.email_recap_nearest;
+CREATE TEMP TABLE email_recap_nearest AS
+WITH ranked AS (
+  SELECT
+    e.week_of,
+    s.observed_at AS nearest_at,
+    s.stream_count AS nearest_count,
+    s.reference_source AS nearest_source,
+    ROW_NUMBER() OVER (
+      PARTITION BY e.week_of
+      ORDER BY ABS(s.observed_at-e.email_sent_at),
+               CASE s.reference_source WHEN 'live' THEN 0 ELSE 1 END,
+               s.observed_at DESC
+    ) AS nearest_rank
+  FROM email_recap_values e
+  LEFT JOIN email_recap_source_points s
+    ON s.observed_at BETWEEN e.email_sent_at-604800000 AND e.email_sent_at+604800000
+)
+SELECT week_of,nearest_at,nearest_count,nearest_source
+FROM ranked
+WHERE nearest_rank=1;
+
 DROP TABLE IF EXISTS temp.email_recap_assessed;
 CREATE TEMP TABLE email_recap_assessed AS
 WITH neighbors AS (
@@ -76,19 +98,11 @@ WITH neighbors AS (
       WHERE s.observed_at>=e.email_sent_at ORDER BY s.observed_at ASC LIMIT 1) AS next_at,
     (SELECT stream_count FROM email_recap_source_points s
       WHERE s.observed_at>=e.email_sent_at ORDER BY s.observed_at ASC LIMIT 1) AS next_count,
-    (SELECT observed_at FROM email_recap_source_points s
-      ORDER BY ABS(s.observed_at-e.email_sent_at),
-               CASE s.reference_source WHEN 'live' THEN 0 ELSE 1 END,
-               s.observed_at DESC LIMIT 1) AS nearest_at,
-    (SELECT stream_count FROM email_recap_source_points s
-      ORDER BY ABS(s.observed_at-e.email_sent_at),
-               CASE s.reference_source WHEN 'live' THEN 0 ELSE 1 END,
-               s.observed_at DESC LIMIT 1) AS nearest_count,
-    (SELECT reference_source FROM email_recap_source_points s
-      ORDER BY ABS(s.observed_at-e.email_sent_at),
-               CASE s.reference_source WHEN 'live' THEN 0 ELSE 1 END,
-               s.observed_at DESC LIMIT 1) AS nearest_source
+    n.nearest_at,
+    n.nearest_count,
+    n.nearest_source
   FROM email_recap_values e
+  LEFT JOIN email_recap_nearest n USING (week_of)
 ), estimated AS (
   SELECT
     *,
