@@ -1,6 +1,6 @@
 {
   "name": "stationhead-monitor-worker",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "private": true,
   "type": "module",
   "scripts": {
@@ -9,7 +9,6 @@
     "tail": "wrangler tail"
   },
   "devDependencies": {
-    "@cloudflare/puppeteer": "^1.1.0",
-    "wrangler": "^4.103.0"
+    "wrangler": "^4.104.0"
   }
 }
