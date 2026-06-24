@@ -2,9 +2,14 @@ import 'dotenv/config';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import os from 'node:os';
 
 const SOURCE_URL = 'https://www.stationhead.com/on/api/weeklyleaderboard';
 const STATE_FILE = path.resolve(process.cwd(), '.weekly-leaderboard-state.json');
+
+const collectorId = process.env.COLLECTOR_ID || `${os.hostname()}-leaderboard`;
+const collectorKind = process.env.COLLECTOR_KIND || 'local';
+const sourcePriority = Number(process.env.SOURCE_PRIORITY || (/[-_:]active(?:$|[-_:])/i.test(collectorId) ? 80 : 70));
 
 const config = {
   enabled: String(process.env.WEEKLY_LEADERBOARD_ENABLED ?? 'true').toLowerCase() === 'true',
@@ -121,21 +126,27 @@ async function fetchLeaderboard() {
     headers: {
       accept: 'application/json',
       'user-agent': 'stationhead-monitor/weekly-leaderboard',
+      ...(process.env.STATIONHEAD_AUTH_TOKEN ? { authorization: `Bearer ${process.env.STATIONHEAD_AUTH_TOKEN}` } : {}),
+      ...(process.env.STATIONHEAD_DEVICE_UID ? { 'sth-device-uid': process.env.STATIONHEAD_DEVICE_UID } : {}),
+      'app-platform': 'web',
+      'app-version': process.env.STATIONHEAD_APP_VERSION || '1.0.0',
+      origin: 'https://www.stationhead.com',
+      referer: 'https://www.stationhead.com/',
     },
     cache: 'no-store',
     signal: AbortSignal.timeout(30_000),
   });
 
-  const text = await response.text();
+  const responseText = await response.text();
   let payload;
   try {
-    payload = JSON.parse(text);
+    payload = JSON.parse(responseText);
   } catch {
-    throw new Error(`non-JSON response ${response.status}: ${text.slice(0, 200)}`);
+    throw new Error(`non-JSON response ${response.status}: ${responseText.slice(0, 200)}`);
   }
 
   if (!response.ok) {
-    throw new Error(`HTTP ${response.status}: ${payload?.error?.title || text.slice(0, 200)}`);
+    throw new Error(`HTTP ${response.status}: ${payload?.error?.title || responseText.slice(0, 200)}`);
   }
 
   const accounts = normalizeAccounts(payload);
@@ -162,16 +173,19 @@ async function ingestLeaderboard({ accounts, sourceHash, rankingDate, observedAt
       ranking_type: '週間チャンネル順位',
       source: 'stationhead_official',
       source_hash: sourceHash,
+      collector_id: collectorId,
+      collector_kind: collectorKind,
+      source_priority: sourcePriority,
       accounts,
     }),
     signal: AbortSignal.timeout(30_000),
   });
 
-  const text = await response.text();
+  const responseText = await response.text();
   if (!response.ok) {
-    throw new Error(`leaderboard ingest failed ${response.status}: ${text.slice(0, 500)}`);
+    throw new Error(`leaderboard ingest failed ${response.status}: ${responseText.slice(0, 500)}`);
   }
-  return text ? JSON.parse(text) : {};
+  return responseText ? JSON.parse(responseText) : {};
 }
 
 async function checkOnce({ forceSave = false, baselineOnly = false } = {}) {
