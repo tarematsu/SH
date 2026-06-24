@@ -10,16 +10,15 @@ const json = (data, status = 200) => new Response(JSON.stringify(data), {
 
 function parseDateStart(value, fallback) {
   const text = /^\d{4}-\d{2}-\d{2}$/.test(value || '') ? value : fallback;
-  return Date.parse(`${text}T00:00:00+09:00`);
+  return Date.parse(`${text}T00:00:00Z`);
 }
 
 function addDays(timestamp, days) {
   return timestamp + days * 86400000;
 }
 
-function todayJstString() {
-  const shifted = new Date(Date.now() + 9 * 3600000);
-  return shifted.toISOString().slice(0, 10);
+function todayUtcString() {
+  return new Date().toISOString().slice(0, 10);
 }
 
 async function legacyRows(env, fromTs, toTs) {
@@ -86,10 +85,10 @@ export async function onRequestGet({ request, env }) {
 
   try {
     const url = new URL(request.url);
-    const from = url.searchParams.get('from') || '2024-06-01';
-    const to = url.searchParams.get('to') || todayJstString();
-    const fromTs = parseDateStart(from, '2024-06-01');
-    const toTs = addDays(parseDateStart(to, todayJstString()), 1);
+    const from = url.searchParams.get('from') || '2024-05-01';
+    const to = url.searchParams.get('to') || todayUtcString();
+    const fromTs = parseDateStart(from, '2024-05-01');
+    const toTs = addDays(parseDateStart(to, todayUtcString()), 1);
 
     const [legacy, failSafe] = await Promise.all([
       legacyRows(env, fromTs, toTs),
@@ -113,10 +112,7 @@ export async function onRequestGet({ request, env }) {
         };
         grouped.set(key, series);
       }
-      series.points.push([
-        Number(row.elapsed_minute) || 0,
-        Number(row.listener_count),
-      ]);
+      series.points.push([Number(row.elapsed_minute) || 0, Number(row.listener_count)]);
       series.source_samples += Number(row.source_samples) || 0;
     }
 
@@ -125,6 +121,7 @@ export async function onRequestGet({ request, env }) {
       ok: true,
       from,
       to,
+      timezone: 'UTC',
       series,
       event_count: series.length,
       point_count: rows.length,
