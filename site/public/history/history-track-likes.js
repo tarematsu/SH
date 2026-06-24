@@ -3,10 +3,9 @@
   const baseLabelsFor=labelsFor;
   const baseDisplayCell=displayCell;
   const baseLoad=load;
-  const labels={like_count:'いいね数'};
 
   visibleKeys=(mode)=>mode==='tracks'?[...baseVisibleKeys(mode),'like_count']:baseVisibleKeys(mode);
-  labelsFor=(mode)=>mode==='tracks'?{...baseLabelsFor(mode),...labels}:baseLabelsFor(mode);
+  labelsFor=(mode)=>mode==='tracks'?{...baseLabelsFor(mode),like_count:'いいね数'}:baseLabelsFor(mode);
   displayCell=function(key,row,mode){
     if(mode==='tracks'&&key==='like_count'){
       if(row?._daily_total)return '—';
@@ -19,10 +18,20 @@
   function identityKeys(row){
     const keys=[];
     for(const value of row?.source_ids||[])if(value)keys.push(String(value));
-    for(const key of ['spotify_id','apple_music_id','isrc','stationhead_track_id','queue_track_id']){
-      if(row?.[key])keys.push(String(row[key]));
-    }
+    for(const key of ['spotify_id','apple_music_id','isrc','stationhead_track_id','queue_track_id'])if(row?.[key])keys.push(String(row[key]));
     return keys;
+  }
+
+  function withTotals(rows){
+    const totals=new Map();
+    for(const row of rows)totals.set(row.play_date,(totals.get(row.play_date)||0)+(finiteNumber(row.play_count)||0));
+    const result=[];let previousDate=null;
+    for(const row of rows){
+      const total=totals.get(row.play_date)||0;
+      if(row.play_date!==previousDate){result.push({_daily_total:true,play_date:row.play_date,title:'この日の延べ曲数',artist:'—',play_count:total,daily_share:100,like_count:null,first_played_at:null,last_played_at:null});previousDate=row.play_date;}
+      result.push({...row,daily_share:total>0?(finiteNumber(row.play_count)||0)/total*100:0});
+    }
+    return result;
   }
 
   load=async function(options={}){
@@ -34,18 +43,13 @@
       const data=await response.json();
       if(!response.ok||!data.ok)return;
       const map=new Map();
-      for(const row of data.rows||[]){
-        for(const key of identityKeys(row))map.set(`${row.play_date}|${key}`,row.like_count);
-      }
+      for(const row of data.rows||[])for(const key of identityKeys(row))map.set(`${row.play_date}|${key}`,row.like_count);
       current=current.map(row=>{
         let like=null;
-        for(const key of identityKeys(row)){
-          const value=map.get(`${row.play_date}|${key}`);
-          if(value!=null){like=value;break;}
-        }
+        for(const key of identityKeys(row)){const value=map.get(`${row.play_date}|${key}`);if(value!=null){like=value;break;}}
         return {...row,like_count:like};
       });
-      const tableRows=typeof withDailyTotals==='function'?withDailyTotals(current):current;
+      const tableRows=withTotals(current);
       renderTable(tableRows,'tracks',false);
       $('#tbody').querySelectorAll('tr').forEach((row,index)=>{if(tableRows[index]?._daily_total)row.classList.add('daily-total-row');});
     }catch(error){console.error('track likes load failed',error);}
