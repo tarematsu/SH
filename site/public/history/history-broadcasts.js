@@ -13,6 +13,8 @@
   let abortController = null;
   let resizeTimer = null;
   let loadingKey = '';
+  let loadedKey = '';
+  let loadedMeta = null;
 
   const active = () => broadcastsButton.classList.contains('active');
   const number = (value) => Number(value).toLocaleString('ja-JP', { maximumFractionDigits: 1 });
@@ -65,6 +67,12 @@
       ? previous : current;
   }
 
+  function escapeHtml(value) {
+    return String(value ?? '')
+      .replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;')
+      .replaceAll('"', '&quot;').replaceAll("'", '&#039;');
+  }
+
   function renderDetail(minute) {
     const detail = document.getElementById('chartDetail');
     if (!detail) return;
@@ -82,12 +90,6 @@
       `<div><i style="background:${colorFor(index)}"></i><strong>${escapeHtml(eventLabel(item))}</strong><span>${number(point[1])}人</span></div>`).join('')}</div>`;
   }
 
-  function escapeHtml(value) {
-    return String(value ?? '')
-      .replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;')
-      .replaceAll('"', '&quot;').replaceAll("'", '&#039;');
-  }
-
   function draw() {
     if (!active()) return;
     const { ctx, width, height } = prepareCanvas();
@@ -96,8 +98,10 @@
     const chartFoot = document.getElementById('chartFoot');
     const startDate = document.getElementById('chartStartDate');
     const endDate = document.getElementById('chartEndDate');
+    const guide = document.getElementById('guide');
     if (chartTitle) chartTitle.textContent = '公式ステヘ 同接推移（開始0分比較）';
     if (chartFoot) chartFoot.textContent = '各線は1回の公式ステヘです。横軸は実日時ではなく、各放送の開始からの経過時間です。';
+    if (guide) guide.innerHTML = '<strong>公式ステヘ比較</strong><span>全放送の同接推移を、各放送の開始時刻を0分として重ねて表示します。</span>';
 
     if (!available.length) {
       ctx.fillStyle = '#aaa3b5';
@@ -214,10 +218,24 @@
     try { sessionStorage.setItem(cacheKey(), JSON.stringify({ at: Date.now(), data })); } catch {}
   }
 
+  function updateNotice(data) {
+    if (!data || !active()) return;
+    const base = notice.textContent.replace(/・全\d+(?:\.\d+)?放送を開始0分で重ね表示.*$/, '').trim();
+    const truncated = data.truncated ? '（上限到達）' : '';
+    const next = `${base}・全${number(data.event_count || series.length)}放送を開始0分で重ね表示${truncated}`;
+    if (notice.textContent !== next) notice.textContent = next;
+  }
+
   async function loadSeries() {
     if (!active()) return;
     const key = cacheKey();
     if (loadingKey === key) return;
+    if (loadedKey === key) {
+      draw();
+      updateNotice(loadedMeta);
+      return;
+    }
+
     loadingKey = key;
     selectedMinute = null;
     try {
@@ -236,13 +254,14 @@
       }
       if (!active()) return;
       series = Array.isArray(data.series) ? data.series : [];
+      loadedKey = key;
+      loadedMeta = data;
       draw();
-      const base = notice.textContent.replace(/・全\d+放送を開始0分で重ね表示.*$/, '').trim();
-      const truncated = data.truncated ? '（上限到達）' : '';
-      notice.textContent = `${base}・全${number(data.event_count || series.length)}放送を開始0分で重ね表示${truncated}`;
+      updateNotice(data);
     } catch (error) {
       if (error?.name !== 'AbortError' && active()) {
-        notice.textContent = `${notice.textContent}・比較グラフ取得失敗: ${error.message}`;
+        const suffix = `・比較グラフ取得失敗: ${error.message}`;
+        if (!notice.textContent.includes(suffix)) notice.textContent += suffix;
       }
     } finally {
       if (loadingKey === key) loadingKey = '';
@@ -268,9 +287,15 @@
   canvas.addEventListener('click', handlePointer, true);
   canvas.addEventListener('touchstart', handlePointer, { capture: true, passive: true });
   broadcastsButton.addEventListener('click', () => scheduleLoad(120));
-  document.getElementById('load')?.addEventListener('click', () => scheduleLoad(160));
+  document.getElementById('load')?.addEventListener('click', () => {
+    loadedKey = '';
+    scheduleLoad(160);
+  });
   document.querySelectorAll('.range-presets button').forEach((button) =>
-    button.addEventListener('click', () => scheduleLoad(160)));
+    button.addEventListener('click', () => {
+      loadedKey = '';
+      scheduleLoad(160);
+    }));
 
   new MutationObserver(() => {
     if (active() && !/読み込み中/.test(notice.textContent)) scheduleLoad(30);
