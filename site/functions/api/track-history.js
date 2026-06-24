@@ -32,6 +32,84 @@ function bestText(...values) {
   return candidates.find((value) => !looksLikeId(value)) || candidates[0] || null;
 }
 
+function parseSpotifyTitle(value) {
+  const cleaned = cleanText(value)?.replace(/\s*\|\s*Spotify\s*$/i, '') || null;
+  if (!cleaned) return { title: null, artist: null };
+  const match = cleaned.match(/^(.*?)\s*-\s*song and lyrics by\s*(.+)$/i);
+  if (match) return { title: cleanText(match[1]), artist: cleanText(match[2]) };
+  return { title: cleaned, artist: null };
+}
+
+async function spotifyMetadata(spotifyId) {
+  if (!spotifyId) return null;
+  const cacheUrl = `https://stationhead-meta-cache.invalid/spotify/${encodeURIComponent(spotifyId)}`;
+  const cacheRequest = new Request(cacheUrl);
+  try {
+    const cached = await caches.default.match(cacheRequest);
+    if (cached) return cached.json();
+  } catch {}
+
+  try {
+    const trackUrl = `https://open.spotify.com/track/${encodeURIComponent(spotifyId)}`;
+    const response = await fetch(`https://open.spotify.com/oembed?url=${encodeURIComponent(trackUrl)}`, {
+      headers: { accept: 'application/json' },
+      signal: AbortSignal.timeout(5000),
+    });
+    if (!response.ok) return null;
+    const raw = await response.json();
+    const parsed = parseSpotifyTitle(raw?.title);
+    const value = {
+      title: parsed.title,
+      artist: cleanText(raw?.author_name || raw?.author) || parsed.artist,
+      spotify_url: trackUrl,
+    };
+    if (!value.title || looksLikeId(value.title)) return null;
+    try {
+      await caches.default.put(cacheRequest, new Response(JSON.stringify(value), {
+        headers: {
+          'content-type': 'application/json; charset=utf-8',
+          'cache-control': 'public, max-age=2592000',
+        },
+      }));
+    } catch {}
+    return value;
+  } catch {
+    return null;
+  }
+}
+
+async function enrichMissingRows(rows) {
+  const unresolved = new Map();
+  for (const row of rows) {
+    const title = bestText(row.title, row.raw_title, row.display_title);
+    const artist = bestText(row.artist, row.raw_artist);
+    if ((!title || looksLikeId(title) || !artist || looksLikeId(artist)) && row.spotify_id) {
+      unresolved.set(row.spotify_id, null);
+      if (unresolved.size >= 20) break;
+    }
+  }
+  if (!unresolved.size) return rows;
+
+  const ids = [...unresolved.keys()];
+  const resolved = new Map();
+  for (let index = 0; index < ids.length; index += 6) {
+    const chunk = ids.slice(index, index + 6);
+    const values = await Promise.all(chunk.map(async (id) => [id, await spotifyMetadata(id)]));
+    for (const [id, value] of values) if (value) resolved.set(id, value);
+  }
+
+  return rows.map((row) => {
+    const value = resolved.get(row.spotify_id);
+    if (!value) return row;
+    return {
+      ...row,
+      title: bestText(row.title, row.raw_title, row.display_title, value.title),
+      artist: bestText(row.artist, row.raw_artist, value.artist),
+      spotify_url: row.spotify_url || value.spotify_url || null,
+    };
+  });
+}
+
 function mergeRows(rows) {
   const merged = new Map();
   for (const row of rows) {
@@ -137,7 +215,8 @@ export async function onRequestGet({ request, env }) {
     ORDER BY p.played_at ASC
     LIMIT ?`).bind(fromTs - 604800000, toTs, fromTs, toTs, limit * 8 + 1).all();
 
-    const rows = mergeRows(result.results || []);
+    const enriched = await enrichMissingRows(result.results || []);
+    const rows = mergeRows(enriched);
     const truncated = rows.length > limit;
     return out({
       ok: true,
@@ -147,7 +226,7 @@ export async function onRequestGet({ request, env }) {
       timezone: 'UTC',
       rows: truncated ? rows.slice(0, limit) : rows,
       truncated,
-      method: 'queue_timeline_window_sum_title_artist_merge',
+      method: 'queue_timeline_window_sum_cached_spotify_metadata_merge',
     });
   } catch (error) {
     if (/no such table|no such column|malformed JSON/i.test(String(error?.message || ''))) {
