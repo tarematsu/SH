@@ -25,6 +25,7 @@ function parseCsv(text) {
 }
 
 const norm=v=>String(v??'').normalize('NFKC').trim();
+const canon=v=>norm(v).toLocaleLowerCase('ja-JP').replace(/[\s\u3000]+/g,'').replace(/[‐‑‒–—―ー−-]/g,'-');
 const number=v=>{const n=Number(norm(v).replace(/,/g,''));return Number.isFinite(n)?n:null;};
 function jstMillis(value){
   const s=norm(value).replace(/\//g,'-');
@@ -33,7 +34,7 @@ function jstMillis(value){
   return Date.UTC(+m[1],+m[2]-1,+m[3],+(m[4]||0)-9,+(m[5]||0),+(m[6]||0));
 }
 const quote=v=>`'${String(v??'').replace(/'/g,"''")}'`;
-const records=[];
+const rawRecords=[];
 
 for(const sheet of sheets){
   const url=`https://docs.google.com/spreadsheets/d/${sheet.id}/export?format=csv&gid=${sheet.gid}`;
@@ -52,11 +53,46 @@ for(const sheet of sheets){
     const artist=artistCol>=0?norm(r[artistCol]):'';
     const likeCount=number(r[likeCol]);
     if(observedAt==null||!title||likeCount==null)continue;
-    records.push({observedAt,title,artist:artist||null,likeCount,sheetId:sheet.id,gid:sheet.gid,row:i+1,raw:r});
+    rawRecords.push({observedAt,title,artist:artist||null,likeCount,sheetId:sheet.id,gid:sheet.gid,row:i+1,raw:r});
   }
 }
 
-records.sort((a,b)=>a.observedAt-b.observedAt||a.title.localeCompare(b.title,'ja'));
+const artistsByTitle=new Map();
+for(const record of rawRecords){
+  if(!record.artist)continue;
+  const key=canon(record.title);
+  if(!artistsByTitle.has(key))artistsByTitle.set(key,new Set());
+  artistsByTitle.get(key).add(record.artist);
+}
+for(const record of rawRecords){
+  if(record.artist)continue;
+  const candidates=artistsByTitle.get(canon(record.title));
+  if(candidates?.size===1)record.artist=[...candidates][0];
+}
+
+rawRecords.sort((a,b)=>
+  canon(a.title).localeCompare(canon(b.title),'ja')
+  || canon(a.artist).localeCompare(canon(b.artist),'ja')
+  || a.observedAt-b.observedAt
+  || a.sheetId.localeCompare(b.sheetId)
+  || a.row-b.row
+);
+
+const records=[];
+const lastByTrack=new Map();
+const exactSeen=new Set();
+for(const record of rawRecords){
+  const trackKey=`${canon(record.title)}|${canon(record.artist)}`;
+  const exactKey=`${trackKey}|${record.observedAt}|${record.likeCount}`;
+  if(exactSeen.has(exactKey))continue;
+  exactSeen.add(exactKey);
+  const previous=lastByTrack.get(trackKey);
+  if(previous?.likeCount===record.likeCount)continue;
+  records.push(record);
+  lastByTrack.set(trackKey,record);
+}
+
+records.sort((a,b)=>a.observedAt-b.observedAt||a.title.localeCompare(b.title,'ja')||String(a.artist||'').localeCompare(String(b.artist||''),'ja'));
 const statements=records.map(r=>`INSERT INTO sh_track_like_history (observed_at,track_title,artist,like_count,source_sheet_id,source_gid,source_row,raw_json) VALUES (${r.observedAt},${quote(r.title)},${r.artist?quote(r.artist):'NULL'},${r.likeCount},${quote(r.sheetId)},${quote(r.gid)},${r.row},${quote(JSON.stringify(r.raw))}) ON CONFLICT(source_sheet_id,source_gid,source_row) DO UPDATE SET observed_at=excluded.observed_at,track_title=excluded.track_title,artist=excluded.artist,like_count=excluded.like_count,raw_json=excluded.raw_json;`);
 
 await rm(OUTPUT_DIR,{recursive:true,force:true});
@@ -68,5 +104,5 @@ for(let offset=0;offset<statements.length;offset+=CHUNK_SIZE){
   await writeFile(`${OUTPUT_DIR}/${name}`,statements.slice(offset,offset+CHUNK_SIZE).join('\n'),'utf8');
   files.push(name);
 }
-await writeFile(`${OUTPUT_DIR}/manifest.json`,JSON.stringify({rows:records.length,chunk_size:CHUNK_SIZE,files},null,2),'utf8');
-console.log(`Generated ${records.length} rows in ${files.length} D1-safe files.`);
+await writeFile(`${OUTPUT_DIR}/manifest.json`,JSON.stringify({source_rows:rawRecords.length,change_rows:records.length,removed_rows:rawRecords.length-records.length,chunk_size:CHUNK_SIZE,files},null,2),'utf8');
+console.log(`Read ${rawRecords.length} rows; kept ${records.length} changes; removed ${rawRecords.length-records.length} unchanged/duplicate rows; generated ${files.length} files.`);
