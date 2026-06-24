@@ -1,28 +1,23 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "stationhead-monitor-collector",
-  "main": "src/adaptive-chat-index.js",
+  "main": "src/optimized-index.js",
   "compatibility_date": "2026-06-24",
-  "compatibility_flags": ["nodejs_compat"],
   "workers_dev": true,
   "observability": {
     "enabled": true
   },
-  "browser": {
-    "binding": "BROWSER"
-  },
   "vars": {
     "CHANNEL_ALIAS": "buddies",
-    "CHAT_LIMIT": 100,
+    "CHAT_LIMIT": 50,
     "STATIONHEAD_APP_VERSION": "1.0.0",
     "COLLECTOR_ID": "cloudflare-worker",
-    "METADATA_LIMIT": 3,
-    "REQUEST_TIMEOUT_MS": 25000,
-    "BROWSER_TIMEOUT_MS": 50000,
+    "METADATA_LIMIT": 2,
+    "REQUEST_TIMEOUT_MS": 20000,
     "AUTH_REFRESH_BEFORE_MS": 3600000,
     "AUTH_REFRESH_COOLDOWN_MS": 300000,
     "AUTH_FAILURE_BACKOFF_MS": 900000,
-    "AUTH_LOCK_MS": 90000
+    "AUTH_LOCK_MS": 60000
   },
   "triggers": {
     "crons": ["* * * * *"]
