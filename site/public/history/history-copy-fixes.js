@@ -2,7 +2,7 @@
   const descriptions = {
     monthly: ['月次集計', '月ごとの最大同接、再生数増加、メンバー増加を表示します。'],
     tracks: ['再生曲', '選択した日または月曜日始まりの週の再生曲を表示します。'],
-    broadcasts: ['公式ステヘ', '同接推移を重ねて表示します。'],
+    broadcasts: ['公式ステへ', '同接推移を重ねて表示します。'],
     ranking: ['リーダーボード', 'Stationheadで放送している櫻坂ホストの週次順位です。'],
   };
 
@@ -16,6 +16,47 @@
     if (!value || !guide) return;
     const html = `<strong>${value[0]}</strong><span>${value[1]}</span>`;
     if (guide.innerHTML !== html) guide.innerHTML = html;
+  };
+
+  const formatDuration = (milliseconds) => {
+    if (!Number.isFinite(milliseconds) || milliseconds < 0) return '—';
+    const totalMinutes = Math.round(milliseconds / 60000);
+    const hours = Math.floor(totalMinutes / 60);
+    const minutes = totalMinutes % 60;
+    if (!hours) return `${minutes}分`;
+    return minutes ? `${hours}時間${minutes}分` : `${hours}時間`;
+  };
+
+  const originalUpdateSummary = updateSummary;
+  updateSummary = function updateSummaryWithBroadcastAverages(rows, mode) {
+    originalUpdateSummary(rows, mode);
+    if (mode !== 'broadcasts') return;
+
+    $('#periodLabel').textContent = '放送数';
+    $('#maxLabel').textContent = '最大同接';
+    $('#streamLabel').textContent = '平均同接';
+    $('#memberLabel').textContent = '平均放送時間';
+
+    const weighted = rows.reduce((result, row) => {
+      const average = finiteNumber(row.listener_avg);
+      const count = finiteNumber(row.sample_count);
+      if (average == null) return result;
+      const weight = count != null && count > 0 ? count : 1;
+      result.total += average * weight;
+      result.weight += weight;
+      return result;
+    }, { total: 0, weight: 0 });
+
+    const durations = rows.map((row) => {
+      const start = finiteNumber(row.started_at);
+      const end = finiteNumber(row.ended_at);
+      return start != null && end != null && end >= start ? end - start : null;
+    }).filter((value) => value != null);
+
+    $('#streamGrowth').textContent = weighted.weight ? fmt(weighted.total / weighted.weight) : '—';
+    $('#memberGrowth').textContent = durations.length
+      ? formatDuration(durations.reduce((sum, value) => sum + value, 0) / durations.length)
+      : '—';
   };
 
   const clearChartPresentation = () => {
