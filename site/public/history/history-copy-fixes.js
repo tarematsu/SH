@@ -37,5 +37,9 @@
     button.addEventListener('click', () => setTimeout(apply, 0));
   });
 
+  const likesScript = document.createElement('script');
+  likesScript.src = '/history/history-track-likes.js';
+  document.head.appendChild(likesScript);
+
   apply();
 })();
