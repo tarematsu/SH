@@ -62,6 +62,7 @@ async function spotifyMetadata(spotifyId) {
       title: parsed.title,
       artist: cleanText(raw?.author_name || raw?.author) || parsed.artist,
       spotify_url: trackUrl,
+      raw,
     };
     if (!value.title || looksLikeId(value.title)) return null;
     try {
@@ -78,7 +79,43 @@ async function spotifyMetadata(spotifyId) {
   }
 }
 
-async function enrichMissingRows(rows) {
+async function persistResolvedMetadata(env, resolved) {
+  if (!resolved.size) return 0;
+  const now = Date.now();
+  const statements = [...resolved.entries()].map(([spotifyId, value]) => env.DB.prepare(`
+    INSERT INTO sh_track_metadata (
+      spotify_id,title,artist,display_title,spotify_url,fetched_at,raw_json
+    ) VALUES (?,?,?,?,?,?,?)
+    ON CONFLICT(spotify_id) DO UPDATE SET
+      title=CASE
+        WHEN excluded.title IS NOT NULL AND excluded.title<>'' THEN excluded.title
+        ELSE sh_track_metadata.title
+      END,
+      artist=CASE
+        WHEN excluded.artist IS NOT NULL AND excluded.artist<>'' THEN excluded.artist
+        ELSE sh_track_metadata.artist
+      END,
+      display_title=CASE
+        WHEN excluded.display_title IS NOT NULL AND excluded.display_title<>'' THEN excluded.display_title
+        ELSE sh_track_metadata.display_title
+      END,
+      spotify_url=COALESCE(excluded.spotify_url,sh_track_metadata.spotify_url),
+      fetched_at=excluded.fetched_at,
+      raw_json=excluded.raw_json
+  `).bind(
+    spotifyId,
+    value.title || null,
+    value.artist || null,
+    value.title && value.artist ? `${value.title} — ${value.artist}` : value.title || null,
+    value.spotify_url || null,
+    now,
+    JSON.stringify({ source: 'spotify_oembed', spotify: value.raw || null }),
+  ));
+  await env.DB.batch(statements);
+  return statements.length;
+}
+
+async function enrichMissingRows(rows, env) {
   const unresolved = new Map();
   for (const row of rows) {
     const title = bestText(row.title, row.raw_title, row.display_title);
@@ -88,7 +125,7 @@ async function enrichMissingRows(rows) {
       if (unresolved.size >= 20) break;
     }
   }
-  if (!unresolved.size) return rows;
+  if (!unresolved.size) return { rows, persisted: 0 };
 
   const ids = [...unresolved.keys()];
   const resolved = new Map();
@@ -98,16 +135,26 @@ async function enrichMissingRows(rows) {
     for (const [id, value] of values) if (value) resolved.set(id, value);
   }
 
-  return rows.map((row) => {
-    const value = resolved.get(row.spotify_id);
-    if (!value) return row;
-    return {
-      ...row,
-      title: bestText(row.title, row.raw_title, row.display_title, value.title),
-      artist: bestText(row.artist, row.raw_artist, value.artist),
-      spotify_url: row.spotify_url || value.spotify_url || null,
-    };
-  });
+  let persisted = 0;
+  try {
+    persisted = await persistResolvedMetadata(env, resolved);
+  } catch (error) {
+    console.error('track metadata D1 upsert failed', error);
+  }
+
+  return {
+    persisted,
+    rows: rows.map((row) => {
+      const value = resolved.get(row.spotify_id);
+      if (!value) return row;
+      return {
+        ...row,
+        title: bestText(row.title, row.raw_title, row.display_title, value.title),
+        artist: bestText(row.artist, row.raw_artist, value.artist),
+        spotify_url: row.spotify_url || value.spotify_url || null,
+      };
+    }),
+  };
 }
 
 function mergeRows(rows) {
@@ -215,8 +262,8 @@ export async function onRequestGet({ request, env }) {
     ORDER BY p.played_at ASC
     LIMIT ?`).bind(fromTs - 604800000, toTs, fromTs, toTs, limit * 8 + 1).all();
 
-    const enriched = await enrichMissingRows(result.results || []);
-    const rows = mergeRows(enriched);
+    const enriched = await enrichMissingRows(result.results || [], env);
+    const rows = mergeRows(enriched.rows);
     const truncated = rows.length > limit;
     return out({
       ok: true,
@@ -226,7 +273,8 @@ export async function onRequestGet({ request, env }) {
       timezone: 'UTC',
       rows: truncated ? rows.slice(0, limit) : rows,
       truncated,
-      method: 'queue_timeline_window_sum_cached_spotify_metadata_merge',
+      metadata_persisted: enriched.persisted,
+      method: 'queue_timeline_window_sum_spotify_metadata_d1_upsert_merge',
     });
   } catch (error) {
     if (/no such table|no such column|malformed JSON/i.test(String(error?.message || ''))) {
