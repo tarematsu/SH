@@ -38,27 +38,19 @@
     </header>
 
     <section class="metrics" aria-label="現在の指標">
-      <article class="metric metric-main">
-        <span>オンライン</span>
-        <strong id="online">-</strong><small>人</small>
-      </article>
+      <article class="metric metric-main"><span>オンライン</span><strong id="online">-</strong><small>人</small></article>
       <article class="metric"><span>総メンバー</span><strong id="members">-</strong><small>人</small><div id="membersDelta" class="daily-delta" hidden></div></article>
       <article class="metric"><span>チャンネルの累計聴取回数</span><strong id="totalListens">-</strong><small>回</small><div id="listensDelta" class="daily-delta" hidden></div></article>
     </section>
 
     <section class="main-grid">
       <article class="panel now-playing">
-        <div class="section-head">
-          <div><p class="eyebrow">NOW PLAYING</p><h2>再生中</h2></div>
-        </div>
+        <div class="section-head"><div><p class="eyebrow">NOW PLAYING</p><h2>再生中</h2></div></div>
         <div id="nowPlaying" class="now-content empty">曲情報を取得中...</div>
       </article>
-
       <article class="panel queue-panel">
         <div class="section-head"><div><p class="eyebrow">UP NEXT</p><h2>今後の再生予定</h2></div><span id="queueCount" class="chip">-</span></div>
-        <div class="queue-slider-wrap">
-          <div id="queue" class="queue-list" tabindex="0" aria-label="今後の再生予定。スクロールして全曲を確認できます"></div>
-        </div>
+        <div class="queue-slider-wrap"><div id="queue" class="queue-list" tabindex="0" aria-label="今後の再生予定。スクロールして全曲を確認できます"></div></div>
         <p class="queue-hint">スクロールして全曲を確認</p>
       </article>
     </section>
@@ -71,11 +63,7 @@
           <div class="progress"><i id="goalBar"></i></div>
           <div class="goal-foot"><span id="goalPercent">-</span><span id="goalRemaining">-</span></div>
         </div>
-        <div class="prediction-card">
-          <small>予測到達日時</small>
-          <strong id="goalEta">計算中</strong>
-          <span id="goalRate">-</span>
-        </div>
+        <div class="prediction-card"><small>予測到達日時</small><strong id="goalEta">計算中</strong><span id="goalRate">-</span></div>
         <div class="host"><img id="hostImage" alt=""><div><small>配信ホスト</small><strong id="host">-</strong></div></div>
       </div>
     </section>
@@ -85,8 +73,8 @@
       <canvas id="chart" width="1200" height="360" aria-label="オンライン数と再生数の推移"></canvas>
       <div id="mainChartDetail" class="main-chart-detail" aria-live="polite">グラフをタッチまたはクリックすると、その時点の日時と数値を表示します。</div>
     </section>
-
   </main>
   <script src="/app.js" defer></script>
+  <script src="/dashboard-optimized.js" defer></script>
 </body>
 </html>
