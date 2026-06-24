@@ -205,7 +205,7 @@ export async function onRequestGet({ request, env }) {
 
   try {
     if (url.searchParams.get('latest') === '1') {
-      const latest = await env.DB.prepare(`SELECT strftime('%Y-%m-%d', MAX(start_time) / 1000, 'unixepoch') AS play_date
+      const latest = await env.DB.prepare(`SELECT strftime('%Y-%m-%d', MAX(observed_at) / 1000, 'unixepoch') AS play_date
         FROM sh_queue_items`).first();
       return out({ ok: true, latest_date: latest?.play_date || null, timezone: 'UTC' });
     }
@@ -221,6 +221,9 @@ export async function onRequestGet({ request, env }) {
 
     const result = await env.DB.prepare(`WITH timed AS (
       SELECT q.*,
+        MAX(q.observed_at) OVER (
+          PARTITION BY q.station_id, q.start_time
+        ) AS queue_last_observed_at,
         q.start_time + COALESCE(SUM(COALESCE(q.duration_ms, 0)) OVER (
           PARTITION BY q.station_id, q.start_time
           ORDER BY q.position
@@ -259,6 +262,7 @@ export async function onRequestGet({ request, env }) {
     FROM timed p
     LEFT JOIN sh_track_metadata m ON m.spotify_id = p.spotify_id
     WHERE p.played_at >= ? AND p.played_at < ?
+      AND p.played_at <= p.queue_last_observed_at + 300000
     ORDER BY p.played_at ASC
     LIMIT ?`).bind(fromTs - 604800000, toTs, fromTs, toTs, limit * 8 + 1).all();
 
@@ -274,7 +278,7 @@ export async function onRequestGet({ request, env }) {
       rows: truncated ? rows.slice(0, limit) : rows,
       truncated,
       metadata_persisted: enriched.persisted,
-      method: 'queue_timeline_window_sum_spotify_metadata_d1_upsert_merge',
+      method: 'queue_reached_tracks_only_spotify_metadata_d1_upsert_merge',
     });
   } catch (error) {
     if (/no such table|no such column|malformed JSON/i.test(String(error?.message || ''))) {
