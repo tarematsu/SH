@@ -66,7 +66,6 @@ worker/      Cloudflare Worker
 site/        Cloudflare Pages、Functions、フロントエンド
 database/    基本スキーマ、マイグレーション、初期データ
 gas/         Google Apps Script関連
-shared/      共通処理（段階的に移行）
 tests/       軽量単体テスト
 docs/        アーキテクチャ・運用資料
 ```
@@ -101,7 +100,7 @@ npx wrangler d1 execute stationhead-monitor --remote --file=..\database\migratio
 npx wrangler d1 execute stationhead-monitor --remote --file=..\database\migrations\007_host_session_safety.sql
 ```
 
-各ファイルは再実行できるように作られています。
+各ファイルは空のSQLiteへ2回適用するCIテストを通しています。
 
 ### 3. WorkerのSecret
 
@@ -229,6 +228,7 @@ GitHub Actionsとローカルで次を検査します。
 
 - 全JavaScript/MJSの構文
 - Collector ID・優先度・ハッシュの単体テスト
+- マイグレーションの2回適用とトリガー動作
 - Wrangler dry-runバンドル
 
 ```powershell
@@ -241,6 +241,7 @@ npx wrangler deploy --dry-run --outdir=dist-dry-run
 
 cd ..
 node --test tests\*.test.mjs
+python -m unittest tests\sql_migrations_test.py -v
 ```
 
 ## 本番切替確認
