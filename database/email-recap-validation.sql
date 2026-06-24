@@ -35,6 +35,27 @@ source_points AS (
   FROM sh_channel_snapshots
   WHERE current_stream_count IS NOT NULL
 ),
+nearest_ranked AS (
+  SELECT
+    e.week_of,
+    s.observed_at AS nearest_at,
+    s.stream_count AS nearest_count,
+    s.reference_source AS nearest_source,
+    ROW_NUMBER() OVER (
+      PARTITION BY e.week_of
+      ORDER BY ABS(s.observed_at-e.email_sent_at),
+               CASE s.reference_source WHEN 'live' THEN 0 ELSE 1 END,
+               s.observed_at DESC
+    ) AS nearest_rank
+  FROM email_values e
+  LEFT JOIN source_points s
+    ON s.observed_at BETWEEN e.email_sent_at-604800000 AND e.email_sent_at+604800000
+),
+nearest_values AS (
+  SELECT week_of,nearest_at,nearest_count,nearest_source
+  FROM nearest_ranked
+  WHERE nearest_rank=1
+),
 neighbor_values AS (
   SELECT
     e.*,
@@ -44,31 +65,17 @@ neighbor_values AS (
     (SELECT stream_count FROM source_points s
       WHERE s.observed_at<=e.email_sent_at
       ORDER BY s.observed_at DESC LIMIT 1) AS previous_count,
-    (SELECT reference_source FROM source_points s
-      WHERE s.observed_at<=e.email_sent_at
-      ORDER BY s.observed_at DESC LIMIT 1) AS previous_source,
     (SELECT observed_at FROM source_points s
       WHERE s.observed_at>=e.email_sent_at
       ORDER BY s.observed_at ASC LIMIT 1) AS next_at,
     (SELECT stream_count FROM source_points s
       WHERE s.observed_at>=e.email_sent_at
       ORDER BY s.observed_at ASC LIMIT 1) AS next_count,
-    (SELECT reference_source FROM source_points s
-      WHERE s.observed_at>=e.email_sent_at
-      ORDER BY s.observed_at ASC LIMIT 1) AS next_source,
-    (SELECT observed_at FROM source_points s
-      ORDER BY ABS(s.observed_at-e.email_sent_at),
-               CASE s.reference_source WHEN 'live' THEN 0 ELSE 1 END,
-               s.observed_at DESC LIMIT 1) AS nearest_at,
-    (SELECT stream_count FROM source_points s
-      ORDER BY ABS(s.observed_at-e.email_sent_at),
-               CASE s.reference_source WHEN 'live' THEN 0 ELSE 1 END,
-               s.observed_at DESC LIMIT 1) AS nearest_count,
-    (SELECT reference_source FROM source_points s
-      ORDER BY ABS(s.observed_at-e.email_sent_at),
-               CASE s.reference_source WHEN 'live' THEN 0 ELSE 1 END,
-               s.observed_at DESC LIMIT 1) AS nearest_source
+    n.nearest_at,
+    n.nearest_count,
+    n.nearest_source
   FROM email_values e
+  LEFT JOIN nearest_values n USING (week_of)
 ),
 estimated_values AS (
   SELECT
@@ -76,7 +83,7 @@ estimated_values AS (
     CASE
       WHEN previous_at IS NOT NULL AND next_at IS NOT NULL AND next_at>previous_at
         THEN CAST(ROUND(
-          previous_count +
+          previous_count+
           (next_count-previous_count)*1.0*(email_sent_at-previous_at)/(next_at-previous_at)
         ) AS INTEGER)
       ELSE nearest_count
