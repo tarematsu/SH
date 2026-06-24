@@ -37,11 +37,11 @@
     }finally{resolvingLatestTrackDate=false;}
   }
 
-  function selectedRankingScope(){return rankingScopeTabs.querySelector('button.active')?.dataset.scope||'featured';}
-  function syncRankingScope(scope){
-    rankingScopeTabs.querySelectorAll('button').forEach((button)=>button.classList.toggle('active',button.dataset.scope===scope));
-    $('#rankingScope').value=scope;
-    $('#host').value='';
+  function syncRankingScope(){
+    const select=$('#rankingScope');
+    if(select)select.value='featured';
+    const host=$('#host');
+    if(host)host.value='';
   }
 
   shouldShowRankingChart=()=>true;
@@ -54,11 +54,11 @@
     controls.hidden=broadcasts;
     setStandardControlsVisible(!(tracks||ranking||broadcasts));
     trackControls.hidden=!tracks;
-    rankingScopeTabs.hidden=!ranking;
+    if(rankingScopeTabs)rankingScopeTabs.hidden=true;
     loadButton.hidden=tracks||ranking||broadcasts;
     $('#rankingScopeWrap').hidden=true;
     $('#hostWrap').hidden=true;
-    if(ranking)syncRankingScope(selectedRankingScope());
+    if(ranking)syncRankingScope();
   };
 
   load=async function(options={}){
@@ -69,7 +69,7 @@
     }else if(currentMode==='ranking'){
       $('#from').value='2024-05-01';
       $('#to').value=todayUtc();
-      syncRankingScope(selectedRankingScope());
+      syncRankingScope();
     }else if(currentMode==='broadcasts'){
       $('#from').value='2024-05-01';
       $('#to').value=todayUtc();
@@ -79,9 +79,4 @@
 
   trackDate.addEventListener('change',()=>{nextCursor=null;load();});
   trackWeekMode.addEventListener('change',()=>{nextCursor=null;load();});
-  rankingScopeTabs.querySelectorAll('button').forEach((button)=>button.addEventListener('click',()=>{
-    syncRankingScope(button.dataset.scope);
-    nextCursor=null;
-    load();
-  }));
 })();
