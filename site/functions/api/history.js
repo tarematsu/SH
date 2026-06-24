@@ -66,7 +66,6 @@ function finiteNumber(value) {
   return Number.isFinite(number) ? number : null;
 }
 
-
 function periodKeyFor(ts, mode) {
   const date = new Date(ts + 9 * 3600000);
   const year = date.getUTCFullYear();
@@ -200,9 +199,7 @@ function sortRankingRows(rows, hostOrder = []) {
     if (aOrder != null || bOrder != null) return (aOrder ?? 9999) - (bOrder ?? 9999);
     const aRank = finiteNumber(a.rank);
     const bRank = finiteNumber(b.rank);
-    if (aRank != null || bRank != null) {
-      return (aRank ?? 9999) - (bRank ?? 9999);
-    }
+    if (aRank != null || bRank != null) return (aRank ?? 9999) - (bRank ?? 9999);
     return String(a.host_name).localeCompare(String(b.host_name));
   });
 }
@@ -214,7 +211,6 @@ function addRankChanges(rows) {
     if (!groups.has(key)) groups.set(key, []);
     groups.get(key).push(row);
   }
-
   for (const hostRows of groups.values()) {
     hostRows.sort((a, b) => String(a.ranking_date).localeCompare(String(b.ranking_date)));
     let previous = null;
@@ -224,9 +220,7 @@ function addRankChanges(rows) {
       row.is_out_of_rank = currentRank == null;
       row.previous_rank = previousRank;
       row.previous_out_of_rank = Boolean(previous && previousRank == null);
-      row.rank_change = previousRank != null && currentRank != null
-        ? previousRank - currentRank
-        : null;
+      row.rank_change = previousRank != null && currentRank != null ? previousRank - currentRank : null;
       previous = row;
     }
   }
@@ -240,41 +234,32 @@ function expandWeeklyDates(values) {
   const last = Date.parse(`${sorted.at(-1)}T00:00:00Z`);
   if (!Number.isFinite(first) || !Number.isFinite(last)) return sorted;
   const expanded = new Set(sorted);
-  for (let ts = first; ts <= last; ts += 7 * 86400000) {
-    expanded.add(new Date(ts).toISOString().slice(0, 10));
-  }
+  for (let ts = first; ts <= last; ts += 7 * 86400000) expanded.add(new Date(ts).toISOString().slice(0, 10));
   return [...expanded].sort();
 }
 
 function completeRankingTimeline(actualRows, rankingWeeks, hosts) {
   if (!hosts.length || !rankingWeeks.length) return actualRows;
-
   const byWeekHost = new Map();
-  for (const row of actualRows) {
-    byWeekHost.set(`${row.ranking_date}\u0000${hostKey(row.host_name)}`, row);
-  }
-
+  for (const row of actualRows) byWeekHost.set(`${row.ranking_date}\u0000${hostKey(row.host_name)}`, row);
   const completed = [];
   for (const week of rankingWeeks) {
     for (const host of hosts) {
       const existing = byWeekHost.get(`${week}\u0000${hostKey(host)}`);
-      if (existing) {
-        completed.push(existing);
-      } else {
-        completed.push({
-          ranking_date: week,
-          observed_at: Date.parse(`${week}T00:00:00+09:00`),
-          ranking_type: '週間リーダーボード',
-          rank: null,
-          host_name: host,
-          host_alias: host,
-          source_sheet: null,
-          quality_score: null,
-          quality_flags: 'not_listed',
-          is_out_of_rank: true,
-          synthetic: true,
-        });
-      }
+      if (existing) completed.push(existing);
+      else completed.push({
+        ranking_date: week,
+        observed_at: Date.parse(`${week}T00:00:00+09:00`),
+        ranking_type: '週間リーダーボード',
+        rank: null,
+        host_name: host,
+        host_alias: host,
+        source_sheet: null,
+        quality_score: null,
+        quality_flags: 'not_listed',
+        is_out_of_rank: true,
+        synthetic: true,
+      });
     }
   }
   return completed;
@@ -286,7 +271,6 @@ async function loadRanking(requestUrl, env) {
   const hostSearch = safeText(requestUrl.searchParams.get('host'));
   const scope = requestUrl.searchParams.get('scope') === 'all' ? 'all' : 'featured';
   const limit = Math.min(Math.max(Number(requestUrl.searchParams.get('limit')) || 5000, 20), 10000);
-
   let sql = `SELECT
 r.ranking_date,r.observed_at,r.ranking_type,r.rank,
 r.channel_name AS host_name,r.channel_alias AS host_alias,
@@ -294,7 +278,6 @@ r.source_sheet,r.quality_score,r.quality_flags
 FROM sh_channel_rankings r
 WHERE r.ranking_date>=? AND r.ranking_date<=?`;
   const binds = [from, to];
-
   if (hostSearch) {
     sql += ' AND (r.channel_name LIKE ? OR r.channel_alias LIKE ?)';
     binds.push(`%${hostSearch}%`, `%${hostSearch}%`);
@@ -302,10 +285,8 @@ WHERE r.ranking_date>=? AND r.ranking_date<=?`;
     sql += ' AND lower(r.channel_name) IN (?,?)';
     binds.push(...FEATURED_HOSTS);
   }
-
   sql += ' ORDER BY r.ranking_date ASC, r.rank ASC LIMIT ?';
   binds.push(limit);
-
   try {
     const [rankingResult, weeklyResult, weeksResult] = await Promise.all([
       env.DB.prepare(sql).bind(...binds).all(),
@@ -315,28 +296,18 @@ FROM sh_channel_rankings
 WHERE ranking_date>=? AND ranking_date<=?
 ORDER BY ranking_date ASC`).bind(from, to).all(),
     ]);
-
     const actualRows = rankingResult.results || [];
     const weeklyMetrics = (weeklyResult.rows || []).map((row) => ({ ...row, ranking_date: row.period_key }));
-    const rankingWeeks = expandWeeklyDates((weeksResult.results || [])
-      .map((row) => row.ranking_date)
-      .filter(validDate));
-
-    let selectedHosts;
-    if (!hostSearch && scope === 'featured') {
-      selectedHosts = FEATURED_HOSTS;
-    } else {
-      selectedHosts = [...new Set(actualRows.map((row) => row.host_name).filter(Boolean))]
-        .sort((a, b) => String(a).localeCompare(String(b)));
-    }
-
-    const shouldComplete = scope === 'featured' || Boolean(hostSearch) || selectedHosts.length <= 10;
-    const timelineRows = shouldComplete
-      ? completeRankingTimeline(actualRows, rankingWeeks, selectedHosts)
-      : actualRows;
-    const rows = sortRankingRows(addRankChanges(timelineRows), selectedHosts);
-    const types = [...new Set(actualRows.map((row) => row.ranking_type).filter(Boolean))].sort();
-
+    const rankingWeeks = expandWeeklyDates((weeksResult.results || []).map((row) => row.ranking_date));
+    const hostOrder = scope === 'featured' && !hostSearch ? FEATURED_HOSTS : [];
+    const hosts = hostSearch
+      ? [...new Set(actualRows.map((row) => row.host_name).filter(Boolean))]
+      : scope === 'featured'
+        ? FEATURED_HOSTS
+        : [...new Set(actualRows.map((row) => row.host_name).filter(Boolean))];
+    const completedRows = completeRankingTimeline(actualRows, rankingWeeks, hosts);
+    addRankChanges(completedRows);
+    sortRankingRows(completedRows, hostOrder);
     return json({
       ok: true,
       mode: 'ranking',
@@ -344,16 +315,17 @@ ORDER BY ranking_date ASC`).bind(from, to).all(),
       to,
       scope,
       featured_hosts: FEATURED_HOSTS,
-      rows,
+      rows: completedRows,
       weekly_metrics: weeklyMetrics,
       ranking_weeks: rankingWeeks,
-      ranking_types: types,
-      host_count: selectedHosts.length,
+      ranking_types: [...new Set(actualRows.map((row) => row.ranking_type).filter(Boolean))],
+      host_count: hosts.length,
       truncated: actualRows.length >= limit,
-      weekly_metrics_source: 'Buddies channel history',
-    }, 200, { 'cache-control': 'public, max-age=300, s-maxage=900' });
+      live_overlay_count: weeklyResult.live_overlay_count,
+      latest_live_observed_at: weeklyResult.latest_live_observed_at,
+    });
   } catch (error) {
-    if (/no such table/i.test(error?.message || '')) {
+    if (/no such table|no such column/i.test(String(error?.message || ''))) {
       return json({
         ok: true,
         mode: 'ranking',
@@ -375,74 +347,88 @@ ORDER BY ranking_date ASC`).bind(from, to).all(),
 
 export async function onRequestGet({ request, env }) {
   if (!env.DB) return json({ ok: false, error: 'DB binding missing' }, 500);
-
   try {
     const url = new URL(request.url);
     const mode = url.searchParams.get('mode') || 'weekly';
     const from = url.searchParams.get('from') || '2024-06-01';
     const to = url.searchParams.get('to') || todayJstString();
-
     if (mode === 'ranking') return loadRanking(url, env);
-
     if (mode === 'broadcasts') {
       const fromTs = parseDateStart(from, '2024-06-01');
       const toTs = addDays(parseDateStart(to, todayJstString()), 1);
-      const result = await env.DB.prepare(`SELECT
-        source_note AS event_name,
-        MIN(observed_at) AS started_at,
-        MAX(observed_at) AS ended_at,
-        MIN(observed_jst) AS started_jst,
-        MAX(observed_jst) AS ended_jst,
-        COUNT(*) AS sample_count,
-        ROUND(AVG(listener_count), 1) AS listener_avg,
-        MAX(listener_count) AS listener_max,
-        MAX(likes) AS likes_max,
-        COUNT(DISTINCT CASE WHEN track_title IS NOT NULL AND track_title<>'' THEN track_title END) AS distinct_tracks,
-        host_handle
-      FROM sh_legacy_snapshots
-      WHERE observed_at>=? AND observed_at<? AND host_handle='sakurazaka46jp' AND source_note IS NOT NULL
-      GROUP BY source_note,host_handle
-      ORDER BY started_at ASC`).bind(fromTs, toTs).all();
-      return json({ ok: true, mode, from, to, rows: result.results || [] }, 200, {
-        'cache-control': 'public, max-age=300, s-maxage=900',
+      const [result, diagnostic] = await Promise.all([
+        env.DB.prepare(`SELECT
+          source_note AS event_name,
+          MIN(observed_at) AS started_at,
+          MAX(observed_at) AS ended_at,
+          MIN(observed_jst) AS started_jst,
+          MAX(observed_jst) AS ended_jst,
+          COUNT(*) AS sample_count,
+          ROUND(AVG(listener_count), 1) AS listener_avg,
+          MAX(listener_count) AS listener_max,
+          MAX(likes) AS likes_max,
+          COUNT(DISTINCT CASE WHEN track_title IS NOT NULL AND track_title<>'' THEN track_title END) AS distinct_tracks,
+          host_handle
+        FROM sh_legacy_snapshots
+        WHERE observed_at>=? AND observed_at<? AND host_handle='sakurazaka46jp' AND source_note IS NOT NULL
+        GROUP BY source_note,host_handle
+        ORDER BY started_at ASC`).bind(fromTs, toTs).all(),
+        env.DB.prepare(`SELECT
+          COUNT(*) AS imported_rows,
+          COUNT(DISTINCT source_note) AS imported_events,
+          MIN(observed_jst) AS first_observed_jst,
+          MAX(observed_jst) AS last_observed_jst
+        FROM sh_legacy_snapshots
+        WHERE host_handle='sakurazaka46jp' AND source_note IS NOT NULL`).first(),
+      ]);
+      const rows = result.results || [];
+      const importedRows = Number(diagnostic?.imported_rows || 0);
+      return json({
+        ok: true,
+        mode,
+        from,
+        to,
+        rows,
+        setup_required: importedRows === 0,
+        diagnostic: {
+          imported_rows: importedRows,
+          imported_events: Number(diagnostic?.imported_events || 0),
+          first_observed_jst: diagnostic?.first_observed_jst || null,
+          last_observed_jst: diagnostic?.last_observed_jst || null,
+        },
+      }, 200, {
+        'cache-control': 'public, max-age=30, s-maxage=60',
       });
     }
-
     if (mode === 'raw') {
       const fromTs = parseDateStart(from, '2024-06-01');
       const requestedToTs = addDays(parseDateStart(to, todayJstString()), 1);
       const toTs = Math.min(requestedToTs, addDays(fromTs, 31));
       const limit = Math.min(Math.max(Number(url.searchParams.get('limit')) || 200, 20), 500);
       const cursor = decodeCursor(url.searchParams.get('cursor'));
-
       let sql = `SELECT id,observed_at,observed_jst,listener_count,total_stream_count,
 track_title,artist_name,likes,comment_velocity,host_handle,total_member_count,
 source_note,quality_score,quality_flags
 FROM sh_legacy_snapshots
 WHERE observed_at>=? AND observed_at<?`;
       const binds = [fromTs, toTs];
-
       if (cursor) {
         sql += ' AND (observed_at>? OR (observed_at=? AND id>?))';
         binds.push(cursor.ts, cursor.ts, cursor.id);
       }
-
       sql += ' ORDER BY observed_at ASC,id ASC LIMIT ?';
       binds.push(limit + 1);
-
       const result = await env.DB.prepare(sql).bind(...binds).all();
       const allRows = result.results || [];
       const hasMore = allRows.length > limit;
       const rows = hasMore ? allRows.slice(0, limit) : allRows;
       const nextCursor = hasMore ? encodeCursor(rows.at(-1)) : null;
-
       return json(
         { ok: true, mode, from, to, rows, has_more: hasMore, next_cursor: nextCursor },
         200,
         { 'cache-control': 'private, max-age=60' },
       );
     }
-
     const summary = await loadSummaryWithLive(env, mode, from, to);
     return json({ ok: true, mode, from, to, ...summary }, 200, {
       'cache-control': 'public, max-age=30, s-maxage=60, stale-while-revalidate=120',
