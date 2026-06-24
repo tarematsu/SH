@@ -19,6 +19,7 @@ if (!['auto', 'active', 'standby'].includes(mode)) {
 
 let child = null;
 let stopping = false;
+let checking = false;
 let unreachableSince = 0;
 let lastCloudHealthy = null;
 
@@ -91,6 +92,8 @@ async function cloudLease() {
 }
 
 async function evaluateAutoMode() {
+  if (checking || stopping) return;
+  checking = true;
   try {
     const lease = await cloudLease();
     unreachableSince = 0;
@@ -110,6 +113,8 @@ async function evaluateAutoMode() {
     const elapsed = Date.now() - unreachableSince;
     log('warn', 'cloud coordination unavailable', { error: error.message, elapsed_ms: elapsed });
     if (elapsed >= graceMs) startCollector('coordination unavailable past grace');
+  } finally {
+    checking = false;
   }
 }
 
@@ -129,7 +134,6 @@ async function run() {
     if (mode === 'auto') evaluateAutoMode().catch((error) => log('error', 'auto evaluation failed', { error: error.message }));
     if (mode === 'active' && !child) startCollector('active mode child restart');
   }, checkIntervalMs);
-  timer.unref?.();
 
   const shutdown = async (signal) => {
     if (stopping) return;
@@ -141,8 +145,6 @@ async function run() {
   };
   process.on('SIGINT', () => shutdown('SIGINT'));
   process.on('SIGTERM', () => shutdown('SIGTERM'));
-
-  await new Promise(() => {});
 }
 
 run().catch((error) => {
