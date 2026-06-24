@@ -40,7 +40,7 @@
     </header>
 
     <section class="metrics" aria-label="現在の指標">
-      <article class="metric metric-main"><span>オンライン</span><strong id="online">-</strong><small>人</small></article>
+      <article class="metric metric-main"><span>オンライン</span><strong id="online">-</strong><small>人</small><div id="onlineRange24h" class="daily-delta neutral" hidden></div></article>
       <article class="metric"><span>総メンバー</span><strong id="members">-</strong><small>人</small><div id="membersDelta" class="daily-delta" hidden></div></article>
       <article class="metric"><span>累計Listen</span><strong id="totalListens">-</strong><small>回</small><div id="listensDelta" class="daily-delta" hidden></div></article>
     </section>
@@ -78,6 +78,7 @@
   </main>
   <script src="/app.js" defer></script>
   <script src="/dashboard-optimized.js" defer></script>
+  <script src="/dashboard-online-range.js" defer></script>
   <script src="/comment-velocity-chart.js" defer></script>
   <script src="/eta-daypart.js" defer></script>
 </body>
