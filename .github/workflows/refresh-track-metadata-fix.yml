@@ -1,0 +1,72 @@
+name: refresh track metadata fix
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Patch collector metadata logic
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p = Path('collector/collector.mjs')
+          s = p.read_text(encoding='utf-8')
+
+          s = s.replace("""        apple_music_id: track?.apple_music_id ?? null,
+        deezer_id: track?.deezer_id ?? null,""", """        apple_music_id: track?.apple_music_id ?? null,
+        title: track?.title ?? track?.name ?? null,
+        artist: track?.artist_name ?? track?.artist ?? track?.artists?.[0]?.name ?? null,
+        deezer_id: track?.deezer_id ?? null,""")
+
+          s = s.replace("""  const resolvedArtist = apple?.artist || spotifyArtist || parsed.artist || null;
+  const resolvedTitle = apple?.title || parsed.title;""", """  const stationheadTitle = String(track?.title || '').trim() || null;
+  const stationheadArtist = String(track?.artist || '').trim() || null;
+  const resolvedArtist = stationheadArtist || apple?.artist || spotifyArtist || parsed.artist || null;
+  const resolvedTitle = stationheadTitle || apple?.title || parsed.title;""")
+
+          s = s.replace("""  const incomplete = (value) => {
+    if (!value) return true;
+    const artist = String(value.artist || '').trim();
+    return !value.title || !artist || /^JP[A-Z0-9]{8,}$/i.test(artist);
+  };
+  const missing = sourceTracks.filter((track) => incomplete(stored.get(track.spotify_id)));""", """  const looksLikeId = (value) => {
+    const text = String(value || '').trim();
+    return /^[0-9A-Za-z]{15,}$/.test(text) || /^JP[A-Z0-9]{8,}$/i.test(text);
+  };
+  const incomplete = (value, track) => {
+    if (!value) return true;
+    const title = String(value.title || '').trim();
+    const artist = String(value.artist || '').trim();
+    if (!title || !artist || looksLikeId(title) || looksLikeId(artist)) return true;
+    if (track?.apple_music_id && !String(value.source || '').includes('apple')) return true;
+    return false;
+  };
+  const missing = sourceTracks.filter((track) => incomplete(stored.get(track.spotify_id), track));""")
+
+          p.write_text(s, encoding='utf-8')
+          PY
+      - name: Validate and commit
+        run: |
+          node --check collector/collector.mjs
+          node --check site/functions/api/track-history.js
+          git diff --check
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git rm .github/workflows/refresh-track-metadata-fix.yml
+          git add collector/collector.mjs site/functions/api/track-history.js
+          git commit -m "Merge duplicate tracks and refresh metadata"
+          git push
