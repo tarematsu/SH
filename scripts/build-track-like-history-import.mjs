@@ -1,0 +1,60 @@
+import { writeFile } from 'node:fs/promises';
+
+const sheets = [
+  { id: '1EYilWL98NNrpJQTlb8aaZlIYWRBGsGNIpAT0RRbaND4', gid: '523702886' },
+  { id: '1Rq66ENqbBd7h7YNa8whpqiG7N4BtGZmAHx8cnKdzDUs', gid: '1648190515' },
+];
+
+function parseCsv(text) {
+  const rows=[]; let row=[]; let cell=''; let quoted=false;
+  for(let i=0;i<text.length;i++){
+    const c=text[i];
+    if(quoted){
+      if(c==='"'&&text[i+1]==='"'){cell+='"';i++;}
+      else if(c==='"')quoted=false;
+      else cell+=c;
+    }else if(c==='"')quoted=true;
+    else if(c===','){row.push(cell);cell='';}
+    else if(c==='\n'){row.push(cell.replace(/\r$/,''));rows.push(row);row=[];cell='';}
+    else cell+=c;
+  }
+  if(cell||row.length){row.push(cell);rows.push(row);}
+  return rows;
+}
+
+const norm=v=>String(v??'').normalize('NFKC').trim();
+const number=v=>{const n=Number(norm(v).replace(/,/g,''));return Number.isFinite(n)?n:null;};
+function jstMillis(value){
+  const s=norm(value).replace(/\//g,'-');
+  const m=s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})(?:\s+(\d{1,2}):(\d{2})(?::(\d{2}))?)?$/);
+  if(!m)return null;
+  return Date.UTC(+m[1],+m[2]-1,+m[3],+(m[4]||0)-9,+(m[5]||0),+(m[6]||0));
+}
+const quote=v=>`'${String(v??'').replace(/'/g,"''")}'`;
+const records=[];
+
+for(const sheet of sheets){
+  const url=`https://docs.google.com/spreadsheets/d/${sheet.id}/export?format=csv&gid=${sheet.gid}`;
+  const response=await fetch(url);
+  if(!response.ok)throw new Error(`download failed ${response.status}: ${sheet.id}`);
+  const rows=parseCsv(await response.text());
+  const headerIndex=rows.findIndex(r=>r.some(c=>/取得日時|日時/.test(norm(c)))&&r.some(c=>/曲名/.test(norm(c)))&&r.some(c=>/いいね|bite/i.test(norm(c))));
+  if(headerIndex<0)throw new Error(`header not found: ${sheet.id}`);
+  const headers=rows[headerIndex].map(norm);
+  const find=re=>headers.findIndex(h=>re.test(h));
+  const dateCol=find(/取得日時|日時/),titleCol=find(/^曲名$/),artistCol=find(/歌手名|アーティスト/),likeCol=find(/いいね|bite/i);
+  for(let i=headerIndex+1;i<rows.length;i++){
+    const r=rows[i];
+    const observedAt=jstMillis(r[dateCol]);
+    const title=norm(r[titleCol]);
+    const artist=artistCol>=0?norm(r[artistCol]):'';
+    const likeCount=number(r[likeCol]);
+    if(observedAt==null||!title||likeCount==null)continue;
+    records.push({observedAt,title,artist:artist||null,likeCount,sheetId:sheet.id,gid:sheet.gid,row:i+1,raw:r});
+  }
+}
+
+records.sort((a,b)=>a.observedAt-b.observedAt||a.title.localeCompare(b.title,'ja'));
+const statements=records.map(r=>`INSERT INTO sh_track_like_history (observed_at,track_title,artist,like_count,source_sheet_id,source_gid,source_row,raw_json) VALUES (${r.observedAt},${quote(r.title)},${r.artist?quote(r.artist):'NULL'},${r.likeCount},${quote(r.sheetId)},${quote(r.gid)},${r.row},${quote(JSON.stringify(r.raw))}) ON CONFLICT(source_sheet_id,source_gid,source_row) DO UPDATE SET observed_at=excluded.observed_at,track_title=excluded.track_title,artist=excluded.artist,like_count=excluded.like_count,raw_json=excluded.raw_json;`);
+await writeFile('database/track-like-history-import.generated.sql',['BEGIN;',...statements,'COMMIT;'].join('\n'),'utf8');
+console.log(`Generated ${records.length} rows.`);
