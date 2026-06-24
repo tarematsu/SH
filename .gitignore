@@ -10,3 +10,5 @@ state/
 *.log
 .DS_Store
 Thumbs.db
+.stationhead-session.json
+.weekly-leaderboard-state.json
