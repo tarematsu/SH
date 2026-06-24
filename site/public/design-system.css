@@ -1,0 +1,100 @@
+:root{
+  --page-max:1240px;
+  --page-pad:14px;
+  --panel-radius:18px;
+  --panel-border:1px solid rgba(255,255,255,.09);
+  --panel-shadow:0 12px 36px rgba(0,0,0,.2);
+  --space-1:4px;
+  --space-2:8px;
+  --space-3:12px;
+  --space-4:16px;
+  --space-5:20px;
+  --font-xs:.68rem;
+  --font-sm:.75rem;
+  --font-md:.84rem;
+  --font-lg:1.15rem;
+  --font-xl:clamp(1.65rem,4vw,2.35rem);
+}
+
+html{font-size:16px}
+body{line-height:1.45;-webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}
+button,input,select{font:inherit}
+
+.container,.wrap{
+  width:100%;
+  max-width:var(--page-max);
+  margin:0 auto;
+  padding:var(--page-pad);
+}
+
+.panel,.metric,.hero,.controls,.cards article,.notice,.guide,.mode-tabs{
+  border-radius:var(--panel-radius);
+  border:var(--panel-border);
+  box-shadow:var(--panel-shadow);
+}
+
+.hero{
+  min-height:102px;
+  padding:var(--space-4) 18px;
+  align-items:center;
+}
+
+h1{font-size:var(--font-xl);line-height:1.05}
+h2{font-size:var(--font-lg);line-height:1.2}
+h3{line-height:1.25}
+.eyebrow,.section-kicker{
+  font-size:var(--font-xs);
+  letter-spacing:.18em;
+  font-weight:800;
+  line-height:1.2;
+}
+
+.action,.back,.primary,.secondary,.mode-tabs button,.range-presets button{
+  min-height:34px;
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  border-radius:999px;
+  padding:7px 11px;
+  font-size:var(--font-sm);
+  line-height:1;
+  white-space:nowrap;
+}
+
+.section-head,.head{
+  display:flex;
+  justify-content:space-between;
+  align-items:center;
+  gap:var(--space-3);
+  margin-bottom:var(--space-3);
+}
+
+.metric,.cards article{padding:14px 16px}
+.metric>span,.cards span,.controls label,.small,.muted,.panel-note,.chart-foot,.queue-hint{
+  font-size:var(--font-sm);
+}
+.metric strong,.cards strong{font-variant-numeric:tabular-nums}
+
+input,select{
+  min-height:38px;
+  border-radius:9px;
+  padding:8px 10px;
+}
+
+table{font-size:var(--font-sm)}
+th,td{padding:9px 10px}
+
+@media(max-width:760px){
+  :root{--page-pad:8px}
+  .hero{min-height:84px;padding:12px}
+  .section-head,.head{gap:8px}
+  .metric,.cards article{padding:11px 10px}
+}
+
+@media(max-width:420px){
+  html{font-size:15px}
+  .action,.back,.primary,.secondary,.mode-tabs button,.range-presets button{
+    min-height:32px;
+    padding:7px 9px;
+  }
+}
