@@ -8,7 +8,7 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const mode = String(process.env.COLLECTOR_MODE || 'auto').trim().toLowerCase();
 const coordinationUrl = process.env.COORDINATION_URL
   || 'https://stationhead-monitor-collector.tarematsu.workers.dev/coordination/lease';
-const checkIntervalMs = positive('FAILOVER_CHECK_INTERVAL_MS', 30000);
+const checkIntervalMs = positive('FAILOVER_CHECK_INTERVAL_MS', 60000);
 const graceMs = positive('FAILOVER_GRACE_MS', 180000);
 const shutdownTimeoutMs = positive('FAILOVER_SHUTDOWN_TIMEOUT_MS', 15000);
 const baseCollectorId = process.env.COLLECTOR_ID || os.hostname();
@@ -22,6 +22,7 @@ let stopping = false;
 let checking = false;
 let unreachableSince = 0;
 let lastCloudHealthy = null;
+let lastWarningAt = 0;
 
 function positive(name, fallback) {
   const value = Number(process.env[name] ?? fallback);
@@ -97,6 +98,7 @@ async function evaluateAutoMode() {
   try {
     const lease = await cloudLease();
     unreachableSince = 0;
+    lastWarningAt = 0;
     const healthy = Boolean(lease.healthy && Number(lease.lease_until || 0) > Date.now());
     if (healthy !== lastCloudHealthy) {
       log('info', 'cloud lease state changed', {
@@ -109,9 +111,13 @@ async function evaluateAutoMode() {
     if (healthy) await stopCollector('cloud lease healthy');
     else startCollector('cloud lease expired');
   } catch (error) {
-    if (!unreachableSince) unreachableSince = Date.now();
-    const elapsed = Date.now() - unreachableSince;
-    log('warn', 'cloud coordination unavailable', { error: error.message, elapsed_ms: elapsed });
+    const now = Date.now();
+    if (!unreachableSince) unreachableSince = now;
+    const elapsed = now - unreachableSince;
+    if (!lastWarningAt || now - lastWarningAt >= 300000) {
+      lastWarningAt = now;
+      log('warn', 'cloud coordination unavailable', { error: error.message, elapsed_ms: elapsed });
+    }
     if (elapsed >= graceMs) startCollector('coordination unavailable past grace');
   } finally {
     checking = false;
