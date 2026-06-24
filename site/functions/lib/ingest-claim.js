@@ -8,11 +8,27 @@ export function hourBucket(value) {
   return Math.floor(Number(value) / 3600000) * 3600000;
 }
 
+function inferCollectorKind(collectorId) {
+  const value = String(collectorId || '').toLowerCase();
+  if (/cloudflare|worker/.test(value)) return 'cloud';
+  if (value && value !== 'unknown') return 'local';
+  return 'unknown';
+}
+
+function defaultPriority(kind) {
+  if (kind === 'cloud') return 100;
+  if (kind === 'local') return 70;
+  return 50;
+}
+
 export function sourceIdentity(body, defaults = {}) {
   const collectorId = String(body?.collector_id || defaults.collectorId || 'unknown').trim().slice(0, 200) || 'unknown';
-  const collectorKind = String(body?.collector_kind || defaults.collectorKind || 'unknown').trim().slice(0, 50) || 'unknown';
-  const parsedPriority = Number(body?.source_priority ?? defaults.sourcePriority ?? 50);
-  const sourcePriority = Number.isFinite(parsedPriority) ? Math.max(0, Math.min(1000, Math.trunc(parsedPriority))) : 50;
+  const inferredKind = inferCollectorKind(collectorId);
+  const collectorKind = String(body?.collector_kind || defaults.collectorKind || inferredKind).trim().slice(0, 50) || inferredKind;
+  const parsedPriority = Number(body?.source_priority ?? defaults.sourcePriority ?? defaultPriority(collectorKind));
+  const sourcePriority = Number.isFinite(parsedPriority)
+    ? Math.max(0, Math.min(1000, Math.trunc(parsedPriority)))
+    : defaultPriority(collectorKind);
   return { collectorId, collectorKind, sourcePriority };
 }
 
@@ -56,7 +72,7 @@ export async function claimWrite(db, options) {
     dataType: String(options.dataType || 'unknown').slice(0, 100),
     collectorId: String(options.collectorId || 'unknown').slice(0, 200),
     collectorKind: String(options.collectorKind || 'unknown').slice(0, 50),
-    sourcePriority: Number(options.sourcePriority || 0),
+    sourcePriority: Number(options.sourcePriority ?? 0),
     observedAt: Number(options.observedAt || Date.now()),
     hash: options.hash || await payloadHash(options.payload),
   };
