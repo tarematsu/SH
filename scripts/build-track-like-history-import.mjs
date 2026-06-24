@@ -1,9 +1,11 @@
-import { writeFile } from 'node:fs/promises';
+import { mkdir, rm, writeFile } from 'node:fs/promises';
 
 const sheets = [
   { id: '1EYilWL98NNrpJQTlb8aaZlIYWRBGsGNIpAT0RRbaND4', gid: '523702886' },
   { id: '1Rq66ENqbBd7h7YNa8whpqiG7N4BtGZmAHx8cnKdzDUs', gid: '1648190515' },
 ];
+const CHUNK_SIZE = 2000;
+const OUTPUT_DIR = 'database/track-like-history-import';
 
 function parseCsv(text) {
   const rows=[]; let row=[]; let cell=''; let quoted=false;
@@ -56,5 +58,15 @@ for(const sheet of sheets){
 
 records.sort((a,b)=>a.observedAt-b.observedAt||a.title.localeCompare(b.title,'ja'));
 const statements=records.map(r=>`INSERT INTO sh_track_like_history (observed_at,track_title,artist,like_count,source_sheet_id,source_gid,source_row,raw_json) VALUES (${r.observedAt},${quote(r.title)},${r.artist?quote(r.artist):'NULL'},${r.likeCount},${quote(r.sheetId)},${quote(r.gid)},${r.row},${quote(JSON.stringify(r.raw))}) ON CONFLICT(source_sheet_id,source_gid,source_row) DO UPDATE SET observed_at=excluded.observed_at,track_title=excluded.track_title,artist=excluded.artist,like_count=excluded.like_count,raw_json=excluded.raw_json;`);
-await writeFile('database/track-like-history-import.generated.sql',['BEGIN;',...statements,'COMMIT;'].join('\n'),'utf8');
-console.log(`Generated ${records.length} rows.`);
+
+await rm(OUTPUT_DIR,{recursive:true,force:true});
+await mkdir(OUTPUT_DIR,{recursive:true});
+const files=[];
+for(let offset=0;offset<statements.length;offset+=CHUNK_SIZE){
+  const index=files.length+1;
+  const name=`part-${String(index).padStart(4,'0')}.sql`;
+  await writeFile(`${OUTPUT_DIR}/${name}`,statements.slice(offset,offset+CHUNK_SIZE).join('\n'),'utf8');
+  files.push(name);
+}
+await writeFile(`${OUTPUT_DIR}/manifest.json`,JSON.stringify({rows:records.length,chunk_size:CHUNK_SIZE,files},null,2),'utf8');
+console.log(`Generated ${records.length} rows in ${files.length} D1-safe files.`);
