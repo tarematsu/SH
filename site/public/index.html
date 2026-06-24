@@ -10,6 +10,7 @@
   <link rel="stylesheet" href="/style.css">
   <link rel="stylesheet" href="/dashboard-interactive.css">
   <link rel="stylesheet" href="/design-system.css">
+  <link rel="stylesheet" href="/comment-velocity-chart.css">
 </head>
 <body>
   <div class="backdrop"></div>
@@ -41,7 +42,7 @@
     <section class="metrics" aria-label="現在の指標">
       <article class="metric metric-main"><span>オンライン</span><strong id="online">-</strong><small>人</small></article>
       <article class="metric"><span>総メンバー</span><strong id="members">-</strong><small>人</small><div id="membersDelta" class="daily-delta" hidden></div></article>
-      <article class="metric"><span>チャンネルの累計聴取回数</span><strong id="totalListens">-</strong><small>回</small><div id="listensDelta" class="daily-delta" hidden></div></article>
+      <article class="metric"><span>累計Listen</span><strong id="totalListens">-</strong><small>回</small><div id="listensDelta" class="daily-delta" hidden></div></article>
     </section>
 
     <section class="main-grid">
@@ -70,13 +71,14 @@
     </section>
 
     <section class="panel chart-panel">
-      <div class="section-head"><div><p class="eyebrow">LAST 24 HOURS</p><h2>オンライン・再生数推移</h2></div><div class="legend"><span>● オンライン</span><span>● 再生数</span></div></div>
-      <canvas id="chart" width="1200" height="360" aria-label="オンライン数と再生数の推移"></canvas>
+      <div class="section-head"><div><p class="eyebrow">LAST 24 HOURS</p><h2>オンライン・再生数推移</h2></div><div class="legend"><span class="legend-online">● オンライン</span><span class="legend-plays">● 再生数</span><span class="legend-comments">▮ コメント勢い</span></div></div>
+      <canvas id="chart" width="1200" height="360" aria-label="オンライン数、再生数、コメント勢いの推移"></canvas>
       <div id="mainChartDetail" class="main-chart-detail" aria-live="polite">グラフをタッチまたはクリックすると、その時点の日時と数値を表示します。</div>
     </section>
   </main>
   <script src="/app.js" defer></script>
   <script src="/dashboard-optimized.js" defer></script>
+  <script src="/comment-velocity-chart.js" defer></script>
   <script src="/eta-daypart.js" defer></script>
 </body>
 </html>
