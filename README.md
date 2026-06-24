@@ -58,6 +58,8 @@ Historical import        20
 
 詳細は[`docs/architecture/cloud-primary-local-failover.md`](docs/architecture/cloud-primary-local-failover.md)を参照してください。
 
+本番投入とロールバック手順は[`docs/production-rollout.md`](docs/production-rollout.md)にまとめています。
+
 ## ディレクトリ
 
 ```text
