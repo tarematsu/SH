@@ -37,14 +37,20 @@
   </section>
 
   <section class="controls">
-    <div class="range-presets" aria-label="期間プリセット">
+    <div id="rangePresets" class="range-presets" aria-label="期間プリセット">
       <button data-days="30">30日</button>
       <button data-days="90">3か月</button>
       <button data-days="365">1年</button>
       <button data-days="all" class="active">全期間</button>
     </div>
-    <label>開始<input id="from" type="date" value="2024-05-01"></label>
-    <label>終了<input id="to" type="date"></label>
+    <label id="fromWrap">開始<input id="from" type="date" value="2024-05-01"></label>
+    <label id="toWrap">終了<input id="to" type="date"></label>
+    <label id="trackDateWrap" hidden>日付
+      <input id="trackDate" type="date">
+    </label>
+    <label id="rankingWeekWrap" hidden>週
+      <input id="rankingWeek" type="week">
+    </label>
     <label id="rankingScopeWrap" hidden>表示対象
       <select id="rankingScope">
         <option value="featured">櫻坂</option>
@@ -117,6 +123,7 @@
 </main>
 <script src="/history/history.js" defer></script>
 <script src="/history/history-tracks.js" defer></script>
+<script src="/history/history-mode-selectors.js" defer></script>
 <script src="/history/history-default-range.js" defer></script>
 <script src="/history/history-broadcasts.js" defer></script>
 </body>
