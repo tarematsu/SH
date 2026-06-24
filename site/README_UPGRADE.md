@@ -29,3 +29,7 @@ https://stationhead-monitor.pages.dev/
 
 ## 備考
 曲名変換は `functions/api/dashboard.js` がSpotify公式oEmbedを呼び出します。Spotify Client IDやSecretは不要です。変換結果はCloudflare Cache APIへ7日間キャッシュします。
+
+## sakurazaka46jp 過去放送データ追加
+
+`database/sakurazaka46jp-history/README.md` の手順で `import.sql` をD1へ適用してください。履歴ページに「放送履歴」タブが追加され、詳細一覧にも放送名・いいね・コメント勢いが表示されます。

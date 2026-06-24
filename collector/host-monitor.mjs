@@ -472,13 +472,11 @@ class HostMonitoring {
         `${this.apiBase}/station/${identity.station_id}/chatHistory?limit=${this.config.soloChatLimit}`,
       );
       const comments = normalizeComments(history, identity.station_id);
-      if (comments.length) {
-        await this.hostIngest('solo_comments', {
-          session_id: this.solo.sessionId,
-          station_id: identity.station_id,
-          comments,
-        }, observedAt);
-      }
+      await this.hostIngest('solo_comments', {
+        session_id: this.solo.sessionId,
+        station_id: identity.station_id,
+        comments,
+      }, observedAt);
     }
 
     if (

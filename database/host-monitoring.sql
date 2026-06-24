@@ -85,6 +85,7 @@ CREATE TABLE IF NOT EXISTS sh_host_station_snapshots (
   current_spotify_id TEXT,
   queue_id INTEGER,
   queue_start_time INTEGER,
+  comment_velocity INTEGER,
   raw_json TEXT
 );
 

@@ -141,14 +141,14 @@ async function saveStationSnapshot(db, observedAt, data) {
       station_id, broadcast_id, broadcast_start_time, is_broadcasting,
       status, chat_status, listener_count, guest_count, total_listens,
       channel_id, channel_alias, current_track_id, current_spotify_id,
-      queue_id, queue_start_time, raw_json
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      queue_id, queue_start_time, comment_velocity, raw_json
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).bind(
     num(data.session_id), observedAt, text(data.source_scope), text(data.handle), num(data.account_id),
     num(data.station_id), num(data.broadcast_id), num(data.broadcast_start_time), bool(data.is_broadcasting),
     text(data.status), text(data.chat_status), listener, num(data.guest_count), num(data.total_listens),
     num(data.channel_id), text(data.channel_alias), num(data.current_track_id), text(data.current_spotify_id),
-    num(data.queue_id), num(data.queue_start_time), rawJson(data.raw),
+    num(data.queue_id), num(data.queue_start_time), num(data.comment_velocity), rawJson(data.raw),
   ).run();
 
   await db.prepare(`
@@ -239,7 +239,6 @@ async function saveComments(db, observedAt, data) {
         boost_chat, followers, following, active_stream_days, emoji, raw_json
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(session_id, comment_id) DO UPDATE SET
-        observed_at = excluded.observed_at,
         station_id = excluded.station_id,
         account_id = excluded.account_id,
         handle = excluded.handle,
@@ -266,6 +265,24 @@ async function saveComments(db, observedAt, data) {
     .bind(sessionId).first();
   await db.prepare(`UPDATE sh_host_broadcast_sessions SET comment_count = ? WHERE id = ?`)
     .bind(num(count?.count) ?? 0, sessionId).run();
+
+  const velocityRow = await db.prepare(`
+    SELECT COUNT(*) AS count
+    FROM sh_host_comments
+    WHERE session_id = ?
+      AND COALESCE(chat_time_ms, chat_time * 1000, observed_at) > ?
+      AND COALESCE(chat_time_ms, chat_time * 1000, observed_at) <= ?
+  `).bind(sessionId, observedAt - 120_000, observedAt).first();
+  const velocity = num(velocityRow?.count) ?? 0;
+  await db.prepare(`
+    UPDATE sh_host_station_snapshots
+    SET comment_velocity = ?
+    WHERE id = (
+      SELECT id FROM sh_host_station_snapshots
+      WHERE session_id = ? AND observed_at <= ?
+      ORDER BY observed_at DESC LIMIT 1
+    )
+  `).bind(velocity, sessionId, observedAt).run();
 }
 
 async function saveWsEvent(db, observedAt, data) {

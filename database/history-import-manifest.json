@@ -1,0 +1,119 @@
+{
+  "generated_at": "2026-06-23T22:37:19.364Z",
+  "chunk_size": 20000,
+  "total_statements": 541451,
+  "files": [
+    {
+      "filename": "history-import-part-001.sql",
+      "statements": 20000
+    },
+    {
+      "filename": "history-import-part-002.sql",
+      "statements": 20000
+    },
+    {
+      "filename": "history-import-part-003.sql",
+      "statements": 20000
+    },
+    {
+      "filename": "history-import-part-004.sql",
+      "statements": 20000
+    },
+    {
+      "filename": "history-import-part-005.sql",
+      "statements": 20000
+    },
+    {
+      "filename": "history-import-part-006.sql",
+      "statements": 20000
+    },
+    {
+      "filename": "history-import-part-007.sql",
+      "statements": 20000
+    },
+    {
+      "filename": "history-import-part-008.sql",
+      "statements": 20000
+    },
+    {
+      "filename": "history-import-part-009.sql",
+      "statements": 20000
+    },
+    {
+      "filename": "history-import-part-010.sql",
+      "statements": 20000
+    },
+    {
+      "filename": "history-import-part-011.sql",
+      "statements": 20000
+    },
+    {
+      "filename": "history-import-part-012.sql",
+      "statements": 20000
+    },
+    {
+      "filename": "history-import-part-013.sql",
+      "statements": 20000
+    },
+    {
+      "filename": "history-import-part-014.sql",
+      "statements": 20000
+    },
+    {
+      "filename": "history-import-part-015.sql",
+      "statements": 20000
+    },
+    {
+      "filename": "history-import-part-016.sql",
+      "statements": 20000
+    },
+    {
+      "filename": "history-import-part-017.sql",
+      "statements": 20000
+    },
+    {
+      "filename": "history-import-part-018.sql",
+      "statements": 20000
+    },
+    {
+      "filename": "history-import-part-019.sql",
+      "statements": 20000
+    },
+    {
+      "filename": "history-import-part-020.sql",
+      "statements": 20000
+    },
+    {
+      "filename": "history-import-part-021.sql",
+      "statements": 20000
+    },
+    {
+      "filename": "history-import-part-022.sql",
+      "statements": 20000
+    },
+    {
+      "filename": "history-import-part-023.sql",
+      "statements": 20000
+    },
+    {
+      "filename": "history-import-part-024.sql",
+      "statements": 20000
+    },
+    {
+      "filename": "history-import-part-025.sql",
+      "statements": 20000
+    },
+    {
+      "filename": "history-import-part-026.sql",
+      "statements": 20000
+    },
+    {
+      "filename": "history-import-part-027.sql",
+      "statements": 20000
+    },
+    {
+      "filename": "history-import-part-028.sql",
+      "statements": 1451
+    }
+  ]
+}
