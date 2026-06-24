@@ -36,9 +36,7 @@
   }
 
   function syncRankingScope(scope) {
-    rankingScopeTabs.querySelectorAll('button').forEach((button) => {
-      button.classList.toggle('active', button.dataset.scope === scope);
-    });
+    rankingScopeTabs.querySelectorAll('button').forEach((button) => button.classList.toggle('active', button.dataset.scope === scope));
     $('#rankingScope').value = scope;
     $('#host').value = '';
   }
@@ -49,7 +47,8 @@
     baseSetMode(mode);
     const tracks = mode === 'tracks';
     const ranking = mode === 'ranking';
-    const dedicated = tracks || ranking;
+    const broadcasts = mode === 'broadcasts';
+    const dedicated = tracks || ranking || broadcasts;
     setStandardControlsVisible(!dedicated);
     trackDateWrap.hidden = !tracks;
     rankingScopeTabs.hidden = !ranking;
@@ -68,15 +67,14 @@
       $('#from').value = '2024-05-01';
       $('#to').value = todayUtc();
       syncRankingScope(selectedRankingScope());
+    } else if (currentMode === 'broadcasts') {
+      $('#from').value = '2024-05-01';
+      $('#to').value = todayUtc();
     }
     return baseLoad(options);
   };
 
-  trackDate.addEventListener('change', () => {
-    nextCursor = null;
-    load();
-  });
-
+  trackDate.addEventListener('change', () => { nextCursor = null; load(); });
   rankingScopeTabs.querySelectorAll('button').forEach((button) => {
     button.addEventListener('click', () => {
       syncRankingScope(button.dataset.scope);
