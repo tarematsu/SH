@@ -1,7 +1,7 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "stationhead-monitor-collector",
-  "main": "src/optimized-index.js",
+  "main": "src/official-news-index.js",
   "compatibility_date": "2026-06-24",
   "workers_dev": true,
   "observability": {
