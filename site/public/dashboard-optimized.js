@@ -1,26 +1,31 @@
 (() => {
-  let since = 0;
   const baseRefresh = refresh;
+  const MIN_REFRESH_MS = 110 * 1000;
+  let lastRequestAt = Date.now();
+  let failures = 0;
+  let backoffUntil = 0;
 
   async function optimizedRefresh() {
-    if (refreshInFlight) return;
+    const now = Date.now();
+    if (refreshInFlight || now < backoffUntil || now - lastRequestAt < MIN_REFRESH_MS) return;
+    lastRequestAt = now;
     refreshInFlight = true;
     refreshAbortController?.abort();
     refreshAbortController = new AbortController();
 
     try {
-      const url = since > 0 ? `/api/dashboard?since=${encodeURIComponent(since)}` : '/api/dashboard';
-      const response = await fetch(url, {
-        cache: 'no-store',
+      // 全閲覧者で同一URLを使い、Cloudflareのエッジキャッシュを共有する。
+      const response = await fetch('/api/dashboard', {
         signal: refreshAbortController.signal,
         headers: { accept: 'application/json' },
       });
       if (!response.ok) throw new Error(`API error: ${response.status}`);
       const data = await response.json();
       if (!data.ok) throw new Error(data.error || 'API error');
-      const latest = data.latest || {};
-      since = Math.max(since, Number(data.latest_observed_at) || Number(latest.observed_at) || 0);
+      failures = 0;
+      backoffUntil = 0;
 
+      const latest = data.latest || {};
       el('channelName').textContent = latest.channel_name || 'Buddies';
       el('description').textContent = latest.description || latest.artist_name || '';
       setImage(el('channelImage'), latest.channel_image || latest.logo_image);
@@ -49,16 +54,7 @@
       const currentIndex = foundCurrentIndex >= 0 ? foundCurrentIndex : (queue.length ? 0 : -1);
       renderNow(currentIndex >= 0 ? queue[currentIndex] : null, queue, currentIndex);
 
-      const incoming = Array.isArray(data.history) ? data.history : [];
-      const merged = data.delta
-        ? [...lastHistoryRows, ...incoming]
-        : incoming;
-      const historyMap = new Map();
-      merged.forEach((row) => historyMap.set(Number(row.observed_at), row));
-      const history = [...historyMap.values()]
-        .sort((a, b) => Number(a.observed_at) - Number(b.observed_at))
-        .slice(-1500);
-
+      const history = Array.isArray(data.history) ? data.history : [];
       if (history.length) {
         const signature = `${history.length}:${history[0]?.observed_at}:${history.at(-1)?.observed_at}:${history.at(-1)?.online_member_count}:${history.at(-1)?.current_stream_count}`;
         if (signature !== lastRenderSignature) {
@@ -70,8 +66,11 @@
       }
     } catch (error) {
       if (error?.name !== 'AbortError') {
+        failures += 1;
+        const delay = Math.min(15 * 60 * 1000, 60 * 1000 * (2 ** Math.min(failures, 4)));
+        backoffUntil = Date.now() + delay;
         console.error(error);
-        if (!since) return baseRefresh();
+        if (!lastHistoryRows.length && failures === 1) return baseRefresh();
       }
     } finally {
       refreshInFlight = false;
