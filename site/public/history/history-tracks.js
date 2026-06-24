@@ -11,7 +11,7 @@
 
   MODE_HELP.tracks = [
     '日別再生曲',
-    '各日の延べ曲数と、各曲がその日の再生全体に占める割合を表示します。',
+    'UTC日付ごとの延べ曲数と、各曲がその日の再生全体に占める割合を表示します。',
   ];
 
   const baseSetMode = setMode;
@@ -24,10 +24,7 @@
 
   function withDailyTotals(rows) {
     const totals = new Map();
-    for (const row of rows) {
-      totals.set(row.play_date, (totals.get(row.play_date) || 0) + (finiteNumber(row.play_count) || 0));
-    }
-
+    for (const row of rows) totals.set(row.play_date, (totals.get(row.play_date) || 0) + (finiteNumber(row.play_count) || 0));
     const result = [];
     let previousDate = null;
     for (const row of rows) {
@@ -45,10 +42,7 @@
         });
         previousDate = row.play_date;
       }
-      result.push({
-        ...row,
-        daily_share: total > 0 ? (finiteNumber(row.play_count) || 0) / total * 100 : 0,
-      });
+      result.push({ ...row, daily_share: total > 0 ? (finiteNumber(row.play_count) || 0) / total * 100 : 0 });
     }
     return result;
   }
@@ -59,7 +53,7 @@
     $('#metric').hidden = true;
     $('#metric').disabled = true;
     $('#chartPanel').hidden = true;
-    $('#tableTitle').textContent = '日別・曲別の再生回数';
+    $('#tableTitle').textContent = '日別・曲別の再生回数（UTC）';
     $('#rankingWeeklyPanel').hidden = true;
   };
 
@@ -74,9 +68,7 @@
   displayCell = function displayTrackCell(key, row, mode) {
     if (mode !== 'tracks') return baseDisplayCell(key, row, mode);
     if (key === 'play_date') return formatDate(row[key]);
-    if (key === 'first_played_at' || key === 'last_played_at') {
-      return row._daily_total ? '—' : formatDate(row[key], true);
-    }
+    if (key === 'first_played_at' || key === 'last_played_at') return row._daily_total ? '—' : formatDate(row[key], true);
     if (key === 'play_count') return `${fmt(row[key])}回`;
     if (key === 'daily_share') {
       const value = finiteNumber(row[key]);
@@ -113,7 +105,6 @@
   load = async function loadTrackHistory(options = {}) {
     if (currentMode !== 'tracks') return baseLoad(options);
     if (loading) return;
-
     loading = true;
     selectedChartIndex = null;
     nextCursor = null;
@@ -122,28 +113,24 @@
     $('#notice').textContent = '読み込み中…';
 
     try {
-      const params = new URLSearchParams({ from, to, limit: '10000', v: '2' });
+      const params = new URLSearchParams({ from, to, limit: '2000', v: '4' });
       const response = await fetch(`/api/track-history?${params}`, { cache: 'no-store' });
       const data = await response.json();
       if (!response.ok || !data.ok) throw new Error(data.error || `HTTP ${response.status}`);
 
       current = data.rows || [];
       updateSummary(current, 'tracks');
-      renderTable(withDailyTotals(current), 'tracks', false);
+      const tableRows = withDailyTotals(current);
+      renderTable(tableRows, 'tracks', false);
       $('#tbody').querySelectorAll('tr').forEach((row, index) => {
-        const source = withDailyTotals(current)[index];
-        if (source?._daily_total) row.classList.add('daily-total-row');
+        if (tableRows[index]?._daily_total) row.classList.add('daily-total-row');
       });
       $('#more').hidden = true;
       $('#chartPanel').hidden = true;
       $('#rankingWeeklyPanel').hidden = true;
 
-      if (data.setup_required) {
-        $('#notice').textContent = '再生曲データの保存テーブルがまだありません。';
-      } else {
-        const suffix = data.truncated ? '（表示上限10,000行）' : '';
-        $('#notice').textContent = `${fmt(current.length)}件の日別・曲別集計を表示${suffix}`;
-      }
+      if (data.setup_required) $('#notice').textContent = '再生曲データの保存テーブルがまだありません。';
+      else $('#notice').textContent = `${fmt(current.length)}件の日別・曲別集計を表示（UTC）${data.truncated ? '（表示上限）' : ''}`;
     } catch (error) {
       $('#notice').textContent = `API error: ${error.message}`;
     } finally {
