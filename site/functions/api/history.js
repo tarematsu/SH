@@ -384,6 +384,30 @@ export async function onRequestGet({ request, env }) {
 
     if (mode === 'ranking') return loadRanking(url, env);
 
+    if (mode === 'broadcasts') {
+      const fromTs = parseDateStart(from, '2024-06-01');
+      const toTs = addDays(parseDateStart(to, todayJstString()), 1);
+      const result = await env.DB.prepare(`SELECT
+        source_note AS event_name,
+        MIN(observed_at) AS started_at,
+        MAX(observed_at) AS ended_at,
+        MIN(observed_jst) AS started_jst,
+        MAX(observed_jst) AS ended_jst,
+        COUNT(*) AS sample_count,
+        ROUND(AVG(listener_count), 1) AS listener_avg,
+        MAX(listener_count) AS listener_max,
+        MAX(likes) AS likes_max,
+        COUNT(DISTINCT CASE WHEN track_title IS NOT NULL AND track_title<>'' THEN track_title END) AS distinct_tracks,
+        host_handle
+      FROM sh_legacy_snapshots
+      WHERE observed_at>=? AND observed_at<? AND host_handle='sakurazaka46jp' AND source_note IS NOT NULL
+      GROUP BY source_note,host_handle
+      ORDER BY started_at ASC`).bind(fromTs, toTs).all();
+      return json({ ok: true, mode, from, to, rows: result.results || [] }, 200, {
+        'cache-control': 'public, max-age=300, s-maxage=900',
+      });
+    }
+
     if (mode === 'raw') {
       const fromTs = parseDateStart(from, '2024-06-01');
       const requestedToTs = addDays(parseDateStart(to, todayJstString()), 1);

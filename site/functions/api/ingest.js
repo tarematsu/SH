@@ -29,9 +29,9 @@ async function saveSnapshot(db, observedAt, d) {
       is_launched, is_broadcasting, chat_status,
       listener_count, online_member_count, total_member_count, guest_count,
       total_listens, stream_goal, current_stream_count,
-      host_account_id, host_handle, broadcast_start_time, raw_json
+      host_account_id, host_handle, broadcast_start_time, comment_velocity, raw_json
     )
-    SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+    SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
     WHERE NOT EXISTS (
       SELECT 1 FROM sh_channel_snapshots
       WHERE channel_id = ? AND observed_at >= ? AND observed_at < ?
@@ -41,14 +41,13 @@ async function saveSnapshot(db, observedAt, d) {
     bool(d.is_launched), bool(d.is_broadcasting), text(d.chat_status),
     num(d.listener_count), num(d.online_member_count), num(d.total_member_count), num(d.guest_count),
     num(d.total_listens), num(d.stream_goal), num(d.current_stream_count),
-    num(d.host_account_id), text(d.host_handle), num(d.broadcast_start_time), rawJson(d.raw),
+    num(d.host_account_id), text(d.host_handle), num(d.broadcast_start_time), num(d.comment_velocity), rawJson(d.raw),
     num(d.channel_id), bucket, bucket + 60_000
   ).run();
 }
 
 async function saveComments(db, observedAt, data) {
   const comments = Array.isArray(data?.comments) ? data.comments : [];
-  if (!comments.length) return;
   const statements = comments.map((c) => db.prepare(`
     INSERT INTO sh_comments (
       id, observed_at, station_id, account_id, handle, text, text_with_xml,
@@ -56,7 +55,7 @@ async function saveComments(db, observedAt, data) {
       followers, following, emoji, raw_json
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(id) DO UPDATE SET
-      observed_at=excluded.observed_at, station_id=excluded.station_id,
+      station_id=excluded.station_id,
       account_id=excluded.account_id, handle=excluded.handle, text=excluded.text,
       text_with_xml=excluded.text_with_xml, chat_time=excluded.chat_time,
       chat_time_ms=excluded.chat_time_ms, all_access_chat=excluded.all_access_chat,
@@ -68,7 +67,28 @@ async function saveComments(db, observedAt, data) {
     num(c.chat_time), num(c.chat_time_ms), bool(c.all_access_chat), bool(c.boost_chat), num(c.active_stream_days),
     num(c.followers), num(c.following), text(c.emoji), rawJson(c.raw)
   ));
-  await db.batch(statements);
+  if (statements.length) await db.batch(statements);
+
+  const stationId = num(data?.station_id ?? comments.find((c) => num(c.station_id) !== null)?.station_id);
+  if (stationId !== null) {
+    const velocityRow = await db.prepare(`
+      SELECT COUNT(*) AS count
+      FROM sh_comments
+      WHERE station_id = ?
+        AND COALESCE(chat_time_ms, chat_time * 1000, observed_at) > ?
+        AND COALESCE(chat_time_ms, chat_time * 1000, observed_at) <= ?
+    `).bind(stationId, observedAt - 120_000, observedAt).first();
+    const velocity = num(velocityRow?.count) ?? 0;
+    await db.prepare(`
+      UPDATE sh_channel_snapshots
+      SET comment_velocity = ?
+      WHERE id = (
+        SELECT id FROM sh_channel_snapshots
+        WHERE station_id = ? AND observed_at <= ?
+        ORDER BY observed_at DESC LIMIT 1
+      )
+    `).bind(velocity, stationId, observedAt).run();
+  }
 }
 
 async function saveQueue(db, observedAt, data) {

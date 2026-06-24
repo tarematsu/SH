@@ -1,83 +1,151 @@
-# Stationhead表示・複数収集対応アップグレード
+# Stationhead ホスト並行監視システム
 
-## 主な変更
+既存のBuddies監視を止めず、同じ`collector.mjs`プロセス内へ次の2系統を追加します。
 
-- オンライン数を主指標に変更
-- リスナー数をオンライン数の内訳として表示
-- コメント欄を非表示
-- 直近24時間のストリーム推移から目標到達日時を予測
-- Buddies、App Store、Google Playへのリンクを追加
-- Spotify曲情報はD1キャッシュのみ参照
-- 複数Collectorの同時実行に対応
-  - チャンネル・キュースナップショットを1分単位で重複排除
-  - WebSocketイベントを5秒単位＋内容一致で重複排除
-  - 曲メタデータはSpotify IDでUPSERT
-  - Collectorごとのハートビートを保存
+1. `sakuramankai`のプロフィール・フォロワー推移を1時間ごとに保存
+2. `sakurazaka46jp`の単独放送を1分ごとに監視し、検知時だけ詳細収集
 
-## 適用順序
+通信調査で確認したAPIを使用します。
 
-### 1. ファイルを上書き
-
-このZIPの内容を既存プロジェクトへ同じパスで上書きしてください。
-
-### 2. D1スキーマを適用
-
-```powershell
-cd C:\Users\yuuki\Documents\stationhead-monitor
-npx wrangler d1 execute stationhead-monitor --remote --file=database/schema.sql
+```text
+POST /station/handle/{handle}/guest
+GET  /account?ids={account_id}&channelId=318
+GET  /station/{station_id}/chatHistory?limit=100
 ```
 
-既存テーブルは削除されません。`sh_collector_heartbeats`だけ追加されます。
+## 単独放送の判定
 
-### 3. GitHubへ反映
+次をすべて満たす場合に候補とします。
+
+- `sakurazaka46jp`が放送中
+- 取得した`station_id`がBuddiesの現在ステーションと異なる
+- チャンネル情報がない、Buddies以外、またはステーションがBuddiesの現在値と異なる
+
+初回検知時点で`provisional`セッションを作り、スナップショット・キュー・コメントを保存します。
+2回連続で検出したら`active`へ昇格し、専用WebSocketを開始します。
+放送終了またはBuddiesと同一になった状態を3回連続で確認すると終了します。
+
+## 保存内容
+
+- `sakuramankai`: followers / following / total_streams / active_stream_days / 画像 / バッジ
+- 単独放送セッション: 開始・確認・終了、放送ID、ステーションID、理由
+- 1分ごとの同接、累計聴取、現在曲
+- 最大同接・平均同接・サンプル数
+- キュー全体と各曲のSpotify/Apple Music/Deezer/ISRC/時間
+- コメント
+- WebSocket生イベント
+- 単独放送開始・終了時および1時間ごとのプロフィール値
+
+## 導入
+
+ZIP内の内容を`C:\stationhead-monitor`へ上書きします。
+
+### 1. D1テーブル作成
 
 ```powershell
-git add site database collector/collector.mjs
-git commit -m "Upgrade dashboard and multi collector support"
+cd C:\stationhead-monitor
+npx wrangler d1 execute stationhead-monitor --remote --file=database/host-monitoring.sql
+```
+
+### 2. 既存Collectorへ統合
+
+```powershell
+node tools\apply-host-monitor.mjs
+```
+
+この処理は既存`collector/collector.mjs`を上書きする前に、次のバックアップを作ります。
+
+```text
+collector/collector.mjs.before-host-monitor
+```
+
+同じコマンドを複数回実行しても重複挿入しません。
+
+### 3. 環境設定
+
+`collector/.env`へ追加します。
+
+```env
+HOST_MONITOR_ENABLED=true
+HOST_PROFILE_HANDLE=sakuramankai
+HOST_PROFILE_ACCOUNT_ID=3334889
+HOST_PROFILE_INTERVAL_MS=3600000
+
+SOLO_BROADCAST_HANDLE=sakurazaka46jp
+SOLO_BROADCAST_ACCOUNT_ID=0
+SOLO_POLL_INTERVAL_MS=60000
+SOLO_CONFIRM_POLLS=2
+SOLO_END_CONFIRM_POLLS=3
+SOLO_CHAT_LIMIT=100
+SOLO_PROFILE_INTERVAL_MS=3600000
+SOLO_ENABLE_WEBSOCKET=true
+```
+
+`SOLO_BROADCAST_ACCOUNT_ID=0`では、単独放送APIの`owner_id`から自動取得します。
+
+### 4. 構文確認
+
+```powershell
+node --check collector\collector.mjs
+node --check collector\host-monitor.mjs
+node --check site\functions\api\host-ingest.js
+node --check site\functions\api\host-history.js
+```
+
+### 5. GitHubへ反映
+
+```powershell
+git add collector/collector.mjs collector/host-monitor.mjs site/functions/api/host-ingest.js site/functions/api/host-history.js database/host-monitoring.sql tools/apply-host-monitor.mjs
+git commit -m "Add host profile and solo broadcast monitoring"
 git push
 ```
 
-### 4. Collectorを起動
+### 6. Collector再起動
 
 ```powershell
-cd collector
+cd C:\stationhead-monitor\collector
 npm start
 ```
 
-複数環境で動かす場合は、それぞれの`.env`へ識別名を指定できます。
+起動時にBuddies監視、プロフィール監視、単独放送監視が同一プロセス内で開始します。
 
-```env
-COLLECTOR_ID=home-windows
+## 動作確認
+
+1回だけ実行:
+
+```powershell
+cd C:\stationhead-monitor\collector
+npm run once
 ```
 
-クラウド側は例として次のようにします。
+`sakuramankai`の最新プロフィール:
 
-```env
-COLLECTOR_ID=oracle-osaka
+```text
+https://stationhead-monitor.pages.dev/api/host-history?mode=profile&handle=sakuramankai&days=30
 ```
 
-未指定時はPCまたはVMのホスト名が使われます。
+単独放送セッション一覧:
 
-## 予測について
-
-- 直近24時間の`current_stream_count`を線形回帰
-- 最低5件かつ15分以上の履歴が必要
-- 増加速度が0以下の場合は予測を表示しない
-- R²と履歴時間から「信頼度 高・中・低」を表示
-- あくまで現在の増加ペースが継続した場合の推定
-
-## 検索エンジン除外
-
-`robots.txt`、HTMLのrobotsメタタグ、Cloudflare Pagesの`X-Robots-Tag`ヘッダーでサイト全体をnoindexにしています。既に検索結果へ登録済みの場合、検索結果から消えるまで時間がかかることがあります。
-
-## Stationhead匿名認証の自動更新
-
-Collectorは`.stationhead-session.json`へ端末UIDと最新ゲストJWTを保存します。JWT期限の1時間前、またはAPIが401を返した時に、Stationheadの公開bootstrapレスポンスから新しい`Authorization`ヘッダーを取得して一度だけ再試行します。`.env`の`STATIONHEAD_AUTH_TOKEN`と`STATIONHEAD_DEVICE_UID`は初回フォールバックとして残せますが、以後は保存済みセッションを優先します。
-
-`.gitignore`へ以下を追加してください。
-
-```gitignore
-collector/.env
-collector/.stationhead-session.json
-collector/node_modules/
+```text
+https://stationhead-monitor.pages.dev/api/host-history?mode=sessions&handle=sakurazaka46jp
 ```
+
+概要:
+
+```text
+https://stationhead-monitor.pages.dev/api/host-history
+```
+
+## D1確認
+
+```powershell
+npx wrangler d1 execute stationhead-monitor --remote --command="SELECT observed_at,handle,followers,total_streams FROM sh_host_profile_snapshots ORDER BY observed_at DESC LIMIT 10;"
+```
+
+```powershell
+npx wrangler d1 execute stationhead-monitor --remote --command="SELECT id,handle,station_id,started_at,ended_at,status,peak_listeners,average_listeners,track_count,comment_count FROM sh_host_broadcast_sessions ORDER BY started_at DESC LIMIT 20;"
+```
+
+## 既存週間リーダーボードとの関係
+
+`weekly-leaderboard.mjs`は別スケジュールですが、本システムと競合しません。Buddies・ホスト監視は`collector.mjs`内、週間リーダーボードは月曜夜だけ独立して動作します。

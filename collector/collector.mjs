@@ -546,7 +546,7 @@ async function pollOnce() {
     const historyUrl = `${API_BASE}/station/${runtime.stationId}/chatHistory?limit=${config.chatLimit}`;
     const history = await fetchJson(historyUrl);
     const comments = normalizeComments(history);
-    if (comments.length) await ingest('comments', { comments, raw_meta: { next: history?.chats?.next ?? history?.next ?? null } }, observedAt);
+    await ingest('comments', { station_id: runtime.stationId, comments, raw_meta: { next: history?.chats?.next ?? history?.next ?? null } }, observedAt);
   }
 
   log('info', `poll ok channel=${runtime.channelId} station=${runtime.stationId} party=${runtime.streamingPartyId}`);

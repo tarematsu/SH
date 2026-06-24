@@ -1,0 +1,135 @@
+[
+  {
+    "opened_at": "2026-06-24T01:02:51.723Z",
+    "url": "wss://realtime-production.stationhead.com/app/982c86a21530b654bfb2?protocol=7&client=js&version=7.4.0&flash=false",
+    "frames": [
+      {
+        "at": "2026-06-24T01:02:52.080Z",
+        "direction": "received",
+        "payload": "{\"event\":\"pusher:connection_established\",\"data\":\"{\\u0022socket_id\\u0022:\\u00224891206820092762199.13322637674374532511\\u0022,\\u0022activity_timeout\\u0022:120}\"}"
+      },
+      {
+        "at": "2026-06-24T01:02:52.727Z",
+        "direction": "sent",
+        "payload": "{\"event\":\"pusher:subscribe\",\"data\":{\"auth\":\"982c86a21530b654bfb2:877010a89d7f1247b49c281b96373ba173aa3590f9ec4fdc2ddbe96159a77ec5\",\"channel_data\":\"{\\\"user_id\\\":\\\"980eb850-7afd-4086-91cd-e76e39649d8d\\\"}\",\"channel\":\"presence-production1_guest_db0165b0-34d5-4b24-a536-f98b3c44c8de\"}}"
+      },
+      {
+        "at": "2026-06-24T01:02:52.904Z",
+        "direction": "received",
+        "payload": "{\"channel\":\"presence-production1_guest_db0165b0-34d5-4b24-a536-f98b3c44c8de\",\"event\":\"pusher_internal:subscription_succeeded\",\"data\":\"{\\u0022presence\\u0022:{\\u0022count\\u0022:0,\\u0022ids\\u0022:[],\\u0022hash\\u0022:{}}}\"}"
+      },
+      {
+        "at": "2026-06-24T01:02:53.095Z",
+        "direction": "sent",
+        "payload": "{\"event\":\"pusher:subscribe\",\"data\":{\"auth\":\"\",\"channel\":\"production1_station_3328626_broadcast\"}}"
+      },
+      {
+        "at": "2026-06-24T01:02:53.095Z",
+        "direction": "sent",
+        "payload": "{\"event\":\"pusher:subscribe\",\"data\":{\"auth\":\"\",\"channel\":\"production1_station_3328626_channel\"}}"
+      },
+      {
+        "at": "2026-06-24T01:02:53.095Z",
+        "direction": "sent",
+        "payload": "{\"event\":\"pusher:subscribe\",\"data\":{\"auth\":\"\",\"channel\":\"production1_station_3328626_chats\"}}"
+      },
+      {
+        "at": "2026-06-24T01:02:53.095Z",
+        "direction": "sent",
+        "payload": "{\"event\":\"pusher:subscribe\",\"data\":{\"auth\":\"\",\"channel\":\"production1_station_3328626\"}}"
+      },
+      {
+        "at": "2026-06-24T01:02:53.095Z",
+        "direction": "sent",
+        "payload": "{\"event\":\"pusher:subscribe\",\"data\":{\"auth\":\"\",\"channel\":\"production1_station_3328626_listener_count\"}}"
+      },
+      {
+        "at": "2026-06-24T01:02:53.095Z",
+        "direction": "sent",
+        "payload": "{\"event\":\"pusher:subscribe\",\"data\":{\"auth\":\"\",\"channel\":\"production1_station_3328626_queue\"}}"
+      },
+      {
+        "at": "2026-06-24T01:02:53.095Z",
+        "direction": "sent",
+        "payload": "{\"event\":\"pusher:subscribe\",\"data\":{\"auth\":\"\",\"channel\":\"production1_streaming_party_333\"}}"
+      },
+      {
+        "at": "2026-06-24T01:02:53.254Z",
+        "direction": "sent",
+        "payload": "{\"event\":\"pusher:subscribe\",\"data\":{\"auth\":\"982c86a21530b654bfb2:93e9894250cc56e7af326674004866b25ec6031d43b83cac1359f79c6e4edead\",\"channel_data\":\"{\\\"user_id\\\":\\\"980eb850-7afd-4086-91cd-e76e39649d8d\\\"}\",\"channel\":\"private-production1_station_3328626_emoji\"}}"
+      },
+      {
+        "at": "2026-06-24T01:02:53.268Z",
+        "direction": "received",
+        "payload": "{\"channel\":\"production1_station_3328626_broadcast\",\"event\":\"pusher_internal:subscription_succeeded\",\"data\":\"{}\"}"
+      },
+      {
+        "at": "2026-06-24T01:02:53.268Z",
+        "direction": "received",
+        "payload": "{\"channel\":\"production1_station_3328626_channel\",\"event\":\"pusher_internal:subscription_succeeded\",\"data\":\"{}\"}"
+      },
+      {
+        "at": "2026-06-24T01:02:53.268Z",
+        "direction": "received",
+        "payload": "{\"channel\":\"production1_station_3328626_chats\",\"event\":\"pusher_internal:subscription_succeeded\",\"data\":\"{}\"}"
+      },
+      {
+        "at": "2026-06-24T01:02:53.269Z",
+        "direction": "received",
+        "payload": "{\"channel\":\"production1_station_3328626\",\"event\":\"pusher_internal:subscription_succeeded\",\"data\":\"{}\"}"
+      },
+      {
+        "at": "2026-06-24T01:02:53.269Z",
+        "direction": "received",
+        "payload": "{\"channel\":\"production1_station_3328626_listener_count\",\"event\":\"pusher_internal:subscription_succeeded\",\"data\":\"{}\"}"
+      },
+      {
+        "at": "2026-06-24T01:02:53.269Z",
+        "direction": "received",
+        "payload": "{\"channel\":\"production1_station_3328626_queue\",\"event\":\"pusher_internal:subscription_succeeded\",\"data\":\"{}\"}"
+      },
+      {
+        "at": "2026-06-24T01:02:53.269Z",
+        "direction": "received",
+        "payload": "{\"channel\":\"production1_streaming_party_333\",\"event\":\"pusher_internal:subscription_succeeded\",\"data\":\"{}\"}"
+      },
+      {
+        "at": "2026-06-24T01:02:53.423Z",
+        "direction": "received",
+        "payload": "{\"channel\":\"private-production1_station_3328626_emoji\",\"event\":\"pusher_internal:subscription_succeeded\",\"data\":\"{}\"}"
+      },
+      {
+        "at": "2026-06-24T01:02:58.963Z",
+        "direction": "received",
+        "payload": "{\"channel\":\"production1_streaming_party_333\",\"event\":\"streamingPartyUpdated\",\"data\":\"{\\u0022type\\u0022:\\u0022streaming_party\\u0022,\\u0022stream_goal\\u0022:48400000,\\u0022current_stream_count\\u0022:48075499,\\u0022content_configuration\\u0022:{\\u0022goal_unmet_configuration\\u0022:{\\u0022backend_provided_status_bar_text\\u0022:\\u0022Streams of 48M goal\\u0022,\\u0022detail_sheet_title\\u0022:\\u0022Buddies are listening together to reach 48M streams\\u0022,\\u0022detail_sheet_footer\\u0022:\\u0022By listening with the Buddies community, your streams contribute to the streaming goal.\\u0022},\\u0022goal_met_configuration\\u0022:{\\u0022backend_provided_status_bar_text\\u0022:\\u0022Streams of 48M goal\\u0022,\\u0022detail_sheet_title\\u0022:\\u0022Buddies reached their 48M streaming goal\\u0022,\\u0022detail_sheet_footer\\u0022:\\u0022By listening with the Buddies community, your streams contribute to the streaming goal.\\u0022}},\\u0022id\\u0022:333,\\u0022response_timestamp\\u0022:1782262980}\"}"
+      },
+      {
+        "at": "2026-06-24T01:03:18.476Z",
+        "direction": "received",
+        "payload": "{\"channel\":\"production1_station_3328626_listener_count\",\"event\":\"listenerCount\",\"data\":\"{\\u0022socket_timestamp\\u0022:1782262998970,\\u0022response_timestamp\\u0022:1782262998970,\\u0022listener_count\\u0022:157,\\u0022type\\u0022:\\u0022member_removed\\u0022,\\u0022account_id\\u0022:1}\"}"
+      },
+      {
+        "at": "2026-06-24T01:03:18.477Z",
+        "direction": "received",
+        "payload": "{\"channel\":\"production1_station_3328626_listener_count\",\"event\":\"guestActivity\",\"data\":\"{\\u0022socket_timestamp\\u0022:1782262998970,\\u0022guest_count\\u0022:1}\"}"
+      },
+      {
+        "at": "2026-06-24T01:03:58.958Z",
+        "direction": "received",
+        "payload": "{\"channel\":\"production1_streaming_party_333\",\"event\":\"streamingPartyUpdated\",\"data\":\"{\\u0022type\\u0022:\\u0022streaming_party\\u0022,\\u0022stream_goal\\u0022:48400000,\\u0022current_stream_count\\u0022:48075521,\\u0022content_configuration\\u0022:{\\u0022goal_unmet_configuration\\u0022:{\\u0022backend_provided_status_bar_text\\u0022:\\u0022Streams of 48M goal\\u0022,\\u0022detail_sheet_title\\u0022:\\u0022Buddies are listening together to reach 48M streams\\u0022,\\u0022detail_sheet_footer\\u0022:\\u0022By listening with the Buddies community, your streams contribute to the streaming goal.\\u0022},\\u0022goal_met_configuration\\u0022:{\\u0022backend_provided_status_bar_text\\u0022:\\u0022Streams of 48M goal\\u0022,\\u0022detail_sheet_title\\u0022:\\u0022Buddies reached their 48M streaming goal\\u0022,\\u0022detail_sheet_footer\\u0022:\\u0022By listening with the Buddies community, your streams contribute to the streaming goal.\\u0022}},\\u0022id\\u0022:333,\\u0022response_timestamp\\u0022:1782263040}\"}"
+      },
+      {
+        "at": "2026-06-24T01:04:06.669Z",
+        "direction": "received",
+        "payload": "{\"channel\":\"production1_station_3328626_listener_count\",\"event\":\"listenerCount\",\"data\":\"{\\u0022socket_timestamp\\u0022:1782263047487,\\u0022response_timestamp\\u0022:1782263047487,\\u0022listener_count\\u0022:156,\\u0022type\\u0022:\\u0022member_removed\\u0022,\\u0022account_id\\u0022:1}\"}"
+      },
+      {
+        "at": "2026-06-24T01:04:06.968Z",
+        "direction": "received",
+        "payload": "{\"channel\":\"production1_station_3328626_listener_count\",\"event\":\"guestActivity\",\"data\":\"{\\u0022socket_timestamp\\u0022:1782263047487,\\u0022guest_count\\u0022:1}\"}"
+      }
+    ],
+    "closed_at": null,
+    "error": null
+  }
+]

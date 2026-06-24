@@ -1,0 +1,25 @@
+[
+  {
+    "opened_at": "2026-06-24T01:20:50.477Z",
+    "url": "wss://realtime-production.stationhead.com/app/982c86a21530b654bfb2?protocol=7&client=js&version=7.4.0&flash=false",
+    "frames": [
+      {
+        "at": "2026-06-24T01:20:50.808Z",
+        "direction": "received",
+        "payload": "{\"event\":\"pusher:connection_established\",\"data\":\"{\\u0022socket_id\\u0022:\\u00225541023246014565270.338124841496894854\\u0022,\\u0022activity_timeout\\u0022:120}\"}"
+      },
+      {
+        "at": "2026-06-24T01:20:52.131Z",
+        "direction": "sent",
+        "payload": "{\"event\":\"pusher:subscribe\",\"data\":{\"auth\":\"982c86a21530b654bfb2:346304d6dc348f9dfe9e7dd358d94f71606c1e6e258b3cfd26c4ba0fa8aa9143\",\"channel_data\":\"{\\\"user_id\\\":\\\"485c9574-5328-45a6-8f27-d8d802cceed8\\\"}\",\"channel\":\"presence-production1_guest_200a9d7d-350c-4339-b8de-0d92fbbd7a6d\"}}"
+      },
+      {
+        "at": "2026-06-24T01:20:52.300Z",
+        "direction": "received",
+        "payload": "{\"channel\":\"presence-production1_guest_200a9d7d-350c-4339-b8de-0d92fbbd7a6d\",\"event\":\"pusher_internal:subscription_succeeded\",\"data\":\"{\\u0022presence\\u0022:{\\u0022count\\u0022:0,\\u0022ids\\u0022:[],\\u0022hash\\u0022:{}}}\"}"
+      }
+    ],
+    "closed_at": null,
+    "error": null
+  }
+]

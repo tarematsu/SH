@@ -18,6 +18,7 @@ CREATE TABLE IF NOT EXISTS sh_channel_snapshots (
   host_account_id INTEGER,
   host_handle TEXT,
   broadcast_start_time INTEGER,
+  comment_velocity INTEGER,
   raw_json TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_sh_sh_channel_snapshots_time ON sh_channel_snapshots(observed_at DESC);
@@ -125,3 +126,15 @@ CREATE TABLE IF NOT EXISTS sh_collector_heartbeats (
   metadata_json TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_sh_collector_heartbeats_last_seen ON sh_collector_heartbeats(last_seen_at DESC);
+
+CREATE TABLE IF NOT EXISTS sh_spotify_playlist_state (
+  playlist_id TEXT PRIMARY KEY,
+  playlist_url TEXT NOT NULL,
+  playlist_name TEXT,
+  track_count INTEGER,
+  queue_hash TEXT,
+  synchronized_at INTEGER NOT NULL,
+  collector_id TEXT,
+  raw_json TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_sh_spotify_playlist_sync ON sh_spotify_playlist_state(synchronized_at DESC);

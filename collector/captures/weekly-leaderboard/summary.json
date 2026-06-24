@@ -1,0 +1,19 @@
+{
+  "target_url": "https://www.stationhead.com/on/leaderboard",
+  "started_at": "2026-06-24T01:20:45.027Z",
+  "finished_at": "2026-06-24T01:21:12.780Z",
+  "browser_path": "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
+  "network_entries": 41,
+  "leaderboard_candidate_entries": 11,
+  "websocket_connections": 1,
+  "websocket_frames": 3,
+  "page_errors": 0,
+  "candidate_api_urls": [
+    "https://js-cdn.music.apple.com/musickit/v3/musickit.js",
+    "https://www.google.com/measurement/conversion?random=1782264048824&cv=11&tid=G-PT5N25TC60&fst=1782264048824&fmt=8&en=session_start&gtm=45je66h0v880234422za200zd880234422xec&gcd=13l3l3l3l1l1&dma=0&tag_exp=115938466~115938469~119027224~119392696~119392704~119576891~119576895&u_w=1440&u_h=1100&url=https%3A%2F%2Fwww.stationhead.com%2Fon%2Fleaderboard&gacid=781016324.1782264049&frm=0&tiba=Stationhead%20%C2%BB%20Weekly%20Leaderboard&gtm_ee=1&npa=0&pscdl=noapi&auid=515445852.1782264049&uaa=x86&uab=64&uafvl=Google%2520Chrome%3B149.0.7827.156%7CChromium%3B149.0.7827.156%7CNot)A%253BBrand%3B24.0.0.0&uamb=0&uam=&uap=Windows&uapv=19.0.0&uaw=0&rcb=19",
+    "https://analytics.google.com/g/collect?v=2&tid=G-PT5N25TC60&gtm=45je66h0v880234422za200zd880234422&_p=1782264048488&_gaz=1&gcd=13l3l3l3l1l1&npa=0&dma=0&_eu=AAAAAGAC&_fid=fVly1Fe93q0R_jNh2utbvh&_prs=ok&are=1&cid=781016324.1782264049&frm=0&pscdl=noapi&rcb=19&sr=1440x1100&uaa=x86&uab=64&uafvl=Google%2520Chrome%3B149.0.7827.156%7CChromium%3B149.0.7827.156%7CNot)A%253BBrand%3B24.0.0.0&uam=&uamb=0&uap=Windows&uapv=19.0.0&uaw=0&ul=ja&gaf=2&_s=1&tag_exp=115938466~115938469~119027224~119392696~119392704~119576891~119576895&sid=1782264048&sct=1&seg=0&dl=https%3A%2F%2Fwww.stationhead.com%2Fon%2Fleaderboard&dt=Stationhead%20%C2%BB%20Weekly%20Leaderboard&en=page_view&_fv=1&_nsi=1&_ss=2&_ee=1&ep.origin=firebase&tfd=3519",
+    "https://www.google.com/measurement/1p-conversion/?random=996589690&cv=11&tid=G-PT5N25TC60&fst=1782264048824&fmt=8&en=session_start&gtm=45je66h0v880234422za200zd880234422xec&gcd=13l3l3l3l1l1&dma=0&tag_exp=115938466~115938469~119027224~119392696~119392704~119576891~119576895&u_w=1440&u_h=1100&url=https%3A%2F%2Fwww.stationhead.com%2Fon%2Fleaderboard&gacid=781016324.1782264049&frm=0&tiba=Stationhead%20%C2%BB%20Weekly%20Leaderboard&gtm_ee=1&npa=0&pscdl=noapi&auid=515445852.1782264049&uaa=x86&uab=64&uafvl=Google%2520Chrome%3B149.0.7827.156%7CChromium%3B149.0.7827.156%7CNot)A%253BBrand%3B24.0.0.0&uamb=0&uam=&uap=Windows&uapv=19.0.0&uaw=0&rcb=19&ct_cookie_present=false&crd=CLTesQII8t-xAgit4bECCK_hsQIIobixAgixwbECCLDBsQIIscOxAgiKxbECCMLJsQIItMaxAgiT2rECCNvcsQIIh9uxAgjTxbECCOvMsQII7c6xAgjVz7ECCPTasQII_eOxAgjL47ECCK7lsQIIyeOxAgiX1LECCMnbsQIIseGxAgiz4bECCKbdsQIIsN6xAgiA27EC&fsk=ChAI8N3o0QYQnP_JiuaitfoDEiwAxPUV_0ihqUIlbBm44oRnRjYg78xiRvCeTV5lGXJpsRUAs8Q47CTtU8ZB6hoCM5o&pscrd=IhMIpYXn_NqelQMVJErDBh140i-2OhxodHRwczovL3d3dy5zdGF0aW9uaGVhZC5jb20vQlZDaEFJOE4zbzBRWVF3THJSaXZ2NHF1c1pFaXdBRVBYZEYxRDBvdzZLeHNXZG9FNjBIM0dLa1dsOEhpdGxiWG5OU05fekRoTndCeGFwUm1XVHdVRXpzUXoMCAliCAgAEAAYACAA",
+    "https://www.stationhead.com/on/api/weeklyleaderboard",
+    "https://analytics.google.com/g/collect?v=2&tid=G-PT5N25TC60&gtm=45je66h0v880234422za200zd880234422&_p=1782264048488&gcd=13l3l3l3l1l1&npa=0&dma=0&_eu=AEAAAGQC&_fid=fVly1Fe93q0R_jNh2utbvh&ae=a&are=1&cid=781016324.1782264049&frm=0&pscdl=noapi&rcb=19&sr=1440x1100&uaa=x86&uab=64&uafvl=Google%2520Chrome%3B149.0.7827.156%7CChromium%3B149.0.7827.156%7CNot)A%253BBrand%3B24.0.0.0&uam=&uamb=0&uap=Windows&uapv=19.0.0&uaw=0&ul=ja&gaf=2&_s=2&tag_exp=115938466~115938469~119027224~119392696~119392704~119576891~119576895&sid=1782264048&sct=1&seg=0&dl=https%3A%2F%2Fwww.stationhead.com%2Fon%2Fleaderboard&dt=Stationhead%20%C2%BB%20Weekly%20Leaderboard&en=scroll&ep.origin=firebase&epn.percent_scrolled=90&_et=4&tfd=8528"
+  ]
+}

@@ -1,0 +1,747 @@
+[
+  {
+    "at": "2026-06-24T01:02:47.201Z",
+    "type": "info",
+    "text": "spotify storage Spotify storage {clientId: false, auth: false, user: false}"
+  },
+  {
+    "at": "2026-06-24T01:02:47.220Z",
+    "type": "info",
+    "text": "main start undefined"
+  },
+  {
+    "at": "2026-06-24T01:02:47.220Z",
+    "type": "info",
+    "text": "main no opener, skipping callbacks undefined"
+  },
+  {
+    "at": "2026-06-24T01:02:47.220Z",
+    "type": "info",
+    "text": "main launching undefined"
+  },
+  {
+    "at": "2026-06-24T01:02:48.198Z",
+    "type": "debug",
+    "text": "[lock-safari-1] is created."
+  },
+  {
+    "at": "2026-06-24T01:02:48.652Z",
+    "type": "debug",
+    "text": "[lock-safari-1] is created."
+  },
+  {
+    "at": "2026-06-24T01:02:48.683Z",
+    "type": "clear",
+    "text": "console.clear"
+  },
+  {
+    "at": "2026-06-24T01:02:48.696Z",
+    "type": "info",
+    "text": "main launched undefined"
+  },
+  {
+    "at": "2026-06-24T01:02:49.025Z",
+    "type": "info",
+    "text": "Modal perform: idle"
+  },
+  {
+    "at": "2026-06-24T01:02:49.026Z",
+    "type": "info",
+    "text": "Modal ---- done performing: idle"
+  },
+  {
+    "at": "2026-06-24T01:02:49.136Z",
+    "type": "info",
+    "text": "Modal perform: idle"
+  },
+  {
+    "at": "2026-06-24T01:02:49.136Z",
+    "type": "info",
+    "text": "Modal ---- done performing: idle"
+  },
+  {
+    "at": "2026-06-24T01:02:50.321Z",
+    "type": "error",
+    "text": "Failed to load resource: net::ERR_SSL_PROTOCOL_ERROR"
+  },
+  {
+    "at": "2026-06-24T01:02:51.301Z",
+    "type": "info",
+    "text": "SpotifyAuthorizer no auth to refresh undefined"
+  },
+  {
+    "at": "2026-06-24T01:02:51.651Z",
+    "type": "info",
+    "text": "AppleMusicPlayer initializing undefined"
+  },
+  {
+    "at": "2026-06-24T01:02:51.657Z",
+    "type": "info",
+    "text": "sendStreamedTrackLogsSaga sending logs! undefined"
+  },
+  {
+    "at": "2026-06-24T01:02:52.039Z",
+    "type": "info",
+    "text": "Modal perform: idle"
+  },
+  {
+    "at": "2026-06-24T01:02:52.039Z",
+    "type": "info",
+    "text": "Modal ---- done performing: idle"
+  },
+  {
+    "at": "2026-06-24T01:02:52.162Z",
+    "type": "info",
+    "text": "Modal perform: idle"
+  },
+  {
+    "at": "2026-06-24T01:02:52.162Z",
+    "type": "info",
+    "text": "Modal ---- done performing: idle"
+  },
+  {
+    "at": "2026-06-24T01:02:52.163Z",
+    "type": "info",
+    "text": "Modal perform: idle"
+  },
+  {
+    "at": "2026-06-24T01:02:52.163Z",
+    "type": "info",
+    "text": "Modal ---- done performing: idle"
+  },
+  {
+    "at": "2026-06-24T01:02:52.408Z",
+    "type": "info",
+    "text": "merch_saga getShops {reload: false, oldPartyId: undefined, oldCountry: undefined, merchPartyId: 0, merchCountry: }"
+  },
+  {
+    "at": "2026-06-24T01:02:53.057Z",
+    "type": "info",
+    "text": "QueueReducer Clearing queue, entering a room undefined"
+  },
+  {
+    "at": "2026-06-24T01:02:53.057Z",
+    "type": "info",
+    "text": "MusicPlayer pausing player undefined"
+  },
+  {
+    "at": "2026-06-24T01:02:53.059Z",
+    "type": "info",
+    "text": "Amp pressedStation {stationId: 3328626, stationheadPlus: false, Target: sakuramankai, is_broadcasting: false, channel: Buddies}"
+  },
+  {
+    "at": "2026-06-24T01:02:53.059Z",
+    "type": "info",
+    "text": "subscribeToStreamSaga no volume undefined"
+  },
+  {
+    "at": "2026-06-24T01:02:53.060Z",
+    "type": "info",
+    "text": "GateTempUserTimer sending message to start timer undefined"
+  },
+  {
+    "at": "2026-06-24T01:02:53.070Z",
+    "type": "info",
+    "text": "playCurrentQueueTrackSaga unable to play music undefined"
+  },
+  {
+    "at": "2026-06-24T01:02:53.071Z",
+    "type": "info",
+    "text": "CurrentTrackTimer stopping timer undefined"
+  },
+  {
+    "at": "2026-06-24T01:02:53.071Z",
+    "type": "info",
+    "text": "CurrentTrackTimer starting timer undefined"
+  },
+  {
+    "at": "2026-06-24T01:02:53.104Z",
+    "type": "info",
+    "text": "AppleMusicPlayer initialized undefined"
+  },
+  {
+    "at": "2026-06-24T01:02:53.104Z",
+    "type": "info",
+    "text": "AppleMusicPlayer no music user token undefined"
+  },
+  {
+    "at": "2026-06-24T01:02:58.963Z",
+    "type": "info",
+    "text": "Sockets public streaming_party_333 streamingPartyUpdated {type: streaming_party, stream_goal: 48400000, current_stream_count: 48075499, content_configuration: Object, id: 333}"
+  },
+  {
+    "at": "2026-06-24T01:03:14.020Z",
+    "type": "info",
+    "text": "Modal perform: idle"
+  },
+  {
+    "at": "2026-06-24T01:03:14.020Z",
+    "type": "info",
+    "text": "Modal ---- done performing: idle"
+  },
+  {
+    "at": "2026-06-24T01:03:14.147Z",
+    "type": "info",
+    "text": "Modal perform: idle"
+  },
+  {
+    "at": "2026-06-24T01:03:14.147Z",
+    "type": "info",
+    "text": "Modal ---- done performing: idle"
+  },
+  {
+    "at": "2026-06-24T01:03:14.432Z",
+    "type": "info",
+    "text": "Modal perform: idle"
+  },
+  {
+    "at": "2026-06-24T01:03:14.432Z",
+    "type": "info",
+    "text": "Modal ---- done performing: idle"
+  },
+  {
+    "at": "2026-06-24T01:03:14.619Z",
+    "type": "info",
+    "text": "Modal perform: idle"
+  },
+  {
+    "at": "2026-06-24T01:03:14.619Z",
+    "type": "info",
+    "text": "Modal ---- done performing: idle"
+  },
+  {
+    "at": "2026-06-24T01:03:14.741Z",
+    "type": "info",
+    "text": "Modal perform: idle"
+  },
+  {
+    "at": "2026-06-24T01:03:14.741Z",
+    "type": "info",
+    "text": "Modal ---- done performing: idle"
+  },
+  {
+    "at": "2026-06-24T01:03:14.881Z",
+    "type": "info",
+    "text": "Modal perform: idle"
+  },
+  {
+    "at": "2026-06-24T01:03:14.881Z",
+    "type": "info",
+    "text": "Modal ---- done performing: idle"
+  },
+  {
+    "at": "2026-06-24T01:03:18.477Z",
+    "type": "info",
+    "text": "Sockets public station_3328626_listener_count listenerCount {socket_timestamp: 1782262998970, response_timestamp: 1782262998970, listener_count: 157, type: member_removed, account_id: 1}"
+  },
+  {
+    "at": "2026-06-24T01:03:18.477Z",
+    "type": "info",
+    "text": "Sockets public station_3328626_listener_count guestActivity {socket_timestamp: 1782262998970, guest_count: 1}"
+  },
+  {
+    "at": "2026-06-24T01:03:33.044Z",
+    "type": "info",
+    "text": "Amp pressedTapToUnmute {location: liveLandingPage, type: station}"
+  },
+  {
+    "at": "2026-06-24T01:03:33.045Z",
+    "type": "info",
+    "text": "onboarding-hooks no music service undefined"
+  },
+  {
+    "at": "2026-06-24T01:03:33.045Z",
+    "type": "info",
+    "text": "modals-slice set animation present-a"
+  },
+  {
+    "at": "2026-06-24T01:03:33.164Z",
+    "type": "info",
+    "text": "Modal perform: present-a"
+  },
+  {
+    "at": "2026-06-24T01:03:33.164Z",
+    "type": "info",
+    "text": "Modal ---- done performing: present-a"
+  },
+  {
+    "at": "2026-06-24T01:03:33.174Z",
+    "type": "info",
+    "text": "Modal perform: present-b"
+  },
+  {
+    "at": "2026-06-24T01:03:33.174Z",
+    "type": "info",
+    "text": "Modal presentB {w: -1px, h: -1px, loading: false}"
+  },
+  {
+    "at": "2026-06-24T01:03:33.174Z",
+    "type": "info",
+    "text": "Modal ---- done performing: present-b"
+  },
+  {
+    "at": "2026-06-24T01:03:33.175Z",
+    "type": "info",
+    "text": "Modal perform: idle"
+  },
+  {
+    "at": "2026-06-24T01:03:33.175Z",
+    "type": "info",
+    "text": "Modal ---- done performing: idle"
+  },
+  {
+    "at": "2026-06-24T01:03:33.195Z",
+    "type": "info",
+    "text": "Modal animation cancel sth-modals"
+  },
+  {
+    "at": "2026-06-24T01:03:33.195Z",
+    "type": "info",
+    "text": "Modal animation final style: {animation: present, id: sth-modals, opacity: 1, bottom: 0px, width: auto}"
+  },
+  {
+    "at": "2026-06-24T01:03:33.288Z",
+    "type": "info",
+    "text": "Modal one size {w: 450, h: 470}"
+  },
+  {
+    "at": "2026-06-24T01:03:33.289Z",
+    "type": "info",
+    "text": "Amp streamingConnectPresented {}"
+  },
+  {
+    "at": "2026-06-24T01:03:33.299Z",
+    "type": "info",
+    "text": "Modal perform: idle"
+  },
+  {
+    "at": "2026-06-24T01:03:33.299Z",
+    "type": "info",
+    "text": "Modal ---- done performing: idle"
+  },
+  {
+    "at": "2026-06-24T01:03:35.311Z",
+    "type": "info",
+    "text": "modals-slice set animation dismiss"
+  },
+  {
+    "at": "2026-06-24T01:03:35.313Z",
+    "type": "info",
+    "text": "Modal perform: dismiss"
+  },
+  {
+    "at": "2026-06-24T01:03:35.313Z",
+    "type": "info",
+    "text": "Modal ---- done performing: dismiss"
+  },
+  {
+    "at": "2026-06-24T01:03:35.324Z",
+    "type": "info",
+    "text": "Modal one size {w: 450, h: 470}"
+  },
+  {
+    "at": "2026-06-24T01:03:35.325Z",
+    "type": "info",
+    "text": "Modal perform: idle"
+  },
+  {
+    "at": "2026-06-24T01:03:35.325Z",
+    "type": "info",
+    "text": "Modal ---- done performing: idle"
+  },
+  {
+    "at": "2026-06-24T01:03:35.326Z",
+    "type": "info",
+    "text": "Modal animation cancel sth-modals"
+  },
+  {
+    "at": "2026-06-24T01:03:35.327Z",
+    "type": "info",
+    "text": "Modal animation final style: {animation: dismiss, id: sth-modals, opacity: 0, bottom: 0px, width: auto}"
+  },
+  {
+    "at": "2026-06-24T01:03:35.385Z",
+    "type": "info",
+    "text": "subscribeToStreamSaga muted undefined"
+  },
+  {
+    "at": "2026-06-24T01:03:35.385Z",
+    "type": "info",
+    "text": "playCurrentQueueTrackSaga unable to play music undefined"
+  },
+  {
+    "at": "2026-06-24T01:03:35.385Z",
+    "type": "info",
+    "text": "playRecordedShowSaga not on recorded show route undefined"
+  },
+  {
+    "at": "2026-06-24T01:03:37.449Z",
+    "type": "info",
+    "text": "modals-slice set animation present-a"
+  },
+  {
+    "at": "2026-06-24T01:03:37.459Z",
+    "type": "info",
+    "text": "Modal perform: present-a"
+  },
+  {
+    "at": "2026-06-24T01:03:37.459Z",
+    "type": "info",
+    "text": "Modal ---- done performing: present-a"
+  },
+  {
+    "at": "2026-06-24T01:03:37.459Z",
+    "type": "info",
+    "text": "Modal perform: present-b"
+  },
+  {
+    "at": "2026-06-24T01:03:37.459Z",
+    "type": "info",
+    "text": "Modal presentB {w: -1px, h: -1px, loading: false}"
+  },
+  {
+    "at": "2026-06-24T01:03:37.460Z",
+    "type": "info",
+    "text": "Modal ---- done performing: present-b"
+  },
+  {
+    "at": "2026-06-24T01:03:37.460Z",
+    "type": "info",
+    "text": "Modal perform: idle"
+  },
+  {
+    "at": "2026-06-24T01:03:37.460Z",
+    "type": "info",
+    "text": "Modal ---- done performing: idle"
+  },
+  {
+    "at": "2026-06-24T01:03:37.463Z",
+    "type": "info",
+    "text": "Modal animation cancel sth-modals"
+  },
+  {
+    "at": "2026-06-24T01:03:37.463Z",
+    "type": "info",
+    "text": "Modal animation final style: {animation: present, id: sth-modals, opacity: 1, bottom: 0px, width: auto}"
+  },
+  {
+    "at": "2026-06-24T01:03:37.474Z",
+    "type": "info",
+    "text": "Modal one size {w: 450, h: 504}"
+  },
+  {
+    "at": "2026-06-24T01:03:37.476Z",
+    "type": "info",
+    "text": "Modal perform: idle"
+  },
+  {
+    "at": "2026-06-24T01:03:37.476Z",
+    "type": "info",
+    "text": "Modal ---- done performing: idle"
+  },
+  {
+    "at": "2026-06-24T01:03:46.751Z",
+    "type": "info",
+    "text": "modals-slice set animation dismiss"
+  },
+  {
+    "at": "2026-06-24T01:03:46.754Z",
+    "type": "info",
+    "text": "Modal perform: dismiss"
+  },
+  {
+    "at": "2026-06-24T01:03:46.755Z",
+    "type": "info",
+    "text": "Modal ---- done performing: dismiss"
+  },
+  {
+    "at": "2026-06-24T01:03:46.811Z",
+    "type": "info",
+    "text": "Modal one size {w: 450, h: 504}"
+  },
+  {
+    "at": "2026-06-24T01:03:46.813Z",
+    "type": "info",
+    "text": "Modal perform: idle"
+  },
+  {
+    "at": "2026-06-24T01:03:46.813Z",
+    "type": "info",
+    "text": "Modal ---- done performing: idle"
+  },
+  {
+    "at": "2026-06-24T01:03:46.833Z",
+    "type": "info",
+    "text": "Modal animation cancel sth-modals"
+  },
+  {
+    "at": "2026-06-24T01:03:46.833Z",
+    "type": "info",
+    "text": "Modal animation final style: {animation: dismiss, id: sth-modals, opacity: 0, bottom: 0px, width: auto}"
+  },
+  {
+    "at": "2026-06-24T01:03:50.455Z",
+    "type": "info",
+    "text": "modals-slice set animation present-a"
+  },
+  {
+    "at": "2026-06-24T01:03:50.461Z",
+    "type": "info",
+    "text": "Modal perform: present-a"
+  },
+  {
+    "at": "2026-06-24T01:03:50.461Z",
+    "type": "info",
+    "text": "Modal ---- done performing: present-a"
+  },
+  {
+    "at": "2026-06-24T01:03:50.462Z",
+    "type": "info",
+    "text": "Modal perform: present-b"
+  },
+  {
+    "at": "2026-06-24T01:03:50.462Z",
+    "type": "info",
+    "text": "Modal presentB {w: -1px, h: -1px, loading: false}"
+  },
+  {
+    "at": "2026-06-24T01:03:50.462Z",
+    "type": "info",
+    "text": "Modal ---- done performing: present-b"
+  },
+  {
+    "at": "2026-06-24T01:03:50.463Z",
+    "type": "info",
+    "text": "Modal perform: idle"
+  },
+  {
+    "at": "2026-06-24T01:03:50.463Z",
+    "type": "info",
+    "text": "Modal ---- done performing: idle"
+  },
+  {
+    "at": "2026-06-24T01:03:50.464Z",
+    "type": "info",
+    "text": "Modal animation cancel sth-modals"
+  },
+  {
+    "at": "2026-06-24T01:03:50.464Z",
+    "type": "info",
+    "text": "Modal animation final style: {animation: present, id: sth-modals, opacity: 1, bottom: 0px, width: auto}"
+  },
+  {
+    "at": "2026-06-24T01:03:50.473Z",
+    "type": "info",
+    "text": "Modal one size {w: 48, h: 48}"
+  },
+  {
+    "at": "2026-06-24T01:03:50.474Z",
+    "type": "info",
+    "text": "Modal perform: idle"
+  },
+  {
+    "at": "2026-06-24T01:03:50.474Z",
+    "type": "info",
+    "text": "Modal ---- done performing: idle"
+  },
+  {
+    "at": "2026-06-24T01:03:50.856Z",
+    "type": "info",
+    "text": "modals-slice set animation resize-a"
+  },
+  {
+    "at": "2026-06-24T01:03:50.856Z",
+    "type": "info",
+    "text": "Modal one size {w: 450, h: 552}"
+  },
+  {
+    "at": "2026-06-24T01:03:50.857Z",
+    "type": "info",
+    "text": "Modal perform: resize-a"
+  },
+  {
+    "at": "2026-06-24T01:03:50.857Z",
+    "type": "info",
+    "text": "Modal ---- done performing: resize-a"
+  },
+  {
+    "at": "2026-06-24T01:03:50.857Z",
+    "type": "info",
+    "text": "Modal perform: idle"
+  },
+  {
+    "at": "2026-06-24T01:03:50.857Z",
+    "type": "info",
+    "text": "Modal ---- done performing: idle"
+  },
+  {
+    "at": "2026-06-24T01:03:54.627Z",
+    "type": "info",
+    "text": "modals-slice set animation dismiss"
+  },
+  {
+    "at": "2026-06-24T01:03:54.628Z",
+    "type": "info",
+    "text": "Modal perform: dismiss"
+  },
+  {
+    "at": "2026-06-24T01:03:54.628Z",
+    "type": "info",
+    "text": "Modal ---- done performing: dismiss"
+  },
+  {
+    "at": "2026-06-24T01:03:54.634Z",
+    "type": "info",
+    "text": "Modal one size {w: 450, h: 552}"
+  },
+  {
+    "at": "2026-06-24T01:03:54.634Z",
+    "type": "info",
+    "text": "Modal perform: idle"
+  },
+  {
+    "at": "2026-06-24T01:03:54.635Z",
+    "type": "info",
+    "text": "Modal ---- done performing: idle"
+  },
+  {
+    "at": "2026-06-24T01:03:54.644Z",
+    "type": "info",
+    "text": "Modal animation cancel sth-modals"
+  },
+  {
+    "at": "2026-06-24T01:03:54.644Z",
+    "type": "info",
+    "text": "Modal animation final style: {animation: dismiss, id: sth-modals, opacity: 0, bottom: 0px, width: auto}"
+  },
+  {
+    "at": "2026-06-24T01:03:55.947Z",
+    "type": "info",
+    "text": "Amp pressedActiveDaysTracker {}"
+  },
+  {
+    "at": "2026-06-24T01:03:55.948Z",
+    "type": "info",
+    "text": "Amp pressedUpsell {source: trackYourStreams}"
+  },
+  {
+    "at": "2026-06-24T01:03:55.948Z",
+    "type": "info",
+    "text": "modals-slice set animation present-a"
+  },
+  {
+    "at": "2026-06-24T01:03:55.955Z",
+    "type": "info",
+    "text": "Modal perform: present-a"
+  },
+  {
+    "at": "2026-06-24T01:03:55.955Z",
+    "type": "info",
+    "text": "Modal ---- done performing: present-a"
+  },
+  {
+    "at": "2026-06-24T01:03:55.955Z",
+    "type": "info",
+    "text": "Modal perform: present-b"
+  },
+  {
+    "at": "2026-06-24T01:03:55.955Z",
+    "type": "info",
+    "text": "Modal presentB {w: -1px, h: -1px, loading: false}"
+  },
+  {
+    "at": "2026-06-24T01:03:55.956Z",
+    "type": "info",
+    "text": "Modal ---- done performing: present-b"
+  },
+  {
+    "at": "2026-06-24T01:03:55.956Z",
+    "type": "info",
+    "text": "Modal perform: idle"
+  },
+  {
+    "at": "2026-06-24T01:03:55.956Z",
+    "type": "info",
+    "text": "Modal ---- done performing: idle"
+  },
+  {
+    "at": "2026-06-24T01:03:55.964Z",
+    "type": "info",
+    "text": "Modal animation cancel sth-modals"
+  },
+  {
+    "at": "2026-06-24T01:03:55.964Z",
+    "type": "info",
+    "text": "Modal animation final style: {animation: present, id: sth-modals, opacity: 1, bottom: 0px, width: auto}"
+  },
+  {
+    "at": "2026-06-24T01:03:55.988Z",
+    "type": "info",
+    "text": "Modal one size {w: 450, h: 604}"
+  },
+  {
+    "at": "2026-06-24T01:03:55.998Z",
+    "type": "info",
+    "text": "Modal perform: idle"
+  },
+  {
+    "at": "2026-06-24T01:03:55.998Z",
+    "type": "info",
+    "text": "Modal ---- done performing: idle"
+  },
+  {
+    "at": "2026-06-24T01:03:57.212Z",
+    "type": "info",
+    "text": "modals-slice set animation dismiss"
+  },
+  {
+    "at": "2026-06-24T01:03:57.213Z",
+    "type": "info",
+    "text": "Modal perform: dismiss"
+  },
+  {
+    "at": "2026-06-24T01:03:57.214Z",
+    "type": "info",
+    "text": "Modal ---- done performing: dismiss"
+  },
+  {
+    "at": "2026-06-24T01:03:57.221Z",
+    "type": "info",
+    "text": "Modal one size {w: 450, h: 604}"
+  },
+  {
+    "at": "2026-06-24T01:03:57.221Z",
+    "type": "info",
+    "text": "Modal perform: idle"
+  },
+  {
+    "at": "2026-06-24T01:03:57.221Z",
+    "type": "info",
+    "text": "Modal ---- done performing: idle"
+  },
+  {
+    "at": "2026-06-24T01:03:57.224Z",
+    "type": "info",
+    "text": "Modal animation cancel sth-modals"
+  },
+  {
+    "at": "2026-06-24T01:03:57.224Z",
+    "type": "info",
+    "text": "Modal animation final style: {animation: dismiss, id: sth-modals, opacity: 0, bottom: 0px, width: auto}"
+  },
+  {
+    "at": "2026-06-24T01:03:58.958Z",
+    "type": "info",
+    "text": "Sockets public streaming_party_333 streamingPartyUpdated {type: streaming_party, stream_goal: 48400000, current_stream_count: 48075521, content_configuration: Object, id: 333}"
+  },
+  {
+    "at": "2026-06-24T01:04:06.669Z",
+    "type": "info",
+    "text": "Sockets public station_3328626_listener_count listenerCount {socket_timestamp: 1782263047487, response_timestamp: 1782263047487, listener_count: 156, type: member_removed, account_id: 1}"
+  },
+  {
+    "at": "2026-06-24T01:04:06.968Z",
+    "type": "info",
+    "text": "Sockets public station_3328626_listener_count guestActivity {socket_timestamp: 1782263047487, guest_count: 1}"
+  }
+]

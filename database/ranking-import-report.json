@@ -1,0 +1,67 @@
+{
+  "generated_at": "2026-06-23T23:36:51.114Z",
+  "ranking_type": "週間チャンネル順位",
+  "merge_rule": "When the same week and channel exist in both sheets, all_channels_matrix has priority.",
+  "weekly_metrics_source": "sh_weekly_summary (derived from original detailed history)",
+  "sources": {
+    "weekly_leaderboard_1163473737": {
+      "kind": "vertical",
+      "source_url": "https://docs.google.com/spreadsheets/d/188dtzckvsE4xf_lIZTIqq_TJe7MEqr32Nk5qGizw-co/export?format=csv&gid=1163473737",
+      "downloaded_rows": 83,
+      "accepted": 35,
+      "skipped_no_date": 0,
+      "skipped_invalid_channel": 0,
+      "skipped_no_ranking": 0,
+      "detected_channels": [
+        "sakuramankai",
+        "sakurazaka46jp"
+      ]
+    },
+    "all_channels_matrix_526290422": {
+      "kind": "matrix",
+      "source_url": "https://docs.google.com/spreadsheets/d/1vixrPSYGfihWqfkjkmz9FiCjJNZgGlLhel5fJot4KWY/export?format=csv&gid=526290422",
+      "downloaded_rows": 485,
+      "accepted": 2778,
+      "skipped_no_date": 0,
+      "skipped_invalid_channel": 1,
+      "skipped_no_ranking": 281,
+      "date_columns": [
+        "2025-12-10",
+        "2025-12-16",
+        "2025-12-23",
+        "2026-01-06",
+        "2026-01-13",
+        "2026-01-20",
+        "2026-01-27",
+        "2026-02-03",
+        "2026-02-10",
+        "2026-02-17",
+        "2026-02-24",
+        "2026-03-03",
+        "2026-03-10",
+        "2026-03-17",
+        "2026-03-24",
+        "2026-03-31",
+        "2026-04-07",
+        "2026-04-14",
+        "2026-04-21",
+        "2026-04-28",
+        "2026-05-05",
+        "2026-05-12",
+        "2026-05-19",
+        "2026-05-26",
+        "2026-06-02",
+        "2026-06-09",
+        "2026-06-16",
+        "2026-06-23"
+      ],
+      "detected_channel_count": 202
+    }
+  },
+  "merged_rankings": 2813,
+  "unique_channels": 202,
+  "unique_weeks": 59,
+  "first_week": "2024-06-17",
+  "last_week": "2026-06-23",
+  "sql_parts": 1
+}

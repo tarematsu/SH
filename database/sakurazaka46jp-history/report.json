@@ -1,0 +1,33 @@
+{
+  "source": "公式リスパ - 櫻坂ステへ統計(1).xlsx",
+  "host_handle": "sakurazaka46jp",
+  "rows": 518,
+  "events": [
+    {
+      "title": "2024.07.23『YUI KOBAYASHI GRADUATION CONCERT』Stationhead Listening Party",
+      "rows": 76
+    },
+    {
+      "title": "2024.11.22「4th YEAR ANNIVERSARY LIVE」開催直前！Stationheadリスニングパーティー",
+      "rows": 199
+    },
+    {
+      "title": "2024.11.25「4th YEAR ANNIVERSARY LIVE」Stationheadリスニングパーティー",
+      "rows": 91
+    },
+    {
+      "title": "2025.04.30 2nd Album『Addiction』Stationheadリスニングパーティー",
+      "rows": 38
+    },
+    {
+      "title": "2025.10.29 13th Single『Unhappy birthday構文』リリース記念Stationheadリスニングパーティー",
+      "rows": 25
+    },
+    {
+      "title": "2025.12.30『THANK YOU BUDDIES!! THANK YOU 2025!! 櫻坂46 YEAR-END LISTENING PARTY』",
+      "rows": 89
+    }
+  ],
+  "date_min": "2024-07-23 20:05:00",
+  "date_max": "2025-12-30 21:33:00"
+}

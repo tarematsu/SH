@@ -16,6 +16,7 @@ const MODE_HELP = {
   daily: ['日次集計', '1日ごとの最大同接、再生数増加、メンバー増加を表示します。'],
   weekly: ['週次集計', '週ごとの最大同接、再生数増加、メンバー増加を表示します。'],
   monthly: ['月次集計', '月ごとの長期推移を少ない読み取り量で表示します。'],
+  broadcasts: ['放送履歴', '過去の公式Stationhead放送を放送単位で表示します。'],
   raw: ['詳細データ', '元の記録を200件ずつ表示します。検索範囲は最大31日です。'],
   ranking: ['週間リーダーボード', 'Stationheadで放送しているホストの週次順位です。掲載がない週は「圏外」として表示します。'],
 };
@@ -28,9 +29,15 @@ const SUMMARY_LABELS = {
   likes_max: '最大いいね', distinct_tracks: '曲数', primary_host: '主なホスト', quality_score: '品質',
 };
 
+const BROADCAST_LABELS = {
+  event_name: '放送名', started_jst: '開始日時', ended_jst: '終了日時',
+  sample_count: '記録数', listener_avg: '平均同接', listener_max: '最大同接',
+  likes_max: '最大いいね', distinct_tracks: '曲数', host_handle: 'ホスト',
+};
+
 const RAW_LABELS = {
-  observed_jst: '取得日時', listener_count: '同接', total_stream_count: '総再生数',
-  track_title: '曲名', artist_name: 'アーティスト', host_handle: 'ホスト',
+  observed_jst: '取得日時', source_note: '放送名', listener_count: '同接', total_stream_count: '総再生数',
+  track_title: '曲名', artist_name: 'アーティスト', likes: 'いいね', comment_velocity: 'コメント勢い', host_handle: 'ホスト',
   total_member_count: 'メンバー', quality_score: '品質',
 };
 
@@ -108,13 +115,13 @@ function setMode(mode) {
   $('#hostWrap').hidden = !ranking;
   $('#rankingWeeklyPanel').hidden = !ranking;
   $('#metric').hidden = ranking;
-  $('#metric').disabled = mode === 'raw';
-  $('#chartPanel').hidden = mode === 'raw';
+  $('#metric').disabled = mode === 'raw' || mode === 'broadcasts';
+  $('#chartPanel').hidden = mode === 'raw' || mode === 'broadcasts';
   $('#chartTitle').textContent = ranking ? '櫻坂ホストの順位推移' : '推移グラフ';
   $('#chartFoot').textContent = ranking
     ? '順位は1位が上です。掲載されなかった週は線をつながず、空白として表示します。'
     : '記録がない期間は線をつながず、空白として表示します。';
-  $('#tableTitle').textContent = ranking ? '週間リーダーボード' : mode === 'raw' ? '詳細データ一覧' : '集計データ一覧';
+  $('#tableTitle').textContent = ranking ? '週間リーダーボード' : mode === 'broadcasts' ? '公式放送一覧' : mode === 'raw' ? '詳細データ一覧' : '集計データ一覧';
   resetChartInfo();
 }
 
@@ -481,12 +488,14 @@ function selectChartFromPointer(event) {
 }
 
 function columnsFor(mode) {
+  if (mode === 'broadcasts') return Object.keys(BROADCAST_LABELS);
   if (mode === 'raw') return Object.keys(RAW_LABELS);
   if (mode === 'ranking') return Object.keys(RANKING_LABELS);
   return Object.keys(SUMMARY_LABELS);
 }
 
 function labelsFor(mode) {
+  if (mode === 'broadcasts') return BROADCAST_LABELS;
   if (mode === 'raw') return RAW_LABELS;
   if (mode === 'ranking') return RANKING_LABELS;
   return SUMMARY_LABELS;
@@ -528,7 +537,7 @@ function displayCell(row, column, mode) {
       return `<span class="${change.className}">${change.text}</span>`;
     }
   }
-  if (column === 'period_key' || column === 'observed_jst') return escapeHtml(formatDate(row[column], column === 'observed_jst'));
+  if (column === 'period_key' || column === 'observed_jst' || column === 'started_jst' || column === 'ended_jst') return escapeHtml(formatDate(row[column], column !== 'period_key'));
   const value = row[column];
   return typeof value === 'number' ? fmt(value) : escapeHtml(value);
 }
@@ -593,7 +602,7 @@ function updateSummary(rows, mode) {
     return;
   }
 
-  $('#periodLabel').textContent = mode === 'raw' ? '表示件数' : '期間数';
+  $('#periodLabel').textContent = mode === 'broadcasts' ? '放送数' : mode === 'raw' ? '表示件数' : '期間数';
   $('#maxLabel').textContent = '最大同接';
   $('#streamLabel').textContent = '再生数増加';
   $('#memberLabel').textContent = 'メンバー増加';
@@ -608,8 +617,8 @@ function updateSummary(rows, mode) {
     memberGrowth += Number(row.member_growth) || 0;
   }
   $('#maxListener').textContent = fmt(maxListener);
-  $('#streamGrowth').textContent = mode === 'raw' ? '—' : fmt(streamGrowth);
-  $('#memberGrowth').textContent = mode === 'raw' ? '—' : fmt(memberGrowth);
+  $('#streamGrowth').textContent = mode === 'raw' || mode === 'broadcasts' ? '—' : fmt(streamGrowth);
+  $('#memberGrowth').textContent = mode === 'raw' || mode === 'broadcasts' ? '—' : fmt(memberGrowth);
 }
 
 function cacheKey(mode, from, to, extra = '') { return `history:v8:${mode}:${from}:${to}:${extra}`; }
@@ -695,6 +704,8 @@ async function load({ append = false } = {}) {
           : '全ホストを表示';
       const suffix = data.truncated ? '（最大5000件）' : '';
       $('#notice').textContent = `${selected}：${fmt(current.length)}行（圏外週を含む）${suffix}`;
+    } else if (mode === 'broadcasts') {
+      $('#notice').textContent = `${fmt(current.length)}件の公式放送を表示`;
     } else if (mode === 'raw') {
       $('#notice').textContent = `${fmt(current.length)}件を表示中（200件ずつ取得）`;
     } else {

@@ -1,0 +1,132 @@
+[
+  {
+    "at": "2026-06-24T01:20:46.591Z",
+    "type": "info",
+    "text": "spotify storage Spotify storage {clientId: false, auth: false, user: false}"
+  },
+  {
+    "at": "2026-06-24T01:20:46.611Z",
+    "type": "info",
+    "text": "main start undefined"
+  },
+  {
+    "at": "2026-06-24T01:20:46.611Z",
+    "type": "info",
+    "text": "main no opener, skipping callbacks undefined"
+  },
+  {
+    "at": "2026-06-24T01:20:46.611Z",
+    "type": "info",
+    "text": "main launching undefined"
+  },
+  {
+    "at": "2026-06-24T01:20:47.555Z",
+    "type": "debug",
+    "text": "[lock-safari-1] is created."
+  },
+  {
+    "at": "2026-06-24T01:20:48.020Z",
+    "type": "debug",
+    "text": "[lock-safari-1] is created."
+  },
+  {
+    "at": "2026-06-24T01:20:48.054Z",
+    "type": "clear",
+    "text": "console.clear"
+  },
+  {
+    "at": "2026-06-24T01:20:48.068Z",
+    "type": "info",
+    "text": "main launched undefined"
+  },
+  {
+    "at": "2026-06-24T01:20:48.401Z",
+    "type": "info",
+    "text": "Modal perform: idle"
+  },
+  {
+    "at": "2026-06-24T01:20:48.402Z",
+    "type": "info",
+    "text": "Modal ---- done performing: idle"
+  },
+  {
+    "at": "2026-06-24T01:20:48.511Z",
+    "type": "info",
+    "text": "Modal perform: idle"
+  },
+  {
+    "at": "2026-06-24T01:20:48.511Z",
+    "type": "info",
+    "text": "Modal ---- done performing: idle"
+  },
+  {
+    "at": "2026-06-24T01:20:49.610Z",
+    "type": "error",
+    "text": "Failed to load resource: net::ERR_SSL_PROTOCOL_ERROR"
+  },
+  {
+    "at": "2026-06-24T01:20:50.045Z",
+    "type": "info",
+    "text": "SpotifyAuthorizer no auth to refresh undefined"
+  },
+  {
+    "at": "2026-06-24T01:20:50.396Z",
+    "type": "info",
+    "text": "AppleMusicPlayer initializing undefined"
+  },
+  {
+    "at": "2026-06-24T01:20:50.403Z",
+    "type": "info",
+    "text": "sendStreamedTrackLogsSaga sending logs! undefined"
+  },
+  {
+    "at": "2026-06-24T01:20:51.360Z",
+    "type": "info",
+    "text": "Modal perform: idle"
+  },
+  {
+    "at": "2026-06-24T01:20:51.360Z",
+    "type": "info",
+    "text": "Modal ---- done performing: idle"
+  },
+  {
+    "at": "2026-06-24T01:20:51.489Z",
+    "type": "info",
+    "text": "Modal perform: idle"
+  },
+  {
+    "at": "2026-06-24T01:20:51.489Z",
+    "type": "info",
+    "text": "Modal ---- done performing: idle"
+  },
+  {
+    "at": "2026-06-24T01:20:51.489Z",
+    "type": "info",
+    "text": "Modal perform: idle"
+  },
+  {
+    "at": "2026-06-24T01:20:51.489Z",
+    "type": "info",
+    "text": "Modal ---- done performing: idle"
+  },
+  {
+    "at": "2026-06-24T01:20:51.644Z",
+    "type": "info",
+    "text": "AppleMusicPlayer initialized undefined"
+  },
+  {
+    "at": "2026-06-24T01:20:51.644Z",
+    "type": "info",
+    "text": "AppleMusicPlayer no music user token undefined"
+  },
+  {
+    "at": "2026-06-24T01:20:52.020Z",
+    "type": "info",
+    "text": "merch_saga getShops {reload: false, oldPartyId: undefined, oldCountry: undefined, merchPartyId: 0, merchCountry: }"
+  },
+  {
+    "at": "2026-06-24T01:20:52.044Z",
+    "type": "error",
+    "text": "Leaderboard loading error Oa: accounts: missing required property\n    at Object.we [as parse] (https://www.stationhead.com/assets/index-D25o2SwW.js:12:99602)\n    at W (https://www.stationhead.com/assets/LeaderboardView-BbrvglBq.js:1:3085)\n    at async https://www.stationhead.com/assets/LeaderboardView-BbrvglBq.js:1:1564"
+  }
+]
