@@ -6,10 +6,11 @@
 
   const render = () => {
     const base = updated.textContent.replace(/\s+\((?:Cloud|Local)\)$/, '');
-    updated.textContent = source ? `${base} (${source})` : base;
+    const next = source ? `${base} (${source})` : base;
+    if (updated.textContent !== next) updated.textContent = next;
   };
 
-  const observer = new MutationObserver(render);
+  const observer = new MutationObserver(() => render());
   observer.observe(updated, { childList: true, characterData: true, subtree: true });
 
   async function refreshSource() {
