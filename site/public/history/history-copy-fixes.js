@@ -2,13 +2,21 @@
   const descriptions = {
     monthly: ['月次集計', '月ごとの最大同接、再生数増加、メンバー増加を表示します。'],
     tracks: ['再生曲', '選択した日または月曜日始まりの週の再生曲を表示します。'],
-    broadcasts: ['公式ステヘ', '全放送の開始時刻を0分として重ねて表示します。'],
+    broadcasts: ['公式ステヘ', '同接推移を重ねて表示します。'],
     ranking: ['リーダーボード', 'Stationheadで放送している櫻坂ホストの週次順位です。'],
   };
 
   Object.entries(descriptions).forEach(([mode, value]) => {
     MODE_HELP[mode] = value;
   });
+
+  const applyDescription = () => {
+    const value = descriptions[currentMode];
+    const guide = $('#guide');
+    if (!value || !guide) return;
+    const html = `<strong>${value[0]}</strong><span>${value[1]}</span>`;
+    if (guide.innerHTML !== html) guide.innerHTML = html;
+  };
 
   const clearChartPresentation = () => {
     $('#chartLegend')?.replaceChildren();
@@ -25,7 +33,15 @@
   setMode = function stableSetMode(mode) {
     clearChartPresentation();
     originalSetMode(mode);
+    applyDescription();
   };
+
+  const guide = $('#guide');
+  if (guide) {
+    new MutationObserver(() => {
+      if (currentMode === 'broadcasts') applyDescription();
+    }).observe(guide, { childList: true, subtree: true, characterData: true });
+  }
 
   const originalLoad = load;
   let requestedLoad = 0;
