@@ -108,7 +108,7 @@ function setMode(mode) {
   $('#metric').hidden = ranking;
   $('#metric').disabled = mode === 'raw';
   $('#chartPanel').hidden = mode === 'raw';
-  $('#chartTitle').textContent = ranking ? '注目ホストの順位推移' : '推移グラフ';
+  $('#chartTitle').textContent = ranking ? '櫻坂ホストの順位推移' : '推移グラフ';
   $('#chartFoot').textContent = ranking
     ? '順位は1位が上です。掲載されなかった週は線をつながず、空白として表示します。'
     : '記録がない期間は線をつながず、空白として表示します。';
@@ -677,7 +677,7 @@ async function load({ append = false } = {}) {
       const selected = host
         ? `「${host}」を検索`
         : scope === 'featured'
-          ? `${FEATURED_HOSTS.join('・')}を表示`
+          ? '櫻坂を表示'
           : '全ホストを表示';
       const suffix = data.truncated ? '（最大5000件）' : '';
       $('#notice').textContent = `${selected}：${fmt(current.length)}行（圏外週を含む）${suffix}`;

@@ -17,24 +17,44 @@ const duration = (ms) => {
   const sec = Math.max(0, Math.floor((Number(ms) || 0) / 1000));
   return `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, '0')}`;
 };
-const escapeText = (value) => String(value ?? '');
+const escapeText = (value) => String(value ?? '')
+  .replaceAll('&', '&amp;')
+  .replaceAll('<', '&lt;')
+  .replaceAll('>', '&gt;')
+  .replaceAll('\"', '&quot;')
+  .replaceAll("'", '&#39;');
 
 function inferredArtist(track) {
-  const direct = String(track?.artist || '').trim();
-  if (direct && !/^JP[A-Z0-9]{8,}$/i.test(direct)) return direct;
+  const candidates = [
+    track?.artist,
+    track?.artist_name,
+    track?.album_artist,
+    track?.performer,
+    track?.subtitle,
+    Array.isArray(track?.artists) ? track.artists.map((item) => item?.name || item).filter(Boolean).join('、') : '',
+  ];
+  for (const candidate of candidates) {
+    const value = String(candidate || '').trim();
+    if (value && !/^JP[A-Z0-9]{8,}$/i.test(value)) return value;
+  }
 
   const display = String(track?.display_title || '').trim();
   const title = String(track?.title || '').trim();
   if (!display) return '';
 
-  for (const separator of [' — ', ' – ', ' - ', ' · ', ' • ']) {
+  for (const separator of [' — ', ' – ', ' - ', ' · ', ' • ', ' / ']) {
     const index = display.lastIndexOf(separator);
     if (index <= 0) continue;
     const left = display.slice(0, index).trim();
     const right = display.slice(index + separator.length).trim();
-    if (!right || /^JP[A-Z0-9]{8,}$/i.test(right)) continue;
+    if (!left || !right) continue;
+    if (/^JP[A-Z0-9]{8,}$/i.test(left) || /^JP[A-Z0-9]{8,}$/i.test(right)) continue;
     if (!title || left === title || display.startsWith(`${title}${separator}`)) return right;
+    if (right === title || display.endsWith(`${separator}${title}`)) return left;
   }
+
+  const byMatch = display.match(/^(.+?)\s+by\s+(.+)$/i);
+  if (byMatch && (!title || byMatch[1].trim() === title)) return byMatch[2].trim();
   return '';
 }
 
@@ -72,10 +92,7 @@ function drawChart(rows = lastHistoryRows) {
   if (!canvas) return;
 
   const sampled = downsampleRows(rows);
-  if (!sampled.length) {
-    // 一時的なAPI失敗やresizeでは、既存グラフを消さない
-    return;
-  }
+  if (!sampled.length) return;
   lastHistoryRows = sampled;
 
   const rect = canvas.getBoundingClientRect();
@@ -94,33 +111,50 @@ function drawChart(rows = lastHistoryRows) {
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.clearRect(0, 0, width, height);
 
-  const pad = { left: 46, right: 18, top: 20, bottom: 34 };
-  const series = [
-    { key: 'online_member_count', css: '--accent' },
-    { key: 'listener_count', css: '--accent-2' },
-  ];
-  const all = sampled.flatMap(r => series.map(s => Number(r[s.key]))).filter(Number.isFinite);
-  if (!all.length) return;
-  const min = Math.max(0, Math.min(...all) - 10);
-  const max = Math.max(...all) + 10;
-  const range = Math.max(1, max - min);
+  const pad = { left: 48, right: 76, top: 20, bottom: 34 };
+  const onlineValues = sampled.map((row) => Number(row.online_member_count)).filter(Number.isFinite);
+  const playValues = sampled.map((row) => Number(row.current_stream_count)).filter(Number.isFinite);
+  if (!onlineValues.length && !playValues.length) return;
 
+  const rangeFor = (values, minimumPadding = 1) => {
+    if (!values.length) return { min: 0, max: 1, range: 1 };
+    const rawMin = Math.min(...values);
+    const rawMax = Math.max(...values);
+    const padding = Math.max(minimumPadding, (rawMax - rawMin) * 0.08);
+    const min = Math.max(0, rawMin - padding);
+    const max = rawMax + padding;
+    return { min, max, range: Math.max(1, max - min) };
+  };
+
+  const onlineScale = rangeFor(onlineValues, 5);
+  const playScale = rangeFor(playValues, 10);
   const styles = getComputedStyle(document.documentElement);
+  const muted = styles.getPropertyValue('--muted').trim() || '#aaa3b5';
+  const onlineColor = styles.getPropertyValue('--accent').trim() || '#ff7aa8';
+  const playColor = styles.getPropertyValue('--accent-2').trim() || '#9c7bf4';
+  const compact = new Intl.NumberFormat('ja-JP', { notation: 'compact', maximumFractionDigits: 1 });
+
   ctx.font = '12px system-ui';
-  ctx.fillStyle = styles.getPropertyValue('--muted').trim() || '#aaa3b5';
   ctx.strokeStyle = 'rgba(255,255,255,.08)';
   ctx.lineWidth = 1;
-  for (let i = 0; i <= 4; i++) {
-    const y = pad.top + (height - pad.top - pad.bottom) * i / 4;
+  for (let i = 0; i <= 4; i += 1) {
+    const ratio = i / 4;
+    const y = pad.top + (height - pad.top - pad.bottom) * ratio;
     ctx.beginPath();
     ctx.moveTo(pad.left, y);
     ctx.lineTo(width - pad.right, y);
     ctx.stroke();
-    ctx.fillText(String(Math.round(max - range * i / 4)), 5, y + 4);
+
+    ctx.fillStyle = onlineColor;
+    const onlineLabel = String(Math.round(onlineScale.max - onlineScale.range * ratio));
+    ctx.fillText(onlineLabel, 5, y + 4);
+
+    ctx.fillStyle = playColor;
+    const playLabel = compact.format(Math.round(playScale.max - playScale.range * ratio));
+    ctx.fillText(playLabel, width - pad.right + 9, y + 4);
   }
 
-  series.forEach((seriesItem) => {
-    const color = styles.getPropertyValue(seriesItem.css).trim();
+  const drawSeries = (key, scale, color) => {
     ctx.strokeStyle = color;
     ctx.lineWidth = 2.5;
     ctx.lineJoin = 'round';
@@ -128,10 +162,13 @@ function drawChart(rows = lastHistoryRows) {
     ctx.beginPath();
     let started = false;
     sampled.forEach((row, index) => {
-      const value = Number(row[seriesItem.key]);
-      if (!Number.isFinite(value)) return;
+      const value = Number(row[key]);
+      if (!Number.isFinite(value)) {
+        started = false;
+        return;
+      }
       const x = pad.left + index * (width - pad.left - pad.right) / Math.max(1, sampled.length - 1);
-      const y = height - pad.bottom - (value - min) * (height - pad.top - pad.bottom) / range;
+      const y = height - pad.bottom - (value - scale.min) * (height - pad.top - pad.bottom) / scale.range;
       if (!started) {
         ctx.moveTo(x, y);
         started = true;
@@ -139,9 +176,13 @@ function drawChart(rows = lastHistoryRows) {
         ctx.lineTo(x, y);
       }
     });
-    if (started) ctx.stroke();
-  });
+    ctx.stroke();
+  };
 
+  if (onlineValues.length) drawSeries('online_member_count', onlineScale, onlineColor);
+  if (playValues.length) drawSeries('current_stream_count', playScale, playColor);
+
+  ctx.fillStyle = muted;
   const first = sampled[0]?.observed_at;
   const last = sampled.at(-1)?.observed_at;
   ctx.fillText(first ? new Date(Number(first)).toLocaleTimeString('ja-JP', { hour:'2-digit', minute:'2-digit' }) : '', pad.left, height - 9);
@@ -178,7 +219,7 @@ function renderNowDisplay(track, progressMs = 0) {
   }
 
   const title = track.title || track.display_title || track.spotify_id || '曲名不明';
-  const artist = inferredArtist(track) || 'アーティスト情報を取得中';
+  const artist = inferredArtist(track);
   const spotifyUrl = track.spotify_url || (track.spotify_id ? `https://open.spotify.com/track/${track.spotify_id}` : '');
   const durationMs = Math.max(0, Number(track.duration_ms) || 0);
   const safeProgress = Math.min(durationMs || Infinity, Math.max(0, Number(progressMs) || 0));
@@ -199,7 +240,7 @@ function renderNowDisplay(track, progressMs = 0) {
     <img class="cover" src="${track.thumbnail_url || ''}" alt="" ${track.thumbnail_url ? '' : 'hidden'}>
     <div class="track-copy">
       <h3>${escapeText(title)}</h3>
-      <p>${escapeText(artist)}</p>
+      ${artist ? `<p>${escapeText(artist)}</p>` : ''}
       <div class="track-meta"><span id="nowPlayingTime">${duration(safeProgress)} / ${duration(durationMs)}</span></div>
       <div class="progress track-progress"><i id="nowPlayingBar" style="width:${progress}%"></i></div>
       ${spotifyUrl ? '<small class="spotify-open-hint">クリックしてSpotifyで開く</small>' : ''}
@@ -313,7 +354,7 @@ function renderQueue(queue, totalItems) {
     row.innerHTML = `
       <span class="queue-no">${index + 1}</span>
       <img src="${track.thumbnail_url || ''}" alt="" ${track.thumbnail_url ? '' : 'hidden'}>
-      <span class="queue-copy"><strong>${escapeText(track.title || track.display_title || track.spotify_id || '曲名不明')}</strong><small>${escapeText(inferredArtist(track) || 'アーティスト情報を取得中')}</small></span>
+      <span class="queue-copy"><strong>${escapeText(track.title || track.display_title || track.spotify_id || '曲名不明')}</strong>${inferredArtist(track) ? `<small>${escapeText(inferredArtist(track))}</small>` : ''}</span>
       <span class="queue-duration">${duration(track.duration_ms)}</span>`;
     return row;
   }));
@@ -382,7 +423,7 @@ async function refresh() {
 
     const history = Array.isArray(data.history) ? data.history : [];
     if (history.length) {
-      const signature = `${history.length}:${history[0]?.observed_at}:${history.at(-1)?.observed_at}:${history.at(-1)?.online_member_count}:${history.at(-1)?.listener_count}`;
+      const signature = `${history.length}:${history[0]?.observed_at}:${history.at(-1)?.observed_at}:${history.at(-1)?.online_member_count}:${history.at(-1)?.current_stream_count}`;
       if (signature !== lastRenderSignature) {
         lastRenderSignature = signature;
         lastHistoryRows = history;
