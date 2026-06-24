@@ -5,7 +5,7 @@
   const notice = $('#notice');
 
   MODE_HELP.daily = ['日次集計', '日ごとの最大同接、再生数増加、メンバー増加を表示します。'];
-  MODE_HELP.ranking = ['リーダーボード', 'Stationheadで放送しているホストの週次順位です。掲載がない週は「圏外」として表示します。'];
+  MODE_HELP.ranking = ['リーダーボード', 'Stationheadで放送しているホストの週次順位です。'];
 
   function normalizeNotice() {
     if (!SUMMARY_MODES.has(currentMode)) return;
@@ -27,6 +27,7 @@
     }
     if (mode === 'ranking') {
       $('#guide strong').textContent = 'リーダーボード';
+      $('#guide span').textContent = 'Stationheadで放送しているホストの週次順位です。';
       $('#tableTitle').textContent = 'リーダーボード';
     }
   }
