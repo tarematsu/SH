@@ -18,10 +18,16 @@ const json = (data, status = 200, cache = 'public, max-age=20, s-maxage=30, stal
     },
   });
 
-function jstDayRange(now = Date.now()) {
+function jstDayRange(now = Date.now(), cutoffHour = 0) {
   const shifted = new Date(now + 9 * 3600000);
-  const todayStart = Date.UTC(shifted.getUTCFullYear(), shifted.getUTCMonth(), shifted.getUTCDate()) - 9 * 3600000;
-  return { previousStart: todayStart - 86400000, todayStart };
+  let currentStart = Date.UTC(
+    shifted.getUTCFullYear(),
+    shifted.getUTCMonth(),
+    shifted.getUTCDate(),
+    cutoffHour,
+  ) - 9 * 3600000;
+  if (now < currentStart) currentStart -= 86400000;
+  return { previousStart: currentStart - 86400000, currentStart };
 }
 
 function inferArtistFromDisplayTitle(displayTitle, title) {
@@ -155,7 +161,8 @@ export async function onRequestGet({ request, env }) {
     const url = new URL(request.url);
     const since = Math.max(0, Number(url.searchParams.get('since')) || 0);
     const initial = since <= 0;
-    const { previousStart, todayStart } = jstDayRange();
+    const midnightRange = jstDayRange(Date.now(), 0);
+    const memberRange = jstDayRange(Date.now(), 16);
 
     const historyStatement = initial
       ? db.prepare(HISTORY_24H_SQL)
@@ -164,12 +171,17 @@ export async function onRequestGet({ request, env }) {
         FROM sh_channel_snapshots WHERE observed_at>?
         ORDER BY observed_at ASC,id ASC LIMIT 180`).bind(since);
 
-    const [latest, historyResult, previousDay, latestQueue] = await Promise.all([
+    const [latest, historyResult, previousMembers, previousListens, latestQueue] = await Promise.all([
       db.prepare(LATEST_SQL).first(),
       historyStatement.all(),
-      db.prepare(`SELECT observed_at,total_member_count,total_listens
+      db.prepare(`SELECT observed_at,total_member_count
         FROM sh_channel_snapshots WHERE observed_at>=? AND observed_at<?
-        ORDER BY observed_at DESC,id DESC LIMIT 1`).bind(previousStart, todayStart).first(),
+        ORDER BY observed_at DESC,id DESC LIMIT 1`)
+        .bind(memberRange.previousStart, memberRange.currentStart).first(),
+      db.prepare(`SELECT observed_at,total_listens
+        FROM sh_channel_snapshots WHERE observed_at>=? AND observed_at<?
+        ORDER BY observed_at DESC,id DESC LIMIT 1`)
+        .bind(midnightRange.previousStart, midnightRange.currentStart).first(),
       db.prepare(`SELECT station_id,queue_id,start_time,is_paused,observed_at
         FROM sh_queue_snapshots ORDER BY observed_at DESC,id DESC LIMIT 1`).first(),
     ]);
@@ -237,12 +249,14 @@ export async function onRequestGet({ request, env }) {
       latest_observed_at: latest?.observed_at || since,
       latest: publicLatest(latest, channel, station, owner, goal),
       history,
-      daily_change: previousDay && latest ? {
-        baseline_observed_at: previousDay.observed_at,
-        total_member_count: num(latest.total_member_count) != null && num(previousDay.total_member_count) != null
-          ? num(latest.total_member_count) - num(previousDay.total_member_count) : null,
-        total_listens: num(latest.total_listens) != null && num(previousDay.total_listens) != null
-          ? num(latest.total_listens) - num(previousDay.total_listens) : null,
+      daily_change: latest ? {
+        member_baseline_observed_at: previousMembers?.observed_at || null,
+        listens_baseline_observed_at: previousListens?.observed_at || null,
+        member_cutoff_hour_jst: 16,
+        total_member_count: previousMembers && num(latest.total_member_count) != null && num(previousMembers.total_member_count) != null
+          ? num(latest.total_member_count) - num(previousMembers.total_member_count) : null,
+        total_listens: previousListens && num(latest.total_listens) != null && num(previousListens.total_listens) != null
+          ? num(latest.total_listens) - num(previousListens.total_listens) : null,
       } : null,
       goal_prediction: linearRegressionPrediction(predictionRows, num(goal)),
       queue: enrichedQueue,
