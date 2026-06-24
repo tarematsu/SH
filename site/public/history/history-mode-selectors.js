@@ -12,6 +12,7 @@
   const trackDate = $('#trackDate');
   const rankingWeek = $('#rankingWeek');
   const loadButton = $('#load');
+  const todayUtc = () => new Date().toISOString().slice(0, 10);
 
   function isoWeekValue(date = new Date()) {
     const local = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
@@ -33,10 +34,7 @@
     monday.setUTCDate(jan4.getUTCDate() - jan4Day + 1 + (week - 1) * 7);
     const sunday = new Date(monday);
     sunday.setUTCDate(monday.getUTCDate() + 6);
-    return {
-      from: monday.toISOString().slice(0, 10),
-      to: sunday.toISOString().slice(0, 10),
-    };
+    return { from: monday.toISOString().slice(0, 10), to: sunday.toISOString().slice(0, 10) };
   }
 
   function setStandardControlsVisible(visible) {
@@ -49,23 +47,9 @@
     if (trackDate.value || resolvingLatestTrackDate) return trackDate.value;
     resolvingLatestTrackDate = true;
     try {
-      for (const days of [30, 365, 3650]) {
-        const to = todayJst();
-        const fromDate = new Date(`${to}T00:00:00+09:00`);
-        fromDate.setDate(fromDate.getDate() - days);
-        const from = new Intl.DateTimeFormat('sv-SE', {
-          timeZone: 'Asia/Tokyo', year: 'numeric', month: '2-digit', day: '2-digit',
-        }).format(fromDate);
-        const params = new URLSearchParams({ from, to, limit: '10000', v: '3' });
-        const response = await fetch(`/api/track-history?${params}`, { cache: 'no-store' });
-        const data = await response.json();
-        const latest = data?.rows?.map((row) => row.play_date).filter(Boolean).sort().at(-1);
-        if (latest) {
-          trackDate.value = latest;
-          return latest;
-        }
-      }
-      trackDate.value = todayJst();
+      const response = await fetch('/api/track-history?latest=1', { cache: 'no-store' });
+      const data = await response.json();
+      trackDate.value = data?.latest_date || todayUtc();
       return trackDate.value;
     } finally {
       resolvingLatestTrackDate = false;
@@ -77,19 +61,12 @@
     resolvingLatestRankingWeek = true;
     try {
       const params = new URLSearchParams({
-        mode: 'ranking',
-        from: '2024-05-01',
-        to: todayJst(),
-        scope: 'all',
-        limit: '5000',
-        v: '10',
+        mode: 'ranking', from: '2024-05-01', to: todayUtc(), scope: 'all', limit: '5000', v: '11',
       });
       const response = await fetch(`/api/history?${params}`, { cache: 'no-store' });
       const data = await response.json();
       const latestDate = data?.rows?.map((row) => row.ranking_date).filter(Boolean).sort().at(-1);
-      rankingWeek.value = latestDate
-        ? isoWeekValue(new Date(`${latestDate}T00:00:00Z`))
-        : isoWeekValue(new Date());
+      rankingWeek.value = latestDate ? isoWeekValue(new Date(`${latestDate}T00:00:00Z`)) : isoWeekValue();
       return rankingWeek.value;
     } finally {
       resolvingLatestRankingWeek = false;
@@ -129,12 +106,6 @@
     return baseLoad(options);
   };
 
-  trackDate.addEventListener('change', () => {
-    nextCursor = null;
-    load();
-  });
-  rankingWeek.addEventListener('change', () => {
-    nextCursor = null;
-    load();
-  });
+  trackDate.addEventListener('change', () => { nextCursor = null; load(); });
+  rankingWeek.addEventListener('change', () => { nextCursor = null; load(); });
 })();
