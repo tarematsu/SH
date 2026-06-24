@@ -36,7 +36,9 @@ function positive(value, fallback) {
 function config(env) {
   return {
     alias: env.CHANNEL_ALIAS || 'buddies',
-    timeoutMs: Math.min(positive(env.BROWSER_TIMEOUT_MS, 50_000), 55_000),
+    appVersion: env.STATIONHEAD_APP_VERSION || '1.0.0',
+    requestTimeoutMs: Math.min(positive(env.REQUEST_TIMEOUT_MS, 15_000), 30_000),
+    browserTimeoutMs: Math.min(positive(env.BROWSER_TIMEOUT_MS, 50_000), 55_000),
     refreshBeforeMs: positive(env.AUTH_REFRESH_BEFORE_MS, 3_600_000),
     cooldownMs: positive(env.AUTH_REFRESH_COOLDOWN_MS, 300_000),
     backoffMs: positive(env.AUTH_FAILURE_BACKOFF_MS, 900_000),
@@ -128,11 +130,75 @@ async function finishAttempt(env, error = null) {
   `).bind(error, now, error, now, STATE_ID).run();
 }
 
+function apiHeaders(cfg, deviceUid, authToken = '') {
+  return {
+    accept: 'application/json, text/plain, */*',
+    'accept-language': 'ja,en-US;q=0.9,en;q=0.8',
+    'app-platform': 'web',
+    'app-version': cfg.appVersion,
+    'content-type': 'application/json',
+    origin: 'https://www.stationhead.com',
+    referer: 'https://www.stationhead.com/',
+    'sth-device-uid': deviceUid,
+    'user-agent': USER_AGENT,
+    ...(authToken ? { authorization: `Bearer ${authToken}` } : {}),
+  };
+}
+
+async function apiFetch(cfg, path, options = {}) {
+  return fetch(`${API_ORIGIN}${path}`, {
+    ...options,
+    signal: AbortSignal.timeout(cfg.requestTimeoutMs),
+  });
+}
+
+async function acquireDirectSession(cfg) {
+  const deviceUid = crypto.randomUUID();
+  const unauthenticatedHeaders = apiHeaders(cfg, deviceUid);
+
+  await apiFetch(cfg, '/timestamp', {
+    headers: unauthenticatedHeaders,
+  }).catch(() => null);
+
+  const tokenResponse = await apiFetch(cfg, '/web/token', {
+    method: 'POST',
+    headers: unauthenticatedHeaders,
+    body: '',
+  });
+  const authToken = normalizeBearer(tokenResponse.headers.get('authorization'));
+  if (!tokenResponse.ok || !authToken) {
+    const body = await tokenResponse.text().catch(() => '');
+    throw new Error(`Direct guest token failed: status=${tokenResponse.status}, authorization=${Boolean(authToken)}${body ? `, body=${body.slice(0, 200)}` : ''}`);
+  }
+
+  const authenticatedHeaders = apiHeaders(cfg, deviceUid, authToken);
+  const loginResponse = await apiFetch(cfg, '/web/guest/login', {
+    method: 'POST',
+    headers: authenticatedHeaders,
+    body: '',
+  });
+  if (!loginResponse.ok) {
+    const body = await loginResponse.text().catch(() => '');
+    throw new Error(`Direct guest login failed: status=${loginResponse.status}${body ? `, body=${body.slice(0, 200)}` : ''}`);
+  }
+
+  const verifyResponse = await apiFetch(cfg, `/channels/alias/${encodeURIComponent(cfg.alias)}`, {
+    headers: authenticatedHeaders,
+  });
+  if (!verifyResponse.ok) {
+    const body = await verifyResponse.text().catch(() => '');
+    throw new Error(`Direct guest verification failed: status=${verifyResponse.status}${body ? `, body=${body.slice(0, 200)}` : ''}`);
+  }
+  await verifyResponse.arrayBuffer().catch(() => {});
+
+  return { authToken, deviceUid, method: 'direct-api' };
+}
+
 function lowerCaseHeaders(headers = {}) {
   return Object.fromEntries(Object.entries(headers).map(([key, value]) => [key.toLowerCase(), value]));
 }
 
-async function captureGuestSession(env, cfg) {
+async function captureBrowserSession(env, cfg) {
   if (!env.BROWSER) throw new Error('Browser Run binding BROWSER is missing');
 
   let browser;
@@ -142,19 +208,20 @@ async function captureGuestSession(env, cfg) {
     const page = await browser.newPage();
     await page.setUserAgent(USER_AGENT);
     await page.setExtraHTTPHeaders({ 'accept-language': 'ja-JP,ja;q=0.9,en-US;q=0.8,en;q=0.7' });
-    page.setDefaultNavigationTimeout(cfg.timeoutMs);
-    page.setDefaultTimeout(cfg.timeoutMs);
+    page.setDefaultNavigationTimeout(cfg.browserTimeoutMs);
+    page.setDefaultTimeout(cfg.browserTimeoutMs);
 
     let authToken = '';
     let deviceUid = '';
     let settled = false;
+    let apiRequests = 0;
 
     const credentials = new Promise((resolve, reject) => {
       const complete = () => {
         if (settled || !authToken || !deviceUid) return;
         settled = true;
         clearTimeout(timer);
-        resolve({ authToken, deviceUid });
+        resolve({ authToken, deviceUid, method: 'browser-run' });
       };
 
       const inspect = (headers) => {
@@ -169,12 +236,15 @@ async function captureGuestSession(env, cfg) {
       timer = setTimeout(() => {
         if (settled) return;
         settled = true;
-        reject(new Error(`Timed out waiting for Stationhead guest credentials (token=${Boolean(authToken)}, device=${Boolean(deviceUid)})`));
-      }, cfg.timeoutMs);
+        reject(new Error(`Browser credentials timed out (token=${Boolean(authToken)}, device=${Boolean(deviceUid)}, api_requests=${apiRequests})`));
+      }, cfg.browserTimeoutMs);
 
       page.on('request', (request) => {
         try {
-          if (new URL(request.url()).origin === API_ORIGIN) inspect(request.headers());
+          if (new URL(request.url()).origin === API_ORIGIN) {
+            apiRequests += 1;
+            inspect(request.headers());
+          }
         } catch {}
       });
 
@@ -193,20 +263,38 @@ async function captureGuestSession(env, cfg) {
       }).catch(() => {});
     });
 
-    const navigation = page.goto(`https://www.stationhead.com/c/${encodeURIComponent(cfg.alias)}`, {
+    await page.goto(`https://www.stationhead.com/c/${encodeURIComponent(cfg.alias)}`, {
       waitUntil: 'domcontentloaded',
-      timeout: cfg.timeoutMs,
-    }).catch((error) => {
-      if (!settled) throw error;
-      return null;
+      timeout: cfg.browserTimeoutMs,
     });
 
-    const result = await credentials;
-    await navigation.catch(() => {});
-    return result;
+    await sleep(3_000);
+    await page.evaluate(() => {
+      const candidates = [...document.querySelectorAll('button, [role="button"], a')];
+      const target = candidates.find((element) => /start listening|listen|join|play|再生|聴く/i.test(element.textContent || ''));
+      target?.click();
+    }).catch(() => {});
+
+    return await credentials;
   } finally {
     clearTimeout(timer);
     await browser?.close().catch(() => {});
+  }
+}
+
+async function acquireSession(env, cfg) {
+  try {
+    return await acquireDirectSession(cfg);
+  } catch (directError) {
+    console.warn(JSON.stringify({
+      event: 'stationhead_direct_auth_failed',
+      error: String(directError?.message || directError).slice(0, 500),
+    }));
+    try {
+      return await captureBrowserSession(env, cfg);
+    } catch (browserError) {
+      throw new Error(`Direct auth: ${directError?.message || directError}; Browser fallback: ${browserError?.message || browserError}`);
+    }
   }
 }
 
@@ -224,12 +312,13 @@ async function refreshSession(env, reason, force = false) {
   }
 
   try {
-    const credentials = await captureGuestSession(env, cfg);
+    const credentials = await acquireSession(env, cfg);
     await saveSession(env, credentials.authToken, credentials.deviceUid);
     await finishAttempt(env, null);
     const state = await readState(env);
     console.log(JSON.stringify({
       event: 'stationhead_auth_refreshed',
+      method: credentials.method,
       reason,
       token_expires_at: state.tokenExpiresAt || null,
     }));
@@ -237,7 +326,7 @@ async function refreshSession(env, reason, force = false) {
   } catch (error) {
     const message = String(error?.message || error).slice(0, 1000);
     await finishAttempt(env, message).catch(() => {});
-    throw new Error(`Browser Run authentication failed: ${message}`);
+    throw new Error(`Stationhead authentication failed: ${message}`);
   }
 }
 
