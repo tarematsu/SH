@@ -21,8 +21,28 @@
     }
   }
 
+  function clearLegend() {
+    const legend = $('#chartLegend');
+    if (legend) legend.replaceChildren();
+  }
+
+  let pendingReload = null;
+  function loadAfterCurrentRequest() {
+    clearTimeout(pendingReload);
+    const run = () => {
+      if (loading) {
+        pendingReload = setTimeout(run, 50);
+        return;
+      }
+      nextCursor = null;
+      load();
+    };
+    run();
+  }
+
   const baseSetMode = setMode;
   setMode = function setModeWithFinalCopy(mode) {
+    clearLegend();
     baseSetMode(mode);
     apply();
   };
@@ -34,8 +54,25 @@
   });
 
   document.querySelectorAll('.mode-tabs button').forEach((button) => {
-    button.addEventListener('click', () => setTimeout(apply, 0));
+    button.onclick = () => {
+      setMode(button.dataset.mode);
+      loadAfterCurrentRequest();
+    };
   });
+
+  document.querySelectorAll('.range-presets button').forEach((button) => {
+    button.onclick = () => {
+      applyPreset(button.dataset.days);
+      clearLegend();
+      loadAfterCurrentRequest();
+    };
+  });
+
+  const loadButton = $('#load');
+  if (loadButton) loadButton.onclick = () => {
+    clearLegend();
+    loadAfterCurrentRequest();
+  };
 
   const likesScript = document.createElement('script');
   likesScript.src = '/history/history-track-likes.js';
