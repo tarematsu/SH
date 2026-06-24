@@ -2,6 +2,7 @@
   const baseSetMode = setMode;
   const baseLoad = load;
   let resolvingLatestTrackDate = false;
+  let resolvingLatestRankingWeek = false;
 
   const rangePresets = $('#rangePresets');
   const fromWrap = $('#fromWrap');
@@ -13,7 +14,7 @@
   const loadButton = $('#load');
 
   function isoWeekValue(date = new Date()) {
-    const local = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
+    const local = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
     const day = local.getUTCDay() || 7;
     local.setUTCDate(local.getUTCDate() + 4 - day);
     const yearStart = new Date(Date.UTC(local.getUTCFullYear(), 0, 1));
@@ -71,6 +72,30 @@
     }
   }
 
+  async function resolveLatestRankingWeek() {
+    if (rankingWeek.value || resolvingLatestRankingWeek) return rankingWeek.value;
+    resolvingLatestRankingWeek = true;
+    try {
+      const params = new URLSearchParams({
+        mode: 'ranking',
+        from: '2024-05-01',
+        to: todayJst(),
+        scope: 'all',
+        limit: '5000',
+        v: '10',
+      });
+      const response = await fetch(`/api/history?${params}`, { cache: 'no-store' });
+      const data = await response.json();
+      const latestDate = data?.rows?.map((row) => row.ranking_date).filter(Boolean).sort().at(-1);
+      rankingWeek.value = latestDate
+        ? isoWeekValue(new Date(`${latestDate}T00:00:00Z`))
+        : isoWeekValue(new Date());
+      return rankingWeek.value;
+    } finally {
+      resolvingLatestRankingWeek = false;
+    }
+  }
+
   setMode = function setModeWithDedicatedSelectors(mode) {
     baseSetMode(mode);
     const tracks = mode === 'tracks';
@@ -84,7 +109,6 @@
     $('#hostWrap').hidden = true;
     $('#rankingScope').value = 'all';
     $('#host').value = '';
-    if (ranking && !rankingWeek.value) rankingWeek.value = isoWeekValue();
   };
 
   load = async function loadWithDedicatedSelectors(options = {}) {
@@ -93,7 +117,8 @@
       $('#from').value = selected;
       $('#to').value = selected;
     } else if (currentMode === 'ranking') {
-      const range = weekRange(rankingWeek.value || isoWeekValue());
+      const selectedWeek = rankingWeek.value || await resolveLatestRankingWeek();
+      const range = weekRange(selectedWeek);
       if (range) {
         $('#from').value = range.from;
         $('#to').value = range.to;
