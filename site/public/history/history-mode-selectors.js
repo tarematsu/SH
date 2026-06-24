@@ -11,9 +11,6 @@
   const trackDate=$('#trackDate');
   const trackWeekMode=$('#trackWeekMode');
   const rankingScopeTabs=$('#rankingScopeTabs');
-  const rankingWeekMenu=$('#rankingWeekMenu');
-  const rankingWeekCurrent=$('#rankingWeekCurrent');
-  const rankingWeekList=$('#rankingWeekList');
   const loadButton=$('#load');
   const todayUtc=()=>new Date().toISOString().slice(0,10);
 
@@ -27,7 +24,6 @@
     date.setUTCDate(date.getUTCDate()+6);
     return date.toISOString().slice(0,10);
   }
-  function displayDate(value){return String(value||'').replaceAll('-','/');}
   function setStandardControlsVisible(visible){rangePresets.hidden=!visible;fromWrap.hidden=!visible;toWrap.hidden=!visible;}
 
   async function resolveLatestTrackDate(){
@@ -48,28 +44,6 @@
     $('#host').value='';
   }
 
-  function focusRankingWeek(week){
-    const weeks=[...new Set(current.map((row)=>row.ranking_date).filter(Boolean))].sort();
-    const index=weeks.indexOf(week);
-    if(index<0)return;
-    selectedChartIndex=index;
-    rankingWeekCurrent.textContent=displayDate(week);
-    rankingWeekList.querySelectorAll('button').forEach((button)=>button.classList.toggle('active',button.dataset.week===week));
-    drawRanking(current,index);
-  }
-
-  function buildRankingWeekMenu(){
-    if(currentMode!=='ranking')return;
-    const weeks=[...new Set(current.map((row)=>row.ranking_date).filter(Boolean))].sort().reverse();
-    rankingWeekList.innerHTML=weeks.map((week)=>`<button type="button" data-week="${week}">${displayDate(week)}</button>`).join('');
-    rankingWeekList.querySelectorAll('button').forEach((button)=>button.addEventListener('click',()=>{
-      focusRankingWeek(button.dataset.week);
-      rankingWeekMenu.open=false;
-    }));
-    if(weeks.length)focusRankingWeek(weeks[0]);
-    else rankingWeekCurrent.textContent='週データなし';
-  }
-
   shouldShowRankingChart=()=>true;
 
   setMode=function(mode){
@@ -81,7 +55,6 @@
     setStandardControlsVisible(!(tracks||ranking||broadcasts));
     trackControls.hidden=!tracks;
     rankingScopeTabs.hidden=!ranking;
-    rankingWeekMenu.hidden=!ranking;
     loadButton.hidden=tracks||ranking||broadcasts;
     $('#rankingScopeWrap').hidden=true;
     $('#hostWrap').hidden=true;
@@ -101,9 +74,7 @@
       $('#from').value='2024-05-01';
       $('#to').value=todayUtc();
     }
-    const result=await baseLoad(options);
-    if(currentMode==='ranking'&&!options.append)buildRankingWeekMenu();
-    return result;
+    return baseLoad(options);
   };
 
   trackDate.addEventListener('change',()=>{nextCursor=null;load();});
