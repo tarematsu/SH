@@ -187,11 +187,14 @@ async function captureGuestSession(env, config) {
       page.on('response', (response) => inspect(response.request()));
     });
 
-    await page.goto(`https://www.stationhead.com/c/${encodeURIComponent(config.channelAlias)}`, {
-      waitUntil: 'domcontentloaded',
-      timeout: config.timeoutMs,
-    });
-    return await credentials;
+    const [, result] = await Promise.all([
+      page.goto(`https://www.stationhead.com/c/${encodeURIComponent(config.channelAlias)}`, {
+        waitUntil: 'domcontentloaded',
+        timeout: config.timeoutMs,
+      }),
+      credentials,
+    ]);
+    return result;
   } finally {
     await browser?.close().catch(() => {});
   }
@@ -231,10 +234,15 @@ async function refreshSession(env, reason, { ignoreBackoff = false } = {}) {
 async function ensureSession(env) {
   const config = configFromEnv(env);
   const state = await readAuthState(env);
-  if (needsRefresh(state, config)) {
-    return refreshSession(env, state.authToken ? 'token-near-expiry' : 'initial-session');
-  }
-  return state;
+  if (!needsRefresh(state, config)) return state;
+
+  const refreshedRecently = state.authToken
+    && state.deviceUid
+    && state.lastSuccessAt
+    && Date.now() - state.lastSuccessAt < config.cooldownMs;
+  if (refreshedRecently) return state;
+
+  return refreshSession(env, state.authToken ? 'token-near-expiry' : 'initial-session');
 }
 
 function is401Error(error) {
