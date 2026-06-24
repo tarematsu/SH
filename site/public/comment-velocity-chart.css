@@ -1,0 +1,4 @@
+:root { --comment-accent: #55d6be; }
+.legend .legend-online { color: var(--accent); }
+.legend .legend-plays { color: var(--accent-2); }
+.legend .legend-comments { color: var(--comment-accent); }
