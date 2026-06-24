@@ -159,6 +159,8 @@ class HostMonitoring {
     this.ingestUrl = deriveHostIngestUrl(options.ingestUrl);
     this.ingestSecret = options.ingestSecret;
     this.collectorId = options.collectorId;
+    this.collectorKind = options.collectorKind || process.env.COLLECTOR_KIND || 'local';
+    this.sourcePriority = Number(options.sourcePriority || process.env.SOURCE_PRIORITY || (/[-_:]active(?:$|[-_:])/i.test(this.collectorId) ? 80 : 70));
     this.getBuddiesState = options.getBuddiesState;
     this.enrichTracks = options.enrichTracks;
     this.log = options.log || ((level, ...args) => console.log(level, ...args));
@@ -251,13 +253,15 @@ class HostMonitoring {
         type,
         observed_at: observedAt,
         collector_id: this.collectorId,
+        collector_kind: this.collectorKind,
+        source_priority: this.sourcePriority,
         data,
       }),
       signal: AbortSignal.timeout(20_000),
     });
-    const text = await response.text();
-    if (!response.ok) throw new Error(`host ingest failed ${response.status}: ${text.slice(0, 500)}`);
-    return text ? JSON.parse(text) : {};
+    const responseText = await response.text();
+    if (!response.ok) throw new Error(`host ingest failed ${response.status}: ${responseText.slice(0, 500)}`);
+    return responseText ? JSON.parse(responseText) : {};
   }
 
   async fetchStation(handle) {
@@ -349,7 +353,7 @@ class HostMonitoring {
     const identity = decision.identity;
 
     if (this.solo.sessionId && this.solo.stationId !== identity.station_id) {
-      await this.closeSoloSession('station_changed', observedAt, station);
+      await this.closeSoloSession('station_changed', observedAt, {}, 'ended');
     }
 
     if (!this.solo.sessionId) {

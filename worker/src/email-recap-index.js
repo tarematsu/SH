@@ -1,7 +1,11 @@
 import app from './official-news-index.js';
+import { runCloudHostMonitor } from './cloud-host-monitor.js';
 
 const PATH = '/ingest/email-recap';
+const LEASE_PATH = '/coordination/lease';
 const DEFAULT_OFFSET_MINUTES = 57;
+const LEASE_SCOPE = 'stationhead-primary';
+const LEASE_TTL_MS = 180000;
 
 function json(data, status = 200) {
   return new Response(JSON.stringify(data, null, 2), {
@@ -35,6 +39,79 @@ function jstDate(timestamp) {
 function addDays(dateText, days) {
   const timestamp = Date.parse(`${dateText}T00:00:00+09:00`);
   return jstDate(timestamp + days * 86400000);
+}
+
+function weeksBetween(a, b) {
+  const start = Date.parse(`${a}T00:00:00Z`);
+  const end = Date.parse(`${b}T00:00:00Z`);
+  if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) return 1;
+  return Math.max(1, Math.round((end - start) / (7 * 86400000)));
+}
+
+function median(values) {
+  const sorted = values.filter((value) => Number.isFinite(value) && value >= 0).sort((a, b) => a - b);
+  if (!sorted.length) return null;
+  const middle = Math.floor(sorted.length / 2);
+  return sorted.length % 2 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2;
+}
+
+async function renewCloudLease(env) {
+  if (!env.DB) return null;
+  const now = Date.now();
+  const leaseUntil = now + LEASE_TTL_MS;
+  try {
+    await env.DB.prepare(`INSERT INTO sh_collector_leases (
+        scope,holder_id,holder_kind,priority,lease_until,heartbeat_at,updated_at,metadata_json
+      ) VALUES (?,?,?,?,?,?,?,?)
+      ON CONFLICT(scope) DO UPDATE SET
+        holder_id=excluded.holder_id,holder_kind=excluded.holder_kind,
+        priority=excluded.priority,lease_until=excluded.lease_until,
+        heartbeat_at=excluded.heartbeat_at,updated_at=excluded.updated_at,
+        metadata_json=excluded.metadata_json`)
+      .bind(
+        LEASE_SCOPE,
+        'cloudflare-worker',
+        'cloud',
+        100,
+        leaseUntil,
+        now,
+        now,
+        JSON.stringify({ cron: 'every-minute', ttl_ms: LEASE_TTL_MS }),
+      ).run();
+    return { leaseUntil, heartbeatAt: now };
+  } catch (error) {
+    if (/no such table/i.test(String(error?.message || ''))) return null;
+    throw error;
+  }
+}
+
+async function readCloudLease(env) {
+  if (!env.DB) return null;
+  try {
+    return env.DB.prepare(`SELECT scope,holder_id,holder_kind,priority,
+      lease_until,heartbeat_at,updated_at FROM sh_collector_leases WHERE scope=?`)
+      .bind(LEASE_SCOPE).first();
+  } catch (error) {
+    if (/no such table/i.test(String(error?.message || ''))) return null;
+    throw error;
+  }
+}
+
+async function coordination(env) {
+  const row = await readCloudLease(env);
+  const now = Date.now();
+  return json({
+    ok: true,
+    scope: LEASE_SCOPE,
+    healthy: Boolean(row && Number(row.lease_until || 0) > now && row.holder_kind === 'cloud'),
+    holder_id: row?.holder_id || null,
+    holder_kind: row?.holder_kind || null,
+    priority: finite(row?.priority),
+    lease_until: finite(row?.lease_until),
+    heartbeat_at: finite(row?.heartbeat_at),
+    server_time: now,
+    setup_required: !row,
+  });
 }
 
 async function loadReferencePoints(env, effectiveAt) {
@@ -121,6 +198,71 @@ function assess(points, effectiveAt, streamCount) {
   };
 }
 
+async function assessEmailSeries(env, sourceKey, weekOf, streamCount) {
+  const existing = await env.DB.prepare(`SELECT source_key,week_of,stream_count
+    FROM sh_email_stream_snapshots WHERE source_key=?`).bind(sourceKey).first();
+  if (existing && Number(existing.stream_count) !== streamCount) {
+    return {
+      accepted: false,
+      status: 'rejected_existing_week_changed',
+      reason: `existing=${existing.stream_count}, incoming=${streamCount}`,
+    };
+  }
+
+  const [previousResult, next] = await Promise.all([
+    env.DB.prepare(`SELECT week_of,stream_count FROM sh_email_stream_snapshots
+      WHERE week_of<? ORDER BY week_of DESC LIMIT 9`).bind(weekOf).all(),
+    env.DB.prepare(`SELECT week_of,stream_count FROM sh_email_stream_snapshots
+      WHERE week_of>? ORDER BY week_of ASC LIMIT 1`).bind(weekOf).first(),
+  ]);
+  const previousRows = (previousResult.results || []).reverse();
+  const previous = previousRows.at(-1) || null;
+
+  if (previous && streamCount < Number(previous.stream_count)) {
+    return { accepted: false, status: 'rejected_non_monotonic', reason: 'below previous week' };
+  }
+  if (next && streamCount > Number(next.stream_count)) {
+    return { accepted: false, status: 'rejected_non_monotonic', reason: 'above next week' };
+  }
+
+  const historicalRates = [];
+  for (let index = 1; index < previousRows.length; index += 1) {
+    const before = previousRows[index - 1];
+    const after = previousRows[index];
+    const delta = Number(after.stream_count) - Number(before.stream_count);
+    if (delta >= 0) historicalRates.push(delta / weeksBetween(before.week_of, after.week_of));
+  }
+  const typicalWeeklyGrowth = median(historicalRates);
+  let incomingWeeklyGrowth = null;
+  if (previous) {
+    incomingWeeklyGrowth = (streamCount - Number(previous.stream_count)) / weeksBetween(previous.week_of, weekOf);
+  }
+
+  if (
+    typicalWeeklyGrowth != null
+    && incomingWeeklyGrowth != null
+    && incomingWeeklyGrowth > typicalWeeklyGrowth * 3
+    && incomingWeeklyGrowth - typicalWeeklyGrowth > 200000
+  ) {
+    return {
+      accepted: false,
+      status: 'rejected_growth_anomaly',
+      reason: `incoming_per_week=${Math.round(incomingWeeklyGrowth)}, median=${Math.round(typicalWeeklyGrowth)}`,
+      typicalWeeklyGrowth,
+      incomingWeeklyGrowth,
+    };
+  }
+
+  return {
+    accepted: true,
+    status: existing ? 'existing_match' : 'series_plausible',
+    previous,
+    next,
+    typicalWeeklyGrowth,
+    incomingWeeklyGrowth,
+  };
+}
+
 async function ingest(request, env) {
   if (!env.DB) return json({ ok: false, error: 'DB binding missing' }, 500);
   if (!authorized(request, env)) return json({ ok: false, error: 'unauthorized' }, 401);
@@ -146,20 +288,25 @@ async function ingest(request, env) {
 
   const sourceKey = `stationhead-email:${weekOf}`;
   const effectiveAt = emailSentAt - offsetMinutes * 60000;
-  const points = await loadReferencePoints(env, effectiveAt);
+  const [points, seriesValidation] = await Promise.all([
+    loadReferencePoints(env, effectiveAt),
+    assessEmailSeries(env, sourceKey, weekOf, streamCount),
+  ]);
   const validation = assess(points, effectiveAt, streamCount);
 
-  if (!validation.accepted) {
+  if (!seriesValidation.accepted || !validation.accepted) {
     return json({
       ok: false,
       imported: false,
       source_key: sourceKey,
-      validation_status: validation.status,
+      validation_status: !seriesValidation.accepted ? seriesValidation.status : validation.status,
+      validation_reason: !seriesValidation.accepted ? seriesValidation.reason : null,
       stream_count: streamCount,
       estimated_stream_count: validation.estimated,
       difference: validation.difference,
       relative_difference: validation.relativeDifference,
       nearest_distance_minutes: validation.distanceMinutes,
+      series_validation: seriesValidation,
     }, 409);
   }
 
@@ -168,6 +315,7 @@ async function ingest(request, env) {
     subject: subject || null,
     previous: validation.previous,
     next: validation.next,
+    series_validation: seriesValidation,
   });
   const importedAt = Date.now();
 
@@ -222,17 +370,50 @@ async function ingest(request, env) {
     difference: validation.difference,
     relative_difference: validation.relativeDifference,
     nearest_distance_minutes: validation.distanceMinutes,
+    series_validation: seriesValidation.status,
   });
 }
 
+async function enhancedHealth(request, env, ctx) {
+  const response = await app.fetch(request, env, ctx);
+  const base = await response.json().catch(() => ({}));
+  let lease = null;
+  let hostMonitor = null;
+  try {
+    lease = await readCloudLease(env);
+    hostMonitor = await env.DB.prepare(`SELECT phase,session_id,station_id,last_success_at,last_error,updated_at
+      FROM sh_cloud_host_monitor_state WHERE id=?`).bind('solo:sakurazaka46jp').first();
+  } catch (error) {
+    if (!/no such table/i.test(String(error?.message || ''))) console.error(error);
+  }
+  return json({
+    ...base,
+    collector_lease_until: finite(lease?.lease_until),
+    collector_lease_healthy: Boolean(lease && Number(lease.lease_until) > Date.now()),
+    cloud_solo_phase: hostMonitor?.phase || null,
+    cloud_solo_session_id: finite(hostMonitor?.session_id),
+    cloud_solo_station_id: finite(hostMonitor?.station_id),
+    cloud_host_last_success_at: finite(hostMonitor?.last_success_at),
+    cloud_host_last_error: hostMonitor?.last_error || null,
+  }, response.status);
+}
+
 export default {
-  scheduled(controller, env, ctx) {
-    return app.scheduled(controller, env, ctx);
+  async scheduled(controller, env, ctx) {
+    await renewCloudLease(env).catch((error) => {
+      console.error(JSON.stringify({ event: 'collector_lease_failed', error: String(error?.message || error) }));
+    });
+    await app.scheduled(controller, env, ctx);
+    ctx.waitUntil(runCloudHostMonitor(env));
   },
 
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
+    if (request.method === 'GET' && url.pathname === LEASE_PATH) return coordination(env);
     if (request.method === 'POST' && url.pathname === PATH) return ingest(request, env);
+    if (request.method === 'GET' && (url.pathname === '/' || url.pathname === '/health')) {
+      return enhancedHealth(request, env, ctx);
+    }
     return app.fetch(request, env, ctx);
   },
 };

@@ -1,3 +1,5 @@
+import { claimWrite, payloadHash, sourceIdentity } from '../lib/ingest-claim.js';
+
 function json(data, status = 200) {
   return new Response(JSON.stringify(data), {
     status,
@@ -50,6 +52,7 @@ export async function onRequestPost({ request, env }) {
   const source = text(body?.source) || 'stationhead_official';
   const sourceHash = text(body?.source_hash);
   const accounts = Array.isArray(body?.accounts) ? body.accounts : [];
+  const collector = sourceIdentity(body, { collectorId: source });
 
   if (!validDateKey(rankingDate)) {
     return json({ ok: false, error: 'invalid ranking_date' }, 400);
@@ -70,10 +73,40 @@ export async function onRequestPost({ request, env }) {
       badges: Array.isArray(account?.badges) ? account.badges : [],
       raw: account?.raw ?? account,
     }))
-    .filter((account) => account.handle && account.rank > 0);
+    .filter((account) => account.handle && account.rank > 0)
+    .sort((a, b) => a.rank - b.rank || a.handle.localeCompare(b.handle));
 
   if (!normalized.length) {
     return json({ ok: false, error: 'no valid accounts' }, 400);
+  }
+
+  const claimPayload = normalized.map((account) => ({
+    rank: account.rank,
+    handle: account.handle.toLowerCase(),
+    account_id: account.account_id,
+    leaderboard_movement: account.leaderboard_movement,
+  }));
+  const hash = sourceHash || await payloadHash(claimPayload);
+  const claim = await claimWrite(env.DB, {
+    dedupeKey: `leaderboard:${rankingDate}:${rankingType}`,
+    dataType: 'weekly_leaderboard',
+    ...collector,
+    observedAt,
+    hash,
+    payload: claimPayload,
+    metadata: { ranking_date: rankingDate, ranking_type: rankingType, row_count: normalized.length },
+  });
+
+  if (!claim.accepted) {
+    return json({
+      ok: true,
+      ranking_date: rankingDate,
+      rows: normalized.length,
+      source_hash: hash,
+      accepted: false,
+      duplicate: claim.duplicate,
+      claim_reason: claim.reason,
+    });
   }
 
   const statements = [
@@ -113,9 +146,12 @@ export async function onRequestPost({ request, env }) {
         source,
         account.rank,
         rawJson({
-          source_hash: sourceHash,
+          source_hash: hash,
           leaderboard_movement: account.leaderboard_movement,
           official: true,
+          collector_id: collector.collectorId,
+          collector_kind: collector.collectorKind,
+          source_priority: collector.sourcePriority,
         }),
         rawJson({
           ...account.raw,
@@ -143,11 +179,14 @@ export async function onRequestPost({ request, env }) {
       rankingDate,
       observedAt,
       source,
-      sourceHash,
+      hash,
       normalized.length,
       rawJson({
         ranking_type: rankingType,
         handles: normalized.map((account) => account.handle),
+        collector_id: collector.collectorId,
+        collector_kind: collector.collectorKind,
+        source_priority: collector.sourcePriority,
       }),
     ),
   );
@@ -158,7 +197,8 @@ export async function onRequestPost({ request, env }) {
       ok: true,
       ranking_date: rankingDate,
       rows: normalized.length,
-      source_hash: sourceHash,
+      source_hash: hash,
+      accepted: true,
     });
   } catch (error) {
     console.error(error);
