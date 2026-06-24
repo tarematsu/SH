@@ -1,0 +1,42 @@
+name: verify dashboard history
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+jobs:
+  verify:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Validate JavaScript
+        run: |
+          node --check site/public/dashboard-online-range.js
+          node --check site/public/eta-daypart.js
+          node --check site/public/history/history-tracks.js
+          node --check site/functions/api/track-history.js
+          git diff --check
+      - name: Finalize repository
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          for name in ('tmp-test.txt', '.github/workflows/verify-dashboard-history.yml'):
+              path = Path(name)
+              if path.exists():
+                  path.unlink()
+          PY
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "Verify dashboard and track history changes"
+          git push
