@@ -5,7 +5,7 @@
   const TRACK_CACHE_MS=10*60*1000;
 
   function withDailyTotals(rows){const totals=new Map();for(const row of rows)totals.set(row.play_date,(totals.get(row.play_date)||0)+(finiteNumber(row.play_count)||0));const result=[];let previousDate=null;for(const row of rows){const total=totals.get(row.play_date)||0;if(row.play_date!==previousDate){result.push({_daily_total:true,play_date:row.play_date,title:'この日の延べ曲数',artist:'—',play_count:total,daily_share:100,first_played_at:null,last_played_at:null});previousDate=row.play_date;}result.push({...row,daily_share:total>0?(finiteNumber(row.play_count)||0)/total*100:0});}return result;}
-  function cacheKey(from,to){return `track-history:v5:${from}:${to}`;}
+  function cacheKey(from,to){return `track-history:v6:${from}:${to}`;}
   function readCache(key){try{const value=JSON.parse(sessionStorage.getItem(key));return value&&Date.now()-value.at<TRACK_CACHE_MS?value.data:null;}catch{return null;}}
   function writeCache(key,data){try{sessionStorage.setItem(key,JSON.stringify({at:Date.now(),data}));}catch{}}
 
@@ -18,7 +18,7 @@
 
   load=async function(options={}){
     if(currentMode!=='tracks')return baseLoad(options);if(loading)return;loading=true;selectedChartIndex=null;nextCursor=null;const from=$('#from').value,to=$('#to').value,key=cacheKey(from,to);$('#notice').textContent='読み込み中…';
-    try{let data=readCache(key);if(!data){const params=new URLSearchParams({from,to,limit:'2000',v:'5'});const response=await fetch(`/api/track-history?${params}`);data=await response.json();if(!response.ok||!data.ok)throw new Error(data.error||`HTTP ${response.status}`);writeCache(key,data);}current=data.rows||[];updateSummary(current,'tracks');const tableRows=withDailyTotals(current);renderTable(tableRows,'tracks',false);$('#tbody').querySelectorAll('tr').forEach((row,index)=>{if(tableRows[index]?._daily_total)row.classList.add('daily-total-row');});$('#more').hidden=true;$('#chartPanel').hidden=true;$('#rankingWeeklyPanel').hidden=true;if(data.setup_required)$('#notice').textContent='再生曲データの保存テーブルがまだありません。';else $('#notice').textContent=`${formatDate(from)}〜${formatDate(to)}：${fmt(current.length)}件を表示（UTC）${data.truncated?'（表示上限）':''}`;}
+    try{let data=readCache(key);if(!data){const params=new URLSearchParams({from,to,limit:'2000',v:'6'});const response=await fetch(`/api/track-history?${params}`);data=await response.json();if(!response.ok||!data.ok)throw new Error(data.error||`HTTP ${response.status}`);writeCache(key,data);}current=data.rows||[];updateSummary(current,'tracks');const tableRows=withDailyTotals(current);renderTable(tableRows,'tracks',false);$('#tbody').querySelectorAll('tr').forEach((row,index)=>{if(tableRows[index]?._daily_total)row.classList.add('daily-total-row');});$('#more').hidden=true;$('#chartPanel').hidden=true;$('#rankingWeeklyPanel').hidden=true;if(data.setup_required)$('#notice').textContent='再生曲データの保存テーブルがまだありません。';else $('#notice').textContent=`${formatDate(from)}〜${formatDate(to)}：${fmt(current.length)}件を表示（UTC）${data.truncated?'（表示上限）':''}`;}
     catch(error){$('#notice').textContent=`API error: ${error.message}`;}finally{loading=false;}
   };
 })();
