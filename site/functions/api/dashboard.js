@@ -39,6 +39,16 @@ function inferArtistFromDisplayTitle(displayTitle, title) {
   return null;
 }
 
+function metadataFallback(rawValue) {
+  const raw = safeJson(rawValue, {}) || {};
+  const appleResults = raw?.apple?.results || raw?.results || [];
+  const apple = Array.isArray(appleResults) ? appleResults.find((item) => item?.artistName || item?.trackName) : null;
+  const spotify = raw?.spotify || raw;
+  const artist = apple?.artistName || spotify?.author_name || spotify?.author || null;
+  const title = apple?.trackName || spotify?.title || null;
+  return { artist, title };
+}
+
 function computePlayback(queue, now = Date.now()) {
   if (!queue.length) return { currentIndex: -1, progressMs: 0 };
   const start = num(queue[0].start_time);
@@ -161,7 +171,7 @@ export async function onRequestGet(context) {
                q.queue_track_id, q.stationhead_track_id, q.spotify_id, q.apple_music_id,
                q.deezer_id, q.isrc, q.duration_ms, q.preview_url, q.bite_count,
                m.title, m.artist, m.display_title, m.thumbnail_url, m.spotify_url,
-               m.fetched_at AS metadata_fetched_at
+               m.fetched_at AS metadata_fetched_at, m.raw_json AS metadata_raw_json
         FROM sh_queue_items q
         LEFT JOIN sh_track_metadata m ON m.spotify_id = q.spotify_id
         WHERE q.station_id = ? AND q.start_time = ?
@@ -175,14 +185,16 @@ export async function onRequestGet(context) {
     const startIndex = Math.max(0, playback.currentIndex);
     const visibleQueue = queue.slice(startIndex);
     const enrichedQueue = visibleQueue.map((track, index) => {
-      const artist = String(track.artist || '').trim();
+      const fallback = metadataFallback(track.metadata_raw_json);
+      const artist = String(track.artist || fallback.artist || '').trim();
       const validArtist = artist && !/^JP[A-Z0-9]{8,}$/i.test(artist)
         ? artist
-        : inferArtistFromDisplayTitle(track.display_title, track.title);
+        : inferArtistFromDisplayTitle(track.display_title || fallback.title, track.title || fallback.title);
       return {
         ...track,
         artist: validArtist || null,
-        display_title: track.display_title || track.title || track.spotify_id || '曲情報取得待ち',
+        title: track.title || fallback.title || null,
+        display_title: track.display_title || (fallback.title && validArtist ? `${fallback.title} — ${validArtist}` : fallback.title) || track.title || track.spotify_id || '曲情報なし',
         spotify_url: track.spotify_url || (track.spotify_id ? `https://open.spotify.com/track/${track.spotify_id}` : null),
         is_current: startIndex + index === playback.currentIndex,
         progress_ms: startIndex + index === playback.currentIndex ? playback.progressMs : 0,

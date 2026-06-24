@@ -414,23 +414,29 @@ function highResolutionArtwork(url) {
 
 async function fetchAppleMetadata(track) {
   if (!track?.apple_music_id) return null;
-  const url = `https://itunes.apple.com/lookup?id=${encodeURIComponent(track.apple_music_id)}&country=JP&entity=song`;
-  const response = await fetch(url, {
-    headers: { accept: 'application/json' },
-    signal: AbortSignal.timeout(20_000),
-  });
-  if (!response.ok) return null;
-  const raw = await response.json();
-  const item = (raw.results || []).find((v) => v.kind === 'song') || raw.results?.[0];
-  if (!item?.trackName || !item?.artistName) return null;
-  return {
-    title: item.trackName,
-    artist: item.artistName,
-    display_title: `${item.trackName} — ${item.artistName}`,
-    thumbnail_url: highResolutionArtwork(item.artworkUrl100 || item.artworkUrl60),
-    source: 'apple_itunes_lookup',
-    raw,
-  };
+  const storefronts = ['JP', 'US', null];
+  for (const country of storefronts) {
+    const params = new URLSearchParams({ id: String(track.apple_music_id), entity: 'song' });
+    if (country) params.set('country', country);
+    const response = await fetch(`https://itunes.apple.com/lookup?${params}`, {
+      headers: { accept: 'application/json' },
+      signal: AbortSignal.timeout(20_000),
+    });
+    if (!response.ok) continue;
+    const raw = await response.json();
+    const item = (raw.results || []).find((v) => v.kind === 'song' && v.trackName && v.artistName)
+      || (raw.results || []).find((v) => v.trackName && v.artistName);
+    if (!item) continue;
+    return {
+      title: item.trackName,
+      artist: item.artistName,
+      display_title: `${item.trackName} — ${item.artistName}`,
+      thumbnail_url: highResolutionArtwork(item.artworkUrl100 || item.artworkUrl60),
+      source: `apple_itunes_lookup_${country || 'default'}`,
+      raw,
+    };
+  }
+  return null;
 }
 
 async function fetchSpotifyMetadata(track) {
@@ -462,12 +468,15 @@ async function fetchSpotifyMetadata(track) {
   }
 
   const parsed = cleanSpotifyTitle(spotifyRaw?.title);
+  const spotifyArtist = String(spotifyRaw?.author_name || spotifyRaw?.author || '').trim() || null;
+  const resolvedArtist = apple?.artist || spotifyArtist || parsed.artist || null;
+  const resolvedTitle = apple?.title || parsed.title;
   return {
     spotify_id: spotifyId,
     spotify_url: spotifyUrl,
-    title: apple?.title || parsed.title,
-    artist: apple?.artist || parsed.artist || null,
-    display_title: apple?.display_title || parsed.display_title,
+    title: resolvedTitle,
+    artist: resolvedArtist,
+    display_title: apple?.display_title || (resolvedTitle && resolvedArtist ? `${resolvedTitle} — ${resolvedArtist}` : parsed.display_title),
     thumbnail_url: apple?.thumbnail_url || spotifyRaw?.thumbnail_url || null,
     source: apple ? 'apple_itunes_lookup+spotify_oembed' : 'spotify_oembed',
     fetched_at: Date.now(),

@@ -22,8 +22,11 @@ button,input,select{font:inherit}
 .hero h1{font-size:2rem;margin:4px 0}
 .hero span{color:var(--muted)}
 .back,.primary{color:#241927;background:var(--accent);text-decoration:none;border:0;border-radius:999px;padding:10px 15px;font-weight:800;cursor:pointer}
-.mode-tabs{display:grid;grid-template-columns:repeat(5,1fr);gap:6px;padding:7px;margin-top:10px}
+.mode-tabs{display:flex;align-items:stretch;gap:5px;padding:6px;margin-top:10px;overflow-x:auto}
+.mode-tabs button{flex:0 0 auto;padding:8px 11px;white-space:nowrap;font-size:.78rem}
+.mode-tabs button[data-mode=ranking]{flex:1 0 132px}
 .mode-tabs button,.range-presets button,.secondary{border:1px solid var(--line);background:var(--panel2);color:var(--muted);border-radius:11px;padding:10px;cursor:pointer;font-weight:750}
+.mode-tabs button{padding:8px 11px}
 .mode-tabs button.active,.range-presets button.active{background:var(--accent);color:#241927;border-color:transparent}
 .guide{display:flex;gap:12px;align-items:center;padding:11px 14px;margin-top:9px}
 .guide strong{color:var(--accent)}
@@ -59,7 +62,6 @@ tbody tr:hover td{background:#ffffff08}
 .rank-same{font-weight:800;color:var(--muted)}
 .more{text-align:center;padding-top:12px}
 .secondary{padding:8px 13px;color:var(--text)}
-@media(max-width:900px){.mode-tabs{grid-template-columns:repeat(3,1fr)}}
 @media(max-width:760px){
   .wrap{padding:8px}
   .hero{align-items:flex-start;gap:12px}
@@ -73,10 +75,6 @@ tbody tr:hover td{background:#ffffff08}
   .primary{width:100%}
   canvas{height:270px}
   .controls input[type=search]{min-width:0}
-}
-@media(max-width:500px){
-  .mode-tabs{grid-template-columns:repeat(2,1fr)}
-  .mode-tabs button[data-mode=ranking]{grid-column:1/-1}
 }
 @media(max-width:420px){
   .cards strong{font-size:1.35rem}
@@ -100,3 +98,5 @@ tbody tr:hover td{background:#ffffff08}
   .chart-detail-values>div{min-width:100%}
   .chart-axis-dates{font-size:.68rem}
 }
+
+@media(max-width:560px){.mode-tabs{gap:3px;padding:4px}.mode-tabs button{padding:7px 8px;font-size:.72rem}.mode-tabs button[data-mode=ranking]{flex-basis:118px}}

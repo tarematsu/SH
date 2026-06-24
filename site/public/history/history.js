@@ -1,6 +1,6 @@
 const $ = (selector) => document.querySelector(selector);
 const $$ = (selector) => [...document.querySelectorAll(selector)];
-const CACHE_MS = 10 * 60 * 1000;
+const CACHE_MS = 60 * 1000;
 const MAX_CHART_POINTS = 240;
 const FEATURED_HOSTS = ['sakuramankai', 'sakurazaka46jp'];
 
@@ -66,7 +66,8 @@ function formatDate(value, includeTime = false) {
     const [year, month, day] = text.split('-');
     return `${year}/${month}/${day}`;
   }
-  const date = new Date(text);
+  const numeric = Number(value);
+  const date = Number.isFinite(numeric) && numeric > 100000000000 ? new Date(numeric) : new Date(text);
   if (Number.isNaN(date.getTime())) return text;
   return new Intl.DateTimeFormat('ja-JP', {
     year: 'numeric', month: '2-digit', day: '2-digit',
@@ -92,7 +93,8 @@ function rowDate(row) {
   return row?.ranking_date || row?.period_key || row?.observed_jst || row?.observed_at || '';
 }
 
-$('#to').value = new Date().toISOString().slice(0, 10);
+const todayJst = () => new Intl.DateTimeFormat('sv-SE', { timeZone: 'Asia/Tokyo', year:'numeric', month:'2-digit', day:'2-digit' }).format(new Date());
+$('#to').value = todayJst();
 
 function setMode(mode) {
   currentMode = mode;
@@ -118,7 +120,7 @@ function setMode(mode) {
 
 function applyPreset(days) {
   const to = new Date();
-  $('#to').value = to.toISOString().slice(0, 10);
+  $('#to').value = todayJst();
   if (days === 'all') $('#from').value = '2024-06-01';
   else {
     const from = new Date(to.getTime() - Number(days) * 86400000);
@@ -211,24 +213,36 @@ function drawGrid(ctx, width, height, area) {
 
 function drawDateAxis(ctx, dates, xPositions, width, height, area) {
   if (!dates.length) return;
-  const count = Math.min(5, dates.length);
-  const indices = new Set();
-  for (let i = 0; i < count; i++) {
-    indices.add(Math.round((dates.length - 1) * i / Math.max(1, count - 1)));
-  }
-  const firstYear = String(dates[0] || '').slice(0, 4);
-  const lastYear = String(dates.at(-1) || '').slice(0, 4);
-  const showYear = firstYear !== lastYear;
-  ctx.font = '11px system-ui';
+  const firstTs = dateTimestamp(dates[0]);
+  const lastTs = dateTimestamp(dates.at(-1));
+  const spanDays = firstTs != null && lastTs != null ? Math.abs(lastTs - firstTs) / 86400000 : 0;
+  const labelFor = (value) => {
+    const text = String(value || '');
+    if (currentMode === 'monthly') return text.slice(0, 7).replace('-', '/');
+    if (spanDays > 730) return text.slice(0, 7).replace('-', '/');
+    if (spanDays > 120) return shortDate(value, true).slice(2);
+    return shortDate(value, spanDays > 300);
+  };
+
+  const estimatedLabelWidth = currentMode === 'monthly' || spanDays > 120 ? 54 : 42;
+  const desired = Math.max(2, Math.min(dates.length, Math.floor(area.width / (estimatedLabelWidth + 14))));
+  const indices = [...new Set(Array.from({ length: desired }, (_, i) =>
+    Math.round((dates.length - 1) * i / Math.max(1, desired - 1))))];
+
+  ctx.font = '10.5px system-ui';
   ctx.fillStyle = '#aaa3b5';
   ctx.textBaseline = 'top';
-  for (const index of indices) {
-    const text = shortDate(dates[index], showYear);
-    const x = xPositions[index];
+  let lastRight = -Infinity;
+  indices.forEach((index, position) => {
+    const text = labelFor(dates[index]);
     const measured = ctx.measureText(text).width;
-    const clampedX = Math.max(area.left, Math.min(width - area.right - measured, x - measured / 2));
-    ctx.fillText(text, clampedX, height - area.bottom + 10);
-  }
+    const x = Math.max(area.left, Math.min(width - area.right - measured, xPositions[index] - measured / 2));
+    const isLast = position === indices.length - 1;
+    if (x > lastRight + 7 || isLast) {
+      ctx.fillText(text, x, height - area.bottom + 11);
+      lastRight = x + measured;
+    }
+  });
 }
 
 function drawSelection(ctx, x, area) {
@@ -248,7 +262,7 @@ function draw(rows, key, selectionIndex = selectedChartIndex) {
   const { ctx, width, height } = prepareCanvas();
   const source = sampleRows(rows);
   const dates = source.map(rowDate);
-  const area = { left: 54, right: 18, top: 24, bottom: 46 };
+  const area = { left: 54, right: 18, top: 24, bottom: 54 };
   area.width = Math.max(1, width - area.left - area.right);
   area.height = Math.max(1, height - area.top - area.bottom);
   const xPositions = makeXPositions(dates, area);
@@ -334,7 +348,7 @@ function drawRanking(rows, selectionIndex = selectedChartIndex) {
 
   const hosts = [...groups.keys()].slice(0, 5);
   const dates = [...new Set(rows.map((row) => row.ranking_date).filter(Boolean))].sort();
-  const area = { left: 54, right: 18, top: 30, bottom: 46 };
+  const area = { left: 54, right: 18, top: 30, bottom: 54 };
   area.width = Math.max(1, width - area.left - area.right);
   area.height = Math.max(1, height - area.top - area.bottom);
   const xPositions = makeXPositions(dates, area);
@@ -598,7 +612,7 @@ function updateSummary(rows, mode) {
   $('#memberGrowth').textContent = mode === 'raw' ? '—' : fmt(memberGrowth);
 }
 
-function cacheKey(mode, from, to, extra = '') { return `history:v7:${mode}:${from}:${to}:${extra}`; }
+function cacheKey(mode, from, to, extra = '') { return `history:v8:${mode}:${from}:${to}:${extra}`; }
 function readCache(key) {
   try {
     const entry = JSON.parse(sessionStorage.getItem(key));
@@ -633,7 +647,7 @@ async function load({ append = false } = {}) {
   try {
     let data = !append && mode !== 'raw' ? readCache(key) : null;
     if (!data) {
-      const params = new URLSearchParams({ mode, from, to, v: '7' });
+      const params = new URLSearchParams({ mode, from, to, v: '8' });
       if (mode === 'raw') {
         params.set('limit', '200');
         if (append && nextCursor) params.set('cursor', nextCursor);
@@ -643,7 +657,7 @@ async function load({ append = false } = {}) {
         params.set('scope', scope);
         if (host) params.set('host', host);
       }
-      const response = await fetch(`/api/history?${params}`, { cache: mode === 'raw' ? 'no-store' : 'default' });
+      const response = await fetch(`/api/history?${params}`, { cache: 'no-store' });
       data = await response.json();
       if (!data.ok) throw new Error(data.error);
       if (!append && mode !== 'raw') writeCache(key, data);
@@ -684,7 +698,9 @@ async function load({ append = false } = {}) {
     } else if (mode === 'raw') {
       $('#notice').textContent = `${fmt(current.length)}件を表示中（200件ずつ取得）`;
     } else {
-      $('#notice').textContent = `${fmt(current.length)}期間を集計済みデータから表示`;
+      const liveText = data.live_overlay_count ? `・最新Collectorデータ ${fmt(data.live_overlay_count)}期間を反映` : '';
+      const latestText = data.latest_live_observed_at ? `（最終 ${formatDate(data.latest_live_observed_at, true)}）` : '';
+      $('#notice').textContent = `${fmt(current.length)}期間を表示${liveText}${latestText}`;
     }
   } catch (error) {
     $('#notice').textContent = `API error: ${error.message}`;

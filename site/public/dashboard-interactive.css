@@ -1,0 +1,6 @@
+#chart{touch-action:pan-y;cursor:crosshair}
+.main-chart-detail{display:flex;gap:18px;align-items:center;flex-wrap:wrap;min-height:44px;margin-top:8px;padding:9px 12px;border:1px solid var(--line);border-radius:11px;background:rgba(0,0,0,.16);color:var(--muted);font-size:.76rem}
+.main-chart-detail time{color:var(--accent);font-weight:800;font-variant-numeric:tabular-nums}
+.main-chart-detail div{display:flex;gap:8px;align-items:baseline}
+.main-chart-detail strong{color:var(--text);font-size:.9rem;font-variant-numeric:tabular-nums}
+@media(max-width:560px){.main-chart-detail{gap:8px 14px}.main-chart-detail time{width:100%}}
