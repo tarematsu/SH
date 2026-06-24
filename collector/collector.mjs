@@ -6,6 +6,7 @@ import os from 'node:os';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import { createHostMonitoring } from './host-monitor.mjs';
 
 const API_BASE = 'https://production1.stationhead.com';
 const PUSHER_KEY = '982c86a21530b654bfb2';
@@ -638,6 +639,23 @@ async function main() {
   await warmUpSession();
   log('info', `Stationhead session ready token=${runtime.authToken.length}chars device=${runtime.deviceUid.slice(0, 8)}... appVersion=${config.stationheadAppVersion} collector=${config.collectorId}`);
   await pollOnce();
+
+  const hostMonitoring = createHostMonitoring({
+    apiBase: API_BASE,
+    fetchJson,
+    ingestUrl: config.ingestUrl,
+    ingestSecret: config.ingestSecret,
+    collectorId: config.collectorId,
+    getBuddiesState: () => ({
+      channelId: runtime.channelId,
+      stationId: runtime.stationId,
+      streamingPartyId: runtime.streamingPartyId,
+    }),
+    enrichTracks: enrichNewTracks,
+    log,
+  });
+  await hostMonitoring.start({ once });
+
   if (once) return;
 
   connectWebSocket();
@@ -648,6 +666,7 @@ async function main() {
   const shutdown = () => {
     runtime.stopped = true;
     clearInterval(timer);
+    hostMonitoring.stop();
     if (runtime.reconnectTimer) clearTimeout(runtime.reconnectTimer);
     runtime.ws?.close(1000, 'shutdown');
     setTimeout(() => process.exit(0), 250).unref();
