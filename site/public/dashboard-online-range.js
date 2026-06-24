@@ -17,7 +17,7 @@
 
     const minimum = Math.min(...values).toLocaleString('ja-JP');
     const maximum = Math.max(...values).toLocaleString('ja-JP');
-    target.textContent = `24時間 最低 ${minimum} / 最高 ${maximum}`;
+    target.innerHTML = `<span>24時間最低 ${minimum}</span><span>24時間最高 ${maximum}</span>`;
     target.hidden = false;
   }
 
