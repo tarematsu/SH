@@ -27,9 +27,31 @@
     return minutes ? `${hours}時間${minutes}分` : `${hours}時間`;
   };
 
+  const averageOf = (rows, key) => {
+    const values = rows.map((row) => finiteNumber(row[key])).filter((value) => value != null);
+    return values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : null;
+  };
+
   const originalUpdateSummary = updateSummary;
-  updateSummary = function updateSummaryWithBroadcastAverages(rows, mode) {
+  updateSummary = function updateSummaryWithAverages(rows, mode) {
     originalUpdateSummary(rows, mode);
+
+    const averagePeriod = {
+      daily: '日平均',
+      weekly: '週平均',
+      monthly: '月平均',
+    }[mode];
+
+    if (averagePeriod) {
+      const streamAverage = averageOf(rows, 'stream_growth');
+      const memberAverage = averageOf(rows, 'member_growth');
+      $('#streamLabel').textContent = `再生数増加（${averagePeriod}）`;
+      $('#memberLabel').textContent = `メンバー増加（${averagePeriod}）`;
+      $('#streamGrowth').textContent = streamAverage == null ? '—' : fmt(streamAverage);
+      $('#memberGrowth').textContent = memberAverage == null ? '—' : fmt(memberAverage);
+      return;
+    }
+
     if (mode !== 'broadcasts') return;
 
     $('#periodLabel').textContent = '放送数';
