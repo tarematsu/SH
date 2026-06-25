@@ -4,7 +4,7 @@
 
 For coding tasks, proactively use delegation. Before implementation, ask Claude Code for a short planning review unless the task is tiny or clearly does not benefit from it.
 
-- Prefer a short prompt and a longer timeout when delegating to Claude Code.
+- Prefer a short prompt and a much longer timeout when delegating to Claude Code. Use roughly 10x the usual timeout for the first attempt when possible.
 - Prefer running `claude --model sonnet -p "<prompt>"` from the target project directory.
 - If `claude` is not available in the current process PATH, use `C:\Users\yuuki\.local\bin\claude.exe --model sonnet -p "<prompt>"`.
 - Ask Claude Code not to edit files. It should only return a concise Japanese plan, risks, validation points, and alternatives if relevant.
@@ -16,3 +16,4 @@ For coding tasks, proactively use delegation. Before implementation, ask Claude 
 - After coding work is complete and verified, create a Git commit for the completed changes when the workspace is a Git repository, then push it to the current branch on GitHub by default. Review the diff first and avoid including unrelated user changes. Do not push when the user says not to push, asks to keep changes local, or the repository has no usable remote. Only open a GitHub PR when the user asks for it or the current task explicitly includes PR publication.
 - Skip this delegation for tiny tasks, simple command checks, direct Q&A, urgent fixes where the plan is obvious, or when calling Claude Code would add more friction than value.
 - Mention Claude Code or subagent fallback details only when useful to the user.
+
