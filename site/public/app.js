@@ -8,6 +8,7 @@ let nowPlayingTimer = null;
 let nowPlayingState = null;
 let playbackQueue = [];
 let simulatedCurrentIndex = -1;
+let currentNowPlayingHost = {};
 let mainChartState = null;
 let selectedMainChartIndex = null;
 
@@ -367,6 +368,7 @@ function advanceSimulatedTrack(carryMs = 0) {
   if (nextIndex >= playbackQueue.length) {
     nowPlayingState = null;
     simulatedCurrentIndex = -1;
+    currentNowPlayingHost = {};
     renderNowDisplay(null);
     renderSimulatedQueue();
     return false;
@@ -378,7 +380,7 @@ function advanceSimulatedTrack(carryMs = 0) {
     durationMs: Math.max(0, Number(playbackQueue[nextIndex]?.duration_ms) || 0),
     renderedAt: Date.now(),
   };
-  renderNowDisplay(currentSimulatedTrack(), remaining);
+  renderNowDisplay(currentSimulatedTrack(), remaining, currentNowPlayingHost);
   renderSimulatedQueue();
   return true;
 }
@@ -407,9 +409,11 @@ function renderNow(track, queue = [], currentIndex = 0, host = {}) {
   stopNowPlayingTimer();
   playbackQueue = Array.isArray(queue) ? queue.slice() : [];
   simulatedCurrentIndex = track ? Math.max(0, currentIndex) : -1;
+  currentNowPlayingHost = track ? { ...host } : {};
 
   if (!track) {
     nowPlayingState = null;
+    currentNowPlayingHost = {};
     renderNowDisplay(null);
     renderSimulatedQueue();
     return;
