@@ -30,6 +30,35 @@ function jstDayRange(now = Date.now(), cutoffHour = 0) {
   return { previousStart: currentStart - 86400000, currentStart };
 }
 
+export function hostScopeFromSnapshot(snapshot) {
+  const hostAccountIdRaw = snapshot?.host_account_id;
+  const hostAccountId = hostAccountIdRaw === undefined || hostAccountIdRaw === null || hostAccountIdRaw === ''
+    ? null
+    : Number(hostAccountIdRaw);
+  if (Number.isFinite(hostAccountId) && hostAccountId > 0) {
+    return { column: 'host_account_id', value: hostAccountId };
+  }
+
+  const hostHandle = String(snapshot?.host_handle || '').trim();
+  if (hostHandle) {
+    return { column: 'host_handle', value: hostHandle };
+  }
+
+  return null;
+}
+
+function hostScopedLatestSql(metricColumn, hostScope) {
+  const hostClause = hostScope ? ` AND ${hostScope.column} = ?` : '';
+  return `SELECT observed_at,${metricColumn}
+FROM sh_channel_snapshots
+WHERE observed_at>=? AND observed_at<?${hostClause}
+ORDER BY observed_at DESC,id DESC LIMIT 1`;
+}
+
+function hostScopedBinds(hostScope, start, end) {
+  return hostScope ? [start, end, hostScope.value] : [start, end];
+}
+
 function inferArtistFromDisplayTitle(displayTitle, title) {
   const display = String(displayTitle || '').trim();
   const knownTitle = String(title || '').trim();
@@ -171,19 +200,21 @@ export async function onRequestGet({ request, env }) {
         FROM sh_channel_snapshots WHERE observed_at>?
         ORDER BY observed_at ASC,id ASC LIMIT 180`).bind(since);
 
-    const [latest, historyResult, previousMembers, previousListens, latestQueue] = await Promise.all([
+    const [latest, historyResult, latestQueue] = await Promise.all([
       db.prepare(LATEST_SQL).first(),
       historyStatement.all(),
-      db.prepare(`SELECT observed_at,total_member_count
-        FROM sh_channel_snapshots WHERE observed_at>=? AND observed_at<?
-        ORDER BY observed_at DESC,id DESC LIMIT 1`)
-        .bind(memberRange.previousStart, memberRange.currentStart).first(),
-      db.prepare(`SELECT observed_at,total_listens
-        FROM sh_channel_snapshots WHERE observed_at>=? AND observed_at<?
-        ORDER BY observed_at DESC,id DESC LIMIT 1`)
-        .bind(midnightRange.previousStart, midnightRange.currentStart).first(),
       db.prepare(`SELECT station_id,queue_id,start_time,is_paused,observed_at
         FROM sh_queue_snapshots ORDER BY observed_at DESC,id DESC LIMIT 1`).first(),
+    ]);
+
+    const hostScope = hostScopeFromSnapshot(latest);
+    const [previousMembers, previousListens] = await Promise.all([
+      db.prepare(hostScopedLatestSql('total_member_count', hostScope))
+        .bind(...hostScopedBinds(hostScope, memberRange.previousStart, memberRange.currentStart))
+        .first(),
+      db.prepare(hostScopedLatestSql('total_listens', hostScope))
+        .bind(...hostScopedBinds(hostScope, midnightRange.previousStart, midnightRange.currentStart))
+        .first(),
     ]);
 
     const history = historyResult.results || [];
@@ -250,6 +281,8 @@ export async function onRequestGet({ request, env }) {
       latest: publicLatest(latest, channel, station, owner, goal),
       history,
       daily_change: latest ? {
+        host_account_id: latest.host_account_id ?? null,
+        host_handle: latest.host_handle ?? null,
         member_baseline_observed_at: previousMembers?.observed_at || null,
         listens_baseline_observed_at: previousListens?.observed_at || null,
         member_cutoff_hour_jst: 16,
