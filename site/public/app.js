@@ -339,8 +339,7 @@ function renderNowDisplay(track, progressMs = 0, host = {}) {
       <div class="host-copy">
         <small>配信ホスト</small>
         <strong>${escapeText((host.handle || host.host_handle) ? `@${host.handle || host.host_handle}` : '-')}</strong>
-      </div>
-      <img class="host-avatar" src="${host.image || ''}" alt="" ${host.image ? '' : 'hidden'}>`;
+      </div>`;
   }
 
   if (spotifyUrl) {
