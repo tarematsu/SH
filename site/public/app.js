@@ -281,7 +281,7 @@ function openTrackOnSpotify(track) {
   if (spotifyUrl) window.open(spotifyUrl, '_blank', 'noopener,noreferrer');
 }
 
-function renderNowDisplay(track, progressMs = 0) {
+function renderNowDisplay(track, progressMs = 0, host = {}) {
   const box = el('nowPlaying');
   if (!box) return;
   if (!track) {
@@ -321,6 +321,13 @@ function renderNowDisplay(track, progressMs = 0) {
       <div class="track-meta"><span id="nowPlayingTime">${duration(safeProgress)} / ${duration(durationMs)}</span></div>
       <div class="progress track-progress"><i id="nowPlayingBar" style="width:${progress}%"></i></div>
       ${spotifyUrl ? '<small class="spotify-open-hint">クリックしてSpotifyで開く</small>' : ''}
+    </div>
+    <div class="now-host">
+      <img class="host-avatar" src="${host.image || ''}" alt="" ${host.image ? '' : 'hidden'}>
+      <div class="host-copy">
+        <small>配信ホスト</small>
+        <strong>${escapeText(host.handle ? `@${host.handle}` : '-')}</strong>
+      </div>
     </div>`;
 
   if (spotifyUrl) {
@@ -396,7 +403,7 @@ function updateNowPlayingProgress() {
   if (bar) bar.style.width = `${percent}%`;
 }
 
-function renderNow(track, queue = [], currentIndex = 0) {
+function renderNow(track, queue = [], currentIndex = 0, host = {}) {
   stopNowPlayingTimer();
   playbackQueue = Array.isArray(queue) ? queue.slice() : [];
   simulatedCurrentIndex = track ? Math.max(0, currentIndex) : -1;
@@ -411,7 +418,7 @@ function renderNow(track, queue = [], currentIndex = 0) {
   const durationMs = Math.max(0, Number(track.duration_ms) || 0);
   const baseProgressMs = Math.min(durationMs || Infinity, Math.max(0, Number(track.progress_ms) || 0));
   nowPlayingState = { baseProgressMs, durationMs, renderedAt: Date.now() };
-  renderNowDisplay(track, baseProgressMs);
+  renderNowDisplay(track, baseProgressMs, host);
   renderSimulatedQueue();
   updateNowPlayingProgress();
   nowPlayingTimer = setInterval(updateNowPlayingProgress, 1000);
@@ -496,7 +503,7 @@ async function refresh() {
     const foundCurrentIndex = queue.findIndex(t => t.is_current);
     const currentIndex = foundCurrentIndex >= 0 ? foundCurrentIndex : (queue.length ? 0 : -1);
     const current = currentIndex >= 0 ? queue[currentIndex] : null;
-    renderNow(current, queue, currentIndex);
+    renderNow(current, queue, currentIndex, { handle: latest.host_handle, image: latest.host_image });
 
     const history = Array.isArray(data.history) ? data.history : [];
     if (history.length) {
