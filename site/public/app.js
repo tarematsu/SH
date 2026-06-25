@@ -478,7 +478,6 @@ async function refresh() {
     el('channelName').textContent = latest.channel_name || 'Buddies';
     el('description').textContent = latest.description || latest.artist_name || '';
     setImage(el('channelImage'), latest.channel_image || latest.logo_image);
-    setImage(el('hostImage'), latest.host_image);
     if (latest.accent_color) document.documentElement.style.setProperty('--accent', latest.accent_color);
 
     el('online').textContent = number(latest.online_member_count);
@@ -486,7 +485,6 @@ async function refresh() {
     el('totalListens').textContent = number(latest.total_listens);
     renderDailyDelta('membersDelta', data.daily_change?.total_member_count);
     renderDailyDelta('listensDelta', data.daily_change?.total_listens);
-    el('host').textContent = latest.host_handle ? `@${latest.host_handle}` : '-';
     el('updated').textContent = `最終取得 ${dateTime(latest.observed_at)}`;
 
     const count = Number(latest.current_stream_count) || 0;

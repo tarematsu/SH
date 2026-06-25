@@ -165,7 +165,7 @@ function normalizeQueue(station, observedAt) {
       isrc: track?.isrc ?? null,
       duration_ms: finite(track?.duration),
       preview_url: track?.preview ?? null,
-      bite_count: finite(track?.bite_count),
+      bite_count: finite(track?.bite_count ?? track?.biteCount ?? track?.likes ?? track?.like_count),
       raw: item,
     };
   });
