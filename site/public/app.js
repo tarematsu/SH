@@ -336,11 +336,11 @@ function renderNowDisplay(track, progressMs = 0, host = {}) {
       sectionHead.appendChild(hostNode);
     }
     hostNode.innerHTML = `
-      <img class="host-avatar" src="${host.image || ''}" alt="" ${host.image ? '' : 'hidden'}>
       <div class="host-copy">
         <small>配信ホスト</small>
         <strong>${escapeText((host.handle || host.host_handle) ? `@${host.handle || host.host_handle}` : '-')}</strong>
-      </div>`;
+      </div>
+      <img class="host-avatar" src="${host.image || ''}" alt="" ${host.image ? '' : 'hidden'}>`;
   }
 
   if (spotifyUrl) {
