@@ -292,7 +292,10 @@ function renderNowDisplay(track, progressMs = 0, host = {}) {
     box.removeAttribute('title');
     box.onclick = null;
     box.onkeydown = null;
-    box.textContent = 'キュー情報がありません';
+    box.textContent = '???????????';
+    const sectionHead = box.closest('.now-playing')?.querySelector('.section-head');
+    const hostNode = sectionHead?.querySelector('.now-host');
+    if (hostNode) hostNode.innerHTML = '';
     return;
   }
 
@@ -322,14 +325,23 @@ function renderNowDisplay(track, progressMs = 0, host = {}) {
       <div class="track-meta"><span id="nowPlayingTime">${duration(safeProgress)} / ${duration(durationMs)}</span></div>
       <div class="progress track-progress"><i id="nowPlayingBar" style="width:${progress}%"></i></div>
       ${spotifyUrl ? '<small class="spotify-open-hint">クリックしてSpotifyで開く</small>' : ''}
-    </div>
-    <div class="now-host">
+    </div>`;
+
+  const sectionHead = box.closest('.now-playing')?.querySelector('.section-head');
+  if (sectionHead) {
+    let hostNode = sectionHead.querySelector('.now-host');
+    if (!hostNode) {
+      hostNode = document.createElement('div');
+      hostNode.className = 'now-host now-host-inline';
+      sectionHead.appendChild(hostNode);
+    }
+    hostNode.innerHTML = `
       <img class="host-avatar" src="${host.image || ''}" alt="" ${host.image ? '' : 'hidden'}>
       <div class="host-copy">
-        <small>配信ホスト</small>
+        <small>?????</small>
         <strong>${escapeText(host.handle ? `@${host.handle}` : '-')}</strong>
-      </div>
-    </div>`;
+      </div>`;
+  }
 
   if (spotifyUrl) {
     box.onclick = () => openTrackOnSpotify(track);
