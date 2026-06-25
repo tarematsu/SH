@@ -190,7 +190,7 @@ export async function onRequestGet({ request, env }) {
     const url = new URL(request.url);
     const since = Math.max(0, Number(url.searchParams.get('since')) || 0);
     const initial = since <= 0;
-    const midnightRange = jstDayRange(Date.now(), 0);
+    const listensRange = jstDayRange(Date.now(), 9);
     const memberRange = jstDayRange(Date.now(), 16);
 
     const historyStatement = initial
@@ -213,7 +213,7 @@ export async function onRequestGet({ request, env }) {
         .bind(...hostScopedBinds(hostScope, memberRange.previousStart, memberRange.currentStart))
         .first(),
       db.prepare(hostScopedLatestSql('total_listens', hostScope))
-        .bind(...hostScopedBinds(hostScope, midnightRange.previousStart, midnightRange.currentStart))
+        .bind(...hostScopedBinds(hostScope, listensRange.previousStart, listensRange.currentStart))
         .first(),
     ]);
 
@@ -286,6 +286,7 @@ export async function onRequestGet({ request, env }) {
         member_baseline_observed_at: previousMembers?.observed_at || null,
         listens_baseline_observed_at: previousListens?.observed_at || null,
         member_cutoff_hour_jst: 16,
+        listens_cutoff_hour_jst: 9,
         total_member_count: previousMembers && num(latest.total_member_count) != null && num(previousMembers.total_member_count) != null
           ? num(latest.total_member_count) - num(previousMembers.total_member_count) : null,
         total_listens: previousListens && num(latest.total_listens) != null && num(previousListens.total_listens) != null
