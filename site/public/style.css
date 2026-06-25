@@ -45,52 +45,19 @@ button.spotify-link{font:inherit;cursor:pointer}
 .hero-side { flex-wrap: wrap; justify-content: flex-end; }
 .hero-side > .small { width: 100%; text-align: right; }
 .actions { align-items: center; }
-.store-tile {
-  width: auto;
+.use-app {
   display: inline-flex;
-  flex-direction: row;
   align-items: center;
-  justify-content: center;
   gap: 5px;
-  text-decoration: none;
-  color: var(--text);
-  border: 1px solid var(--line);
-  border-radius: 999px;
-  background: rgba(255,255,255,.025);
-  padding: 7px 10px;
-  font-size: .74rem;
-  line-height: 1;
-  flex: none;
 }
-.store-tile .store-icon {
-  width: 18px;
-  height: 18px;
+.use-app-icon {
+  width: 16px;
+  height: 16px;
   display: grid;
   place-items: center;
-  color: var(--text);
   flex: none;
 }
-.store-tile svg { width: 100%; height: 100%; display: block; }
-.store-tile .store-label {
-  display: flex;
-  flex-direction: row;
-  align-items: baseline;
-  gap: 2px;
-  line-height: 1;
-  white-space: nowrap;
-}
-.store-tile .store-label small {
-  font-size: .58rem;
-  letter-spacing: .04em;
-  text-transform: uppercase;
-  color: var(--muted);
-}
-.store-tile .store-label strong {
-  font-size: .74rem;
-  font-weight: 800;
-}
-.store-tile.app-store { background: rgba(255,255,255,.025); }
-.store-tile.play-store { background: rgba(255,255,255,.025); }
+.use-app-icon svg { width: 100%; height: 100%; display: block; }
 .metrics { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .metric-main { grid-column: auto; }
 .spotify-embed { margin-top: 0; min-height: 152px; }
@@ -144,10 +111,6 @@ button.spotify-link{font:inherit;cursor:pointer}
 @media (max-width:560px) {
   .hero-side > .small { text-align:left; }
   .actions { gap: 6px; }
-  .store-tile { padding: 7px 9px; gap: 4px; }
-  .store-tile .store-icon { width: 17px; height: 17px; }
-  .store-tile .store-label small { font-size: .55rem; }
-  .store-tile .store-label strong { font-size: .72rem; }
   .metric span { font-size:.68rem; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   .now-content { grid-template-columns: auto minmax(0, 1fr); }
   .now-playing .section-head { flex-wrap: nowrap; }
