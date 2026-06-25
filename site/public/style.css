@@ -53,6 +53,7 @@ button.spotify-link{font:inherit;cursor:pointer}
 .now-playing .section-head .now-host-inline {
   display: flex;
   align-items: center;
+  flex-direction: row;
   gap: 10px;
   margin-left: auto;
   justify-self: auto;
