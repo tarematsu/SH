@@ -48,9 +48,18 @@ button.spotify-link{font:inherit;cursor:pointer}
 .metric-main { grid-column: auto; }
 .spotify-embed { margin-top: 0; min-height: 152px; }
 .spotify-embed iframe { display:block; width:100%; border:0; border-radius:12px; }
-.now-playing .section-head { margin-bottom: 10px; }
-.now-playing .section-head { align-items: center; }
-.now-playing .section-head > div:first-child { min-width: 0; }
+.now-playing .section-head { margin-bottom: 10px; align-items: center; flex-wrap: nowrap; }
+.now-playing .section-head > div:first-child { min-width: 0; flex: 1 1 auto; }
+.now-playing .section-head .now-host-inline {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-left: auto;
+  justify-self: auto;
+  padding-left: 12px;
+  text-align: right;
+  white-space: nowrap;
+}
 .now-content {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
@@ -64,7 +73,6 @@ button.spotify-link{font:inherit;cursor:pointer}
   gap: 10px;
   text-align: right;
 }
-.now-host-inline { margin-left: auto; padding-left: 12px; justify-self: end; }
 .now-host .host-avatar {
   width: 42px;
   height: 42px;
@@ -97,8 +105,8 @@ button.spotify-link{font:inherit;cursor:pointer}
   .hero-side > .small { text-align:left; }
   .metric span { font-size:.68rem; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   .now-content { grid-template-columns: auto minmax(0, 1fr); }
-  .now-playing .section-head { flex-wrap: wrap; }
-  .now-host-inline { width: 100%; padding-left: 0; margin-top: 6px; justify-content: flex-end; }
+  .now-playing .section-head { flex-wrap: nowrap; }
+  .now-playing .section-head .now-host-inline { padding-left: 10px; }
 }
 
 /* graph stability/performance */

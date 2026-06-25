@@ -292,7 +292,7 @@ function renderNowDisplay(track, progressMs = 0, host = {}) {
     box.removeAttribute('title');
     box.onclick = null;
     box.onkeydown = null;
-    box.textContent = '???????????';
+    box.textContent = 'キュー情報がありません';
     const sectionHead = box.closest('.now-playing')?.querySelector('.section-head');
     const hostNode = sectionHead?.querySelector('.now-host');
     if (hostNode) hostNode.innerHTML = '';
@@ -338,7 +338,7 @@ function renderNowDisplay(track, progressMs = 0, host = {}) {
     hostNode.innerHTML = `
       <img class="host-avatar" src="${host.image || ''}" alt="" ${host.image ? '' : 'hidden'}>
       <div class="host-copy">
-        <small>?????</small>
+        <small>配信ホスト</small>
         <strong>${escapeText(host.handle ? `@${host.handle}` : '-')}</strong>
       </div>`;
   }
