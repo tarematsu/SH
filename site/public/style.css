@@ -74,8 +74,8 @@ button.spotify-link{font:inherit;cursor:pointer}
   text-align: right;
 }
 .now-host .host-avatar {
-  width: 42px;
-  height: 42px;
+  width: 21px;
+  height: 21px;
   border-radius: 999px;
   object-fit: cover;
   flex: none;
@@ -106,7 +106,8 @@ button.spotify-link{font:inherit;cursor:pointer}
   .metric span { font-size:.68rem; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   .now-content { grid-template-columns: auto minmax(0, 1fr); }
   .now-playing .section-head { flex-wrap: nowrap; }
-  .now-playing .section-head .now-host-inline { padding-left: 10px; }
+  .now-playing .section-head .now-host-inline { padding-left: 10px; gap: 8px; }
+  .now-host .host-avatar { width: 18px; height: 18px; }
 }
 
 /* graph stability/performance */
