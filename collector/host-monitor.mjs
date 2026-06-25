@@ -99,7 +99,7 @@ function normalizeQueue(station, observedAt) {
       isrc: track?.isrc ?? null,
       duration_ms: track?.duration ?? null,
       preview_url: track?.preview ?? null,
-      bite_count: track?.bite_count ?? null,
+      bite_count: track?.bite_count ?? track?.biteCount ?? track?.likes ?? track?.like_count ?? null,
       raw: item,
     };
   });
