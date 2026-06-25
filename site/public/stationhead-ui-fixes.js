@@ -1,8 +1,8 @@
 (() => {
   if (typeof renderNowDisplay === 'function') {
     const baseRenderNowDisplay = renderNowDisplay;
-    renderNowDisplay = function patchedRenderNowDisplay(track, progressMs = 0) {
-      baseRenderNowDisplay(track, progressMs);
+    renderNowDisplay = function patchedRenderNowDisplay(track, progressMs = 0, host = {}) {
+      baseRenderNowDisplay(track, progressMs, host);
       if (!track) return;
       const copy = document.querySelector('#nowPlaying .track-copy');
       if (!copy) return;
