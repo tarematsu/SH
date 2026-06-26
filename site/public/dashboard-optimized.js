@@ -1,11 +1,12 @@
 (() => {
   const baseRefresh = refresh;
   const minIntervalMs = 110 * 1000;
-  let lastStartedAt = Date.now();
+  let lastStartedAt = 0;
 
-  refresh = async function throttledRefresh() {
+  refresh = async function throttledRefresh(options = {}) {
     const now = Date.now();
-    if (refreshInFlight || now - lastStartedAt < minIntervalMs) return;
+    const forced = Boolean(options?.force);
+    if (refreshInFlight || (!forced && now - lastStartedAt < minIntervalMs)) return;
     lastStartedAt = now;
     return baseRefresh();
   };
