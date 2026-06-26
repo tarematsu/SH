@@ -26,12 +26,8 @@ const config = {
   enableWebSocket: String(process.env.ENABLE_WEBSOCKET ?? 'true').toLowerCase() === 'true',
   logLevel: process.env.LOG_LEVEL || 'info',
   stationheadCookie: process.env.STATIONHEAD_COOKIE || '',
-  stationheadAuthToken: process.env.STATIONHEAD_AUTH_TOKEN || '',
-  stationheadDeviceUid: process.env.STATIONHEAD_DEVICE_UID || '',
   chromePath: process.env.CHROME_PATH || '',
   authBrowserTimeoutMs: numberEnv('AUTH_BROWSER_TIMEOUT_MS', 45_000),
-  authRefreshBeforeMs: numberEnv('AUTH_REFRESH_BEFORE_MS', 60 * 60 * 1000),
-  authMinReuseMs: numberEnv('AUTH_MIN_REUSE_MS', 5 * 60 * 1000),
   stationheadAppVersion: process.env.STATIONHEAD_APP_VERSION || '1.0.0',
   collectorId: process.env.COLLECTOR_ID || os.hostname(),
   collectorVersion: '1.2.0',
@@ -92,9 +88,6 @@ function jwtExpiryMs(token) {
 }
 
 async function loadSavedSession() {
-  if (config.stationheadDeviceUid) runtime.deviceUid = config.stationheadDeviceUid;
-  if (config.stationheadAuthToken) runtime.authToken = normalizeBearer(config.stationheadAuthToken);
-
   try {
     const saved = JSON.parse(await fs.readFile(SESSION_FILE, 'utf8'));
     if (!runtime.deviceUid && saved.device_uid) runtime.deviceUid = saved.device_uid;
@@ -226,7 +219,7 @@ async function refreshGuestAuth(force = false) {
   if (runtime.authRefreshPromise) return runtime.authRefreshPromise;
   runtime.authRefreshPromise = (async () => {
     const expires = jwtExpiryMs(runtime.authToken);
-    if (!force && runtime.authToken && expires - Date.now() > config.authRefreshBeforeMs) return;
+    if (!force && runtime.authToken && expires - Date.now() > 60 * 60 * 1000) return;
 
     const previousToken = runtime.authToken;
     const previousDeviceUid = runtime.deviceUid;
@@ -237,7 +230,7 @@ async function refreshGuestAuth(force = false) {
     } catch (error) {
       runtime.authToken = previousToken;
       runtime.deviceUid = previousDeviceUid;
-      if (previousToken && jwtExpiryMs(previousToken) > Date.now() + config.authMinReuseMs) {
+      if (previousToken && jwtExpiryMs(previousToken) > Date.now() + 5 * 60 * 1000) {
         log('warn', `fresh guest authentication failed; continuing with saved token: ${error.message}`);
         return;
       }
@@ -252,10 +245,6 @@ async function refreshGuestAuth(force = false) {
 async function warmUpSession() {
   await loadSavedSession();
   if (config.stationheadCookie) await cookieJar.setCookie(config.stationheadCookie, API_BASE);
-  if (runtime.authToken && jwtExpiryMs(runtime.authToken) > Date.now() + config.authMinReuseMs) {
-    log('info', 'using saved Stationhead guest authentication');
-    return;
-  }
   await refreshGuestAuth(true);
 }
 
