@@ -478,7 +478,6 @@ async function refresh() {
   refreshInFlight = true;
   refreshAbortController?.abort();
   refreshAbortController = new AbortController();
-  const timeout = setTimeout(() => refreshAbortController?.abort(), 20_000);
 
   try {
     const response = await fetch('/api/dashboard', {
@@ -539,7 +538,6 @@ async function refresh() {
     }
     // 失敗時は前回表示・前回グラフをそのまま維持
   } finally {
-    clearTimeout(timeout);
     refreshInFlight = false;
   }
 }
