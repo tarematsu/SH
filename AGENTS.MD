@@ -1,19 +1,23 @@
 # Global Codex Workflow
 
-## Claude Code planning delegate
+## Project start
 
-For coding tasks, proactively use delegation. Before implementation, ask Claude Code for a short planning review unless the task is tiny or clearly does not benefit from it.
+- When the chat is for a Git project, start unconditionally with `git pull origin main` before inspecting or editing files.
+- When the chat is not for a project, do not run `git pull`.
+- After pulling, check the working tree and avoid including unrelated user changes in your work.
 
-- Prefer a short prompt and a much longer timeout when delegating to Claude Code. Use roughly 10x the usual timeout for the first attempt when possible.
-- Prefer running `claude --model sonnet -p "<prompt>"` from the target project directory.
-- If `claude` is not available in the current process PATH, use `C:\Users\yuuki\.local\bin\claude.exe --model sonnet -p "<prompt>"`.
-- Ask Claude Code not to edit files. It should only return a concise Japanese plan, risks, validation points, and alternatives if relevant.
-- If Claude Code is unavailable, fails, times out, or asks for missing task context, fall back to a Codex subagent using `gpt-5.5` with medium reasoning effort for the planning review unless the task is tiny.
-- Codex owns the default implementation path, file edits, final integration, and the final response.
-- Before editing code, check Git synchronization status first, and if the local branch is behind or uncertain, start with `git pull` before making changes.
-- Actively look for opportunities to delegate bounded implementation subtasks to Codex subagents, especially for complex implementations, broad refactors, parallelizable work, or clearly separable modules. Assign each subagent a clear scope and file/module ownership, then review and integrate the results in the main Codex thread.
-- Actively delegate testing and verification work to Codex subagents after non-trivial changes. Give verification subagents a clear test scope, ask them to run or inspect relevant checks independently, and use their findings before finalizing.
-- After coding work is complete and verified, create a Git commit for the completed changes when the workspace is a Git repository, then push it to the current branch on GitHub by default. Review the diff first and avoid including unrelated user changes. Do not push when the user says not to push, asks to keep changes local, or the repository has no usable remote. Only open a GitHub PR when the user asks for it or the current task explicitly includes PR publication.
-- Skip this delegation for tiny tasks, simple command checks, direct Q&A, urgent fixes where the plan is obvious, or when calling Claude Code would add more friction than value.
-- Mention Claude Code or subagent fallback details only when useful to the user.
+## Work delegation
 
+- For coding tasks, the main agent owns investigation, integration, review, final decisions, commits, pushes, and the final response.
+- By default, have a `gpt-5.4-mini` worker handle bounded implementation or testing work when that can speed up the task.
+- Keep delegated work narrowly scoped, with clear file or module ownership and explicit validation expectations.
+- The main agent must review delegated results, resolve conflicts, run or verify the relevant checks, and integrate only the intended changes.
+- Skip delegation for tiny tasks, simple command checks, direct Q&A, urgent obvious fixes, or work where delegation would add more friction than value.
+
+## Git completion
+
+- After coding work is complete and verified, create a Git commit when the workspace is a Git repository.
+- Push the completed commit to the current branch on GitHub by default.
+- Review the diff before committing, and do not stage unrelated user changes.
+- Do not push when the user says not to push, asks to keep changes local, or the repository has no usable remote.
+- Only open a GitHub PR when the user asks for it or the current task explicitly includes PR publication.
