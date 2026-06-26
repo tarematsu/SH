@@ -21,6 +21,31 @@ for (const key of ["targetUrl", "ingestUrl", "ingestSecret"]) {
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
+async function clickFirstVisible(page, locators, timeoutMs = 30_000) {
+  const deadline = Date.now() + timeoutMs;
+  let lastError = null;
+
+  while (Date.now() < deadline) {
+    for (const locator of locators) {
+      const count = await locator.count().catch(() => 0);
+      for (let index = 0; index < count; index += 1) {
+        const candidate = locator.nth(index);
+        if (!(await candidate.isVisible().catch(() => false))) continue;
+        try {
+          await candidate.click({ timeout: 5_000 });
+          return true;
+        } catch (error) {
+          lastError = error;
+        }
+      }
+    }
+    await page.waitForTimeout(1_000);
+  }
+
+  if (lastError) console.warn("listen button click failed:", lastError.message);
+  return false;
+}
+
 async function postPayload(payload) {
   const response = await fetch(config.ingestUrl, {
     method: "POST",
@@ -41,14 +66,20 @@ async function openChannel(page) {
     waitUntil: "domcontentloaded",
     timeout: 60_000
   });
-  await page.waitForTimeout(5_000);
+  await page.waitForLoadState("networkidle", { timeout: 10_000 }).catch(() => {});
+  await page.waitForTimeout(2_000);
 
-  const button = page.getByRole("button", {
-    name: /start listening|listen|join/i
-  }).first();
-  if (await button.count()) {
-    await button.click({ timeout: 10_000 }).catch(() => {});
+  const clicked = await clickFirstVisible(page, [
+    page.getByRole("button", { name: /start listening|listen live|listen|join|play/i }),
+    page.getByText(/start listening|listen live|listen|join/i),
+    page.locator("[aria-label*='Listen' i], [aria-label*='Join' i], [data-testid*='listen' i], [data-testid*='join' i]"),
+    page.locator("button").filter({ hasText: /listen|join|play/i })
+  ]);
+
+  if (clicked) {
     await page.waitForTimeout(5_000);
+  } else {
+    console.warn("listen button was not found; continuing to scrape visible page state");
   }
 }
 
