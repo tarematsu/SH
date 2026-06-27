@@ -29,22 +29,6 @@
     date.setUTCDate(date.getUTCDate() + 6);
     return date.toISOString().slice(0, 10);
   };
-  const withDailyTotals = (rows) => {
-    const totals = new Map();
-    rows.forEach((row) => totals.set(row.play_date, (totals.get(row.play_date) || 0) + (finiteNumber(row.play_count) || 0)));
-    const result = [];
-    let previousDate = null;
-    rows.forEach((row) => {
-      const total = totals.get(row.play_date) || 0;
-      if (row.play_date !== previousDate) {
-        result.push({ _daily_total: true, play_date: row.play_date, title: 'この日の延べ曲数', artist: '—', play_count: total, daily_share: 100, first_played_at: null, last_played_at: null });
-        previousDate = row.play_date;
-      }
-      result.push({ ...row, daily_share: total > 0 ? (finiteNumber(row.play_count) || 0) / total * 100 : 0 });
-    });
-    return result;
-  };
-
   const originalUpdateSummary = updateSummary;
   let broadcastMinimumRequest = 0;
   const updateBroadcastMinimum = async () => {
@@ -192,9 +176,9 @@
     } else if (mode === 'raw') {
       $('#notice').textContent = `${fmt(current.length)}件を表示中（200件ずつ取得）`;
     } else {
-      const liveText = data.live_overlay_count ? `・最新Collectorデータ ${fmt(data.live_overlay_count)}期間を反映` : '';
-      const latestText = data.latest_live_observed_at ? `（最終 ${formatDate(data.latest_live_observed_at, true)}）` : '';
-      $('#notice').textContent = `${fmt(current.length)}期間を表示${liveText}${latestText}`;
+      const count = `${fmt(current.length)}期間を表示`;
+      const latest = data.latest_live_observed_at ? formatDate(data.latest_live_observed_at, true) : null;
+      $('#notice').textContent = latest ? `${count} : 最新 ${latest}` : count;
     }
   };
 
@@ -287,10 +271,5 @@
   likesScript.src = '/history/history-track-likes.js';
   document.head.appendChild(likesScript);
 
-  const initialMode = currentMode;
-  const settleInitialLoad = () => {
-    if (loading) return setTimeout(settleInitialLoad, 40);
-    if (currentMode === initialMode) load();
-  };
-  setTimeout(settleInitialLoad, 0);
+  load();
 })();

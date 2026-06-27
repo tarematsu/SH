@@ -1,31 +1,5 @@
 import { claimWrite, payloadHash, sourceIdentity } from '../lib/ingest-claim.js';
-
-function json(data, status = 200) {
-  return new Response(JSON.stringify(data), {
-    status,
-    headers: { 'content-type': 'application/json; charset=utf-8' },
-  });
-}
-
-function authorized(request, env) {
-  const expected = env.INGEST_SECRET;
-  const auth = request.headers.get('authorization') || '';
-  return Boolean(expected) && auth === `Bearer ${expected}`;
-}
-
-function num(value) {
-  if (value === undefined || value === null || value === '') return null;
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : null;
-}
-
-function text(value) {
-  return value === undefined || value === null ? null : String(value);
-}
-
-function rawJson(value) {
-  return JSON.stringify(value ?? null);
-}
+import { json, authorized, num, text, rawJson } from '../lib/api-utils.js';
 
 function validDateKey(value) {
   return /^\d{4}-\d{2}-\d{2}$/.test(String(value || ''));
