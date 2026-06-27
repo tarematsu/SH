@@ -1,5 +1,11 @@
 import { onRequestPost as saveHostIngest } from '../../site/functions/api/host-ingest.js';
 import { onRequestPost as savePrimaryIngest } from '../../site/functions/api/ingest.js';
+import {
+  normalizeComments as sharedNormalizeComments,
+  fetchTrackMetadata as sharedFetchTrackMetadata,
+  enrichTracks as sharedEnrichTracks,
+  highResolutionArtwork as sharedHighResArtwork,
+} from './shared.js';
 
 const API_BASE = 'https://production1.stationhead.com';
 const COLLECTOR_ID = 'cloudflare-worker';
@@ -128,25 +134,7 @@ function normalizeProfile(account, fallbackHandle) {
 }
 
 function normalizeComments(payload, stationId) {
-  const candidates = [payload, payload?.items, payload?.data?.items, payload?.chats?.items, payload?.chats];
-  const items = candidates.find(Array.isArray) || [];
-  return items.map((chat) => ({
-    comment_id: finite(chat?.id),
-    station_id: finite(chat?.station_id ?? stationId),
-    account_id: finite(chat?.account_id ?? chat?.account?.id),
-    handle: chat?.account?.handle ?? null,
-    text: chat?.text ?? null,
-    text_with_xml: chat?.text_with_xml ?? null,
-    chat_time: finite(chat?.chat_time),
-    chat_time_ms: finite(chat?.chat_time_ms),
-    all_access_chat: chat?.all_access_chat ?? null,
-    boost_chat: chat?.boost_chat ?? null,
-    followers: finite(chat?.account?.followers),
-    following: finite(chat?.account?.following),
-    active_stream_days: finite(chat?.active_stream_days ?? chat?.account?.active_stream_days),
-    emoji: chat?.account?.emoji ?? null,
-    raw: chat,
-  })).filter((comment) => comment.comment_id != null);
+  return sharedNormalizeComments(payload, stationId, { finite });
 }
 
 function normalizeQueue(station, observedAt) {
@@ -317,68 +305,9 @@ async function collectGeneralProfile(env, config, auth, now) {
   });
 }
 
-function highResolutionArtwork(url) {
-  if (!url) return null;
-  return String(url).replace(/\/\d+x\d+bb\./, '/600x600bb.').replace(/\/\d+x\d+-\d+\./, '/600x600-75.');
-}
-
-async function fetchTrackMetadata(track, config) {
-  const apple = track.apple_music_id
-    ? await Promise.all(['JP', 'US'].map(async (country) => {
-      const params = new URLSearchParams({ id: String(track.apple_music_id), entity: 'song', country });
-      const response = await fetch(`https://itunes.apple.com/lookup?${params}`, {
-        headers: { accept: 'application/json' },
-        signal: AbortSignal.timeout(config.requestTimeoutMs),
-      });
-      if (!response.ok) return null;
-      const raw = await response.json();
-      const item = (raw.results || []).find((value) => value.kind === 'song' && value.trackName && value.artistName)
-        || (raw.results || []).find((value) => value.trackName && value.artistName);
-      return item ? { item, raw } : null;
-    })).then((values) => values.find(Boolean) || null).catch(() => null)
-    : null;
-
-  const spotifyId = track.spotify_id;
-  const spotifyUrl = spotifyId ? `https://open.spotify.com/track/${encodeURIComponent(spotifyId)}` : null;
-  const spotify = spotifyUrl
-    ? await fetch(`https://open.spotify.com/oembed?url=${encodeURIComponent(spotifyUrl)}`, {
-      headers: { accept: 'application/json' },
-      signal: AbortSignal.timeout(config.requestTimeoutMs),
-    }).then((response) => response.ok ? response.json() : null).catch(() => null)
-    : null;
-
-  if (!apple && !spotify?.title) return null;
-  const spotifyTitle = String(spotify?.title || '').replace(/\s*\|\s*Spotify\s*$/i, '').trim();
-  const split = spotifyTitle.split(/\s+[—–]\s+/);
-  const title = apple?.item?.trackName || split[0] || spotifyTitle || null;
-  const artistName = apple?.item?.artistName || String(spotify?.author_name || spotify?.author || '').trim() || split.slice(1).join(' — ') || null;
-  return {
-    spotify_id: spotifyId,
-    spotify_url: spotifyUrl,
-    title,
-    artist: artistName,
-    display_title: title && artistName ? `${title} — ${artistName}` : spotifyTitle,
-    thumbnail_url: highResolutionArtwork(apple?.item?.artworkUrl100 || apple?.item?.artworkUrl60) || spotify?.thumbnail_url || null,
-    source: apple ? 'apple_itunes_lookup+spotify_oembed' : 'spotify_oembed',
-    fetched_at: Date.now(),
-    raw: { apple: apple?.raw || null, spotify },
-  };
-}
-
 async function enrichTracks(env, config, queue, now) {
-  const candidates = [...new Map((queue?.tracks || [])
-    .filter((track) => track.spotify_id)
-    .map((track) => [track.spotify_id, track])).values()];
-  if (!candidates.length) return;
-  const placeholders = candidates.map(() => '?').join(',');
-  const existing = await env.DB.prepare(`SELECT spotify_id,title,artist FROM sh_track_metadata
-    WHERE spotify_id IN (${placeholders})`).bind(...candidates.map((track) => track.spotify_id)).all();
-  const complete = new Set((existing.results || [])
-    .filter((track) => track.title && track.artist && !/^JP[A-Z0-9]{8,}$/i.test(String(track.artist)))
-    .map((track) => track.spotify_id));
-  const missing = candidates.filter((track) => !complete.has(track.spotify_id)).slice(0, config.metadataLimit);
-  const metadata = (await Promise.all(missing.map((track) => fetchTrackMetadata(track, config)))).filter(Boolean);
-  if (metadata.length) await internalIngest(savePrimaryIngest, env, 'track_metadata', { tracks: metadata }, now);
+  const ingestFn = (e, type, data, observedAt) => internalIngest(savePrimaryIngest, e, type, data, observedAt);
+  await sharedEnrichTracks(env, ingestFn, queue, now, config);
 }
 
 async function collectSoloProfile(env, config, auth, state, accountId, now) {
