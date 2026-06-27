@@ -338,7 +338,7 @@ function renderNowDisplay(track, progressMs = 0, host = {}) {
     hostNode.innerHTML = `
       <div class="host-copy">
         <small>配信ホスト</small>
-        <strong>${escapeText((host.handle || host.host_handle) ? `@${host.handle || host.host_handle}` : '-')}</strong>
+        ${((host.handle || host.host_handle) ? `<strong><a href="https://stationhead.com/${host.handle || host.host_handle}" target="_blank" rel="noopener">@${escapeText(host.handle || host.host_handle)}</a></strong>` : `<strong>-</strong>`)}
       </div>`;
   }
 
