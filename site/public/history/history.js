@@ -559,6 +559,37 @@ function updateSummary(rows, mode) {
   $('#memberGrowth').textContent = mode === 'raw' || mode === 'broadcasts' ? '—' : fmt(memberGrowth);
 }
 
+function withDailyTotals(rows) {
+  const totals = new Map();
+  for (const row of rows) {
+    totals.set(row.play_date, (totals.get(row.play_date) || 0) + (finiteNumber(row.play_count) || 0));
+  }
+  const result = [];
+  let previousDate = null;
+  for (const row of rows) {
+    const total = totals.get(row.play_date) || 0;
+    if (row.play_date !== previousDate) {
+      result.push({
+        _daily_total: true,
+        play_date: row.play_date,
+        title: 'この日の延べ曲数',
+        artist: '—',
+        play_count: total,
+        daily_share: 100,
+        like_count: null,
+        first_played_at: null,
+        last_played_at: null,
+      });
+      previousDate = row.play_date;
+    }
+    result.push({
+      ...row,
+      daily_share: total > 0 ? (finiteNumber(row.play_count) || 0) / total * 100 : 0,
+    });
+  }
+  return result;
+}
+
 function cacheKey(mode, from, to, extra = '') { return `history:v9:${mode}:${from}:${to}:${extra}`; }
 
 function readCache(key) {
@@ -700,4 +731,3 @@ window.addEventListener('resize', () => {
   }, 160);
 });
 setMode('weekly');
-load();

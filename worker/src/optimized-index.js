@@ -1,37 +1,10 @@
 import collector from './index.js';
+import { jsonResponse as json, normalizeBearer, jwtExpiryMs, positiveNumber as positive } from './shared.js';
 
 const API_ORIGIN = 'https://production1.stationhead.com';
 const STATE_ID = 'stationhead';
 const USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36';
 const nativeFetch = globalThis.fetch.bind(globalThis);
-
-function json(data, status = 200) {
-  return new Response(JSON.stringify(data, null, 2), {
-    status,
-    headers: { 'content-type': 'application/json; charset=utf-8' },
-  });
-}
-
-function normalizeBearer(value) {
-  return String(value || '').replace(/^Bearer\s+/i, '').trim();
-}
-
-function jwtExpiryMs(token) {
-  try {
-    const part = String(token || '').split('.')[1];
-    if (!part) return 0;
-    const normalized = part.replace(/-/g, '+').replace(/_/g, '/');
-    const padded = normalized.padEnd(Math.ceil(normalized.length / 4) * 4, '=');
-    return Number(JSON.parse(atob(padded)).exp || 0) * 1000;
-  } catch {
-    return 0;
-  }
-}
-
-function positive(value, fallback) {
-  const number = Number(value ?? fallback);
-  return Number.isFinite(number) && number > 0 ? number : fallback;
-}
 
 function authConfig(env) {
   return {

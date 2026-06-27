@@ -67,12 +67,6 @@
       ? previous : current;
   }
 
-  function escapeHtml(value) {
-    return String(value ?? '')
-      .replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;')
-      .replaceAll('"', '&quot;').replaceAll("'", '&#039;');
-  }
-
   function renderDetail(minute) {
     const detail = document.getElementById('chartDetail');
     if (!detail) return;

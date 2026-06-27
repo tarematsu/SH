@@ -277,9 +277,15 @@ function currentSimulatedTrack() {
   return simulatedCurrentIndex >= 0 ? playbackQueue[simulatedCurrentIndex] || null : null;
 }
 
+function safeSpotifyUrl(track) {
+  const url = track?.spotify_url || (track?.spotify_id ? `https://open.spotify.com/track/${track.spotify_id}` : '');
+  if (!url) return '';
+  try { return new URL(url).protocol === 'https:' ? url : ''; } catch { return ''; }
+}
+
 function openTrackOnSpotify(track) {
-  const spotifyUrl = track?.spotify_url || (track?.spotify_id ? `https://open.spotify.com/track/${track.spotify_id}` : '');
-  if (spotifyUrl) window.open(spotifyUrl, '_blank', 'noopener,noreferrer');
+  const url = safeSpotifyUrl(track);
+  if (url) window.open(url, '_blank', 'noopener,noreferrer');
 }
 
 function renderNowDisplay(track, progressMs = 0, host = {}) {
@@ -301,7 +307,7 @@ function renderNowDisplay(track, progressMs = 0, host = {}) {
 
   const title = track.title || track.display_title || track.spotify_id || '曲名不明';
   const artist = inferredArtist(track);
-  const spotifyUrl = track.spotify_url || (track.spotify_id ? `https://open.spotify.com/track/${track.spotify_id}` : '');
+  const spotifyUrl = safeSpotifyUrl(track);
   const durationMs = Math.max(0, Number(track.duration_ms) || 0);
   const safeProgress = Math.min(durationMs || Infinity, Math.max(0, Number(progressMs) || 0));
   const progress = durationMs ? Math.min(100, safeProgress / durationMs * 100) : 0;
@@ -318,7 +324,7 @@ function renderNowDisplay(track, progressMs = 0, host = {}) {
   }
 
   box.innerHTML = `
-    <img class="cover" src="${track.thumbnail_url || ''}" alt="" ${track.thumbnail_url ? '' : 'hidden'}>
+    <img class="cover" src="${escapeText(track.thumbnail_url || '')}" alt="" ${track.thumbnail_url ? '' : 'hidden'}>
     <div class="track-copy">
       <h3>${escapeText(title)}</h3>
       ${artist ? `<p>${escapeText(artist)}</p>` : ''}
@@ -447,12 +453,13 @@ function renderQueue(queue, totalItems) {
   box.replaceChildren(...upcoming.map((track, index) => {
     const row = document.createElement('a');
     row.className = 'queue-item';
-    row.href = track.spotify_url || '#';
-    row.target = track.spotify_url ? '_blank' : '';
-    row.rel = 'noopener';
+    const trackUrl = safeSpotifyUrl(track);
+    row.href = trackUrl || '#';
+    row.target = trackUrl ? '_blank' : '';
+    row.rel = 'noopener noreferrer';
     row.innerHTML = `
       <span class="queue-no">${index + 1}</span>
-      <img src="${track.thumbnail_url || ''}" alt="" ${track.thumbnail_url ? '' : 'hidden'}>
+      <img src="${escapeText(track.thumbnail_url || '')}" alt="" ${track.thumbnail_url ? '' : 'hidden'}>
       <span class="queue-copy"><strong>${escapeText(track.title || track.display_title || track.spotify_id || '曲名不明')}</strong>${inferredArtist(track) ? `<small>${escapeText(inferredArtist(track))}</small>` : ''}</span>
       <span class="queue-duration">${duration(track.duration_ms)}</span>`;
     return row;

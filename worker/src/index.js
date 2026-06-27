@@ -1,37 +1,13 @@
 import { onRequestPost as saveIngest } from '../../site/functions/api/ingest.js';
+import {
+  jsonResponse as json, normalizeBearer, jwtExpiryMs, positiveNumber as numberValue,
+  normalizeComments as sharedNormalizeComments, fetchTrackMetadata, enrichTracks as sharedEnrichTracks,
+  highResolutionArtwork, cleanSpotifyTitle,
+} from './shared.js';
 
 const API_BASE = 'https://production1.stationhead.com';
 const COLLECTOR_VERSION = '1.0.0-worker';
 const DEFAULT_USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36';
-
-function json(data, status = 200) {
-  return new Response(JSON.stringify(data, null, 2), {
-    status,
-    headers: { 'content-type': 'application/json; charset=utf-8' },
-  });
-}
-
-function numberValue(value, fallback) {
-  const parsed = Number(value ?? fallback);
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
-}
-
-function normalizeBearer(value) {
-  return String(value || '').replace(/^Bearer\s+/i, '').trim();
-}
-
-function jwtExpiryMs(token) {
-  try {
-    const part = String(token || '').split('.')[1];
-    if (!part) return 0;
-    const normalized = part.replace(/-/g, '+').replace(/_/g, '/');
-    const padded = normalized.padEnd(Math.ceil(normalized.length / 4) * 4, '=');
-    const payload = JSON.parse(atob(padded));
-    return Number(payload.exp || 0) * 1000;
-  } catch {
-    return 0;
-  }
-}
 
 function firstDefined(...values) {
   return values.find((value) => value !== undefined && value !== null);
@@ -209,25 +185,7 @@ function normalizeSnapshot(channel, state, config) {
 }
 
 function normalizeComments(payload, stationId) {
-  const candidates = [payload, payload?.items, payload?.data?.items, payload?.chats?.items, payload?.chats];
-  const items = candidates.find(Array.isArray) || [];
-  return items.map((chat) => ({
-    id: chat?.id,
-    station_id: chat?.station_id ?? stationId,
-    account_id: chat?.account_id ?? chat?.account?.id ?? null,
-    handle: chat?.account?.handle ?? null,
-    text: chat?.text ?? null,
-    text_with_xml: chat?.text_with_xml ?? null,
-    chat_time: chat?.chat_time ?? null,
-    chat_time_ms: chat?.chat_time_ms ?? null,
-    all_access_chat: chat?.all_access_chat ?? null,
-    boost_chat: chat?.boost_chat ?? null,
-    active_stream_days: chat?.active_stream_days ?? null,
-    followers: chat?.account?.followers ?? null,
-    following: chat?.account?.following ?? null,
-    emoji: chat?.account?.emoji ?? null,
-    raw: chat,
-  })).filter((item) => item.id != null);
+  return sharedNormalizeComments(payload, stationId);
 }
 
 function extractQueue(channel, stationId) {
@@ -260,96 +218,10 @@ function extractQueue(channel, stationId) {
   };
 }
 
-function highResolutionArtwork(url) {
-  if (!url) return null;
-  return String(url)
-    .replace(/\/\d+x\d+bb\./, '/600x600bb.')
-    .replace(/\/\d+x\d+-\d+\./, '/600x600-75.');
-}
 
-function cleanSpotifyTitle(rawTitle) {
-  const cleaned = String(rawTitle || '')
-    .replace(/\s*\|\s*Spotify\s*$/i, '')
-    .replace(/\s*-\s*song and lyrics by\s*/i, ' — ')
-    .trim();
-  const [title, ...artistParts] = cleaned.split(/\s+—\s+/);
-  return {
-    title: title || rawTitle || null,
-    artist: artistParts.join(' — ') || null,
-    displayTitle: cleaned || rawTitle || null,
-  };
-}
-
-async function fetchTrackMetadata(track, config) {
-  const applePromise = track?.apple_music_id
-    ? Promise.all(['JP', 'US'].map(async (country) => {
-      const params = new URLSearchParams({ id: String(track.apple_music_id), entity: 'song', country });
-      const response = await fetch(`https://itunes.apple.com/lookup?${params}`, {
-        headers: { accept: 'application/json' },
-        signal: AbortSignal.timeout(config.requestTimeoutMs),
-      });
-      if (!response.ok) return null;
-      const raw = await response.json();
-      const item = (raw.results || []).find((value) => value.kind === 'song' && value.trackName && value.artistName)
-        || (raw.results || []).find((value) => value.trackName && value.artistName);
-      if (!item) return null;
-      return {
-        title: item.trackName,
-        artist: item.artistName,
-        thumbnailUrl: highResolutionArtwork(item.artworkUrl100 || item.artworkUrl60),
-        raw,
-      };
-    })).then((values) => values.find(Boolean) || null).catch(() => null)
-    : Promise.resolve(null);
-
-  const spotifyId = track?.spotify_id;
-  const spotifyUrl = spotifyId ? `https://open.spotify.com/track/${encodeURIComponent(spotifyId)}` : null;
-  const spotifyPromise = spotifyUrl
-    ? fetch(`https://open.spotify.com/oembed?url=${encodeURIComponent(spotifyUrl)}`, {
-      headers: { accept: 'application/json' },
-      signal: AbortSignal.timeout(config.requestTimeoutMs),
-    }).then((response) => response.ok ? response.json() : null).catch(() => null)
-    : Promise.resolve(null);
-
-  const [apple, spotify] = await Promise.all([applePromise, spotifyPromise]);
-  if (!apple && !spotify?.title) return null;
-  const parsed = cleanSpotifyTitle(spotify?.title);
-  const title = apple?.title || parsed.title;
-  const artist = apple?.artist || String(spotify?.author_name || spotify?.author || '').trim() || parsed.artist || null;
-  return {
-    spotify_id: spotifyId,
-    spotify_url: spotifyUrl,
-    title,
-    artist,
-    display_title: title && artist ? `${title} — ${artist}` : parsed.displayTitle,
-    thumbnail_url: apple?.thumbnailUrl || spotify?.thumbnail_url || null,
-    source: apple ? 'apple_itunes_lookup+spotify_oembed' : 'spotify_oembed',
-    fetched_at: Date.now(),
-    raw: { apple: apple?.raw || null, spotify },
-  };
-}
 
 async function enrichTracks(env, queue, observedAt, config) {
-  const candidates = [...new Map(
-    (queue?.tracks || []).filter((track) => track.spotify_id).map((track) => [track.spotify_id, track]),
-  ).values()];
-  if (!candidates.length || config.metadataLimit <= 0) return 0;
-
-  const placeholders = candidates.map(() => '?').join(',');
-  const stored = await env.DB.prepare(`
-    SELECT spotify_id, title, artist
-    FROM sh_track_metadata
-    WHERE spotify_id IN (${placeholders})
-  `).bind(...candidates.map((track) => track.spotify_id)).all();
-  const complete = new Set((stored.results || [])
-    .filter((item) => item.title && item.artist && !/^JP[A-Z0-9]{8,}$/i.test(String(item.artist)))
-    .map((item) => item.spotify_id));
-  const missing = candidates.filter((track) => !complete.has(track.spotify_id)).slice(0, config.metadataLimit);
-  if (!missing.length) return 0;
-
-  const metadata = (await Promise.all(missing.map((track) => fetchTrackMetadata(track, config)))).filter(Boolean);
-  if (metadata.length) await ingest(env, 'track_metadata', { tracks: metadata }, observedAt);
-  return metadata.length;
+  return sharedEnrichTracks(env, ingest, queue, observedAt, config);
 }
 
 async function collectOnce(env, source = 'manual') {
