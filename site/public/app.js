@@ -453,9 +453,10 @@ function renderQueue(queue, totalItems) {
   box.replaceChildren(...upcoming.map((track, index) => {
     const row = document.createElement('a');
     row.className = 'queue-item';
-    row.href = track.spotify_url || '#';
-    row.target = track.spotify_url ? '_blank' : '';
-    row.rel = 'noopener';
+    const trackUrl = safeSpotifyUrl(track);
+    row.href = trackUrl || '#';
+    row.target = trackUrl ? '_blank' : '';
+    row.rel = 'noopener noreferrer';
     row.innerHTML = `
       <span class="queue-no">${index + 1}</span>
       <img src="${escapeText(track.thumbnail_url || '')}" alt="" ${track.thumbnail_url ? '' : 'hidden'}>

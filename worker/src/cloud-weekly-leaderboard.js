@@ -1,12 +1,8 @@
 import { onRequestPost as saveLeaderboard } from '../../site/functions/api/leaderboard-ingest.js';
+import { positiveNumber as positive } from './shared.js';
 
 const SOURCE_URL = 'https://www.stationhead.com/on/api/weeklyleaderboard';
 const SOURCE = 'stationhead_official_cloud';
-
-function positive(value, fallback) {
-  const number = Number(value ?? fallback);
-  return Number.isFinite(number) && number > 0 ? number : fallback;
-}
 
 function jstParts(now = Date.now()) {
   const date = new Date(now + 9 * 3600000);

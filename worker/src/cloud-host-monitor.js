@@ -1,6 +1,7 @@
 import { onRequestPost as saveHostIngest } from '../../site/functions/api/host-ingest.js';
 import { onRequestPost as savePrimaryIngest } from '../../site/functions/api/ingest.js';
 import {
+  positiveNumber as positive,
   normalizeComments as sharedNormalizeComments,
   fetchTrackMetadata as sharedFetchTrackMetadata,
   enrichTracks as sharedEnrichTracks,
@@ -10,11 +11,6 @@ import {
 const API_BASE = 'https://production1.stationhead.com';
 const COLLECTOR_ID = 'cloudflare-worker';
 const SOURCE_PRIORITY = 100;
-
-function positive(value, fallback) {
-  const number = Number(value ?? fallback);
-  return Number.isFinite(number) && number > 0 ? number : fallback;
-}
 
 function finite(value) {
   if (value === undefined || value === null || value === '') return null;

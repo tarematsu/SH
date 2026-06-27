@@ -1,38 +1,13 @@
 import { onRequestPost as saveIngest } from '../../site/functions/api/ingest.js';
-import { normalizeComments as sharedNormalizeComments, fetchTrackMetadata, enrichTracks as sharedEnrichTracks, highResolutionArtwork, cleanSpotifyTitle } from './shared.js';
+import {
+  jsonResponse as json, normalizeBearer, jwtExpiryMs, positiveNumber as numberValue,
+  normalizeComments as sharedNormalizeComments, fetchTrackMetadata, enrichTracks as sharedEnrichTracks,
+  highResolutionArtwork, cleanSpotifyTitle,
+} from './shared.js';
 
 const API_BASE = 'https://production1.stationhead.com';
 const COLLECTOR_VERSION = '1.0.0-worker';
 const DEFAULT_USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36';
-
-function json(data, status = 200) {
-  return new Response(JSON.stringify(data, null, 2), {
-    status,
-    headers: { 'content-type': 'application/json; charset=utf-8' },
-  });
-}
-
-function numberValue(value, fallback) {
-  const parsed = Number(value ?? fallback);
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
-}
-
-function normalizeBearer(value) {
-  return String(value || '').replace(/^Bearer\s+/i, '').trim();
-}
-
-function jwtExpiryMs(token) {
-  try {
-    const part = String(token || '').split('.')[1];
-    if (!part) return 0;
-    const normalized = part.replace(/-/g, '+').replace(/_/g, '/');
-    const padded = normalized.padEnd(Math.ceil(normalized.length / 4) * 4, '=');
-    const payload = JSON.parse(atob(padded));
-    return Number(payload.exp || 0) * 1000;
-  } catch {
-    return 0;
-  }
-}
 
 function firstDefined(...values) {
   return values.find((value) => value !== undefined && value !== null);

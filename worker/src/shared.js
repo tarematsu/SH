@@ -1,3 +1,32 @@
+export function jsonResponse(data, status = 200) {
+  return new Response(JSON.stringify(data, null, 2), {
+    status,
+    headers: { 'content-type': 'application/json; charset=utf-8' },
+  });
+}
+
+export function normalizeBearer(value) {
+  return String(value || '').replace(/^Bearer\s+/i, '').trim();
+}
+
+export function jwtExpiryMs(token) {
+  try {
+    const part = String(token || '').split('.')[1];
+    if (!part) return 0;
+    const normalized = part.replace(/-/g, '+').replace(/_/g, '/');
+    const padded = normalized.padEnd(Math.ceil(normalized.length / 4) * 4, '=');
+    const payload = JSON.parse(atob(padded));
+    return Number(payload.exp || 0) * 1000;
+  } catch {
+    return 0;
+  }
+}
+
+export function positiveNumber(value, fallback) {
+  const n = Number(value ?? fallback);
+  return Number.isFinite(n) && n > 0 ? n : fallback;
+}
+
 export function highResolutionArtwork(url) {
   if (!url) return null;
   return String(url)

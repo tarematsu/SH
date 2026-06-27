@@ -1,14 +1,10 @@
 import app from './optimized-index.js';
+import { positiveNumber as positive } from './shared.js';
 
 const NEWS_LIST_URL = 'https://sakurazaka46.com/s/s46/news/list';
 const NEWS_ORIGIN = 'https://sakurazaka46.com';
 const STATIONHEAD_ORIGIN = 'https://production1.stationhead.com';
 const STATE_ID = 'official-news';
-
-function positive(value, fallback) {
-  const number = Number(value ?? fallback);
-  return Number.isFinite(number) && number > 0 ? number : fallback;
-}
 
 function finite(value) {
   if (value === undefined || value === null || value === '') return null;

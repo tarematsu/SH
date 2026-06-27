@@ -1,35 +1,5 @@
 import { claimWrite, minuteBucket, payloadHash, sourceIdentity } from '../lib/ingest-claim.js';
-
-function json(data, status = 200) {
-  return new Response(JSON.stringify(data), {
-    status,
-    headers: { 'content-type': 'application/json; charset=utf-8' },
-  });
-}
-
-function authorized(request, env) {
-  const expected = env.INGEST_SECRET;
-  const auth = request.headers.get('authorization') || '';
-  return Boolean(expected) && auth === `Bearer ${expected}`;
-}
-
-function num(value) {
-  if (value === undefined || value === null || value === '') return null;
-  const n = Number(value);
-  return Number.isFinite(n) ? n : null;
-}
-
-function bool(value) {
-  return value === undefined || value === null ? null : value ? 1 : 0;
-}
-
-function text(value) {
-  return value === undefined || value === null ? null : String(value);
-}
-
-function rawJson(value) {
-  return JSON.stringify(value ?? null);
-}
+import { json, authorized, num, bool, text, rawJson } from '../lib/api-utils.js';
 
 function snapshotClaimPayload(d) {
   return {
