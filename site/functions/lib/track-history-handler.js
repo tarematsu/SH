@@ -10,26 +10,7 @@ const day = () => new Date().toISOString().slice(0, 10);
 const valid = (value) => /^\d{4}-\d{2}-\d{2}$/.test(value || '');
 const ts = (value) => Date.parse(`${value}T00:00:00Z`);
 
-export async function handleTrackHistory({ request, env }) {
-  if (!env.DB) return out({ ok: false, error: 'DB binding missing' }, 500);
-  const url = new URL(request.url);
-  try {
-    if (url.searchParams.get('latest') === '1') {
-      const latest = await env.DB.prepare(`SELECT strftime('%Y-%m-%d', MAX(observed_at) / 1000, 'unixepoch') AS play_date
-        FROM sh_queue_snapshots`).first();
-      return out({ ok: true, latest_date: latest?.play_date || null, timezone: 'UTC' });
-    }
-
-    const from = valid(url.searchParams.get('from')) ? url.searchParams.get('from') : '2024-05-01';
-    const to = valid(url.searchParams.get('to')) ? url.searchParams.get('to') : day();
-    const fromTs = ts(from);
-    const toTs = ts(to) + 86400000;
-    const limit = Math.min(Math.max(+url.searchParams.get('limit') || 10000, 100), 20000);
-    if (!Number.isFinite(fromTs) || !Number.isFinite(toTs) || toTs <= fromTs) {
-      return out({ ok: false, error: 'invalid date range' }, 400);
-    }
-
-    const result = await env.DB.prepare(`WITH queue_seen AS (
+export const TRACK_HISTORY_SQL = `WITH queue_seen AS (
       SELECT station_id, start_time, MAX(observed_at) AS queue_last_observed_at
       FROM sh_queue_snapshots
       WHERE start_time >= ? AND start_time < ?
@@ -71,9 +52,29 @@ export async function handleTrackHistory({ request, env }) {
     FROM timed p
     LEFT JOIN sh_track_metadata m ON m.spotify_id = p.spotify_id
     WHERE p.played_at >= ? AND p.played_at < ?
-      AND p.played_at <= p.queue_last_observed_at + 300000
     ORDER BY p.played_at ASC
-    LIMIT ?`).bind(
+    LIMIT ?`;
+
+export async function handleTrackHistory({ request, env }) {
+  if (!env.DB) return out({ ok: false, error: 'DB binding missing' }, 500);
+  const url = new URL(request.url);
+  try {
+    if (url.searchParams.get('latest') === '1') {
+      const latest = await env.DB.prepare(`SELECT strftime('%Y-%m-%d', MAX(observed_at) / 1000, 'unixepoch') AS play_date
+        FROM sh_queue_snapshots`).first();
+      return out({ ok: true, latest_date: latest?.play_date || null, timezone: 'UTC' });
+    }
+
+    const from = valid(url.searchParams.get('from')) ? url.searchParams.get('from') : '2024-05-01';
+    const to = valid(url.searchParams.get('to')) ? url.searchParams.get('to') : day();
+    const fromTs = ts(from);
+    const toTs = ts(to) + 86400000;
+    const limit = Math.min(Math.max(+url.searchParams.get('limit') || 10000, 100), 20000);
+    if (!Number.isFinite(fromTs) || !Number.isFinite(toTs) || toTs <= fromTs) {
+      return out({ ok: false, error: 'invalid date range' }, 400);
+    }
+
+    const result = await env.DB.prepare(TRACK_HISTORY_SQL).bind(
       fromTs - 604800000, toTs,
       fromTs - 604800000, toTs,
       fromTs, toTs,
