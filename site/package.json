@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "wrangler pages dev public",
-    "check": "node --check functions/api/dashboard.js && node --check functions/api/history.js && node --check functions/api/ingest.js && node --check functions/api/host-ingest.js && node --check functions/api/leaderboard-ingest.js"
+    "check": "node --check functions/api/dashboard.js && node --check functions/api/playback.js && node --check functions/api/history.js && node --check functions/api/ingest.js && node --check functions/api/host-ingest.js && node --check functions/api/leaderboard-ingest.js"
   },
   "devDependencies": {
     "wrangler": "^4.104.0"
