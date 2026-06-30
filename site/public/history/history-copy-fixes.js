@@ -142,9 +142,10 @@
     $('#more').hidden = true;
     $('#chartPanel').hidden = true;
     $('#rankingWeeklyPanel').hidden = true;
+    const timezone = data.timezone === 'Asia/Tokyo' ? 'JST' : (data.timezone || 'UTC');
     $('#notice').textContent = data.setup_required
       ? '再生曲データの保存テーブルがまだありません。'
-      : `${formatDate(from)}〜${formatDate(to)}：${fmt(current.length)}件を表示（UTC）${data.truncated ? '（表示上限）' : ''}`;
+      : `${formatDate(from)}〜${formatDate(to)}：${fmt(current.length)}件を表示（${timezone}）${data.truncated ? '（表示上限）' : ''}`;
   };
 
   const renderHistoryData = (data, mode, append, scope, host) => {
@@ -200,10 +201,10 @@
       const to = $('#to').value;
 
       if (mode === 'tracks') {
-        const key = `track-history:v7:${from}:${to}`;
+        const key = `track-history:v8:${from}:${to}`;
         let data = readCache(key);
         if (!data) {
-          const params = new URLSearchParams({ from, to, limit: '2000', v: '7' });
+          const params = new URLSearchParams({ from, to, limit: '2000', v: '8' });
           const response = await fetch(`/api/track-history?${params}`, { signal: controller.signal, cache: 'no-store' });
           data = await response.json();
           if (!response.ok || !data.ok) throw new Error(data.error || `HTTP ${response.status}`);

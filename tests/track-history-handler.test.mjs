@@ -1,9 +1,192 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { DatabaseSync } from 'node:sqlite';
 
-import { TRACK_HISTORY_SQL } from '../site/functions/lib/track-history-handler.js';
+import {
+  TRACK_HISTORY_GRACE_MS,
+  TRACK_HISTORY_SQL,
+} from '../site/functions/lib/track-history-handler.js';
 
-test('track history SQL does not drop rows after the last observation window', () => {
-  assert.ok(TRACK_HISTORY_SQL.includes('WHERE p.played_at >= ? AND p.played_at < ?'));
-  assert.ok(!TRACK_HISTORY_SQL.includes('queue_last_observed_at + 300000'));
+function createDatabase() {
+  const db = new DatabaseSync(':memory:');
+  db.exec(`
+    CREATE TABLE sh_queue_snapshots (
+      id INTEGER PRIMARY KEY,
+      observed_at INTEGER NOT NULL,
+      station_id INTEGER,
+      queue_id INTEGER,
+      start_time INTEGER,
+      is_paused INTEGER,
+      raw_json TEXT NOT NULL
+    );
+    CREATE TABLE sh_queue_items (
+      id INTEGER PRIMARY KEY,
+      observed_at INTEGER NOT NULL,
+      station_id INTEGER NOT NULL,
+      queue_id INTEGER,
+      start_time INTEGER NOT NULL,
+      position INTEGER NOT NULL,
+      queue_track_id INTEGER,
+      stationhead_track_id INTEGER,
+      spotify_id TEXT,
+      apple_music_id TEXT,
+      deezer_id TEXT,
+      isrc TEXT,
+      duration_ms INTEGER,
+      preview_url TEXT,
+      bite_count INTEGER,
+      raw_json TEXT NOT NULL,
+      UNIQUE(station_id, start_time, position)
+    );
+    CREATE TABLE sh_track_metadata (
+      spotify_id TEXT PRIMARY KEY,
+      title TEXT,
+      artist TEXT,
+      display_title TEXT,
+      thumbnail_url TEXT,
+      spotify_url TEXT,
+      source TEXT,
+      fetched_at INTEGER,
+      raw_json TEXT
+    );
+  `);
+  return db;
+}
+
+function addTracks(db, {
+  start,
+  count,
+  duration = 180000,
+  observed = start,
+  station = 1,
+}) {
+  const insert = db.prepare(`
+    INSERT INTO sh_queue_items (
+      observed_at, station_id, queue_id, start_time, position,
+      queue_track_id, spotify_id, duration_ms, raw_json
+    ) VALUES (?, ?, 1, ?, ?, ?, ?, ?, ?)
+  `);
+  for (let position = 0; position < count; position += 1) {
+    const durationMs = Array.isArray(duration) ? duration[position] : duration;
+    insert.run(
+      observed,
+      station,
+      start,
+      position,
+      position + 1,
+      `spotify-${position}`,
+      durationMs,
+      JSON.stringify({ title: `Track ${position}`, artist: 'Artist' }),
+    );
+  }
+}
+
+function addSnapshot(db, {
+  start,
+  observed,
+  paused = 0,
+  station = 1,
+}) {
+  db.prepare(`
+    INSERT INTO sh_queue_snapshots (
+      observed_at, station_id, queue_id, start_time, is_paused, raw_json
+    ) VALUES (?, ?, 1, ?, ?, '{}')
+  `).run(observed, station, start, paused);
+}
+
+function queryTracks(db, from, to, limit = 100000) {
+  const fromTs = Date.parse(`${from}T00:00:00+09:00`);
+  const toTs = Date.parse(`${to}T00:00:00+09:00`) + 86400000;
+  return db.prepare(TRACK_HISTORY_SQL).all(
+    toTs,
+    fromTs - TRACK_HISTORY_GRACE_MS,
+    toTs,
+    fromTs - TRACK_HISTORY_GRACE_MS,
+    toTs,
+    fromTs,
+    toTs,
+    TRACK_HISTORY_GRACE_MS,
+    limit,
+  );
+}
+
+test('does not count the entire future queue as already played', () => {
+  const db = createDatabase();
+  const start = Date.parse('2026-06-30T00:00:00+09:00');
+  addTracks(db, { start, count: 2000 });
+  addSnapshot(db, { start, observed: start + 30 * 60000 });
+
+  const rows = queryTracks(db, '2026-06-30', '2026-06-30');
+
+  assert.equal(rows.length, 12);
+  assert.ok(rows.length < 2000);
+});
+
+test('includes a long-running queue that started more than seven days earlier', () => {
+  const db = createDatabase();
+  const start = Date.parse('2026-06-01T00:00:00+09:00');
+  addTracks(db, { start, count: 600, duration: 3600000 });
+  addSnapshot(db, {
+    start,
+    observed: Date.parse('2026-06-20T02:00:00+09:00'),
+  });
+
+  const rows = queryTracks(db, '2026-06-20', '2026-06-20');
+
+  assert.equal(rows.length, 3);
+  assert.equal(rows[0].position, 456);
+});
+
+test('groups midnight playback by Japan time', () => {
+  const db = createDatabase();
+  const start = Date.parse('2026-06-30T00:30:00+09:00');
+  addTracks(db, { start, count: 1 });
+  addSnapshot(db, { start, observed: start });
+
+  const rows = queryTracks(db, '2026-06-30', '2026-06-30');
+
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].play_date, '2026-06-30');
+});
+
+test('stops inferring later playback after an invalid duration', () => {
+  const db = createDatabase();
+  const start = Date.parse('2026-06-30T00:00:00+09:00');
+  addTracks(db, {
+    start,
+    count: 4,
+    duration: [180000, null, 180000, 180000],
+  });
+  addSnapshot(db, { start, observed: start + 3600000 });
+
+  const rows = queryTracks(db, '2026-06-30', '2026-06-30');
+
+  assert.deepEqual(rows.map((row) => row.position), [0, 1]);
+});
+
+test('paused snapshots do not advance the playback boundary', () => {
+  const db = createDatabase();
+  const start = Date.parse('2026-06-30T00:00:00+09:00');
+  addTracks(db, { start, count: 200, duration: 120000 });
+  addSnapshot(db, { start, observed: start + 10 * 60000 });
+  addSnapshot(db, { start, observed: start + 3 * 3600000, paused: 1 });
+
+  const rows = queryTracks(db, '2026-06-30', '2026-06-30');
+
+  assert.equal(rows.length, 8);
+});
+
+test('uses queue item heartbeat evidence for legacy rows without snapshots', () => {
+  const db = createDatabase();
+  const start = Date.parse('2026-06-30T00:00:00+09:00');
+  addTracks(db, {
+    start,
+    count: 20,
+    duration: 180000,
+    observed: start + 15 * 60000,
+  });
+
+  const rows = queryTracks(db, '2026-06-30', '2026-06-30');
+
+  assert.equal(rows.length, 7);
 });
