@@ -1,0 +1,13 @@
+{
+  "name": "stationhead-monitor",
+  "version": "1.3.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "check": "npm run check:js && npm run test:js && npm run test:sql && npm run check:worker-bundle",
+    "check:js": "node scripts/check-js-syntax.mjs",
+    "check:worker-bundle": "npm --prefix worker run check:bundle",
+    "test:js": "node --test tests/*.test.mjs",
+    "test:sql": "python -m unittest tests.sql_migrations_test"
+  }
+}

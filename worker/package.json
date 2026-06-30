@@ -7,7 +7,9 @@
     "dev": "wrangler dev --test-scheduled",
     "deploy": "wrangler deploy",
     "tail": "wrangler tail",
-    "check": "node --check src/main.js && node --check src/email-recap-index.js && node --check src/cloud-host-monitor.js && node --check src/cloud-weekly-leaderboard.js && wrangler deploy --dry-run --outdir=dist-dry-run"
+    "check": "npm run check:syntax && npm run check:bundle",
+    "check:syntax": "node --check src/main.js && node --check src/email-recap-index.js && node --check src/cloud-host-monitor.js && node --check src/cloud-weekly-leaderboard.js",
+    "check:bundle": "wrangler deploy --dry-run --outdir=dist-dry-run"
   },
   "devDependencies": {
     "wrangler": "^4.104.0"

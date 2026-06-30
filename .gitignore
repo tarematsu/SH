@@ -1,9 +1,12 @@
 node_modules/
+__pycache__/
+.pytest_cache/
 .env
 .env.*
 !.env.example
 .dev.vars
 artifacts/
+dist-dry-run/
 playwright-report/
 test-results/
 state/
