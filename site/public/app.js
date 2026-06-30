@@ -422,7 +422,7 @@ function updateNowPlayingProgress() {
   if (bar) bar.style.width = `${percent}%`;
 }
 
-function renderNow(track, queue = [], currentIndex = 0, host = {}) {
+function renderNow(track, queue = [], currentIndex = 0, host = {}, playback = {}) {
   stopNowPlayingTimer();
   playbackQueue = Array.isArray(queue) ? queue.slice() : [];
   simulatedCurrentIndex = track ? Math.max(0, currentIndex) : -1;
@@ -437,12 +437,22 @@ function renderNow(track, queue = [], currentIndex = 0, host = {}) {
   }
 
   const durationMs = Math.max(0, Number(track.duration_ms) || 0);
-  const baseProgressMs = Math.min(durationMs || Infinity, Math.max(0, Number(track.progress_ms) || 0));
+  const responseAgeMs = Number.isFinite(Number(playback.response_age_ms))
+    ? Math.max(0, Number(playback.response_age_ms))
+    : 0;
+  const shouldAdvance = playback.playing !== false;
+  const initialProgressMs = Math.max(0, Number(track.progress_ms) || 0) + (shouldAdvance ? responseAgeMs : 0);
+  const baseProgressMs = Math.min(durationMs || Infinity, initialProgressMs);
   nowPlayingState = { baseProgressMs, durationMs, renderedAt: Date.now() };
+  if (shouldAdvance && durationMs > 0 && initialProgressMs >= durationMs) {
+    advanceSimulatedTrack(initialProgressMs - durationMs);
+    if (nowPlayingState) nowPlayingTimer = setInterval(updateNowPlayingProgress, 1000);
+    return;
+  }
   renderNowDisplay(track, baseProgressMs, host);
   renderSimulatedQueue();
   updateNowPlayingProgress();
-  nowPlayingTimer = setInterval(updateNowPlayingProgress, 1000);
+  if (shouldAdvance) nowPlayingTimer = setInterval(updateNowPlayingProgress, 1000);
 }
 
 function renderQueue(queue, totalItems) {
@@ -523,7 +533,10 @@ async function refresh() {
     const foundCurrentIndex = queue.findIndex(t => t.is_current);
     const currentIndex = foundCurrentIndex >= 0 ? foundCurrentIndex : (queue.length ? 0 : -1);
     const current = currentIndex >= 0 ? queue[currentIndex] : null;
-    renderNow(current, queue, currentIndex, { handle: latest.host_handle, image: latest.host_image });
+    const generatedAt = Number(data.generated_at);
+    const responseAgeMs = Number.isFinite(generatedAt) ? Math.max(0, Date.now() - generatedAt) : 0;
+    const playing = latest.is_broadcasting !== 0 && latest.is_broadcasting !== false && !data.queue_status?.is_paused;
+    renderNow(current, queue, currentIndex, { handle: latest.host_handle, image: latest.host_image }, { response_age_ms: responseAgeMs, playing });
 
     const history = Array.isArray(data.history) ? data.history : [];
     if (history.length) {
