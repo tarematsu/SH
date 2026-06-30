@@ -1,12 +1,5 @@
-const safeJson = (value, fallback = null) => {
-  if (!value) return fallback;
-  try { return JSON.parse(value); } catch { return fallback; }
-};
-
-const num = (value) => {
-  const n = Number(value);
-  return Number.isFinite(n) ? n : null;
-};
+import { num } from '../lib/api-utils.js';
+import { computePlayback as computePlaybackWithAnchors, safeJson } from '../lib/playback.js';
 
 const json = (data, status = 200, cache = 'public, max-age=20, s-maxage=30, stale-while-revalidate=90') =>
   new Response(JSON.stringify(data), {
@@ -83,22 +76,6 @@ function metadataFallback(rawValue) {
     artist: apple?.artistName || spotify?.author_name || spotify?.author || null,
     title: apple?.trackName || spotify?.title || null,
   };
-}
-
-function computePlayback(queue, now = Date.now()) {
-  if (!queue.length) return { currentIndex: -1, progressMs: 0 };
-  const start = num(queue[0].start_time);
-  if (!start) return { currentIndex: 0, progressMs: 0 };
-  const elapsedMs = Math.max(0, now - start);
-  let cursor = 0;
-  for (let i = 0; i < queue.length; i += 1) {
-    const duration = Math.max(0, num(queue[i].duration_ms) || 0);
-    if (elapsedMs < cursor + duration || i === queue.length - 1) {
-      return { currentIndex: i, progressMs: Math.max(0, Math.min(duration, elapsedMs - cursor)) };
-    }
-    cursor += duration;
-  }
-  return { currentIndex: queue.length - 1, progressMs: 0 };
 }
 
 function linearRegressionPrediction(rows, goal, now = Date.now()) {
@@ -234,7 +211,8 @@ export async function onRequestGet({ request, env }) {
       queue = result.results || [];
     }
 
-    const playback = computePlayback(queue);
+    const generatedAt = Date.now();
+    const playback = computePlaybackWithAnchors(queue, generatedAt);
     const startIndex = Math.max(0, playback.currentIndex);
     const enrichedQueue = queue.slice(startIndex).map((track, index) => {
       const fallback = metadataFallback(track.metadata_raw_json);
@@ -275,7 +253,7 @@ export async function onRequestGet({ request, env }) {
 
     return json({
       ok: true,
-      generated_at: Date.now(),
+      generated_at: generatedAt,
       delta: !initial,
       latest_observed_at: latest?.observed_at || since,
       latest: publicLatest(latest, channel, station, owner, goal),
@@ -296,8 +274,11 @@ export async function onRequestGet({ request, env }) {
       queue: enrichedQueue,
       queue_status: latestQueue ? {
         ...latestQueue,
+        playing: latest?.is_broadcasting !== 0 && latest?.is_broadcasting !== false && !latestQueue.is_paused && playback.currentIndex >= 0,
         current_index: playback.currentIndex,
         progress_ms: playback.progressMs,
+        anchor_at: playback.anchorAt,
+        queue_end_at: playback.queueEndAt,
         total_items: queue.length,
       } : null,
     });

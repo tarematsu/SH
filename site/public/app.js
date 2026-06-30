@@ -441,7 +441,10 @@ function renderNow(track, queue = [], currentIndex = 0, host = {}, playback = {}
     ? Math.max(0, Number(playback.response_age_ms))
     : 0;
   const shouldAdvance = playback.playing !== false;
-  const initialProgressMs = Math.max(0, Number(track.progress_ms) || 0) + (shouldAdvance ? responseAgeMs : 0);
+  const anchorAt = Number(playback.anchor_at);
+  const initialProgressMs = shouldAdvance && Number.isFinite(anchorAt)
+    ? Math.max(0, Date.now() - anchorAt)
+    : Math.max(0, Number(track.progress_ms) || 0) + (shouldAdvance ? responseAgeMs : 0);
   const baseProgressMs = Math.min(durationMs || Infinity, initialProgressMs);
   nowPlayingState = { baseProgressMs, durationMs, renderedAt: Date.now() };
   if (shouldAdvance && durationMs > 0 && initialProgressMs >= durationMs) {
@@ -535,8 +538,12 @@ async function refresh() {
     const current = currentIndex >= 0 ? queue[currentIndex] : null;
     const generatedAt = Number(data.generated_at);
     const responseAgeMs = Number.isFinite(generatedAt) ? Math.max(0, Date.now() - generatedAt) : 0;
-    const playing = latest.is_broadcasting !== 0 && latest.is_broadcasting !== false && !data.queue_status?.is_paused;
-    renderNow(current, queue, currentIndex, { handle: latest.host_handle, image: latest.host_image }, { response_age_ms: responseAgeMs, playing });
+    const playing = data.queue_status?.playing ?? (latest.is_broadcasting !== 0 && latest.is_broadcasting !== false && !data.queue_status?.is_paused);
+    renderNow(current, queue, currentIndex, { handle: latest.host_handle, image: latest.host_image }, {
+      anchor_at: data.queue_status?.anchor_at,
+      response_age_ms: responseAgeMs,
+      playing,
+    });
 
     const history = Array.isArray(data.history) ? data.history : [];
     if (history.length) {
