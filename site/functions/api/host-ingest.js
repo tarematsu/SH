@@ -21,6 +21,22 @@ function stationClaimPayload(data) {
   };
 }
 
+function stationRawPayload(data) {
+  return {
+    ...stationClaimPayload(data),
+    raw_status: text(data.raw?.status),
+    owner: {
+      handle: text(data.raw?.owner?.handle),
+      thumbnail_url: text(data.raw?.owner?.thumbnail?.url),
+      medium_url: text(data.raw?.owner?.medium?.url),
+    },
+    channel: {
+      id: num(data.raw?.channel?.id),
+      alias: text(data.raw?.channel?.alias),
+    },
+  };
+}
+
 function queueClaimPayload(data) {
   return {
     session_id: num(data.session_id),
@@ -153,7 +169,7 @@ async function saveStationSnapshot(db, observedAt, data) {
     num(data.station_id), num(data.broadcast_id), num(data.broadcast_start_time), bool(data.is_broadcasting),
     text(data.status), text(data.chat_status), num(data.listener_count), num(data.guest_count), num(data.total_listens),
     num(data.channel_id), text(data.channel_alias), num(data.current_track_id), text(data.current_spotify_id),
-    num(data.queue_id), num(data.queue_start_time), num(data.comment_velocity), rawJson(data.raw),
+    num(data.queue_id), num(data.queue_start_time), num(data.comment_velocity), rawJson(stationRawPayload(data)),
   ];
 
   const updated = await db.prepare(`UPDATE sh_host_station_snapshots SET
@@ -190,7 +206,7 @@ async function saveQueue(db, observedAt, data) {
       queue_hash,current_track_id,current_spotify_id,raw_json
     ) VALUES (?,?,?,?,?,?,?,?,?,?)`)
     .bind(sessionId, observedAt, num(data.station_id), num(data.queue_id), num(data.start_time),
-      bool(data.is_paused), text(data.queue_hash), num(data.current_track_id), text(data.current_spotify_id), rawJson(data.raw)).run();
+      bool(data.is_paused), text(data.queue_hash), num(data.current_track_id), text(data.current_spotify_id), rawJson(queueClaimPayload(data))).run();
 
   if (tracks.length) {
     await db.batch(tracks.map((track) => db.prepare(`

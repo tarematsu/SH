@@ -20,6 +20,33 @@ function snapshotClaimPayload(d) {
   };
 }
 
+function snapshotRawPayload(d) {
+  const raw = d?.raw || {};
+  const station = raw.current_station || {};
+  const owner = station.owner || {};
+  return {
+    ...snapshotClaimPayload(d),
+    description: text(raw.description || station.status),
+    artist_name: text(raw.artist_name),
+    accent_color: text(raw.accent_color),
+    images: {
+      medium: { url: text(raw.images?.medium?.url) },
+      logo: { medium: { url: text(raw.images?.logo?.medium?.url) } },
+    },
+    current_station: {
+      status: text(station.status),
+      streaming_party: {
+        current_stream_count: num(station.streaming_party?.current_stream_count),
+        stream_goal: num(station.streaming_party?.stream_goal),
+      },
+      owner: {
+        thumbnail: { url: text(owner.thumbnail?.url) },
+        medium: { url: text(owner.medium?.url) },
+      },
+    },
+  };
+}
+
 function queueClaimPayload(data) {
   return {
     station_id: num(data?.station_id),
@@ -48,7 +75,7 @@ async function saveSnapshot(db, observedAt, d) {
     num(d.listener_count), num(d.online_member_count), num(d.total_member_count),
     num(d.guest_count), num(d.total_listens), num(d.stream_goal),
     num(d.current_stream_count), num(d.host_account_id), text(d.host_handle),
-    num(d.broadcast_start_time), num(d.comment_velocity), rawJson(d.raw),
+    num(d.broadcast_start_time), num(d.comment_velocity), rawJson(snapshotRawPayload(d)),
   ];
 
   const updated = await db.prepare(`
@@ -194,7 +221,7 @@ async function saveQueue(db, observedAt, data) {
     )
   `).bind(
     observedAt, stationId, queueId, startTime,
-    bool(data?.is_paused), rawJson(data?.raw),
+    bool(data?.is_paused), rawJson(queueClaimPayload(data)),
     stationId, startTime, bucket, bucket + 60000,
   ).run();
 
