@@ -90,7 +90,15 @@ Invoke-Step "Deploy Pages site" {
 
 Invoke-Step "Verify Worker health" {
   $response = Invoke-RestMethod "https://stationhead-monitor-collector.tarematsu.workers.dev/health"
-  if (-not $response.healthy -and -not $response.ok) {
+  $isHealthy = $false
+  if ($response.PSObject.Properties.Name -contains "healthy") {
+    $isHealthy = [bool]$response.healthy
+  }
+  elseif ($response.PSObject.Properties.Name -contains "ok") {
+    $isHealthy = [bool]$response.ok
+  }
+
+  if (-not $isHealthy) {
     throw "Worker health verification failed."
   }
 }
