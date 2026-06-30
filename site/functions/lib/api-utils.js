@@ -1,7 +1,15 @@
-export function json(data, status = 200) {
+export function json(data, status = 200, cache = null, extraHeaders = {}) {
+  const headers = {
+    'content-type': 'application/json; charset=utf-8',
+    ...extraHeaders,
+  };
+  if (cache) {
+    headers['cache-control'] = cache;
+    headers.vary = headers.vary || 'accept-encoding';
+  }
   return new Response(JSON.stringify(data), {
     status,
-    headers: { 'content-type': 'application/json; charset=utf-8' },
+    headers,
   });
 }
 
