@@ -1,5 +1,6 @@
 import collector from './index.js';
 import { jsonResponse as json, normalizeBearer, jwtExpiryMs, positiveNumber as positive } from './shared.js';
+import { ensureAuthControlRow, readAuthState } from './auth-state.js';
 
 const API_ORIGIN = 'https://production1.stationhead.com';
 const STATE_ID = 'stationhead';
@@ -88,39 +89,6 @@ globalThis.fetch = async (input, init = {}) => {
   return chatFallbackResponse(requestedLimit, lastReason);
 };
 
-async function ensureControlRow(env) {
-  await env.DB.prepare(`
-    INSERT OR IGNORE INTO sh_worker_auth_control (id, updated_at)
-    VALUES (?, ?)
-  `).bind(STATE_ID, Date.now()).run();
-}
-
-async function readAuthState(env) {
-  await ensureControlRow(env);
-  const [session, control] = await Promise.all([
-    env.DB.prepare(`
-      SELECT auth_token, device_uid, token_expires_at
-      FROM sh_worker_collector_state WHERE id = ?
-    `).bind(STATE_ID).first(),
-    env.DB.prepare(`
-      SELECT last_attempt_at, last_success_at, last_error, lock_until
-      FROM sh_worker_auth_control WHERE id = ?
-    `).bind(STATE_ID).first(),
-  ]);
-
-  const authToken = normalizeBearer(session?.auth_token || env.STATIONHEAD_AUTH_TOKEN);
-  const deviceUid = String(session?.device_uid || env.STATIONHEAD_DEVICE_UID || '').trim();
-  return {
-    authToken,
-    deviceUid,
-    tokenExpiresAt: jwtExpiryMs(authToken) || Number(session?.token_expires_at || 0),
-    lastAttemptAt: Number(control?.last_attempt_at || 0),
-    lastSuccessAt: Number(control?.last_success_at || 0),
-    lastError: control?.last_error || null,
-    lockUntil: Number(control?.lock_until || 0),
-  };
-}
-
 async function claimAuthLock(env, cfg) {
   const now = Date.now();
   const result = await env.DB.prepare(`
@@ -135,7 +103,7 @@ async function waitForAuth(env, previousSuccessAt, cfg) {
   const deadline = Date.now() + Math.min(cfg.lockMs, 30_000);
   while (Date.now() < deadline) {
     await sleep(1_500);
-    const state = await readAuthState(env);
+    const state = await readAuthState(env, STATE_ID);
     if (state.lastSuccessAt > previousSuccessAt && state.authToken && state.deviceUid) return state;
     if (state.lockUntil <= Date.now()) break;
   }
@@ -229,13 +197,14 @@ async function acquireDirectSession(cfg) {
 
 async function refreshSession(env, reason, force = false) {
   const cfg = authConfig(env);
-  const initial = await readAuthState(env);
+  const initial = await readAuthState(env, STATE_ID);
   const now = Date.now();
 
   if (!force && initial.lastError && initial.lastAttemptAt && now - initial.lastAttemptAt < cfg.backoffMs) {
     return null;
   }
 
+  if (!initial.controlExists) await ensureAuthControlRow(env, STATE_ID, now);
   if (!await claimAuthLock(env, cfg)) {
     return waitForAuth(env, initial.lastSuccessAt, cfg);
   }
@@ -244,7 +213,7 @@ async function refreshSession(env, reason, force = false) {
     const credentials = await acquireDirectSession(cfg);
     await saveSession(env, credentials.authToken, credentials.deviceUid);
     await finishAuthAttempt(env, null);
-    const state = await readAuthState(env);
+    const state = await readAuthState(env, STATE_ID);
     console.log(JSON.stringify({
       event: 'stationhead_auth_refreshed',
       method: 'direct-api',
@@ -261,7 +230,7 @@ async function refreshSession(env, reason, force = false) {
 
 async function ensureSession(env) {
   const cfg = authConfig(env);
-  const state = await readAuthState(env);
+  const state = await readAuthState(env, STATE_ID);
   const ready = Boolean(state.authToken && state.deviceUid);
   const expiresSoon = Boolean(state.tokenExpiresAt && state.tokenExpiresAt - Date.now() <= cfg.refreshBeforeMs);
 
@@ -282,7 +251,7 @@ function authorized(request, env) {
 }
 
 async function authHealth(env) {
-  const state = await readAuthState(env);
+  const state = await readAuthState(env, STATE_ID);
   return {
     auth_method: 'direct-api',
     auth_session_ready: Boolean(state.authToken && state.deviceUid),
