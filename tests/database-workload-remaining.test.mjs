@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { DatabaseSync } from 'node:sqlite';
-import { queueItemsToWrite, commentsToWrite } from '../site/functions/api/ingest.js';
+import { queueItemsToWrite, queueInspectionDue, commentsToWrite } from '../site/functions/api/ingest.js';
 import { hostCommentsToWrite } from '../site/functions/api/host-ingest.js';
 import { LEGACY_SERIES_SQL, decodeSeriesRows, trimSeries } from '../site/functions/api/broadcast-series.js';
 import { completeMetadataCount } from '../site/functions/api/track-metadata-refresh.js';
@@ -16,6 +16,15 @@ test('unchanged queue items skip writes until the hourly checkpoint', () => {
   assert.equal(queueItemsToWrite([track], existing, observedAt, 7).length, 0);
   assert.equal(queueItemsToWrite([{ ...track, bite_count: 6 }], existing, observedAt, 7).length, 1);
   assert.equal(queueItemsToWrite([track], existing, observedAt + 3_600_000, 7).length, 1);
+});
+
+test('unchanged queue payload skips all item and like inspection between checkpoints', () => {
+  const observedAt = 10_000_000;
+  const payload = '{"queue_id":7,"tracks":[1]}';
+  assert.equal(queueInspectionDue(null, payload, observedAt), true);
+  assert.equal(queueInspectionDue({ raw_json: payload, item_observed_at: observedAt - 1000 }, payload, observedAt), false);
+  assert.equal(queueInspectionDue({ raw_json: '{"changed":true}', item_observed_at: observedAt - 1000 }, payload, observedAt), true);
+  assert.equal(queueInspectionDue({ raw_json: payload, item_observed_at: observedAt - 3_600_000 }, payload, observedAt), true);
 });
 
 test('comment filters only return new or changed rows', () => {
