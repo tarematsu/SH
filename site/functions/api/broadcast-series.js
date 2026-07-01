@@ -1,39 +1,71 @@
 const JSON_HEADERS = {
   'content-type': 'application/json; charset=utf-8',
   'cache-control': 'public, max-age=300, s-maxage=3600, stale-while-revalidate=7200',
+  vary: 'accept-encoding',
 };
 const MAX_POINTS = 120000;
+const SERIES_CACHE_TTL_MS = 5 * 60 * 1000;
+const SERIES_CACHE_MAX = 8;
+const seriesCache = new Map();
+
 const json = (data, status = 200) => new Response(JSON.stringify(data), {
   status,
   headers: status === 200 ? JSON_HEADERS : { ...JSON_HEADERS, 'cache-control': 'no-store' },
 });
-function parseDateStart(value, fallback) {
-  const text = /^\d{4}-\d{2}-\d{2}$/.test(value || '') ? value : fallback;
-  return Date.parse(`${text}T00:00:00Z`);
+
+function dateParam(value, fallback) {
+  return /^\d{4}-\d{2}-\d{2}$/.test(value || '') ? value : fallback;
 }
+function parseDateStart(value) { return Date.parse(`${value}T00:00:00Z`); }
 function addDays(timestamp, days) { return timestamp + days * 86400000; }
 function todayUtcString() { return new Date().toISOString().slice(0, 10); }
-export const LEGACY_SERIES_SQL = `WITH starts AS (
-  SELECT source_note AS event_name, MIN(observed_at) AS started_at
+
+export async function cachedBroadcastSeries(key, loader, now = Date.now()) {
+  const cached = seriesCache.get(key);
+  if (cached?.expiresAt > now && Object.hasOwn(cached, 'value')) {
+    seriesCache.delete(key);
+    seriesCache.set(key, cached);
+    return cached.value;
+  }
+  if (cached?.pending) return cached.pending;
+
+  const entry = cached || {};
+  entry.pending = Promise.resolve().then(loader).then((value) => {
+    entry.value = value;
+    entry.expiresAt = Date.now() + SERIES_CACHE_TTL_MS;
+    return value;
+  }).catch((error) => {
+    seriesCache.delete(key);
+    throw error;
+  }).finally(() => { entry.pending = null; });
+  seriesCache.set(key, entry);
+  while (seriesCache.size > SERIES_CACHE_MAX) {
+    seriesCache.delete(seriesCache.keys().next().value);
+  }
+  return entry.pending;
+}
+
+export function resetBroadcastSeriesCache() {
+  seriesCache.clear();
+}
+
+export const LEGACY_SERIES_SQL = `WITH base AS (
+  SELECT source_note AS event_name,observed_at,listener_count,
+    MIN(observed_at) OVER (PARTITION BY source_note) AS started_at
   FROM sh_legacy_snapshots
   WHERE observed_at>=? AND observed_at<?
     AND host_handle='sakurazaka46jp'
     AND source_note IS NOT NULL AND source_note<>''
-  GROUP BY source_note
 ), minute_points AS (
   SELECT
-    'legacy:' || snapshots.source_note AS series_key,
-    snapshots.source_note AS event_name,
-    starts.started_at,
-    CAST((snapshots.observed_at - starts.started_at) / 60000 AS INTEGER) AS elapsed_minute,
-    ROUND(AVG(snapshots.listener_count), 1) AS listener_count,
+    'legacy:' || event_name AS series_key,
+    event_name,started_at,
+    CAST((observed_at - started_at) / 60000 AS INTEGER) AS elapsed_minute,
+    ROUND(AVG(listener_count), 1) AS listener_count,
     COUNT(*) AS source_samples
-  FROM sh_legacy_snapshots snapshots
-  JOIN starts ON starts.event_name=snapshots.source_note
-  WHERE snapshots.observed_at>=? AND snapshots.observed_at<?
-    AND snapshots.host_handle='sakurazaka46jp'
-    AND snapshots.listener_count IS NOT NULL
-  GROUP BY snapshots.source_note,starts.started_at,elapsed_minute
+  FROM base
+  WHERE listener_count IS NOT NULL
+  GROUP BY event_name,started_at,elapsed_minute
 ), ranked AS (
   SELECT *,ROW_NUMBER() OVER (ORDER BY started_at ASC,elapsed_minute ASC) AS point_rank,
     COUNT(*) OVER () AS total_points
@@ -49,6 +81,7 @@ SELECT series_key,event_name,started_at,
 FROM ordered
 GROUP BY series_key,event_name,started_at
 ORDER BY started_at ASC`;
+
 export const FAILSAFE_SERIES_SQL = `WITH minute_points AS (
   SELECT
     'news:' || announcements.id AS series_key,
@@ -79,28 +112,37 @@ SELECT series_key,event_name,started_at,
 FROM ordered
 GROUP BY series_key,event_name,started_at
 ORDER BY started_at ASC`;
+
 export function decodeSeriesRows(rows, source) {
-  return (rows || []).map((row) => {
+  const result = [];
+  for (const row of rows || []) {
     let encoded = [];
     try {
       const parsed = JSON.parse(row.points_json || '[]');
       if (Array.isArray(parsed)) encoded = parsed;
     } catch {}
-    const samples = encoded.map((point) => ({
-      elapsed: Number(point?.[0]) || 0,
-      listener: Number(point?.[1]),
-      sourceSamples: Number(point?.[2]) || 0,
-    })).filter((point) => Number.isFinite(point.listener));
-    return {
+    const samples = [];
+    for (const point of encoded) {
+      const listener = Number(point?.[1]);
+      if (!Number.isFinite(listener)) continue;
+      samples.push({
+        elapsed: Number(point?.[0]) || 0,
+        listener,
+        sourceSamples: Number(point?.[2]) || 0,
+      });
+    }
+    result.push({
       series_key: String(row.series_key || `${row.event_name}:${row.started_at}`),
       event_name: String(row.event_name || '公式ステヘ'),
       started_at: Number(row.started_at) || null,
       samples,
       source,
       sourceTruncated: Number(row.total_points || 0) > MAX_POINTS,
-    };
-  });
+    });
+  }
+  return result;
 }
+
 export function trimSeries(seriesRows, limit = MAX_POINTS) {
   const ordered = [...seriesRows].sort((a, b) => (a.started_at || 0) - (b.started_at || 0));
   const result = [];
@@ -108,26 +150,35 @@ export function trimSeries(seriesRows, limit = MAX_POINTS) {
   let originalPoints = 0;
   let sourceTruncated = false;
   for (const row of ordered) {
-    originalPoints += row.samples.length;
+    const samples = Array.isArray(row.samples) ? row.samples : [];
+    originalPoints += samples.length;
     sourceTruncated ||= Boolean(row.sourceTruncated);
-    if (remaining <= 0) continue;
-    const samples = row.samples.slice(0, remaining);
-    remaining -= samples.length;
-    if (!samples.length) continue;
+    if (remaining <= 0 || !samples.length) continue;
+    const take = Math.min(samples.length, remaining);
+    const points = new Array(take);
+    let sourceSamples = 0;
+    for (let index = 0; index < take; index += 1) {
+      const point = samples[index];
+      points[index] = [point.elapsed, point.listener];
+      sourceSamples += point.sourceSamples;
+    }
+    remaining -= take;
     result.push({
       event_name: row.event_name,
       started_at: row.started_at,
-      points: samples.map((point) => [point.elapsed, point.listener]),
-      source_samples: samples.reduce((sum, point) => sum + point.sourceSamples, 0),
+      points,
+      source_samples: sourceSamples,
       source: row.source,
     });
   }
   return { series: result, pointCount: limit - remaining, truncated: sourceTruncated || originalPoints > limit };
 }
+
 async function legacyRows(env, fromTs, toTs) {
-  const result = await env.DB.prepare(LEGACY_SERIES_SQL).bind(fromTs, toTs, fromTs, toTs).all();
+  const result = await env.DB.prepare(LEGACY_SERIES_SQL).bind(fromTs, toTs).all();
   return decodeSeriesRows(result.results || [], 'historical_import');
 }
+
 async function failSafeRows(env, fromTs, toTs) {
   try {
     const result = await env.DB.prepare(FAILSAFE_SERIES_SQL).bind(fromTs, toTs).all();
@@ -137,22 +188,35 @@ async function failSafeRows(env, fromTs, toTs) {
     throw error;
   }
 }
+
+async function loadBroadcastSeries(env, from, to) {
+  const fromTs = parseDateStart(from);
+  const toTs = addDays(parseDateStart(to), 1);
+  const [legacy, failSafe] = await Promise.all([
+    legacyRows(env, fromTs, toTs),
+    failSafeRows(env, fromTs, toTs),
+  ]);
+  const trimmed = trimSeries(legacy.concat(failSafe));
+  return {
+    ok: true, from, to, timezone: 'UTC', series: trimmed.series,
+    event_count: trimmed.series.length, point_count: trimmed.pointCount,
+    fail_safe_event_count: trimmed.series.filter((item) => item.source === 'official_news_fail_safe').length,
+    truncated: trimmed.truncated, x_origin: 'broadcast_start', x_unit: 'minute',
+  };
+}
+
 export async function onRequestGet({ request, env }) {
   if (!env.DB) return json({ ok: false, error: 'DB binding missing' }, 500);
   try {
     const url = new URL(request.url);
-    const from = url.searchParams.get('from') || '2024-05-01';
-    const to = url.searchParams.get('to') || todayUtcString();
-    const fromTs = parseDateStart(from, '2024-05-01');
-    const toTs = addDays(parseDateStart(to, todayUtcString()), 1);
-    const [legacy, failSafe] = await Promise.all([legacyRows(env, fromTs, toTs), failSafeRows(env, fromTs, toTs)]);
-    const trimmed = trimSeries([...legacy, ...failSafe]);
-    return json({
-      ok: true, from, to, timezone: 'UTC', series: trimmed.series,
-      event_count: trimmed.series.length, point_count: trimmed.pointCount,
-      fail_safe_event_count: trimmed.series.filter((item) => item.source === 'official_news_fail_safe').length,
-      truncated: trimmed.truncated, x_origin: 'broadcast_start', x_unit: 'minute',
-    });
+    const today = todayUtcString();
+    const from = dateParam(url.searchParams.get('from'), '2024-05-01');
+    const to = dateParam(url.searchParams.get('to'), today);
+    const payload = await cachedBroadcastSeries(
+      `broadcast-series:v2:${from}:${to}`,
+      () => loadBroadcastSeries(env, from, to),
+    );
+    return json(payload);
   } catch (error) {
     return json({ ok: false, error: error?.message || 'broadcast series error' }, 500);
   }

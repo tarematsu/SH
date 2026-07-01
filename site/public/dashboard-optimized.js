@@ -1,33 +1,65 @@
 (() => {
   const baseDrawChart = drawChart;
+  const historyBuckets = new Map();
   let lastDashboardObservedAt = 0;
   let lastQueueRevision = '';
   let hiddenAt = 0;
   let playbackActive = null;
 
+  function mergeHistoryBucket(row, cutoff) {
+    const observedAt = Number(row?.observed_at);
+    if (!Number.isFinite(observedAt) || observedAt < cutoff) return false;
+    const bucket = Math.floor(observedAt / 300000) * 300000;
+    const previous = historyBuckets.get(bucket);
+    const previousVelocity = Number(previous?.comment_velocity);
+    const nextVelocity = Number(row?.comment_velocity);
+    const commentVelocity = Number.isFinite(previousVelocity) || Number.isFinite(nextVelocity)
+      ? Math.max(Number.isFinite(previousVelocity) ? previousVelocity : 0, Number.isFinite(nextVelocity) ? nextVelocity : 0)
+      : null;
+    if (!previous || observedAt >= Number(previous.observed_at)) {
+      historyBuckets.set(bucket, { ...row, comment_velocity: commentVelocity });
+      return true;
+    }
+    if (commentVelocity !== previous.comment_velocity) {
+      historyBuckets.set(bucket, { ...previous, comment_velocity: commentVelocity });
+      return true;
+    }
+    return false;
+  }
+
+  function seedHistoryBuckets(rows, cutoff = Date.now() - 86400000) {
+    historyBuckets.clear();
+    for (const row of Array.isArray(rows) ? rows : []) mergeHistoryBucket(row, cutoff);
+  }
+
   function mergeDashboardHistory(rows, delta) {
     const cutoff = Date.now() - 86400000;
-    const byBucket = new Map();
-    const mergeRow = (row) => {
-      const observedAt = Number(row?.observed_at);
-      if (!Number.isFinite(observedAt) || observedAt < cutoff) return;
-      const bucket = Math.floor(observedAt / 300000) * 300000;
-      const previous = byBucket.get(bucket);
-      const previousVelocity = Number(previous?.comment_velocity);
-      const nextVelocity = Number(row?.comment_velocity);
-      const commentVelocity = Number.isFinite(previousVelocity) || Number.isFinite(nextVelocity)
-        ? Math.max(Number.isFinite(previousVelocity) ? previousVelocity : 0, Number.isFinite(nextVelocity) ? nextVelocity : 0)
-        : null;
-      if (!previous || observedAt >= Number(previous.observed_at)) {
-        byBucket.set(bucket, { ...row, comment_velocity: commentVelocity });
-      } else if (commentVelocity !== previous.comment_velocity) {
-        byBucket.set(bucket, { ...previous, comment_velocity: commentVelocity });
-      }
-    };
+    const incoming = Array.isArray(rows) ? rows : [];
+    let changed = false;
 
-    if (delta) lastHistoryRows.forEach(mergeRow);
-    (Array.isArray(rows) ? rows : []).forEach(mergeRow);
-    return [...byBucket.values()].sort((a, b) => Number(a.observed_at) - Number(b.observed_at));
+    if (!delta || !historyBuckets.size) {
+      historyBuckets.clear();
+      if (delta) {
+        for (const row of lastHistoryRows) changed = mergeHistoryBucket(row, cutoff) || changed;
+      }
+      for (const row of incoming) changed = mergeHistoryBucket(row, cutoff) || changed;
+      changed = true;
+    } else {
+      for (const row of incoming) changed = mergeHistoryBucket(row, cutoff) || changed;
+    }
+
+    const cutoffBucket = Math.floor(cutoff / 300000) * 300000;
+    for (const bucket of historyBuckets.keys()) {
+      if (bucket >= cutoffBucket) continue;
+      historyBuckets.delete(bucket);
+      changed = true;
+    }
+
+    if (!changed) return { rows: lastHistoryRows, changed: false };
+    return {
+      rows: [...historyBuckets.values()].sort((a, b) => Number(a.observed_at) - Number(b.observed_at)),
+      changed: true,
+    };
   }
 
   function syncPlaybackActivity(playing) {
@@ -68,13 +100,15 @@
       minimum = Math.min(minimum, value);
       maximum = Math.max(maximum, value);
     }
-    target.innerHTML = Number.isFinite(minimum)
+    const html = Number.isFinite(minimum)
       ? `<span>24時間最低 ${minimum.toLocaleString('ja-JP')}</span><span>24時間最高 ${maximum.toLocaleString('ja-JP')}</span>`
       : '<span>24時間最低 -</span><span>24時間最高 -</span>';
+    if (target.innerHTML !== html) target.innerHTML = html;
   };
 
   drawChart = function drawChartWithoutDiscardingHistory(rows = lastHistoryRows, selectionIndex = selectedMainChartIndex) {
     const fullRows = Array.isArray(rows) ? rows : [];
+    if (!historyBuckets.size && fullRows.length) seedHistoryBuckets(fullRows);
     baseDrawChart(fullRows, selectionIndex);
     lastHistoryRows = fullRows;
   };
@@ -151,16 +185,28 @@
 
       const latestObservedAt = Number(data.latest_observed_at);
       if (Number.isFinite(latestObservedAt) && latestObservedAt > 0) lastDashboardObservedAt = latestObservedAt;
-      const history = mergeDashboardHistory(data.history, Boolean(data.delta));
-      renderOnlineRange(history);
-      if (history.length) {
-        const tail = history.at(-1);
-        const signature = `${history.length}:${history[0]?.observed_at}:${tail?.observed_at}:${tail?.online_member_count}:${tail?.current_stream_count}:${tail?.comment_velocity}`;
-        if (signature !== lastRenderSignature) {
-          lastRenderSignature = signature;
-          selectedMainChartIndex = null;
-          lastHistoryRows = history;
-          requestAnimationFrame(() => drawChart(history));
+      const historyState = mergeDashboardHistory(data.history, Boolean(data.delta));
+      if (historyState.changed) {
+        const history = historyState.rows;
+        lastHistoryRows = history;
+        renderOnlineRange(history);
+        if (history.length) {
+          const tail = history.at(-1);
+          const signature = [
+            history.length,
+            history[0]?.observed_at,
+            tail?.listener_count,
+            tail?.online_member_count,
+            tail?.total_member_count,
+            tail?.total_listens,
+            tail?.current_stream_count,
+            tail?.comment_velocity,
+          ].join(':');
+          if (signature !== lastRenderSignature) {
+            lastRenderSignature = signature;
+            selectedMainChartIndex = null;
+            requestAnimationFrame(() => drawChart(history));
+          }
         }
       }
     } catch (error) {

@@ -3,7 +3,13 @@ import assert from 'node:assert/strict';
 import { DatabaseSync } from 'node:sqlite';
 import { queueItemsToWrite, queueInspectionDue, commentsToWrite } from '../site/functions/api/ingest.js';
 import { hostCommentsToWrite } from '../site/functions/api/host-ingest.js';
-import { LEGACY_SERIES_SQL, decodeSeriesRows, trimSeries } from '../site/functions/api/broadcast-series.js';
+import {
+  LEGACY_SERIES_SQL,
+  cachedBroadcastSeries,
+  decodeSeriesRows,
+  resetBroadcastSeriesCache,
+  trimSeries,
+} from '../site/functions/api/broadcast-series.js';
 import { completeMetadataCount } from '../site/functions/api/track-metadata-refresh.js';
 import { cachedSnapshotCount, resetSnapshotCountCache } from '../site/functions/api/health.js';
 import { compactProbePayload, officialCommentsToWrite } from '../worker/src/official-news-index.js';
@@ -34,23 +40,43 @@ test('comment filters only return new or changed rows', () => {
   assert.deepEqual(hostCommentsToWrite(hostComments, [{ comment_id: 1, raw_json: '{"text":"same"}' }, { comment_id: 2, raw_json: '{"text":"old"}' }]).map((item) => item.comment_id), [2, 3]);
 });
 
-test('broadcast series leaves SQLite as one row per event', () => {
+test('broadcast series calculates event starts in one filtered scan', () => {
   const db = new DatabaseSync(':memory:');
   db.exec(`CREATE TABLE sh_legacy_snapshots(id INTEGER PRIMARY KEY,observed_at INTEGER NOT NULL,host_handle TEXT,source_note TEXT,listener_count INTEGER)`);
   const insert = db.prepare('INSERT INTO sh_legacy_snapshots VALUES(?,?,?,?,?)');
-  insert.run(1, 1000, 'sakurazaka46jp', 'event-a', 10);
-  insert.run(2, 2000, 'sakurazaka46jp', 'event-a', 20);
-  insert.run(3, 61000, 'sakurazaka46jp', 'event-a', 30);
-  insert.run(4, 121000, 'sakurazaka46jp', 'event-b', 40);
-  const rows = db.prepare(LEGACY_SERIES_SQL).all(0, 200000, 0, 200000);
+  insert.run(1, 1000, 'sakurazaka46jp', 'event-a', null);
+  insert.run(2, 2000, 'sakurazaka46jp', 'event-a', 10);
+  insert.run(3, 3000, 'sakurazaka46jp', 'event-a', 20);
+  insert.run(4, 61000, 'sakurazaka46jp', 'event-a', 30);
+  insert.run(5, 121000, 'sakurazaka46jp', 'event-b', 40);
+  const rows = db.prepare(LEGACY_SERIES_SQL).all(0, 200000);
   assert.equal(rows.length, 2);
   const decoded = decodeSeriesRows(rows, 'historical_import');
   assert.deepEqual(decoded[0].samples.map((point) => [point.elapsed, point.listener]), [[0, 15], [1, 30]]);
+  assert.equal(decoded[0].started_at, 1000);
   assert.equal(decoded[0].samples.reduce((sum, point) => sum + point.sourceSamples, 0), 3);
   assert.equal(decoded[0].sourceTruncated, false);
   const trimmed = trimSeries(decoded, 2);
   assert.equal(trimmed.pointCount, 2);
   assert.equal(trimmed.truncated, true);
+});
+
+test('broadcast series cache coalesces concurrent heavy queries', async () => {
+  resetBroadcastSeriesCache();
+  let calls = 0;
+  const loader = async () => {
+    calls += 1;
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    return { series: [{ event_name: 'event-a' }] };
+  };
+  const [first, second] = await Promise.all([
+    cachedBroadcastSeries('range-a', loader),
+    cachedBroadcastSeries('range-a', loader),
+  ]);
+  assert.equal(calls, 1);
+  assert.strictEqual(first, second);
+  assert.strictEqual(await cachedBroadcastSeries('range-a', loader), first);
+  assert.equal(calls, 1);
 });
 
 test('metadata remaining count only subtracts complete resolutions', () => {
