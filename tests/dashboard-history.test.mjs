@@ -2,9 +2,14 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { DatabaseSync } from 'node:sqlite';
 
-import { HISTORY_24H_SQL } from '../site/functions/api/dashboard.js';
+import {
+  HISTORY_24H_SQL,
+  PREDICTION_24H_SQL,
+  linearRegressionPrediction,
+  linearRegressionPredictionFromAggregate,
+} from '../site/functions/api/dashboard.js';
 
-test('dashboard history keeps latest values and maximum comment velocity per bucket', () => {
+function createSnapshotsDb() {
   const db = new DatabaseSync(':memory:');
   db.exec(`
     CREATE TABLE sh_channel_snapshots (
@@ -19,6 +24,11 @@ test('dashboard history keeps latest values and maximum comment velocity per buc
       comment_velocity INTEGER
     );
   `);
+  return db;
+}
+
+test('dashboard history keeps latest values and maximum comment velocity per bucket', () => {
+  const db = createSnapshotsDb();
   const now = Date.now();
   const bucket = Math.floor(now / 300000) * 300000;
   const insert = db.prepare(`INSERT INTO sh_channel_snapshots VALUES (?,?,?,?,?,?,?,?,?)`);
@@ -30,4 +40,25 @@ test('dashboard history keeps latest values and maximum comment velocity per buc
   assert.equal(rows.length, 1);
   assert.equal(rows[0].listener_count, 11);
   assert.equal(rows[0].comment_velocity, 25);
+});
+
+test('aggregate prediction matches row-based regression without returning 24 hours of rows', () => {
+  const db = createSnapshotsDb();
+  const base = Math.floor((Date.now() - 30 * 60000) / 300000) * 300000;
+  const insert = db.prepare(`INSERT INTO sh_channel_snapshots VALUES (?,?,?,?,?,?,?,?,?)`);
+  for (let index = 0; index < 5; index += 1) {
+    insert.run(index + 1, base + index * 300000 + 1000, null, null, null, null, 100 + index * 5, 180, null);
+  }
+  const rows = db.prepare(HISTORY_24H_SQL).all();
+  const aggregate = db.prepare(PREDICTION_24H_SQL).get();
+  const now = rows.at(-1).observed_at;
+  const fromRows = linearRegressionPrediction(rows, 180, now);
+  const fromAggregate = linearRegressionPredictionFromAggregate(aggregate, 180, now);
+
+  assert.ok(fromRows);
+  assert.ok(fromAggregate);
+  assert.equal(fromAggregate.sample_count, 5);
+  assert.ok(Math.abs(fromAggregate.rate_per_hour - 60) < 1e-8);
+  assert.ok(Math.abs(fromAggregate.rate_per_hour - fromRows.rate_per_hour) < 1e-8);
+  assert.ok(Math.abs(fromAggregate.eta - fromRows.eta) < 1);
 });
