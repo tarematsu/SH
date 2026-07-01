@@ -8,6 +8,11 @@ export function looksLikeId(value) {
   return /^[0-9A-Za-z]{15,}$/.test(text) || /^JP[A-Z0-9]{8,}$/i.test(text);
 }
 
+export function looksLikePlaceholder(value) {
+  const text = (cleanText(value) || '').toLocaleLowerCase('ja-JP');
+  return !text || /^(?:[-‐‑‒–—―ー−_]+|n\/?a|none|null|undefined|unknown|不明|未取得|取得失敗|アーティスト不明|曲情報なし)$/.test(text);
+}
+
 export function canonical(value) {
   return (cleanText(value) || '')
     .toLocaleLowerCase('ja-JP')
@@ -20,5 +25,7 @@ export function canonical(value) {
 
 export function bestText(...values) {
   const candidates = values.map(cleanText).filter(Boolean);
-  return candidates.find((value) => !looksLikeId(value)) || candidates[0] || null;
+  return candidates.find((value) => !looksLikePlaceholder(value) && !looksLikeId(value))
+    || candidates.find((value) => !looksLikePlaceholder(value))
+    || null;
 }
