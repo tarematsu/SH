@@ -174,33 +174,53 @@ export function trimSeries(seriesRows, limit = MAX_POINTS) {
   return { series: result, pointCount: limit - remaining, truncated: sourceTruncated || originalPoints > limit };
 }
 
-async function legacyRows(env, fromTs, toTs) {
-  const result = await env.DB.prepare(LEGACY_SERIES_SQL).bind(fromTs, toTs).all();
-  return decodeSeriesRows(result.results || [], 'historical_import');
+function broadcastSeriesStatements(db, fromTs, toTs) {
+  return [
+    db.prepare(LEGACY_SERIES_SQL).bind(fromTs, toTs),
+    db.prepare(FAILSAFE_SERIES_SQL).bind(fromTs, toTs),
+  ];
 }
 
-async function failSafeRows(env, fromTs, toTs) {
-  try {
-    const result = await env.DB.prepare(FAILSAFE_SERIES_SQL).bind(fromTs, toTs).all();
-    return decodeSeriesRows(result.results || [], 'official_news_fail_safe');
-  } catch (error) {
-    if (/no such table/i.test(String(error?.message || ''))) return [];
-    throw error;
+export async function loadBroadcastSeriesRows(db, fromTs, toTs) {
+  if (typeof db.batch === 'function') {
+    try {
+      const [legacyResult, failSafeResult] = await db.batch(broadcastSeriesStatements(db, fromTs, toTs));
+      return {
+        legacy: decodeSeriesRows(legacyResult?.results || [], 'historical_import'),
+        failSafe: decodeSeriesRows(failSafeResult?.results || [], 'official_news_fail_safe'),
+      };
+    } catch (error) {
+      if (!/no such table/i.test(String(error?.message || ''))) throw error;
+    }
   }
+
+  const legacyResult = await db.prepare(LEGACY_SERIES_SQL).bind(fromTs, toTs).all();
+  let failSafeRows = [];
+  try {
+    const failSafeResult = await db.prepare(FAILSAFE_SERIES_SQL).bind(fromTs, toTs).all();
+    failSafeRows = failSafeResult.results || [];
+  } catch (error) {
+    if (!/no such table/i.test(String(error?.message || ''))) throw error;
+  }
+  return {
+    legacy: decodeSeriesRows(legacyResult.results || [], 'historical_import'),
+    failSafe: decodeSeriesRows(failSafeRows, 'official_news_fail_safe'),
+  };
 }
 
 async function loadBroadcastSeries(env, from, to) {
   const fromTs = parseDateStart(from);
   const toTs = addDays(parseDateStart(to), 1);
-  const [legacy, failSafe] = await Promise.all([
-    legacyRows(env, fromTs, toTs),
-    failSafeRows(env, fromTs, toTs),
-  ]);
+  const { legacy, failSafe } = await loadBroadcastSeriesRows(env.DB, fromTs, toTs);
   const trimmed = trimSeries(legacy.concat(failSafe));
+  let failSafeEventCount = 0;
+  for (const item of trimmed.series) {
+    if (item.source === 'official_news_fail_safe') failSafeEventCount += 1;
+  }
   return {
     ok: true, from, to, timezone: 'UTC', series: trimmed.series,
     event_count: trimmed.series.length, point_count: trimmed.pointCount,
-    fail_safe_event_count: trimmed.series.filter((item) => item.source === 'official_news_fail_safe').length,
+    fail_safe_event_count: failSafeEventCount,
     truncated: trimmed.truncated, x_origin: 'broadcast_start', x_unit: 'minute',
   };
 }
@@ -213,7 +233,7 @@ export async function onRequestGet({ request, env }) {
     const from = dateParam(url.searchParams.get('from'), '2024-05-01');
     const to = dateParam(url.searchParams.get('to'), today);
     const payload = await cachedBroadcastSeries(
-      `broadcast-series:v2:${from}:${to}`,
+      `broadcast-series:v3:${from}:${to}`,
       () => loadBroadcastSeries(env, from, to),
     );
     return json(payload);
