@@ -12,6 +12,11 @@
     const values = rows.map((row) => finiteNumber(row[key])).filter((value) => value != null);
     return values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : null;
   };
+  const minimumOf = (rows, key) => rows.reduce((minimum, row) => {
+    const value = finiteNumber(row[key]);
+    if (value == null) return minimum;
+    return minimum == null ? value : Math.min(minimum, value);
+  }, null);
   const formatDuration = (milliseconds) => {
     if (!Number.isFinite(milliseconds) || milliseconds < 0) return '—';
     const totalMinutes = Math.round(milliseconds / 60000);
@@ -31,25 +36,6 @@
     return date.toISOString().slice(0, 10);
   };
   const originalUpdateSummary = updateSummary;
-  let broadcastMinimumRequest = 0;
-  const updateBroadcastMinimum = async () => {
-    const requestId = ++broadcastMinimumRequest;
-    const from = $('#from').value;
-    const to = $('#to').value;
-    $('#periods').textContent = '—';
-    try {
-      const params = new URLSearchParams({ from, to });
-      const response = await fetch(`/api/broadcast-series?${params}`, { headers: { accept: 'application/json' } });
-      const data = await response.json();
-      if (!response.ok || !data.ok) throw new Error(data.error || `API ${response.status}`);
-      if (requestId !== broadcastMinimumRequest || currentMode !== 'broadcasts') return;
-      const listeners = (data.series || []).flatMap((item) =>
-        (item.points || []).map((point) => finiteNumber(point?.[1])).filter((value) => value != null));
-      $('#periods').textContent = listeners.length ? fmt(Math.min(...listeners)) : '—';
-    } catch {
-      if (requestId === broadcastMinimumRequest && currentMode === 'broadcasts') $('#periods').textContent = '—';
-    }
-  };
 
   updateSummary = function updateSummaryWithAverages(rows, mode) {
     originalUpdateSummary(rows, mode);
@@ -71,7 +57,8 @@
     $('#maxLabel').textContent = '最大同接';
     $('#streamLabel').textContent = '平均同接';
     $('#memberLabel').textContent = '平均放送時間';
-    updateBroadcastMinimum();
+    const listenerMinimum = minimumOf(rows, 'listener_min');
+    $('#periods').textContent = listenerMinimum == null ? '—' : fmt(listenerMinimum);
     const weighted = rows.reduce((result, row) => {
       const average = finiteNumber(row.listener_avg);
       const count = finiteNumber(row.sample_count);

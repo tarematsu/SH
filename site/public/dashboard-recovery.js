@@ -37,8 +37,15 @@
     if (updated && !updated.textContent.includes('取得停止中')) updated.textContent += '・取得停止中';
   }
 
+  let recoveryWaits = 0;
+
   async function recoverDashboardHistory() {
     if (document.hidden || (Array.isArray(lastHistoryRows) && lastHistoryRows.length)) return;
+    if (refreshInFlight && recoveryWaits < 6) {
+      recoveryWaits += 1;
+      setTimeout(recoverDashboardHistory, 1000);
+      return;
+    }
     try {
       const response = await fetch('/api/dashboard-recovery', {
         headers: { accept: 'application/json' },

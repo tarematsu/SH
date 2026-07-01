@@ -151,24 +151,29 @@ async function loadSummaryWithLive(env, mode, from, to) {
   };
 }
 
+export const BROADCAST_SUMMARY_SQL = `SELECT source_note AS event_name,MIN(observed_at) AS started_at,
+  MAX(observed_at) AS ended_at,MIN(observed_jst) AS started_jst,MAX(observed_jst) AS ended_jst,
+  COUNT(*) AS sample_count,ROUND(AVG(listener_count),1) AS listener_avg,
+  MIN(listener_count) AS listener_min,MAX(listener_count) AS listener_max,MAX(likes) AS likes_max,
+  COUNT(DISTINCT CASE WHEN track_title IS NOT NULL AND track_title<>'' THEN track_title END) AS distinct_tracks,
+  host_handle FROM sh_legacy_snapshots
+  WHERE observed_at>=? AND observed_at<? AND host_handle='sakurazaka46jp' AND source_note IS NOT NULL
+  GROUP BY source_note,host_handle ORDER BY started_at ASC`;
+
 async function loadBroadcasts(env, from, to) {
   const fromTs = parseDateStart(from, '2024-06-01');
   const toTs = addDays(parseDateStart(to, todayJstString()), 1);
-  const [result, existence] = await Promise.all([
-    env.DB.prepare(`SELECT source_note AS event_name,MIN(observed_at) AS started_at,
-      MAX(observed_at) AS ended_at,MIN(observed_jst) AS started_jst,MAX(observed_jst) AS ended_jst,
-      COUNT(*) AS sample_count,ROUND(AVG(listener_count),1) AS listener_avg,
-      MAX(listener_count) AS listener_max,MAX(likes) AS likes_max,
-      COUNT(DISTINCT CASE WHEN track_title IS NOT NULL AND track_title<>'' THEN track_title END) AS distinct_tracks,
-      host_handle FROM sh_legacy_snapshots
-      WHERE observed_at>=? AND observed_at<? AND host_handle='sakurazaka46jp' AND source_note IS NOT NULL
-      GROUP BY source_note,host_handle ORDER BY started_at ASC`).bind(fromTs, toTs).all(),
-    env.DB.prepare(`SELECT 1 AS has_data FROM sh_legacy_snapshots
-      WHERE host_handle='sakurazaka46jp' AND source_note IS NOT NULL LIMIT 1`).first(),
-  ]);
+  const result = await env.DB.prepare(BROADCAST_SUMMARY_SQL).bind(fromTs, toTs).all();
+  const rows = result.results || [];
+  let setupRequired = false;
+  if (!rows.length) {
+    const existence = await env.DB.prepare(`SELECT 1 AS has_data FROM sh_legacy_snapshots
+      WHERE host_handle='sakurazaka46jp' AND source_note IS NOT NULL LIMIT 1`).first();
+    setupRequired = !existence?.has_data;
+  }
   return json({
-    ok: true, mode: 'broadcasts', from, to, rows: result.results || [],
-    setup_required: !existence?.has_data,
+    ok: true, mode: 'broadcasts', from, to, rows,
+    setup_required: setupRequired,
     diagnostic: { imported_rows: null, imported_events: null, first_observed_jst: null, last_observed_jst: null },
   }, 200, { 'cache-control': 'public, max-age=30, s-maxage=60, stale-while-revalidate=120' });
 }
