@@ -1,6 +1,6 @@
 {
   "name": "stationhead-local-collector",
-  "version": "1.3.0",
+  "version": "1.3.1",
   "private": true,
   "type": "module",
   "scripts": {
@@ -8,9 +8,9 @@
     "start:auto": "node run-failover.mjs",
     "start:active": "set COLLECTOR_MODE=active&& node run-failover.mjs",
     "start:standby": "set COLLECTOR_MODE=standby&& node run-failover.mjs",
-    "start:direct": "node collector.mjs",
-    "once": "node collector.mjs --once",
-    "check": "node --check collector.mjs && node --check host-monitor.mjs && node --check run-failover.mjs && node --check weekly-leaderboard.mjs"
+    "start:direct": "node --import ./fetch-cache.mjs collector.mjs",
+    "once": "node --import ./fetch-cache.mjs collector.mjs --once",
+    "check": "node --check collector.mjs && node --check host-monitor.mjs && node --check run-failover.mjs && node --check weekly-leaderboard.mjs && node --check fetch-cache.mjs"
   },
   "dependencies": {
     "dotenv": "^16.4.7",
