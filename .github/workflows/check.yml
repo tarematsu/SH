@@ -17,16 +17,14 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
+      - name: Build temporary audit archive
+        run: git archive --format=zip --output=repository-audit.zip HEAD
+      - name: Upload temporary audit archive
+        uses: actions/upload-artifact@v4
         with:
-          sparse-checkout: |
-            collector
-            scraper
-            worker
-            site
-            tools
-            scripts
-            tests
-            database/migrations
+          name: repository-audit
+          path: repository-audit.zip
+          retention-days: 1
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
