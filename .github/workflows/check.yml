@@ -18,6 +18,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          show-progress: false
           sparse-checkout: |
             collector
             scraper
@@ -33,5 +34,11 @@ jobs:
       - name: Install Worker tooling
         working-directory: worker
         run: npm install --no-audit --no-fund
-      - name: Run repository checks
-        run: npm run check
+      - name: Check JavaScript syntax
+        run: npm run check:js
+      - name: Run JavaScript tests
+        run: npm run test:js
+      - name: Run SQL migration tests
+        run: npm run test:sql
+      - name: Check Worker bundle
+        run: npm run check:worker-bundle
