@@ -52,38 +52,39 @@
 
   if (typeof drawChart !== 'function' || typeof showMainChartDetail !== 'function') return;
 
-  drawChart = function drawOnlineChart(rows = lastHistoryRows, selectionIndex = selectedMainChartIndex) {
-    const canvas = el('chart');
-    if (!canvas) return;
+  let mainChartModelSource = null;
+  let mainChartModelWidth = 0;
+  let mainChartModelHeight = 0;
+  let mainChartModel = null;
+
+  function prepareMainChartModel(rows, width, height) {
+    if (
+      mainChartModelSource === rows
+      && mainChartModelWidth === width
+      && mainChartModelHeight === height
+      && mainChartModel
+    ) return mainChartModel;
+
     const sampled = downsampleRows(rows);
-    const rect = canvas.getBoundingClientRect();
-    const width = Math.max(320, Math.round(rect.width || canvas.clientWidth || 1000));
-    const height = Math.max(260, Math.min(380, Math.round(width * 0.32)));
-    const dpr = Math.min(2, window.devicePixelRatio || 1);
-    const pixelWidth = Math.round(width * dpr);
-    const pixelHeight = Math.round(height * dpr);
-    if (canvas.width !== pixelWidth) canvas.width = pixelWidth;
-    if (canvas.height !== pixelHeight) canvas.height = pixelHeight;
-    const cssHeight = `${height}px`;
-    if (canvas.style.height !== cssHeight) canvas.style.height = cssHeight;
-    const ctx = canvas.getContext('2d', { alpha: true });
-    if (!ctx) return;
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    ctx.clearRect(0, 0, width, height);
     if (!sampled.length) {
-      mainChartState = null;
-      return;
+      mainChartModelSource = rows;
+      mainChartModelWidth = width;
+      mainChartModelHeight = height;
+      mainChartModel = null;
+      return null;
     }
 
     const pad = { left: 48, right: 18, top: 20, bottom: 50 };
     const plotWidth = Math.max(1, width - pad.left - pad.right);
     const plotHeight = Math.max(1, height - pad.top - pad.bottom);
     const times = new Array(sampled.length);
+    const commentVelocityValues = new Array(sampled.length);
     const intervals = [];
     let minTime = Infinity;
     let maxTime = -Infinity;
     let rawMin = Infinity;
     let rawMax = -Infinity;
+    let commentVelocityMax = 0;
     let previousTime = null;
 
     for (let index = 0; index < sampled.length; index += 1) {
@@ -101,11 +102,11 @@
         rawMin = Math.min(rawMin, online);
         rawMax = Math.max(rawMax, online);
       }
+      const velocity = Number(row.comment_velocity);
+      commentVelocityValues[index] = Number.isFinite(velocity) ? velocity : null;
+      if (Number.isFinite(velocity)) commentVelocityMax = Math.max(commentVelocityMax, velocity);
     }
-    if (!Number.isFinite(rawMin)) {
-      mainChartState = null;
-      return;
-    }
+    if (!Number.isFinite(rawMin)) return null;
     if (!Number.isFinite(minTime)) {
       minTime = 0;
       maxTime = Math.max(1, sampled.length - 1);
@@ -126,6 +127,63 @@
     const padding = Math.max(5, (rawMax - rawMin) * 0.08);
     const scale = { min: Math.max(0, rawMin - padding), max: rawMax + padding };
     scale.range = Math.max(1, scale.max - scale.min);
+    const tickTarget = Math.max(5, Math.min(14, Math.floor(plotWidth / 72)));
+    const tickIndices = [];
+    let previousTick = -1;
+    for (let index = 0; index < tickTarget; index += 1) {
+      const tick = Math.round((sampled.length - 1) * index / Math.max(1, tickTarget - 1));
+      if (tick !== previousTick) tickIndices.push(tick);
+      previousTick = tick;
+    }
+
+    mainChartModelSource = rows;
+    mainChartModelWidth = width;
+    mainChartModelHeight = height;
+    mainChartModel = {
+      sampled,
+      pad,
+      plotWidth,
+      plotHeight,
+      times,
+      xPositions,
+      gapThreshold,
+      scale,
+      tickIndices,
+      minTime,
+      maxTime,
+      commentVelocityValues,
+      commentVelocityMax,
+    };
+    return mainChartModel;
+  }
+
+  drawChart = function drawOnlineChartCachedModel(rows = lastHistoryRows, selectionIndex = selectedMainChartIndex) {
+    const canvas = el('chart');
+    if (!canvas) return;
+    const rect = canvas.getBoundingClientRect();
+    const width = Math.max(320, Math.round(rect.width || canvas.clientWidth || 1000));
+    const height = Math.max(260, Math.min(380, Math.round(width * 0.32)));
+    const dpr = Math.min(2, window.devicePixelRatio || 1);
+    const pixelWidth = Math.round(width * dpr);
+    const pixelHeight = Math.round(height * dpr);
+    if (canvas.width !== pixelWidth) canvas.width = pixelWidth;
+    if (canvas.height !== pixelHeight) canvas.height = pixelHeight;
+    const cssHeight = `${height}px`;
+    if (canvas.style.height !== cssHeight) canvas.style.height = cssHeight;
+    const ctx = canvas.getContext('2d', { alpha: true });
+    if (!ctx) return;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, width, height);
+
+    const model = prepareMainChartModel(rows, width, height);
+    if (!model) {
+      mainChartState = null;
+      return;
+    }
+    const {
+      sampled, pad, plotHeight, times, xPositions, gapThreshold, scale,
+      tickIndices, minTime, maxTime, commentVelocityValues, commentVelocityMax,
+    } = model;
     const styles = getComputedStyle(document.documentElement);
     const muted = styles.getPropertyValue('--muted').trim() || '#aaa3b5';
     const onlineColor = styles.getPropertyValue('--accent').trim() || '#ff7aa8';
@@ -168,9 +226,6 @@
     }
     ctx.stroke();
 
-    const tickTarget = Math.max(5, Math.min(14, Math.floor(plotWidth / 72)));
-    const tickIndices = [...new Set(Array.from({ length: tickTarget }, (_, index) =>
-      Math.round((sampled.length - 1) * index / Math.max(1, tickTarget - 1))))];
     const crossesDate = dayKeyFormatter.format(new Date(minTime)) !== dayKeyFormatter.format(new Date(maxTime));
     const tickFormatter = crossesDate ? tickDateTimeFormatter : tickTimeFormatter;
     ctx.font = '11px system-ui';
@@ -210,7 +265,12 @@
       }
     }
 
-    mainChartState = { sampled, xPositions };
+    mainChartState = {
+      sampled,
+      xPositions,
+      commentVelocityValues,
+      commentVelocityMax,
+    };
   };
 
   showMainChartDetail = function showOnlineDetail(index) {
