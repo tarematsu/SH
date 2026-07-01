@@ -64,7 +64,7 @@ export default {
 
     const payload = await response.json().catch(() => null);
     if (!payload) return response;
-    return new Response(JSON.stringify(normalizeHealthPayload(payload), null, 2), {
+    return new Response(JSON.stringify(normalizeHealthPayload(payload)), {
       status: response.status,
       headers: response.headers,
     });
