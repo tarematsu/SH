@@ -50,6 +50,10 @@ function createDatabase() {
       fetched_at INTEGER,
       raw_json TEXT
     );
+    CREATE TABLE sh_channel_snapshots (
+      id INTEGER PRIMARY KEY,
+      observed_at INTEGER NOT NULL
+    );
   `);
   return db;
 }
@@ -97,6 +101,10 @@ function addSnapshot(db, {
   `).run(observed, station, start, paused);
 }
 
+function addChannelSnapshot(db, observed) {
+  db.prepare('INSERT INTO sh_channel_snapshots (observed_at) VALUES (?)').run(observed);
+}
+
 function queryTracks(db, from, to, limit = 100000) {
   const fromTs = Date.parse(`${from}T00:00:00Z`);
   const toTs = Date.parse(`${to}T00:00:00Z`) + 86400000;
@@ -109,6 +117,8 @@ function queryTracks(db, from, to, limit = 100000) {
     fromTs,
     toTs,
     TRACK_HISTORY_GRACE_MS,
+    fromTs,
+    toTs,
     limit,
   );
 }
@@ -166,6 +176,20 @@ test('uses UTC day boundaries, which begin at 09:00 in Japan', () => {
     }).format(new Date(rows[0].played_at)),
     '2026-07-01 09:00',
   );
+});
+
+test('includes collection coverage for each UTC playback day', () => {
+  const db = createDatabase();
+  const start = Date.parse('2026-06-30T00:00:00Z');
+  addTracks(db, { start, count: 2 });
+  addSnapshot(db, { start, observed: start + 10 * 60000 });
+  addChannelSnapshot(db, start + 5 * 60000);
+  addChannelSnapshot(db, start + 23 * 3600000 + 55 * 60000);
+
+  const rows = queryTracks(db, '2026-06-30', '2026-06-30');
+
+  assert.equal(rows[0].period_first_observed_at, start + 5 * 60000);
+  assert.equal(rows[0].period_last_observed_at, start + 23 * 3600000 + 55 * 60000);
 });
 
 test('stops inferring later playback after an invalid duration', () => {

@@ -108,7 +108,10 @@
       if (key === 'first_played_at' || key === 'last_played_at') {
         return row._daily_total ? '—' : formatDate(row[key], true);
       }
-      if (key === 'play_count') return `${numberText(row[key])}回`;
+      if (key === 'play_count') {
+        const value = finiteNumber(row[key]);
+        return value == null ? '—' : `${numberFormatter.format(value)}回`;
+      }
       if (key === 'daily_share') {
         const value = finiteNumber(row[key]);
         return value == null ? '—' : `${numberFormatter.format(value)}%`;
@@ -153,6 +156,7 @@
         continue;
       }
       if (mode === 'tracks') {
+        if (row.period_complete === false || row.play_count_excluded === true) continue;
         if (row.play_date) trackDays.add(row.play_date);
         if (row.track_key) trackKeys.add(row.track_key);
         const playCount = finiteNumber(row.play_count) || 0;
@@ -206,13 +210,13 @@
     }
 
     if (mode === 'tracks') {
-      setText('#periodLabel', '日数');
+      setText('#periodLabel', '有効日数');
       setText('#maxLabel', '総再生回数');
       setText('#streamLabel', '曲数');
       setText('#memberLabel', '1曲の最多');
       setText('#periods', numberText(trackDays.size));
-      setText('#maxListener', numberText(trackPlayTotal));
-      setText('#streamGrowth', numberText(trackKeys.size));
+      setText('#maxListener', trackDays.size ? numberText(trackPlayTotal) : '—');
+      setText('#streamGrowth', trackDays.size ? numberText(trackKeys.size) : '—');
       setText('#memberGrowth', trackPlayMax ? `${numberText(trackPlayMax)}回` : '—');
       return;
     }
@@ -273,9 +277,9 @@
     }
 
     if (url.pathname === '/api/track-history' && url.searchParams.get('latest') !== '1') {
-      url.searchParams.set('v', '12');
-    } else if (url.pathname === '/api/history') {
       url.searchParams.set('v', '13');
+    } else if (url.pathname === '/api/history') {
+      url.searchParams.set('v', '14');
     }
     const options = { ...init };
     if (options.cache === 'no-store') delete options.cache;
