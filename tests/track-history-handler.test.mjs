@@ -74,7 +74,7 @@ function addTracks(db, {
       start,
       position,
       position + 1,
-      `spotify-${position}`,
+      `spotify-${station}-${position}`,
       durationMs,
       JSON.stringify({ title: `Track ${position}`, artist: 'Artist' }),
     );
@@ -95,8 +95,8 @@ function addSnapshot(db, {
 }
 
 function queryTracks(db, from, to, limit = 100000) {
-  const fromTs = Date.parse(`${from}T00:00:00+09:00`);
-  const toTs = Date.parse(`${to}T00:00:00+09:00`) + 86400000;
+  const fromTs = Date.parse(`${from}T00:00:00Z`);
+  const toTs = Date.parse(`${to}T00:00:00Z`) + 86400000;
   return db.prepare(TRACK_HISTORY_SQL).all(
     toTs,
     fromTs - TRACK_HISTORY_GRACE_MS,
@@ -112,7 +112,7 @@ function queryTracks(db, from, to, limit = 100000) {
 
 test('does not count the entire future queue as already played', () => {
   const db = createDatabase();
-  const start = Date.parse('2026-06-30T00:00:00+09:00');
+  const start = Date.parse('2026-06-30T00:00:00Z');
   addTracks(db, { start, count: 2000 });
   addSnapshot(db, { start, observed: start + 30 * 60000 });
 
@@ -124,11 +124,11 @@ test('does not count the entire future queue as already played', () => {
 
 test('includes a long-running queue that started more than seven days earlier', () => {
   const db = createDatabase();
-  const start = Date.parse('2026-06-01T00:00:00+09:00');
+  const start = Date.parse('2026-06-01T00:00:00Z');
   addTracks(db, { start, count: 600, duration: 3600000 });
   addSnapshot(db, {
     start,
-    observed: Date.parse('2026-06-20T02:00:00+09:00'),
+    observed: Date.parse('2026-06-20T02:00:00Z'),
   });
 
   const rows = queryTracks(db, '2026-06-20', '2026-06-20');
@@ -137,21 +137,37 @@ test('includes a long-running queue that started more than seven days earlier', 
   assert.equal(rows[0].position, 456);
 });
 
-test('groups midnight playback by Japan time', () => {
+test('uses UTC day boundaries, which begin at 09:00 in Japan', () => {
   const db = createDatabase();
-  const start = Date.parse('2026-06-30T00:30:00+09:00');
-  addTracks(db, { start, count: 1 });
-  addSnapshot(db, { start, observed: start });
+  const before = Date.parse('2026-06-30T23:59:00Z');
+  const boundary = Date.parse('2026-07-01T00:00:00Z');
+  addTracks(db, { start: before, count: 1, station: 1 });
+  addSnapshot(db, { start: before, observed: before, station: 1 });
+  addTracks(db, { start: boundary, count: 1, station: 2 });
+  addSnapshot(db, { start: boundary, observed: boundary, station: 2 });
 
-  const rows = queryTracks(db, '2026-06-30', '2026-06-30');
+  const rows = queryTracks(db, '2026-07-01', '2026-07-01');
 
   assert.equal(rows.length, 1);
-  assert.equal(rows[0].play_date, '2026-06-30');
+  assert.equal(rows[0].play_date, '2026-07-01');
+  assert.equal(rows[0].spotify_id, 'spotify-2-0');
+  assert.equal(
+    new Intl.DateTimeFormat('sv-SE', {
+      timeZone: 'Asia/Tokyo',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
+    }).format(new Date(rows[0].played_at)),
+    '2026-07-01 09:00',
+  );
 });
 
 test('stops inferring later playback after an invalid duration', () => {
   const db = createDatabase();
-  const start = Date.parse('2026-06-30T00:00:00+09:00');
+  const start = Date.parse('2026-06-30T00:00:00Z');
   addTracks(db, {
     start,
     count: 4,
@@ -166,7 +182,7 @@ test('stops inferring later playback after an invalid duration', () => {
 
 test('paused snapshots do not advance the playback boundary', () => {
   const db = createDatabase();
-  const start = Date.parse('2026-06-30T00:00:00+09:00');
+  const start = Date.parse('2026-06-30T00:00:00Z');
   addTracks(db, { start, count: 200, duration: 120000 });
   addSnapshot(db, { start, observed: start + 10 * 60000 });
   addSnapshot(db, { start, observed: start + 3 * 3600000, paused: 1 });
@@ -178,7 +194,7 @@ test('paused snapshots do not advance the playback boundary', () => {
 
 test('uses queue item heartbeat evidence for legacy rows without snapshots', () => {
   const db = createDatabase();
-  const start = Date.parse('2026-06-30T00:00:00+09:00');
+  const start = Date.parse('2026-06-30T00:00:00Z');
   addTracks(db, {
     start,
     count: 20,

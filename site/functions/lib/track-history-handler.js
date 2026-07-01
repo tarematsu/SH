@@ -6,10 +6,9 @@ const H = {
   'cache-control': 'public, max-age=300, s-maxage=900, stale-while-revalidate=3600',
 };
 const out = (value, status = 200) => new Response(JSON.stringify(value), { status, headers: H });
-const JST_OFFSET_MS = 9 * 60 * 60 * 1000;
-const day = () => new Date(Date.now() + JST_OFFSET_MS).toISOString().slice(0, 10);
+const day = () => new Date().toISOString().slice(0, 10);
 const valid = (value) => /^\d{4}-\d{2}-\d{2}$/.test(value || '');
-const ts = (value) => Date.parse(`${value}T00:00:00+09:00`);
+const ts = (value) => Date.parse(`${value}T00:00:00Z`);
 
 export const TRACK_HISTORY_GRACE_MS = 5 * 60 * 1000;
 
@@ -58,7 +57,7 @@ export const TRACK_HISTORY_SQL = `WITH snapshot_evidence AS (
       FROM normalized n
     )
     SELECT
-      strftime('%Y-%m-%d', p.played_at / 1000, 'unixepoch', '+9 hours') AS play_date,
+      strftime('%Y-%m-%d', p.played_at / 1000, 'unixepoch') AS play_date,
       p.played_at,p.position,p.queue_track_id,p.stationhead_track_id,
       p.spotify_id,p.apple_music_id,p.isrc,
       NULLIF(m.title, '') AS title,
@@ -87,14 +86,14 @@ export const TRACK_HISTORY_SQL = `WITH snapshot_evidence AS (
     ORDER BY p.played_at ASC
     LIMIT ?`;
 
-export async function handleTrackHistory({ request, env }) {
+export async function handleTrackHistory({ request, env, waitUntil }) {
   if (!env.DB) return out({ ok: false, error: 'DB binding missing' }, 500);
   const url = new URL(request.url);
   try {
     if (url.searchParams.get('latest') === '1') {
-      const latest = await env.DB.prepare(`SELECT strftime('%Y-%m-%d', MAX(observed_at) / 1000, 'unixepoch', '+9 hours') AS play_date
+      const latest = await env.DB.prepare(`SELECT strftime('%Y-%m-%d', MAX(observed_at) / 1000, 'unixepoch') AS play_date
         FROM sh_queue_snapshots WHERE COALESCE(is_paused, 0) = 0`).first();
-      return out({ ok: true, latest_date: latest?.play_date || null, timezone: 'Asia/Tokyo' });
+      return out({ ok: true, latest_date: latest?.play_date || null, timezone: 'UTC' });
     }
 
     const from = valid(url.searchParams.get('from')) ? url.searchParams.get('from') : '2024-05-01';
@@ -119,24 +118,29 @@ export async function handleTrackHistory({ request, env }) {
     const allSourceRows = result.results || [];
     const sourceTruncated = allSourceRows.length > maxSourceRows;
     const sourceRows = sourceTruncated ? allSourceRows.slice(0, maxSourceRows) : allSourceRows;
-    const enriched = await enrichMissingRows(sourceRows, env);
-    const rows = mergeTrackRows(enriched.rows);
+    const rows = mergeTrackRows(sourceRows);
+    const metadataRefreshScheduled = typeof waitUntil === 'function';
+    if (metadataRefreshScheduled) {
+      waitUntil(enrichMissingRows(sourceRows, env).catch((error) => {
+        console.error('track metadata background refresh failed', error);
+      }));
+    }
     const truncated = sourceTruncated || rows.length > limit;
     return out({
       ok: true,
       mode: 'tracks',
       from,
       to,
-      timezone: 'Asia/Tokyo',
+      timezone: 'UTC',
       rows: rows.length > limit ? rows.slice(0, limit) : rows,
       truncated,
       source_truncated: sourceTruncated,
-      metadata_persisted: enriched.persisted,
-      method: 'observed_unpaused_queue_reachability_jst',
+      metadata_refresh_scheduled: metadataRefreshScheduled,
+      method: 'observed_unpaused_queue_reachability_utc',
     });
   } catch (error) {
     if (/no such table|no such column|malformed JSON/i.test(String(error?.message || ''))) {
-      return out({ ok: true, mode: 'tracks', rows: [], setup_required: true, timezone: 'Asia/Tokyo' });
+      return out({ ok: true, mode: 'tracks', rows: [], setup_required: true, timezone: 'UTC' });
     }
     return out({ ok: false, error: error?.message || 'track history error' }, 500);
   }
