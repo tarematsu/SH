@@ -114,14 +114,18 @@ export function applyPeriodBoundaryEvidence(rows, evidence) {
     const periodKey = String(row?.period_key || '');
     if (!evidence?.has(periodKey)) return row;
     const boundary = evidence.get(periodKey) || {};
+    const boundaryStart = finiteNumber(boundary.boundary_start_at);
+    const boundaryEnd = finiteNumber(boundary.boundary_end_at);
     const streamStart = finiteNumber(boundary.stream_start);
     const streamEnd = finiteNumber(boundary.stream_end);
     const memberStart = finiteNumber(boundary.member_start);
     const memberEnd = finiteNumber(boundary.member_end);
     return {
       ...row,
-      boundary_start_at: finiteNumber(boundary.boundary_start_at),
-      boundary_end_at: finiteNumber(boundary.boundary_end_at),
+      period_start: boundaryStart,
+      period_end: boundaryEnd,
+      boundary_start_at: boundaryStart,
+      boundary_end_at: boundaryEnd,
       stream_start: streamStart,
       stream_end: streamEnd,
       stream_growth: streamStart != null && streamEnd != null && streamEnd >= streamStart
