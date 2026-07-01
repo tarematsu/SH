@@ -91,6 +91,12 @@ export function isTrustedEmailWeekly(row) {
   return periodKey >= EMAIL_WEEKLY_FROM && periodKey < EMAIL_WEEKLY_TO_EXCLUSIVE;
 }
 
+export function withinPeriodBoundaryTolerance(observedAt, boundaryAt, toleranceMs = PERIOD_BOUNDARY_TOLERANCE_MS) {
+  const observed = finiteNumber(observedAt);
+  const boundary = finiteNumber(boundaryAt);
+  return observed != null && boundary != null && Math.abs(observed - boundary) <= toleranceMs;
+}
+
 export function evaluatePeriodCompleteness({
   mode,
   periodKey,
@@ -106,20 +112,22 @@ export function evaluatePeriodCompleteness({
     return { complete: false, trusted: false, reasons: ['invalid_period_key'], bounds: null };
   }
 
-  const current = now < bounds.end;
+  const current = now < bounds.end + toleranceMs;
   const trusted = mode === 'weekly' && isTrustedEmailWeekly({
     period_key: periodKey,
     quality_flags: qualityFlags,
   });
   if (trusted && !current) return { complete: true, trusted: true, reasons: [], bounds };
 
-  const first = finiteNumber(firstObservedAt);
-  const last = finiteNumber(lastObservedAt);
   const reasons = [];
   if (current) reasons.push('current_period');
   if (knownGap) reasons.push('known_collection_gap');
-  if (first == null || first > bounds.start + toleranceMs) reasons.push('missing_period_start');
-  if (last == null || last < bounds.end - toleranceMs) reasons.push('missing_period_end');
+  if (!withinPeriodBoundaryTolerance(firstObservedAt, bounds.start, toleranceMs)) {
+    reasons.push('missing_period_start');
+  }
+  if (!withinPeriodBoundaryTolerance(lastObservedAt, bounds.end, toleranceMs)) {
+    reasons.push('missing_period_end');
+  }
   return { complete: reasons.length === 0, trusted: false, reasons, bounds };
 }
 
@@ -137,11 +145,13 @@ export function applySummaryCompleteness(rows, mode, now = Date.now()) {
   let excludedCount = 0;
   const completedRows = (Array.isArray(rows) ? rows : []).map((row) => {
     const periodKey = String(row?.period_key || '');
+    const hasBoundaryStart = Object.hasOwn(row || {}, 'boundary_start_at');
+    const hasBoundaryEnd = Object.hasOwn(row || {}, 'boundary_end_at');
     const evaluation = evaluatePeriodCompleteness({
       mode,
       periodKey,
-      firstObservedAt: row?.period_start,
-      lastObservedAt: row?.period_end,
+      firstObservedAt: hasBoundaryStart ? row?.boundary_start_at : row?.period_start,
+      lastObservedAt: hasBoundaryEnd ? row?.boundary_end_at : row?.period_end,
       qualityFlags: row?.quality_flags,
       now,
       knownGap: mode === 'daily' && KNOWN_DAILY_STREAM_GAPS.has(periodKey),
@@ -151,6 +161,7 @@ export function applySummaryCompleteness(rows, mode, now = Date.now()) {
         ...row,
         period_complete: true,
         stream_growth_excluded: false,
+        member_growth_excluded: false,
         exclusion_reasons: [],
       };
     }
@@ -158,8 +169,10 @@ export function applySummaryCompleteness(rows, mode, now = Date.now()) {
     return {
       ...row,
       stream_growth: null,
+      member_growth: null,
       period_complete: false,
       stream_growth_excluded: true,
+      member_growth_excluded: true,
       exclusion_reasons: evaluation.reasons,
       quality_flags: appendFlags(row?.quality_flags, qualityFlagsForReasons(evaluation.reasons)),
     };
