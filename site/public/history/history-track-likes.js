@@ -5,6 +5,8 @@
   const likeFormatter = new Intl.NumberFormat('ja-JP');
   const numberFormatter = new Intl.NumberFormat('ja-JP', { maximumFractionDigits: 1 });
   const rankingPalette = ['#f6c7d9', '#9c7bf4', '#7ee787', '#ffb86b', '#7ad7ff'];
+  let rankingModelSource = null;
+  let rankingModel = null;
 
   visibleKeys = (mode) => mode === 'tracks'
     ? [...baseVisibleKeys(mode), 'like_count']
@@ -171,9 +173,7 @@
     setTextIfChanged('#memberGrowth', '—');
   };
 
-  drawRanking = function drawRankingSingleIndex(rows, selected = null) {
-    const values = Array.isArray(rows) ? rows : [];
-    const { ctx, width, height } = prepareCanvas();
+  function buildRankingModel(values) {
     const hostNames = new Map();
     const byHost = new Map();
     const weekSet = new Set();
@@ -203,7 +203,51 @@
       return a.localeCompare(b);
     });
     const weeks = [...weekSet].sort();
-    if (!weeks.length || !hosts.length) {
+    const series = new Array(hosts.length);
+    for (let hostIndex = 0; hostIndex < hosts.length; hostIndex += 1) {
+      const [hostKey, host] = hosts[hostIndex];
+      const rowsByWeek = byHost.get(hostKey) || new Map();
+      const hostRows = new Array(weeks.length);
+      const ranks = new Array(weeks.length);
+      for (let index = 0; index < weeks.length; index += 1) {
+        const row = rowsByWeek.get(weeks[index]) || null;
+        hostRows[index] = row;
+        ranks[index] = row ? rankNumber(row) : null;
+      }
+      series[hostIndex] = {
+        host,
+        values: hostRows,
+        ranks,
+        color: rankingPalette[hostIndex % rankingPalette.length],
+      };
+    }
+    return {
+      weeks,
+      series,
+      maxRank,
+      ticks: [...new Set([
+        1,
+        Math.ceil(maxRank / 4),
+        Math.ceil(maxRank / 2),
+        Math.ceil(maxRank * 3 / 4),
+        maxRank,
+      ])].sort((a, b) => a - b),
+    };
+  }
+
+  function rankingModelFor(values) {
+    if (rankingModelSource === values && rankingModel) return { model: rankingModel, rebuilt: false };
+    rankingModelSource = values;
+    rankingModel = buildRankingModel(values);
+    return { model: rankingModel, rebuilt: true };
+  }
+
+  drawRanking = function drawRankingSingleIndex(rows, selected = null) {
+    const values = Array.isArray(rows) ? rows : [];
+    const { model, rebuilt } = rankingModelFor(values);
+    const { weeks, series, maxRank, ticks } = model;
+    const { ctx, width, height } = prepareCanvas();
+    if (!weeks.length || !series.length) {
       drawEmpty(ctx, width, height, 'ランキングデータがありません');
       return;
     }
@@ -218,24 +262,16 @@
     ctx.fillStyle = '#aaa3b5';
     ctx.textAlign = 'right';
     ctx.textBaseline = 'middle';
-    const ticks = [...new Set([1, Math.ceil(maxRank / 4), Math.ceil(maxRank / 2), Math.ceil(maxRank * 3 / 4), maxRank])].sort((a, b) => a - b);
     for (const rank of ticks) ctx.fillText(`${rank}位`, area.left - 8, yFor(rank));
     drawDateAxis(ctx, weeks, xPositions, width, height, area);
 
-    const series = new Array(hosts.length);
-    for (let hostIndex = 0; hostIndex < hosts.length; hostIndex += 1) {
-      const [hostKey, host] = hosts[hostIndex];
-      const rowsByWeek = byHost.get(hostKey) || new Map();
-      const hostRows = new Array(weeks.length);
-      const color = rankingPalette[hostIndex % rankingPalette.length];
-      ctx.strokeStyle = color;
+    for (const item of series) {
+      ctx.strokeStyle = item.color;
       ctx.lineWidth = 2;
       ctx.beginPath();
       let open = false;
-      for (let index = 0; index < weeks.length; index += 1) {
-        const row = rowsByWeek.get(weeks[index]) || null;
-        hostRows[index] = row;
-        const rank = row ? rankNumber(row) : null;
+      for (let index = 0; index < item.ranks.length; index += 1) {
+        const rank = item.ranks[index];
         if (rank == null) {
           open = false;
           continue;
@@ -247,21 +283,20 @@
         open = true;
       }
       ctx.stroke();
-      for (let index = 0; index < hostRows.length; index += 1) {
-        const rank = hostRows[index] ? rankNumber(hostRows[index]) : null;
+      ctx.fillStyle = item.color;
+      for (let index = 0; index < item.ranks.length; index += 1) {
+        const rank = item.ranks[index];
         if (rank == null) continue;
-        ctx.fillStyle = color;
         ctx.beginPath();
         ctx.arc(xPositions[index], yFor(rank), 3, 0, Math.PI * 2);
         ctx.fill();
       }
-      series[hostIndex] = { host, values: hostRows, color };
     }
 
     const selectedWeekIndex = Number.isInteger(selected) ? selected : null;
     if (selectedWeekIndex != null && weeks[selectedWeekIndex]) drawSelection(ctx, xPositions[selectedWeekIndex], area);
     chartState = { type: 'ranking', weeks, xPositions, series, selectedIndex: selectedWeekIndex };
-    setChartRange(weeks);
+    if (rebuilt) setChartRange(weeks);
     if (selectedWeekIndex != null) renderRankingDetail(selectedWeekIndex);
   };
 })();
