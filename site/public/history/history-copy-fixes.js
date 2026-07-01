@@ -189,7 +189,7 @@
       const to = $('#to').value;
 
       if (mode === 'tracks') {
-        const key = `track-history:v9:${from}:${to}`;
+        const key = `track-history:v11:${from}:${to}`;
         let data = readCache(key);
         if (!data) {
           const tbody = $('#tbody');
@@ -202,8 +202,11 @@
             row.appendChild(cell);
             tbody.appendChild(row);
           }
-          const params = new URLSearchParams({ from, to, limit: '2000', v: '9' });
-          const response = await fetch(`/api/track-history?${params}`, { signal: controller.signal, cache: 'no-store' });
+          const params = new URLSearchParams({ from, to, limit: '2000', likes: '1', v: '11' });
+          const response = await fetch(`/api/track-history?${params}`, {
+            signal: controller.signal,
+            headers: { accept: 'application/json' },
+          });
           data = await response.json();
           if (!response.ok || !data.ok) throw new Error(data.error || `HTTP ${response.status}`);
           writeCache(key, data);
