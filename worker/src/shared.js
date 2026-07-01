@@ -1,5 +1,9 @@
+const TRACK_METADATA_CACHE_TTL_MS = 30 * 60 * 1000;
+const TRACK_METADATA_CACHE_MAX = 16;
+const trackMetadataQueueCache = new Map();
+
 export function jsonResponse(data, status = 200) {
-  return new Response(JSON.stringify(data, null, 2), {
+  return new Response(JSON.stringify(data), {
     status,
     headers: { 'content-type': 'application/json; charset=utf-8' },
   });
@@ -129,11 +133,54 @@ export async function fetchTrackMetadata(track, config) {
   };
 }
 
+function completeMetadata(value, spotifyId = '') {
+  const title = String(value?.title || '').trim();
+  const artist = String(value?.artist || '').trim();
+  return Boolean(
+    title && artist
+    && title !== spotifyId
+    && artist !== spotifyId
+    && !/^JP[A-Z0-9]{8,}$/i.test(artist),
+  );
+}
+
+function metadataQueueKey(candidates) {
+  return candidates.map((track) => String(track.spotify_id)).sort().join(',');
+}
+
+function cachedMetadataComplete(key, now = Date.now()) {
+  const cached = trackMetadataQueueCache.get(key);
+  if (!cached || cached.expiresAt <= now) {
+    if (cached) trackMetadataQueueCache.delete(key);
+    return false;
+  }
+  trackMetadataQueueCache.delete(key);
+  trackMetadataQueueCache.set(key, cached);
+  return true;
+}
+
+function markMetadataComplete(key) {
+  trackMetadataQueueCache.delete(key);
+  trackMetadataQueueCache.set(key, { expiresAt: Date.now() + TRACK_METADATA_CACHE_TTL_MS });
+  while (trackMetadataQueueCache.size > TRACK_METADATA_CACHE_MAX) {
+    trackMetadataQueueCache.delete(trackMetadataQueueCache.keys().next().value);
+  }
+}
+
+export function resetTrackMetadataQueueCache() {
+  trackMetadataQueueCache.clear();
+}
+
 export async function enrichTracks(env, ingestFn, queue, observedAt, config) {
-  const candidates = [...new Map(
-    (queue?.tracks || []).filter((track) => track.spotify_id).map((track) => [track.spotify_id, track]),
-  ).values()];
+  const unique = new Map();
+  for (const track of queue?.tracks || []) {
+    if (track?.spotify_id) unique.set(track.spotify_id, track);
+  }
+  const candidates = [...unique.values()];
   if (!candidates.length || (config.metadataLimit != null && config.metadataLimit <= 0)) return 0;
+
+  const cacheKey = metadataQueueKey(candidates);
+  if (cachedMetadataComplete(cacheKey)) return 0;
 
   const placeholders = candidates.map(() => '?').join(',');
   const stored = await env.DB.prepare(`
@@ -142,13 +189,21 @@ export async function enrichTracks(env, ingestFn, queue, observedAt, config) {
     WHERE spotify_id IN (${placeholders})
   `).bind(...candidates.map((track) => track.spotify_id)).all();
   const complete = new Set((stored.results || [])
-    .filter((item) => item.title && item.artist && !/^JP[A-Z0-9]{8,}$/i.test(String(item.artist)))
+    .filter((item) => completeMetadata(item, item.spotify_id))
     .map((item) => item.spotify_id));
-  const limit = config.metadataLimit ?? 3;
-  const missing = candidates.filter((track) => !complete.has(track.spotify_id)).slice(0, limit);
-  if (!missing.length) return 0;
+  const allMissing = candidates.filter((track) => !complete.has(track.spotify_id));
+  if (!allMissing.length) {
+    markMetadataComplete(cacheKey);
+    return 0;
+  }
 
+  const limit = config.metadataLimit ?? 3;
+  const missing = allMissing.slice(0, limit);
   const metadata = (await Promise.all(missing.map((track) => fetchTrackMetadata(track, config)))).filter(Boolean);
   if (metadata.length) await ingestFn(env, 'track_metadata', { tracks: metadata }, observedAt);
+
+  const completeFetched = metadata.filter((item) => completeMetadata(item, item.spotify_id)).length;
+  if (allMissing.length <= limit && completeFetched === allMissing.length) markMetadataComplete(cacheKey);
+  else trackMetadataQueueCache.delete(cacheKey);
   return metadata.length;
 }

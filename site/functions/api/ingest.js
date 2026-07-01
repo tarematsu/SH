@@ -174,7 +174,9 @@ async function saveQueue(db, observedAt, data, payload = queueClaimPayload(data)
     stationId, startTime, bucket, bucket + 60000,
   ).run();
 
-  if (!queueInspectionDue(previous, payloadJson, observedAt)) return;
+  if (!queueInspectionDue(previous, payloadJson, observedAt)) {
+    return { inspected: false, itemsWritten: 0, observationsWritten: 0 };
+  }
 
   const positions = [...new Set(tracks.map((track) => num(track.position)).filter((value) => value != null))];
   const existingRows = await loadExistingQueueItems(db, stationId, startTime, positions);
@@ -202,7 +204,9 @@ async function saveQueue(db, observedAt, data, payload = queueClaimPayload(data)
   const keyed = [...new Set(
     tracks.filter((track) => num(track?.bite_count) != null).map(observationTrackKey),
   )];
-  if (!keyed.length) return;
+  if (!keyed.length) {
+    return { inspected: true, itemsWritten: changedTracks.length, observationsWritten: 0 };
+  }
   const latestRows = await loadLatestLikes(db, stationId, keyed);
   const observations = planLikeObservations(tracks, latestRows, observedAt);
   await runBatches(db, observations.map(({ trackKey, track }) => db.prepare(`INSERT OR IGNORE INTO sh_track_like_observations (
@@ -215,6 +219,11 @@ async function saveQueue(db, observedAt, data, payload = queueClaimPayload(data)
     text(track.spotify_id), text(track.apple_music_id), text(track.isrc),
     trackKey, num(track.bite_count), 'collector', rawJson(track.raw ?? track),
   )));
+  return {
+    inspected: true,
+    itemsWritten: changedTracks.length,
+    observationsWritten: observations.length,
+  };
 }
 
 async function loadExistingComments(db, ids) {
@@ -285,13 +294,29 @@ async function saveComments(db, observedAt, data) {
     .bind(velocity, stationId, observedAt).run();
 }
 
+export function requestWithParsedJson(request, body) {
+  return new Proxy(request, {
+    get(target, property) {
+      if (property === 'json') return async () => body;
+      const value = Reflect.get(target, property, target);
+      return typeof value === 'function' ? value.bind(target) : value;
+    },
+  });
+}
+
 export async function onRequestPost(context) {
   const { request, env } = context;
   if (!authorized(request, env) || !env.DB) return legacyPost(context);
   let body;
-  try { body = await request.clone().json(); } catch { return legacyPost(context); }
+  try {
+    body = await request.json();
+  } catch {
+    return json({ ok: false, error: 'invalid JSON' }, 400);
+  }
   const type = body?.type;
-  if (!['queue', 'comments'].includes(type)) return legacyPost(context);
+  if (!['queue', 'comments'].includes(type)) {
+    return legacyPost({ ...context, request: requestWithParsedJson(request, body) });
+  }
   const observedAt = num(body?.observed_at) ?? Date.now();
   const data = body?.data ?? {};
 
@@ -317,13 +342,18 @@ export async function onRequestPost(context) {
       payload,
       metadata: { station_id: num(data.station_id), start_time: num(data.start_time) },
     });
-    if (claim.accepted) await saveQueue(env.DB, observedAt, data, payload);
+    const details = claim.accepted
+      ? await saveQueue(env.DB, observedAt, data, payload)
+      : { inspected: false, itemsWritten: 0, observationsWritten: 0 };
     return json({
       ok: true,
       type,
       accepted: claim.accepted,
       duplicate: claim.duplicate || false,
       claim_reason: claim.reason || null,
+      queue_inspected: details.inspected,
+      queue_items_written: details.itemsWritten,
+      like_observations_written: details.observationsWritten,
     });
   } catch (error) {
     console.error(error);
