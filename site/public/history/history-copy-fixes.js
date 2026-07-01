@@ -271,7 +271,8 @@
 
   const likesScript = document.createElement('script');
   likesScript.src = '/history/history-track-likes.js';
+  const initialLoad = () => load();
+  likesScript.addEventListener('load', initialLoad, { once: true });
+  likesScript.addEventListener('error', initialLoad, { once: true });
   document.head.appendChild(likesScript);
-
-  load();
 })();
