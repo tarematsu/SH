@@ -1,13 +1,13 @@
 import { onRequestPost as saveIngest } from '../../site/functions/api/ingest.js';
 import {
   jsonResponse as json, normalizeBearer, jwtExpiryMs, positiveNumber as numberValue,
-  normalizeComments as sharedNormalizeComments, fetchTrackMetadata, enrichTracks as sharedEnrichTracks,
-  highResolutionArtwork, cleanSpotifyTitle,
+  normalizeComments as sharedNormalizeComments, enrichTracks as sharedEnrichTracks,
 } from './shared.js';
 
 const API_BASE = 'https://production1.stationhead.com';
 const COLLECTOR_VERSION = '1.0.0-worker';
 const DEFAULT_USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36';
+let collectionFlight = null;
 
 function firstDefined(...values) {
   return values.find((value) => value !== undefined && value !== null);
@@ -48,7 +48,6 @@ async function loadState(env) {
     lastError: row?.last_error || null,
     channelId: Number(row?.last_channel_id || 0) || null,
     stationId: Number(row?.last_station_id || 0) || null,
-    dirty: !row,
   };
 }
 
@@ -81,7 +80,6 @@ async function saveState(env, state, patch = {}) {
     state.stationId || null,
     now,
   ).run();
-  state.dirty = false;
 }
 
 function stationheadHeaders(state, config) {
@@ -99,7 +97,7 @@ function stationheadHeaders(state, config) {
   };
 }
 
-async function stationheadJson(env, state, config, path) {
+async function stationheadJson(state, config, path) {
   const response = await fetch(`${API_BASE}${path}`, {
     headers: stationheadHeaders(state, config),
     signal: AbortSignal.timeout(config.requestTimeoutMs),
@@ -109,7 +107,6 @@ async function stationheadJson(env, state, config, path) {
   if (refreshed && refreshed !== state.authToken) {
     state.authToken = refreshed;
     state.tokenExpiresAt = jwtExpiryMs(refreshed);
-    state.dirty = true;
   }
 
   if (!response.ok) {
@@ -146,6 +143,7 @@ async function ingest(env, type, data, observedAt) {
     const body = await response.text().catch(() => '');
     throw new Error(`D1 ingest failed ${response.status}: ${body.slice(0, 500)}`);
   }
+  return response.json().catch(() => ({}));
 }
 
 function extractIds(channel, state) {
@@ -218,23 +216,20 @@ function extractQueue(channel, stationId) {
   };
 }
 
-
-
 async function enrichTracks(env, queue, observedAt, config) {
   return sharedEnrichTracks(env, ingest, queue, observedAt, config);
 }
 
-async function collectOnce(env, source = 'manual') {
+export async function collectOnce(env, source = 'manual') {
   if (!env.DB) throw new Error('DB binding is missing');
   const config = configFromEnv(env);
   const state = await loadState(env);
   const observedAt = Date.now();
   state.lastRunAt = observedAt;
   state.lastError = null;
-  await saveState(env, state);
 
   try {
-    const channel = await stationheadJson(env, state, config, `/channels/alias/${encodeURIComponent(config.channelAlias)}`);
+    const channel = await stationheadJson(state, config, `/channels/alias/${encodeURIComponent(config.channelAlias)}`);
     extractIds(channel, state);
 
     await ingest(env, 'collector_heartbeat', {
@@ -248,16 +243,16 @@ async function collectOnce(env, source = 'manual') {
     await ingest(env, 'snapshot', normalizeSnapshot(channel, state, config), observedAt);
 
     const queue = extractQueue(channel, state.stationId);
+    let queueResult = null;
     let metadataSaved = 0;
     if (queue) {
-      await ingest(env, 'queue', queue, observedAt);
+      queueResult = await ingest(env, 'queue', queue, observedAt);
       metadataSaved = await enrichTracks(env, queue, observedAt, config);
     }
 
     let commentsSaved = 0;
     if (state.stationId) {
       const history = await stationheadJson(
-        env,
         state,
         config,
         `/station/${encodeURIComponent(state.stationId)}/chatHistory?limit=${config.chatLimit}`,
@@ -272,6 +267,7 @@ async function collectOnce(env, source = 'manual') {
     }
 
     await saveState(env, state, {
+      lastRunAt: observedAt,
       lastSuccessAt: Date.now(),
       lastError: null,
       tokenExpiresAt: jwtExpiryMs(state.authToken) || state.tokenExpiresAt,
@@ -286,16 +282,32 @@ async function collectOnce(env, source = 'manual') {
       station_id: state.stationId,
       comments_saved: commentsSaved,
       queue_tracks: queue?.tracks?.length || 0,
+      queue_inspected: Boolean(queueResult?.queue_inspected),
+      queue_items_written: Number(queueResult?.queue_items_written || 0),
+      like_observations_written: Number(queueResult?.like_observations_written || 0),
       metadata_saved: metadataSaved,
       token_expires_at: state.tokenExpiresAt || null,
     };
   } catch (error) {
     await saveState(env, state, {
+      lastRunAt: observedAt,
       lastError: String(error?.message || error).slice(0, 2000),
       tokenExpiresAt: jwtExpiryMs(state.authToken) || state.tokenExpiresAt,
     }).catch(() => {});
     throw error;
   }
+}
+
+export function runCollection(env, source = 'manual', collector = collectOnce) {
+  if (collectionFlight) return collectionFlight;
+  collectionFlight = Promise.resolve()
+    .then(() => collector(env, source))
+    .finally(() => { collectionFlight = null; });
+  return collectionFlight;
+}
+
+export function resetCollectionFlight() {
+  collectionFlight = null;
 }
 
 function authorized(request, env) {
@@ -326,7 +338,7 @@ async function health(env) {
 
 export default {
   async scheduled(controller, env) {
-    const result = await collectOnce(env, `cron:${controller.cron}`);
+    const result = await runCollection(env, `cron:${controller.cron}`);
     console.log(JSON.stringify(result));
   },
 
@@ -338,7 +350,7 @@ export default {
     if (request.method === 'POST' && url.pathname === '/run') {
       if (!authorized(request, env)) return json({ ok: false, error: 'unauthorized' }, 401);
       try {
-        return json(await collectOnce(env, 'http'));
+        return json(await runCollection(env, 'http'));
       } catch (error) {
         console.error(error);
         return json({ ok: false, error: error?.message || String(error) }, 500);
