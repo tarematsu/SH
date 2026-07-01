@@ -1,6 +1,7 @@
 import { onRequestPost as legacyPost, onRequestGet } from './host-ingest-legacy.mjs';
 import { claimWrite, minuteBucket, payloadHash, sourceIdentity } from '../lib/ingest-claim.js';
 import { json, authorized, num, bool, text, rawJson } from '../lib/api-utils.js';
+import { requestWithParsedJson } from '../lib/parsed-request.js';
 
 export { onRequestGet };
 
@@ -79,7 +80,19 @@ async function claimStationSnapshot(db, observedAt, data, source) {
   });
 }
 
-async function saveStationSnapshot(db, observedAt, data) {
+function sessionAggregateStatement(db, data, observedAt, sessionId, peak, listenerSum, sampleCount) {
+  return db.prepare(`UPDATE sh_host_broadcast_sessions SET
+      account_id=COALESCE(?,account_id),broadcast_id=COALESCE(?,broadcast_id),
+      peak_listeners=?,listener_sum=?,listener_sample_count=?,average_listeners=?,
+      total_listens_end=COALESCE(?,total_listens_end),last_observed_at=?
+    WHERE id=?`).bind(
+    num(data.account_id), num(data.broadcast_id), peak, listenerSum, sampleCount,
+    sampleCount ? listenerSum / sampleCount : null,
+    num(data.total_listens), observedAt, sessionId,
+  );
+}
+
+export async function saveStationSnapshot(db, observedAt, data) {
   const sessionId = num(data.session_id);
   const bucket = minuteBucket(observedAt);
   const state = await db.prepare(`SELECT
@@ -130,9 +143,16 @@ async function saveStationSnapshot(db, observedAt, data) {
     && num(state.old_listener) >= (num(state.peak_listeners) ?? 0)
     && (listener == null || listener < num(state.old_listener));
 
+  if (!correction) {
+    await db.batch([
+      snapshotStatement,
+      sessionAggregateStatement(db, data, observedAt, sessionId, peak, listenerSum, sampleCount),
+    ]);
+    return;
+  }
+
   await snapshotStatement.run();
-  if (correction) {
-    const peakRow = await db.prepare(`SELECT MAX(value) AS peak FROM (
+  const peakRow = await db.prepare(`SELECT MAX(value) AS peak FROM (
       SELECT MAX(listener_count) AS value FROM sh_host_station_snapshots WHERE session_id=?
       UNION ALL
       SELECT MAX(CAST(COALESCE(
@@ -141,18 +161,8 @@ async function saveStationSnapshot(db, observedAt, data) {
       FROM sh_host_raw_events
       WHERE session_id=? AND event='listenerCount' AND json_valid(data_json)
     )`).bind(sessionId, sessionId).first();
-    peak = num(peakRow?.peak);
-  }
-
-  await db.prepare(`UPDATE sh_host_broadcast_sessions SET
-      account_id=COALESCE(?,account_id),broadcast_id=COALESCE(?,broadcast_id),
-      peak_listeners=?,listener_sum=?,listener_sample_count=?,average_listeners=?,
-      total_listens_end=COALESCE(?,total_listens_end),last_observed_at=?
-    WHERE id=?`).bind(
-    num(data.account_id), num(data.broadcast_id), peak, listenerSum, sampleCount,
-    sampleCount ? listenerSum / sampleCount : null,
-    num(data.total_listens), observedAt, sessionId,
-  ).run();
+  peak = num(peakRow?.peak);
+  await sessionAggregateStatement(db, data, observedAt, sessionId, peak, listenerSum, sampleCount).run();
 }
 
 async function loadExistingComments(db, sessionId, ids) {
@@ -272,9 +282,15 @@ export async function onRequestPost(context) {
   const { request, env } = context;
   if (!authorized(request, env) || !env.DB) return legacyPost(context);
   let body;
-  try { body = await request.clone().json(); } catch { return legacyPost(context); }
+  try {
+    body = await request.json();
+  } catch {
+    return json({ ok: false, error: 'invalid JSON' }, 400);
+  }
   const type = body?.type;
-  if (!['solo_station_snapshot', 'solo_comments', 'solo_ws_event'].includes(type)) return legacyPost(context);
+  if (!['solo_station_snapshot', 'solo_comments', 'solo_ws_event'].includes(type)) {
+    return legacyPost({ ...context, request: requestWithParsedJson(request, body) });
+  }
   const observedAt = num(body?.observed_at) ?? Date.now();
   const data = body?.data ?? {};
   const source = sourceIdentity(body, {
