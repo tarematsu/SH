@@ -53,6 +53,41 @@ function hostScopedBinds(hostScope, start, end) {
   return hostScope ? [start, end, hostScope.value] : [start, end];
 }
 
+const HOST_METRIC_CACHE_MS = 15 * 60 * 1000;
+const hostMetricCache = new Map();
+
+function hostMetricCacheKey(metricColumn, hostScope, start, end) {
+  return [metricColumn, hostScope?.column || '', hostScope?.value || '', start, end].join(':');
+}
+
+export async function cachedHostMetric(db, metricColumn, hostScope, start, end, now = Date.now()) {
+  if (!['total_member_count', 'total_listens'].includes(metricColumn)) {
+    throw new Error(`unsupported host metric: ${metricColumn}`);
+  }
+  const key = hostMetricCacheKey(metricColumn, hostScope, start, end);
+  const cached = hostMetricCache.get(key);
+  if (cached?.expiresAt > now && Object.hasOwn(cached, 'value')) return cached.value;
+  if (cached?.pending) return cached.pending;
+
+  const entry = cached || {};
+  entry.pending = db.prepare(hostScopedLatestSql(metricColumn, hostScope))
+    .bind(...hostScopedBinds(hostScope, start, end))
+    .first()
+    .then((value) => {
+      entry.value = value || null;
+      entry.expiresAt = Date.now() + HOST_METRIC_CACHE_MS;
+      return entry.value;
+    })
+    .finally(() => { entry.pending = null; });
+  hostMetricCache.set(key, entry);
+  while (hostMetricCache.size > 16) hostMetricCache.delete(hostMetricCache.keys().next().value);
+  return entry.pending;
+}
+
+export function resetHostMetricCache() {
+  hostMetricCache.clear();
+}
+
 function inferArtistFromDisplayTitle(displayTitle, title) {
   const display = String(displayTitle || '').trim();
   const knownTitle = String(title || '').trim();
@@ -244,12 +279,8 @@ export async function onRequestGet({ request, env }) {
 
     const hostScope = hostScopeFromSnapshot(latest);
     const [previousMembers, previousListens] = await Promise.all([
-      db.prepare(hostScopedLatestSql('total_member_count', hostScope))
-        .bind(...hostScopedBinds(hostScope, memberRange.previousStart, memberRange.currentStart))
-        .first(),
-      db.prepare(hostScopedLatestSql('total_listens', hostScope))
-        .bind(...hostScopedBinds(hostScope, listensRange.previousStart, listensRange.currentStart))
-        .first(),
+      cachedHostMetric(db, 'total_member_count', hostScope, memberRange.previousStart, memberRange.currentStart),
+      cachedHostMetric(db, 'total_listens', hostScope, listensRange.previousStart, listensRange.currentStart),
     ]);
 
     const history = historyResult.results || [];

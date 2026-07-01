@@ -1,5 +1,6 @@
 import { refreshMissingMetadata } from './track-history-metadata.js';
 import { mergeTrackRows } from './track-history-merge.js';
+import { attachTrackLikes, loadTrackLikeRows } from './track-likes.js';
 
 const H = {
   'content-type': 'application/json; charset=utf-8',
@@ -127,24 +128,29 @@ export async function handleTrackHistory({ request, env, waitUntil }) {
     const fromTs = ts(from);
     const toTs = ts(to) + 86400000;
     const limit = Math.min(Math.max(+url.searchParams.get('limit') || 10000, 100), 20000);
+    const includeLikes = url.searchParams.get('likes') === '1';
     if (!Number.isFinite(fromTs) || !Number.isFinite(toTs) || toTs <= fromTs) {
       return out({ ok: false, error: 'invalid date range' }, 400);
     }
 
     const maxGroupedRows = Math.min(limit * 8, 40000);
-    const result = await env.DB.prepare(TRACK_HISTORY_SQL).bind(
-      toTs, fromTs - TRACK_HISTORY_GRACE_MS,
-      toTs, fromTs - TRACK_HISTORY_GRACE_MS,
-      toTs,
-      fromTs, toTs,
-      TRACK_HISTORY_GRACE_MS,
-      maxGroupedRows + 1,
-    ).all();
+    const [result, likeRows] = await Promise.all([
+      env.DB.prepare(TRACK_HISTORY_SQL).bind(
+        toTs, fromTs - TRACK_HISTORY_GRACE_MS,
+        toTs, fromTs - TRACK_HISTORY_GRACE_MS,
+        toTs,
+        fromTs, toTs,
+        TRACK_HISTORY_GRACE_MS,
+        maxGroupedRows + 1,
+      ).all(),
+      includeLikes ? loadTrackLikeRows(env.DB, fromTs, toTs) : Promise.resolve([]),
+    ]);
 
     const allGroupedRows = result.results || [];
     const sourceTruncated = allGroupedRows.length > maxGroupedRows;
     const groupedRows = sourceTruncated ? allGroupedRows.slice(0, maxGroupedRows) : allGroupedRows;
-    const rows = mergeTrackRows(groupedRows);
+    const mergedRows = mergeTrackRows(groupedRows);
+    const rows = includeLikes ? attachTrackLikes(mergedRows, likeRows) : mergedRows;
     const metadataRefreshScheduled = typeof waitUntil === 'function';
     if (metadataRefreshScheduled) {
       waitUntil(refreshMissingMetadata(groupedRows, env).catch((error) => {
@@ -163,6 +169,8 @@ export async function handleTrackHistory({ request, env, waitUntil }) {
       source_truncated: sourceTruncated,
       source_row_count: groupedRows.reduce((sum, row) => sum + (Number(row.play_count) || 0), 0),
       grouped_row_count: groupedRows.length,
+      likes_included: includeLikes,
+      like_row_count: likeRows.length,
       metadata_refresh_scheduled: metadataRefreshScheduled,
       method: 'observed_unpaused_queue_reachability_utc_sql_preaggregate',
     });

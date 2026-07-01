@@ -7,6 +7,8 @@ import {
   PREDICTION_24H_SQL,
   linearRegressionPrediction,
   linearRegressionPredictionFromAggregate,
+  cachedHostMetric,
+  resetHostMetricCache,
 } from '../site/functions/api/dashboard.js';
 
 function createSnapshotsDb() {
@@ -61,4 +63,36 @@ test('aggregate prediction matches row-based regression without returning 24 hou
   assert.ok(Math.abs(fromAggregate.rate_per_hour - 60) < 1e-8);
   assert.ok(Math.abs(fromAggregate.rate_per_hour - fromRows.rate_per_hour) < 1e-8);
   assert.ok(Math.abs(fromAggregate.eta - fromRows.eta) < 1);
+});
+
+test('dashboard baseline requests share and reuse the same host/day query', async () => {
+  resetHostMetricCache();
+  let calls = 0;
+  const db = {
+    prepare(sql) {
+      assert.match(sql, /total_member_count/);
+      return {
+        bind(...values) {
+          assert.deepEqual(values, [1000, 2000, 42]);
+          return {
+            async first() {
+              calls += 1;
+              await new Promise((resolve) => setTimeout(resolve, 5));
+              return { observed_at: 1900, total_member_count: 123 };
+            },
+          };
+        },
+      };
+    },
+  };
+  const scope = { column: 'host_account_id', value: 42 };
+  const [first, second] = await Promise.all([
+    cachedHostMetric(db, 'total_member_count', scope, 1000, 2000),
+    cachedHostMetric(db, 'total_member_count', scope, 1000, 2000),
+  ]);
+
+  assert.equal(calls, 1);
+  assert.equal(first, second);
+  assert.equal((await cachedHostMetric(db, 'total_member_count', scope, 1000, 2000)).total_member_count, 123);
+  assert.equal(calls, 1);
 });
