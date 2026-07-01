@@ -1,6 +1,11 @@
 import { refreshMissingMetadata } from './track-history-metadata.js';
 import { mergeTrackRows } from './track-history-merge.js';
-import { attachCompactTrackLikes, loadTrackLikeRows } from './track-likes.js';
+import {
+  attachCompactTrackLikes,
+  compactTrackLikeBatchResults,
+  loadTrackLikeRows,
+  trackLikeStatements,
+} from './track-likes.js';
 
 const H = {
   'content-type': 'application/json; charset=utf-8',
@@ -113,6 +118,41 @@ export const TRACK_HISTORY_SQL = `WITH snapshot_evidence AS (
     ORDER BY first_played_at ASC
     LIMIT ?`;
 
+function trackHistoryStatement(db, fromTs, toTs, maxGroupedRows) {
+  return db.prepare(TRACK_HISTORY_SQL).bind(
+    toTs, fromTs - TRACK_HISTORY_GRACE_MS,
+    toTs, fromTs - TRACK_HISTORY_GRACE_MS,
+    toTs,
+    fromTs, toTs,
+    TRACK_HISTORY_GRACE_MS,
+    maxGroupedRows + 1,
+  );
+}
+
+export async function loadTrackHistoryData(db, fromTs, toTs, maxGroupedRows, includeLikes) {
+  if (!includeLikes) {
+    return { result: await trackHistoryStatement(db, fromTs, toTs, maxGroupedRows).all(), likeRows: [] };
+  }
+
+  if (typeof db.batch === 'function') {
+    try {
+      const [result, ...likeResults] = await db.batch([
+        trackHistoryStatement(db, fromTs, toTs, maxGroupedRows),
+        ...trackLikeStatements(db, fromTs, toTs),
+      ]);
+      return { result, likeRows: compactTrackLikeBatchResults(likeResults) };
+    } catch (error) {
+      if (!/no such table|no such column/i.test(String(error?.message || ''))) throw error;
+    }
+  }
+
+  const [result, likeRows] = await Promise.all([
+    trackHistoryStatement(db, fromTs, toTs, maxGroupedRows).all(),
+    loadTrackLikeRows(db, fromTs, toTs),
+  ]);
+  return { result, likeRows };
+}
+
 export async function handleTrackHistory({ request, env, waitUntil }) {
   if (!env.DB) return out({ ok: false, error: 'DB binding missing' }, 500);
   const url = new URL(request.url);
@@ -134,17 +174,13 @@ export async function handleTrackHistory({ request, env, waitUntil }) {
     }
 
     const maxGroupedRows = Math.min(limit * 8, 40000);
-    const [result, likeRows] = await Promise.all([
-      env.DB.prepare(TRACK_HISTORY_SQL).bind(
-        toTs, fromTs - TRACK_HISTORY_GRACE_MS,
-        toTs, fromTs - TRACK_HISTORY_GRACE_MS,
-        toTs,
-        fromTs, toTs,
-        TRACK_HISTORY_GRACE_MS,
-        maxGroupedRows + 1,
-      ).all(),
-      includeLikes ? loadTrackLikeRows(env.DB, fromTs, toTs) : Promise.resolve([]),
-    ]);
+    const { result, likeRows } = await loadTrackHistoryData(
+      env.DB,
+      fromTs,
+      toTs,
+      maxGroupedRows,
+      includeLikes,
+    );
 
     const allGroupedRows = result.results || [];
     const sourceTruncated = allGroupedRows.length > maxGroupedRows;

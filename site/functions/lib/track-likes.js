@@ -113,12 +113,21 @@ export function compactTrackLikeRows(rows) {
   return compactTrackLikeSources([rows]);
 }
 
-function trackLikeStatements(db, fromTs, toTs) {
+export function trackLikeStatements(db, fromTs, toTs) {
   return [
     db.prepare(TRACK_LIKE_REALTIME_SQL).bind(fromTs, toTs),
     db.prepare(TRACK_LIKE_QUEUE_SQL).bind(fromTs, toTs),
     db.prepare(TRACK_LIKE_HISTORY_SQL).bind(fromTs, toTs),
   ];
+}
+
+export function compactTrackLikeBatchResults(results) {
+  const [realtime, queue, historical] = results || [];
+  return compactTrackLikeSources([
+    historical?.results || [],
+    queue?.results || [],
+    realtime?.results || [],
+  ]);
 }
 
 async function loadTrackLikeRowsFallback(db, fromTs, toTs) {
@@ -132,8 +141,7 @@ export async function loadTrackLikeRows(db, fromTs, toTs) {
   let sources;
   if (typeof db.batch === 'function') {
     try {
-      const [realtime, queue, historical] = await db.batch(trackLikeStatements(db, fromTs, toTs));
-      sources = [historical?.results || [], queue?.results || [], realtime?.results || []];
+      return compactTrackLikeBatchResults(await db.batch(trackLikeStatements(db, fromTs, toTs)));
     } catch (error) {
       if (!/no such table|no such column/i.test(String(error?.message || ''))) throw error;
       sources = await loadTrackLikeRowsFallback(db, fromTs, toTs);

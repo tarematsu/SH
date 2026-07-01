@@ -6,7 +6,7 @@ const SOURCE = 'stationhead_official_cloud';
 
 function jstParts(now = Date.now()) {
   const date = new Date(now + 9 * 3600000);
-  return { year: date.getUTCFullYear(), month: date.getUTCMonth() + 1, day: date.getUTCDate(), weekday: date.getUTCDay(), hour: date.getUTCHours() };
+  return { weekday: date.getUTCDay(), hour: date.getUTCHours() };
 }
 function rankingDate(now = Date.now()) {
   const date = new Date(now + 9 * 3600000);
@@ -19,9 +19,6 @@ function insideWindow(env, now) {
   const mondayStart = Number(env.WEEKLY_LEADERBOARD_START_HOUR_JST ?? 18);
   const tuesdayEnd = Number(env.WEEKLY_LEADERBOARD_END_HOUR_JST ?? 2);
   return (parts.weekday === 1 && parts.hour >= mondayStart) || (parts.weekday === 2 && parts.hour < tuesdayEnd);
-}
-async function session(env) {
-  return env.DB.prepare(`SELECT auth_token,device_uid FROM sh_worker_collector_state WHERE id='stationhead'`).first();
 }
 function normalizeAccounts(payload) {
   if (!Array.isArray(payload?.accounts)) {
@@ -51,9 +48,19 @@ async function sha256(value) {
   const bytes = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(JSON.stringify(value)));
   return [...new Uint8Array(bytes)].map((part) => part.toString(16).padStart(2, '0')).join('');
 }
-async function leaderboardFetchState(env, date) {
+
+export const LEADERBOARD_CONTEXT_SQL = `SELECT
+  fetches.fetched_at,fetches.status,fetches.source_hash,
+  collector.auth_token,collector.device_uid
+FROM (SELECT ? AS ranking_date,? AS source) requested
+LEFT JOIN sh_leaderboard_fetches fetches
+  ON fetches.ranking_date=requested.ranking_date AND fetches.source=requested.source
+LEFT JOIN sh_worker_collector_state collector ON collector.id='stationhead'
+LIMIT 1`;
+
+export async function loadLeaderboardContext(env, date) {
   try {
-    return await env.DB.prepare(`SELECT fetched_at,status,source_hash FROM sh_leaderboard_fetches WHERE ranking_date=? AND source=? LIMIT 1`).bind(date, SOURCE).first();
+    return await env.DB.prepare(LEADERBOARD_CONTEXT_SQL).bind(date, SOURCE).first();
   } catch (error) {
     if (/no such table/i.test(String(error?.message || ''))) return { unavailable: true };
     throw error;
@@ -75,8 +82,7 @@ async function recordFailure(env, date, now, error) {
     if (!/no such table/i.test(String(writeError?.message || ''))) console.error(writeError);
   }
 }
-async function fetchLeaderboard(env, now) {
-  const auth = await session(env);
+async function fetchLeaderboard(env, now, context) {
   const headers = {
     accept: 'application/json',
     'user-agent': 'stationhead-monitor/cloud-weekly-leaderboard',
@@ -85,8 +91,8 @@ async function fetchLeaderboard(env, now) {
     origin: 'https://www.stationhead.com',
     referer: 'https://www.stationhead.com/',
   };
-  if (auth?.auth_token) headers.authorization = `Bearer ${auth.auth_token}`;
-  if (auth?.device_uid) headers['sth-device-uid'] = auth.device_uid;
+  if (context?.auth_token) headers.authorization = `Bearer ${context.auth_token}`;
+  if (context?.device_uid) headers['sth-device-uid'] = context.device_uid;
   const response = await fetch(`${SOURCE_URL}?_=${now}`, {
     headers, cache: 'no-store',
     signal: AbortSignal.timeout(Math.min(positive(env.REQUEST_TIMEOUT_MS, 20000), 30000)),
@@ -119,17 +125,17 @@ export async function runCloudWeeklyLeaderboard(env) {
   const now = Date.now();
   if (!insideWindow(env, now)) return;
   const date = rankingDate(now);
-  const previous = await leaderboardFetchState(env, date);
+  const context = await loadLeaderboardContext(env, date);
   const intervalMs = positive(env.WEEKLY_LEADERBOARD_CHECK_MINUTES, 15) * 60000;
-  if (!leaderboardCheckDue(previous, now, intervalMs)) return;
+  if (!leaderboardCheckDue(context, now, intervalMs)) return;
   try {
-    const { accounts } = await fetchLeaderboard(env, now);
+    const { accounts } = await fetchLeaderboard(env, now, context);
     const minimum = positive(env.WEEKLY_LEADERBOARD_MIN_ACCOUNTS, 20);
     if (accounts.length < minimum) throw new Error(`leaderboard incomplete: ${accounts.length} accounts`);
     const sourceHash = await sha256(accounts.map((account) => ({
       rank: account.rank, account_id: account.account_id, handle: account.handle, movement: account.leaderboard_movement,
     })));
-    if (previous?.status === 'saved' && previous?.source_hash === sourceHash) {
+    if (context?.status === 'saved' && context?.source_hash === sourceHash) {
       await env.DB.prepare(`UPDATE sh_leaderboard_fetches SET fetched_at=? WHERE ranking_date=? AND source=?`).bind(now, date, SOURCE).run();
       return;
     }
