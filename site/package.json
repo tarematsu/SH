@@ -5,7 +5,9 @@
   "type": "module",
   "scripts": {
     "dev": "wrangler pages dev public",
-    "check": "node --check functions/api/dashboard.js && node --check functions/api/playback.js && node --check functions/api/history.js && node --check functions/api/ingest.js && node --check functions/api/host-ingest.js && node --check functions/api/leaderboard-ingest.js"
+    "build": "node scripts/apply-d1-migrations.mjs",
+    "db:migrate": "wrangler d1 migrations apply stationhead-monitor --remote",
+    "check": "node --check functions/api/dashboard.js && node --check functions/api/playback.js && node --check functions/api/history.js && node --check functions/api/ingest.js && node --check functions/api/host-ingest.js && node --check functions/api/leaderboard-ingest.js && node --check scripts/apply-d1-migrations.mjs"
   },
   "devDependencies": {
     "wrangler": "^4.104.0"
