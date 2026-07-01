@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { DatabaseSync } from 'node:sqlite';
 
-import { liveSummarySql, combineSummaryRows } from '../site/functions/api/history.js';
+import { liveSummarySql, combineSummaryRows, BROADCAST_SUMMARY_SQL } from '../site/functions/api/history.js';
 import { planLikeObservations, latestLikesSql } from '../site/functions/api/ingest.js';
 import { listenerAggregateDelta } from '../site/functions/api/host-ingest.js';
 import { cachedPrediction, resetPredictionCache } from '../site/functions/api/dashboard.js';
@@ -31,6 +31,24 @@ test('live history is aggregated inside SQLite by JST period', () => {
   assert.equal(rows[1].stream_start, 1010);
   assert.equal(rows[1].stream_end, 1030);
   assert.equal(rows[1].primary_host, 'b');
+});
+
+test('broadcast summary returns minimum listener without a second series query', () => {
+  const db = new DatabaseSync(':memory:');
+  db.exec(`CREATE TABLE sh_legacy_snapshots(
+    observed_at INTEGER NOT NULL, observed_jst TEXT, listener_count INTEGER, likes INTEGER,
+    track_title TEXT, host_handle TEXT, source_note TEXT
+  )`);
+  const insert = db.prepare('INSERT INTO sh_legacy_snapshots VALUES(?,?,?,?,?,?,?)');
+  insert.run(1000, '2026-01-01 00:00', 30, 1, 'A', 'sakurazaka46jp', 'event');
+  insert.run(2000, '2026-01-01 00:01', 12, 2, 'B', 'sakurazaka46jp', 'event');
+  insert.run(3000, '2026-01-01 00:02', 20, 3, 'A', 'sakurazaka46jp', 'event');
+
+  const rows = db.prepare(BROADCAST_SUMMARY_SQL).all(0, 4000);
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].listener_min, 12);
+  assert.equal(rows[0].listener_max, 30);
+  assert.equal(rows[0].distinct_tracks, 2);
 });
 
 test('summary overlay combines only incremental samples', () => {
