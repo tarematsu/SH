@@ -38,7 +38,10 @@
     if (key === 'first_played_at' || key === 'last_played_at') {
       return row._daily_total ? '—' : formatDate(row[key], true);
     }
-    if (key === 'play_count') return `${fmt(row[key])}回`;
+    if (key === 'play_count') {
+      const value = finiteNumber(row[key]);
+      return value == null ? '—' : `${fmt(value)}回`;
+    }
     if (key === 'daily_share') {
       const value = finiteNumber(row[key]);
       return value == null ? '—' : `${value.toLocaleString('ja-JP', { maximumFractionDigits: 1 })}%`;
@@ -49,17 +52,18 @@
 
   updateSummary = function (rows, mode) {
     if (mode !== 'tracks') return baseUpdateSummary(rows, mode);
-    const days = new Set(rows.map((r) => r.play_date).filter(Boolean));
-    const tracks = new Set(rows.map((r) => r.track_key).filter(Boolean));
-    const total = rows.reduce((s, r) => s + (finiteNumber(r.play_count) || 0), 0);
-    const max = rows.reduce((m, r) => Math.max(m, finiteNumber(r.play_count) || 0), 0);
-    $('#periodLabel').textContent = '日数';
+    const validRows = rows.filter((row) => row?.period_complete !== false && row?.play_count_excluded !== true);
+    const days = new Set(validRows.map((row) => row.play_date).filter(Boolean));
+    const tracks = new Set(validRows.map((row) => row.track_key).filter(Boolean));
+    const total = validRows.reduce((sum, row) => sum + (finiteNumber(row.play_count) || 0), 0);
+    const max = validRows.reduce((maximum, row) => Math.max(maximum, finiteNumber(row.play_count) || 0), 0);
+    $('#periodLabel').textContent = '有効日数';
     $('#maxLabel').textContent = '総再生回数';
     $('#streamLabel').textContent = '曲数';
     $('#memberLabel').textContent = '1曲の最多';
     $('#periods').textContent = fmt(days.size);
-    $('#maxListener').textContent = fmt(total);
-    $('#streamGrowth').textContent = fmt(tracks.size);
+    $('#maxListener').textContent = days.size ? fmt(total) : '—';
+    $('#streamGrowth').textContent = days.size ? fmt(tracks.size) : '—';
     $('#memberGrowth').textContent = max ? `${fmt(max)}回` : '—';
   };
 
