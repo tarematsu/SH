@@ -3,6 +3,8 @@ import {
   PERIOD_BOUNDARY_TOLERANCE_MS,
   expectedPeriodBounds,
   isTrustedEmailWeekly,
+  periodBoundaryToleranceMs,
+  withinPeriodBoundaryTolerance,
 } from './period-completeness.js';
 
 function finiteNumber(value) {
@@ -11,7 +13,10 @@ function finiteNumber(value) {
   return Number.isFinite(number) ? number : null;
 }
 
-export function periodBoundaryEvidenceSql(includeLegacy = true) {
+export function periodBoundaryEvidenceSql(
+  includeLegacy = true,
+  toleranceMs = PERIOD_BOUNDARY_TOLERANCE_MS,
+) {
   const legacy = includeLegacy ? `
     UNION ALL
     SELECT boundaries.period_key,boundaries.boundary_name,boundaries.target_at,
@@ -19,8 +24,8 @@ export function periodBoundaryEvidenceSql(includeLegacy = true) {
       legacy.total_member_count AS member_value,1 AS source_priority,legacy.id AS source_id
     FROM boundaries
     JOIN sh_legacy_snapshots legacy
-      ON legacy.observed_at BETWEEN boundaries.target_at-${PERIOD_BOUNDARY_TOLERANCE_MS}
-        AND boundaries.target_at+${PERIOD_BOUNDARY_TOLERANCE_MS}` : '';
+      ON legacy.observed_at BETWEEN boundaries.target_at-${toleranceMs}
+        AND boundaries.target_at+${toleranceMs}` : '';
 
   return `WITH periods AS (
     SELECT
@@ -39,8 +44,8 @@ export function periodBoundaryEvidenceSql(includeLegacy = true) {
       snapshots.total_member_count AS member_value,0 AS source_priority,snapshots.id AS source_id
     FROM boundaries
     JOIN sh_channel_snapshots snapshots
-      ON snapshots.observed_at BETWEEN boundaries.target_at-${PERIOD_BOUNDARY_TOLERANCE_MS}
-        AND boundaries.target_at+${PERIOD_BOUNDARY_TOLERANCE_MS}${legacy}
+      ON snapshots.observed_at BETWEEN boundaries.target_at-${toleranceMs}
+        AND boundaries.target_at+${toleranceMs}${legacy}
   ), ranked AS (
     SELECT candidates.*,
       ROW_NUMBER() OVER (
@@ -70,14 +75,37 @@ export function periodBoundaryEvidenceSql(includeLegacy = true) {
   FROM ranked GROUP BY period_key ORDER BY period_key ASC`;
 }
 
+export function summaryRowNeedsBoundaryEvidence(row, mode) {
+  const periodKey = String(row?.period_key || '');
+  const bounds = expectedPeriodBounds(mode, periodKey);
+  if (!bounds) return false;
+  const toleranceMs = periodBoundaryToleranceMs(mode);
+  const start = Object.hasOwn(row || {}, 'boundary_start_at')
+    ? row?.boundary_start_at
+    : row?.period_start;
+  const end = Object.hasOwn(row || {}, 'boundary_end_at')
+    ? row?.boundary_end_at
+    : row?.period_end;
+  if (!withinPeriodBoundaryTolerance(start, bounds.start, toleranceMs)
+      || !withinPeriodBoundaryTolerance(end, bounds.end, toleranceMs)) {
+    return true;
+  }
+  const streamReady = finiteNumber(row?.stream_growth) != null
+    || (finiteNumber(row?.stream_start) != null && finiteNumber(row?.stream_end) != null);
+  const memberReady = finiteNumber(row?.member_growth) != null
+    || (finiteNumber(row?.member_start) != null && finiteNumber(row?.member_end) != null);
+  return !streamReady || !memberReady;
+}
+
 export function rowsRequiringBoundaryEvidence(rows, mode, now = Date.now()) {
+  const toleranceMs = periodBoundaryToleranceMs(mode);
   return (Array.isArray(rows) ? rows : []).filter((row) => {
     const periodKey = String(row?.period_key || '');
     const bounds = expectedPeriodBounds(mode, periodKey);
-    if (!bounds || now < bounds.end + PERIOD_BOUNDARY_TOLERANCE_MS) return false;
+    if (!bounds || now < bounds.end + toleranceMs) return false;
     if (mode === 'daily' && KNOWN_DAILY_STREAM_GAPS.has(periodKey)) return false;
     if (mode === 'weekly' && isTrustedEmailWeekly(row)) return false;
-    return true;
+    return summaryRowNeedsBoundaryEvidence(row, mode);
   });
 }
 
@@ -99,12 +127,13 @@ export async function loadPeriodBoundaryEvidence(db, rows, mode) {
   const periods = periodPayload(rows, mode);
   if (!periods.length) return new Map();
   const payload = JSON.stringify(periods);
+  const toleranceMs = periodBoundaryToleranceMs(mode);
   let result;
   try {
-    result = await db.prepare(periodBoundaryEvidenceSql(true)).bind(payload).all();
+    result = await db.prepare(periodBoundaryEvidenceSql(true, toleranceMs)).bind(payload).all();
   } catch (error) {
     if (!/no such table|no such column/i.test(String(error?.message || ''))) throw error;
-    result = await db.prepare(periodBoundaryEvidenceSql(false)).bind(payload).all();
+    result = await db.prepare(periodBoundaryEvidenceSql(false, toleranceMs)).bind(payload).all();
   }
   return new Map((result.results || []).map((row) => [String(row.period_key), row]));
 }

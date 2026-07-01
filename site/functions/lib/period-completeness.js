@@ -1,7 +1,10 @@
 const DAY_MS = 86400000;
 const JST_OFFSET_MS = 9 * 3600000;
 
-export const PERIOD_BOUNDARY_TOLERANCE_MS = 15 * 60 * 1000;
+export const DAILY_BOUNDARY_TOLERANCE_MS = 15 * 60 * 1000;
+export const WEEKLY_BOUNDARY_TOLERANCE_MS = 12 * 60 * 60 * 1000;
+export const MONTHLY_BOUNDARY_TOLERANCE_MS = 2 * DAY_MS;
+export const PERIOD_BOUNDARY_TOLERANCE_MS = DAILY_BOUNDARY_TOLERANCE_MS;
 export const KNOWN_DAILY_STREAM_GAPS = new Set(['2026-04-30']);
 
 const EMAIL_WEEKLY_FROM = '2026-01-01';
@@ -19,6 +22,12 @@ function validDate(value) {
 
 function validMonth(value) {
   return /^\d{4}-\d{2}$/.test(String(value || ''));
+}
+
+export function periodBoundaryToleranceMs(mode) {
+  if (mode === 'weekly') return WEEKLY_BOUNDARY_TOLERANCE_MS;
+  if (mode === 'monthly') return MONTHLY_BOUNDARY_TOLERANCE_MS;
+  return DAILY_BOUNDARY_TOLERANCE_MS;
 }
 
 export function parseQualityFlags(value) {
@@ -91,7 +100,7 @@ export function isTrustedEmailWeekly(row) {
   return periodKey >= EMAIL_WEEKLY_FROM && periodKey < EMAIL_WEEKLY_TO_EXCLUSIVE;
 }
 
-export function withinPeriodBoundaryTolerance(observedAt, boundaryAt, toleranceMs = PERIOD_BOUNDARY_TOLERANCE_MS) {
+export function withinPeriodBoundaryTolerance(observedAt, boundaryAt, toleranceMs = DAILY_BOUNDARY_TOLERANCE_MS) {
   const observed = finiteNumber(observedAt);
   const boundary = finiteNumber(boundaryAt);
   return observed != null && boundary != null && Math.abs(observed - boundary) <= toleranceMs;
@@ -104,7 +113,7 @@ export function evaluatePeriodCompleteness({
   lastObservedAt,
   qualityFlags,
   now = Date.now(),
-  toleranceMs = PERIOD_BOUNDARY_TOLERANCE_MS,
+  toleranceMs,
   knownGap = false,
 }) {
   const bounds = expectedPeriodBounds(mode, periodKey);
@@ -112,7 +121,11 @@ export function evaluatePeriodCompleteness({
     return { complete: false, trusted: false, reasons: ['invalid_period_key'], bounds: null };
   }
 
-  const current = now < bounds.end + toleranceMs;
+  const suppliedTolerance = finiteNumber(toleranceMs);
+  const effectiveToleranceMs = suppliedTolerance == null
+    ? periodBoundaryToleranceMs(mode)
+    : Math.max(0, suppliedTolerance);
+  const current = now < bounds.end + effectiveToleranceMs;
   const trusted = mode === 'weekly' && isTrustedEmailWeekly({
     period_key: periodKey,
     quality_flags: qualityFlags,
@@ -122,10 +135,10 @@ export function evaluatePeriodCompleteness({
   const reasons = [];
   if (current) reasons.push('current_period');
   if (knownGap) reasons.push('known_collection_gap');
-  if (!withinPeriodBoundaryTolerance(firstObservedAt, bounds.start, toleranceMs)) {
+  if (!withinPeriodBoundaryTolerance(firstObservedAt, bounds.start, effectiveToleranceMs)) {
     reasons.push('missing_period_start');
   }
-  if (!withinPeriodBoundaryTolerance(lastObservedAt, bounds.end, toleranceMs)) {
+  if (!withinPeriodBoundaryTolerance(lastObservedAt, bounds.end, effectiveToleranceMs)) {
     reasons.push('missing_period_end');
   }
   return { complete: reasons.length === 0, trusted: false, reasons, bounds };

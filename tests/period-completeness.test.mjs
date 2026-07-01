@@ -3,11 +3,15 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
 import {
+  DAILY_BOUNDARY_TOLERANCE_MS,
+  MONTHLY_BOUNDARY_TOLERANCE_MS,
+  WEEKLY_BOUNDARY_TOLERANCE_MS,
   applySummaryCompleteness,
   applyTrackPeriodCompleteness,
   currentPeriodKey,
   evaluatePeriodCompleteness,
   expectedPeriodBounds,
+  periodBoundaryToleranceMs,
 } from '../site/functions/lib/period-completeness.js';
 
 const AFTER_JULY = Date.parse('2026-07-02T12:00:00Z');
@@ -21,6 +25,56 @@ test('daily period uses UTC boundaries corresponding to 09:00 Japan', () => {
     year: 'numeric', month: '2-digit', day: '2-digit',
     hour: '2-digit', minute: '2-digit', hour12: false,
   }).format(new Date(bounds.start)), '2026-07-01 09:00');
+});
+
+test('daily, weekly, and monthly use their configured boundary tolerances', () => {
+  assert.equal(periodBoundaryToleranceMs('daily'), DAILY_BOUNDARY_TOLERANCE_MS);
+  assert.equal(periodBoundaryToleranceMs('weekly'), WEEKLY_BOUNDARY_TOLERANCE_MS);
+  assert.equal(periodBoundaryToleranceMs('monthly'), MONTHLY_BOUNDARY_TOLERANCE_MS);
+  assert.equal(DAILY_BOUNDARY_TOLERANCE_MS, 15 * 60 * 1000);
+  assert.equal(WEEKLY_BOUNDARY_TOLERANCE_MS, 12 * 60 * 60 * 1000);
+  assert.equal(MONTHLY_BOUNDARY_TOLERANCE_MS, 2 * 86400000);
+});
+
+test('weekly accepts entrance and exit observations within twelve hours', () => {
+  const bounds = expectedPeriodBounds('weekly', '2026-07-06');
+  const result = evaluatePeriodCompleteness({
+    mode: 'weekly',
+    periodKey: '2026-07-06',
+    firstObservedAt: bounds.start - WEEKLY_BOUNDARY_TOLERANCE_MS,
+    lastObservedAt: bounds.end + WEEKLY_BOUNDARY_TOLERANCE_MS,
+    now: bounds.end + WEEKLY_BOUNDARY_TOLERANCE_MS + 1,
+  });
+  assert.equal(result.complete, true);
+});
+
+test('monthly accepts entrance and exit observations within two days', () => {
+  const bounds = expectedPeriodBounds('monthly', '2026-05');
+  const result = evaluatePeriodCompleteness({
+    mode: 'monthly',
+    periodKey: '2026-05',
+    firstObservedAt: bounds.start + MONTHLY_BOUNDARY_TOLERANCE_MS,
+    lastObservedAt: bounds.end - MONTHLY_BOUNDARY_TOLERANCE_MS,
+    now: bounds.end + MONTHLY_BOUNDARY_TOLERANCE_MS + 1,
+  });
+  assert.equal(result.complete, true);
+});
+
+test('weekly and monthly reject evidence beyond their tolerance', () => {
+  for (const [mode, periodKey, tolerance] of [
+    ['weekly', '2026-07-06', WEEKLY_BOUNDARY_TOLERANCE_MS],
+    ['monthly', '2026-05', MONTHLY_BOUNDARY_TOLERANCE_MS],
+  ]) {
+    const bounds = expectedPeriodBounds(mode, periodKey);
+    const result = evaluatePeriodCompleteness({
+      mode,
+      periodKey,
+      firstObservedAt: bounds.start - tolerance - 1,
+      lastObservedAt: bounds.end,
+      now: bounds.end + tolerance + 1,
+    });
+    assert.ok(result.reasons.includes('missing_period_start'));
+  }
 });
 
 test('completed daily period keeps stream growth', () => {
@@ -145,18 +199,32 @@ test('track rows retain details but incomplete dates are marked for total exclus
   assert.deepEqual(result.excludedDates, ['2026-07-02']);
 });
 
-test('history page installs period filters before stable loading and bumps caches', () => {
+test('history page trusts server completeness and installs final runtime optimizations', () => {
   const html = readFileSync(new URL('../site/public/history/index.html', import.meta.url), 'utf8');
   const filterIndex = html.indexOf('/history/history-period-completeness.js');
   const loaderIndex = html.indexOf('/history/history-copy-fixes.js');
   assert.ok(filterIndex >= 0 && filterIndex < loaderIndex);
 
-  const source = readFileSync(
+  const filterSource = readFileSync(
     new URL('../site/public/history/history-period-completeness.js', import.meta.url),
     'utf8',
   );
-  assert.match(source, /この日の延べ曲数（集計対象外）/);
-  assert.match(source, /track-history:v12:/);
-  assert.match(source, /history:v10:/);
-  assert.match(source, /if \(key === mondayJstKey\(\)\) return false/);
+  assert.match(filterSource, /この日の延べ曲数（集計対象外）/);
+  assert.match(filterSource, /track-history:v13:/);
+  assert.match(filterSource, /history:v11:/);
+  assert.doesNotMatch(filterSource, /mondayJstKey|expectedStart|expectedEnd/);
+
+  const loaderSource = readFileSync(
+    new URL('../site/public/history/history-copy-fixes.js', import.meta.url),
+    'utf8',
+  );
+  assert.match(loaderSource, /history-track-likes\.js/);
+
+  const runtimeSource = readFileSync(
+    new URL('../site/public/history/history-track-likes.js', import.meta.url),
+    'utf8',
+  );
+  assert.match(runtimeSource, /updateSummaryRuntimeSinglePass/);
+  assert.match(runtimeSource, /drawRankingSingleIndex/);
+  assert.doesNotMatch(runtimeSource, /rows\.filter\(\(row\).*host_name/s);
 });
