@@ -2,7 +2,11 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { DatabaseSync } from 'node:sqlite';
 
-import { decorateQueueResponse } from '../site/functions/api/dashboard.js';
+import {
+  appendJsonObjectFields,
+  decorateQueueResponse,
+  queueResponseFields,
+} from '../site/functions/api/dashboard.js';
 import {
   DASHBOARD_QUEUE_STATE_SQL,
   hostIdentity,
@@ -55,6 +59,21 @@ test('dashboard queue revision changes only when queue state or metadata changes
   const secondRow = db.prepare(DASHBOARD_QUEUE_STATE_SQL).get();
   const secondRevision = queueRevision(parseQueueState(secondRow), hostIdentity(secondRow));
   assert.notEqual(secondRevision, firstRevision);
+});
+
+test('changed dashboard response appends queue fields without rebuilding the payload', () => {
+  const context = {
+    revision: '20:7:3000:0:2200:6000:2:id:42',
+    state: { total_items: 2 },
+    hostIdentity: 'id:42',
+    unchanged: false,
+  };
+  const source = JSON.stringify({ ok: true, history: [{ observed_at: 1 }], queue: [{ title: 'track' }] });
+  const result = JSON.parse(appendJsonObjectFields(source, queueResponseFields(context)));
+  assert.deepEqual(result.history, [{ observed_at: 1 }]);
+  assert.deepEqual(result.queue, [{ title: 'track' }]);
+  assert.equal(result.queue_revision, context.revision);
+  assert.equal(result.queue_unchanged, false);
 });
 
 test('unchanged dashboard queue response omits rows but keeps playback status', () => {
