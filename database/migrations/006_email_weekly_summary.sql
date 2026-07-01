@@ -31,13 +31,13 @@ BEGIN
     period_end=MAX(sh_weekly_summary.period_end,excluded.period_end),
     stream_start=COALESCE(excluded.stream_start,sh_weekly_summary.stream_start),
     stream_end=excluded.stream_end,
-    stream_growth=CASE
+    stream_growth= CASE
       WHEN COALESCE(excluded.stream_start,sh_weekly_summary.stream_start) IS NOT NULL
        AND excluded.stream_end>=COALESCE(excluded.stream_start,sh_weekly_summary.stream_start)
       THEN excluded.stream_end-COALESCE(excluded.stream_start,sh_weekly_summary.stream_start)
       ELSE sh_weekly_summary.stream_growth END ,
     quality_score=MAX(COALESCE(sh_weekly_summary.quality_score,0),excluded.quality_score),
-    quality_flags=CASE
+    quality_flags= CASE
       WHEN instr(COALESCE(sh_weekly_summary.quality_flags,''),'stationhead_email_recap')>0
         THEN sh_weekly_summary.quality_flags
       WHEN json_valid(sh_weekly_summary.quality_flags)
@@ -76,13 +76,13 @@ BEGIN
     period_end=MAX(sh_weekly_summary.period_end,excluded.period_end),
     stream_start=COALESCE(excluded.stream_start,sh_weekly_summary.stream_start),
     stream_end=excluded.stream_end,
-    stream_growth=CASE
+    stream_growth= CASE
       WHEN COALESCE(excluded.stream_start,sh_weekly_summary.stream_start) IS NOT NULL
        AND excluded.stream_end>=COALESCE(excluded.stream_start,sh_weekly_summary.stream_start)
       THEN excluded.stream_end-COALESCE(excluded.stream_start,sh_weekly_summary.stream_start)
       ELSE sh_weekly_summary.stream_growth END ,
     quality_score=MAX(COALESCE(sh_weekly_summary.quality_score,0),excluded.quality_score),
-    quality_flags=CASE
+    quality_flags= CASE
       WHEN instr(COALESCE(sh_weekly_summary.quality_flags,''),'stationhead_email_recap')>0
         THEN sh_weekly_summary.quality_flags
       WHEN json_valid(sh_weekly_summary.quality_flags)
