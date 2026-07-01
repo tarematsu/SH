@@ -11,6 +11,33 @@ const SUMMARY_COLUMNS = `period_key,period_start,period_end,sample_count,reliabl
 listener_avg,listener_min,listener_max,stream_start,stream_end,stream_growth,
 member_start,member_end,member_growth,likes_max,distinct_tracks,primary_host,
 quality_score,quality_flags`;
+const HISTORY_CACHE_MAX = 32;
+const historyLoadCache = new Map();
+
+export async function cachedHistoryLoad(key, ttlMs, loader, now = Date.now()) {
+  const cached = historyLoadCache.get(key);
+  if (cached?.expiresAt > now && Object.hasOwn(cached, 'value')) return cached.value;
+  if (cached?.pending) return cached.pending;
+
+  const entry = cached || {};
+  entry.pending = Promise.resolve().then(loader).then((value) => {
+    entry.value = value;
+    entry.expiresAt = Date.now() + ttlMs;
+    return value;
+  }).catch((error) => {
+    historyLoadCache.delete(key);
+    throw error;
+  }).finally(() => { entry.pending = null; });
+  historyLoadCache.set(key, entry);
+  while (historyLoadCache.size > HISTORY_CACHE_MAX) {
+    historyLoadCache.delete(historyLoadCache.keys().next().value);
+  }
+  return entry.pending;
+}
+
+export function resetHistoryLoadCache() {
+  historyLoadCache.clear();
+}
 
 function parseDateStart(value, fallback) {
   const text = /^\d{4}-\d{2}-\d{2}$/.test(value || '') ? value : fallback;
@@ -160,7 +187,7 @@ export const BROADCAST_SUMMARY_SQL = `SELECT source_note AS event_name,MIN(obser
   WHERE observed_at>=? AND observed_at<? AND host_handle='sakurazaka46jp' AND source_note IS NOT NULL
   GROUP BY source_note,host_handle ORDER BY started_at ASC`;
 
-async function loadBroadcasts(env, from, to) {
+async function loadBroadcastPayload(env, from, to) {
   const fromTs = parseDateStart(from, '2024-06-01');
   const toTs = addDays(parseDateStart(to, todayJstString()), 1);
   const result = await env.DB.prepare(BROADCAST_SUMMARY_SQL).bind(fromTs, toTs).all();
@@ -171,11 +198,20 @@ async function loadBroadcasts(env, from, to) {
       WHERE host_handle='sakurazaka46jp' AND source_note IS NOT NULL LIMIT 1`).first();
     setupRequired = !existence?.has_data;
   }
-  return json({
+  return {
     ok: true, mode: 'broadcasts', from, to, rows,
     setup_required: setupRequired,
     diagnostic: { imported_rows: null, imported_events: null, first_observed_jst: null, last_observed_jst: null },
-  }, 200, { 'cache-control': 'public, max-age=30, s-maxage=60, stale-while-revalidate=120' });
+  };
+}
+
+async function loadBroadcasts(env, from, to) {
+  const payload = await cachedHistoryLoad(
+    `broadcasts:v1:${from}:${to}`,
+    30000,
+    () => loadBroadcastPayload(env, from, to),
+  );
+  return json(payload, 200, { 'cache-control': 'public, max-age=30, s-maxage=60, stale-while-revalidate=120' });
 }
 
 export async function onRequestGet(context) {
@@ -187,7 +223,11 @@ export async function onRequestGet(context) {
   const to = url.searchParams.get('to') || todayJstString();
   try {
     if (Object.hasOwn(SUMMARY_TABLES, mode)) {
-      const summary = await loadSummaryWithLive(env, mode, from, to);
+      const summary = await cachedHistoryLoad(
+        `summary:v1:${mode}:${from}:${to}`,
+        30000,
+        () => loadSummaryWithLive(env, mode, from, to),
+      );
       return json({ ok: true, mode, from, to, ...summary }, 200, {
         'cache-control': 'public, max-age=30, s-maxage=60, stale-while-revalidate=120',
       });

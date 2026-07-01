@@ -28,9 +28,6 @@ export {
 };
 
 const cache = { value: null, expiresAt: 0, pending: null };
-const normalize = (value) => String(value || '').replace(/\s+/g, ' ').trim();
-const predictionSql = normalize(PREDICTION_24H_SQL);
-const queueSql = normalize(LATEST_QUEUE_WITH_ITEMS_SQL);
 
 export async function cachedPrediction(statement, now = Date.now()) {
   if (cache.value && cache.expiresAt > now) return cache.value;
@@ -81,13 +78,21 @@ async function loadDashboardQueue(statement, db, queueContext) {
   return statement.all();
 }
 
+function captureHostIdentity(value, queueContext) {
+  const identity = hostIdentity(value);
+  if (identity) queueContext.hostIdentity = identity;
+  return value;
+}
+
 function proxyStatement(statement, sql, db, queueContext) {
-  const normalized = normalize(sql);
   return new Proxy(statement, {
     get(target, property) {
-      if (normalized === predictionSql && property === 'first') return () => cachedPrediction(target);
-      if (normalized === queueSql && property === 'all') {
+      if (sql === PREDICTION_24H_SQL && property === 'first') return () => cachedPrediction(target);
+      if (sql === LATEST_QUEUE_WITH_ITEMS_SQL && property === 'all') {
         return () => loadDashboardQueue(target, db, queueContext);
+      }
+      if (property === 'first') {
+        return async (...args) => captureHostIdentity(await target.first(...args), queueContext);
       }
       const value = Reflect.get(target, property, target);
       return typeof value === 'function' ? value.bind(target) : value;
@@ -107,17 +112,27 @@ function proxyDatabase(db, queueContext) {
   });
 }
 
-export function decorateQueueResponse(payload, queueContext) {
-  if (!payload?.ok) return payload;
-  const identity = queueContext.hostIdentity || hostIdentity(payload.latest);
-  const revision = queueContext.revision || queueRevision(queueContext.state, identity);
-  const result = {
-    ...payload,
-    queue_revision: revision,
+export function queueResponseFields(queueContext) {
+  return {
+    queue_revision: queueContext.revision
+      || queueRevision(queueContext.state, queueContext.hostIdentity),
     queue_unchanged: Boolean(queueContext.unchanged),
   };
-  if (!queueContext.unchanged) return result;
+}
 
+export function appendJsonObjectFields(body, fields) {
+  const text = String(body || '');
+  const trimmed = text.trim();
+  const encoded = JSON.stringify(fields || {}).slice(1, -1);
+  if (!encoded || !trimmed.startsWith('{') || !trimmed.endsWith('}')) return text;
+  const closing = text.lastIndexOf('}');
+  return `${text.slice(0, closing)}${trimmed === '{}' ? '' : ','}${encoded}${text.slice(closing)}`;
+}
+
+export function decorateQueueResponse(payload, queueContext) {
+  if (!payload?.ok) return payload;
+  const result = { ...payload, ...queueResponseFields(queueContext) };
+  if (!queueContext.unchanged) return result;
   result.queue = [];
   if (result.queue_status) {
     result.queue_status = {
@@ -145,10 +160,14 @@ export async function onRequestGet(context) {
     ...context,
     env: { ...context.env, DB: proxyDatabase(context.env.DB, queueContext) },
   });
-  const payload = await response.clone().json().catch(() => null);
-  if (!payload) return response;
-  return new Response(JSON.stringify(decorateQueueResponse(payload, queueContext)), {
+  if (!response.ok) return response;
+  const body = await response.text();
+  const output = queueContext.unchanged
+    ? JSON.stringify(decorateQueueResponse(JSON.parse(body), queueContext))
+    : appendJsonObjectFields(body, queueResponseFields(queueContext));
+  return new Response(output, {
     status: response.status,
+    statusText: response.statusText,
     headers: response.headers,
   });
 }
