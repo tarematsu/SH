@@ -98,23 +98,32 @@ test('track likes use one D1 batch and preserve newest source row', async () => 
   assert.equal(spotify.source, 'collector');
 });
 
-test('host summary loads three result sets in one D1 batch', async () => {
-  let batchCalls = 0;
+test('host summary loads profile, active session and recent sessions in one D1 statement', async () => {
+  let prepareCalls = 0;
+  let allCalls = 0;
   const db = {
-    prepare(sql) { return { sql }; },
-    async batch(statements) {
-      batchCalls += 1;
-      assert.equal(statements.length, 3);
-      return [
-        { results: [{ handle: 'sakuramankai', followers: 1 }] },
-        { results: [{ handle: 'sakurazaka46jp', status: 'active' }] },
-        { results: [{ id: 2 }, { id: 1 }] },
-      ];
+    prepare(sql) {
+      prepareCalls += 1;
+      assert.match(sql, /WITH profile AS/);
+      assert.match(sql, /active_session AS/);
+      assert.match(sql, /recent_sessions AS/);
+      return {
+        async all() {
+          allCalls += 1;
+          return { results: [
+            { result_kind: 0, handle: 'sakuramankai', followers: 1 },
+            { result_kind: 1, id: 3, handle: 'sakurazaka46jp', status: 'active' },
+            { result_kind: 2, id: 2, handle: 'sakurazaka46jp' },
+            { result_kind: 2, id: 1, handle: 'sakurazaka46jp' },
+          ] };
+        },
+      };
     },
   };
 
   const summary = await loadHostSummary(db);
-  assert.equal(batchCalls, 1);
+  assert.equal(prepareCalls, 1);
+  assert.equal(allCalls, 1);
   assert.equal(summary.latestProfile.handle, 'sakuramankai');
   assert.equal(summary.activeSession.status, 'active');
   assert.deepEqual(summary.recentSessions.map((row) => row.id), [2, 1]);

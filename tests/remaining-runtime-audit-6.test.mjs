@@ -115,20 +115,23 @@ test('dashboard latest row and unchanged queue share one context query', async (
   assert.equal(queueResult.results[0].queue_id, 31);
 });
 
-test('host summary cache coalesces concurrent D1 batches per binding', async () => {
+test('host summary cache coalesces concurrent single-statement D1 loads per binding', async () => {
   resetHostSummaryCache();
-  let batches = 0;
+  let loads = 0;
   const db = {
-    prepare(sql) { return { sql }; },
-    async batch(statements) {
-      batches += 1;
-      assert.equal(statements.length, 3);
-      await new Promise((resolve) => setTimeout(resolve, 5));
-      return [
-        { results: [{ handle: 'sakuramankai', followers: 100 }] },
-        { results: [{ handle: 'sakurazaka46jp', status: 'active' }] },
-        { results: [{ id: 1 }, { id: 2 }] },
-      ];
+    prepare() {
+      return {
+        async all() {
+          loads += 1;
+          await new Promise((resolve) => setTimeout(resolve, 5));
+          return { results: [
+            { result_kind: 0, handle: 'sakuramankai', followers: 100 },
+            { result_kind: 1, id: 3, handle: 'sakurazaka46jp', status: 'active' },
+            { result_kind: 2, id: 1, handle: 'sakurazaka46jp' },
+            { result_kind: 2, id: 2, handle: 'sakurazaka46jp' },
+          ] };
+        },
+      };
     },
   };
 
@@ -137,9 +140,9 @@ test('host summary cache coalesces concurrent D1 batches per binding', async () 
     cachedHostSummary(db),
   ]);
   assert.strictEqual(first, second);
-  assert.equal(batches, 1);
+  assert.equal(loads, 1);
   assert.strictEqual(await cachedHostSummary(db), first);
-  assert.equal(batches, 1);
+  assert.equal(loads, 1);
 });
 
 test('main chart uses shared formatters, single-pass preparation and differential DOM updates', () => {

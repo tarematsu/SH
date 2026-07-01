@@ -269,10 +269,10 @@
     }).observe(guide, { childList: true, subtree: true, characterData: true });
   }
 
-  const likesScript = document.createElement('script');
-  likesScript.src = '/history/history-track-likes.js';
   const initialLoad = () => load();
-  likesScript.addEventListener('load', initialLoad, { once: true });
-  likesScript.addEventListener('error', initialLoad, { once: true });
-  document.head.appendChild(likesScript);
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', initialLoad, { once: true });
+  } else {
+    queueMicrotask(initialLoad);
+  }
 })();

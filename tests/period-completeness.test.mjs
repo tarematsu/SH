@@ -203,7 +203,9 @@ test('history page trusts server completeness and installs final runtime optimiz
   const html = readFileSync(new URL('../site/public/history/index.html', import.meta.url), 'utf8');
   const filterIndex = html.indexOf('/history/history-period-completeness.js');
   const loaderIndex = html.indexOf('/history/history-copy-fixes.js');
+  const likesIndex = html.indexOf('/history/history-track-likes.js');
   assert.ok(filterIndex >= 0 && filterIndex < loaderIndex);
+  assert.ok(loaderIndex < likesIndex);
 
   const filterSource = readFileSync(
     new URL('../site/public/history/history-period-completeness.js', import.meta.url),
@@ -218,7 +220,8 @@ test('history page trusts server completeness and installs final runtime optimiz
     new URL('../site/public/history/history-copy-fixes.js', import.meta.url),
     'utf8',
   );
-  assert.match(loaderSource, /history-track-likes\.js/);
+  assert.match(loaderSource, /DOMContentLoaded/);
+  assert.doesNotMatch(loaderSource, /createElement\('script'\)/);
 
   const runtimeSource = readFileSync(
     new URL('../site/public/history/history-track-likes.js', import.meta.url),
