@@ -242,7 +242,7 @@
     return { model: rankingModel, rebuilt: true };
   }
 
-  drawRanking = function drawRankingCachedModel(rows, selected = null) {
+  drawRanking = function drawRankingSingleIndex(rows, selected = null) {
     const values = Array.isArray(rows) ? rows : [];
     const { model, rebuilt } = rankingModelFor(values);
     const { weeks, series, maxRank, ticks } = model;
