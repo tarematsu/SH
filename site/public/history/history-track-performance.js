@@ -8,8 +8,6 @@
   const dateTimeFormatter = new Intl.DateTimeFormat('ja-JP', {
     year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit',
   });
-  const previousReadCache = readCache;
-  const previousWriteCache = writeCache;
 
   function boundaryCacheKey(key) {
     return String(key || '')
@@ -17,13 +15,16 @@
       .replace(/^history:v10:/, 'history:v11:');
   }
 
-  readCache = function readBoundaryCache(key) {
-    return previousReadCache(boundaryCacheKey(key));
-  };
-
-  writeCache = function writeBoundaryCache(key, data) {
-    return previousWriteCache(boundaryCacheKey(key), data);
-  };
+  if (typeof readCache === 'function' && typeof writeCache === 'function') {
+    const previousReadCache = readCache;
+    const previousWriteCache = writeCache;
+    readCache = function readBoundaryCache(key) {
+      return previousReadCache(boundaryCacheKey(key));
+    };
+    writeCache = function writeBoundaryCache(key, data) {
+      return previousWriteCache(boundaryCacheKey(key), data);
+    };
+  }
 
   function numberText(value) {
     const number = finiteNumber(value);
