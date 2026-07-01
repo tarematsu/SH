@@ -22,7 +22,7 @@ BEGIN
         WHERE week_of=date(NEW.week_of,'-7 days') LIMIT 1) IS NOT NULL
       THEN NEW.stream_count-(SELECT stream_count FROM sh_email_stream_snapshots
         WHERE week_of=date(NEW.week_of,'-7 days') LIMIT 1)
-      ELSE NULL END,
+      ELSE NULL END ,
     NULL,NULL,NULL,NULL,NULL,NULL,
     0.95,'["stationhead_email_recap"]',
     CAST(strftime('%s','now') AS INTEGER)*1000
@@ -35,14 +35,14 @@ BEGIN
       WHEN COALESCE(excluded.stream_start,sh_weekly_summary.stream_start) IS NOT NULL
        AND excluded.stream_end>=COALESCE(excluded.stream_start,sh_weekly_summary.stream_start)
       THEN excluded.stream_end-COALESCE(excluded.stream_start,sh_weekly_summary.stream_start)
-      ELSE sh_weekly_summary.stream_growth END,
+      ELSE sh_weekly_summary.stream_growth END ,
     quality_score=MAX(COALESCE(sh_weekly_summary.quality_score,0),excluded.quality_score),
     quality_flags=CASE
       WHEN instr(COALESCE(sh_weekly_summary.quality_flags,''),'stationhead_email_recap')>0
         THEN sh_weekly_summary.quality_flags
       WHEN json_valid(sh_weekly_summary.quality_flags)
         THEN json_insert(sh_weekly_summary.quality_flags,'$[#]','stationhead_email_recap')
-      ELSE excluded.quality_flags END,
+      ELSE excluded.quality_flags END ,
     updated_at=excluded.updated_at;
 END;
 
@@ -67,7 +67,7 @@ BEGIN
         WHERE week_of=date(NEW.week_of,'-7 days') LIMIT 1) IS NOT NULL
       THEN NEW.stream_count-(SELECT stream_count FROM sh_email_stream_snapshots
         WHERE week_of=date(NEW.week_of,'-7 days') LIMIT 1)
-      ELSE NULL END,
+      ELSE NULL END ,
     NULL,NULL,NULL,NULL,NULL,NULL,
     0.95,'["stationhead_email_recap"]',
     CAST(strftime('%s','now') AS INTEGER)*1000
@@ -80,14 +80,14 @@ BEGIN
       WHEN COALESCE(excluded.stream_start,sh_weekly_summary.stream_start) IS NOT NULL
        AND excluded.stream_end>=COALESCE(excluded.stream_start,sh_weekly_summary.stream_start)
       THEN excluded.stream_end-COALESCE(excluded.stream_start,sh_weekly_summary.stream_start)
-      ELSE sh_weekly_summary.stream_growth END,
+      ELSE sh_weekly_summary.stream_growth END ,
     quality_score=MAX(COALESCE(sh_weekly_summary.quality_score,0),excluded.quality_score),
     quality_flags=CASE
       WHEN instr(COALESCE(sh_weekly_summary.quality_flags,''),'stationhead_email_recap')>0
         THEN sh_weekly_summary.quality_flags
       WHEN json_valid(sh_weekly_summary.quality_flags)
         THEN json_insert(sh_weekly_summary.quality_flags,'$[#]','stationhead_email_recap')
-      ELSE excluded.quality_flags END,
+      ELSE excluded.quality_flags END ,
     updated_at=excluded.updated_at;
 END;
 
