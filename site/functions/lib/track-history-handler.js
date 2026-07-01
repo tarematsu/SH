@@ -98,29 +98,27 @@ export const TRACK_HISTORY_SQL = `WITH snapshot_evidence AS (
         CAST(strftime('%s', play_date) AS INTEGER) * 1000 AS period_start,
         CAST(strftime('%s', play_date) AS INTEGER) * 1000 + 86400000 AS period_end
       FROM plays
+    ), coverage_range AS (
+      SELECT ? AS range_start,? AS range_end
     ), coverage_boundaries AS (
       SELECT play_date,'start' AS boundary_name,period_start AS target_at FROM play_days
       UNION ALL
       SELECT play_date,'end' AS boundary_name,period_end AS target_at FROM play_days
     ), coverage_candidates AS (
       SELECT boundaries.play_date,boundaries.boundary_name,boundaries.target_at,
-        snapshots.observed_at,0 AS source_priority,snapshots.id AS source_id
+        snapshots.observed_at,snapshots.id AS source_id
       FROM coverage_boundaries boundaries
       JOIN sh_channel_snapshots snapshots
         ON snapshots.observed_at BETWEEN boundaries.target_at-${PERIOD_BOUNDARY_TOLERANCE_MS}
           AND boundaries.target_at+${PERIOD_BOUNDARY_TOLERANCE_MS}
-      UNION ALL
-      SELECT boundaries.play_date,boundaries.boundary_name,boundaries.target_at,
-        legacy.observed_at,1 AS source_priority,legacy.id AS source_id
-      FROM coverage_boundaries boundaries
-      JOIN sh_legacy_snapshots legacy
-        ON legacy.observed_at BETWEEN boundaries.target_at-${PERIOD_BOUNDARY_TOLERANCE_MS}
-          AND boundaries.target_at+${PERIOD_BOUNDARY_TOLERANCE_MS}
+      JOIN coverage_range range
+        ON snapshots.observed_at >= range.range_start-${PERIOD_BOUNDARY_TOLERANCE_MS}
+          AND snapshots.observed_at <= range.range_end+${PERIOD_BOUNDARY_TOLERANCE_MS}
     ), coverage_ranked AS (
       SELECT coverage_candidates.*,
         ROW_NUMBER() OVER (
           PARTITION BY play_date,boundary_name
-          ORDER BY ABS(observed_at-target_at),source_priority,
+          ORDER BY ABS(observed_at-target_at),
             CASE WHEN boundary_name='start' THEN -observed_at ELSE observed_at END,source_id
         ) AS boundary_rank
       FROM coverage_candidates
@@ -170,6 +168,7 @@ function trackHistoryStatement(db, fromTs, toTs, maxGroupedRows) {
     toTs,
     fromTs, toTs,
     TRACK_HISTORY_GRACE_MS,
+    fromTs, toTs,
     maxGroupedRows + 1,
   );
 }
