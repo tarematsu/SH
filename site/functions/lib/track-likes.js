@@ -95,14 +95,22 @@ function primaryIdentity(row) {
   return `unknown:${row?.source || ''}:${row?.observed_at || ''}`;
 }
 
-export function compactTrackLikeRows(rows) {
+export function compactTrackLikeSources(sources) {
   const compact = new Map();
-  for (const row of rows || []) {
-    const key = `${row?.play_date || ''}|${primaryIdentity(row)}`;
-    const previous = compact.get(key);
-    if (!previous || Number(row?.observed_at || 0) >= Number(previous?.observed_at || 0)) compact.set(key, row);
+  for (const rows of sources || []) {
+    for (const row of rows || []) {
+      const key = `${row?.play_date || ''}|${primaryIdentity(row)}`;
+      const previous = compact.get(key);
+      if (!previous || Number(row?.observed_at || 0) >= Number(previous?.observed_at || 0)) {
+        compact.set(key, row);
+      }
+    }
   }
   return [...compact.values()].sort((a, b) => Number(a?.observed_at || 0) - Number(b?.observed_at || 0));
+}
+
+export function compactTrackLikeRows(rows) {
+  return compactTrackLikeSources([rows]);
 }
 
 export async function loadTrackLikeRows(db, fromTs, toTs) {
@@ -111,25 +119,33 @@ export async function loadTrackLikeRows(db, fromTs, toTs) {
     optionalRows(db.prepare(TRACK_LIKE_QUEUE_SQL).bind(fromTs, toTs)),
     optionalRows(db.prepare(TRACK_LIKE_HISTORY_SQL).bind(fromTs, toTs)),
   ]);
-  return compactTrackLikeRows([...historical, ...queue, ...realtime]);
+  return compactTrackLikeSources([historical, queue, realtime]);
 }
 
 function identityKeys(row) {
   const keys = [];
+  const seen = new Set();
+  const add = (key) => {
+    if (!key || seen.has(key)) return;
+    seen.add(key);
+    keys.push(key);
+  };
   const addId = (value) => {
     const id = idValue(value);
-    if (id) keys.push(`id:${id}`);
+    if (id) add(`id:${id}`);
   };
   for (const value of row?.source_ids || []) addId(value);
   for (const key of ['spotify_id', 'apple_music_id', 'isrc', 'stationhead_track_id', 'queue_track_id']) addId(row?.[key]);
-  if (row?.title) keys.push(`name:${canonical(row.title)}|artist:${canonical(row.artist)}`);
-  if (row?.title) keys.push(`name:${canonical(row.title)}`);
-  return [...new Set(keys)];
+  if (row?.title) {
+    add(`name:${canonical(row.title)}|artist:${canonical(row.artist)}`);
+    add(`name:${canonical(row.title)}`);
+  }
+  return keys;
 }
 
-export function attachTrackLikes(trackRows, likeRows) {
+export function attachCompactTrackLikes(trackRows, compactRows) {
   const likes = new Map();
-  for (const row of compactTrackLikeRows(likeRows)) {
+  for (const row of compactRows || []) {
     for (const key of identityKeys(row)) likes.set(`${row.play_date}|${key}`, row.like_count);
   }
   return (trackRows || []).map((row) => {
@@ -143,4 +159,8 @@ export function attachTrackLikes(trackRows, likeRows) {
     }
     return { ...row, like_count: Number.isFinite(likeCount) ? likeCount : null };
   });
+}
+
+export function attachTrackLikes(trackRows, likeRows) {
+  return attachCompactTrackLikes(trackRows, compactTrackLikeRows(likeRows));
 }
