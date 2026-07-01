@@ -33,6 +33,28 @@ test('live history is aggregated inside SQLite by JST period', () => {
   assert.equal(rows[1].primary_host, 'b');
 });
 
+test('live summary selects boundary values in one ranked scan', () => {
+  const db = new DatabaseSync(':memory:');
+  db.exec(`CREATE TABLE sh_channel_snapshots(
+    id INTEGER PRIMARY KEY, observed_at INTEGER NOT NULL, listener_count INTEGER,
+    total_member_count INTEGER,total_listens INTEGER,current_stream_count INTEGER,host_handle TEXT
+  )`);
+  const insert = db.prepare('INSERT INTO sh_channel_snapshots VALUES(?,?,?,?,?,?,?)');
+  insert.run(1, 1000, 1, null, null, null, 'a');
+  insert.run(2, 2000, 2, 100, 10, null, 'a');
+  insert.run(3, 2000, 3, 101, 11, null, 'a');
+  insert.run(4, 3000, 4, 110, 20, null, 'b');
+
+  const sql = liveSummarySql('daily');
+  assert.doesNotMatch(sql, /SELECT stream_value FROM prepared/);
+  assert.doesNotMatch(sql, /SELECT total_member_count FROM prepared/);
+  const row = db.prepare(sql).get(0, 86400000, 10);
+  assert.equal(row.stream_start, 10);
+  assert.equal(row.stream_end, 20);
+  assert.equal(row.member_start, 100);
+  assert.equal(row.member_end, 110);
+});
+
 test('broadcast summary returns minimum listener without a second series query', () => {
   const db = new DatabaseSync(':memory:');
   db.exec(`CREATE TABLE sh_legacy_snapshots(

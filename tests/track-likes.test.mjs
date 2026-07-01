@@ -7,6 +7,8 @@ import {
   TRACK_LIKE_QUEUE_SQL,
   TRACK_LIKE_HISTORY_SQL,
   compactTrackLikeRows,
+  compactTrackLikeSources,
+  attachCompactTrackLikes,
   attachTrackLikes,
 } from '../site/functions/lib/track-likes.js';
 
@@ -76,17 +78,30 @@ test('like queries return only the latest observation for each UTC day and track
   assert.equal(historical[0].like_count, 4);
 });
 
-test('track rows receive the newest compatible like value without a second browser request', () => {
-  const likeRows = compactTrackLikeRows([
+test('multiple like sources compact without a concatenated intermediate array', () => {
+  const rows = compactTrackLikeSources([
+    [{ play_date: '1970-01-01', spotify_id: 'spotify-1', like_count: 3, observed_at: 1000 }],
+    [{ play_date: '1970-01-01', spotify_id: 'spotify-1', like_count: 5, observed_at: 2000 }],
+    [{ play_date: '1970-01-01', title: 'Legacy', artist: 'Artist', like_count: 4, observed_at: 3000 }],
+  ]);
+  assert.equal(rows.length, 2);
+  assert.equal(rows.find((row) => row.spotify_id)?.like_count, 5);
+});
+
+test('track rows receive already compacted like values without compacting again', () => {
+  const compactRows = compactTrackLikeRows([
     { play_date: '1970-01-01', spotify_id: 'spotify-1', like_count: 5, observed_at: 2000 },
     { play_date: '1970-01-01', spotify_id: 'spotify-1', like_count: 7, observed_at: 3000 },
     { play_date: '1970-01-01', title: 'Legacy', artist: 'Artist', like_count: 4, observed_at: 4000 },
   ]);
-  const rows = attachTrackLikes([
+  const tracks = [
     { play_date: '1970-01-01', title: 'Song', artist: 'Artist', source_ids: ['spotify-1'] },
     { play_date: '1970-01-01', title: 'Legacy', artist: 'Artist', source_ids: [] },
-  ], likeRows);
+  ];
+  const directRows = attachCompactTrackLikes(tracks, compactRows);
+  const compatibilityRows = attachTrackLikes(tracks, compactRows);
 
-  assert.equal(rows[0].like_count, 7);
-  assert.equal(rows[1].like_count, 4);
+  assert.equal(directRows[0].like_count, 7);
+  assert.equal(directRows[1].like_count, 4);
+  assert.deepEqual(directRows, compatibilityRows);
 });
