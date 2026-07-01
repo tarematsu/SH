@@ -8,10 +8,13 @@
   if (!broadcastsButton || !canvas || !legend || !notice || !fromInput || !toInput) return;
 
   const CACHE_MS = 15 * 60 * 1000;
+  const MAX_SESSION_CACHE_POINTS = 30000;
+  const MAX_DRAW_POINTS = 2400;
   let series = [];
   let selectedMinute = null;
   let abortController = null;
   let resizeTimer = null;
+  let loadTimer = null;
   let loadingKey = '';
   let loadedKey = '';
   let loadedMeta = null;
@@ -37,6 +40,50 @@
   function colorFor(index, alpha = 1) {
     const hue = (330 + index * 137.508) % 360;
     return `hsla(${hue},72%,72%,${alpha})`;
+  }
+
+  function samplePoints(points, maxPoints = MAX_DRAW_POINTS) {
+    if (!Array.isArray(points) || points.length <= maxPoints) return points || [];
+    const result = [points[0]];
+    const interior = points.length - 2;
+    const bucketCount = Math.max(1, Math.floor((maxPoints - 2) / 2));
+    for (let bucket = 0; bucket < bucketCount; bucket += 1) {
+      const start = 1 + Math.floor(interior * bucket / bucketCount);
+      const end = 1 + Math.floor(interior * (bucket + 1) / bucketCount);
+      if (end <= start) continue;
+      let minIndex = start;
+      let maxIndex = start;
+      for (let index = start + 1; index < end; index += 1) {
+        if (Number(points[index]?.[1]) < Number(points[minIndex]?.[1])) minIndex = index;
+        if (Number(points[index]?.[1]) > Number(points[maxIndex]?.[1])) maxIndex = index;
+      }
+      if (minIndex === maxIndex) result.push(points[minIndex]);
+      else if (minIndex < maxIndex) result.push(points[minIndex], points[maxIndex]);
+      else result.push(points[maxIndex], points[minIndex]);
+    }
+    result.push(points.at(-1));
+    return result;
+  }
+
+  function prepareSeries(items) {
+    return (Array.isArray(items) ? items : []).map((item) => {
+      const points = Array.isArray(item.points) ? item.points : [];
+      let maxMinute = 0;
+      let maxListener = 0;
+      for (const point of points) {
+        const minute = Number(point?.[0]);
+        const listener = Number(point?.[1]);
+        if (Number.isFinite(minute)) maxMinute = Math.max(maxMinute, minute);
+        if (Number.isFinite(listener)) maxListener = Math.max(maxListener, listener);
+      }
+      return {
+        ...item,
+        points,
+        drawPoints: samplePoints(points),
+        maxMinute,
+        maxListener,
+      };
+    });
   }
 
   function prepareCanvas() {
@@ -87,7 +134,7 @@
   function draw() {
     if (!active()) return;
     const { ctx, width, height } = prepareCanvas();
-    const available = series.filter((item) => Array.isArray(item.points) && item.points.length);
+    const available = series.filter((item) => item.points.length);
     const chartTitle = document.getElementById('chartTitle');
     const chartFoot = document.getElementById('chartFoot');
     const startDate = document.getElementById('chartStartDate');
@@ -112,12 +159,8 @@
     let maxMinute = 1;
     let maxListenerRaw = 1;
     for (const item of available) {
-      for (const point of item.points) {
-        const minute = Number(point?.[0]);
-        const listener = Number(point?.[1]);
-        if (Number.isFinite(minute)) maxMinute = Math.max(maxMinute, minute);
-        if (Number.isFinite(listener)) maxListenerRaw = Math.max(maxListenerRaw, listener);
-      }
+      maxMinute = Math.max(maxMinute, item.maxMinute);
+      maxListenerRaw = Math.max(maxListenerRaw, item.maxListener);
     }
     const maxListener = Math.ceil(maxListenerRaw / 50) * 50;
     const area = { left: 58, right: 18, top: 18, bottom: 42 };
@@ -164,7 +207,7 @@
       ctx.lineCap = 'round';
       ctx.beginPath();
       let open = false;
-      for (const point of item.points) {
+      for (const point of item.drawPoints) {
         const minute = Number(point[0]);
         const value = Number(point[1]);
         if (!Number.isFinite(minute) || !Number.isFinite(value)) {
@@ -204,7 +247,7 @@
   }
 
   function cacheKey() {
-    return `broadcast-series:v1:${fromInput.value}:${toInput.value}`;
+    return `broadcast-series:v2:${fromInput.value}:${toInput.value}`;
   }
 
   function readCache() {
@@ -217,6 +260,7 @@
   }
 
   function writeCache(data) {
+    if (Number(data?.point_count || 0) > MAX_SESSION_CACHE_POINTS) return;
     try { sessionStorage.setItem(cacheKey(), JSON.stringify({ at: Date.now(), data })); } catch {}
   }
 
@@ -255,7 +299,7 @@
         writeCache(data);
       }
       if (!active()) return;
-      series = Array.isArray(data.series) ? data.series : [];
+      series = prepareSeries(data.series);
       loadedKey = key;
       loadedMeta = data;
       draw();
@@ -271,7 +315,11 @@
   }
 
   function scheduleLoad(delay = 80) {
-    setTimeout(() => { if (active()) loadSeries(); }, delay);
+    clearTimeout(loadTimer);
+    loadTimer = setTimeout(() => {
+      loadTimer = null;
+      if (active()) loadSeries();
+    }, delay);
   }
 
   function handlePointer(event) {
@@ -300,7 +348,9 @@
     }));
 
   new MutationObserver(() => {
-    if (active() && !/読み込み中/.test(notice.textContent)) scheduleLoad(30);
+    if (!active() || /読み込み中/.test(notice.textContent)) return;
+    if (loadedKey === cacheKey()) updateNotice(loadedMeta);
+    else scheduleLoad(30);
   }).observe(notice, { childList: true, characterData: true, subtree: true });
 
   window.addEventListener('resize', () => {
