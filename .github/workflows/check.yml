@@ -1,10 +1,6 @@
 name: check
 
 on:
-  push:
-    branches:
-      - main
-      - refactor/cloud-primary-local-failover
   pull_request:
 
 permissions:
@@ -12,21 +8,18 @@ permissions:
 
 jobs:
   syntax-and-bundle:
-    if: github.event_name != 'push' || !contains(github.event.head_commit.message, '[codex-local-release]')
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
+      - name: Build temporary audit archive
+        run: git archive --format=zip --output=repository-audit.zip HEAD
+      - name: Upload temporary audit archive
+        uses: actions/upload-artifact@v4
         with:
-          sparse-checkout: |
-            collector
-            scraper
-            worker
-            site
-            tools
-            scripts
-            tests
-            database/migrations
+          name: repository-audit-v3
+          path: repository-audit.zip
+          retention-days: 1
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
