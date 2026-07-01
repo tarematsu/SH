@@ -143,7 +143,7 @@ async function ingest(env, type, data, observedAt) {
     const body = await response.text().catch(() => '');
     throw new Error(`D1 ingest failed ${response.status}: ${body.slice(0, 500)}`);
   }
-  return response.json().catch(() => ({}));
+  return type === 'queue' ? response.json().catch(() => ({})) : null;
 }
 
 function extractIds(channel, state) {
