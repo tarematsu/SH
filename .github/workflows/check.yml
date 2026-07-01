@@ -40,6 +40,8 @@ jobs:
         run: node --test tests/period-completeness.test.mjs tests/period-boundary-tolerance.test.mjs
       - name: Check track history tests
         run: node --test tests/track-history-handler.test.mjs
+      - name: Check database workload tests
+        run: node --test tests/database-workload.test.mjs tests/remaining-runtime-audit-8.test.mjs
       - name: Run JavaScript tests
         run: npm run test:js
       - name: Run SQL migration tests
