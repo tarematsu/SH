@@ -109,8 +109,16 @@
       return;
     }
 
-    const maxMinute = Math.max(1, ...available.flatMap((item) => item.points.map((point) => Number(point[0]) || 0)));
-    const maxListenerRaw = Math.max(1, ...available.flatMap((item) => item.points.map((point) => Number(point[1]) || 0)));
+    let maxMinute = 1;
+    let maxListenerRaw = 1;
+    for (const item of available) {
+      for (const point of item.points) {
+        const minute = Number(point?.[0]);
+        const listener = Number(point?.[1]);
+        if (Number.isFinite(minute)) maxMinute = Math.max(maxMinute, minute);
+        if (Number.isFinite(listener)) maxListenerRaw = Math.max(maxListenerRaw, listener);
+      }
+    }
     const maxListener = Math.ceil(maxListenerRaw / 50) * 50;
     const area = { left: 58, right: 18, top: 18, bottom: 42 };
     area.width = Math.max(1, width - area.left - area.right);
