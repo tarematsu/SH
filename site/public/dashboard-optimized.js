@@ -1,7 +1,9 @@
 (() => {
   const baseDrawChart = drawChart;
   let lastDashboardObservedAt = 0;
+  let lastQueueRevision = '';
   let hiddenAt = 0;
+  let playbackActive = null;
 
   function mergeDashboardHistory(rows, delta) {
     const cutoff = Date.now() - 86400000;
@@ -26,6 +28,31 @@
     if (delta) lastHistoryRows.forEach(mergeRow);
     (Array.isArray(rows) ? rows : []).forEach(mergeRow);
     return [...byBucket.values()].sort((a, b) => Number(a.observed_at) - Number(b.observed_at));
+  }
+
+  function syncPlaybackActivity(playing) {
+    const active = Boolean(playing);
+    if (playbackActive === active) return;
+    playbackActive = active;
+    if (!nowPlayingState) return;
+
+    if (!active) {
+      updateNowPlayingProgress();
+      if (nowPlayingState) {
+        const now = Date.now();
+        const elapsed = Math.max(0, now - nowPlayingState.renderedAt);
+        const current = Math.max(0, nowPlayingState.baseProgressMs + elapsed);
+        nowPlayingState.baseProgressMs = Math.min(nowPlayingState.durationMs || Infinity, current);
+        nowPlayingState.renderedAt = now;
+        updateNowPlayingProgress();
+      }
+      stopNowPlayingTimer();
+      return;
+    }
+
+    nowPlayingState.renderedAt = Date.now();
+    updateNowPlayingProgress();
+    if (!nowPlayingTimer && nowPlayingState) nowPlayingTimer = setInterval(updateNowPlayingProgress, 1000);
   }
 
   renderOnlineRange = function renderOnlineRangeOptimized(rows = lastHistoryRows) {
@@ -62,9 +89,10 @@
       if (!lastDashboardObservedAt && lastHistoryRows.length) {
         lastDashboardObservedAt = Math.max(...lastHistoryRows.map((row) => Number(row?.observed_at) || 0));
       }
-      const dashboardUrl = lastDashboardObservedAt
-        ? `/api/dashboard?since=${encodeURIComponent(lastDashboardObservedAt)}`
-        : '/api/dashboard';
+      const params = new URLSearchParams();
+      if (lastDashboardObservedAt) params.set('since', String(lastDashboardObservedAt));
+      if (lastDashboardObservedAt && lastQueueRevision) params.set('queue_revision', lastQueueRevision);
+      const dashboardUrl = params.size ? `/api/dashboard?${params}` : '/api/dashboard';
       const response = await fetch(dashboardUrl, {
         signal: refreshAbortController.signal,
         headers: { accept: 'application/json' },
@@ -96,19 +124,30 @@
       el('goalRemaining').textContent = goal ? `残り ${number(Math.max(0, goal - count))}` : '-';
       renderPrediction(data.goal_prediction, count, goal);
 
-      const queue = Array.isArray(data.queue) ? data.queue : [];
-      const foundCurrentIndex = queue.findIndex((track) => track.is_current);
-      const currentIndex = foundCurrentIndex >= 0 ? foundCurrentIndex : (queue.length ? 0 : -1);
-      const current = currentIndex >= 0 ? queue[currentIndex] : null;
-      const generatedAt = Number(data.generated_at);
-      const responseAgeMs = Number.isFinite(generatedAt) ? Math.max(0, Date.now() - generatedAt) : 0;
+      const responseRevision = String(data.queue_revision || '');
+      const queueUnchanged = Boolean(
+        data.queue_unchanged && lastQueueRevision && responseRevision === lastQueueRevision,
+      );
+      if (responseRevision) lastQueueRevision = responseRevision;
       const playing = data.queue_status?.playing
         ?? (latest.is_broadcasting !== 0 && latest.is_broadcasting !== false && !data.queue_status?.is_paused);
-      renderNow(current, queue, currentIndex, { handle: latest.host_handle, image: latest.host_image }, {
-        anchor_at: data.queue_status?.anchor_at,
-        response_age_ms: responseAgeMs,
-        playing,
-      });
+
+      if (queueUnchanged) {
+        syncPlaybackActivity(playing);
+      } else {
+        const queue = Array.isArray(data.queue) ? data.queue : [];
+        const foundCurrentIndex = queue.findIndex((track) => track.is_current);
+        const currentIndex = foundCurrentIndex >= 0 ? foundCurrentIndex : (queue.length ? 0 : -1);
+        const current = currentIndex >= 0 ? queue[currentIndex] : null;
+        const generatedAt = Number(data.generated_at);
+        const responseAgeMs = Number.isFinite(generatedAt) ? Math.max(0, Date.now() - generatedAt) : 0;
+        renderNow(current, queue, currentIndex, { handle: latest.host_handle, image: latest.host_image }, {
+          anchor_at: data.queue_status?.anchor_at,
+          response_age_ms: responseAgeMs,
+          playing,
+        });
+        playbackActive = Boolean(playing);
+      }
 
       const latestObservedAt = Number(data.latest_observed_at);
       if (Number.isFinite(latestObservedAt) && latestObservedAt > 0) lastDashboardObservedAt = latestObservedAt;
@@ -135,9 +174,17 @@
     if (document.hidden) {
       hiddenAt = Date.now();
       refreshAbortController?.abort();
+      stopNowPlayingTimer();
     } else {
-      if (hiddenAt && Date.now() - hiddenAt > 2 * 60 * 60 * 1000) lastDashboardObservedAt = 0;
+      if (hiddenAt && Date.now() - hiddenAt > 2 * 60 * 60 * 1000) {
+        lastDashboardObservedAt = 0;
+        lastQueueRevision = '';
+      }
       hiddenAt = 0;
+      if (playbackActive && nowPlayingState) {
+        updateNowPlayingProgress();
+        if (!nowPlayingTimer && nowPlayingState) nowPlayingTimer = setInterval(updateNowPlayingProgress, 1000);
+      }
     }
   }, true);
 })();
