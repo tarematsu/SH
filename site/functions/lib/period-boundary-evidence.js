@@ -1,0 +1,135 @@
+import {
+  KNOWN_DAILY_STREAM_GAPS,
+  PERIOD_BOUNDARY_TOLERANCE_MS,
+  expectedPeriodBounds,
+  isTrustedEmailWeekly,
+} from './period-completeness.js';
+
+function finiteNumber(value) {
+  if (value == null || value === '') return null;
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+}
+
+export function periodBoundaryEvidenceSql(includeLegacy = true) {
+  const legacy = includeLegacy ? `
+    UNION ALL
+    SELECT boundaries.period_key,boundaries.boundary_name,boundaries.target_at,
+      legacy.observed_at,legacy.total_stream_count AS stream_value,
+      legacy.total_member_count AS member_value,1 AS source_priority,legacy.id AS source_id
+    FROM boundaries
+    JOIN sh_legacy_snapshots legacy
+      ON legacy.observed_at BETWEEN boundaries.target_at-${PERIOD_BOUNDARY_TOLERANCE_MS}
+        AND boundaries.target_at+${PERIOD_BOUNDARY_TOLERANCE_MS}` : '';
+
+  return `WITH periods AS (
+    SELECT
+      json_extract(value,'$.period_key') AS period_key,
+      CAST(json_extract(value,'$.period_start') AS INTEGER) AS period_start,
+      CAST(json_extract(value,'$.period_end') AS INTEGER) AS period_end
+    FROM json_each(?)
+  ), boundaries AS (
+    SELECT period_key,'start' AS boundary_name,period_start AS target_at FROM periods
+    UNION ALL
+    SELECT period_key,'end' AS boundary_name,period_end AS target_at FROM periods
+  ), candidates AS (
+    SELECT boundaries.period_key,boundaries.boundary_name,boundaries.target_at,
+      snapshots.observed_at,
+      COALESCE(snapshots.current_stream_count,snapshots.total_listens) AS stream_value,
+      snapshots.total_member_count AS member_value,0 AS source_priority,snapshots.id AS source_id
+    FROM boundaries
+    JOIN sh_channel_snapshots snapshots
+      ON snapshots.observed_at BETWEEN boundaries.target_at-${PERIOD_BOUNDARY_TOLERANCE_MS}
+        AND boundaries.target_at+${PERIOD_BOUNDARY_TOLERANCE_MS}${legacy}
+  ), ranked AS (
+    SELECT candidates.*,
+      ROW_NUMBER() OVER (
+        PARTITION BY period_key,boundary_name
+        ORDER BY ABS(observed_at-target_at),source_priority,
+          CASE WHEN boundary_name='start' THEN -observed_at ELSE observed_at END,source_id
+      ) AS observed_rank,
+      ROW_NUMBER() OVER (
+        PARTITION BY period_key,boundary_name
+        ORDER BY (stream_value IS NULL),ABS(observed_at-target_at),source_priority,
+          CASE WHEN boundary_name='start' THEN -observed_at ELSE observed_at END,source_id
+      ) AS stream_rank,
+      ROW_NUMBER() OVER (
+        PARTITION BY period_key,boundary_name
+        ORDER BY (member_value IS NULL),ABS(observed_at-target_at),source_priority,
+          CASE WHEN boundary_name='start' THEN -observed_at ELSE observed_at END,source_id
+      ) AS member_rank
+    FROM candidates
+  )
+  SELECT period_key,
+    MAX(CASE WHEN boundary_name='start' AND observed_rank=1 THEN observed_at END) AS boundary_start_at,
+    MAX(CASE WHEN boundary_name='end' AND observed_rank=1 THEN observed_at END) AS boundary_end_at,
+    MAX(CASE WHEN boundary_name='start' AND stream_rank=1 THEN stream_value END) AS stream_start,
+    MAX(CASE WHEN boundary_name='end' AND stream_rank=1 THEN stream_value END) AS stream_end,
+    MAX(CASE WHEN boundary_name='start' AND member_rank=1 THEN member_value END) AS member_start,
+    MAX(CASE WHEN boundary_name='end' AND member_rank=1 THEN member_value END) AS member_end
+  FROM ranked GROUP BY period_key ORDER BY period_key ASC`;
+}
+
+export function rowsRequiringBoundaryEvidence(rows, mode, now = Date.now()) {
+  return (Array.isArray(rows) ? rows : []).filter((row) => {
+    const periodKey = String(row?.period_key || '');
+    const bounds = expectedPeriodBounds(mode, periodKey);
+    if (!bounds || now < bounds.end + PERIOD_BOUNDARY_TOLERANCE_MS) return false;
+    if (mode === 'daily' && KNOWN_DAILY_STREAM_GAPS.has(periodKey)) return false;
+    if (mode === 'weekly' && isTrustedEmailWeekly(row)) return false;
+    return true;
+  });
+}
+
+function periodPayload(rows, mode) {
+  const periods = [];
+  const seen = new Set();
+  for (const row of Array.isArray(rows) ? rows : []) {
+    const periodKey = String(row?.period_key || '');
+    if (!periodKey || seen.has(periodKey)) continue;
+    const bounds = expectedPeriodBounds(mode, periodKey);
+    if (!bounds) continue;
+    seen.add(periodKey);
+    periods.push({ period_key: periodKey, period_start: bounds.start, period_end: bounds.end });
+  }
+  return periods;
+}
+
+export async function loadPeriodBoundaryEvidence(db, rows, mode) {
+  const periods = periodPayload(rows, mode);
+  if (!periods.length) return new Map();
+  const payload = JSON.stringify(periods);
+  let result;
+  try {
+    result = await db.prepare(periodBoundaryEvidenceSql(true)).bind(payload).all();
+  } catch (error) {
+    if (!/no such table|no such column/i.test(String(error?.message || ''))) throw error;
+    result = await db.prepare(periodBoundaryEvidenceSql(false)).bind(payload).all();
+  }
+  return new Map((result.results || []).map((row) => [String(row.period_key), row]));
+}
+
+export function applyPeriodBoundaryEvidence(rows, evidence) {
+  return (Array.isArray(rows) ? rows : []).map((row) => {
+    const periodKey = String(row?.period_key || '');
+    if (!evidence?.has(periodKey)) return row;
+    const boundary = evidence.get(periodKey) || {};
+    const streamStart = finiteNumber(boundary.stream_start);
+    const streamEnd = finiteNumber(boundary.stream_end);
+    const memberStart = finiteNumber(boundary.member_start);
+    const memberEnd = finiteNumber(boundary.member_end);
+    return {
+      ...row,
+      boundary_start_at: finiteNumber(boundary.boundary_start_at),
+      boundary_end_at: finiteNumber(boundary.boundary_end_at),
+      stream_start: streamStart,
+      stream_end: streamEnd,
+      stream_growth: streamStart != null && streamEnd != null && streamEnd >= streamStart
+        ? streamEnd - streamStart
+        : null,
+      member_start: memberStart,
+      member_end: memberEnd,
+      member_growth: memberStart != null && memberEnd != null ? memberEnd - memberStart : null,
+    };
+  });
+}
