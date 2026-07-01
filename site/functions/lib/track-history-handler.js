@@ -1,6 +1,6 @@
 import { refreshMissingMetadata } from './track-history-metadata.js';
 import { mergeTrackRows } from './track-history-merge.js';
-import { attachTrackLikes, loadTrackLikeRows } from './track-likes.js';
+import { attachCompactTrackLikes, loadTrackLikeRows } from './track-likes.js';
 
 const H = {
   'content-type': 'application/json; charset=utf-8',
@@ -150,7 +150,7 @@ export async function handleTrackHistory({ request, env, waitUntil }) {
     const sourceTruncated = allGroupedRows.length > maxGroupedRows;
     const groupedRows = sourceTruncated ? allGroupedRows.slice(0, maxGroupedRows) : allGroupedRows;
     const mergedRows = mergeTrackRows(groupedRows);
-    const rows = includeLikes ? attachTrackLikes(mergedRows, likeRows) : mergedRows;
+    const rows = includeLikes ? attachCompactTrackLikes(mergedRows, likeRows) : mergedRows;
     const metadataRefreshScheduled = typeof waitUntil === 'function';
     if (metadataRefreshScheduled) {
       waitUntil(refreshMissingMetadata(groupedRows, env).catch((error) => {
