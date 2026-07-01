@@ -49,7 +49,7 @@ function startCollector(reason) {
     COLLECTOR_KIND: 'local',
     SOURCE_PRIORITY: mode === 'active' ? '80' : '70',
   };
-  child = spawn(process.execPath, ['collector.mjs'], {
+  child = spawn(process.execPath, ['--import=./fetch-cache.mjs', 'collector.mjs'], {
     cwd: here,
     env,
     stdio: 'inherit',
