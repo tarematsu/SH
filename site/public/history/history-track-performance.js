@@ -8,6 +8,22 @@
   const dateTimeFormatter = new Intl.DateTimeFormat('ja-JP', {
     year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit',
   });
+  const previousReadCache = readCache;
+  const previousWriteCache = writeCache;
+
+  function boundaryCacheKey(key) {
+    return String(key || '')
+      .replace(/^track-history:v12:/, 'track-history:v13:')
+      .replace(/^history:v10:/, 'history:v11:');
+  }
+
+  readCache = function readBoundaryCache(key) {
+    return previousReadCache(boundaryCacheKey(key));
+  };
+
+  writeCache = function writeBoundaryCache(key, data) {
+    return previousWriteCache(boundaryCacheKey(key), data);
+  };
 
   function numberText(value) {
     const number = finiteNumber(value);
@@ -277,9 +293,9 @@
     }
 
     if (url.pathname === '/api/track-history' && url.searchParams.get('latest') !== '1') {
-      url.searchParams.set('v', '13');
-    } else if (url.pathname === '/api/history') {
       url.searchParams.set('v', '14');
+    } else if (url.pathname === '/api/history') {
+      url.searchParams.set('v', '15');
     }
     const options = { ...init };
     if (options.cache === 'no-store') delete options.cache;
