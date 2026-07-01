@@ -122,7 +122,7 @@ test('history display layer avoids repeated canvas resets and temporary date arr
   assert.match(source, /if \(canvas\.width !== pixelWidth\)/);
   assert.match(source, /setChartRangeSinglePass/);
   assert.match(source, /makeXPositionsSinglePass/);
-  assert.match(source, /url\.searchParams\.set\('v', '13'\)/);
+  assert.match(source, /url\.searchParams\.set\('v', '14'\)/);
   assert.doesNotMatch(source, /dates\.filter\(Boolean\)/);
   assert.doesNotMatch(source, /dates\.map\(dateTimestamp\)/);
 });

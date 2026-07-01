@@ -1,6 +1,9 @@
 import { refreshMissingMetadata } from './track-history-metadata.js';
 import { mergeTrackRows } from './track-history-merge.js';
-import { applyTrackPeriodCompleteness } from './period-completeness.js';
+import {
+  PERIOD_BOUNDARY_TOLERANCE_MS,
+  applyTrackPeriodCompleteness,
+} from './period-completeness.js';
 import {
   attachCompactTrackLikes,
   compactTrackLikeBatchResults,
@@ -90,13 +93,42 @@ export const TRACK_HISTORY_SQL = `WITH snapshot_evidence AS (
       WHERE p.played_at >= ? AND p.played_at < ?
         AND p.invalid_durations_before = 0
         AND p.played_at <= p.queue_last_observed_at + ?
+    ), play_days AS (
+      SELECT DISTINCT play_date,
+        CAST(strftime('%s', play_date) AS INTEGER) * 1000 AS period_start,
+        CAST(strftime('%s', play_date) AS INTEGER) * 1000 + 86400000 AS period_end
+      FROM plays
+    ), coverage_range AS (
+      SELECT ? AS range_start,? AS range_end
+    ), coverage_boundaries AS (
+      SELECT play_date,'start' AS boundary_name,period_start AS target_at FROM play_days
+      UNION ALL
+      SELECT play_date,'end' AS boundary_name,period_end AS target_at FROM play_days
+    ), coverage_candidates AS (
+      SELECT boundaries.play_date,boundaries.boundary_name,boundaries.target_at,
+        snapshots.observed_at,snapshots.id AS source_id
+      FROM coverage_boundaries boundaries
+      JOIN sh_channel_snapshots snapshots
+        ON snapshots.observed_at BETWEEN boundaries.target_at-${PERIOD_BOUNDARY_TOLERANCE_MS}
+          AND boundaries.target_at+${PERIOD_BOUNDARY_TOLERANCE_MS}
+      CROSS JOIN coverage_range
+      WHERE snapshots.observed_at >= coverage_range.range_start-${PERIOD_BOUNDARY_TOLERANCE_MS}
+        AND snapshots.observed_at <= coverage_range.range_end+${PERIOD_BOUNDARY_TOLERANCE_MS}
+    ), coverage_ranked AS (
+      SELECT coverage_candidates.*,
+        ROW_NUMBER() OVER (
+          PARTITION BY play_date,boundary_name
+          ORDER BY ABS(observed_at-target_at),
+            CASE WHEN boundary_name='start' THEN -observed_at ELSE observed_at END,source_id
+        ) AS boundary_rank
+      FROM coverage_candidates
     ), coverage AS (
-      SELECT strftime('%Y-%m-%d', observed_at / 1000, 'unixepoch') AS play_date,
-        MIN(observed_at) AS period_first_observed_at,
-        MAX(observed_at) AS period_last_observed_at
-      FROM sh_channel_snapshots
-      WHERE observed_at >= ? AND observed_at < ?
-      GROUP BY play_date
+      SELECT play_date,
+        MAX(CASE WHEN boundary_name='start' AND boundary_rank=1 THEN observed_at END)
+          AS period_first_observed_at,
+        MAX(CASE WHEN boundary_name='end' AND boundary_rank=1 THEN observed_at END)
+          AS period_last_observed_at
+      FROM coverage_ranked GROUP BY play_date
     )
     SELECT
       plays.play_date,
@@ -224,7 +256,7 @@ export async function handleTrackHistory({ request, env, waitUntil }) {
       excluded_play_count_dates: completed.excludedDates,
       excluded_play_count_date_count: completed.excludedDates.length,
       metadata_refresh_scheduled: metadataRefreshScheduled,
-      method: 'observed_unpaused_queue_reachability_utc_sql_preaggregate_with_period_completeness',
+      method: 'observed_unpaused_queue_reachability_utc_sql_preaggregate_with_symmetric_boundary_evidence',
     });
   } catch (error) {
     if (/no such table|no such column|malformed JSON/i.test(String(error?.message || ''))) {
