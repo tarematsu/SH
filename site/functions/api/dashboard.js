@@ -79,7 +79,7 @@ function metadataFallback(rawValue) {
   };
 }
 
-function linearRegressionPrediction(rows, goal, now = Date.now()) {
+export function linearRegressionPrediction(rows, goal, now = Date.now()) {
   const points = rows.map((r) => ({ t: num(r.observed_at), y: num(r.current_stream_count) }))
     .filter((p) => p.t != null && p.y != null).sort((a, b) => a.t - b.t);
   if (!goal || points.length < 5) return null;
@@ -109,6 +109,33 @@ function linearRegressionPrediction(rows, goal, now = Date.now()) {
   };
 }
 
+export function linearRegressionPredictionFromAggregate(row, goal, now = Date.now()) {
+  const sampleCount = num(row?.sample_count);
+  const firstT = num(row?.first_t);
+  const lastT = num(row?.last_t);
+  const xMean = num(row?.x_mean);
+  const yMean = num(row?.y_mean);
+  const xyMean = num(row?.xy_mean);
+  const xxMean = num(row?.xx_mean);
+  const latest = num(row?.latest_y);
+  if (!goal || sampleCount == null || sampleCount < 5 || firstT == null || lastT == null || latest == null) return null;
+  const spanMs = lastT - firstT;
+  if (spanMs < 15 * 60000 || [xMean, yMean, xyMean, xxMean].some((value) => value == null)) return null;
+  const covariance = xyMean - xMean * yMean;
+  const variance = xxMean - xMean * xMean;
+  if (!Number.isFinite(variance) || variance <= 0) return null;
+  const ratePerHour = covariance / variance;
+  if (!Number.isFinite(ratePerHour) || ratePerHour <= 0) return null;
+  const remaining = Math.max(0, goal - latest);
+  return {
+    eta: remaining === 0 ? now : now + (remaining / ratePerHour) * 3600000,
+    rate_per_hour: ratePerHour,
+    remaining,
+    sample_count: sampleCount,
+    span_hours: spanMs / 3600000,
+  };
+}
+
 const LATEST_SQL = `SELECT
   id,observed_at,channel_id,channel_alias,channel_name,station_id,
   is_launched,is_broadcasting,chat_status,listener_count,online_member_count,
@@ -133,6 +160,32 @@ SELECT observed_at,listener_count,online_member_count,total_member_count,
   total_listens,current_stream_count,stream_goal,comment_velocity_max AS comment_velocity
 FROM ranked WHERE rn=1 ORDER BY observed_at ASC LIMIT 300`;
 
+export const PREDICTION_24H_SQL = `WITH ranked AS (
+  SELECT id,observed_at,current_stream_count,
+    ROW_NUMBER() OVER (
+      PARTITION BY CAST(observed_at/300000 AS INTEGER)
+      ORDER BY observed_at DESC,id DESC
+    ) AS bucket_rank
+  FROM sh_channel_snapshots
+  WHERE observed_at >= (unixepoch('now','-24 hours')*1000)
+    AND current_stream_count IS NOT NULL
+), points AS (
+  SELECT observed_at,
+    CAST(current_stream_count AS REAL) AS y,
+    (observed_at - MIN(observed_at) OVER ()) / 3600000.0 AS x,
+    ROW_NUMBER() OVER (ORDER BY observed_at DESC,id DESC) AS latest_rank
+  FROM ranked
+  WHERE bucket_rank=1
+)
+SELECT COUNT(*) AS sample_count,
+  MIN(observed_at) AS first_t,
+  MAX(observed_at) AS last_t,
+  AVG(x) AS x_mean,
+  AVG(y) AS y_mean,
+  AVG(x*y) AS xy_mean,
+  AVG(x*x) AS xx_mean,
+  MAX(CASE WHEN latest_rank=1 THEN y END) AS latest_y
+FROM points`;
 
 function publicLatest(latest, channel, station, owner, goal) {
   if (!latest) return null;
@@ -186,7 +239,7 @@ export async function onRequestGet({ request, env }) {
       db.prepare(LATEST_SQL).first(),
       historyStatement.all(),
       db.prepare(LATEST_QUEUE_WITH_ITEMS_SQL).all(),
-      initial ? Promise.resolve(null) : db.prepare(HISTORY_24H_SQL).all(),
+      initial ? Promise.resolve(null) : db.prepare(PREDICTION_24H_SQL).first(),
     ]);
 
     const hostScope = hostScopeFromSnapshot(latest);
@@ -200,7 +253,6 @@ export async function onRequestGet({ request, env }) {
     ]);
 
     const history = historyResult.results || [];
-    const predictionRows = initial ? history : predictionResult?.results || [];
     const { latestQueue, queue } = parseLatestQueueRows(queueResult.results || []);
 
     const generatedAt = Date.now();
@@ -242,6 +294,9 @@ export async function onRequestGet({ request, env }) {
     const owner = station.owner || {};
     const streaming = station.streaming_party || {};
     const goal = latest?.stream_goal ?? streaming.stream_goal ?? null;
+    const goalPrediction = initial
+      ? linearRegressionPrediction(history, num(goal), generatedAt)
+      : linearRegressionPredictionFromAggregate(predictionResult, num(goal), generatedAt);
 
     return json({
       ok: true,
@@ -262,7 +317,7 @@ export async function onRequestGet({ request, env }) {
         total_listens: previousListens && num(latest.total_listens) != null && num(previousListens.total_listens) != null
           ? num(latest.total_listens) - num(previousListens.total_listens) : null,
       } : null,
-      goal_prediction: linearRegressionPrediction(predictionRows, num(goal)),
+      goal_prediction: goalPrediction,
       queue: enrichedQueue,
       queue_status: latestQueue ? {
         ...latestQueue,

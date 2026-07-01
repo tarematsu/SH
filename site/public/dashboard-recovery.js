@@ -38,10 +38,9 @@
   }
 
   async function recoverDashboardHistory() {
-    if (Array.isArray(lastHistoryRows) && lastHistoryRows.length) return;
+    if (document.hidden || (Array.isArray(lastHistoryRows) && lastHistoryRows.length)) return;
     try {
       const response = await fetch('/api/dashboard-recovery', {
-        cache: 'no-store',
         headers: { accept: 'application/json' },
       });
       if (!response.ok) throw new Error(`dashboard recovery API ${response.status}`);
