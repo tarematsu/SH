@@ -41,52 +41,42 @@ function sortRankingRows(rows, hostOrder = []) {
   });
 }
 
-function addRankChanges(rows) {
-  const groups = new Map();
-  for (const row of rows) {
-    const key = hostKey(row.host_name);
-    if (!groups.has(key)) groups.set(key, []);
-    groups.get(key).push(row);
-  }
-  for (const hostRows of groups.values()) {
-    hostRows.sort((a, b) => String(a.ranking_date).localeCompare(String(b.ranking_date)));
-    let previous = null;
-    for (const row of hostRows) {
-      const currentRank = finiteNumber(row.rank);
-      const previousRank = previous ? finiteNumber(previous.rank) : null;
-      row.is_out_of_rank = currentRank == null;
-      row.previous_rank = previousRank;
-      row.previous_out_of_rank = Boolean(previous && previousRank == null);
-      row.rank_change = previousRank != null && currentRank != null ? previousRank - currentRank : null;
-      previous = row;
-    }
-  }
-  return rows;
-}
-
 function expandWeeklyDates(values) {
-  const sorted = [...new Set(values.filter(validDate))].sort();
+  const unique = new Set();
+  for (const value of values || []) {
+    if (validDate(value)) unique.add(value);
+  }
+  const sorted = [...unique].sort();
   if (sorted.length < 2) return sorted;
   const first = Date.parse(`${sorted[0]}T00:00:00Z`);
   const last = Date.parse(`${sorted.at(-1)}T00:00:00Z`);
   if (!Number.isFinite(first) || !Number.isFinite(last)) return sorted;
-  const expanded = new Set(sorted);
   for (let timestamp = first; timestamp <= last; timestamp += 7 * 86400000) {
-    expanded.add(new Date(timestamp).toISOString().slice(0, 10));
+    unique.add(new Date(timestamp).toISOString().slice(0, 10));
   }
-  return [...expanded].sort();
+  return [...unique].sort();
 }
 
 function completeRankingTimeline(actualRows, rankingWeeks, hosts) {
   if (!hosts.length || !rankingWeeks.length) return actualRows;
-  const byWeekHost = new Map();
-  for (const row of actualRows) byWeekHost.set(`${row.ranking_date}\u0000${hostKey(row.host_name)}`, row);
-  const completed = [];
+  const rowsByWeek = new Map();
+  for (const row of actualRows) {
+    const week = String(row.ranking_date || '');
+    let rowsByHost = rowsByWeek.get(week);
+    if (!rowsByHost) {
+      rowsByHost = new Map();
+      rowsByWeek.set(week, rowsByHost);
+    }
+    rowsByHost.set(hostKey(row.host_name), row);
+  }
+
+  const previousByHost = new Map();
+  const completed = new Array(rankingWeeks.length * hosts.length);
+  let outputIndex = 0;
   for (const week of rankingWeeks) {
     for (const host of hosts) {
-      const existing = byWeekHost.get(`${week}\u0000${hostKey(host)}`);
-      if (existing) completed.push(existing);
-      else completed.push({
+      const key = hostKey(host);
+      const row = rowsByWeek.get(week)?.get(key) || {
         ranking_date: week,
         observed_at: Date.parse(`${week}T00:00:00+09:00`),
         ranking_type: '週間リーダーボード',
@@ -96,17 +86,78 @@ function completeRankingTimeline(actualRows, rankingWeeks, hosts) {
         source_sheet: null,
         quality_score: null,
         quality_flags: 'not_listed',
-        is_out_of_rank: true,
         synthetic: true,
-      });
+      };
+      const currentRank = finiteNumber(row.rank);
+      const previous = previousByHost.get(key);
+      row.is_out_of_rank = currentRank == null;
+      row.previous_rank = previous?.rank ?? null;
+      row.previous_out_of_rank = Boolean(previous && previous.rank == null);
+      row.rank_change = previous?.rank != null && currentRank != null ? previous.rank - currentRank : null;
+      previousByHost.set(key, { rank: currentRank });
+      completed[outputIndex] = row;
+      outputIndex += 1;
     }
   }
   return completed;
 }
 
-export async function loadRankingRowsAndWeeks(db, rankingStatement, weeksStatement) {
-  if (typeof db.batch === 'function') return db.batch([rankingStatement, weeksStatement]);
-  return Promise.all([rankingStatement.all(), weeksStatement.all()]);
+export function rankingRowsAndWeeksSql(hostSearch, scope) {
+  let selectedWhere = '';
+  if (hostSearch) selectedWhere = ' WHERE (host_name LIKE ? OR host_alias LIKE ?)';
+  else if (scope === 'featured') selectedWhere = ' WHERE lower(host_name) IN (?,?)';
+
+  return `WITH ranged AS (
+    SELECT r.ranking_date,r.observed_at,r.ranking_type,r.rank,
+      r.channel_name AS host_name,r.channel_alias AS host_alias,
+      r.source_sheet,r.quality_score,r.quality_flags
+    FROM sh_channel_rankings r
+    WHERE r.ranking_date>=? AND r.ranking_date<=?
+  ), selected AS (
+    SELECT * FROM ranged${selectedWhere}
+    ORDER BY ranking_date ASC,rank ASC LIMIT ?
+  ), weeks AS (
+    SELECT ranking_date FROM ranged GROUP BY ranking_date
+  )
+  SELECT 0 AS result_kind,ranking_date,observed_at,ranking_type,rank,
+    host_name,host_alias,source_sheet,quality_score,quality_flags
+  FROM selected
+  UNION ALL
+  SELECT 1 AS result_kind,ranking_date,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL
+  FROM weeks
+  ORDER BY result_kind ASC,ranking_date ASC,rank ASC`;
+}
+
+export async function loadRankingRowsAndWeeks(statement) {
+  const result = await statement.all();
+  const rows = [];
+  const weeks = [];
+  const hostNames = [];
+  const rankingTypes = [];
+  const seenHosts = new Set();
+  const seenTypes = new Set();
+
+  for (const source of result?.results || []) {
+    if (Number(source?.result_kind) === 1) {
+      if (validDate(source.ranking_date)) weeks.push(source.ranking_date);
+      continue;
+    }
+    const row = { ...source };
+    delete row.result_kind;
+    rows.push(row);
+    const host = String(row.host_name || '').trim();
+    const hostId = hostKey(host);
+    if (host && !seenHosts.has(hostId)) {
+      seenHosts.add(hostId);
+      hostNames.push(host);
+    }
+    const rankingType = String(row.ranking_type || '').trim();
+    if (rankingType && !seenTypes.has(rankingType)) {
+      seenTypes.add(rankingType);
+      rankingTypes.push(rankingType);
+    }
+  }
+  return { rows, weeks, hostNames, rankingTypes };
 }
 
 export async function onRequestGet({ request, env }) {
@@ -117,45 +168,23 @@ export async function onRequestGet({ request, env }) {
   const hostSearch = safeText(url.searchParams.get('host'));
   const scope = url.searchParams.get('scope') === 'all' ? 'all' : 'featured';
   const limit = Math.min(Math.max(Number(url.searchParams.get('limit')) || 5000, 20), 10000);
-  let sql = `SELECT
-r.ranking_date,r.observed_at,r.ranking_type,r.rank,
-r.channel_name AS host_name,r.channel_alias AS host_alias,
-r.source_sheet,r.quality_score,r.quality_flags
-FROM sh_channel_rankings r
-WHERE r.ranking_date>=? AND r.ranking_date<=?`;
   const binds = [from, to];
-  if (hostSearch) {
-    sql += ' AND (r.channel_name LIKE ? OR r.channel_alias LIKE ?)';
-    binds.push(`%${hostSearch}%`, `%${hostSearch}%`);
-  } else if (scope === 'featured') {
-    sql += ' AND lower(r.channel_name) IN (?,?)';
-    binds.push(...FEATURED_HOSTS);
-  }
-  sql += ' ORDER BY r.ranking_date ASC,r.rank ASC LIMIT ?';
+  if (hostSearch) binds.push(`%${hostSearch}%`, `%${hostSearch}%`);
+  else if (scope === 'featured') binds.push(...FEATURED_HOSTS);
   binds.push(limit);
 
   try {
-    const rankingStatement = env.DB.prepare(sql).bind(...binds);
-    const weeksStatement = env.DB.prepare(`SELECT DISTINCT ranking_date
-      FROM sh_channel_rankings
-      WHERE ranking_date>=? AND ranking_date<=?
-      ORDER BY ranking_date ASC`).bind(from, to);
+    const rankingStatement = env.DB.prepare(rankingRowsAndWeeksSql(hostSearch, scope)).bind(...binds);
     const [rankingData, weeklyResult] = await Promise.all([
-      loadRankingRowsAndWeeks(env.DB, rankingStatement, weeksStatement),
+      loadRankingRowsAndWeeks(rankingStatement),
       loadSummaryWithLive(env, 'weekly', from, to),
     ]);
-    const [rankingResult, weeksResult] = rankingData;
-    const actualRows = rankingResult?.results || [];
+    const actualRows = rankingData.rows;
     const weeklyMetrics = (weeklyResult.rows || []).map((row) => ({ ...row, ranking_date: row.period_key }));
-    const rankingWeeks = expandWeeklyDates((weeksResult?.results || []).map((row) => row.ranking_date));
+    const rankingWeeks = expandWeeklyDates(rankingData.weeks);
     const hostOrder = scope === 'featured' && !hostSearch ? FEATURED_HOSTS : [];
-    const hosts = hostSearch
-      ? [...new Set(actualRows.map((row) => row.host_name).filter(Boolean))]
-      : scope === 'featured'
-        ? FEATURED_HOSTS
-        : [...new Set(actualRows.map((row) => row.host_name).filter(Boolean))];
+    const hosts = hostOrder.length ? FEATURED_HOSTS : rankingData.hostNames;
     const completedRows = completeRankingTimeline(actualRows, rankingWeeks, hosts);
-    addRankChanges(completedRows);
     sortRankingRows(completedRows, hostOrder);
     return json({
       ok: true,
@@ -167,7 +196,7 @@ WHERE r.ranking_date>=? AND r.ranking_date<=?`;
       rows: completedRows,
       weekly_metrics: weeklyMetrics,
       ranking_weeks: rankingWeeks,
-      ranking_types: [...new Set(actualRows.map((row) => row.ranking_type).filter(Boolean))],
+      ranking_types: rankingData.rankingTypes,
       host_count: hosts.length,
       truncated: actualRows.length >= limit,
       live_overlay_count: weeklyResult.live_overlay_count,
