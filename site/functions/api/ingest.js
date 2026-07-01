@@ -32,8 +32,10 @@ function queueClaimPayload(data) {
       stationhead_track_id: num(track.stationhead_track_id),
       spotify_id: text(track.spotify_id),
       apple_music_id: text(track.apple_music_id),
+      deezer_id: text(track.deezer_id),
       isrc: text(track.isrc),
       duration_ms: num(track.duration_ms),
+      preview_url: text(track.preview_url),
       bite_count: num(track.bite_count),
     })),
   };
@@ -137,47 +139,64 @@ async function loadExistingQueueItems(db, stationId, startTime, positions) {
   return rows;
 }
 
-async function saveQueue(db, observedAt, data) {
+export const QUEUE_INSPECTION_STATE_SQL = `SELECT snapshots.raw_json,
+  (SELECT MAX(items.observed_at) FROM sh_queue_items items
+    WHERE items.station_id IS ? AND items.start_time IS ?) AS item_observed_at
+FROM sh_queue_snapshots snapshots
+WHERE snapshots.station_id IS ? AND snapshots.start_time IS ?
+ORDER BY snapshots.observed_at DESC,snapshots.id DESC
+LIMIT 1`;
+
+export function queueInspectionDue(previous, payloadJson, observedAt) {
+  if (!previous || previous.raw_json !== payloadJson) return true;
+  const itemObservedAt = num(previous.item_observed_at);
+  return itemObservedAt == null || observedAt - itemObservedAt >= CHECKPOINT_MS;
+}
+
+async function saveQueue(db, observedAt, data, payload = queueClaimPayload(data)) {
   const stationId = num(data?.station_id);
   const queueId = num(data?.queue_id);
   const startTime = num(data?.start_time);
   const tracks = Array.isArray(data?.tracks) ? data.tracks : [];
   const bucket = minuteBucket(observedAt);
-  const positions = [...new Set(tracks.map((track) => num(track.position)).filter((value) => value != null))];
-  const existingRows = await loadExistingQueueItems(db, stationId, startTime, positions);
-  const changedTracks = queueItemsToWrite(tracks, existingRows, observedAt, queueId);
+  const payloadJson = rawJson(payload);
+  const previous = await db.prepare(QUEUE_INSPECTION_STATE_SQL)
+    .bind(stationId, startTime, stationId, startTime).first();
 
-  const statements = [db.prepare(`INSERT INTO sh_queue_snapshots (
+  await db.prepare(`INSERT INTO sh_queue_snapshots (
       observed_at,station_id,queue_id,start_time,is_paused,raw_json
     ) SELECT ?,?,?,?,?,?
     WHERE NOT EXISTS (
       SELECT 1 FROM sh_queue_snapshots
       WHERE station_id IS ? AND start_time IS ? AND observed_at>=? AND observed_at<?
     )`).bind(
-    observedAt, stationId, queueId, startTime, bool(data?.is_paused), rawJson(queueClaimPayload(data)),
+    observedAt, stationId, queueId, startTime, bool(data?.is_paused), payloadJson,
     stationId, startTime, bucket, bucket + 60000,
-  )];
+  ).run();
 
-  for (const track of changedTracks) {
-    statements.push(db.prepare(`INSERT INTO sh_queue_items (
-        observed_at,station_id,queue_id,start_time,position,
-        queue_track_id,stationhead_track_id,spotify_id,apple_music_id,
-        deezer_id,isrc,duration_ms,preview_url,bite_count,raw_json
-      ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-      ON CONFLICT(station_id,start_time,position) DO UPDATE SET
-        observed_at=excluded.observed_at,queue_id=excluded.queue_id,
-        queue_track_id=excluded.queue_track_id,stationhead_track_id=excluded.stationhead_track_id,
-        spotify_id=excluded.spotify_id,apple_music_id=excluded.apple_music_id,
-        deezer_id=excluded.deezer_id,isrc=excluded.isrc,duration_ms=excluded.duration_ms,
-        preview_url=excluded.preview_url,bite_count=excluded.bite_count,raw_json=excluded.raw_json`)
-      .bind(
-        observedAt, stationId, queueId, startTime, num(track.position),
-        num(track.queue_track_id), num(track.stationhead_track_id),
-        text(track.spotify_id), text(track.apple_music_id), text(track.deezer_id),
-        text(track.isrc), num(track.duration_ms), text(track.preview_url),
-        num(track.bite_count), rawJson(track.raw),
-      ));
-  }
+  if (!queueInspectionDue(previous, payloadJson, observedAt)) return;
+
+  const positions = [...new Set(tracks.map((track) => num(track.position)).filter((value) => value != null))];
+  const existingRows = await loadExistingQueueItems(db, stationId, startTime, positions);
+  const changedTracks = queueItemsToWrite(tracks, existingRows, observedAt, queueId);
+  const statements = changedTracks.map((track) => db.prepare(`INSERT INTO sh_queue_items (
+      observed_at,station_id,queue_id,start_time,position,
+      queue_track_id,stationhead_track_id,spotify_id,apple_music_id,
+      deezer_id,isrc,duration_ms,preview_url,bite_count,raw_json
+    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+    ON CONFLICT(station_id,start_time,position) DO UPDATE SET
+      observed_at=excluded.observed_at,queue_id=excluded.queue_id,
+      queue_track_id=excluded.queue_track_id,stationhead_track_id=excluded.stationhead_track_id,
+      spotify_id=excluded.spotify_id,apple_music_id=excluded.apple_music_id,
+      deezer_id=excluded.deezer_id,isrc=excluded.isrc,duration_ms=excluded.duration_ms,
+      preview_url=excluded.preview_url,bite_count=excluded.bite_count,raw_json=excluded.raw_json`)
+    .bind(
+      observedAt, stationId, queueId, startTime, num(track.position),
+      num(track.queue_track_id), num(track.stationhead_track_id),
+      text(track.spotify_id), text(track.apple_music_id), text(track.deezer_id),
+      text(track.isrc), num(track.duration_ms), text(track.preview_url),
+      num(track.bite_count), rawJson(track.raw),
+    ));
   await runBatches(db, statements);
 
   const keyed = [...new Set(
@@ -298,7 +317,7 @@ export async function onRequestPost(context) {
       payload,
       metadata: { station_id: num(data.station_id), start_time: num(data.start_time) },
     });
-    if (claim.accepted) await saveQueue(env.DB, observedAt, data);
+    if (claim.accepted) await saveQueue(env.DB, observedAt, data, payload);
     return json({
       ok: true,
       type,
