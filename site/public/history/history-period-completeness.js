@@ -1,7 +1,6 @@
 (() => {
   const DAY_MS = 86400000;
   const TOLERANCE_MS = 15 * 60 * 1000;
-  const baseWithDailyTotals = withDailyTotals;
   const baseReadCache = readCache;
   const baseWriteCache = writeCache;
   const baseRenderWeeklyMetrics = renderWeeklyMetrics;
@@ -72,16 +71,6 @@
     return result;
   };
 
-  function qualityFlags(value) {
-    if (Array.isArray(value)) return value.map(String);
-    if (typeof value !== 'string' || !value.trim()) return [];
-    try {
-      const parsed = JSON.parse(value);
-      if (Array.isArray(parsed)) return parsed.map(String);
-    } catch {}
-    return value.split(',').map((item) => item.trim()).filter(Boolean);
-  }
-
   function mondayJstKey(now = Date.now()) {
     const shifted = new Date(now + 9 * 3600000);
     const monday = new Date(Date.UTC(
@@ -91,17 +80,16 @@
     return monday.toISOString().slice(0, 10);
   }
 
-  function trustedEmailWeek(row, key) {
-    return key >= '2026-01-01' && key < '2026-07-01'
-      && qualityFlags(row?.quality_flags).includes('stationhead_email_recap');
+  function trustedEmailWeek(key) {
+    return key >= '2026-01-01' && key < '2026-07-01';
   }
 
   function weeklyMetricComplete(row) {
     const key = String(row?.ranking_date || row?.period_key || '');
     if (!/^\d{4}-\d{2}-\d{2}$/.test(key)) return false;
-    if (trustedEmailWeek(row, key)) return true;
-    if (row?.period_complete === false || row?.stream_growth_excluded === true) return false;
     if (key === mondayJstKey()) return false;
+    if (trustedEmailWeek(key)) return true;
+    if (row?.period_complete === false || row?.stream_growth_excluded === true) return false;
     const expectedStart = Date.parse(`${key}T00:00:00+09:00`);
     const expectedEnd = expectedStart + 7 * DAY_MS;
     const first = finiteNumber(row?.period_start);
@@ -122,6 +110,4 @@
         });
     return baseRenderWeeklyMetrics(validated);
   };
-
-  void baseWithDailyTotals;
 })();
