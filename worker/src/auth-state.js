@@ -1,12 +1,12 @@
 import { normalizeBearer, jwtExpiryMs } from './shared.js';
 
 export const AUTH_STATE_SQL = `SELECT
-  session.auth_token,session.device_uid,session.token_expires_at,
-  control.id AS control_id,control.last_attempt_at,control.last_success_at,
-  control.last_error,control.lock_until
+  collector_state.auth_token,collector_state.device_uid,collector_state.token_expires_at,
+  auth_control.id AS control_id,auth_control.last_attempt_at,auth_control.last_success_at,
+  auth_control.last_error,auth_control.lock_until
 FROM (SELECT ? AS id) requested
-LEFT JOIN sh_worker_collector_state session ON session.id=requested.id
-LEFT JOIN sh_worker_auth_control control ON control.id=requested.id`;
+LEFT JOIN sh_worker_collector_state collector_state ON collector_state.id=requested.id
+LEFT JOIN sh_worker_auth_control auth_control ON auth_control.id=requested.id`;
 
 export function parseAuthState(row, env = {}) {
   const authToken = normalizeBearer(row?.auth_token || env.STATIONHEAD_AUTH_TOKEN);
