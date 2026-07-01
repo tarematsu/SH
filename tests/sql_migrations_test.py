@@ -107,6 +107,7 @@ class MigrationTests(unittest.TestCase):
             self.apply("006_email_weekly_summary.sql")
             self.apply("007_host_session_safety.sql")
             self.apply("008_runtime_query_indexes.sql")
+            self.apply("016_email_stream_runtime.sql")
 
         rows = [
             ("stationhead-email:2026-06-08", "2026-06-08", 1781528583000, 1781525193000, 47576224),
@@ -180,6 +181,7 @@ class MigrationTests(unittest.TestCase):
             "idx_sh_channel_snapshots_host_account_observed",
             "idx_sh_channel_snapshots_host_handle_observed",
             "idx_sh_queue_snapshots_station_observed",
+            "idx_sh_email_stream_snapshots_week",
         }.issubset(index_names))
 
     def tearDown(self):
