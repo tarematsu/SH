@@ -20,6 +20,12 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
+      - name: Repository inventory
+        run: |
+          echo '--- tracked files ---'
+          git ls-files
+          echo '--- largest tracked files ---'
+          git ls-files -z | xargs -0 du -h | sort -h | tail -80
       - name: Install Worker tooling
         working-directory: worker
         run: npm install --no-audit --no-fund
