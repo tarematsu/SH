@@ -17,15 +17,17 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
+      - name: Build temporary audit archive
+        run: git archive --format=zip --output=repository-audit.zip HEAD
+      - name: Upload temporary audit archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: repository-audit
+          path: repository-audit.zip
+          retention-days: 1
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - name: Repository inventory
-        run: |
-          echo '--- tracked files ---'
-          git ls-files
-          echo '--- largest tracked files ---'
-          git ls-files -z | xargs -0 du -h | sort -h | tail -80
       - name: Install Worker tooling
         working-directory: worker
         run: npm install --no-audit --no-fund
