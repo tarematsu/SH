@@ -10,7 +10,6 @@ import {
 } from './dashboard-legacy.mjs';
 import { LATEST_QUEUE_WITH_ITEMS_SQL, parseLatestQueueRows } from '../lib/latest-queue.js';
 import {
-  DASHBOARD_QUEUE_STATE_SQL,
   hostIdentity,
   parseQueueState,
   queueRevision,
@@ -47,6 +46,67 @@ export function resetPredictionCache() {
   cache.pending = null;
 }
 
+export const DASHBOARD_CONTEXT_SQL = `WITH latest_channel AS (
+  SELECT
+    id,observed_at,channel_id,channel_alias,channel_name,station_id,
+    is_launched,is_broadcasting,chat_status,listener_count,online_member_count,
+    total_member_count,guest_count,total_listens,stream_goal,current_stream_count,
+    host_account_id,host_handle,broadcast_start_time,comment_velocity,raw_json
+  FROM sh_channel_snapshots
+  ORDER BY observed_at DESC,id DESC
+  LIMIT 1
+), latest_queue AS (
+  SELECT station_id,queue_id,start_time,is_paused,observed_at
+  FROM sh_queue_snapshots
+  WHERE station_id=(SELECT station_id FROM latest_channel)
+  ORDER BY observed_at DESC,id DESC
+  LIMIT 1
+), queue_stats AS (
+  SELECT
+    MAX(items.observed_at) AS item_observed_at,
+    MAX(metadata.fetched_at) AS metadata_fetched_at,
+    COUNT(items.position) AS total_items
+  FROM latest_queue
+  LEFT JOIN sh_queue_items items
+    ON items.station_id=latest_queue.station_id
+    AND items.start_time=latest_queue.start_time
+  LEFT JOIN sh_track_metadata metadata ON metadata.spotify_id=items.spotify_id
+)
+SELECT
+  latest_channel.*,
+  latest_queue.station_id AS queue_station_id,
+  latest_queue.queue_id,
+  latest_queue.start_time AS queue_start_time,
+  latest_queue.is_paused AS queue_is_paused,
+  latest_queue.observed_at AS queue_observed_at,
+  queue_stats.item_observed_at,
+  queue_stats.metadata_fetched_at,
+  queue_stats.total_items
+FROM latest_channel
+LEFT JOIN latest_queue ON 1=1
+LEFT JOIN queue_stats ON 1=1`;
+
+function latestSnapshotSql(sql) {
+  const value = String(sql || '').replace(/\s+/g, ' ');
+  return value.includes('comment_velocity,raw_json')
+    && value.includes('FROM sh_channel_snapshots ORDER BY observed_at DESC,id DESC LIMIT 1');
+}
+
+export async function loadDashboardContext(db, queueContext) {
+  if (!queueContext.contextPromise) {
+    queueContext.contextPromise = db.prepare(DASHBOARD_CONTEXT_SQL).first().then((row) => {
+      queueContext.state = parseQueueState(row);
+      queueContext.hostIdentity = hostIdentity(row);
+      queueContext.revision = queueRevision(queueContext.state, queueContext.hostIdentity);
+      return row || null;
+    }).catch((error) => {
+      queueContext.contextPromise = null;
+      throw error;
+    });
+  }
+  return queueContext.contextPromise;
+}
+
 function queueHeaderResult(state) {
   if (!state) return { results: [] };
   return { results: [{
@@ -59,7 +119,7 @@ function queueHeaderResult(state) {
   }] };
 }
 
-async function loadDashboardQueue(statement, db, queueContext) {
+export async function loadDashboardQueue(statement, db, queueContext) {
   if (!queueContext.requestedRevision) {
     const result = await statement.all();
     const parsed = parseLatestQueueRows(result.results || []);
@@ -67,10 +127,7 @@ async function loadDashboardQueue(statement, db, queueContext) {
     return result;
   }
 
-  const stateRow = await db.prepare(DASHBOARD_QUEUE_STATE_SQL).first();
-  queueContext.state = parseQueueState(stateRow);
-  queueContext.hostIdentity = hostIdentity(stateRow);
-  queueContext.revision = queueRevision(queueContext.state, queueContext.hostIdentity);
+  await loadDashboardContext(db, queueContext);
   if (queueContext.revision === queueContext.requestedRevision) {
     queueContext.unchanged = true;
     return queueHeaderResult(queueContext.state);
@@ -90,6 +147,9 @@ function proxyStatement(statement, sql, db, queueContext) {
       if (sql === PREDICTION_24H_SQL && property === 'first') return () => cachedPrediction(target);
       if (sql === LATEST_QUEUE_WITH_ITEMS_SQL && property === 'all') {
         return () => loadDashboardQueue(target, db, queueContext);
+      }
+      if (property === 'first' && queueContext.requestedRevision && latestSnapshotSql(sql)) {
+        return () => loadDashboardContext(db, queueContext);
       }
       if (property === 'first') {
         return async (...args) => captureHostIdentity(await target.first(...args), queueContext);
@@ -155,6 +215,7 @@ export async function onRequestGet(context) {
     state: null,
     hostIdentity: '',
     unchanged: false,
+    contextPromise: null,
   };
   const response = await legacyDashboard({
     ...context,

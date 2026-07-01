@@ -34,6 +34,18 @@ FROM sh_host_broadcast_sessions
 WHERE handle = 'sakurazaka46jp'
 ORDER BY started_at DESC LIMIT 10`;
 
+const SUMMARY_CACHE_MS = 30 * 1000;
+let summaryStates = new WeakMap();
+
+function summaryStateFor(db) {
+  let state = summaryStates.get(db);
+  if (!state) {
+    state = { value: null, hasValue: false, expiresAt: 0, pending: null };
+    summaryStates.set(db, state);
+  }
+  return state;
+}
+
 export async function loadHostSummary(db) {
   if (typeof db.batch === 'function') {
     const [latestProfileResult, activeSessionResult, recentSessionsResult] = await db.batch([
@@ -58,6 +70,32 @@ export async function loadHostSummary(db) {
     activeSession: activeSession || null,
     recentSessions: recentSessions.results || [],
   };
+}
+
+export async function cachedHostSummary(db, now = Date.now()) {
+  const state = summaryStateFor(db);
+  if (state.hasValue && state.expiresAt > now) return state.value;
+  if (state.pending) return state.pending;
+
+  state.pending = loadHostSummary(db).then((value) => {
+    state.value = value;
+    state.hasValue = true;
+    state.expiresAt = Date.now() + SUMMARY_CACHE_MS;
+    return value;
+  }).catch((error) => {
+    state.hasValue = false;
+    state.value = null;
+    state.expiresAt = 0;
+    throw error;
+  }).finally(() => {
+    state.pending = null;
+  });
+  return state.pending;
+}
+
+export function resetHostSummaryCache(db = null) {
+  if (db) summaryStates.delete(db);
+  else summaryStates = new WeakMap();
 }
 
 export async function onRequestGet({ request, env }) {
@@ -153,7 +191,7 @@ export async function onRequestGet({ request, env }) {
       });
     }
 
-    const summary = await loadHostSummary(env.DB);
+    const summary = await cachedHostSummary(env.DB);
     return json({
       ok: true,
       mode: 'summary',
