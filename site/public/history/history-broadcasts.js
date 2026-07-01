@@ -10,6 +10,8 @@
   const CACHE_MS = 15 * 60 * 1000;
   const MAX_SESSION_CACHE_POINTS = 30000;
   const MAX_DRAW_POINTS = 2400;
+  const numberFormatter = new Intl.NumberFormat('ja-JP', { maximumFractionDigits: 1 });
+  const eventDateFormatter = new Intl.DateTimeFormat('ja-JP', { month: 'numeric', day: 'numeric' });
   let series = [];
   let selectedMinute = null;
   let abortController = null;
@@ -20,7 +22,17 @@
   let loadedMeta = null;
 
   const active = () => broadcastsButton.classList.contains('active');
-  const number = (value) => Number(value).toLocaleString('ja-JP', { maximumFractionDigits: 1 });
+  const number = (value) => numberFormatter.format(Number(value));
+
+  function setTextIfChanged(node, value) {
+    if (!node) return;
+    const text = String(value ?? '');
+    if (node.textContent !== text) node.textContent = text;
+  }
+
+  function setHtmlIfChanged(node, value) {
+    if (node && node.innerHTML !== value) node.innerHTML = value;
+  }
 
   function elapsedLabel(minutes) {
     const value = Math.max(0, Math.round(Number(minutes) || 0));
@@ -33,8 +45,7 @@
   function eventLabel(item) {
     const startedAt = Number(item.started_at);
     if (!Number.isFinite(startedAt)) return item.event_name || '公式ステヘ';
-    const date = new Date(startedAt).toLocaleDateString('ja-JP', { month: 'numeric', day: 'numeric' });
-    return `${date} ${item.event_name || '公式ステヘ'}`;
+    return `${eventDateFormatter.format(new Date(startedAt))} ${item.event_name || '公式ステヘ'}`;
   }
 
   function colorFor(index, alpha = 1) {
@@ -118,7 +129,7 @@
     const detail = document.getElementById('chartDetail');
     if (!detail) return;
     if (minute == null) {
-      detail.innerHTML = '<span>グラフをタッチまたはクリックすると、開始後の同じ時点で全放送を比較できます。</span>';
+      setHtmlIfChanged(detail, '<span>グラフをタッチまたはクリックすると、開始後の同じ時点で全放送を比較できます。</span>');
       return;
     }
     const values = series.map((item, index) => ({
@@ -127,8 +138,9 @@
       point: nearestPoint(item.points, minute),
     })).filter(({ point }) => point && Math.abs(Number(point[0]) - minute) <= 5);
 
-    detail.innerHTML = `<time>開始から ${elapsedLabel(minute)}</time><div class="chart-detail-values broadcast-detail-values">${values.map(({ item, index, point }) =>
+    const html = `<time>開始から ${elapsedLabel(minute)}</time><div class="chart-detail-values broadcast-detail-values">${values.map(({ item, index, point }) =>
       `<div><i style="background:${colorFor(index)}"></i><strong>${escapeHtml(eventLabel(item))}</strong><span>${number(point[1])}人</span></div>`).join('')}</div>`;
+    setHtmlIfChanged(detail, html);
   }
 
   function draw() {
@@ -140,18 +152,18 @@
     const startDate = document.getElementById('chartStartDate');
     const endDate = document.getElementById('chartEndDate');
     const guide = document.getElementById('guide');
-    if (chartTitle) chartTitle.textContent = '公式ステヘ 同接推移（開始0分比較）';
-    if (chartFoot) chartFoot.textContent = '各線は1回の公式ステヘです。横軸は実日時ではなく、各放送の開始からの経過時間です。';
-    if (guide) guide.innerHTML = '<strong>公式ステヘ比較</strong><span>全放送の同接推移を、各放送の開始時刻を0分として重ねて表示します。</span>';
+    setTextIfChanged(chartTitle, '公式ステヘ 同接推移（開始0分比較）');
+    setTextIfChanged(chartFoot, '各線は1回の公式ステヘです。横軸は実日時ではなく、各放送の開始からの経過時間です。');
+    setHtmlIfChanged(guide, '<strong>公式ステヘ比較</strong><span>全放送の同接推移を、各放送の開始時刻を0分として重ねて表示します。</span>');
 
     if (!available.length) {
       ctx.fillStyle = '#aaa3b5';
       ctx.font = '14px system-ui';
       ctx.textAlign = 'center';
       ctx.fillText('表示できる公式ステヘデータがありません', width / 2, height / 2);
-      legend.replaceChildren();
-      if (startDate) startDate.textContent = '開始 0分';
-      if (endDate) endDate.textContent = '—';
+      if (legend.childNodes.length) legend.replaceChildren();
+      setTextIfChanged(startDate, '開始 0分');
+      setTextIfChanged(endDate, '—');
       renderDetail(null);
       return;
     }
@@ -235,10 +247,11 @@
       ctx.restore();
     }
 
-    legend.innerHTML = available.map((item, index) =>
+    const legendHtml = available.map((item, index) =>
       `<span><i style="background:${colorFor(index)}"></i>${escapeHtml(eventLabel(item))}</span>`).join('');
-    if (startDate) startDate.textContent = '開始 0分';
-    if (endDate) endDate.textContent = `最長 ${elapsedLabel(maxMinute)}`;
+    setHtmlIfChanged(legend, legendHtml);
+    setTextIfChanged(startDate, '開始 0分');
+    setTextIfChanged(endDate, `最長 ${elapsedLabel(maxMinute)}`);
     renderDetail(selectedMinute);
 
     canvas.dataset.broadcastMaxMinute = String(maxMinute);
@@ -247,7 +260,7 @@
   }
 
   function cacheKey() {
-    return `broadcast-series:v2:${fromInput.value}:${toInput.value}`;
+    return `broadcast-series:v3:${fromInput.value}:${toInput.value}`;
   }
 
   function readCache() {
