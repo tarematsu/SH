@@ -1,10 +1,22 @@
 (() => {
   const baseDrawChart = drawChart;
   const historyBuckets = new Map();
+  const integerFormatter = new Intl.NumberFormat('ja-JP');
+  const dateTimeFormatter = new Intl.DateTimeFormat('ja-JP', {
+    month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit',
+  });
   let lastDashboardObservedAt = 0;
   let lastQueueRevision = '';
   let hiddenAt = 0;
   let playbackActive = null;
+
+  function formatNumber(value) {
+    return value == null || !Number.isFinite(Number(value)) ? '-' : integerFormatter.format(Number(value));
+  }
+
+  function formatDateTime(value) {
+    return value ? dateTimeFormatter.format(new Date(Number(value))) : '-';
+  }
 
   function setText(target, value) {
     if (!target) return false;
@@ -18,6 +30,37 @@
     if (!target || target.style[property] === value) return false;
     target.style[property] = value;
     return true;
+  }
+
+  function setImageIfChanged(target, src) {
+    if (!target) return false;
+    const visible = Boolean(src);
+    let changed = false;
+    if (target.hidden === visible) {
+      target.hidden = !visible;
+      changed = true;
+    }
+    if (visible && target.getAttribute('src') !== src) {
+      target.src = src;
+      changed = true;
+    }
+    return changed;
+  }
+
+  function renderDailyDeltaIfChanged(elementId, value) {
+    const node = el(elementId);
+    if (!node) return;
+    const n = Number(value);
+    if (!Number.isFinite(n)) {
+      setText(node, '');
+      if (!node.hidden) node.hidden = true;
+      return;
+    }
+    const sign = n > 0 ? '+' : n < 0 ? '−' : '±';
+    setText(node, `前日 ${sign}${formatNumber(Math.abs(n))}`);
+    const className = `daily-delta ${n > 0 ? 'positive' : n < 0 ? 'negative' : 'neutral'}`;
+    if (node.className !== className) node.className = className;
+    if (node.hidden) node.hidden = false;
   }
 
   function latestObservedAt(rows) {
@@ -124,7 +167,7 @@
       maximum = Math.max(maximum, value);
     }
     const html = Number.isFinite(minimum)
-      ? `<span>24時間最低 ${minimum.toLocaleString('ja-JP')}</span><span>24時間最高 ${maximum.toLocaleString('ja-JP')}</span>`
+      ? `<span>24時間最低 ${integerFormatter.format(minimum)}</span><span>24時間最高 ${integerFormatter.format(maximum)}</span>`
       : '<span>24時間最低 -</span><span>24時間最高 -</span>';
     if (target.innerHTML !== html) target.innerHTML = html;
   };
@@ -161,26 +204,26 @@
 
       setText(el('channelName'), latest.channel_name || 'Buddies');
       setText(el('description'), latest.description || latest.artist_name || '');
-      setImage(el('channelImage'), latest.channel_image || latest.logo_image);
+      setImageIfChanged(el('channelImage'), latest.channel_image || latest.logo_image);
       if (latest.accent_color && document.documentElement.style.getPropertyValue('--accent') !== latest.accent_color) {
         document.documentElement.style.setProperty('--accent', latest.accent_color);
       }
 
-      setText(el('online'), number(latest.online_member_count));
-      setText(el('members'), number(latest.total_member_count));
-      setText(el('totalListens'), number(latest.total_listens));
-      renderDailyDelta('membersDelta', data.daily_change?.total_member_count);
-      renderDailyDelta('listensDelta', data.daily_change?.total_listens);
-      setText(el('updated'), `最終取得 ${dateTime(latest.observed_at)}`);
+      setText(el('online'), formatNumber(latest.online_member_count));
+      setText(el('members'), formatNumber(latest.total_member_count));
+      setText(el('totalListens'), formatNumber(latest.total_listens));
+      renderDailyDeltaIfChanged('membersDelta', data.daily_change?.total_member_count);
+      renderDailyDeltaIfChanged('listensDelta', data.daily_change?.total_listens);
+      setText(el('updated'), `最終取得 ${formatDateTime(latest.observed_at)}`);
 
       const count = Number(latest.current_stream_count) || 0;
       const goal = Number(latest.stream_goal) || 0;
       const pct = goal ? Math.min(100, count / goal * 100) : 0;
-      setText(el('streamCount'), number(count));
-      setText(el('streamGoal'), number(goal));
+      setText(el('streamCount'), formatNumber(count));
+      setText(el('streamGoal'), formatNumber(goal));
       setStyle(el('goalBar'), 'width', `${pct}%`);
       setText(el('goalPercent'), `${pct.toFixed(2)}%`);
-      setText(el('goalRemaining'), goal ? `残り ${number(Math.max(0, goal - count))}` : '-');
+      setText(el('goalRemaining'), goal ? `残り ${formatNumber(Math.max(0, goal - count))}` : '-');
       renderPrediction(data.goal_prediction, count, goal);
 
       const responseRevision = String(data.queue_revision || '');
