@@ -13,6 +13,8 @@
     year: 'numeric', month: '2-digit', day: '2-digit',
     hour: '2-digit', minute: '2-digit', second: '2-digit',
   });
+  const integerText = (value) => value == null || !Number.isFinite(Number(value))
+    ? '-' : integerFormatter.format(Number(value));
 
   if (typeof renderNowDisplay === 'function') {
     const baseRenderNowDisplay = renderNowDisplay;
@@ -203,7 +205,7 @@
     const detail = el('mainChartDetail');
     if (detail) {
       const html = `<time>${escapeText(detailDateTimeFormatter.format(new Date(Number(row.observed_at))))}</time>`
-        + `<div><span>オンライン</span><strong>${integerFormatter.format(Number(row.online_member_count))}人</strong></div>`;
+        + `<div><span>オンライン</span><strong>${integerText(row.online_member_count)}人</strong></div>`;
       if (detail.innerHTML !== html) detail.innerHTML = html;
     }
     drawChart(lastHistoryRows, index);
