@@ -17,7 +17,7 @@
     }
 
     if (url.pathname === '/api/track-history' && url.searchParams.get('latest') !== '1') {
-      url.searchParams.set('v', '10');
+      url.searchParams.set('v', '11');
     } else if (url.pathname === '/api/history') {
       url.searchParams.set('v', '11');
     }
