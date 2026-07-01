@@ -24,7 +24,29 @@ function configFromEnv(env) {
   };
 }
 
+export function collectorStateFromAuthState(authState, env = {}) {
+  const authToken = normalizeBearer(authState?.authToken || env.STATIONHEAD_AUTH_TOKEN);
+  const deviceUid = String(authState?.deviceUid || env.STATIONHEAD_DEVICE_UID || '').trim();
+  if (!authToken || !deviceUid) {
+    throw new Error('Stationhead session is missing. Set STATIONHEAD_AUTH_TOKEN and STATIONHEAD_DEVICE_UID from collector/.stationhead-session.json.');
+  }
+  return {
+    authToken,
+    deviceUid,
+    tokenExpiresAt: jwtExpiryMs(authToken) || Number(authState?.tokenExpiresAt || 0),
+    lastRunAt: Number(authState?.collectorLastRunAt || 0),
+    lastSuccessAt: Number(authState?.collectorLastSuccessAt || 0),
+    lastError: authState?.collectorLastError || null,
+    channelId: Number(authState?.collectorChannelId || 0) || null,
+    stationId: Number(authState?.collectorStationId || 0) || null,
+  };
+}
+
 async function loadState(env) {
+  if (env.__stationheadAuthState) {
+    return collectorStateFromAuthState(env.__stationheadAuthState, env);
+  }
+
   const row = await env.DB.prepare(`
     SELECT auth_token, device_uid, token_expires_at, last_run_at, last_success_at,
            last_error, last_channel_id, last_station_id, updated_at
@@ -317,7 +339,16 @@ function authorized(request, env) {
 
 async function health(env) {
   if (!env.DB) return { ok: false, error: 'DB binding is missing' };
-  const row = await env.DB.prepare(`
+  const cached = env.__stationheadAuthState;
+  const row = cached ? {
+    token_expires_at: cached.tokenExpiresAt || null,
+    last_run_at: cached.collectorLastRunAt || null,
+    last_success_at: cached.collectorLastSuccessAt || null,
+    last_error: cached.collectorLastError || null,
+    last_channel_id: cached.collectorChannelId || null,
+    last_station_id: cached.collectorStationId || null,
+    updated_at: cached.collectorUpdatedAt || null,
+  } : await env.DB.prepare(`
     SELECT token_expires_at, last_run_at, last_success_at, last_error,
            last_channel_id, last_station_id, updated_at
     FROM sh_worker_collector_state
@@ -325,7 +356,8 @@ async function health(env) {
   `).first();
   return {
     ok: true,
-    configured: Boolean(row || (env.STATIONHEAD_AUTH_TOKEN && env.STATIONHEAD_DEVICE_UID)),
+    configured: Boolean(cached?.authToken && cached?.deviceUid)
+      || Boolean(row || (env.STATIONHEAD_AUTH_TOKEN && env.STATIONHEAD_DEVICE_UID)),
     token_expires_at: row?.token_expires_at || null,
     last_run_at: row?.last_run_at || null,
     last_success_at: row?.last_success_at || null,
