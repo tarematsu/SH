@@ -76,16 +76,6 @@ export function planLikeObservations(tracks, latestRows, observedAt) {
     .map(([trackKey, track]) => ({ trackKey, track }));
 }
 
-async function loadLatestLikes(db, stationId, trackKeys) {
-  const rows = [];
-  for (const group of chunks(trackKeys, QUERY_CHUNK)) {
-    if (!group.length) continue;
-    const result = await db.prepare(latestLikesSql(group.length)).bind(stationId, ...group).all();
-    rows.push(...(result.results || []));
-  }
-  return rows;
-}
-
 function queueItemState(track) {
   return {
     queue_id: num(track.queue_id),
@@ -123,20 +113,39 @@ export function queueItemsToWrite(tracks, existingRows, observedAt, queueId = nu
   });
 }
 
-async function loadExistingQueueItems(db, stationId, startTime, positions) {
-  const rows = [];
-  for (const group of chunks(positions, QUERY_CHUNK)) {
-    if (!group.length) continue;
+function queueItemLookupStatements(db, stationId, startTime, positions) {
+  return chunks(positions, QUERY_CHUNK).filter((group) => group.length).map((group) => {
     const placeholders = group.map(() => '?').join(',');
-    const result = await db.prepare(`SELECT
+    return db.prepare(`SELECT
       position,observed_at,queue_id,queue_track_id,stationhead_track_id,
       spotify_id,apple_music_id,deezer_id,isrc,duration_ms,preview_url,bite_count,raw_json
       FROM sh_queue_items
       WHERE station_id IS ? AND start_time IS ? AND position IN (${placeholders})`)
-      .bind(stationId, startTime, ...group).all();
-    rows.push(...(result.results || []));
-  }
-  return rows;
+      .bind(stationId, startTime, ...group);
+  });
+}
+
+function latestLikeLookupStatements(db, stationId, trackKeys) {
+  return chunks(trackKeys, QUERY_CHUNK).filter((group) => group.length)
+    .map((group) => db.prepare(latestLikesSql(group.length)).bind(stationId, ...group));
+}
+
+export async function loadQueueComparisonState(db, stationId, startTime, positions, trackKeys) {
+  const itemStatements = queueItemLookupStatements(db, stationId, startTime, positions);
+  const likeStatements = latestLikeLookupStatements(db, stationId, trackKeys);
+  const statements = itemStatements.concat(likeStatements);
+  if (!statements.length) return { existingRows: [], latestRows: [], statementCount: 0 };
+
+  const results = typeof db.batch === 'function'
+    ? await db.batch(statements)
+    : await Promise.all(statements.map((statement) => statement.all()));
+  const itemResults = results.slice(0, itemStatements.length);
+  const likeResults = results.slice(itemStatements.length);
+  return {
+    existingRows: itemResults.flatMap((result) => result?.results || []),
+    latestRows: likeResults.flatMap((result) => result?.results || []),
+    statementCount: statements.length,
+  };
 }
 
 export const QUEUE_INSPECTION_STATE_SQL = `SELECT snapshots.raw_json,
@@ -151,6 +160,40 @@ export function queueInspectionDue(previous, payloadJson, observedAt) {
   if (!previous || previous.raw_json !== payloadJson) return true;
   const itemObservedAt = num(previous.item_observed_at);
   return itemObservedAt == null || observedAt - itemObservedAt >= CHECKPOINT_MS;
+}
+
+function queueItemWriteStatements(db, tracks, observedAt, stationId, queueId, startTime) {
+  return tracks.map((track) => db.prepare(`INSERT INTO sh_queue_items (
+      observed_at,station_id,queue_id,start_time,position,
+      queue_track_id,stationhead_track_id,spotify_id,apple_music_id,
+      deezer_id,isrc,duration_ms,preview_url,bite_count,raw_json
+    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+    ON CONFLICT(station_id,start_time,position) DO UPDATE SET
+      observed_at=excluded.observed_at,queue_id=excluded.queue_id,
+      queue_track_id=excluded.queue_track_id,stationhead_track_id=excluded.stationhead_track_id,
+      spotify_id=excluded.spotify_id,apple_music_id=excluded.apple_music_id,
+      deezer_id=excluded.deezer_id,isrc=excluded.isrc,duration_ms=excluded.duration_ms,
+      preview_url=excluded.preview_url,bite_count=excluded.bite_count,raw_json=excluded.raw_json`)
+    .bind(
+      observedAt, stationId, queueId, startTime, num(track.position),
+      num(track.queue_track_id), num(track.stationhead_track_id),
+      text(track.spotify_id), text(track.apple_music_id), text(track.deezer_id),
+      text(track.isrc), num(track.duration_ms), text(track.preview_url),
+      num(track.bite_count), rawJson(track.raw),
+    ));
+}
+
+function likeObservationWriteStatements(db, observations, observedAt, stationId, queueId, startTime) {
+  return observations.map(({ trackKey, track }) => db.prepare(`INSERT OR IGNORE INTO sh_track_like_observations (
+      observed_at,station_id,queue_id,start_time,position,
+      queue_track_id,stationhead_track_id,spotify_id,apple_music_id,isrc,
+      track_key,like_count,source,raw_json
+    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).bind(
+    observedAt, stationId, queueId, startTime, num(track.position),
+    num(track.queue_track_id), num(track.stationhead_track_id),
+    text(track.spotify_id), text(track.apple_music_id), text(track.isrc),
+    trackKey, num(track.bite_count), 'collector', rawJson(track.raw ?? track),
+  ));
 }
 
 async function saveQueue(db, observedAt, data, payload = queueClaimPayload(data)) {
@@ -179,46 +222,18 @@ async function saveQueue(db, observedAt, data, payload = queueClaimPayload(data)
   }
 
   const positions = [...new Set(tracks.map((track) => num(track.position)).filter((value) => value != null))];
-  const existingRows = await loadExistingQueueItems(db, stationId, startTime, positions);
-  const changedTracks = queueItemsToWrite(tracks, existingRows, observedAt, queueId);
-  const statements = changedTracks.map((track) => db.prepare(`INSERT INTO sh_queue_items (
-      observed_at,station_id,queue_id,start_time,position,
-      queue_track_id,stationhead_track_id,spotify_id,apple_music_id,
-      deezer_id,isrc,duration_ms,preview_url,bite_count,raw_json
-    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-    ON CONFLICT(station_id,start_time,position) DO UPDATE SET
-      observed_at=excluded.observed_at,queue_id=excluded.queue_id,
-      queue_track_id=excluded.queue_track_id,stationhead_track_id=excluded.stationhead_track_id,
-      spotify_id=excluded.spotify_id,apple_music_id=excluded.apple_music_id,
-      deezer_id=excluded.deezer_id,isrc=excluded.isrc,duration_ms=excluded.duration_ms,
-      preview_url=excluded.preview_url,bite_count=excluded.bite_count,raw_json=excluded.raw_json`)
-    .bind(
-      observedAt, stationId, queueId, startTime, num(track.position),
-      num(track.queue_track_id), num(track.stationhead_track_id),
-      text(track.spotify_id), text(track.apple_music_id), text(track.deezer_id),
-      text(track.isrc), num(track.duration_ms), text(track.preview_url),
-      num(track.bite_count), rawJson(track.raw),
-    ));
-  await runBatches(db, statements);
-
   const keyed = [...new Set(
     tracks.filter((track) => num(track?.bite_count) != null).map(observationTrackKey),
   )];
-  if (!keyed.length) {
-    return { inspected: true, itemsWritten: changedTracks.length, observationsWritten: 0 };
-  }
-  const latestRows = await loadLatestLikes(db, stationId, keyed);
+  const { existingRows, latestRows } = await loadQueueComparisonState(
+    db, stationId, startTime, positions, keyed,
+  );
+  const changedTracks = queueItemsToWrite(tracks, existingRows, observedAt, queueId);
   const observations = planLikeObservations(tracks, latestRows, observedAt);
-  await runBatches(db, observations.map(({ trackKey, track }) => db.prepare(`INSERT OR IGNORE INTO sh_track_like_observations (
-      observed_at,station_id,queue_id,start_time,position,
-      queue_track_id,stationhead_track_id,spotify_id,apple_music_id,isrc,
-      track_key,like_count,source,raw_json
-    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).bind(
-    observedAt, stationId, queueId, startTime, num(track.position),
-    num(track.queue_track_id), num(track.stationhead_track_id),
-    text(track.spotify_id), text(track.apple_music_id), text(track.isrc),
-    trackKey, num(track.bite_count), 'collector', rawJson(track.raw ?? track),
-  )));
+  await runBatches(db, [
+    ...queueItemWriteStatements(db, changedTracks, observedAt, stationId, queueId, startTime),
+    ...likeObservationWriteStatements(db, observations, observedAt, stationId, queueId, startTime),
+  ]);
   return {
     inspected: true,
     itemsWritten: changedTracks.length,
@@ -251,13 +266,19 @@ export function commentsToWrite(comments, existingRows) {
   });
 }
 
-async function saveComments(db, observedAt, data) {
-  const comments = Array.isArray(data?.comments) ? data.comments : [];
-  const ids = [...new Set(comments.map((comment) => num(comment.id)).filter((value) => value != null))];
-  const existingRows = await loadExistingComments(db, ids);
-  const changed = commentsToWrite(comments, existingRows);
+export const COMMENT_VELOCITY_UPDATE_SQL = `UPDATE sh_channel_snapshots
+SET comment_velocity=(
+  SELECT COUNT(*) FROM sh_comments
+  WHERE station_id=?
+    AND COALESCE(chat_time_ms,chat_time*1000,observed_at)>?
+    AND COALESCE(chat_time_ms,chat_time*1000,observed_at)<=?
+)
+WHERE id=(SELECT id FROM sh_channel_snapshots
+  WHERE station_id=? AND observed_at<=?
+  ORDER BY observed_at DESC,id DESC LIMIT 1)`;
 
-  await runBatches(db, changed.map((comment) => db.prepare(`INSERT INTO sh_comments (
+function commentWriteStatements(db, changed, observedAt) {
+  return changed.map((comment) => db.prepare(`INSERT INTO sh_comments (
       id,observed_at,station_id,account_id,handle,text,text_with_xml,
       chat_time,chat_time_ms,all_access_chat,boost_chat,
       active_stream_days,followers,following,emoji,raw_json
@@ -277,21 +298,21 @@ async function saveComments(db, observedAt, data) {
       bool(comment.all_access_chat), bool(comment.boost_chat),
       num(comment.active_stream_days), num(comment.followers), num(comment.following),
       text(comment.emoji), rawJson(comment.raw),
-    )));
+    ));
+}
 
+async function saveComments(db, observedAt, data) {
+  const comments = Array.isArray(data?.comments) ? data.comments : [];
+  const ids = [...new Set(comments.map((comment) => num(comment.id)).filter((value) => value != null))];
+  const existingRows = await loadExistingComments(db, ids);
+  const changed = commentsToWrite(comments, existingRows);
   const stationId = num(data?.station_id ?? comments.find((comment) => num(comment.station_id) != null)?.station_id);
-  if (stationId == null) return;
-  const velocityRow = await db.prepare(`SELECT COUNT(*) AS count FROM sh_comments
-    WHERE station_id=?
-      AND COALESCE(chat_time_ms,chat_time*1000,observed_at)>?
-      AND COALESCE(chat_time_ms,chat_time*1000,observed_at)<=?`)
-    .bind(stationId, observedAt - 120000, observedAt).first();
-  const velocity = num(velocityRow?.count) ?? 0;
-  await db.prepare(`UPDATE sh_channel_snapshots SET comment_velocity=?
-    WHERE id=(SELECT id FROM sh_channel_snapshots
-      WHERE station_id=? AND observed_at<=?
-      ORDER BY observed_at DESC,id DESC LIMIT 1)`)
-    .bind(velocity, stationId, observedAt).run();
+  const statements = commentWriteStatements(db, changed, observedAt);
+  if (stationId != null) {
+    statements.push(db.prepare(COMMENT_VELOCITY_UPDATE_SQL)
+      .bind(stationId, observedAt - 120000, observedAt, stationId, observedAt));
+  }
+  await runBatches(db, statements);
 }
 
 export function requestWithParsedJson(request, body) {
