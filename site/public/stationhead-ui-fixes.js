@@ -34,6 +34,22 @@
     };
   }
 
+  if (typeof renderPrediction === 'function') {
+    renderPrediction = function renderPredictionDifferential(prediction, current, goal) {
+      const eta = el('goalEta');
+      const rate = el('goalRate');
+      if (!eta || !rate) return;
+      const etaText = prediction
+        ? etaDateTime(prediction.eta)
+        : current >= goal && goal > 0 ? '目標達成済み' : '予測データ不足';
+      const rateText = prediction
+        ? `平均 +${integerText(Math.round(prediction.rate_per_hour))} /時`
+        : '最低15分以上の履歴が必要です';
+      if (eta.textContent !== etaText) eta.textContent = etaText;
+      if (rate.textContent !== rateText) rate.textContent = rateText;
+    };
+  }
+
   if (typeof drawChart !== 'function' || typeof showMainChartDetail !== 'function') return;
 
   drawChart = function drawOnlineChart(rows = lastHistoryRows, selectionIndex = selectedMainChartIndex) {
