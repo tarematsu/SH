@@ -2,6 +2,7 @@
   const baseVisibleKeys = visibleKeys;
   const baseLabelsFor = labelsFor;
   const baseDisplayCell = displayCell;
+  const likeFormatter = new Intl.NumberFormat('ja-JP');
 
   visibleKeys = (mode) => mode === 'tracks'
     ? [...baseVisibleKeys(mode), 'like_count']
@@ -15,7 +16,7 @@
     if (mode === 'tracks' && key === 'like_count') {
       if (row?._daily_total) return '—';
       const value = Number(row?.like_count);
-      return Number.isFinite(value) ? `${value.toLocaleString('ja-JP')}件` : '—';
+      return Number.isFinite(value) ? `${likeFormatter.format(value)}件` : '—';
     }
     return baseDisplayCell(key, row, mode);
   };
