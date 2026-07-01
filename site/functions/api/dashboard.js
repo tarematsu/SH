@@ -113,10 +113,9 @@ function proxyDatabase(db, queueContext) {
 }
 
 export function queueResponseFields(queueContext) {
-  const revision = queueContext.revision
-    || queueRevision(queueContext.state, queueContext.hostIdentity);
   return {
-    queue_revision: revision,
+    queue_revision: queueContext.revision
+      || queueRevision(queueContext.state, queueContext.hostIdentity),
     queue_unchanged: Boolean(queueContext.unchanged),
   };
 }
@@ -127,8 +126,24 @@ export function appendJsonObjectFields(body, fields) {
   const encoded = JSON.stringify(fields || {}).slice(1, -1);
   if (!encoded || !trimmed.startsWith('{') || !trimmed.endsWith('}')) return text;
   const closing = text.lastIndexOf('}');
-  const hasProperties = trimmed !== '{}';
-  return `${text.slice(0, closing)}${hasProperties ? ',' : ''}${encoded}${text.slice(closing)}`;
+  return `${text.slice(0, closing)}${trimmed === '{}' ? '' : ','}${encoded}${text.slice(closing)}`;
+}
+
+export function decorateQueueResponse(payload, queueContext) {
+  if (!payload?.ok) return payload;
+  const result = { ...payload, ...queueResponseFields(queueContext) };
+  if (!queueContext.unchanged) return result;
+  result.queue = [];
+  if (result.queue_status) {
+    result.queue_status = {
+      ...result.queue_status,
+      playing: result.latest?.is_broadcasting !== 0
+        && result.latest?.is_broadcasting !== false
+        && !result.queue_status.is_paused,
+      total_items: queueContext.state?.total_items ?? result.queue_status.total_items ?? 0,
+    };
+  }
+  return result;
 }
 
 export async function onRequestGet(context) {
@@ -147,7 +162,10 @@ export async function onRequestGet(context) {
   });
   if (!response.ok) return response;
   const body = await response.text();
-  return new Response(appendJsonObjectFields(body, queueResponseFields(queueContext)), {
+  const output = queueContext.unchanged
+    ? JSON.stringify(decorateQueueResponse(JSON.parse(body), queueContext))
+    : appendJsonObjectFields(body, queueResponseFields(queueContext));
+  return new Response(output, {
     status: response.status,
     statusText: response.statusText,
     headers: response.headers,
