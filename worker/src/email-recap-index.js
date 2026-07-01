@@ -8,7 +8,7 @@ const LEASE_SCOPE = 'stationhead-primary';
 const LEASE_TTL_MS = 180000;
 
 function json(data, status = 200) {
-  return new Response(JSON.stringify(data, null, 2), {
+  return new Response(JSON.stringify(data), {
     status,
     headers: {
       'content-type': 'application/json; charset=utf-8',
@@ -198,9 +198,47 @@ function assess(points, effectiveAt, streamCount) {
   };
 }
 
-async function assessEmailSeries(env, sourceKey, weekOf, streamCount) {
-  const existing = await env.DB.prepare(`SELECT source_key,week_of,stream_count
-    FROM sh_email_stream_snapshots WHERE source_key=?`).bind(sourceKey).first();
+export const EMAIL_SERIES_CONTEXT_SQL = `WITH existing AS (
+  SELECT source_key,week_of,stream_count
+  FROM sh_email_stream_snapshots
+  WHERE source_key=?
+), previous AS (
+  SELECT source_key,week_of,stream_count
+  FROM sh_email_stream_snapshots
+  WHERE week_of<?
+  ORDER BY week_of DESC
+  LIMIT 9
+), following AS (
+  SELECT source_key,week_of,stream_count
+  FROM sh_email_stream_snapshots
+  WHERE week_of>?
+  ORDER BY week_of ASC
+  LIMIT 1
+)
+SELECT 0 AS result_kind,source_key,week_of,stream_count FROM existing
+UNION ALL
+SELECT 1 AS result_kind,source_key,week_of,stream_count FROM previous
+UNION ALL
+SELECT 2 AS result_kind,source_key,week_of,stream_count FROM following
+ORDER BY result_kind ASC,week_of ASC`;
+
+export async function loadEmailSeriesContext(db, sourceKey, weekOf) {
+  const result = await db.prepare(EMAIL_SERIES_CONTEXT_SQL).bind(sourceKey, weekOf, weekOf).all();
+  let existing = null;
+  let next = null;
+  const previousRows = [];
+  for (const row of result.results || []) {
+    const kind = Number(row.result_kind);
+    const value = { source_key: row.source_key, week_of: row.week_of, stream_count: row.stream_count };
+    if (kind === 0) existing = value;
+    else if (kind === 1) previousRows.push(value);
+    else if (kind === 2) next = value;
+  }
+  return { existing, previousRows, next };
+}
+
+export async function assessEmailSeries(env, sourceKey, weekOf, streamCount) {
+  const { existing, previousRows, next } = await loadEmailSeriesContext(env.DB, sourceKey, weekOf);
   if (existing && Number(existing.stream_count) !== streamCount) {
     return {
       accepted: false,
@@ -209,13 +247,6 @@ async function assessEmailSeries(env, sourceKey, weekOf, streamCount) {
     };
   }
 
-  const [previousResult, next] = await Promise.all([
-    env.DB.prepare(`SELECT week_of,stream_count FROM sh_email_stream_snapshots
-      WHERE week_of<? ORDER BY week_of DESC LIMIT 9`).bind(weekOf).all(),
-    env.DB.prepare(`SELECT week_of,stream_count FROM sh_email_stream_snapshots
-      WHERE week_of>? ORDER BY week_of ASC LIMIT 1`).bind(weekOf).first(),
-  ]);
-  const previousRows = (previousResult.results || []).reverse();
   const previous = previousRows.at(-1) || null;
 
   if (previous && streamCount < Number(previous.stream_count)) {
