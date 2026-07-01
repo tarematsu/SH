@@ -1,7 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { fetchTrackMetadata } from '../worker/src/shared.js';
+import {
+  enrichTracks,
+  fetchTrackMetadata,
+  jsonResponse,
+  resetTrackMetadataQueueCache,
+} from '../worker/src/shared.js';
 
 async function withFetch(fetchImpl, callback) {
   const originalFetch = globalThis.fetch;
@@ -40,4 +45,34 @@ test('Apple metadata lookup falls back to US only after JP misses', async () => 
     assert.equal(value.title, 'Track');
     assert.deepEqual(countries, ['JP', 'US']);
   });
+});
+
+test('completed queue metadata skips repeated D1 lookups', async () => {
+  resetTrackMetadataQueueCache();
+  let queries = 0;
+  const env = {
+    DB: {
+      prepare() {
+        return {
+          bind() { return this; },
+          async all() {
+            queries += 1;
+            return { results: [{ spotify_id: 'spotify-1', title: 'Track', artist: 'Artist' }] };
+          },
+        };
+      },
+    },
+  };
+  const queue = { tracks: [{ spotify_id: 'spotify-1' }] };
+  const ingest = async () => assert.fail('complete metadata must not trigger ingest');
+  const config = { metadataLimit: 3, requestTimeoutMs: 1000 };
+
+  assert.equal(await enrichTracks(env, ingest, queue, 1000, config), 0);
+  assert.equal(await enrichTracks(env, ingest, queue, 2000, config), 0);
+  assert.equal(queries, 1);
+});
+
+test('worker JSON responses do not add pretty-print transfer bytes', async () => {
+  const response = jsonResponse({ ok: true, count: 1 });
+  assert.equal(await response.text(), '{"ok":true,"count":1}');
 });
