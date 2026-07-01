@@ -8,11 +8,10 @@
     const xPositions = mainChartState?.xPositions;
     if (!canvas || !sampled?.length || !xPositions?.length) return;
 
-    const values = sampled.map((row) => Number(row.comment_velocity));
-    const finiteValues = values.filter(Number.isFinite);
-    if (!finiteValues.length) return;
-
-    const maxValue = Math.max(1, ...finiteValues);
+    const values = mainChartState?.commentVelocityValues;
+    const maximum = Number(mainChartState?.commentVelocityMax) || 0;
+    if (!values?.length || maximum <= 0) return;
+    const maxValue = Math.max(1, maximum);
     const rect = canvas.getBoundingClientRect();
     const width = Math.max(320, Math.round(rect.width || canvas.clientWidth || 1000));
     const height = Math.max(260, Math.min(380, Math.round(width * 0.32)));
@@ -30,9 +29,9 @@
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.globalCompositeOperation = 'destination-over';
 
-    sampled.forEach((row, index) => {
-      const value = Number(row.comment_velocity);
-      if (!Number.isFinite(value) || value <= 0) return;
+    for (let index = 0; index < values.length; index += 1) {
+      const value = values[index];
+      if (value == null || value <= 0) continue;
 
       const previousGap = index > 0 ? xPositions[index] - xPositions[index - 1] : Infinity;
       const nextGap = index < xPositions.length - 1 ? xPositions[index + 1] - xPositions[index] : Infinity;
@@ -44,7 +43,7 @@
       ctx.globalAlpha = selected ? 0.48 : 0.24;
       ctx.fillStyle = barColor;
       ctx.fillRect(xPositions[index] - barWidth / 2, plotBottom - barHeight, barWidth, barHeight);
-    });
+    }
 
     ctx.restore();
   }
@@ -56,9 +55,8 @@
 
   showMainChartDetail = function showDetailWithVelocity(index) {
     baseShowDetail(index);
-    const row = mainChartState?.sampled?.[index];
     const detail = el('mainChartDetail');
-    const velocity = Number(row?.comment_velocity);
+    const velocity = mainChartState?.commentVelocityValues?.[index];
     if (!detail) return;
     detail.insertAdjacentHTML(
       'beforeend',
