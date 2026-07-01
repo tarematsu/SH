@@ -53,7 +53,7 @@
   };
 
   refresh = async function refreshDashboardDelta() {
-    if (refreshInFlight) return;
+    if (refreshInFlight || document.hidden) return;
     refreshInFlight = true;
     refreshAbortController?.abort();
     refreshAbortController = new AbortController();
@@ -66,7 +66,6 @@
         ? `/api/dashboard?since=${encodeURIComponent(lastDashboardObservedAt)}`
         : '/api/dashboard';
       const response = await fetch(dashboardUrl, {
-        cache: 'no-store',
         signal: refreshAbortController.signal,
         headers: { accept: 'application/json' },
       });
@@ -135,6 +134,7 @@
   document.addEventListener('visibilitychange', () => {
     if (document.hidden) {
       hiddenAt = Date.now();
+      refreshAbortController?.abort();
     } else {
       if (hiddenAt && Date.now() - hiddenAt > 2 * 60 * 60 * 1000) lastDashboardObservedAt = 0;
       hiddenAt = 0;

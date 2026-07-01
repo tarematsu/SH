@@ -74,21 +74,27 @@ export function normalizeComments(payload, stationId, { finite } = {}) {
   })).filter((comment) => comment.comment_id != null || comment.id != null);
 }
 
-export async function fetchTrackMetadata(track, config) {
-  const applePromise = track?.apple_music_id
-    ? Promise.all(['JP', 'US'].map(async (country) => {
+async function fetchAppleTrackMetadata(track, config) {
+  if (!track?.apple_music_id) return null;
+  for (const country of ['JP', 'US']) {
+    try {
       const params = new URLSearchParams({ id: String(track.apple_music_id), entity: 'song', country });
       const response = await fetch(`https://itunes.apple.com/lookup?${params}`, {
         headers: { accept: 'application/json' },
         signal: AbortSignal.timeout(config.requestTimeoutMs),
       });
-      if (!response.ok) return null;
+      if (!response.ok) continue;
       const raw = await response.json();
       const item = (raw.results || []).find((value) => value.kind === 'song' && value.trackName && value.artistName)
         || (raw.results || []).find((value) => value.trackName && value.artistName);
-      return item ? { item, raw } : null;
-    })).then((values) => values.find(Boolean) || null).catch(() => null)
-    : Promise.resolve(null);
+      if (item) return { item, raw };
+    } catch {}
+  }
+  return null;
+}
+
+export async function fetchTrackMetadata(track, config) {
+  const applePromise = fetchAppleTrackMetadata(track, config);
 
   const spotifyId = track?.spotify_id;
   const spotifyUrl = spotifyId ? `https://open.spotify.com/track/${encodeURIComponent(spotifyId)}` : null;
