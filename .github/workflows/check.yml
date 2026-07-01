@@ -18,7 +18,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          show-progress: false
           sparse-checkout: |
             collector
             scraper
@@ -34,21 +33,5 @@ jobs:
       - name: Install Worker tooling
         working-directory: worker
         run: npm install --no-audit --no-fund
-      - name: Check JavaScript syntax
-        run: npm run check:js
-      - name: Check period boundary tests
-        run: node --test tests/period-completeness.test.mjs tests/period-boundary-tolerance.test.mjs
-      - name: Check track history tests
-        run: node --test tests/track-history-handler.test.mjs
-      - name: Check database workload tests
-        run: node --test tests/database-workload.test.mjs tests/remaining-runtime-audit-8.test.mjs
-      - name: Check audit tests 2 through 4
-        run: node --test tests/remaining-runtime-audit-2.test.mjs tests/remaining-runtime-audit-3.test.mjs tests/remaining-runtime-audit-4.test.mjs
-      - name: Check audit tests 5 through 7
-        run: node --test tests/remaining-runtime-audit-5.test.mjs tests/remaining-runtime-audit-6.test.mjs tests/remaining-runtime-audit-7.test.mjs
-      - name: Run JavaScript tests
-        run: npm run test:js
-      - name: Run SQL migration tests
-        run: npm run test:sql
-      - name: Check Worker bundle
-        run: npm run check:worker-bundle
+      - name: Run repository checks
+        run: npm run check
