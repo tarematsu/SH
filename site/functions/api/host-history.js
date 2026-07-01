@@ -14,6 +14,26 @@ function intParam(value, fallback, min, max) {
   return Math.min(max, Math.max(min, parsed));
 }
 
+const LATEST_PROFILE_SQL = `SELECT observed_at, handle, account_id, followers, following,
+       total_streams, active_stream_days, thumbnail_url
+FROM sh_host_profile_snapshots
+WHERE handle = 'sakuramankai'
+ORDER BY observed_at DESC LIMIT 1`;
+
+const ACTIVE_SESSION_SQL = `SELECT id, handle, station_id, started_at, confirmed_at, status,
+       peak_listeners, listener_sample_count, track_count, comment_count,
+       last_observed_at
+FROM sh_host_broadcast_sessions
+WHERE handle = 'sakurazaka46jp' AND status IN ('provisional', 'active')
+ORDER BY started_at DESC LIMIT 1`;
+
+const RECENT_SESSIONS_SQL = `SELECT id, handle, station_id, started_at, ended_at, status,
+       peak_listeners, average_listeners, total_listens_start,
+       total_listens_end, track_count, comment_count
+FROM sh_host_broadcast_sessions
+WHERE handle = 'sakurazaka46jp'
+ORDER BY started_at DESC LIMIT 10`;
+
 export const HOST_SUMMARY_SQL = `WITH profile AS (
   SELECT observed_at,handle,account_id,followers,following,
     total_streams,active_stream_days,thumbnail_url
@@ -130,8 +150,22 @@ function summaryStateFor(db) {
 }
 
 export async function loadHostSummary(db) {
-  const result = await db.prepare(HOST_SUMMARY_SQL).all();
-  return parseHostSummaryRows(result?.results || []);
+  const statement = db.prepare(HOST_SUMMARY_SQL);
+  if (typeof statement?.all === 'function') {
+    const result = await statement.all();
+    return parseHostSummaryRows(result?.results || []);
+  }
+
+  const [latestProfileResult, activeSessionResult, recentSessionsResult] = await db.batch([
+    db.prepare(LATEST_PROFILE_SQL),
+    db.prepare(ACTIVE_SESSION_SQL),
+    db.prepare(RECENT_SESSIONS_SQL),
+  ]);
+  return {
+    latestProfile: latestProfileResult?.results?.[0] || null,
+    activeSession: activeSessionResult?.results?.[0] || null,
+    recentSessions: recentSessionsResult?.results || [],
+  };
 }
 
 export async function cachedHostSummary(db, now = Date.now()) {

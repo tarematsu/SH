@@ -90,7 +90,7 @@
     setText('#chartEndDate', last == null ? '—' : formatDate(last));
   };
 
-  makeXPositions = function makeXPositionsCached(dates, area) {
+  makeXPositions = function makeXPositionsSinglePassCached(dates, area) {
     const values = Array.isArray(dates) ? dates : [];
     const cacheKey = `${area.left}:${area.width}`;
     const cached = xPositionCache.get(values);
