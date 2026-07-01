@@ -55,35 +55,61 @@ export const TRACK_HISTORY_SQL = `WITH snapshot_evidence AS (
           ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING
         ), 0) AS invalid_durations_before
       FROM normalized n
+    ), plays AS (
+      SELECT
+        strftime('%Y-%m-%d', p.played_at / 1000, 'unixepoch') AS play_date,
+        p.played_at,p.position,p.queue_track_id,p.stationhead_track_id,
+        p.spotify_id,p.apple_music_id,p.isrc,
+        NULLIF(m.title, '') AS title,
+        NULLIF(m.artist, '') AS artist,
+        NULLIF(m.display_title, '') AS display_title,
+        NULLIF(m.spotify_url, '') AS spotify_url,
+        COALESCE(
+          NULLIF(json_extract(p.raw_json, '$.track.title'), ''),
+          NULLIF(json_extract(p.raw_json, '$.track.name'), ''),
+          NULLIF(json_extract(p.raw_json, '$.title'), ''),
+          NULLIF(json_extract(p.raw_json, '$.name'), '')
+        ) AS raw_title,
+        COALESCE(
+          NULLIF(json_extract(p.raw_json, '$.track.artist_name'), ''),
+          NULLIF(json_extract(p.raw_json, '$.track.artist'), ''),
+          NULLIF(json_extract(p.raw_json, '$.track.artists[0].name'), ''),
+          NULLIF(json_extract(p.raw_json, '$.artist_name'), ''),
+          NULLIF(json_extract(p.raw_json, '$.artist'), ''),
+          NULLIF(json_extract(p.raw_json, '$.artists[0].name'), '')
+        ) AS raw_artist
+      FROM timed p
+      LEFT JOIN sh_track_metadata m ON m.spotify_id = p.spotify_id
+      WHERE p.played_at >= ? AND p.played_at < ?
+        AND p.invalid_durations_before = 0
+        AND p.played_at <= p.queue_last_observed_at + ?
     )
     SELECT
-      strftime('%Y-%m-%d', p.played_at / 1000, 'unixepoch') AS play_date,
-      p.played_at,p.position,p.queue_track_id,p.stationhead_track_id,
-      p.spotify_id,p.apple_music_id,p.isrc,
-      NULLIF(m.title, '') AS title,
-      NULLIF(m.artist, '') AS artist,
-      NULLIF(m.display_title, '') AS display_title,
-      NULLIF(m.spotify_url, '') AS spotify_url,
-      COALESCE(
-        NULLIF(json_extract(p.raw_json, '$.track.title'), ''),
-        NULLIF(json_extract(p.raw_json, '$.track.name'), ''),
-        NULLIF(json_extract(p.raw_json, '$.title'), ''),
-        NULLIF(json_extract(p.raw_json, '$.name'), '')
-      ) AS raw_title,
-      COALESCE(
-        NULLIF(json_extract(p.raw_json, '$.track.artist_name'), ''),
-        NULLIF(json_extract(p.raw_json, '$.track.artist'), ''),
-        NULLIF(json_extract(p.raw_json, '$.track.artists[0].name'), ''),
-        NULLIF(json_extract(p.raw_json, '$.artist_name'), ''),
-        NULLIF(json_extract(p.raw_json, '$.artist'), ''),
-        NULLIF(json_extract(p.raw_json, '$.artists[0].name'), '')
-      ) AS raw_artist
-    FROM timed p
-    LEFT JOIN sh_track_metadata m ON m.spotify_id = p.spotify_id
-    WHERE p.played_at >= ? AND p.played_at < ?
-      AND p.invalid_durations_before = 0
-      AND p.played_at <= p.queue_last_observed_at + ?
-    ORDER BY p.played_at ASC
+      play_date,
+      MIN(played_at) AS played_at,
+      MIN(played_at) AS first_played_at,
+      MAX(played_at) AS last_played_at,
+      COUNT(*) AS play_count,
+      MIN(position) AS position,
+      MIN(queue_track_id) AS queue_track_id,
+      stationhead_track_id,spotify_id,apple_music_id,isrc,
+      MAX(title) AS title,MAX(artist) AS artist,
+      MAX(display_title) AS display_title,MAX(spotify_url) AS spotify_url,
+      MAX(raw_title) AS raw_title,MAX(raw_artist) AS raw_artist
+    FROM plays
+    GROUP BY
+      play_date,stationhead_track_id,spotify_id,apple_music_id,isrc,
+      CASE
+        WHEN spotify_id IS NULL AND apple_music_id IS NULL AND isrc IS NULL
+          AND stationhead_track_id IS NULL THEN queue_track_id
+        ELSE NULL
+      END,
+      CASE
+        WHEN spotify_id IS NULL AND apple_music_id IS NULL AND isrc IS NULL
+          AND stationhead_track_id IS NULL AND queue_track_id IS NULL THEN position
+        ELSE NULL
+      END
+    ORDER BY first_played_at ASC
     LIMIT ?`;
 
 export async function handleTrackHistory({ request, env, waitUntil }) {
@@ -105,23 +131,23 @@ export async function handleTrackHistory({ request, env, waitUntil }) {
       return out({ ok: false, error: 'invalid date range' }, 400);
     }
 
-    const maxSourceRows = Math.min(limit * 32, 100000);
+    const maxGroupedRows = Math.min(limit * 8, 40000);
     const result = await env.DB.prepare(TRACK_HISTORY_SQL).bind(
       toTs, fromTs - TRACK_HISTORY_GRACE_MS,
       toTs, fromTs - TRACK_HISTORY_GRACE_MS,
       toTs,
       fromTs, toTs,
       TRACK_HISTORY_GRACE_MS,
-      maxSourceRows + 1,
+      maxGroupedRows + 1,
     ).all();
 
-    const allSourceRows = result.results || [];
-    const sourceTruncated = allSourceRows.length > maxSourceRows;
-    const sourceRows = sourceTruncated ? allSourceRows.slice(0, maxSourceRows) : allSourceRows;
-    const rows = mergeTrackRows(sourceRows);
+    const allGroupedRows = result.results || [];
+    const sourceTruncated = allGroupedRows.length > maxGroupedRows;
+    const groupedRows = sourceTruncated ? allGroupedRows.slice(0, maxGroupedRows) : allGroupedRows;
+    const rows = mergeTrackRows(groupedRows);
     const metadataRefreshScheduled = typeof waitUntil === 'function';
     if (metadataRefreshScheduled) {
-      waitUntil(refreshMissingMetadata(sourceRows, env).catch((error) => {
+      waitUntil(refreshMissingMetadata(groupedRows, env).catch((error) => {
         console.error('track metadata background refresh failed', error);
       }));
     }
@@ -135,8 +161,10 @@ export async function handleTrackHistory({ request, env, waitUntil }) {
       rows: rows.length > limit ? rows.slice(0, limit) : rows,
       truncated,
       source_truncated: sourceTruncated,
+      source_row_count: groupedRows.reduce((sum, row) => sum + (Number(row.play_count) || 0), 0),
+      grouped_row_count: groupedRows.length,
       metadata_refresh_scheduled: metadataRefreshScheduled,
-      method: 'observed_unpaused_queue_reachability_utc',
+      method: 'observed_unpaused_queue_reachability_utc_sql_preaggregate',
     });
   } catch (error) {
     if (/no such table|no such column|malformed JSON/i.test(String(error?.message || ''))) {

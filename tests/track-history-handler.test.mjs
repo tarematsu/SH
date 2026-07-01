@@ -6,6 +6,7 @@ import {
   TRACK_HISTORY_GRACE_MS,
   TRACK_HISTORY_SQL,
 } from '../site/functions/lib/track-history-handler.js';
+import { mergeTrackRows } from '../site/functions/lib/track-history-merge.js';
 
 function createDatabase() {
   const db = new DatabaseSync(':memory:');
@@ -59,6 +60,8 @@ function addTracks(db, {
   duration = 180000,
   observed = start,
   station = 1,
+  spotifyId = (position) => `spotify-${station}-${position}`,
+  rawTitle = (position) => `Track ${position}`,
 }) {
   const insert = db.prepare(`
     INSERT INTO sh_queue_items (
@@ -74,9 +77,9 @@ function addTracks(db, {
       start,
       position,
       position + 1,
-      `spotify-${station}-${position}`,
+      spotifyId(position),
       durationMs,
-      JSON.stringify({ title: `Track ${position}`, artist: 'Artist' }),
+      JSON.stringify({ title: rawTitle(position), artist: 'Artist' }),
     );
   }
 }
@@ -205,4 +208,41 @@ test('uses queue item heartbeat evidence for legacy rows without snapshots', () 
   const rows = queryTracks(db, '2026-06-30', '2026-06-30');
 
   assert.equal(rows.length, 7);
+});
+
+test('preaggregates repeated plays before rows leave SQLite', () => {
+  const db = createDatabase();
+  const start = Date.parse('2026-06-30T00:00:00Z');
+  addTracks(db, {
+    start,
+    count: 4,
+    spotifyId: () => 'same-track',
+    rawTitle: () => 'Same Track',
+  });
+  addSnapshot(db, { start, observed: start + 20 * 60000 });
+
+  const rows = queryTracks(db, '2026-06-30', '2026-06-30');
+
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].play_count, 4);
+  assert.equal(rows[0].first_played_at, start);
+  assert.equal(rows[0].last_played_at, start + 9 * 60000);
+});
+
+test('mergeTrackRows adds preaggregated counts for matching titles', () => {
+  const rows = mergeTrackRows([
+    {
+      play_date: '2026-06-30', title: 'Song', artist: 'Artist', spotify_id: 'a',
+      play_count: 3, first_played_at: 10, last_played_at: 30,
+    },
+    {
+      play_date: '2026-06-30', title: 'Song', artist: 'Artist', spotify_id: 'b',
+      play_count: 2, first_played_at: 40, last_played_at: 50,
+    },
+  ]);
+
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].play_count, 5);
+  assert.equal(rows[0].first_played_at, 10);
+  assert.equal(rows[0].last_played_at, 50);
 });
