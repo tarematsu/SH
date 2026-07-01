@@ -113,13 +113,35 @@ export function compactTrackLikeRows(rows) {
   return compactTrackLikeSources([rows]);
 }
 
+function trackLikeStatements(db, fromTs, toTs) {
+  return [
+    db.prepare(TRACK_LIKE_REALTIME_SQL).bind(fromTs, toTs),
+    db.prepare(TRACK_LIKE_QUEUE_SQL).bind(fromTs, toTs),
+    db.prepare(TRACK_LIKE_HISTORY_SQL).bind(fromTs, toTs),
+  ];
+}
+
+async function loadTrackLikeRowsFallback(db, fromTs, toTs) {
+  const [realtime, queue, historical] = await Promise.all(
+    trackLikeStatements(db, fromTs, toTs).map(optionalRows),
+  );
+  return [historical, queue, realtime];
+}
+
 export async function loadTrackLikeRows(db, fromTs, toTs) {
-  const [realtime, queue, historical] = await Promise.all([
-    optionalRows(db.prepare(TRACK_LIKE_REALTIME_SQL).bind(fromTs, toTs)),
-    optionalRows(db.prepare(TRACK_LIKE_QUEUE_SQL).bind(fromTs, toTs)),
-    optionalRows(db.prepare(TRACK_LIKE_HISTORY_SQL).bind(fromTs, toTs)),
-  ]);
-  return compactTrackLikeSources([historical, queue, realtime]);
+  let sources;
+  if (typeof db.batch === 'function') {
+    try {
+      const [realtime, queue, historical] = await db.batch(trackLikeStatements(db, fromTs, toTs));
+      sources = [historical?.results || [], queue?.results || [], realtime?.results || []];
+    } catch (error) {
+      if (!/no such table|no such column/i.test(String(error?.message || ''))) throw error;
+      sources = await loadTrackLikeRowsFallback(db, fromTs, toTs);
+    }
+  } else {
+    sources = await loadTrackLikeRowsFallback(db, fromTs, toTs);
+  }
+  return compactTrackLikeSources(sources);
 }
 
 function identityKeys(row) {
