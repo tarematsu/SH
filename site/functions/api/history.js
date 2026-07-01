@@ -235,36 +235,54 @@ async function loadSummaryWithLive(env, mode, from, to) {
   };
 }
 
-export const BROADCAST_SUMMARY_SQL = `SELECT source_note AS event_name,MIN(observed_at) AS started_at,
-  MAX(observed_at) AS ended_at,MIN(observed_jst) AS started_jst,MAX(observed_jst) AS ended_jst,
-  COUNT(*) AS sample_count,ROUND(AVG(listener_count),1) AS listener_avg,
-  MIN(listener_count) AS listener_min,MAX(listener_count) AS listener_max,MAX(likes) AS likes_max,
-  COUNT(DISTINCT CASE WHEN track_title IS NOT NULL AND track_title<>'' THEN track_title END) AS distinct_tracks,
-  host_handle FROM sh_legacy_snapshots
+export const BROADCAST_SUMMARY_SQL = `WITH summaries AS (
+  SELECT source_note AS event_name,MIN(observed_at) AS started_at,
+    MAX(observed_at) AS ended_at,MIN(observed_jst) AS started_jst,MAX(observed_jst) AS ended_jst,
+    COUNT(*) AS sample_count,ROUND(AVG(listener_count),1) AS listener_avg,
+    MIN(listener_count) AS listener_min,MAX(listener_count) AS listener_max,MAX(likes) AS likes_max,
+    COUNT(DISTINCT CASE WHEN track_title IS NOT NULL AND track_title<>'' THEN track_title END) AS distinct_tracks,
+    host_handle
+  FROM sh_legacy_snapshots
   WHERE observed_at>=? AND observed_at<? AND host_handle='sakurazaka46jp' AND source_note IS NOT NULL
-  GROUP BY source_note,host_handle ORDER BY started_at ASC`;
+  GROUP BY source_note,host_handle
+)
+SELECT event_name,started_at,ended_at,started_jst,ended_jst,sample_count,
+  listener_avg,listener_min,listener_max,likes_max,distinct_tracks,host_handle,1 AS has_data
+FROM summaries
+UNION ALL
+SELECT NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,
+  EXISTS(SELECT 1 FROM sh_legacy_snapshots
+    WHERE host_handle='sakurazaka46jp' AND source_note IS NOT NULL) AS has_data
+WHERE NOT EXISTS (SELECT 1 FROM summaries)
+ORDER BY started_at ASC`;
+
+export function parseBroadcastSummaryRows(resultRows) {
+  const rows = [];
+  let hasData = false;
+  for (const source of resultRows || []) {
+    if (Number(source?.has_data) === 1) hasData = true;
+    if (source?.event_name == null) continue;
+    const { has_data: ignored, ...row } = source;
+    rows.push(row);
+  }
+  return { rows, setupRequired: rows.length === 0 && !hasData };
+}
 
 async function loadBroadcastPayload(env, from, to) {
   const fromTs = parseDateStart(from, '2024-06-01');
   const toTs = addDays(parseDateStart(to, todayJstString()), 1);
   const result = await env.DB.prepare(BROADCAST_SUMMARY_SQL).bind(fromTs, toTs).all();
-  const rows = result.results || [];
-  let setupRequired = false;
-  if (!rows.length) {
-    const existence = await env.DB.prepare(`SELECT 1 AS has_data FROM sh_legacy_snapshots
-      WHERE host_handle='sakurazaka46jp' AND source_note IS NOT NULL LIMIT 1`).first();
-    setupRequired = !existence?.has_data;
-  }
+  const parsed = parseBroadcastSummaryRows(result.results || []);
   return {
-    ok: true, mode: 'broadcasts', from, to, rows,
-    setup_required: setupRequired,
+    ok: true, mode: 'broadcasts', from, to, rows: parsed.rows,
+    setup_required: parsed.setupRequired,
     diagnostic: { imported_rows: null, imported_events: null, first_observed_jst: null, last_observed_jst: null },
   };
 }
 
 async function loadBroadcasts(env, from, to) {
   const payload = await cachedHistoryLoad(
-    `broadcasts:v1:${from}:${to}`,
+    `broadcasts:v2:${from}:${to}`,
     30000,
     () => loadBroadcastPayload(env, from, to),
   );

@@ -20,6 +20,11 @@
     if (node && node.textContent !== text) node.textContent = text;
   }
 
+  function setHtml(selector, value) {
+    const node = $(selector);
+    if (node && node.innerHTML !== value) node.innerHTML = value;
+  }
+
   formatDate = function formatDateWithSharedFormatter(value, includeTime = false) {
     if (!value) return '—';
     const text = String(value);
@@ -31,6 +36,66 @@
     const date = Number.isFinite(numeric) && numeric > 100000000000 ? new Date(numeric) : new Date(text);
     if (Number.isNaN(date.getTime())) return text;
     return (includeTime ? dateTimeFormatter : dateFormatter).format(date);
+  };
+
+  prepareCanvas = function prepareCanvasDifferential() {
+    const canvas = $('#chart');
+    const ctx = canvas.getContext('2d');
+    const dpr = Math.min(devicePixelRatio || 1, 1.5);
+    const width = canvas.clientWidth || 1000;
+    const height = canvas.clientHeight || 330;
+    const pixelWidth = Math.round(width * dpr);
+    const pixelHeight = Math.round(height * dpr);
+    if (canvas.width !== pixelWidth) canvas.width = pixelWidth;
+    if (canvas.height !== pixelHeight) canvas.height = pixelHeight;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, width, height);
+    return { ctx, width, height };
+  };
+
+  resetChartInfo = function resetChartInfoDifferential() {
+    setText('#chartStartDate', '—');
+    setText('#chartEndDate', '—');
+    setHtml('#chartDetail', '<span>グラフをタッチまたはクリックすると、その時点の詳細を表示します。</span>');
+  };
+
+  setChartRange = function setChartRangeSinglePass(dates) {
+    let first = null;
+    let last = null;
+    for (const value of dates || []) {
+      if (!value) continue;
+      if (first == null) first = value;
+      last = value;
+    }
+    setText('#chartStartDate', first == null ? '—' : formatDate(first));
+    setText('#chartEndDate', last == null ? '—' : formatDate(last));
+  };
+
+  makeXPositions = function makeXPositionsSinglePass(dates, area) {
+    const values = Array.isArray(dates) ? dates : [];
+    const times = new Array(values.length);
+    let minimum = Infinity;
+    let maximum = -Infinity;
+    let validCount = 0;
+    for (let index = 0; index < values.length; index += 1) {
+      const time = dateTimestamp(values[index]);
+      times[index] = time;
+      if (time == null) continue;
+      validCount += 1;
+      minimum = Math.min(minimum, time);
+      maximum = Math.max(maximum, time);
+    }
+
+    const positions = new Array(values.length);
+    const denominator = Math.max(1, values.length - 1);
+    const span = maximum - minimum;
+    for (let index = 0; index < values.length; index += 1) {
+      const time = times[index];
+      positions[index] = validCount >= 2 && span > 0 && time != null
+        ? area.left + area.width * (time - minimum) / span
+        : area.left + area.width * index / denominator;
+    }
+    return positions;
   };
 
   displayCell = function displayCellWithSharedFormatters(key, row, mode) {
@@ -210,7 +275,7 @@
     if (url.pathname === '/api/track-history' && url.searchParams.get('latest') !== '1') {
       url.searchParams.set('v', '12');
     } else if (url.pathname === '/api/history') {
-      url.searchParams.set('v', '12');
+      url.searchParams.set('v', '13');
     }
     const options = { ...init };
     if (options.cache === 'no-store') delete options.cache;
