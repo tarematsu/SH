@@ -8,6 +8,8 @@
   const dateTimeFormatter = new Intl.DateTimeFormat('ja-JP', {
     year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit',
   });
+  const xPositionCache = new WeakMap();
+  const dateAxisCache = new WeakMap();
 
   function boundaryCacheKey(key) {
     return String(key || '')
@@ -88,8 +90,12 @@
     setText('#chartEndDate', last == null ? '—' : formatDate(last));
   };
 
-  makeXPositions = function makeXPositionsSinglePass(dates, area) {
+  makeXPositions = function makeXPositionsSinglePassCached(dates, area) {
     const values = Array.isArray(dates) ? dates : [];
+    const cacheKey = `${area.left}:${area.width}`;
+    const cached = xPositionCache.get(values);
+    if (cached?.cacheKey === cacheKey) return cached.positions;
+
     const times = new Array(values.length);
     let minimum = Infinity;
     let maximum = -Infinity;
@@ -112,7 +118,58 @@
         ? area.left + area.width * (time - minimum) / span
         : area.left + area.width * index / denominator;
     }
+    xPositionCache.set(values, { cacheKey, positions });
     return positions;
+  };
+
+  function dateAxisModel(dates, area) {
+    const values = Array.isArray(dates) ? dates : [];
+    const cacheKey = `${currentMode}:${Math.round(area.width)}`;
+    const cached = dateAxisCache.get(values);
+    if (cached?.cacheKey === cacheKey) return cached.model;
+
+    const firstTs = values.length ? dateTimestamp(values[0]) : null;
+    const lastTs = values.length ? dateTimestamp(values.at(-1)) : null;
+    const spanDays = firstTs != null && lastTs != null ? Math.abs(lastTs - firstTs) / 86400000 : 0;
+    const estimatedLabelWidth = currentMode === 'monthly' || spanDays > 120 ? 54 : 42;
+    const desired = Math.max(2, Math.min(values.length, Math.floor(area.width / (estimatedLabelWidth + 14))));
+    const indices = [];
+    let previous = -1;
+    for (let index = 0; index < desired; index += 1) {
+      const value = Math.round((values.length - 1) * index / Math.max(1, desired - 1));
+      if (value !== previous) indices.push(value);
+      previous = value;
+    }
+    const labels = indices.map((index) => {
+      const value = values[index];
+      const text = String(value || '');
+      if (currentMode === 'monthly' || spanDays > 730) return text.slice(0, 7).replace('-', '/');
+      if (spanDays > 120) return shortDate(value, true).slice(2);
+      return shortDate(value, spanDays > 300);
+    });
+    const model = { indices, labels };
+    dateAxisCache.set(values, { cacheKey, model });
+    return model;
+  }
+
+  drawDateAxis = function drawDateAxisCached(ctx, dates, xPositions, width, height, area) {
+    if (!dates.length) return;
+    const { indices, labels } = dateAxisModel(dates, area);
+    ctx.font = '10.5px system-ui';
+    ctx.fillStyle = '#aaa3b5';
+    ctx.textBaseline = 'top';
+    let lastRight = -Infinity;
+    for (let position = 0; position < indices.length; position += 1) {
+      const index = indices[position];
+      const text = labels[position];
+      const measured = ctx.measureText(text).width;
+      const x = Math.max(area.left, Math.min(width - area.right - measured, xPositions[index] - measured / 2));
+      const isLast = position === indices.length - 1;
+      if (x > lastRight + 7 || isLast) {
+        ctx.fillText(text, x, height - area.bottom + 11);
+        lastRight = x + measured;
+      }
+    }
   };
 
   displayCell = function displayCellWithSharedFormatters(key, row, mode) {

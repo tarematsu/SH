@@ -34,6 +34,109 @@ FROM sh_host_broadcast_sessions
 WHERE handle = 'sakurazaka46jp'
 ORDER BY started_at DESC LIMIT 10`;
 
+export const HOST_SUMMARY_SQL = `WITH profile AS (
+  SELECT observed_at,handle,account_id,followers,following,
+    total_streams,active_stream_days,thumbnail_url
+  FROM sh_host_profile_snapshots
+  WHERE handle='sakuramankai'
+  ORDER BY observed_at DESC
+  LIMIT 1
+), active_session AS (
+  SELECT id,handle,station_id,started_at,confirmed_at,ended_at,status,
+    peak_listeners,average_listeners,total_listens_start,total_listens_end,
+    listener_sample_count,track_count,comment_count,last_observed_at
+  FROM sh_host_broadcast_sessions
+  WHERE handle='sakurazaka46jp' AND status IN ('provisional','active')
+  ORDER BY started_at DESC
+  LIMIT 1
+), recent_sessions AS (
+  SELECT id,handle,station_id,started_at,confirmed_at,ended_at,status,
+    peak_listeners,average_listeners,total_listens_start,total_listens_end,
+    listener_sample_count,track_count,comment_count,last_observed_at
+  FROM sh_host_broadcast_sessions
+  WHERE handle='sakurazaka46jp'
+  ORDER BY started_at DESC
+  LIMIT 10
+)
+SELECT 0 AS result_kind,NULL AS id,observed_at,handle,account_id,
+  followers,following,total_streams,active_stream_days,thumbnail_url,
+  NULL AS station_id,NULL AS started_at,NULL AS confirmed_at,NULL AS ended_at,
+  NULL AS status,NULL AS peak_listeners,NULL AS average_listeners,
+  NULL AS total_listens_start,NULL AS total_listens_end,
+  NULL AS listener_sample_count,NULL AS track_count,NULL AS comment_count,
+  NULL AS last_observed_at
+FROM profile
+UNION ALL
+SELECT 1,id,NULL,handle,NULL,NULL,NULL,NULL,NULL,NULL,
+  station_id,started_at,confirmed_at,ended_at,status,peak_listeners,average_listeners,
+  total_listens_start,total_listens_end,listener_sample_count,track_count,comment_count,last_observed_at
+FROM active_session
+UNION ALL
+SELECT 2,id,NULL,handle,NULL,NULL,NULL,NULL,NULL,NULL,
+  station_id,started_at,confirmed_at,ended_at,status,peak_listeners,average_listeners,
+  total_listens_start,total_listens_end,listener_sample_count,track_count,comment_count,last_observed_at
+FROM recent_sessions
+ORDER BY result_kind ASC,started_at DESC`;
+
+function hostProfileFromRow(row) {
+  return {
+    observed_at: row.observed_at,
+    handle: row.handle,
+    account_id: row.account_id,
+    followers: row.followers,
+    following: row.following,
+    total_streams: row.total_streams,
+    active_stream_days: row.active_stream_days,
+    thumbnail_url: row.thumbnail_url,
+  };
+}
+
+function activeSessionFromRow(row) {
+  return {
+    id: row.id,
+    handle: row.handle,
+    station_id: row.station_id,
+    started_at: row.started_at,
+    confirmed_at: row.confirmed_at,
+    status: row.status,
+    peak_listeners: row.peak_listeners,
+    listener_sample_count: row.listener_sample_count,
+    track_count: row.track_count,
+    comment_count: row.comment_count,
+    last_observed_at: row.last_observed_at,
+  };
+}
+
+function recentSessionFromRow(row) {
+  return {
+    id: row.id,
+    handle: row.handle,
+    station_id: row.station_id,
+    started_at: row.started_at,
+    ended_at: row.ended_at,
+    status: row.status,
+    peak_listeners: row.peak_listeners,
+    average_listeners: row.average_listeners,
+    total_listens_start: row.total_listens_start,
+    total_listens_end: row.total_listens_end,
+    track_count: row.track_count,
+    comment_count: row.comment_count,
+  };
+}
+
+export function parseHostSummaryRows(rows = []) {
+  let latestProfile = null;
+  let activeSession = null;
+  const recentSessions = [];
+  for (const row of rows) {
+    const kind = Number(row?.result_kind);
+    if (kind === 0 && !latestProfile) latestProfile = hostProfileFromRow(row);
+    else if (kind === 1 && !activeSession) activeSession = activeSessionFromRow(row);
+    else if (kind === 2) recentSessions.push(recentSessionFromRow(row));
+  }
+  return { latestProfile, activeSession, recentSessions };
+}
+
 const SUMMARY_CACHE_MS = 30 * 1000;
 let summaryStates = new WeakMap();
 
@@ -47,28 +150,21 @@ function summaryStateFor(db) {
 }
 
 export async function loadHostSummary(db) {
-  if (typeof db.batch === 'function') {
-    const [latestProfileResult, activeSessionResult, recentSessionsResult] = await db.batch([
-      db.prepare(LATEST_PROFILE_SQL),
-      db.prepare(ACTIVE_SESSION_SQL),
-      db.prepare(RECENT_SESSIONS_SQL),
-    ]);
-    return {
-      latestProfile: latestProfileResult?.results?.[0] || null,
-      activeSession: activeSessionResult?.results?.[0] || null,
-      recentSessions: recentSessionsResult?.results || [],
-    };
+  const statement = db.prepare(HOST_SUMMARY_SQL);
+  if (typeof statement?.all === 'function') {
+    const result = await statement.all();
+    return parseHostSummaryRows(result?.results || []);
   }
 
-  const [latestProfile, activeSession, recentSessions] = await Promise.all([
-    db.prepare(LATEST_PROFILE_SQL).first(),
-    db.prepare(ACTIVE_SESSION_SQL).first(),
-    db.prepare(RECENT_SESSIONS_SQL).all(),
+  const [latestProfileResult, activeSessionResult, recentSessionsResult] = await db.batch([
+    db.prepare(LATEST_PROFILE_SQL),
+    db.prepare(ACTIVE_SESSION_SQL),
+    db.prepare(RECENT_SESSIONS_SQL),
   ]);
   return {
-    latestProfile: latestProfile || null,
-    activeSession: activeSession || null,
-    recentSessions: recentSessions.results || [],
+    latestProfile: latestProfileResult?.results?.[0] || null,
+    activeSession: activeSessionResult?.results?.[0] || null,
+    recentSessions: recentSessionsResult?.results || [],
   };
 }
 
