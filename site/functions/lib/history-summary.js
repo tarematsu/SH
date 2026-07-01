@@ -1,4 +1,9 @@
 import { applySummaryCompleteness, parseRangeStart } from './period-completeness.js';
+import {
+  applyPeriodBoundaryEvidence,
+  loadPeriodBoundaryEvidence,
+  rowsRequiringBoundaryEvidence,
+} from './period-boundary-evidence.js';
 
 const DAY_MS = 86400000;
 
@@ -170,10 +175,16 @@ export async function loadSummaryWithLive(env, mode, from, to, now = Date.now())
   const liveRows = (liveResult.results || []).map(normalizeLiveRow);
   const merged = new Map(baseRows.map((row) => [row.period_key, row]));
   liveRows.forEach((row) => merged.set(row.period_key, combineSummaryRows(merged.get(row.period_key), row)));
-  const completed = applySummaryCompleteness([...merged.values()].slice(-limit), mode, now);
+
+  const rows = [...merged.values()].slice(-limit);
+  const evidenceTargets = rowsRequiringBoundaryEvidence(rows, mode, now);
+  const evidence = await loadPeriodBoundaryEvidence(env.DB, evidenceTargets, mode);
+  const boundedRows = applyPeriodBoundaryEvidence(rows, evidence);
+  const completed = applySummaryCompleteness(boundedRows, mode, now);
   return {
     rows: completed.rows,
     excluded_stream_growth_count: completed.excludedCount,
+    boundary_evidence_count: evidence.size,
     live_overlay_count: liveRows.length,
     latest_live_observed_at: liveRows.at(-1)?.period_end || null,
     live_truncated: false,
