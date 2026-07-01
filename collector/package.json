@@ -8,8 +8,8 @@
     "start:auto": "node run-failover.mjs",
     "start:active": "set COLLECTOR_MODE=active&& node run-failover.mjs",
     "start:standby": "set COLLECTOR_MODE=standby&& node run-failover.mjs",
-    "start:direct": "node --import ./fetch-cache.mjs collector.mjs",
-    "once": "node --import ./fetch-cache.mjs collector.mjs --once",
+    "start:direct": "node --import=./fetch-cache.mjs collector.mjs",
+    "once": "node --import=./fetch-cache.mjs collector.mjs --once",
     "check": "node --check collector.mjs && node --check host-monitor.mjs && node --check run-failover.mjs && node --check weekly-leaderboard.mjs && node --check fetch-cache.mjs"
   },
   "dependencies": {
