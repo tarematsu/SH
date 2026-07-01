@@ -1,45 +1,13 @@
-const HEADERS = {
-  'content-type': 'application/json; charset=utf-8',
-  'cache-control': 'no-store',
-};
+import { json } from '../lib/api-utils.js';
+import { fetchSpotifyMetadataBatch } from '../lib/spotify-metadata.js';
 
-const json = (data, status = 200) => new Response(JSON.stringify(data), { status, headers: HEADERS });
-const clean = (value) => String(value || '').normalize('NFKC').replace(/\s+/g, ' ').trim() || null;
-const looksLikeId = (value) => /^[0-9A-Za-z]{15,}$/.test(clean(value) || '');
-
-function parseTitle(value) {
-  const text = clean(value)?.replace(/\s*\|\s*Spotify\s*$/i, '') || null;
-  if (!text) return { title: null, artist: null };
-  const match = text.match(/^(.*?)\s*-\s*song and lyrics by\s*(.+)$/i);
-  return match
-    ? { title: clean(match[1]), artist: clean(match[2]) }
-    : { title: text, artist: null };
-}
-
-async function fetchSpotify(spotifyId) {
-  try {
-    const trackUrl = `https://open.spotify.com/track/${encodeURIComponent(spotifyId)}`;
-    const response = await fetch(`https://open.spotify.com/oembed?url=${encodeURIComponent(trackUrl)}`, {
-      headers: { accept: 'application/json' },
-      signal: AbortSignal.timeout(5000),
-    });
-    if (!response.ok) return null;
-    const raw = await response.json();
-    const parsed = parseTitle(raw?.title);
-    const title = parsed.title;
-    const artist = clean(raw?.author_name || raw?.author) || parsed.artist;
-    if (!title || looksLikeId(title)) return null;
-    return { title, artist, spotify_url: trackUrl, raw };
-  } catch {
-    return null;
-  }
-}
+const CACHE_CONTROL = 'no-store';
 
 export async function onRequestPost({ request, env }) {
-  if (!env.DB) return json({ ok: false, error: 'DB binding missing' }, 500);
+  if (!env.DB) return json({ ok: false, error: 'DB binding missing' }, 500, CACHE_CONTROL);
   const url = new URL(request.url);
   const origin = request.headers.get('origin');
-  if (origin && origin !== url.origin) return json({ ok: false, error: 'forbidden' }, 403);
+  if (origin && origin !== url.origin) return json({ ok: false, error: 'forbidden' }, 403, CACHE_CONTROL);
 
   try {
     const result = await env.DB.prepare(`
@@ -58,18 +26,12 @@ export async function onRequestPost({ request, env }) {
     `).all();
 
     const ids = (result.results || []).map((row) => row.spotify_id).filter(Boolean);
-    if (!ids.length) return json({ ok: true, processed: 0, updated: 0, done: true });
+    if (!ids.length) return json({ ok: true, processed: 0, updated: 0, done: true }, 200, CACHE_CONTROL);
 
-    const resolved = [];
-    for (let index = 0; index < ids.length; index += 5) {
-      const chunk = ids.slice(index, index + 5);
-      const values = await Promise.all(chunk.map(async (id) => [id, await fetchSpotify(id)]));
-      resolved.push(...values.filter(([, value]) => value));
-    }
-
-    if (resolved.length) {
+    const resolved = await fetchSpotifyMetadataBatch(ids);
+    if (resolved.size) {
       const now = Date.now();
-      await env.DB.batch(resolved.map(([spotifyId, value]) => env.DB.prepare(`
+      await env.DB.batch([...resolved.entries()].map(([spotifyId, value]) => env.DB.prepare(`
         INSERT INTO sh_track_metadata (
           spotify_id,title,artist,display_title,spotify_url,source,fetched_at,raw_json
         ) VALUES (?,?,?,?,?,?,?,?)
@@ -105,15 +67,16 @@ export async function onRequestPost({ request, env }) {
           OR m.artist IS NULL OR m.artist = '' OR m.artist = q.spotify_id
         )
     `).first();
+    const remainingCount = Number(remaining?.count || 0);
 
     return json({
       ok: true,
       processed: ids.length,
-      updated: resolved.length,
-      remaining: Number(remaining?.count || 0),
-      done: Number(remaining?.count || 0) === 0,
-    });
+      updated: resolved.size,
+      remaining: remainingCount,
+      done: remainingCount === 0,
+    }, 200, CACHE_CONTROL);
   } catch (error) {
-    return json({ ok: false, error: error?.message || 'metadata refresh failed' }, 500);
+    return json({ ok: false, error: error?.message || 'metadata refresh failed' }, 500, CACHE_CONTROL);
   }
 }

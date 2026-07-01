@@ -15,3 +15,10 @@ state/
 Thumbs.db
 .stationhead-session.json
 .weekly-leaderboard-state.json
+
+# Generated local tooling state and diagnostic captures
+.wrangler/
+collector/.leaderboard-capture-browser/
+collector/.profile-capture-browser/
+collector/captures/
+collector/*.before-*

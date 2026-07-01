@@ -1,18 +1,6 @@
 (() => {
   const baseDrawChart = drawChart;
   const baseShowDetail = showMainChartDetail;
-  const velocityByBucket = new Map();
-  let loading = false;
-
-  const bucketAt = (value) => Math.floor(Number(value) / 300000) * 300000;
-
-  function mergeVelocity(rows) {
-    if (!Array.isArray(rows)) return [];
-    return rows.map((row) => {
-      const stored = velocityByBucket.get(bucketAt(row?.observed_at));
-      return stored == null ? row : { ...row, comment_velocity: stored };
-    });
-  }
 
   function drawVelocityBars(selectionIndex) {
     const canvas = el('chart');
@@ -62,7 +50,7 @@
   }
 
   drawChart = function drawChartWithVelocity(rows = lastHistoryRows, selectionIndex = selectedMainChartIndex) {
-    baseDrawChart(mergeVelocity(rows), selectionIndex);
+    baseDrawChart(rows, selectionIndex);
     drawVelocityBars(selectionIndex);
   };
 
@@ -77,36 +65,4 @@
       `<div><span>コメント勢い</span><strong>${Number.isFinite(velocity) ? number(velocity) : '-'}件 / 2分</strong></div>`,
     );
   };
-
-  async function refreshVelocity() {
-    if (loading) return;
-    loading = true;
-    try {
-      const response = await fetch('/api/comment-velocity', {
-        cache: 'no-store',
-        headers: { accept: 'application/json' },
-      });
-      if (!response.ok) throw new Error(`comment velocity API ${response.status}`);
-      const data = await response.json();
-      if (!data.ok) throw new Error(data.error || 'comment velocity API error');
-
-      velocityByBucket.clear();
-      for (const row of data.rows || []) {
-        const key = Number(row.bucket_at);
-        const value = Number(row.comment_velocity);
-        if (Number.isFinite(key) && Number.isFinite(value)) velocityByBucket.set(key, value);
-      }
-
-      if (lastHistoryRows.length) requestAnimationFrame(() => drawChart(lastHistoryRows, selectedMainChartIndex));
-    } catch (error) {
-      console.warn(error);
-    } finally {
-      loading = false;
-    }
-  }
-
-  refreshVelocity();
-  setInterval(() => {
-    if (!document.hidden) refreshVelocity();
-  }, 120000);
 })();

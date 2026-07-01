@@ -1,4 +1,4 @@
-import { enrichMissingRows } from './track-history-metadata.js';
+import { refreshMissingMetadata } from './track-history-metadata.js';
 import { mergeTrackRows } from './track-history-merge.js';
 
 const H = {
@@ -121,7 +121,7 @@ export async function handleTrackHistory({ request, env, waitUntil }) {
     const rows = mergeTrackRows(sourceRows);
     const metadataRefreshScheduled = typeof waitUntil === 'function';
     if (metadataRefreshScheduled) {
-      waitUntil(enrichMissingRows(sourceRows, env).catch((error) => {
+      waitUntil(refreshMissingMetadata(sourceRows, env).catch((error) => {
         console.error('track metadata background refresh failed', error);
       }));
     }

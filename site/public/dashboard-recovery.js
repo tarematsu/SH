@@ -11,15 +11,6 @@
     };
   }
 
-  function renderRange(rows) {
-    const target = document.getElementById('onlineRange24h');
-    if (!target) return;
-    const values = rows.map((row) => Number(row?.online_member_count)).filter(Number.isFinite);
-    target.innerHTML = values.length
-      ? `<span>24時間最低 ${Math.min(...values).toLocaleString('ja-JP')}</span><span>24時間最高 ${Math.max(...values).toLocaleString('ja-JP')}</span>`
-      : '<span>24時間最低 -</span><span>24時間最高 -</span>';
-  }
-
   function renderRecoveryStatus(data) {
     const panel = document.querySelector('.chart-panel');
     const head = panel?.querySelector('.section-head');
@@ -62,7 +53,7 @@
 
       lastHistoryRows = rows;
       selectedMainChartIndex = null;
-      renderRange(rows);
+      renderOnlineRange(rows);
       requestAnimationFrame(() => drawChart(rows));
     } catch (error) {
       console.warn(error);
