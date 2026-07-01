@@ -3,10 +3,16 @@ import { fetchSpotifyMetadataBatch } from '../lib/spotify-metadata.js';
 
 const CACHE_CONTROL = 'no-store';
 const EMPTY_RESULT_TTL_MS = 60 * 1000;
-const refreshState = {
-  pending: null,
-  emptyUntil: 0,
-};
+let refreshStates = new WeakMap();
+
+function refreshStateFor(db) {
+  let state = refreshStates.get(db);
+  if (!state) {
+    state = { pending: null, emptyUntil: 0 };
+    refreshStates.set(db, state);
+  }
+  return state;
+}
 
 export function completeMetadataCount(resolved) {
   let count = 0;
@@ -79,7 +85,8 @@ async function performTrackMetadataRefresh(env) {
 }
 
 export async function refreshTrackMetadata(env, now = Date.now()) {
-  if (refreshState.emptyUntil > now) {
+  const state = refreshStateFor(env.DB);
+  if (state.emptyUntil > now) {
     return {
       ok: true,
       processed: 0,
@@ -89,25 +96,25 @@ export async function refreshTrackMetadata(env, now = Date.now()) {
       cached: true,
     };
   }
-  if (refreshState.pending) return refreshState.pending;
+  if (state.pending) return state.pending;
 
-  refreshState.pending = performTrackMetadataRefresh(env).then((result) => {
-    refreshState.emptyUntil = result.processed === 0 && result.done
+  state.pending = performTrackMetadataRefresh(env).then((result) => {
+    state.emptyUntil = result.processed === 0 && result.done
       ? Date.now() + EMPTY_RESULT_TTL_MS
       : 0;
     return result;
   }).catch((error) => {
-    refreshState.emptyUntil = 0;
+    state.emptyUntil = 0;
     throw error;
   }).finally(() => {
-    refreshState.pending = null;
+    state.pending = null;
   });
-  return refreshState.pending;
+  return state.pending;
 }
 
-export function resetTrackMetadataRefreshState() {
-  refreshState.pending = null;
-  refreshState.emptyUntil = 0;
+export function resetTrackMetadataRefreshState(db = null) {
+  if (db) refreshStates.delete(db);
+  else refreshStates = new WeakMap();
 }
 
 export async function onRequestPost({ request, env }) {
