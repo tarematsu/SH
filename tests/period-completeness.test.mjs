@@ -16,7 +16,11 @@ test('daily period uses UTC boundaries corresponding to 09:00 Japan', () => {
   const bounds = expectedPeriodBounds('daily', '2026-07-01');
   assert.equal(bounds.start, Date.parse('2026-07-01T00:00:00Z'));
   assert.equal(bounds.end, Date.parse('2026-07-02T00:00:00Z'));
-  assert.equal(new Date(bounds.start + 9 * 3600000).toISOString(), '2026-07-01T09:00:00.000Z');
+  assert.equal(new Intl.DateTimeFormat('sv-SE', {
+    timeZone: 'Asia/Tokyo',
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', hour12: false,
+  }).format(new Date(bounds.start)), '2026-07-01 09:00');
 });
 
 test('completed daily period keeps stream growth', () => {
@@ -78,7 +82,7 @@ test('current day, week, and month are excluded', () => {
       period_start: bounds.start,
       period_end: AFTER_JULY,
       stream_growth: 100,
-      quality_flags: '[]',
+      quality_flags: mode === 'weekly' ? '["stationhead_email_recap"]' : '[]',
     }], mode, AFTER_JULY);
     assert.equal(result.rows[0].stream_growth, null, `${mode} should be excluded`);
     assert.ok(result.rows[0].exclusion_reasons.includes('current_period'));
@@ -88,11 +92,11 @@ test('current day, week, and month are excluded', () => {
   assert.equal(currentPeriodKey('monthly', AFTER_JULY), '2026-07');
 });
 
-test('January through June email weekly records remain trusted', () => {
+test('completed January through June email weekly records remain trusted', () => {
   const result = applySummaryCompleteness([{
-    period_key: '2026-06-29',
-    period_start: Date.parse('2026-06-29T10:00:00+09:00'),
-    period_end: Date.parse('2026-07-02T10:00:00+09:00'),
+    period_key: '2026-06-22',
+    period_start: Date.parse('2026-06-22T10:00:00+09:00'),
+    period_end: Date.parse('2026-06-25T10:00:00+09:00'),
     stream_growth: 410074,
     quality_flags: '["stationhead_email_recap"]',
   }], 'weekly', AFTER_JULY);
@@ -154,4 +158,5 @@ test('history page installs period filters before stable loading and bumps cache
   assert.match(source, /この日の延べ曲数（集計対象外）/);
   assert.match(source, /track-history:v12:/);
   assert.match(source, /history:v10:/);
+  assert.match(source, /if \(key === mondayJstKey\(\)\) return false/);
 });
