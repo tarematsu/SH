@@ -1,5 +1,15 @@
 import { bestText, canonical, looksLikeId } from './track-history-text.js';
 
+function positiveCount(value) {
+  const count = Number(value);
+  return Number.isFinite(count) && count > 0 ? count : 1;
+}
+
+function finiteTime(value, fallback = null) {
+  const time = Number(value);
+  return Number.isFinite(time) ? time : fallback;
+}
+
 export function mergeTrackRows(rows) {
   const merged = new Map();
   for (const row of rows) {
@@ -10,6 +20,9 @@ export function mergeTrackRows(rows) {
       ? `name:${canonical(title)}|artist:${canonical(artist)}`
       : `id:${row.spotify_id || row.isrc || row.apple_music_id || row.stationhead_track_id || row.queue_track_id || row.position}`;
     const key = `${row.play_date}|${identity}`;
+    const playCount = positiveCount(row.play_count);
+    const firstPlayedAt = finiteTime(row.first_played_at, finiteTime(row.played_at));
+    const lastPlayedAt = finiteTime(row.last_played_at, finiteTime(row.played_at));
     const current = merged.get(key);
     if (!current) {
       merged.set(key, {
@@ -18,16 +31,22 @@ export function mergeTrackRows(rows) {
         title,
         artist,
         spotify_url: row.spotify_url || null,
-        play_count: 1,
-        first_played_at: row.played_at,
-        last_played_at: row.played_at,
+        play_count: playCount,
+        first_played_at: firstPlayedAt,
+        last_played_at: lastPlayedAt,
         source_ids: [row.spotify_id, row.apple_music_id, row.isrc].filter(Boolean),
       });
       continue;
     }
-    current.play_count += 1;
-    current.first_played_at = Math.min(current.first_played_at, row.played_at);
-    current.last_played_at = Math.max(current.last_played_at, row.played_at);
+    current.play_count += playCount;
+    if (firstPlayedAt != null) {
+      current.first_played_at = current.first_played_at == null
+        ? firstPlayedAt : Math.min(current.first_played_at, firstPlayedAt);
+    }
+    if (lastPlayedAt != null) {
+      current.last_played_at = current.last_played_at == null
+        ? lastPlayedAt : Math.max(current.last_played_at, lastPlayedAt);
+    }
     if ((!current.artist || looksLikeId(current.artist)) && artist) current.artist = artist;
     if ((!current.title || looksLikeId(current.title)) && title) current.title = title;
     if (!current.spotify_url && row.spotify_url) current.spotify_url = row.spotify_url;
