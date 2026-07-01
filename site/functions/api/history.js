@@ -3,6 +3,7 @@ import { onRequestGet as legacyHistory } from './history-legacy.mjs';
 const JSON_HEADERS = {
   'content-type': 'application/json; charset=utf-8',
   'cache-control': 'public, max-age=300, s-maxage=900, stale-while-revalidate=3600',
+  vary: 'accept-encoding',
 };
 const json = (data, status = 200, headers = {}) =>
   new Response(JSON.stringify(data), { status, headers: { ...JSON_HEADERS, ...headers } });
@@ -14,10 +15,21 @@ quality_score,quality_flags`;
 const HISTORY_CACHE_MAX = 32;
 const historyLoadCache = new Map();
 
+function promoteCacheEntry(key, entry) {
+  historyLoadCache.delete(key);
+  historyLoadCache.set(key, entry);
+}
+
 export async function cachedHistoryLoad(key, ttlMs, loader, now = Date.now()) {
   const cached = historyLoadCache.get(key);
-  if (cached?.expiresAt > now && Object.hasOwn(cached, 'value')) return cached.value;
-  if (cached?.pending) return cached.pending;
+  if (cached?.expiresAt > now && Object.hasOwn(cached, 'value')) {
+    promoteCacheEntry(key, cached);
+    return cached.value;
+  }
+  if (cached?.pending) {
+    promoteCacheEntry(key, cached);
+    return cached.pending;
+  }
 
   const entry = cached || {};
   entry.pending = Promise.resolve().then(loader).then((value) => {
@@ -28,7 +40,7 @@ export async function cachedHistoryLoad(key, ttlMs, loader, now = Date.now()) {
     historyLoadCache.delete(key);
     throw error;
   }).finally(() => { entry.pending = null; });
-  historyLoadCache.set(key, entry);
+  promoteCacheEntry(key, entry);
   while (historyLoadCache.size > HISTORY_CACHE_MAX) {
     historyLoadCache.delete(historyLoadCache.keys().next().value);
   }
@@ -37,6 +49,42 @@ export async function cachedHistoryLoad(key, ttlMs, loader, now = Date.now()) {
 
 export function resetHistoryLoadCache() {
   historyLoadCache.clear();
+}
+
+async function snapshotResponse(response) {
+  return {
+    body: await response.text(),
+    status: response.status,
+    statusText: response.statusText,
+    headers: [...response.headers.entries()],
+  };
+}
+
+function restoreResponse(snapshot) {
+  return new Response(snapshot.body, {
+    status: snapshot.status,
+    statusText: snapshot.statusText,
+    headers: snapshot.headers,
+  });
+}
+
+export async function cachedLegacyHistoryResponse(key, ttlMs, loader) {
+  try {
+    const snapshot = await cachedHistoryLoad(key, ttlMs, async () => {
+      const response = await loader();
+      const value = await snapshotResponse(response);
+      if (!response.ok) {
+        const error = new Error(`history response ${response.status}`);
+        error.responseSnapshot = value;
+        throw error;
+      }
+      return value;
+    });
+    return restoreResponse(snapshot);
+  } catch (error) {
+    if (error?.responseSnapshot) return restoreResponse(error.responseSnapshot);
+    throw error;
+  }
 }
 
 function parseDateStart(value, fallback) {
@@ -63,15 +111,34 @@ export function liveSummarySql(mode) {
       COALESCE(current_stream_count,total_listens) AS stream_value,host_handle,
       ${periodKey} AS period_key
     FROM sh_channel_snapshots WHERE observed_at>=? AND observed_at<?
+  ), ranked AS (
+    SELECT prepared.*,
+      ROW_NUMBER() OVER (
+        PARTITION BY period_key
+        ORDER BY (stream_value IS NULL) ASC,observed_at ASC,id ASC
+      ) AS stream_first_rank,
+      ROW_NUMBER() OVER (
+        PARTITION BY period_key
+        ORDER BY (stream_value IS NULL) ASC,observed_at DESC,id DESC
+      ) AS stream_last_rank,
+      ROW_NUMBER() OVER (
+        PARTITION BY period_key
+        ORDER BY (total_member_count IS NULL) ASC,observed_at ASC,id ASC
+      ) AS member_first_rank,
+      ROW_NUMBER() OVER (
+        PARTITION BY period_key
+        ORDER BY (total_member_count IS NULL) ASC,observed_at DESC,id DESC
+      ) AS member_last_rank
+    FROM prepared
   ), aggregated AS (
     SELECT period_key,MIN(observed_at) AS period_start,MAX(observed_at) AS period_end,
       COUNT(*) AS sample_count,AVG(listener_count) AS listener_avg,
       MIN(listener_count) AS listener_min,MAX(listener_count) AS listener_max,
-      MIN(CASE WHEN stream_value IS NOT NULL THEN observed_at END) AS stream_start_at,
-      MAX(CASE WHEN stream_value IS NOT NULL THEN observed_at END) AS stream_end_at,
-      MIN(CASE WHEN total_member_count IS NOT NULL THEN observed_at END) AS member_start_at,
-      MAX(CASE WHEN total_member_count IS NOT NULL THEN observed_at END) AS member_end_at
-    FROM prepared GROUP BY period_key
+      MAX(CASE WHEN stream_first_rank=1 THEN stream_value END) AS stream_start,
+      MAX(CASE WHEN stream_last_rank=1 THEN stream_value END) AS stream_end,
+      MAX(CASE WHEN member_first_rank=1 THEN total_member_count END) AS member_start,
+      MAX(CASE WHEN member_last_rank=1 THEN total_member_count END) AS member_end
+    FROM ranked GROUP BY period_key
   ), host_counts AS (
     SELECT period_key,host_handle,COUNT(*) AS host_samples FROM prepared
     WHERE host_handle IS NOT NULL AND host_handle<>'' GROUP BY period_key,host_handle
@@ -85,18 +152,8 @@ export function liveSummarySql(mode) {
   SELECT aggregated.period_key,aggregated.period_start,aggregated.period_end,
     aggregated.sample_count,aggregated.sample_count AS reliable_sample_count,
     aggregated.listener_avg,aggregated.listener_min,aggregated.listener_max,
-    (SELECT stream_value FROM prepared WHERE prepared.period_key=aggregated.period_key
-      AND prepared.observed_at=aggregated.stream_start_at AND stream_value IS NOT NULL
-      ORDER BY id ASC LIMIT 1) AS stream_start,
-    (SELECT stream_value FROM prepared WHERE prepared.period_key=aggregated.period_key
-      AND prepared.observed_at=aggregated.stream_end_at AND stream_value IS NOT NULL
-      ORDER BY id DESC LIMIT 1) AS stream_end,
-    (SELECT total_member_count FROM prepared WHERE prepared.period_key=aggregated.period_key
-      AND prepared.observed_at=aggregated.member_start_at AND total_member_count IS NOT NULL
-      ORDER BY id ASC LIMIT 1) AS member_start,
-    (SELECT total_member_count FROM prepared WHERE prepared.period_key=aggregated.period_key
-      AND prepared.observed_at=aggregated.member_end_at AND total_member_count IS NOT NULL
-      ORDER BY id DESC LIMIT 1) AS member_end,
+    aggregated.stream_start,aggregated.stream_end,
+    aggregated.member_start,aggregated.member_end,
     primary_hosts.host_handle AS primary_host
   FROM aggregated LEFT JOIN primary_hosts ON primary_hosts.period_key=aggregated.period_key
   ORDER BY aggregated.period_key ASC LIMIT ?`;
@@ -171,7 +228,7 @@ async function loadSummaryWithLive(env, mode, from, to) {
   const merged = new Map(baseRows.map((row) => [row.period_key, row]));
   liveRows.forEach((row) => merged.set(row.period_key, combineSummaryRows(merged.get(row.period_key), row)));
   return {
-    rows: [...merged.values()].sort((a, b) => String(a.period_key).localeCompare(String(b.period_key))).slice(-limit),
+    rows: [...merged.values()].slice(-limit),
     live_overlay_count: liveRows.length,
     latest_live_observed_at: liveRows.at(-1)?.period_end || null,
     live_truncated: false,
@@ -214,6 +271,16 @@ async function loadBroadcasts(env, from, to) {
   return json(payload, 200, { 'cache-control': 'public, max-age=30, s-maxage=60, stale-while-revalidate=120' });
 }
 
+function rankingCacheKey(url) {
+  const from = url.searchParams.get('from') || '2024-06-01';
+  const to = url.searchParams.get('to') || todayJstString();
+  const scope = url.searchParams.get('scope') === 'all' ? 'all' : 'featured';
+  const host = String(url.searchParams.get('host') || '').trim().slice(0, 100).toLowerCase();
+  const limit = Math.min(Math.max(Number(url.searchParams.get('limit')) || 5000, 20), 10000);
+  const version = String(url.searchParams.get('v') || '');
+  return `ranking:v2:${from}:${to}:${scope}:${host}:${limit}:${version}`;
+}
+
 export async function onRequestGet(context) {
   const { request, env } = context;
   if (!env.DB) return json({ ok: false, error: 'DB binding missing' }, 500, { 'cache-control': 'no-store' });
@@ -224,7 +291,7 @@ export async function onRequestGet(context) {
   try {
     if (Object.hasOwn(SUMMARY_TABLES, mode)) {
       const summary = await cachedHistoryLoad(
-        `summary:v1:${mode}:${from}:${to}`,
+        `summary:v2:${mode}:${from}:${to}`,
         30000,
         () => loadSummaryWithLive(env, mode, from, to),
       );
@@ -233,6 +300,9 @@ export async function onRequestGet(context) {
       });
     }
     if (mode === 'broadcasts') return loadBroadcasts(env, from, to);
+    if (mode === 'ranking') {
+      return cachedLegacyHistoryResponse(rankingCacheKey(url), 60000, () => legacyHistory(context));
+    }
     return legacyHistory(context);
   } catch (error) {
     return json({ ok: false, error: error?.message || 'history error' }, 500, { 'cache-control': 'no-store' });
