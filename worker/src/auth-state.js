@@ -2,6 +2,12 @@ import { normalizeBearer, jwtExpiryMs } from './shared.js';
 
 export const AUTH_STATE_SQL = `SELECT
   collector_state.auth_token,collector_state.device_uid,collector_state.token_expires_at,
+  collector_state.last_run_at AS collector_last_run_at,
+  collector_state.last_success_at AS collector_last_success_at,
+  collector_state.last_error AS collector_last_error,
+  collector_state.last_channel_id AS collector_channel_id,
+  collector_state.last_station_id AS collector_station_id,
+  collector_state.updated_at AS collector_updated_at,
   auth_control.id AS control_id,auth_control.last_attempt_at,auth_control.last_success_at,
   auth_control.last_error,auth_control.lock_until
 FROM (SELECT ? AS id) requested
@@ -20,6 +26,12 @@ export function parseAuthState(row, env = {}) {
     lastError: row?.last_error || null,
     lockUntil: Number(row?.lock_until || 0),
     controlExists: Boolean(row?.control_id),
+    collectorLastRunAt: Number(row?.collector_last_run_at || 0),
+    collectorLastSuccessAt: Number(row?.collector_last_success_at || 0),
+    collectorLastError: row?.collector_last_error || null,
+    collectorChannelId: Number(row?.collector_channel_id || 0) || null,
+    collectorStationId: Number(row?.collector_station_id || 0) || null,
+    collectorUpdatedAt: Number(row?.collector_updated_at || 0),
   };
 }
 

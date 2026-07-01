@@ -14,6 +14,52 @@ function intParam(value, fallback, min, max) {
   return Math.min(max, Math.max(min, parsed));
 }
 
+const LATEST_PROFILE_SQL = `SELECT observed_at, handle, account_id, followers, following,
+       total_streams, active_stream_days, thumbnail_url
+FROM sh_host_profile_snapshots
+WHERE handle = 'sakuramankai'
+ORDER BY observed_at DESC LIMIT 1`;
+
+const ACTIVE_SESSION_SQL = `SELECT id, handle, station_id, started_at, confirmed_at, status,
+       peak_listeners, listener_sample_count, track_count, comment_count,
+       last_observed_at
+FROM sh_host_broadcast_sessions
+WHERE handle = 'sakurazaka46jp' AND status IN ('provisional', 'active')
+ORDER BY started_at DESC LIMIT 1`;
+
+const RECENT_SESSIONS_SQL = `SELECT id, handle, station_id, started_at, ended_at, status,
+       peak_listeners, average_listeners, total_listens_start,
+       total_listens_end, track_count, comment_count
+FROM sh_host_broadcast_sessions
+WHERE handle = 'sakurazaka46jp'
+ORDER BY started_at DESC LIMIT 10`;
+
+export async function loadHostSummary(db) {
+  if (typeof db.batch === 'function') {
+    const [latestProfileResult, activeSessionResult, recentSessionsResult] = await db.batch([
+      db.prepare(LATEST_PROFILE_SQL),
+      db.prepare(ACTIVE_SESSION_SQL),
+      db.prepare(RECENT_SESSIONS_SQL),
+    ]);
+    return {
+      latestProfile: latestProfileResult?.results?.[0] || null,
+      activeSession: activeSessionResult?.results?.[0] || null,
+      recentSessions: recentSessionsResult?.results || [],
+    };
+  }
+
+  const [latestProfile, activeSession, recentSessions] = await Promise.all([
+    db.prepare(LATEST_PROFILE_SQL).first(),
+    db.prepare(ACTIVE_SESSION_SQL).first(),
+    db.prepare(RECENT_SESSIONS_SQL).all(),
+  ]);
+  return {
+    latestProfile: latestProfile || null,
+    activeSession: activeSession || null,
+    recentSessions: recentSessions.results || [],
+  };
+}
+
 export async function onRequestGet({ request, env }) {
   if (!env.DB) return json({ ok: false, error: 'DB binding missing' }, 500);
   const url = new URL(request.url);
@@ -28,10 +74,15 @@ export async function onRequestGet({ request, env }) {
       const result = await env.DB.prepare(`
         SELECT observed_at, handle, account_id, followers, following,
                total_streams, active_stream_days, thumbnail_url
-        FROM sh_host_profile_snapshots
-        WHERE handle = ? AND observed_at >= ?
+        FROM (
+          SELECT observed_at, handle, account_id, followers, following,
+                 total_streams, active_stream_days, thumbnail_url
+          FROM sh_host_profile_snapshots
+          WHERE handle = ? AND observed_at >= ?
+          ORDER BY observed_at DESC
+          LIMIT ?
+        )
         ORDER BY observed_at ASC
-        LIMIT ?
       `).bind(handle, since, limit).all();
       return json({ ok: true, mode, handle, rows: result.results || [] });
     }
@@ -102,38 +153,13 @@ export async function onRequestGet({ request, env }) {
       });
     }
 
-    const [latestProfile, activeSession, recentSessions] = await Promise.all([
-      env.DB.prepare(`
-        SELECT observed_at, handle, account_id, followers, following,
-               total_streams, active_stream_days, thumbnail_url
-        FROM sh_host_profile_snapshots
-        WHERE handle = 'sakuramankai'
-        ORDER BY observed_at DESC LIMIT 1
-      `).first(),
-      env.DB.prepare(`
-        SELECT id, handle, station_id, started_at, confirmed_at, status,
-               peak_listeners, listener_sample_count, track_count, comment_count,
-               last_observed_at
-        FROM sh_host_broadcast_sessions
-        WHERE handle = 'sakurazaka46jp' AND status IN ('provisional', 'active')
-        ORDER BY started_at DESC LIMIT 1
-      `).first(),
-      env.DB.prepare(`
-        SELECT id, handle, station_id, started_at, ended_at, status,
-               peak_listeners, average_listeners, total_listens_start,
-               total_listens_end, track_count, comment_count
-        FROM sh_host_broadcast_sessions
-        WHERE handle = 'sakurazaka46jp'
-        ORDER BY started_at DESC LIMIT 10
-      `).all(),
-    ]);
-
+    const summary = await loadHostSummary(env.DB);
     return json({
       ok: true,
       mode: 'summary',
-      sakuramankai: latestProfile || null,
-      sakurazaka46jp_active_session: activeSession || null,
-      sakurazaka46jp_recent_sessions: recentSessions.results || [],
+      sakuramankai: summary.latestProfile,
+      sakurazaka46jp_active_session: summary.activeSession,
+      sakurazaka46jp_recent_sessions: summary.recentSessions,
     });
   } catch (error) {
     console.error(error);

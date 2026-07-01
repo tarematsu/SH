@@ -89,6 +89,15 @@ globalThis.fetch = async (input, init = {}) => {
   return chatFallbackResponse(requestedLimit, lastReason);
 };
 
+export function withAuthState(env, state) {
+  return new Proxy(env, {
+    get(target, property, receiver) {
+      if (property === '__stationheadAuthState') return state;
+      return Reflect.get(target, property, receiver);
+    },
+  });
+}
+
 async function claimAuthLock(env, cfg) {
   const now = Date.now();
   const result = await env.DB.prepare(`
@@ -234,11 +243,10 @@ async function ensureSession(env) {
   const ready = Boolean(state.authToken && state.deviceUid);
   const expiresSoon = Boolean(state.tokenExpiresAt && state.tokenExpiresAt - Date.now() <= cfg.refreshBeforeMs);
 
-  if (ready && !expiresSoon) return true;
-  if (ready && state.lastSuccessAt && Date.now() - state.lastSuccessAt < cfg.cooldownMs) return true;
+  if (ready && !expiresSoon) return state;
+  if (ready && state.lastSuccessAt && Date.now() - state.lastSuccessAt < cfg.cooldownMs) return state;
 
-  const refreshed = await refreshSession(env, ready ? 'token-near-expiry' : 'initial-session');
-  return Boolean(refreshed?.authToken && refreshed?.deviceUid);
+  return refreshSession(env, ready ? 'token-near-expiry' : 'initial-session');
 }
 
 function is401(value) {
@@ -250,39 +258,40 @@ function authorized(request, env) {
   return Boolean(expected) && request.headers.get('authorization') === `Bearer ${expected}`;
 }
 
-async function authHealth(env) {
-  const state = await readAuthState(env, STATE_ID);
+export function authHealth(state) {
   return {
     auth_method: 'direct-api',
-    auth_session_ready: Boolean(state.authToken && state.deviceUid),
-    auth_token_expires_at: state.tokenExpiresAt || null,
-    auth_last_attempt_at: state.lastAttemptAt || null,
-    auth_last_success_at: state.lastSuccessAt || null,
-    auth_last_error: state.lastError || null,
+    auth_session_ready: Boolean(state?.authToken && state?.deviceUid),
+    auth_token_expires_at: state?.tokenExpiresAt || null,
+    auth_last_attempt_at: state?.lastAttemptAt || null,
+    auth_last_success_at: state?.lastSuccessAt || null,
+    auth_last_error: state?.lastError || null,
     // 旧表示との互換性
     browser_binding: false,
-    browser_session_ready: Boolean(state.authToken && state.deviceUid),
-    browser_token_expires_at: state.tokenExpiresAt || null,
-    browser_last_auth_attempt_at: state.lastAttemptAt || null,
-    browser_last_auth_success_at: state.lastSuccessAt || null,
-    browser_last_auth_error: state.lastError || null,
+    browser_session_ready: Boolean(state?.authToken && state?.deviceUid),
+    browser_token_expires_at: state?.tokenExpiresAt || null,
+    browser_last_auth_attempt_at: state?.lastAttemptAt || null,
+    browser_last_auth_success_at: state?.lastSuccessAt || null,
+    browser_last_auth_error: state?.lastError || null,
   };
 }
 
 export default {
   async scheduled(controller, env, ctx) {
     try {
-      if (!await ensureSession(env)) {
+      let state = await ensureSession(env);
+      if (!state?.authToken || !state?.deviceUid) {
         console.warn(JSON.stringify({ event: 'stationhead_auth_backoff' }));
         return;
       }
 
       try {
-        await collector.scheduled(controller, env, ctx);
+        await collector.scheduled(controller, withAuthState(env, state), ctx);
       } catch (error) {
         if (!is401(error)) throw error;
-        await refreshSession(env, 'api-401', true);
-        await collector.scheduled(controller, env, ctx);
+        state = await refreshSession(env, 'api-401', true);
+        if (!state) throw error;
+        await collector.scheduled(controller, withAuthState(env, state), ctx);
       }
     } catch (error) {
       console.error(error);
@@ -303,19 +312,22 @@ export default {
     }
 
     if (request.method === 'GET' && (url.pathname === '/' || url.pathname === '/health')) {
-      const baseResponse = await collector.fetch(request, env, ctx);
+      const state = await readAuthState(env, STATE_ID);
+      const baseResponse = await collector.fetch(request, withAuthState(env, state), ctx);
       const base = await baseResponse.json().catch(() => ({}));
-      return json({ ...base, ...(await authHealth(env)) }, baseResponse.status);
+      return json({ ...base, ...authHealth(state) }, baseResponse.status);
     }
 
     if (request.method === 'POST' && url.pathname === '/run') {
       if (!authorized(request, env)) return json({ ok: false, error: 'unauthorized' }, 401);
       try {
-        if (!await ensureSession(env)) return json({ ok: false, error: 'authentication backoff' }, 503);
-        let response = await collector.fetch(request, env, ctx);
+        let state = await ensureSession(env);
+        if (!state?.authToken || !state?.deviceUid) return json({ ok: false, error: 'authentication backoff' }, 503);
+        let response = await collector.fetch(request, withAuthState(env, state), ctx);
         if (response.status === 500 && is401(await response.clone().text().catch(() => ''))) {
-          await refreshSession(env, 'api-401', true);
-          response = await collector.fetch(request, env, ctx);
+          state = await refreshSession(env, 'api-401', true);
+          if (!state) return response;
+          response = await collector.fetch(request, withAuthState(env, state), ctx);
         }
         return response;
       } catch (error) {
