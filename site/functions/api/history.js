@@ -1,4 +1,5 @@
 import { onRequestGet as legacyHistory } from './history-legacy.mjs';
+import { applySummaryCompleteness, parseRangeStart } from '../lib/period-completeness.js';
 
 const JSON_HEADERS = {
   'content-type': 'application/json; charset=utf-8',
@@ -93,13 +94,14 @@ function parseDateStart(value, fallback) {
 }
 const addDays = (timestamp, days) => timestamp + days * 86400000;
 const todayJstString = () => new Date(Date.now() + 9 * 3600000).toISOString().slice(0, 10);
+const todayUtcString = () => new Date().toISOString().slice(0, 10);
 function finiteNumber(value) {
   if (value == null || value === '') return null;
   const number = Number(value);
   return Number.isFinite(number) ? number : null;
 }
 function periodExpression(mode) {
-  if (mode === 'daily') return `strftime('%Y-%m-%d', observed_at / 1000, 'unixepoch', '+9 hours')`;
+  if (mode === 'daily') return `strftime('%Y-%m-%d', observed_at / 1000, 'unixepoch')`;
   if (mode === 'monthly') return `strftime('%Y-%m', observed_at / 1000, 'unixepoch', '+9 hours')`;
   return `date(observed_at / 1000,'unixepoch','+9 hours','-' || ((CAST(strftime('%w', observed_at / 1000, 'unixepoch', '+9 hours') AS INTEGER) + 6) % 7) || ' days')`;
 }
@@ -217,8 +219,9 @@ async function loadSummaryWithLive(env, mode, from, to) {
     `SELECT ${SUMMARY_COLUMNS} FROM ${table} WHERE period_key>=? AND period_key<=? ORDER BY period_key ASC LIMIT ?`,
   ).bind(from, to, limit).all();
   const baseRows = baseResult.results || [];
-  const fromTs = parseDateStart(from, '2024-06-01');
-  const toTs = addDays(parseDateStart(to, todayJstString()), 1);
+  const fallbackTo = mode === 'daily' ? todayUtcString() : todayJstString();
+  const fromTs = parseRangeStart(mode, from, '2024-06-01');
+  const toTs = addDays(parseRangeStart(mode, to, fallbackTo), 1);
   const lastBaseEnd = finiteNumber(baseRows.at(-1)?.period_end);
   const liveStart = Math.max(fromTs, lastBaseEnd == null ? fromTs : lastBaseEnd + 1);
   const liveResult = liveStart < toTs
@@ -227,8 +230,10 @@ async function loadSummaryWithLive(env, mode, from, to) {
   const liveRows = (liveResult.results || []).map(normalizeLiveRow);
   const merged = new Map(baseRows.map((row) => [row.period_key, row]));
   liveRows.forEach((row) => merged.set(row.period_key, combineSummaryRows(merged.get(row.period_key), row)));
+  const completed = applySummaryCompleteness([...merged.values()].slice(-limit), mode);
   return {
-    rows: [...merged.values()].slice(-limit),
+    rows: completed.rows,
+    excluded_stream_growth_count: completed.excludedCount,
     live_overlay_count: liveRows.length,
     latest_live_observed_at: liveRows.at(-1)?.period_end || null,
     live_truncated: false,
@@ -305,11 +310,11 @@ export async function onRequestGet(context) {
   const url = new URL(request.url);
   const mode = url.searchParams.get('mode') || 'weekly';
   const from = url.searchParams.get('from') || '2024-06-01';
-  const to = url.searchParams.get('to') || todayJstString();
+  const to = url.searchParams.get('to') || (mode === 'daily' ? todayUtcString() : todayJstString());
   try {
     if (Object.hasOwn(SUMMARY_TABLES, mode)) {
       const summary = await cachedHistoryLoad(
-        `summary:v2:${mode}:${from}:${to}`,
+        `summary:v3:${mode}:${from}:${to}`,
         30000,
         () => loadSummaryWithLive(env, mode, from, to),
       );

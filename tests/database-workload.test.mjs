@@ -7,7 +7,7 @@ import { planLikeObservations, latestLikesSql } from '../site/functions/api/inge
 import { listenerAggregateDelta } from '../site/functions/api/host-ingest.js';
 import { cachedPrediction, resetPredictionCache } from '../site/functions/api/dashboard.js';
 
-test('live history is aggregated inside SQLite by JST period', () => {
+test('live daily history is aggregated by UTC day beginning at 09:00 in Japan', () => {
   const db = new DatabaseSync(':memory:');
   db.exec(`CREATE TABLE sh_channel_snapshots(
     id INTEGER PRIMARY KEY, observed_at INTEGER NOT NULL, listener_count INTEGER,
@@ -15,10 +15,10 @@ test('live history is aggregated inside SQLite by JST period', () => {
   )`);
   const insert = db.prepare('INSERT INTO sh_channel_snapshots VALUES(?,?,?,?,?,?,?)');
   const timestamp = (value) => Date.parse(value);
-  insert.run(1, timestamp('2026-06-30T14:59:00Z'), 10, 100, 1000, null, 'a');
-  insert.run(2, timestamp('2026-06-30T15:00:00Z'), 20, 101, 1010, null, 'a');
-  insert.run(3, timestamp('2026-06-30T16:00:00Z'), 30, 102, 1020, null, 'b');
-  insert.run(4, timestamp('2026-06-30T17:00:00Z'), 40, 103, 1030, null, 'b');
+  insert.run(1, timestamp('2026-06-30T23:59:00Z'), 10, 100, 1000, null, 'a');
+  insert.run(2, timestamp('2026-07-01T00:00:00Z'), 20, 101, 1010, null, 'a');
+  insert.run(3, timestamp('2026-07-01T01:00:00Z'), 30, 102, 1020, null, 'b');
+  insert.run(4, timestamp('2026-07-01T02:00:00Z'), 40, 103, 1030, null, 'b');
 
   const rows = db.prepare(liveSummarySql('daily')).all(
     timestamp('2026-06-29T00:00:00Z'),

@@ -1,5 +1,6 @@
 import { refreshMissingMetadata } from './track-history-metadata.js';
 import { mergeTrackRows } from './track-history-merge.js';
+import { applyTrackPeriodCompleteness } from './period-completeness.js';
 import {
   attachCompactTrackLikes,
   compactTrackLikeBatchResults,
@@ -89,30 +90,40 @@ export const TRACK_HISTORY_SQL = `WITH snapshot_evidence AS (
       WHERE p.played_at >= ? AND p.played_at < ?
         AND p.invalid_durations_before = 0
         AND p.played_at <= p.queue_last_observed_at + ?
+    ), coverage AS (
+      SELECT strftime('%Y-%m-%d', observed_at / 1000, 'unixepoch') AS play_date,
+        MIN(observed_at) AS period_first_observed_at,
+        MAX(observed_at) AS period_last_observed_at
+      FROM sh_channel_snapshots
+      WHERE observed_at >= ? AND observed_at < ?
+      GROUP BY play_date
     )
     SELECT
-      play_date,
-      MIN(played_at) AS played_at,
-      MIN(played_at) AS first_played_at,
-      MAX(played_at) AS last_played_at,
+      plays.play_date,
+      MIN(plays.played_at) AS played_at,
+      MIN(plays.played_at) AS first_played_at,
+      MAX(plays.played_at) AS last_played_at,
       COUNT(*) AS play_count,
-      MIN(position) AS position,
-      MIN(queue_track_id) AS queue_track_id,
-      stationhead_track_id,spotify_id,apple_music_id,isrc,
-      MAX(title) AS title,MAX(artist) AS artist,
-      MAX(display_title) AS display_title,MAX(spotify_url) AS spotify_url,
-      MAX(raw_title) AS raw_title,MAX(raw_artist) AS raw_artist
+      MIN(plays.position) AS position,
+      MIN(plays.queue_track_id) AS queue_track_id,
+      plays.stationhead_track_id,plays.spotify_id,plays.apple_music_id,plays.isrc,
+      MAX(plays.title) AS title,MAX(plays.artist) AS artist,
+      MAX(plays.display_title) AS display_title,MAX(plays.spotify_url) AS spotify_url,
+      MAX(plays.raw_title) AS raw_title,MAX(plays.raw_artist) AS raw_artist,
+      MAX(coverage.period_first_observed_at) AS period_first_observed_at,
+      MAX(coverage.period_last_observed_at) AS period_last_observed_at
     FROM plays
+    LEFT JOIN coverage ON coverage.play_date=plays.play_date
     GROUP BY
-      play_date,stationhead_track_id,spotify_id,apple_music_id,isrc,
+      plays.play_date,plays.stationhead_track_id,plays.spotify_id,plays.apple_music_id,plays.isrc,
       CASE
-        WHEN spotify_id IS NULL AND apple_music_id IS NULL AND isrc IS NULL
-          AND stationhead_track_id IS NULL THEN queue_track_id
+        WHEN plays.spotify_id IS NULL AND plays.apple_music_id IS NULL AND plays.isrc IS NULL
+          AND plays.stationhead_track_id IS NULL THEN plays.queue_track_id
         ELSE NULL
       END,
       CASE
-        WHEN spotify_id IS NULL AND apple_music_id IS NULL AND isrc IS NULL
-          AND stationhead_track_id IS NULL AND queue_track_id IS NULL THEN position
+        WHEN plays.spotify_id IS NULL AND plays.apple_music_id IS NULL AND plays.isrc IS NULL
+          AND plays.stationhead_track_id IS NULL AND plays.queue_track_id IS NULL THEN plays.position
         ELSE NULL
       END
     ORDER BY first_played_at ASC
@@ -125,6 +136,7 @@ function trackHistoryStatement(db, fromTs, toTs, maxGroupedRows) {
     toTs,
     fromTs, toTs,
     TRACK_HISTORY_GRACE_MS,
+    fromTs, toTs,
     maxGroupedRows + 1,
   );
 }
@@ -186,7 +198,9 @@ export async function handleTrackHistory({ request, env, waitUntil }) {
     const sourceTruncated = allGroupedRows.length > maxGroupedRows;
     const groupedRows = sourceTruncated ? allGroupedRows.slice(0, maxGroupedRows) : allGroupedRows;
     const mergedRows = mergeTrackRows(groupedRows);
-    const rows = includeLikes ? attachCompactTrackLikes(mergedRows, likeRows) : mergedRows;
+    const likedRows = includeLikes ? attachCompactTrackLikes(mergedRows, likeRows) : mergedRows;
+    const completed = applyTrackPeriodCompleteness(likedRows, groupedRows);
+    const rows = completed.rows;
     const metadataRefreshScheduled = typeof waitUntil === 'function';
     if (metadataRefreshScheduled) {
       waitUntil(refreshMissingMetadata(groupedRows, env).catch((error) => {
@@ -207,8 +221,10 @@ export async function handleTrackHistory({ request, env, waitUntil }) {
       grouped_row_count: groupedRows.length,
       likes_included: includeLikes,
       like_row_count: likeRows.length,
+      excluded_play_count_dates: completed.excludedDates,
+      excluded_play_count_date_count: completed.excludedDates.length,
       metadata_refresh_scheduled: metadataRefreshScheduled,
-      method: 'observed_unpaused_queue_reachability_utc_sql_preaggregate',
+      method: 'observed_unpaused_queue_reachability_utc_sql_preaggregate_with_period_completeness',
     });
   } catch (error) {
     if (/no such table|no such column|malformed JSON/i.test(String(error?.message || ''))) {
