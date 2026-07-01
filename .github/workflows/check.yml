@@ -42,12 +42,10 @@ jobs:
         run: node --test tests/track-history-handler.test.mjs
       - name: Check database workload tests
         run: node --test tests/database-workload.test.mjs tests/remaining-runtime-audit-8.test.mjs
-      - name: Check remaining audit tests
-        run: node --test tests/remaining-runtime-audit-*.test.mjs
-      - name: Check history tests
-        run: node --test tests/history*.test.mjs
-      - name: Check all track tests
-        run: node --test tests/track*.test.mjs
+      - name: Check audit tests 2 through 4
+        run: node --test tests/remaining-runtime-audit-2.test.mjs tests/remaining-runtime-audit-3.test.mjs tests/remaining-runtime-audit-4.test.mjs
+      - name: Check audit tests 5 through 7
+        run: node --test tests/remaining-runtime-audit-5.test.mjs tests/remaining-runtime-audit-6.test.mjs tests/remaining-runtime-audit-7.test.mjs
       - name: Run JavaScript tests
         run: npm run test:js
       - name: Run SQL migration tests
