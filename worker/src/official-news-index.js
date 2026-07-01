@@ -132,31 +132,67 @@ async function saveMonitorState(env, values) {
 }
 
 async function saveAnnouncement(env, article, scheduledAt, detectedAt) {
-  const existing = await env.DB.prepare(`SELECT id FROM sh_official_news_announcements
-      WHERE news_id=? AND COALESCE(scheduled_at,0)=? LIMIT 1`)
-    .bind(article.newsId, scheduledAt || 0).first();
+  const rawText = article.text.slice(0, 50000);
+  if (scheduledAt) {
+    const row = await env.DB.prepare(`INSERT INTO sh_official_news_announcements
+        (news_id,news_url,published_date,title,event_name,scheduled_at,detected_at,updated_at,status,raw_text)
+        VALUES (?,?,?,?,?,?,?,?,?,?)
+        ON CONFLICT(news_id,scheduled_at) DO UPDATE SET
+          news_url=excluded.news_url,published_date=excluded.published_date,
+          title=excluded.title,event_name=excluded.event_name,
+          updated_at=excluded.updated_at,raw_text=excluded.raw_text
+        WHERE news_url IS NOT excluded.news_url
+          OR published_date IS NOT excluded.published_date
+          OR title IS NOT excluded.title
+          OR event_name IS NOT excluded.event_name
+          OR raw_text IS NOT excluded.raw_text
+        RETURNING id`)
+      .bind(
+        article.newsId, article.href, article.publishedDate, article.title, article.eventName,
+        scheduledAt, detectedAt, detectedAt, 'scheduled', rawText,
+      ).first();
+    return Number(row?.id || 0);
+  }
 
+  const existing = await env.DB.prepare(`SELECT id FROM sh_official_news_announcements
+      WHERE news_id=? AND scheduled_at IS NULL LIMIT 1`)
+    .bind(article.newsId).first();
   if (existing?.id) {
     await env.DB.prepare(`UPDATE sh_official_news_announcements SET
         news_url=?,published_date=?,title=?,event_name=?,updated_at=?,raw_text=?
-        WHERE id=?`)
-      .bind(article.href, article.publishedDate, article.title, article.eventName,
-        detectedAt, article.text.slice(0, 50000), existing.id).run();
+        WHERE id=? AND (
+          news_url IS NOT ? OR published_date IS NOT ? OR title IS NOT ?
+          OR event_name IS NOT ? OR raw_text IS NOT ?
+        )`)
+      .bind(
+        article.href, article.publishedDate, article.title, article.eventName,
+        detectedAt, rawText, existing.id,
+        article.href, article.publishedDate, article.title, article.eventName, rawText,
+      ).run();
     return Number(existing.id);
   }
 
   const result = await env.DB.prepare(`INSERT INTO sh_official_news_announcements
       (news_id,news_url,published_date,title,event_name,scheduled_at,detected_at,updated_at,status,raw_text)
       VALUES (?,?,?,?,?,?,?,?,?,?)`)
-    .bind(article.newsId, article.href, article.publishedDate, article.title, article.eventName,
-      scheduledAt || null, detectedAt, detectedAt, scheduledAt ? 'scheduled' : 'time_unknown', article.text.slice(0, 50000)).run();
+    .bind(
+      article.newsId, article.href, article.publishedDate, article.title, article.eventName,
+      null, detectedAt, detectedAt, 'time_unknown', rawText,
+    ).run();
   return Number(result?.meta?.last_row_id || 0);
+}
+
+async function markMissedAnnouncements(env, cfg, now) {
+  await env.DB.prepare(`UPDATE sh_official_news_announcements SET status='missed',updated_at=?
+    WHERE status='scheduled' AND scheduled_at IS NOT NULL AND scheduled_at<?`)
+    .bind(now, now - cfg.lateWindowMs).run();
 }
 
 async function checkOfficialNews(env, cfg, now) {
   const state = await monitorState(env);
   if (Number(state?.last_check_at || 0) && now - Number(state.last_check_at) < cfg.checkIntervalMs) return;
   await saveMonitorState(env, { lastCheckAt: now, lastSuccessAt: state?.last_success_at, lastError: null });
+  await markMissedAnnouncements(env, cfg, now);
 
   try {
     const response = await timedFetch(NEWS_LIST_URL, {
@@ -280,10 +316,46 @@ async function fetchComments(stationId, cfg, session) {
   return [];
 }
 
-async function saveProbe(env, announcement, station, active, now) {
-  const identity = stationIdentity(station);
+const DB_BATCH_SIZE = 80;
+
+async function runDbBatches(db, statements) {
+  for (let index = 0; index < statements.length; index += DB_BATCH_SIZE) {
+    const group = statements.slice(index, index + DB_BATCH_SIZE);
+    if (group.length) await db.batch(group);
+  }
+}
+
+export function compactProbePayload(station, identity = stationIdentity(station)) {
+  const queue = station?.queue || null;
+  const queueTracks = queue?.queue_tracks || queue?.tracks || [];
+  const compactQueue = queue ? {
+    id: finite(queue.id),
+    start_time: finite(queue.start_time),
+    is_paused: queue.is_paused ?? null,
+    track_count: Array.isArray(queueTracks) ? queueTracks.length : 0,
+  } : null;
+  return {
+    queueJson: JSON.stringify(compactQueue),
+    rawJson: JSON.stringify({
+      station_id: identity.stationId,
+      broadcast_id: identity.broadcastId,
+      broadcast_start_time: identity.broadcastStartTime,
+      is_broadcasting: Boolean(station?.is_broadcasting),
+      listener_count: finite(station?.listener_count),
+      guest_count: finite(station?.guest_count),
+      total_listens: finite(station?.total_listens),
+      status: station?.status || null,
+      chat_status: station?.chat_status || null,
+      channel_id: identity.channelId,
+      channel_alias: identity.channelAlias,
+    }),
+  };
+}
+
+function probeStatement(env, announcement, station, active, now, identity) {
   const minute = Math.floor(now / 60000);
-  await env.DB.prepare(`INSERT INTO sh_official_news_station_probes
+  const compact = compactProbePayload(station, identity);
+  return env.DB.prepare(`INSERT INTO sh_official_news_station_probes
       (announcement_id,observed_at,observed_minute,station_id,broadcast_id,broadcast_start_time,
        is_broadcasting,listener_count,guest_count,total_listens,status,chat_status,
        channel_id,channel_alias,queue_json,raw_json)
@@ -298,34 +370,64 @@ async function saveProbe(env, announcement, station, active, now) {
       announcement.id, now, minute, identity.stationId, identity.broadcastId, identity.broadcastStartTime,
       active ? 1 : 0, finite(station?.listener_count), finite(station?.guest_count), finite(station?.total_listens),
       station?.status || null, station?.chat_status || null, identity.channelId, identity.channelAlias,
-      JSON.stringify(station?.queue ?? null), JSON.stringify(station ?? null),
-    ).run();
-  return identity;
+      compact.queueJson, compact.rawJson,
+    );
 }
 
-async function saveComments(env, announcementId, stationId, comments, now) {
-  if (!comments.length) return;
-  await env.DB.batch(comments.map((comment) => env.DB.prepare(`INSERT INTO sh_official_news_comments
+async function loadExistingOfficialComments(env, announcementIds, commentIds) {
+  if (!announcementIds.length || !commentIds.length) return [];
+  const announcementPlaceholders = announcementIds.map(() => '?').join(',');
+  const commentPlaceholders = commentIds.map(() => '?').join(',');
+  const result = await env.DB.prepare(`SELECT announcement_id,comment_id,raw_json
+    FROM sh_official_news_comments
+    WHERE announcement_id IN (${announcementPlaceholders})
+      AND comment_id IN (${commentPlaceholders})`)
+    .bind(...announcementIds, ...commentIds).all();
+  return result.results || [];
+}
+
+export function officialCommentsToWrite(announcements, comments, existingRows) {
+  const existing = new Map((existingRows || []).map((row) => [
+    `${row.announcement_id}:${row.comment_id}`,
+    row.raw_json,
+  ]));
+  const result = [];
+  for (const announcement of announcements || []) {
+    for (const comment of comments || []) {
+      const key = `${announcement.id}:${comment.commentId}`;
+      const raw = JSON.stringify(comment.raw);
+      if (!existing.has(key) || existing.get(key) !== raw) {
+        result.push({ announcementId: announcement.id, comment, raw });
+      }
+    }
+  }
+  return result;
+}
+
+function commentStatement(env, announcementId, stationId, comment, now, raw) {
+  return env.DB.prepare(`INSERT INTO sh_official_news_comments
       (announcement_id,station_id,comment_id,observed_at,account_id,handle,text,chat_time,chat_time_ms,raw_json)
       VALUES (?,?,?,?,?,?,?,?,?,?)
       ON CONFLICT(announcement_id,comment_id) DO UPDATE SET
        observed_at=excluded.observed_at,account_id=excluded.account_id,handle=excluded.handle,
        text=excluded.text,chat_time=excluded.chat_time,chat_time_ms=excluded.chat_time_ms,raw_json=excluded.raw_json`)
-    .bind(announcementId, stationId, comment.commentId, now, comment.accountId, comment.handle,
-      comment.text, comment.chatTime, comment.chatTimeMs, JSON.stringify(comment.raw))));
+    .bind(
+      announcementId, stationId, comment.commentId, now, comment.accountId, comment.handle,
+      comment.text, comment.chatTime, comment.chatTimeMs, raw,
+    );
 }
 
 async function dueAnnouncements(env, cfg, now) {
-  await env.DB.prepare(`UPDATE sh_official_news_announcements SET status='missed',updated_at=?
-      WHERE status='scheduled' AND scheduled_at IS NOT NULL AND scheduled_at<?`)
-    .bind(now, now - cfg.lateWindowMs).run();
-
-  return (await env.DB.prepare(`SELECT * FROM sh_official_news_announcements
-      WHERE scheduled_at IS NOT NULL AND (
-        (status='scheduled' AND scheduled_at>=? AND scheduled_at<=?)
-        OR status='active'
-      ) ORDER BY scheduled_at ASC LIMIT 5`)
-    .bind(now - cfg.lateWindowMs, now + cfg.earlyWindowMs).all()).results || [];
+  const result = await env.DB.prepare(`SELECT
+      id,event_name,scheduled_at,status,inactive_streak,first_broadcast_at
+    FROM sh_official_news_announcements
+    WHERE scheduled_at IS NOT NULL AND (
+      (status='scheduled' AND scheduled_at>=? AND scheduled_at<=?)
+      OR status='active'
+    )
+    ORDER BY scheduled_at ASC LIMIT 5`)
+    .bind(now - cfg.lateWindowMs, now + cfg.earlyWindowMs).all();
+  return result.results || [];
 }
 
 async function probeAnnouncements(env, cfg, now) {
@@ -346,31 +448,52 @@ async function probeAnnouncements(env, cfg, now) {
     && identity.stationId !== finite(buddies?.station_id)
   );
 
-  for (const announcement of announcements) {
-    await saveProbe(env, announcement, station, active, now);
-    if (active) {
-      const comments = await fetchComments(identity.stationId, cfg, session).catch((error) => {
-        console.warn(JSON.stringify({ event: 'official_news_comments_failed', error: String(error?.message || error) }));
-        return [];
-      });
-      await saveComments(env, announcement.id, identity.stationId, comments, now);
-      await env.DB.prepare(`UPDATE sh_official_news_announcements SET
+  const comments = active
+    ? await fetchComments(identity.stationId, cfg, session).catch((error) => {
+      console.warn(JSON.stringify({ event: 'official_news_comments_failed', error: String(error?.message || error) }));
+      return [];
+    })
+    : [];
+  const announcementIds = announcements.map((announcement) => Number(announcement.id));
+  const commentIds = [...new Set(comments.map((comment) => Number(comment.commentId)))];
+  const existingComments = active
+    ? await loadExistingOfficialComments(env, announcementIds, commentIds)
+    : [];
+  const changedComments = officialCommentsToWrite(announcements, comments, existingComments);
+  const statements = announcements.map((announcement) => probeStatement(
+    env, announcement, station, active, now, identity,
+  ));
+
+  if (active) {
+    statements.push(...changedComments.map(({ announcementId, comment, raw }) => commentStatement(
+      env, announcementId, identity.stationId, comment, now, raw,
+    )));
+    for (const announcement of announcements) {
+      statements.push(env.DB.prepare(`UPDATE sh_official_news_announcements SET
           status='active',matched_station_id=?,first_broadcast_at=COALESCE(first_broadcast_at,?),
           last_broadcast_at=?,inactive_streak=0,updated_at=? WHERE id=?`)
-        .bind(identity.stationId, identity.broadcastStartTime || now, now, now, announcement.id).run();
-      console.log(JSON.stringify({
-        event: 'official_news_broadcast_probe',
-        announcement_id: announcement.id,
-        station_id: identity.stationId,
-        listener_count: station?.listener_count ?? null,
-        comments_saved: comments.length,
-      }));
-    } else if (announcement.status === 'active') {
-      const streak = Number(announcement.inactive_streak || 0) + 1;
-      await env.DB.prepare(`UPDATE sh_official_news_announcements SET
-          inactive_streak=?,status=CASE WHEN ?>=? THEN 'ended' ELSE status END,updated_at=? WHERE id=?`)
-        .bind(streak, streak, cfg.endConfirmPolls, now, announcement.id).run();
+        .bind(identity.stationId, identity.broadcastStartTime || now, now, now, announcement.id));
     }
+  } else {
+    for (const announcement of announcements) {
+      if (announcement.status !== 'active') continue;
+      const streak = Number(announcement.inactive_streak || 0) + 1;
+      statements.push(env.DB.prepare(`UPDATE sh_official_news_announcements SET
+          inactive_streak=?,status=CASE WHEN ?>=? THEN 'ended' ELSE status END,updated_at=? WHERE id=?`)
+        .bind(streak, streak, cfg.endConfirmPolls, now, announcement.id));
+    }
+  }
+  await runDbBatches(env.DB, statements);
+
+  for (const announcement of announcements) {
+    console.log(JSON.stringify({
+      event: 'official_news_broadcast_probe',
+      announcement_id: announcement.id,
+      station_id: identity.stationId,
+      listener_count: station?.listener_count ?? null,
+      comments_fetched: comments.length,
+      comments_written: changedComments.filter((item) => item.announcementId === announcement.id).length,
+    }));
   }
 }
 
@@ -390,19 +513,20 @@ async function runOfficialNewsMonitor(env) {
 async function health(env, baseResponse) {
   const base = await baseResponse.json().catch(() => ({}));
   try {
-    const [state, upcoming, active] = await Promise.all([
+    const [state, counts] = await Promise.all([
       monitorState(env),
-      env.DB.prepare(`SELECT COUNT(*) AS count FROM sh_official_news_announcements WHERE status='scheduled' AND scheduled_at>=?`)
-        .bind(Date.now()).first(),
-      env.DB.prepare(`SELECT COUNT(*) AS count FROM sh_official_news_announcements WHERE status='active'`).first(),
+      env.DB.prepare(`SELECT
+        SUM(CASE WHEN status='scheduled' AND scheduled_at>=? THEN 1 ELSE 0 END) AS upcoming_count,
+        SUM(CASE WHEN status='active' THEN 1 ELSE 0 END) AS active_count
+        FROM sh_official_news_announcements`).bind(Date.now()).first(),
     ]);
     return new Response(JSON.stringify({
       ...base,
       official_news_last_check_at: finite(state?.last_check_at),
       official_news_last_success_at: finite(state?.last_success_at),
       official_news_last_error: state?.last_error || null,
-      official_news_upcoming_count: Number(upcoming?.count || 0),
-      official_news_active_count: Number(active?.count || 0),
+      official_news_upcoming_count: Number(counts?.upcoming_count || 0),
+      official_news_active_count: Number(counts?.active_count || 0),
     }, null, 2), {
       status: baseResponse.status,
       headers: { 'content-type': 'application/json; charset=utf-8' },

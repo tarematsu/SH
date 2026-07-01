@@ -6,35 +6,23 @@ const SOURCE = 'stationhead_official_cloud';
 
 function jstParts(now = Date.now()) {
   const date = new Date(now + 9 * 3600000);
-  return {
-    year: date.getUTCFullYear(),
-    month: date.getUTCMonth() + 1,
-    day: date.getUTCDate(),
-    weekday: date.getUTCDay(),
-    hour: date.getUTCHours(),
-  };
+  return { year: date.getUTCFullYear(), month: date.getUTCMonth() + 1, day: date.getUTCDate(), weekday: date.getUTCDay(), hour: date.getUTCHours() };
 }
-
 function rankingDate(now = Date.now()) {
   const date = new Date(now + 9 * 3600000);
   const daysSinceMonday = (date.getUTCDay() + 6) % 7;
   date.setUTCDate(date.getUTCDate() - daysSinceMonday);
   return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, '0')}-${String(date.getUTCDate()).padStart(2, '0')}`;
 }
-
 function insideWindow(env, now) {
   const parts = jstParts(now);
   const mondayStart = Number(env.WEEKLY_LEADERBOARD_START_HOUR_JST ?? 18);
   const tuesdayEnd = Number(env.WEEKLY_LEADERBOARD_END_HOUR_JST ?? 2);
-  return (parts.weekday === 1 && parts.hour >= mondayStart)
-    || (parts.weekday === 2 && parts.hour < tuesdayEnd);
+  return (parts.weekday === 1 && parts.hour >= mondayStart) || (parts.weekday === 2 && parts.hour < tuesdayEnd);
 }
-
 async function session(env) {
-  return env.DB.prepare(`SELECT auth_token,device_uid FROM sh_worker_collector_state
-    WHERE id='stationhead'`).first();
+  return env.DB.prepare(`SELECT auth_token,device_uid FROM sh_worker_collector_state WHERE id='stationhead'`).first();
 }
-
 function normalizeAccounts(payload) {
   if (!Array.isArray(payload?.accounts)) {
     const message = payload?.error?.title || payload?.error?.detail || 'accounts array missing';
@@ -59,24 +47,22 @@ function normalizeAccounts(payload) {
     return true;
   });
 }
-
 async function sha256(value) {
   const bytes = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(JSON.stringify(value)));
   return [...new Uint8Array(bytes)].map((part) => part.toString(16).padStart(2, '0')).join('');
 }
-
-async function shouldCheck(env, date, now) {
-  const intervalMs = positive(env.WEEKLY_LEADERBOARD_CHECK_MINUTES, 15) * 60000;
+async function leaderboardFetchState(env, date) {
   try {
-    const row = await env.DB.prepare(`SELECT fetched_at,status FROM sh_leaderboard_fetches
-      WHERE ranking_date=? AND source=? LIMIT 1`).bind(date, SOURCE).first();
-    return !row?.fetched_at || now - Number(row.fetched_at) >= intervalMs;
+    return await env.DB.prepare(`SELECT fetched_at,status,source_hash FROM sh_leaderboard_fetches WHERE ranking_date=? AND source=? LIMIT 1`).bind(date, SOURCE).first();
   } catch (error) {
-    if (/no such table/i.test(String(error?.message || ''))) return false;
+    if (/no such table/i.test(String(error?.message || ''))) return { unavailable: true };
     throw error;
   }
 }
-
+export function leaderboardCheckDue(row, now, intervalMs) {
+  if (row?.unavailable) return false;
+  return !row?.fetched_at || now - Number(row.fetched_at) >= intervalMs;
+}
 async function recordFailure(env, date, now, error) {
   try {
     await env.DB.prepare(`INSERT INTO sh_leaderboard_fetches (
@@ -89,7 +75,6 @@ async function recordFailure(env, date, now, error) {
     if (!/no such table/i.test(String(writeError?.message || ''))) console.error(writeError);
   }
 }
-
 async function fetchLeaderboard(env, now) {
   const auth = await session(env);
   const headers = {
@@ -102,72 +87,50 @@ async function fetchLeaderboard(env, now) {
   };
   if (auth?.auth_token) headers.authorization = `Bearer ${auth.auth_token}`;
   if (auth?.device_uid) headers['sth-device-uid'] = auth.device_uid;
-
   const response = await fetch(`${SOURCE_URL}?_=${now}`, {
-    headers,
-    cache: 'no-store',
+    headers, cache: 'no-store',
     signal: AbortSignal.timeout(Math.min(positive(env.REQUEST_TIMEOUT_MS, 20000), 30000)),
   });
   const text = await response.text();
   let payload;
   try { payload = JSON.parse(text); }
   catch { throw new Error(`leaderboard non-JSON ${response.status}: ${text.slice(0, 200)}`); }
-  if (!response.ok) {
-    throw new Error(`leaderboard HTTP ${response.status}: ${payload?.error?.title || text.slice(0, 200)}`);
-  }
+  if (!response.ok) throw new Error(`leaderboard HTTP ${response.status}: ${payload?.error?.title || text.slice(0, 200)}`);
   return { payload, accounts: normalizeAccounts(payload) };
 }
-
 async function ingest(env, date, now, accounts, sourceHash) {
   const secret = env.INGEST_SECRET || 'worker-internal-ingest';
   const request = new Request('https://worker.internal/leaderboard-ingest', {
     method: 'POST',
-    headers: {
-      authorization: `Bearer ${secret}`,
-      'content-type': 'application/json',
-    },
+    headers: { authorization: `Bearer ${secret}`, 'content-type': 'application/json' },
     body: JSON.stringify({
-      observed_at: now,
-      ranking_date: date,
-      ranking_type: '週間チャンネル順位',
-      source: SOURCE,
-      source_hash: sourceHash,
-      collector_id: 'cloudflare-worker',
-      collector_kind: 'cloud',
-      source_priority: 100,
-      accounts,
+      observed_at: now, ranking_date: date, ranking_type: '週間チャンネル順位',
+      source: SOURCE, source_hash: sourceHash, collector_id: 'cloudflare-worker',
+      collector_kind: 'cloud', source_priority: 100, accounts,
     }),
   });
   const response = await saveLeaderboard({ request, env: { DB: env.DB, INGEST_SECRET: secret } });
   const payload = await response.json().catch(() => ({}));
-  if (!response.ok || !payload.ok) {
-    throw new Error(`leaderboard ingest ${response.status}: ${JSON.stringify(payload).slice(0, 500)}`);
-  }
+  if (!response.ok || !payload.ok) throw new Error(`leaderboard ingest ${response.status}: ${JSON.stringify(payload).slice(0, 500)}`);
   return payload;
 }
-
 export async function runCloudWeeklyLeaderboard(env) {
   if (!env.DB || String(env.WEEKLY_LEADERBOARD_ENABLED ?? 'true').toLowerCase() !== 'true') return;
   const now = Date.now();
   if (!insideWindow(env, now)) return;
   const date = rankingDate(now);
-  if (!await shouldCheck(env, date, now)) return;
-
+  const previous = await leaderboardFetchState(env, date);
+  const intervalMs = positive(env.WEEKLY_LEADERBOARD_CHECK_MINUTES, 15) * 60000;
+  if (!leaderboardCheckDue(previous, now, intervalMs)) return;
   try {
     const { accounts } = await fetchLeaderboard(env, now);
     const minimum = positive(env.WEEKLY_LEADERBOARD_MIN_ACCOUNTS, 20);
     if (accounts.length < minimum) throw new Error(`leaderboard incomplete: ${accounts.length} accounts`);
     const sourceHash = await sha256(accounts.map((account) => ({
-      rank: account.rank,
-      account_id: account.account_id,
-      handle: account.handle,
-      movement: account.leaderboard_movement,
+      rank: account.rank, account_id: account.account_id, handle: account.handle, movement: account.leaderboard_movement,
     })));
-    const previous = await env.DB.prepare(`SELECT source_hash,status FROM sh_leaderboard_fetches
-      WHERE ranking_date=? AND source=? LIMIT 1`).bind(date, SOURCE).first().catch(() => null);
     if (previous?.status === 'saved' && previous?.source_hash === sourceHash) {
-      await env.DB.prepare(`UPDATE sh_leaderboard_fetches SET fetched_at=?
-        WHERE ranking_date=? AND source=?`).bind(now, date, SOURCE).run();
+      await env.DB.prepare(`UPDATE sh_leaderboard_fetches SET fetched_at=? WHERE ranking_date=? AND source=?`).bind(now, date, SOURCE).run();
       return;
     }
     const result = await ingest(env, date, now, accounts, sourceHash);
