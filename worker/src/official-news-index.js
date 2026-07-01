@@ -264,8 +264,16 @@ function stationHeaders(cfg, session) {
   };
 }
 
-async function workerSession(env) {
-  return env.DB.prepare(`SELECT auth_token,device_uid FROM sh_worker_collector_state WHERE id='stationhead'`).first();
+export const OFFICIAL_PROBE_CONTEXT_SQL = `SELECT
+  collector.auth_token,collector.device_uid,
+  (SELECT station_id FROM sh_channel_snapshots
+    WHERE station_id IS NOT NULL
+    ORDER BY observed_at DESC,id DESC LIMIT 1) AS buddies_station_id
+FROM sh_worker_collector_state collector
+WHERE collector.id='stationhead' LIMIT 1`;
+
+export async function loadOfficialProbeContext(env) {
+  return env.DB.prepare(OFFICIAL_PROBE_CONTEXT_SQL).first();
 }
 
 async function stationRequest(path, cfg, session, options = {}) {
@@ -352,9 +360,8 @@ export function compactProbePayload(station, identity = stationIdentity(station)
   };
 }
 
-function probeStatement(env, announcement, station, active, now, identity) {
+function probeStatement(env, announcement, station, active, now, identity, compact) {
   const minute = Math.floor(now / 60000);
-  const compact = compactProbePayload(station, identity);
   return env.DB.prepare(`INSERT INTO sh_official_news_station_probes
       (announcement_id,observed_at,observed_minute,station_id,broadcast_id,broadcast_start_time,
        is_broadcasting,listener_count,guest_count,total_listens,status,chat_status,
@@ -391,17 +398,29 @@ export function officialCommentsToWrite(announcements, comments, existingRows) {
     `${row.announcement_id}:${row.comment_id}`,
     row.raw_json,
   ]));
+  const encodedComments = (comments || []).map((comment) => ({
+    comment,
+    raw: JSON.stringify(comment.raw),
+  }));
   const result = [];
   for (const announcement of announcements || []) {
-    for (const comment of comments || []) {
+    for (const { comment, raw } of encodedComments) {
       const key = `${announcement.id}:${comment.commentId}`;
-      const raw = JSON.stringify(comment.raw);
       if (!existing.has(key) || existing.get(key) !== raw) {
         result.push({ announcementId: announcement.id, comment, raw });
       }
     }
   }
   return result;
+}
+
+export function officialCommentWriteCounts(changedComments) {
+  const counts = new Map();
+  for (const item of changedComments || []) {
+    const id = Number(item.announcementId);
+    counts.set(id, (counts.get(id) || 0) + 1);
+  }
+  return counts;
 }
 
 function commentStatement(env, announcementId, stationId, comment, now, raw) {
@@ -434,18 +453,15 @@ async function probeAnnouncements(env, cfg, now) {
   const announcements = await dueAnnouncements(env, cfg, now);
   if (!announcements.length) return;
 
-  const session = await workerSession(env);
+  const session = await loadOfficialProbeContext(env);
   if (!session?.auth_token || !session?.device_uid) throw new Error('Stationhead worker session unavailable');
-  const [station, buddies] = await Promise.all([
-    stationRequest(`/station/handle/${encodeURIComponent(cfg.handle)}/guest`, cfg, session, { method: 'POST', body: '{}' }),
-    env.DB.prepare(`SELECT station_id FROM sh_channel_snapshots ORDER BY observed_at DESC LIMIT 1`).first(),
-  ]);
+  const station = await stationRequest(`/station/handle/${encodeURIComponent(cfg.handle)}/guest`, cfg, session, { method: 'POST', body: '{}' });
   const identity = stationIdentity(station);
   const active = Boolean(
     station?.is_broadcasting
     && station?.broadcast
     && identity.stationId
-    && identity.stationId !== finite(buddies?.station_id)
+    && identity.stationId !== finite(session.buddies_station_id)
   );
 
   const comments = active
@@ -460,8 +476,10 @@ async function probeAnnouncements(env, cfg, now) {
     ? await loadExistingOfficialComments(env, announcementIds, commentIds)
     : [];
   const changedComments = officialCommentsToWrite(announcements, comments, existingComments);
+  const changedCounts = officialCommentWriteCounts(changedComments);
+  const compact = compactProbePayload(station, identity);
   const statements = announcements.map((announcement) => probeStatement(
-    env, announcement, station, active, now, identity,
+    env, announcement, station, active, now, identity, compact,
   ));
 
   if (active) {
@@ -492,7 +510,7 @@ async function probeAnnouncements(env, cfg, now) {
       station_id: identity.stationId,
       listener_count: station?.listener_count ?? null,
       comments_fetched: comments.length,
-      comments_written: changedComments.filter((item) => item.announcementId === announcement.id).length,
+      comments_written: changedCounts.get(Number(announcement.id)) || 0,
     }));
   }
 }
@@ -510,29 +528,36 @@ async function runOfficialNewsMonitor(env) {
   }
 }
 
+export const OFFICIAL_HEALTH_SQL = `SELECT
+  monitor.last_check_at,monitor.last_success_at,monitor.last_error,
+  (SELECT COUNT(*) FROM sh_official_news_announcements
+    WHERE status='scheduled' AND scheduled_at>=?) AS upcoming_count,
+  (SELECT COUNT(*) FROM sh_official_news_announcements
+    WHERE status='active') AS active_count
+FROM (SELECT ? AS id) requested
+LEFT JOIN sh_official_news_monitor_state monitor ON monitor.id=requested.id`;
+
+export async function loadOfficialHealthState(env, now = Date.now()) {
+  return env.DB.prepare(OFFICIAL_HEALTH_SQL).bind(now, STATE_ID).first();
+}
+
 async function health(env, baseResponse) {
   const base = await baseResponse.json().catch(() => ({}));
   try {
-    const [state, counts] = await Promise.all([
-      monitorState(env),
-      env.DB.prepare(`SELECT
-        SUM(CASE WHEN status='scheduled' AND scheduled_at>=? THEN 1 ELSE 0 END) AS upcoming_count,
-        SUM(CASE WHEN status='active' THEN 1 ELSE 0 END) AS active_count
-        FROM sh_official_news_announcements`).bind(Date.now()).first(),
-    ]);
+    const state = await loadOfficialHealthState(env);
     return new Response(JSON.stringify({
       ...base,
       official_news_last_check_at: finite(state?.last_check_at),
       official_news_last_success_at: finite(state?.last_success_at),
       official_news_last_error: state?.last_error || null,
-      official_news_upcoming_count: Number(counts?.upcoming_count || 0),
-      official_news_active_count: Number(counts?.active_count || 0),
-    }, null, 2), {
+      official_news_upcoming_count: Number(state?.upcoming_count || 0),
+      official_news_active_count: Number(state?.active_count || 0),
+    }), {
       status: baseResponse.status,
       headers: { 'content-type': 'application/json; charset=utf-8' },
     });
   } catch {
-    return new Response(JSON.stringify({ ...base, official_news_setup_required: true }, null, 2), {
+    return new Response(JSON.stringify({ ...base, official_news_setup_required: true }), {
       status: baseResponse.status,
       headers: { 'content-type': 'application/json; charset=utf-8' },
     });
