@@ -1,5 +1,6 @@
 import { num } from '../lib/api-utils.js';
 import { computePlayback as computePlaybackWithAnchors, safeJson } from '../lib/playback.js';
+import { LATEST_QUEUE_WITH_ITEMS_SQL, parseLatestQueueRows } from '../lib/latest-queue.js';
 
 const json = (data, status = 200, cache = 'public, max-age=20, s-maxage=30, stale-while-revalidate=90') =>
   new Response(JSON.stringify(data), {
@@ -115,9 +116,12 @@ const LATEST_SQL = `SELECT
   host_account_id,host_handle,broadcast_start_time,comment_velocity,raw_json
 FROM sh_channel_snapshots ORDER BY observed_at DESC,id DESC LIMIT 1`;
 
-const HISTORY_24H_SQL = `WITH ranked AS (
+export const HISTORY_24H_SQL = `WITH ranked AS (
   SELECT id,observed_at,listener_count,online_member_count,total_member_count,
     total_listens,current_stream_count,stream_goal,
+    MAX(COALESCE(comment_velocity, 0)) OVER (
+      PARTITION BY CAST(observed_at/300000 AS INTEGER)
+    ) AS comment_velocity_max,
     ROW_NUMBER() OVER (
       PARTITION BY CAST(observed_at/300000 AS INTEGER)
       ORDER BY observed_at DESC,id DESC
@@ -126,8 +130,9 @@ const HISTORY_24H_SQL = `WITH ranked AS (
   WHERE observed_at >= (unixepoch('now','-24 hours')*1000)
 )
 SELECT observed_at,listener_count,online_member_count,total_member_count,
-  total_listens,current_stream_count,stream_goal
+  total_listens,current_stream_count,stream_goal,comment_velocity_max AS comment_velocity
 FROM ranked WHERE rn=1 ORDER BY observed_at ASC LIMIT 300`;
+
 
 function publicLatest(latest, channel, station, owner, goal) {
   if (!latest) return null;
@@ -173,15 +178,15 @@ export async function onRequestGet({ request, env }) {
     const historyStatement = initial
       ? db.prepare(HISTORY_24H_SQL)
       : db.prepare(`SELECT observed_at,listener_count,online_member_count,total_member_count,
-          total_listens,current_stream_count,stream_goal
+          total_listens,current_stream_count,stream_goal,comment_velocity
         FROM sh_channel_snapshots WHERE observed_at>?
         ORDER BY observed_at ASC,id ASC LIMIT 180`).bind(since);
 
-    const [latest, historyResult, latestQueue] = await Promise.all([
+    const [latest, historyResult, queueResult, predictionResult] = await Promise.all([
       db.prepare(LATEST_SQL).first(),
       historyStatement.all(),
-      db.prepare(`SELECT station_id,queue_id,start_time,is_paused,observed_at
-        FROM sh_queue_snapshots ORDER BY observed_at DESC,id DESC LIMIT 1`).first(),
+      db.prepare(LATEST_QUEUE_WITH_ITEMS_SQL).all(),
+      initial ? Promise.resolve(null) : db.prepare(HISTORY_24H_SQL).all(),
     ]);
 
     const hostScope = hostScopeFromSnapshot(latest);
@@ -195,21 +200,8 @@ export async function onRequestGet({ request, env }) {
     ]);
 
     const history = historyResult.results || [];
-    const predictionRows = initial
-      ? history
-      : (await db.prepare(HISTORY_24H_SQL).all()).results || [];
-
-    let queue = [];
-    if (latestQueue) {
-      const result = await db.prepare(`SELECT q.observed_at,q.station_id,q.queue_id,q.start_time,q.position,
-        q.queue_track_id,q.stationhead_track_id,q.spotify_id,q.apple_music_id,q.deezer_id,q.isrc,
-        q.duration_ms,q.preview_url,q.bite_count,m.title,m.artist,m.display_title,m.thumbnail_url,
-        m.spotify_url,m.fetched_at AS metadata_fetched_at,m.raw_json AS metadata_raw_json
-        FROM sh_queue_items q LEFT JOIN sh_track_metadata m ON m.spotify_id=q.spotify_id
-        WHERE q.station_id=? AND q.start_time=? ORDER BY q.position ASC LIMIT 80`)
-        .bind(latestQueue.station_id, latestQueue.start_time).all();
-      queue = result.results || [];
-    }
+    const predictionRows = initial ? history : predictionResult?.results || [];
+    const { latestQueue, queue } = parseLatestQueueRows(queueResult.results || []);
 
     const generatedAt = Date.now();
     const playback = computePlaybackWithAnchors(queue, generatedAt);
