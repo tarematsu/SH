@@ -1,12 +1,13 @@
 (() => {
   const descriptions = {
     monthly: ['月次集計', '月ごとの平均同接、再生数増加、メンバー増加を表示します。'],
-    tracks: ['再生曲', '選択した日または月曜日始まりの週の再生曲を表示します。'],
+    tracks: ['再生曲', 'UTC日付（日本時間9:00〜翌8:59）または月曜日始まりの週で再生曲を表示します。'],
     broadcasts: ['公式ステへ', '同接推移を重ねて表示します。'],
     ranking: ['リーダーボード', 'Stationheadで放送している櫻坂ホストの週次順位です。'],
   };
   Object.entries(descriptions).forEach(([mode, value]) => { MODE_HELP[mode] = value; });
 
+  const todayUtc = () => new Date().toISOString().slice(0, 10);
   const averageOf = (rows, key) => {
     const values = rows.map((row) => finiteNumber(row[key])).filter((value) => value != null);
     return values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : null;
@@ -20,7 +21,7 @@
     return minutes ? `${hours}時間${minutes}分` : `${hours}時間`;
   };
   const mondayOf = (value) => {
-    const date = new Date(`${value || todayJst()}T00:00:00Z`);
+    const date = new Date(`${value || todayUtc()}T00:00:00Z`);
     date.setUTCDate(date.getUTCDate() - ((date.getUTCDay() + 6) % 7));
     return date.toISOString().slice(0, 10);
   };
@@ -110,7 +111,7 @@
         const response = await fetch('/api/track-history?latest=1', { signal, headers: { accept: 'application/json' } });
         const data = await response.json();
         if (!isCurrent(version, mode)) return false;
-        input.value = data?.latest_date || todayJst();
+        input.value = data?.latest_date || todayUtc();
       }
       if ($('#trackWeekMode').checked) {
         $('#from').value = mondayOf(input.value);
@@ -142,10 +143,10 @@
     $('#more').hidden = true;
     $('#chartPanel').hidden = true;
     $('#rankingWeeklyPanel').hidden = true;
-    const timezone = data.timezone === 'Asia/Tokyo' ? 'JST' : (data.timezone || 'UTC');
+    const timezone = data.timezone || 'UTC';
     $('#notice').textContent = data.setup_required
       ? '再生曲データの保存テーブルがまだありません。'
-      : `${formatDate(from)}〜${formatDate(to)}：${fmt(current.length)}件を表示（${timezone}）${data.truncated ? '（表示上限）' : ''}`;
+      : `${formatDate(from)}〜${formatDate(to)}：${fmt(current.length)}件を表示（${timezone} / 日本時間9:00〜翌8:59）${data.truncated ? '（表示上限）' : ''}`;
   };
 
   const renderHistoryData = (data, mode, append, scope, host) => {
@@ -201,10 +202,20 @@
       const to = $('#to').value;
 
       if (mode === 'tracks') {
-        const key = `track-history:v8:${from}:${to}`;
+        const key = `track-history:v9:${from}:${to}`;
         let data = readCache(key);
         if (!data) {
-          const params = new URLSearchParams({ from, to, limit: '2000', v: '8' });
+          const tbody = $('#tbody');
+          if (tbody) {
+            tbody.replaceChildren();
+            const row = document.createElement('tr');
+            const cell = document.createElement('td');
+            cell.colSpan = Math.max(1, $('#thead')?.querySelectorAll('th').length || 1);
+            cell.textContent = '再生曲を読み込み中…';
+            row.appendChild(cell);
+            tbody.appendChild(row);
+          }
+          const params = new URLSearchParams({ from, to, limit: '2000', v: '9' });
           const response = await fetch(`/api/track-history?${params}`, { signal: controller.signal, cache: 'no-store' });
           data = await response.json();
           if (!response.ok || !data.ok) throw new Error(data.error || `HTTP ${response.status}`);
