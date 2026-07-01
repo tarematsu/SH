@@ -87,9 +87,8 @@ export function currentPeriodKey(mode, now = Date.now()) {
 }
 
 export function isTrustedEmailWeekly(row) {
-  if (!row || String(row.period_key || '') < EMAIL_WEEKLY_FROM
-    || String(row.period_key || '') >= EMAIL_WEEKLY_TO_EXCLUSIVE) return false;
-  return parseQualityFlags(row.quality_flags).includes('stationhead_email_recap');
+  const periodKey = String(row?.period_key || '');
+  return periodKey >= EMAIL_WEEKLY_FROM && periodKey < EMAIL_WEEKLY_TO_EXCLUSIVE;
 }
 
 export function evaluatePeriodCompleteness({
@@ -107,16 +106,17 @@ export function evaluatePeriodCompleteness({
     return { complete: false, trusted: false, reasons: ['invalid_period_key'], bounds: null };
   }
 
+  const current = now < bounds.end;
   const trusted = mode === 'weekly' && isTrustedEmailWeekly({
     period_key: periodKey,
     quality_flags: qualityFlags,
   });
-  if (trusted) return { complete: true, trusted: true, reasons: [], bounds };
+  if (trusted && !current) return { complete: true, trusted: true, reasons: [], bounds };
 
   const first = finiteNumber(firstObservedAt);
   const last = finiteNumber(lastObservedAt);
   const reasons = [];
-  if (now < bounds.end) reasons.push('current_period');
+  if (current) reasons.push('current_period');
   if (knownGap) reasons.push('known_collection_gap');
   if (first == null || first > bounds.start + toleranceMs) reasons.push('missing_period_start');
   if (last == null || last < bounds.end - toleranceMs) reasons.push('missing_period_end');
