@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "check": "npm run check:js && npm run test:js && npm run test:sql && npm run check:worker-bundle",
+    "check": "node scripts/diagnose-checks.mjs",
     "check:js": "node scripts/check-js-syntax.mjs",
     "check:worker-bundle": "npm --prefix worker run check:bundle",
     "test:js": "node --test tests/*.test.mjs",
