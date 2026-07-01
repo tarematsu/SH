@@ -111,9 +111,9 @@ export const TRACK_HISTORY_SQL = `WITH snapshot_evidence AS (
       JOIN sh_channel_snapshots snapshots
         ON snapshots.observed_at BETWEEN boundaries.target_at-${PERIOD_BOUNDARY_TOLERANCE_MS}
           AND boundaries.target_at+${PERIOD_BOUNDARY_TOLERANCE_MS}
-      JOIN coverage_range range
-        ON snapshots.observed_at >= range.range_start-${PERIOD_BOUNDARY_TOLERANCE_MS}
-          AND snapshots.observed_at <= range.range_end+${PERIOD_BOUNDARY_TOLERANCE_MS}
+      CROSS JOIN coverage_range
+      WHERE snapshots.observed_at >= coverage_range.range_start-${PERIOD_BOUNDARY_TOLERANCE_MS}
+        AND snapshots.observed_at <= coverage_range.range_end+${PERIOD_BOUNDARY_TOLERANCE_MS}
     ), coverage_ranked AS (
       SELECT coverage_candidates.*,
         ROW_NUMBER() OVER (
