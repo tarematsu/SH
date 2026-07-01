@@ -6,6 +6,29 @@
   let hiddenAt = 0;
   let playbackActive = null;
 
+  function setText(target, value) {
+    if (!target) return false;
+    const text = String(value ?? '');
+    if (target.textContent === text) return false;
+    target.textContent = text;
+    return true;
+  }
+
+  function setStyle(target, property, value) {
+    if (!target || target.style[property] === value) return false;
+    target.style[property] = value;
+    return true;
+  }
+
+  function latestObservedAt(rows) {
+    let latest = 0;
+    for (const row of Array.isArray(rows) ? rows : []) {
+      const value = Number(row?.observed_at);
+      if (Number.isFinite(value) && value > latest) latest = value;
+    }
+    return latest;
+  }
+
   function mergeHistoryBucket(row, cutoff) {
     const observedAt = Number(row?.observed_at);
     if (!Number.isFinite(observedAt) || observedAt < cutoff) return false;
@@ -121,7 +144,7 @@
 
     try {
       if (!lastDashboardObservedAt && lastHistoryRows.length) {
-        lastDashboardObservedAt = Math.max(...lastHistoryRows.map((row) => Number(row?.observed_at) || 0));
+        lastDashboardObservedAt = latestObservedAt(lastHistoryRows);
       }
       const params = new URLSearchParams();
       if (lastDashboardObservedAt) params.set('since', String(lastDashboardObservedAt));
@@ -136,26 +159,28 @@
       if (!data.ok) throw new Error(data.error || 'API error');
       const latest = data.latest || {};
 
-      el('channelName').textContent = latest.channel_name || 'Buddies';
-      el('description').textContent = latest.description || latest.artist_name || '';
+      setText(el('channelName'), latest.channel_name || 'Buddies');
+      setText(el('description'), latest.description || latest.artist_name || '');
       setImage(el('channelImage'), latest.channel_image || latest.logo_image);
-      if (latest.accent_color) document.documentElement.style.setProperty('--accent', latest.accent_color);
+      if (latest.accent_color && document.documentElement.style.getPropertyValue('--accent') !== latest.accent_color) {
+        document.documentElement.style.setProperty('--accent', latest.accent_color);
+      }
 
-      el('online').textContent = number(latest.online_member_count);
-      el('members').textContent = number(latest.total_member_count);
-      el('totalListens').textContent = number(latest.total_listens);
+      setText(el('online'), number(latest.online_member_count));
+      setText(el('members'), number(latest.total_member_count));
+      setText(el('totalListens'), number(latest.total_listens));
       renderDailyDelta('membersDelta', data.daily_change?.total_member_count);
       renderDailyDelta('listensDelta', data.daily_change?.total_listens);
-      el('updated').textContent = `最終取得 ${dateTime(latest.observed_at)}`;
+      setText(el('updated'), `最終取得 ${dateTime(latest.observed_at)}`);
 
       const count = Number(latest.current_stream_count) || 0;
       const goal = Number(latest.stream_goal) || 0;
       const pct = goal ? Math.min(100, count / goal * 100) : 0;
-      el('streamCount').textContent = number(count);
-      el('streamGoal').textContent = number(goal);
-      el('goalBar').style.width = `${pct}%`;
-      el('goalPercent').textContent = `${pct.toFixed(2)}%`;
-      el('goalRemaining').textContent = goal ? `残り ${number(Math.max(0, goal - count))}` : '-';
+      setText(el('streamCount'), number(count));
+      setText(el('streamGoal'), number(goal));
+      setStyle(el('goalBar'), 'width', `${pct}%`);
+      setText(el('goalPercent'), `${pct.toFixed(2)}%`);
+      setText(el('goalRemaining'), goal ? `残り ${number(Math.max(0, goal - count))}` : '-');
       renderPrediction(data.goal_prediction, count, goal);
 
       const responseRevision = String(data.queue_revision || '');
@@ -183,8 +208,8 @@
         playbackActive = Boolean(playing);
       }
 
-      const latestObservedAt = Number(data.latest_observed_at);
-      if (Number.isFinite(latestObservedAt) && latestObservedAt > 0) lastDashboardObservedAt = latestObservedAt;
+      const latestObserved = Number(data.latest_observed_at);
+      if (Number.isFinite(latestObserved) && latestObserved > 0) lastDashboardObservedAt = latestObserved;
       const historyState = mergeDashboardHistory(data.history, Boolean(data.delta));
       if (historyState.changed) {
         const history = historyState.rows;
