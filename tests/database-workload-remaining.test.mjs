@@ -1,0 +1,85 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { DatabaseSync } from 'node:sqlite';
+import { queueItemsToWrite, commentsToWrite } from '../site/functions/api/ingest.js';
+import { hostCommentsToWrite } from '../site/functions/api/host-ingest.js';
+import { LEGACY_SERIES_SQL, decodeSeriesRows, trimSeries } from '../site/functions/api/broadcast-series.js';
+import { completeMetadataCount } from '../site/functions/api/track-metadata-refresh.js';
+import { cachedSnapshotCount, resetSnapshotCountCache } from '../site/functions/api/health.js';
+import { compactProbePayload, officialCommentsToWrite } from '../worker/src/official-news-index.js';
+import { leaderboardCheckDue } from '../worker/src/cloud-weekly-leaderboard.js';
+
+test('unchanged queue items skip writes until the hourly checkpoint', () => {
+  const observedAt = 10_000_000;
+  const track = { position: 0, queue_track_id: 11, stationhead_track_id: 22, spotify_id: 'spotify', apple_music_id: 'apple', deezer_id: 'deezer', isrc: 'isrc', duration_ms: 180000, preview_url: 'preview', bite_count: 5, raw: { stable: true } };
+  const existing = [{ position: 0, observed_at: observedAt - 1000, queue_id: 7, queue_track_id: 11, stationhead_track_id: 22, spotify_id: 'spotify', apple_music_id: 'apple', deezer_id: 'deezer', isrc: 'isrc', duration_ms: 180000, preview_url: 'preview', bite_count: 5, raw_json: JSON.stringify(track.raw) }];
+  assert.equal(queueItemsToWrite([track], existing, observedAt, 7).length, 0);
+  assert.equal(queueItemsToWrite([{ ...track, bite_count: 6 }], existing, observedAt, 7).length, 1);
+  assert.equal(queueItemsToWrite([track], existing, observedAt + 3_600_000, 7).length, 1);
+});
+
+test('comment filters only return new or changed rows', () => {
+  const mainComments = [{ id: 1, raw: { text: 'same' } }, { id: 2, raw: { text: 'changed' } }, { id: 3, raw: { text: 'new' } }];
+  assert.deepEqual(commentsToWrite(mainComments, [{ id: 1, raw_json: '{"text":"same"}' }, { id: 2, raw_json: '{"text":"old"}' }]).map((item) => item.id), [2, 3]);
+  const hostComments = mainComments.map((item) => ({ comment_id: item.id, raw: item.raw }));
+  assert.deepEqual(hostCommentsToWrite(hostComments, [{ comment_id: 1, raw_json: '{"text":"same"}' }, { comment_id: 2, raw_json: '{"text":"old"}' }]).map((item) => item.comment_id), [2, 3]);
+});
+
+test('broadcast series leaves SQLite as one row per event', () => {
+  const db = new DatabaseSync(':memory:');
+  db.exec(`CREATE TABLE sh_legacy_snapshots(id INTEGER PRIMARY KEY,observed_at INTEGER NOT NULL,host_handle TEXT,source_note TEXT,listener_count INTEGER)`);
+  const insert = db.prepare('INSERT INTO sh_legacy_snapshots VALUES(?,?,?,?,?)');
+  insert.run(1, 1000, 'sakurazaka46jp', 'event-a', 10);
+  insert.run(2, 2000, 'sakurazaka46jp', 'event-a', 20);
+  insert.run(3, 61000, 'sakurazaka46jp', 'event-a', 30);
+  insert.run(4, 121000, 'sakurazaka46jp', 'event-b', 40);
+  const rows = db.prepare(LEGACY_SERIES_SQL).all(0, 200000, 0, 200000);
+  assert.equal(rows.length, 2);
+  const decoded = decodeSeriesRows(rows, 'historical_import');
+  assert.deepEqual(decoded[0].samples.map((point) => [point.elapsed, point.listener]), [[0, 15], [1, 30]]);
+  assert.equal(decoded[0].samples.reduce((sum, point) => sum + point.sourceSamples, 0), 3);
+  assert.equal(decoded[0].sourceTruncated, false);
+  const trimmed = trimSeries(decoded, 2);
+  assert.equal(trimmed.pointCount, 2);
+  assert.equal(trimmed.truncated, true);
+});
+
+test('metadata remaining count only subtracts complete resolutions', () => {
+  const resolved = new Map([['a', { title: 'Title', artist: 'Artist' }], ['b', { title: 'Title', artist: '' }], ['c', { title: 'c', artist: 'Artist' }]]);
+  assert.equal(completeMetadataCount(resolved), 1);
+});
+
+test('snapshot health count is cached and concurrent reads share one query', async () => {
+  resetSnapshotCountCache();
+  let calls = 0;
+  const db = { prepare() { return { async first() { calls += 1; await new Promise((resolve) => setTimeout(resolve, 5)); return { count: 42 }; } }; } };
+  const values = await Promise.all([cachedSnapshotCount(db), cachedSnapshotCount(db)]);
+  assert.deepEqual(values, [42, 42]);
+  assert.equal(calls, 1);
+  assert.equal(await cachedSnapshotCount(db), 42);
+  assert.equal(calls, 1);
+});
+
+test('official news only writes changed announcement comments', () => {
+  const announcements = [{ id: 10 }, { id: 20 }];
+  const comments = [{ commentId: 1, raw: { text: 'same' } }, { commentId: 2, raw: { text: 'new' } }];
+  const rows = officialCommentsToWrite(announcements, comments, [{ announcement_id: 10, comment_id: 1, raw_json: '{"text":"same"}' }, { announcement_id: 20, comment_id: 1, raw_json: '{"text":"same"}' }]);
+  assert.deepEqual(rows.map((row) => `${row.announcementId}:${row.comment.commentId}`), ['10:2', '20:2']);
+});
+
+test('official probe payload excludes full station and queue bodies', () => {
+  const station = { id: 123, is_broadcasting: true, listener_count: 50, huge_unused_field: 'x'.repeat(10000), queue: { id: 9, start_time: 1000, queue_tracks: Array.from({ length: 100 }, (_, index) => ({ id: index, raw: 'x'.repeat(100) })) } };
+  const compact = compactProbePayload(station);
+  assert.ok(compact.rawJson.length < 1000);
+  assert.ok(compact.queueJson.length < 200);
+  assert.equal(JSON.parse(compact.queueJson).track_count, 100);
+  assert.equal(JSON.parse(compact.rawJson).huge_unused_field, undefined);
+});
+
+test('weekly leaderboard reuses one fetch-state row and skips missing schema', () => {
+  const now = 1_000_000;
+  assert.equal(leaderboardCheckDue(null, now, 900_000), true);
+  assert.equal(leaderboardCheckDue({ unavailable: true }, now, 900_000), false);
+  assert.equal(leaderboardCheckDue({ fetched_at: now - 1000 }, now, 900_000), false);
+  assert.equal(leaderboardCheckDue({ fetched_at: now - 900_000 }, now, 900_000), true);
+});

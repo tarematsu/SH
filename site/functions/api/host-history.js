@@ -57,43 +57,38 @@ export async function onRequestGet({ request, env }) {
     if (mode === 'session') {
       const sessionId = intParam(url.searchParams.get('id'), 0, 1, Number.MAX_SAFE_INTEGER);
       if (!sessionId) return json({ ok: false, error: 'id is required' }, 400);
-      const session = await env.DB.prepare(`SELECT * FROM sh_host_broadcast_sessions WHERE id = ?`)
-        .bind(sessionId).first();
-      if (!session) return json({ ok: false, error: 'session not found' }, 404);
-
-      const [snapshots, queues, tracks, comments, events] = await Promise.all([
-        env.DB.prepare(`
-          SELECT observed_at, listener_count, guest_count, total_listens,
-                 is_broadcasting, current_track_id, current_spotify_id,
-                 queue_id, queue_start_time
+      const [sessionResult, snapshots, queues, tracks, comments, events] = await env.DB.batch([
+        env.DB.prepare(`SELECT
+          id,source_scope,handle,account_id,station_id,broadcast_id,broadcast_stream_id,
+          started_at,confirmed_at,ended_at,status,detection_reason,end_reason,
+          buddies_station_id,channel_id,channel_alias,total_listens_start,total_listens_end,
+          followers_start,followers_end,total_streams_start,total_streams_end,
+          peak_listeners,listener_sum,listener_sample_count,average_listeners,
+          track_count,comment_count,last_observed_at,raw_start_json,raw_end_json
+          FROM sh_host_broadcast_sessions WHERE id=? LIMIT 1`).bind(sessionId),
+        env.DB.prepare(`SELECT observed_at,listener_count,guest_count,total_listens,
+          is_broadcasting,current_track_id,current_spotify_id,queue_id,queue_start_time
           FROM sh_host_station_snapshots
-          WHERE session_id = ? ORDER BY observed_at ASC LIMIT 10000
-        `).bind(sessionId).all(),
-        env.DB.prepare(`
-          SELECT id, observed_at, queue_id, queue_start_time, is_paused,
-                 queue_hash, current_track_id, current_spotify_id
+          WHERE session_id=? ORDER BY observed_at ASC LIMIT 10000`).bind(sessionId),
+        env.DB.prepare(`SELECT id,observed_at,queue_id,queue_start_time,is_paused,
+          queue_hash,current_track_id,current_spotify_id
           FROM sh_host_queue_snapshots
-          WHERE session_id = ? ORDER BY observed_at ASC LIMIT 1000
-        `).bind(sessionId).all(),
-        env.DB.prepare(`
-          SELECT observed_at, queue_start_time, position, queue_track_id,
-                 stationhead_track_id, spotify_id, apple_music_id, deezer_id,
-                 isrc, duration_ms, preview_url, bite_count
+          WHERE session_id=? ORDER BY observed_at ASC LIMIT 1000`).bind(sessionId),
+        env.DB.prepare(`SELECT observed_at,queue_start_time,position,queue_track_id,
+          stationhead_track_id,spotify_id,apple_music_id,deezer_id,
+          isrc,duration_ms,preview_url,bite_count
           FROM sh_host_queue_items
-          WHERE session_id = ? ORDER BY queue_start_time ASC, position ASC LIMIT 10000
-        `).bind(sessionId).all(),
-        env.DB.prepare(`
-          SELECT comment_id, observed_at, account_id, handle, text,
-                 chat_time, chat_time_ms, followers, active_stream_days, emoji
+          WHERE session_id=? ORDER BY queue_start_time ASC,position ASC LIMIT 10000`).bind(sessionId),
+        env.DB.prepare(`SELECT comment_id,observed_at,account_id,handle,text,
+          chat_time,chat_time_ms,followers,active_stream_days,emoji
           FROM sh_host_comments
-          WHERE session_id = ? ORDER BY COALESCE(chat_time_ms, observed_at) ASC LIMIT 10000
-        `).bind(sessionId).all(),
-        env.DB.prepare(`
-          SELECT observed_at, channel, event, data_json
+          WHERE session_id=? ORDER BY COALESCE(chat_time_ms,observed_at) ASC LIMIT 10000`).bind(sessionId),
+        env.DB.prepare(`SELECT observed_at,channel,event,data_json
           FROM sh_host_raw_events
-          WHERE session_id = ? ORDER BY observed_at ASC LIMIT 10000
-        `).bind(sessionId).all(),
+          WHERE session_id=? ORDER BY observed_at ASC LIMIT 10000`).bind(sessionId),
       ]);
+      const session = sessionResult.results?.[0] || null;
+      if (!session) return json({ ok: false, error: 'session not found' }, 404);
 
       return json({
         ok: true,
