@@ -13,10 +13,10 @@
 
   function sampledGapThreshold(times) {
     const gaps = [];
-    let previous = null;
-    for (const time of times) {
-      if (time != null && previous != null && time > previous) gaps.push(time - previous);
-      if (time != null) previous = time;
+    for (let index = 1; index < times.length; index += 1) {
+      const previous = times[index - 1];
+      const current = times[index];
+      if (previous != null && current != null && current > previous) gaps.push(current - previous);
     }
     gaps.sort((a, b) => a - b);
     const median = gaps.length ? gaps[Math.floor(gaps.length / 2)] : 0;
@@ -93,7 +93,8 @@
 
   function drawSummary(rows, selectedIndex = null) {
     const { ctx, width, height } = prepareCanvas();
-    const sorted = [...rows].sort(
+    const source = Array.isArray(rows) ? rows : [];
+    const sorted = [...source].sort(
       (a, b) => (dateTimestamp(rowDate(a)) || 0) - (dateTimestamp(rowDate(b)) || 0),
     );
     const sampled = sampleRows(sorted);
