@@ -33,22 +33,5 @@ jobs:
       - name: Install Worker tooling
         working-directory: worker
         run: npm install --no-audit --no-fund
-      - name: Check JavaScript syntax
-        run: npm run check:js
-      - name: Run JavaScript tests
-        id: js-tests
-        continue-on-error: true
-        run: npm run test:js > js-test.log 2>&1
-      - name: Upload JavaScript test log
-        uses: actions/upload-artifact@v4
-        with:
-          name: js-test-log
-          path: js-test.log
-          retention-days: 1
-      - name: Fail on JavaScript test failure
-        if: steps.js-tests.outcome == 'failure'
-        run: exit 1
-      - name: Run SQL migration tests
-        run: npm run test:sql
-      - name: Check Worker bundle
-        run: npm run check:worker-bundle
+      - name: Run repository checks
+        run: npm run check
