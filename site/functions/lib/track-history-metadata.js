@@ -1,49 +1,5 @@
-import { bestText, cleanText, looksLikeId } from './track-history-text.js';
-
-function parseSpotifyTitle(value) {
-  const cleaned = cleanText(value)?.replace(/\s*\|\s*Spotify\s*$/i, '') || null;
-  if (!cleaned) return { title: null, artist: null };
-  const match = cleaned.match(/^(.*?)\s*-\s*song and lyrics by\s*(.+)$/i);
-  if (match) return { title: cleanText(match[1]), artist: cleanText(match[2]) };
-  return { title: cleaned, artist: null };
-}
-
-async function spotifyMetadata(spotifyId) {
-  if (!spotifyId) return null;
-  const cacheRequest = new Request(`https://stationhead-meta-cache.invalid/spotify/${encodeURIComponent(spotifyId)}`);
-  try {
-    const cached = await caches.default.match(cacheRequest);
-    if (cached) return cached.json();
-  } catch {}
-  try {
-    const spotifyUrl = `https://open.spotify.com/track/${encodeURIComponent(spotifyId)}`;
-    const response = await fetch(`https://open.spotify.com/oembed?url=${encodeURIComponent(spotifyUrl)}`, {
-      headers: { accept: 'application/json' },
-      signal: AbortSignal.timeout(5000),
-    });
-    if (!response.ok) return null;
-    const raw = await response.json();
-    const parsed = parseSpotifyTitle(raw?.title);
-    const value = {
-      title: parsed.title,
-      artist: cleanText(raw?.author_name || raw?.author) || parsed.artist,
-      spotify_url: spotifyUrl,
-      raw,
-    };
-    if (!value.title || looksLikeId(value.title)) return null;
-    try {
-      await caches.default.put(cacheRequest, new Response(JSON.stringify(value), {
-        headers: {
-          'content-type': 'application/json; charset=utf-8',
-          'cache-control': 'public, max-age=2592000',
-        },
-      }));
-    } catch {}
-    return value;
-  } catch {
-    return null;
-  }
-}
+import { fetchSpotifyMetadataBatch } from './spotify-metadata.js';
+import { bestText, looksLikeId } from './track-history-text.js';
 
 async function persistResolvedMetadata(env, resolved) {
   if (!resolved.size) return 0;
@@ -72,24 +28,24 @@ async function persistResolvedMetadata(env, resolved) {
   return statements.length;
 }
 
-export async function enrichMissingRows(rows, env) {
-  const unresolved = new Map();
+function unresolvedSpotifyIds(rows, limit = 20) {
+  const ids = new Set();
   for (const row of rows) {
     const title = bestText(row.title, row.raw_title, row.display_title);
     const artist = bestText(row.artist, row.raw_artist);
     if ((!title || looksLikeId(title) || !artist || looksLikeId(artist)) && row.spotify_id) {
-      unresolved.set(row.spotify_id, null);
-      if (unresolved.size >= 20) break;
+      ids.add(row.spotify_id);
+      if (ids.size >= limit) break;
     }
   }
-  if (!unresolved.size) return { rows, persisted: 0 };
+  return [...ids];
+}
 
-  const ids = [...unresolved.keys()];
-  const resolved = new Map();
-  for (let index = 0; index < ids.length; index += 6) {
-    const values = await Promise.all(ids.slice(index, index + 6).map(async (id) => [id, await spotifyMetadata(id)]));
-    for (const [id, value] of values) if (value) resolved.set(id, value);
-  }
+async function resolveMissingMetadata(rows, env) {
+  const ids = unresolvedSpotifyIds(rows);
+  if (!ids.length) return { resolved: new Map(), persisted: 0 };
+
+  const resolved = await fetchSpotifyMetadataBatch(ids);
 
   let persisted = 0;
   try {
@@ -97,7 +53,17 @@ export async function enrichMissingRows(rows, env) {
   } catch (error) {
     console.error('track metadata D1 upsert failed', error);
   }
+  return { resolved, persisted };
+}
 
+export async function refreshMissingMetadata(rows, env) {
+  const { persisted } = await resolveMissingMetadata(rows, env);
+  return persisted;
+}
+
+export async function enrichMissingRows(rows, env) {
+  const { resolved, persisted } = await resolveMissingMetadata(rows, env);
+  if (!resolved.size) return { rows, persisted };
   return {
     persisted,
     rows: rows.map((row) => {

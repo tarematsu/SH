@@ -80,6 +80,20 @@ class MigrationTests(unittest.TestCase):
               event TEXT,
               data_json TEXT
             );
+
+            CREATE TABLE sh_channel_snapshots (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              observed_at INTEGER NOT NULL,
+              station_id INTEGER,
+              host_account_id INTEGER,
+              host_handle TEXT
+            );
+
+            CREATE TABLE sh_queue_snapshots (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              observed_at INTEGER NOT NULL,
+              station_id INTEGER
+            );
             """
         )
 
@@ -92,6 +106,7 @@ class MigrationTests(unittest.TestCase):
             self.apply("005_cloud_host_monitor.sql")
             self.apply("006_email_weekly_summary.sql")
             self.apply("007_host_session_safety.sql")
+            self.apply("008_runtime_query_indexes.sql")
 
         rows = [
             ("stationhead-email:2026-06-08", "2026-06-08", 1781528583000, 1781525193000, 47576224),
@@ -153,6 +168,19 @@ class MigrationTests(unittest.TestCase):
         ).fetchone()
         self.assertEqual(ended[0], 10100)
         self.assertIsNone(ended[1])
+
+        index_names = {
+            row[0]
+            for row in self.db.execute(
+                "SELECT name FROM sqlite_master WHERE type='index'"
+            )
+        }
+        self.assertTrue({
+            "idx_sh_channel_snapshots_station_observed",
+            "idx_sh_channel_snapshots_host_account_observed",
+            "idx_sh_channel_snapshots_host_handle_observed",
+            "idx_sh_queue_snapshots_station_observed",
+        }.issubset(index_names))
 
     def tearDown(self):
         self.db.close()
