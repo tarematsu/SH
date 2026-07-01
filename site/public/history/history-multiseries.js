@@ -10,6 +10,9 @@
   ];
   const COLORS = ['#f6c7d9', '#9c7bf4', '#7ee787', '#ffb86b', '#7ad7ff'];
   const detailFormatter = new Intl.NumberFormat('ja-JP', { maximumFractionDigits: 1 });
+  let summaryModelSource = null;
+  let summaryModelMode = null;
+  let summaryModel = null;
 
   function sampledGapThreshold(times) {
     const gaps = [];
@@ -86,6 +89,34 @@
     };
   }
 
+  function summaryModelFor(source) {
+    if (summaryModelSource === source && summaryModelMode === currentMode && summaryModel) {
+      return { model: summaryModel, rebuilt: false };
+    }
+    const sorted = [...source].sort(
+      (a, b) => (dateTimestamp(rowDate(a)) || 0) - (dateTimestamp(rowDate(b)) || 0),
+    );
+    const sampled = sampleRows(sorted);
+    const prepared = prepareSeries(sampled);
+    const series = prepared.metrics.map((metric) => ({
+      key: metric.key,
+      label: metric.label,
+      color: metric.color,
+      alpha: metric.alpha,
+    }));
+    summaryModelSource = source;
+    summaryModelMode = currentMode;
+    summaryModel = {
+      sampled,
+      ...prepared,
+      series,
+      legendHtml: series.map((item) =>
+        `<span style="opacity:${item.alpha}"><i style="background:${item.color}"></i>${escapeHtml(item.label)}</span>`,
+      ).join(''),
+    };
+    return { model: summaryModel, rebuilt: true };
+  }
+
   function detailValue(value) {
     const number = finiteNumber(value);
     return number == null ? '—' : detailFormatter.format(number);
@@ -94,14 +125,11 @@
   function drawSummary(rows, selectedIndex = null) {
     const { ctx, width, height } = prepareCanvas();
     const source = Array.isArray(rows) ? rows : [];
-    const sorted = [...source].sort(
-      (a, b) => (dateTimestamp(rowDate(a)) || 0) - (dateTimestamp(rowDate(b)) || 0),
-    );
-    const sampled = sampleRows(sorted);
-    if (!sampled.length) return drawEmpty(ctx, width, height);
-    const prepared = prepareSeries(sampled);
-    const { dates, times, gapThreshold, metrics } = prepared;
-    if (!metrics.length) return drawEmpty(ctx, width, height);
+    const { model, rebuilt } = summaryModelFor(source);
+    const {
+      sampled, dates, times, gapThreshold, metrics, series, legendHtml,
+    } = model;
+    if (!sampled.length || !metrics.length) return drawEmpty(ctx, width, height);
 
     const area = { left: 42, right: 18, top: 18, bottom: 42 };
     area.width = Math.max(1, width - area.left - area.right);
@@ -110,7 +138,6 @@
     const xs = positionsFromTimes(times, area);
     drawDateAxis(ctx, dates, xs, width, height, area);
 
-    const series = [];
     for (const metric of metrics) {
       const range = metric.maximum - metric.minimum || 1;
       ctx.save();
@@ -134,18 +161,15 @@
       }
       ctx.stroke();
       ctx.restore();
-      series.push({ key: metric.key, label: metric.label, color: metric.color, alpha: metric.alpha });
     }
 
     const selected = Number.isInteger(selectedIndex) && sampled[selectedIndex] ? selectedIndex : null;
     if (selected != null) drawSelection(ctx, xs[selected], area);
     chartState = { type: 'multi-summary', rows: sampled, dates, xPositions: xs, series, selectedIndex: selected };
-    setChartRange(dates);
-
-    const legendHtml = series.map((item) =>
-      `<span style="opacity:${item.alpha}"><i style="background:${item.color}"></i>${escapeHtml(item.label)}</span>`,
-    ).join('');
-    if ($('#chartLegend').innerHTML !== legendHtml) $('#chartLegend').innerHTML = legendHtml;
+    if (rebuilt) {
+      setChartRange(dates);
+      if ($('#chartLegend').innerHTML !== legendHtml) $('#chartLegend').innerHTML = legendHtml;
+    }
 
     if (selected != null) {
       const row = sampled[selected];
