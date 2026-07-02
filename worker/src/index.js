@@ -3,6 +3,12 @@ import {
   jsonResponse as json, normalizeBearer, jwtExpiryMs, positiveNumber as numberValue,
   normalizeComments as sharedNormalizeComments, enrichTracks as sharedEnrichTracks,
 } from './shared.js';
+import {
+  asCollectorFailure,
+  clearCollectorFailure,
+  recordCollectorFailure,
+  sanitizeFailureDetail,
+} from './collector-failure.js';
 
 const API_BASE = 'https://production1.stationhead.com';
 const COLLECTOR_VERSION = '1.0.0-worker';
@@ -139,7 +145,32 @@ async function stationheadJson(state, config, path) {
     throw new Error(`Stationhead API ${response.status}: ${path}${body ? ` | ${body.slice(0, 300)}` : ''}`);
   }
 
-  return response.json();
+  try {
+    return await response.json();
+  } catch (error) {
+    throw new Error(`Stationhead API invalid JSON: ${path} | ${sanitizeFailureDetail(error?.message || error)}`);
+  }
+}
+
+export function validateChannelPayload(channel, expectedAlias) {
+  if (!channel || typeof channel !== 'object' || Array.isArray(channel)) {
+    throw new Error('Stationhead channel response shape changed: root payload is not an object');
+  }
+  const channelId = firstDefined(channel.id, channel.channel_id);
+  const channelAlias = String(channel.alias || channel.channel_alias || '').trim();
+  if (channelId === undefined || channelId === null) {
+    throw new Error('Stationhead channel response shape changed: channel id is missing');
+  }
+  if (!channelAlias) {
+    throw new Error('Stationhead channel response shape changed: channel alias is missing');
+  }
+  if (expectedAlias && channelAlias.toLowerCase() !== String(expectedAlias).trim().toLowerCase()) {
+    throw new Error(`Stationhead channel response shape changed: expected alias=${expectedAlias}, received alias=${channelAlias}`);
+  }
+  if (!('current_station' in channel) && !('current_station_id' in channel)) {
+    throw new Error('Stationhead channel response shape changed: current_station fields are missing');
+  }
+  return channel;
 }
 
 async function ingest(env, type, data, observedAt) {
@@ -163,7 +194,7 @@ async function ingest(env, type, data, observedAt) {
   });
   if (!response.ok) {
     const body = await response.text().catch(() => '');
-    throw new Error(`D1 ingest failed ${response.status}: ${body.slice(0, 500)}`);
+    throw new Error(`D1 ingest failed (${type}) ${response.status}: ${body.slice(0, 500)}`);
   }
   return type === 'queue' ? response.json().catch(() => ({})) : null;
 }
@@ -243,17 +274,27 @@ async function enrichTracks(env, queue, observedAt, config) {
 }
 
 export async function collectOnce(env, source = 'manual') {
-  if (!env.DB) throw new Error('DB binding is missing');
-  const config = configFromEnv(env);
-  const state = await loadState(env);
   const observedAt = Date.now();
-  state.lastRunAt = observedAt;
-  state.lastError = null;
+  let stage = 'collector_start';
+  let state = null;
 
   try {
+    if (!env.DB) throw new Error('DB binding is missing');
+    const config = configFromEnv(env);
+
+    stage = env.__stationheadAuthState ? 'stationhead_auth' : 'd1_read_collector_state';
+    state = await loadState(env);
+    state.lastRunAt = observedAt;
+    state.lastError = null;
+
+    stage = 'stationhead_channel_request';
     const channel = await stationheadJson(state, config, `/channels/alias/${encodeURIComponent(config.channelAlias)}`);
+
+    stage = 'stationhead_channel_payload';
+    validateChannelPayload(channel, config.channelAlias);
     extractIds(channel, state);
 
+    stage = 'd1_write_collector_heartbeat';
     await ingest(env, 'collector_heartbeat', {
       collector_id: config.collectorId,
       hostname: 'cloudflare-workers',
@@ -262,18 +303,23 @@ export async function collectOnce(env, source = 'manual') {
       websocket_enabled: false,
       invocation_source: source,
     }, observedAt);
+
+    stage = 'd1_write_snapshot';
     await ingest(env, 'snapshot', normalizeSnapshot(channel, state, config), observedAt);
 
     const queue = extractQueue(channel, state.stationId);
     let queueResult = null;
     let metadataSaved = 0;
     if (queue) {
+      stage = 'd1_write_queue';
       queueResult = await ingest(env, 'queue', queue, observedAt);
+      stage = 'd1_write_track_metadata';
       metadataSaved = await enrichTracks(env, queue, observedAt, config);
     }
 
     let commentsSaved = 0;
     if (state.stationId) {
+      stage = 'stationhead_chat_history';
       const history = await stationheadJson(
         state,
         config,
@@ -281,6 +327,7 @@ export async function collectOnce(env, source = 'manual') {
       );
       const comments = normalizeComments(history, state.stationId);
       commentsSaved = comments.length;
+      stage = 'd1_write_comments';
       await ingest(env, 'comments', {
         station_id: state.stationId,
         comments,
@@ -288,11 +335,18 @@ export async function collectOnce(env, source = 'manual') {
       }, observedAt);
     }
 
+    stage = 'd1_write_collector_state';
     await saveState(env, state, {
       lastRunAt: observedAt,
       lastSuccessAt: Date.now(),
       lastError: null,
       tokenExpiresAt: jwtExpiryMs(state.authToken) || state.tokenExpiresAt,
+    });
+    await clearCollectorFailure(env).catch((error) => {
+      console.warn(JSON.stringify({
+        event: 'collector_failure_clear_failed',
+        error: sanitizeFailureDetail(error?.message || error),
+      }));
     });
 
     return {
@@ -311,12 +365,16 @@ export async function collectOnce(env, source = 'manual') {
       token_expires_at: state.tokenExpiresAt || null,
     };
   } catch (error) {
-    await saveState(env, state, {
-      lastRunAt: observedAt,
-      lastError: String(error?.message || error).slice(0, 2000),
-      tokenExpiresAt: jwtExpiryMs(state.authToken) || state.tokenExpiresAt,
-    }).catch(() => {});
-    throw error;
+    const failure = asCollectorFailure(error, stage, Date.now());
+    if (state) {
+      await saveState(env, state, {
+        lastRunAt: observedAt,
+        lastError: failure.message.slice(0, 2000),
+        tokenExpiresAt: jwtExpiryMs(state.authToken) || state.tokenExpiresAt,
+      }).catch(() => {});
+    }
+    await recordCollectorFailure(env, failure, failure.diagnosis.stage, source).catch(() => {});
+    throw failure;
   }
 }
 
