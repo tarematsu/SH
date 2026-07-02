@@ -76,9 +76,9 @@ export function planLikeObservations(tracks, latestRows, observedAt) {
     .map(([trackKey, track]) => ({ trackKey, track }));
 }
 
-function queueItemState(track) {
+function queueItemState(track, queueId = null) {
   return {
-    queue_id: num(track.queue_id),
+    queue_id: num(queueId ?? track.queue_id),
     queue_track_id: num(track.queue_track_id),
     stationhead_track_id: num(track.stationhead_track_id),
     spotify_id: text(track.spotify_id),
@@ -96,21 +96,27 @@ function sameValue(left, right) {
   return (left ?? null) === (right ?? null);
 }
 
-export function queueItemsToWrite(tracks, existingRows, observedAt, queueId = null) {
+export function queueItemsToWrite(tracks, existingRows, _observedAt, queueId = null) {
   const existing = new Map((existingRows || []).map((row) => [Number(row.position), row]));
   const unique = new Map();
   for (const track of Array.isArray(tracks) ? tracks : []) {
     const position = num(track.position);
     if (position != null) unique.set(position, track);
   }
-  return [...unique.values()].filter((track) => {
+
+  const changed = [];
+  for (const track of unique.values()) {
     const previous = existing.get(num(track.position));
-    if (!previous) return true;
-    const current = queueItemState({ ...track, queue_id: queueId });
-    const changed = Object.entries(current).some(([key, value]) => !sameValue(previous[key], value));
-    const checkpointDue = observedAt - (num(previous.observed_at) ?? 0) >= CHECKPOINT_MS;
-    return changed || checkpointDue;
-  });
+    if (!previous) {
+      changed.push(track);
+      continue;
+    }
+    const current = queueItemState(track, queueId);
+    if (Object.entries(current).some(([key, value]) => !sameValue(previous[key], value))) {
+      changed.push(track);
+    }
+  }
+  return changed;
 }
 
 function queueItemLookupStatements(db, stationId, startTime, positions) {
