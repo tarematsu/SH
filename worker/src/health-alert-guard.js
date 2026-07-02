@@ -6,6 +6,10 @@ function finite(value) {
   return Number.isFinite(number) ? number : null;
 }
 
+function changed(result) {
+  return Number(result?.meta?.changes || 0) > 0;
+}
+
 export function pendingAlertIsObsolete(row) {
   if (String(row?.event_kind || '') !== 'alert') return false;
   const currentSuccessAt = finite(row?.last_success_at);
@@ -49,7 +53,7 @@ export async function retireRecoveredPendingAlert(env, now = Date.now()) {
     ?? finite(row.baseline_success_at)
     ?? now;
   const retiredId = retiredDeliveryId(row.idempotency_key, now);
-  await env.DB.batch([
+  const results = await env.DB.batch([
     env.DB.prepare(`UPDATE sh_health_alert_state SET
         incident_open=1,
         incident_started_at=?,
@@ -73,6 +77,18 @@ export async function retireRecoveredPendingAlert(env, now = Date.now()) {
       WHERE id=? AND idempotency_key=? AND event_kind='alert'`)
       .bind(retiredId, now, ALERT_ID, row.idempotency_key),
   ]);
+
+  const stateUpdated = changed(results?.[0]);
+  const deliveryRetired = changed(results?.[1]);
+  if (!stateUpdated || !deliveryRetired) {
+    console.warn(JSON.stringify({
+      event: 'collector_health_alert_retire_skipped',
+      reason: 'stale_or_partial_update',
+      state_updated: stateUpdated,
+      delivery_retired: deliveryRetired,
+    }));
+    return false;
+  }
 
   console.log(JSON.stringify({
     event: 'collector_health_alert_retired_after_recovery',
