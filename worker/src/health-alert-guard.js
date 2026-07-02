@@ -68,7 +68,7 @@ export async function retireRecoveredPendingAlert(env, now = Date.now()) {
   const incidentStartedAt = finite(row.incident_started_at)
     ?? finite(row.baseline_success_at)
     ?? now;
-  const retiredId = retiredDeliveryId(row.idempotencyKey, now);
+  const retiredId = retiredDeliveryId(row.idempotency_key, now);
   const retireResult = await env.DB.prepare(`UPDATE sh_health_alert_delivery SET
       id=?,last_error='retired_after_recovery',updated_at=?
     WHERE id=? AND idempotency_key=? AND event_kind='alert'`)
