@@ -27,6 +27,20 @@ function retiredDeliveryId(idempotencyKey, now) {
   return `retired-${now}-${(hash >>> 0).toString(36)}`;
 }
 
+async function restorePendingAlertDelivery(env, row, retiredId, now) {
+  const result = await env.DB.prepare(`UPDATE sh_health_alert_delivery SET
+      id=?,last_error=?,updated_at=?
+    WHERE id=? AND idempotency_key=? AND event_kind='alert' AND last_error='retired_after_recovery'`)
+    .bind(
+      ALERT_ID,
+      row.delivery_last_error ?? null,
+      finite(row.delivery_updated_at) ?? now,
+      retiredId,
+      row.idempotency_key,
+    ).run();
+  return changed(result);
+}
+
 export async function retireRecoveredPendingAlert(env, now = Date.now()) {
   if (!env?.DB) return false;
 
@@ -37,7 +51,9 @@ export async function retireRecoveredPendingAlert(env, now = Date.now()) {
         delivery.event_kind,
         delivery.incident_started_at,
         delivery.baseline_success_at,
-        delivery.idempotency_key
+        delivery.idempotency_key,
+        delivery.last_error AS delivery_last_error,
+        delivery.updated_at AS delivery_updated_at
       FROM sh_health_alert_delivery delivery
       LEFT JOIN sh_worker_collector_state collector ON collector.id='stationhead'
       WHERE delivery.id=?`)
@@ -53,39 +69,57 @@ export async function retireRecoveredPendingAlert(env, now = Date.now()) {
     ?? finite(row.baseline_success_at)
     ?? now;
   const retiredId = retiredDeliveryId(row.idempotency_key, now);
-  const results = await env.DB.batch([
-    env.DB.prepare(`UPDATE sh_health_alert_state SET
-        incident_open=1,
-        incident_started_at=?,
-        last_observed_success_at=?,
-        last_error=NULL,
-        updated_at=?
-      WHERE id=? AND EXISTS (
-        SELECT 1 FROM sh_health_alert_delivery
-        WHERE id=? AND idempotency_key=? AND event_kind='alert'
-      )`)
-      .bind(
-        incidentStartedAt,
-        finite(row.baseline_success_at),
-        now,
-        ALERT_ID,
-        ALERT_ID,
-        row.idempotency_key,
-      ),
-    env.DB.prepare(`UPDATE sh_health_alert_delivery SET
-        id=?,last_error='retired_after_recovery',updated_at=?
-      WHERE id=? AND idempotency_key=? AND event_kind='alert'`)
-      .bind(retiredId, now, ALERT_ID, row.idempotency_key),
-  ]);
+  const retireResult = await env.DB.prepare(`UPDATE sh_health_alert_delivery SET
+      id=?,last_error='retired_after_recovery',updated_at=?
+    WHERE id=? AND idempotency_key=? AND event_kind='alert'`)
+    .bind(retiredId, now, ALERT_ID, row.idempotency_key).run();
 
-  const stateUpdated = changed(results?.[0]);
-  const deliveryRetired = changed(results?.[1]);
-  if (!stateUpdated || !deliveryRetired) {
+  const deliveryRetired = changed(retireResult);
+  if (!deliveryRetired) {
     console.warn(JSON.stringify({
       event: 'collector_health_alert_retire_skipped',
-      reason: 'stale_or_partial_update',
-      state_updated: stateUpdated,
-      delivery_retired: deliveryRetired,
+      reason: 'stale_delivery_update',
+      state_updated: false,
+      delivery_retired: false,
+      delivery_restored: false,
+    }));
+    return false;
+  }
+
+  const stateResult = await env.DB.prepare(`UPDATE sh_health_alert_state SET
+      incident_open=1,
+      incident_started_at=?,
+      last_observed_success_at=?,
+      last_error=NULL,
+      updated_at=?
+    WHERE id=? AND EXISTS (
+      SELECT 1 FROM sh_health_alert_delivery
+      WHERE id=? AND idempotency_key=? AND event_kind='alert' AND last_error='retired_after_recovery'
+    )`)
+    .bind(
+      incidentStartedAt,
+      finite(row.baseline_success_at),
+      now,
+      ALERT_ID,
+      retiredId,
+      row.idempotency_key,
+    ).run();
+
+  const stateUpdated = changed(stateResult);
+  if (!stateUpdated) {
+    const deliveryRestored = await restorePendingAlertDelivery(env, row, retiredId, now).catch((error) => {
+      console.warn(JSON.stringify({
+        event: 'collector_health_alert_retire_restore_failed',
+        error: String(error?.message || error),
+      }));
+      return false;
+    });
+    console.warn(JSON.stringify({
+      event: 'collector_health_alert_retire_skipped',
+      reason: 'stale_state_update',
+      state_updated: false,
+      delivery_retired: true,
+      delivery_restored: deliveryRestored,
     }));
     return false;
   }
