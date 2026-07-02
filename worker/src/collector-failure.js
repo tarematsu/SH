@@ -74,6 +74,7 @@ function text(value) {
 }
 
 function finite(value) {
+  if (value === undefined || value === null || value === '') return null;
   const number = Number(value);
   return Number.isFinite(number) ? number : null;
 }
@@ -88,7 +89,7 @@ export function sanitizeFailureDetail(value) {
 }
 
 function hasStatus(detail, status) {
-  return new RegExp(`(?:status[=: ]*|HTTP\\s*)${status}\\b`, 'i').test(detail);
+  return new RegExp(`(?:status[=: ]*|HTTP\\s*|API\\s*)${status}\\b`, 'i').test(detail);
 }
 
 function definition(code) {
@@ -139,7 +140,7 @@ export function diagnoseCollectorFailure(error, stage = 'collector_unknown', at 
     code = 'STATIONHEAD_API_CHANGED';
   } else if (/timeout|timed out|aborted|aborterror/i.test(detail)) {
     code = 'STATIONHEAD_TIMEOUT';
-  } else if (/(?:status[=: ]*|HTTP\s*)5\d\d\b|Stationhead API 5\d\d/i.test(detail)) {
+  } else if (/(?:status[=: ]*|HTTP\s*|API\s*)5\d\d\b|Stationhead API 5\d\d/i.test(detail)) {
     code = 'STATIONHEAD_UPSTREAM_ERROR';
   } else if (/fetch failed|network|dns|econn|socket|connection reset|connection refused/i.test(detail)) {
     code = 'NETWORK_ERROR';
@@ -186,6 +187,8 @@ export async function recordCollectorFailure(
   at = Date.now(),
 ) {
   const diagnosis = diagnoseCollectorFailure(error, stage, at);
+  const eventAt = finite(diagnosis.at) ?? at;
+  const firstAt = finite(diagnosis.firstAt) ?? eventAt;
   if (!env?.DB) return { diagnosis, recorded: false, recordError: 'DB binding missing' };
 
   try {
@@ -197,7 +200,7 @@ export async function recordCollectorFailure(
         first_failure_at=CASE
           WHEN sh_collector_failure_state.code=excluded.code
            AND sh_collector_failure_state.stage=excluded.stage
-          THEN sh_collector_failure_state.first_failure_at
+          THEN MIN(sh_collector_failure_state.first_failure_at,excluded.first_failure_at)
           ELSE excluded.first_failure_at
         END,
         last_failure_at=excluded.last_failure_at,
@@ -212,15 +215,15 @@ export async function recordCollectorFailure(
         updated_at=excluded.updated_at`)
       .bind(
         STATE_ID,
-        at,
-        at,
+        firstAt,
+        eventAt,
         diagnosis.code,
         diagnosis.stage,
         diagnosis.summary,
         diagnosis.detail || null,
         diagnosis.hint || null,
         source,
-        at,
+        eventAt,
       ).run();
     return { diagnosis, recorded: true };
   } catch (recordError) {
