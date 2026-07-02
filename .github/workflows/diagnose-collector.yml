@@ -9,8 +9,13 @@ permissions:
 jobs:
   probe:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 8
+    env:
+      RUN_SECRET: ${{ secrets.RUN_SECRET }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
     steps:
+      - uses: actions/checkout@v4
       - name: Probe worker and public dashboard
         shell: bash
         run: |
@@ -22,7 +27,6 @@ jobs:
             https://stationhead-monitor-collector.tarematsu.workers.dev/health \
             | tee /tmp/worker-health.json
           echo
-          echo '=== Parsed worker times ==='
           python3 - <<'PY'
           import json, datetime
           p=json.load(open('/tmp/worker-health.json'))
@@ -49,3 +53,20 @@ jobs:
           print('keys=', sorted(p.keys()))
           print('latest=', json.dumps(p.get('latest'), ensure_ascii=False))
           PY
+          echo "RUN_SECRET=$([[ -n \"${RUN_SECRET:-}\" ]] && echo present || echo missing)"
+          echo "CLOUDFLARE_API_TOKEN=$([[ -n \"${CLOUDFLARE_API_TOKEN:-}\" ]] && echo present || echo missing)"
+          if [[ -n "${RUN_SECRET:-}" ]]; then
+            echo '=== Manual collection response ==='
+            curl -sS --max-time 120 -X POST \
+              -H "Authorization: Bearer ${RUN_SECRET}" \
+              -w '\nHTTP_STATUS=%{http_code}\n' \
+              https://stationhead-monitor-collector.tarematsu.workers.dev/run
+          fi
+      - name: Query remote D1 state when credentials exist
+        if: ${{ env.CLOUDFLARE_API_TOKEN != '' && env.CLOUDFLARE_ACCOUNT_ID != '' }}
+        working-directory: worker
+        shell: bash
+        run: |
+          npm install --no-audit --no-fund
+          npx wrangler d1 execute stationhead-monitor --remote --json --command \
+            "SELECT last_run_at,last_success_at,last_error,updated_at FROM sh_worker_collector_state WHERE id='stationhead'; SELECT MAX(observed_at) AS latest_snapshot,COUNT(*) AS snapshots_today FROM sh_channel_snapshots WHERE observed_at>=unixepoch('now','start of day')*1000;"
