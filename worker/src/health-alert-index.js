@@ -1,5 +1,6 @@
 import app from './main.js';
 import { getCollectorHealthView, runCollectorHealthAlert } from './health-alert.js';
+import { retireRecoveredPendingAlert } from './health-alert-guard.js';
 import {
   diagnoseScheduledCollection,
   diagnosticHealthView,
@@ -124,6 +125,16 @@ export default {
       await emergencyIfNeeded(env, error);
       console.error(JSON.stringify({
         event: 'collector_diagnostic_postflight_failed',
+        error: sanitizeFailureDetail(error?.message || error),
+      }));
+    }
+
+    try {
+      await retireRecoveredPendingAlert(env);
+    } catch (error) {
+      await emergencyIfNeeded(env, error);
+      console.error(JSON.stringify({
+        event: 'collector_pending_alert_retire_failed',
         error: sanitizeFailureDetail(error?.message || error),
       }));
     }
