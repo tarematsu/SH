@@ -7,6 +7,8 @@ CREATE TABLE IF NOT EXISTS sh_health_alert_delivery (
   stale_ms INTEGER,
   subject TEXT NOT NULL,
   body TEXT NOT NULL,
+  from_address TEXT NOT NULL,
+  to_address TEXT NOT NULL,
   idempotency_key TEXT NOT NULL,
   created_at INTEGER NOT NULL,
   last_attempt_at INTEGER,
