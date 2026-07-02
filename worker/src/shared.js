@@ -1,5 +1,5 @@
 const STATIONHEAD_API_ORIGIN = 'https://production1.stationhead.com';
-const STATIONHEAD_READ_CACHE_GRACE_MS = 5_000;
+const STATIONHEAD_API_PREFIX = `${STATIONHEAD_API_ORIGIN}/station/`;
 const STATIONHEAD_READ_CACHE_MAX = 32;
 const STATIONHEAD_READ_CACHE_MARK = Symbol.for('stationhead-monitor.stationhead-read-cache');
 
@@ -9,7 +9,7 @@ function cacheableStationheadRead(input, init, now) {
     : input instanceof URL
       ? input.toString()
       : input?.url;
-  if (!rawUrl) return null;
+  if (!rawUrl || !String(rawUrl).startsWith(STATIONHEAD_API_PREFIX)) return null;
 
   let url;
   try {
@@ -24,57 +24,62 @@ function cacheableStationheadRead(input, init, now) {
   const stationGuest = method === 'POST' && /\/station\/handle\/[^/]+\/guest\/?$/i.test(url.pathname);
   if (!chatHistory && !stationGuest) return null;
 
-  const body = init?.body == null ? '' : typeof init.body === 'string' ? init.body : null;
-  if (body == null || (stationGuest && body.trim() && body.trim() !== '{}')) return null;
+  let body = '';
+  if (stationGuest) {
+    if (init?.body == null) {
+      if (typeof Request === 'function' && input instanceof Request) return null;
+    } else if (typeof init.body === 'string') {
+      body = init.body;
+    } else {
+      return null;
+    }
+    if (body.trim() && body.trim() !== '{}') return null;
+  }
+
   const headers = new Headers(init?.headers || input?.headers || undefined);
   const deviceUid = headers.get('sth-device-uid') || '';
   const authorization = headers.get('authorization') || '';
   const minute = Math.floor(now / 60_000);
   return {
-    key: [minute, method, url.toString(), body, deviceUid, authorization.slice(-24)].join('\n'),
-    expiresAt: (minute + 1) * 60_000 + STATIONHEAD_READ_CACHE_GRACE_MS,
+    minute,
+    key: [method, url.toString(), body, deviceUid, authorization].join('\n'),
   };
 }
 
 export function createStationheadReadFetch(nativeFetch, nowFn = Date.now) {
   if (typeof nativeFetch !== 'function') throw new TypeError('nativeFetch must be a function');
   const cache = new Map();
+  let cacheMinute = null;
 
   const cachedFetch = async (input, init = {}) => {
     const now = Number(nowFn()) || Date.now();
-    for (const [key, entry] of cache) {
-      if (entry.expiresAt <= now) cache.delete(key);
-    }
-
     const request = cacheableStationheadRead(input, init, now);
     if (!request) return nativeFetch(input, init);
 
-    const existing = cache.get(request.key);
-    if (existing && existing.expiresAt > now) {
-      cache.delete(request.key);
-      cache.set(request.key, existing);
-      return (await existing.promise).clone();
+    if (cacheMinute !== request.minute) {
+      cache.clear();
+      cacheMinute = request.minute;
     }
+
+    const existing = cache.get(request.key);
+    if (existing) return (await existing).clone();
 
     while (cache.size >= STATIONHEAD_READ_CACHE_MAX) {
       cache.delete(cache.keys().next().value);
     }
 
-    const entry = {
-      expiresAt: request.expiresAt,
-      promise: Promise.resolve()
-        .then(() => nativeFetch(input, init))
-        .then((response) => {
-          if (!response?.ok) cache.delete(request.key);
-          return response;
-        })
-        .catch((error) => {
-          cache.delete(request.key);
-          throw error;
-        }),
-    };
-    cache.set(request.key, entry);
-    return (await entry.promise).clone();
+    const pending = Promise.resolve()
+      .then(() => nativeFetch(input, init))
+      .then((response) => {
+        if (!response?.ok) cache.delete(request.key);
+        return response;
+      })
+      .catch((error) => {
+        cache.delete(request.key);
+        throw error;
+      });
+    cache.set(request.key, pending);
+    return (await pending).clone();
   };
 
   Object.defineProperty(cachedFetch, STATIONHEAD_READ_CACHE_MARK, { value: true });
