@@ -128,13 +128,13 @@ export default {
       }));
     }
 
-    const activeIncidentFailure = Boolean(
+    const detailedAlertReady = Boolean(
       prepared?.diagnosis
-      && prepared?.incidentOpen
-      && prepared?.pending !== 'alert',
+      && prepared?.pending === 'alert',
     );
+    const shouldRunStandardAlert = !prepared?.diagnosis || detailedAlertReady;
 
-    if (!activeIncidentFailure) {
+    if (shouldRunStandardAlert) {
       await runCollectorHealthAlert(env).catch(async (error) => {
         await emergencyIfNeeded(env, error);
         console.error(JSON.stringify({
@@ -144,10 +144,10 @@ export default {
       });
     } else {
       console.warn(JSON.stringify({
-        event: 'collector_recovery_deferred',
-        reason: 'active_failure_diagnostic',
-        code: prepared.diagnosis.code,
-        stage: prepared.diagnosis.stage,
+        event: 'collector_generic_alert_suppressed',
+        reason: prepared?.incidentOpen ? 'active_failure_diagnostic' : 'diagnostic_alert_not_due',
+        code: prepared?.diagnosis?.code || null,
+        stage: prepared?.diagnosis?.stage || null,
       }));
     }
 
