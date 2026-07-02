@@ -3,6 +3,7 @@ const DEFAULT_STALE_MS = 60 * 60 * 1000;
 const MIN_STALE_MS = 5 * 60 * 1000;
 const RESEND_ENDPOINT = 'https://api.resend.com/emails';
 const DEFAULT_FROM = 'Stationhead Monitor <onboarding@resend.dev>';
+const PUBLIC_HEALTH_URL = 'https://skrzk.pages.dev/api/health';
 
 function finite(value) {
   if (value === undefined || value === null || value === '') return null;
@@ -82,7 +83,7 @@ export function buildAlertEmail(health, now, staleMs) {
       `確認時刻: ${formatJst(now)}`,
       `直近エラー: ${health.lastError || '記録なし'}`,
       '',
-      'Health: https://skrzk.pages.dev/health',
+      `Health: ${PUBLIC_HEALTH_URL}`,
     ].join('\n'),
   };
 }
@@ -100,7 +101,7 @@ export function buildRecoveryEmail(health, state, now) {
       `障害開始: ${formatJst(incidentStartedAt)}`,
       `障害時間: ${incidentStartedAt == null ? '不明' : formatDuration(now - incidentStartedAt)}`,
       '',
-      'Health: https://skrzk.pages.dev/health',
+      `Health: ${PUBLIC_HEALTH_URL}`,
     ].join('\n'),
   };
 }
@@ -257,7 +258,7 @@ export async function sendCollectorHealthTest(env, now = Date.now()) {
       `現在の判定: ${health.stale ? '停止' : health.referenceAt == null ? '未計測' : '正常'}`,
       `最終成功: ${formatJst(health.lastSuccessAt)}`,
       '',
-      'Health: https://skrzk.pages.dev/health',
+      `Health: ${PUBLIC_HEALTH_URL}`,
     ].join('\n'),
   });
   return { ok: true, to: cfg.to };

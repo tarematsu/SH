@@ -52,7 +52,7 @@ test('alert and recovery emails use stable incident keys', () => {
   const alert = buildAlertEmail(health, now, HOUR);
   assert.equal(alert.incidentStartedAt, now);
   assert.equal(alert.idempotencyKey, `stationhead-monitor-down-${now}`);
-  assert.match(alert.body, /Health: https:\/\/skrzk\.pages\.dev\/health/);
+  assert.match(alert.body, /Health: https:\/\/skrzk\.pages\.dev\/api\/health/);
 
   const recovery = buildRecoveryEmail(
     { ...health, lastSuccessAt: now + 60_000 },
@@ -60,6 +60,7 @@ test('alert and recovery emails use stable incident keys', () => {
     now + 120_000,
   );
   assert.match(recovery.subject, /復旧/);
+  assert.match(recovery.body, /Health: https:\/\/skrzk\.pages\.dev\/api\/health/);
   assert.match(recovery.idempotencyKey, /^stationhead-monitor-recovered-/);
 });
 
