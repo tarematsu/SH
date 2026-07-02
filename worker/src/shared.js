@@ -1,3 +1,90 @@
+const STATIONHEAD_API_ORIGIN = 'https://production1.stationhead.com';
+const STATIONHEAD_READ_CACHE_GRACE_MS = 5_000;
+const STATIONHEAD_READ_CACHE_MAX = 32;
+const STATIONHEAD_READ_CACHE_MARK = Symbol.for('stationhead-monitor.stationhead-read-cache');
+
+function cacheableStationheadRead(input, init, now) {
+  const rawUrl = typeof input === 'string'
+    ? input
+    : input instanceof URL
+      ? input.toString()
+      : input?.url;
+  if (!rawUrl) return null;
+
+  let url;
+  try {
+    url = new URL(rawUrl);
+  } catch {
+    return null;
+  }
+  if (url.origin !== STATIONHEAD_API_ORIGIN) return null;
+
+  const method = String(init?.method || input?.method || 'GET').toUpperCase();
+  const chatHistory = method === 'GET' && /\/station\/[^/]+\/chatHistory\/?$/i.test(url.pathname);
+  const stationGuest = method === 'POST' && /\/station\/handle\/[^/]+\/guest\/?$/i.test(url.pathname);
+  if (!chatHistory && !stationGuest) return null;
+
+  const body = init?.body == null ? '' : typeof init.body === 'string' ? init.body : null;
+  if (body == null || (stationGuest && body.trim() && body.trim() !== '{}')) return null;
+  const headers = new Headers(init?.headers || input?.headers || undefined);
+  const deviceUid = headers.get('sth-device-uid') || '';
+  const authorization = headers.get('authorization') || '';
+  const minute = Math.floor(now / 60_000);
+  return {
+    key: [minute, method, url.toString(), body, deviceUid, authorization.slice(-24)].join('\n'),
+    expiresAt: (minute + 1) * 60_000 + STATIONHEAD_READ_CACHE_GRACE_MS,
+  };
+}
+
+export function createStationheadReadFetch(nativeFetch, nowFn = Date.now) {
+  if (typeof nativeFetch !== 'function') throw new TypeError('nativeFetch must be a function');
+  const cache = new Map();
+
+  const cachedFetch = async (input, init = {}) => {
+    const now = Number(nowFn()) || Date.now();
+    for (const [key, entry] of cache) {
+      if (entry.expiresAt <= now) cache.delete(key);
+    }
+
+    const request = cacheableStationheadRead(input, init, now);
+    if (!request) return nativeFetch(input, init);
+
+    const existing = cache.get(request.key);
+    if (existing && existing.expiresAt > now) {
+      cache.delete(request.key);
+      cache.set(request.key, existing);
+      return (await existing.promise).clone();
+    }
+
+    while (cache.size >= STATIONHEAD_READ_CACHE_MAX) {
+      cache.delete(cache.keys().next().value);
+    }
+
+    const entry = {
+      expiresAt: request.expiresAt,
+      promise: Promise.resolve()
+        .then(() => nativeFetch(input, init))
+        .then((response) => {
+          if (!response?.ok) cache.delete(request.key);
+          return response;
+        })
+        .catch((error) => {
+          cache.delete(request.key);
+          throw error;
+        }),
+    };
+    cache.set(request.key, entry);
+    return (await entry.promise).clone();
+  };
+
+  Object.defineProperty(cachedFetch, STATIONHEAD_READ_CACHE_MARK, { value: true });
+  return cachedFetch;
+}
+
+if (typeof globalThis.fetch === 'function' && !globalThis.fetch[STATIONHEAD_READ_CACHE_MARK]) {
+  globalThis.fetch = createStationheadReadFetch(globalThis.fetch.bind(globalThis));
+}
+
 const TRACK_METADATA_CACHE_TTL_MS = 30 * 60 * 1000;
 const TRACK_METADATA_CACHE_MAX = 16;
 const trackMetadataQueueCache = new Map();
