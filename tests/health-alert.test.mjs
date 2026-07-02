@@ -136,6 +136,8 @@ test('stored delivery payload is reused exactly for retries', () => {
     pending_observed_at: 200,
     pending_baseline_success_at: 100,
     pending_stale_ms: HOUR,
+    pending_from_address: 'Stationhead Monitor <alerts@example.com>',
+    pending_to_address: 'owner@example.com',
   });
   assert.deepEqual(stored, {
     eventKind: 'alert',
@@ -146,6 +148,8 @@ test('stored delivery payload is reused exactly for retries', () => {
     observedAt: 200,
     baselineSuccessAt: 100,
     staleMs: HOUR,
+    from: 'Stationhead Monitor <alerts@example.com>',
+    to: 'owner@example.com',
   });
 });
 
@@ -200,6 +204,8 @@ test('health delivery uses a stored payload and transactional finalization', () 
   assert.match(source, /INSERT OR IGNORE INTO sh_health_alert_delivery/);
   assert.match(source, /pending_subject/);
   assert.match(source, /pending_body/);
+  assert.match(source, /pending_from_address/);
+  assert.match(source, /pending_to_address/);
   assert.match(source, /await env\.DB\.batch\(\[/);
   assert.match(source, /DELETE FROM sh_health_alert_delivery/);
   assert.match(source, /AbortSignal\.timeout\(cfg\.resendTimeoutMs\)/);
@@ -217,6 +223,10 @@ test('health alert migrations create repeatable state and delivery tables', () =
     .map((row) => row.name);
   assert.ok(tables.includes('sh_health_alert_state'));
   assert.ok(tables.includes('sh_health_alert_delivery'));
+  const columns = db.prepare("PRAGMA table_info('sh_health_alert_delivery')").all()
+    .map((row) => row.name);
+  assert.ok(columns.includes('from_address'));
+  assert.ok(columns.includes('to_address'));
   const state = db.prepare("SELECT incident_open FROM sh_health_alert_state WHERE id='stationhead-collector'").get();
   assert.equal(state.incident_open, 0);
   db.close();
