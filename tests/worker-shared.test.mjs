@@ -118,6 +118,40 @@ test('failed Stationhead reads are not retained after the in-flight request', as
   assert.equal(calls, 2);
 });
 
+test('Stationhead cache keys keep full authorization values separate', async () => {
+  let calls = 0;
+  const cachedFetch = createStationheadReadFetch(async () => {
+    calls += 1;
+    return new Response(JSON.stringify({ calls }), { status: 200 });
+  }, () => 120_000);
+  const url = 'https://production1.stationhead.com/station/123/chatHistory?limit=50';
+  const sharedSuffix = '123456789012345678901234';
+  const first = await cachedFetch(url, {
+    headers: { authorization: `Bearer first-${sharedSuffix}`, 'sth-device-uid': 'device' },
+  });
+  const second = await cachedFetch(url, {
+    headers: { authorization: `Bearer second-${sharedSuffix}`, 'sth-device-uid': 'device' },
+  });
+  assert.equal((await first.json()).calls, 1);
+  assert.equal((await second.json()).calls, 2);
+  assert.equal(calls, 2);
+});
+
+test('Stationhead guest Request bodies bypass response sharing', async () => {
+  let calls = 0;
+  const cachedFetch = createStationheadReadFetch(async () => {
+    calls += 1;
+    return new Response(JSON.stringify({ calls }), { status: 200 });
+  }, () => 120_000);
+  const url = 'https://production1.stationhead.com/station/handle/sakurazaka46jp/guest';
+  const headers = { authorization: 'Bearer token', 'sth-device-uid': 'device' };
+  const first = await cachedFetch(new Request(url, { method: 'POST', headers, body: '{"probe":1}' }));
+  const second = await cachedFetch(new Request(url, { method: 'POST', headers, body: '{"probe":1}' }));
+  assert.equal((await first.json()).calls, 1);
+  assert.equal((await second.json()).calls, 2);
+  assert.equal(calls, 2);
+});
+
 test('worker JSON responses do not add pretty-print transfer bytes', async () => {
   const response = jsonResponse({ ok: true, count: 1 });
   assert.equal(await response.text(), '{"ok":true,"count":1}');
