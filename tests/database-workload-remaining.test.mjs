@@ -1,7 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { DatabaseSync } from 'node:sqlite';
-import { queueItemsToWrite, queueInspectionDue, commentsToWrite } from '../site/functions/api/ingest.js';
+import {
+  queueItemsToWrite,
+  queueInspectionDue,
+  commentsToWrite,
+  planLikeObservations,
+} from '../site/functions/api/ingest.js';
 import { hostCommentsToWrite } from '../site/functions/api/host-ingest.js';
 import {
   LEGACY_SERIES_SQL,
@@ -15,13 +20,20 @@ import { cachedSnapshotCount, resetSnapshotCountCache } from '../site/functions/
 import { compactProbePayload, officialCommentsToWrite } from '../worker/src/official-news-index.js';
 import { leaderboardCheckDue } from '../worker/src/cloud-weekly-leaderboard.js';
 
-test('unchanged queue items skip writes until the hourly checkpoint', () => {
+test('unchanged queue items only write when their stored state changes', () => {
   const observedAt = 10_000_000;
   const track = { position: 0, queue_track_id: 11, stationhead_track_id: 22, spotify_id: 'spotify', apple_music_id: 'apple', deezer_id: 'deezer', isrc: 'isrc', duration_ms: 180000, preview_url: 'preview', bite_count: 5, raw: { stable: true } };
   const existing = [{ position: 0, observed_at: observedAt - 1000, queue_id: 7, queue_track_id: 11, stationhead_track_id: 22, spotify_id: 'spotify', apple_music_id: 'apple', deezer_id: 'deezer', isrc: 'isrc', duration_ms: 180000, preview_url: 'preview', bite_count: 5, raw_json: JSON.stringify(track.raw) }];
   assert.equal(queueItemsToWrite([track], existing, observedAt, 7).length, 0);
   assert.equal(queueItemsToWrite([{ ...track, bite_count: 6 }], existing, observedAt, 7).length, 1);
-  assert.equal(queueItemsToWrite([track], existing, observedAt + 3_600_000, 7).length, 1);
+  assert.equal(queueItemsToWrite([track], existing, observedAt + 3_600_000, 7).length, 0);
+});
+
+test('hourly queue checkpoints preserve like observations without rewriting queue state', () => {
+  const observedAt = 10_000_000;
+  const track = { position: 0, queue_track_id: 11, bite_count: 5, raw: { stable: true } };
+  const latest = [{ track_key: '11', observed_at: observedAt - 3_600_000, like_count: 5 }];
+  assert.equal(planLikeObservations([track], latest, observedAt).length, 1);
 });
 
 test('unchanged queue payload skips all item and like inspection between checkpoints', () => {
