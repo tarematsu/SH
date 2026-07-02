@@ -1,0 +1,51 @@
+name: diagnose-collector
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Probe worker and public dashboard
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo '=== UTC ==='
+          date -u --iso-8601=seconds
+          echo '=== Worker health ==='
+          curl -fsS --retry 3 --retry-delay 2 --max-time 30 \
+            https://stationhead-monitor-collector.tarematsu.workers.dev/health \
+            | tee /tmp/worker-health.json
+          echo
+          echo '=== Parsed worker times ==='
+          python3 - <<'PY'
+          import json, datetime
+          p=json.load(open('/tmp/worker-health.json'))
+          for k,v in p.items():
+              if k.endswith('_at') or k.endswith('_until'):
+                  if isinstance(v,(int,float)) and v:
+                      d=datetime.datetime.fromtimestamp(v/1000, datetime.timezone(datetime.timedelta(hours=9)))
+                      print(f'{k}={v} -> {d.isoformat()}')
+          print(json.dumps(p, ensure_ascii=False, indent=2))
+          PY
+          echo '=== Public dashboard ==='
+          curl -fsS --retry 3 --retry-delay 2 --max-time 30 \
+            'https://skrzk.pages.dev/api/dashboard' \
+            | tee /tmp/dashboard.json
+          echo
+          python3 - <<'PY'
+          import json, datetime
+          p=json.load(open('/tmp/dashboard.json'))
+          for k in ('latest_observed_at','generated_at'):
+              v=p.get(k)
+              if isinstance(v,(int,float)) and v:
+                  d=datetime.datetime.fromtimestamp(v/1000, datetime.timezone(datetime.timedelta(hours=9)))
+                  print(f'{k}={v} -> {d.isoformat()}')
+          print('keys=', sorted(p.keys()))
+          print('latest=', json.dumps(p.get('latest'), ensure_ascii=False))
+          PY
