@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+  createStationheadReadFetch,
   enrichTracks,
   fetchTrackMetadata,
   jsonResponse,
@@ -70,6 +71,51 @@ test('completed queue metadata skips repeated D1 lookups', async () => {
   assert.equal(await enrichTracks(env, ingest, queue, 1000, config), 0);
   assert.equal(await enrichTracks(env, ingest, queue, 2000, config), 0);
   assert.equal(queries, 1);
+});
+
+test('duplicate Stationhead station and comment reads share one response per minute', async () => {
+  let now = 120_000;
+  let calls = 0;
+  const nativeFetch = async (input) => {
+    const call = ++calls;
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    return new Response(JSON.stringify({ call, url: String(input) }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    });
+  };
+  const cachedFetch = createStationheadReadFetch(nativeFetch, () => now);
+  const headers = { authorization: 'Bearer token', 'sth-device-uid': 'device' };
+  const stationUrl = 'https://production1.stationhead.com/station/handle/sakurazaka46jp/guest';
+  const commentsUrl = 'https://production1.stationhead.com/station/123/chatHistory?limit=50';
+
+  const responses = await Promise.all([
+    cachedFetch(stationUrl, { method: 'POST', headers, body: '{}' }),
+    cachedFetch(stationUrl, { method: 'POST', headers, body: '{}' }),
+    cachedFetch(commentsUrl, { headers }),
+    cachedFetch(commentsUrl, { headers }),
+  ]);
+  assert.equal(calls, 2);
+  assert.deepEqual((await Promise.all(responses.map((response) => response.json()))).map((value) => value.call), [1, 1, 2, 2]);
+
+  await cachedFetch(stationUrl, { method: 'POST', headers, body: '{}' });
+  assert.equal(calls, 2);
+  now += 60_000;
+  await cachedFetch(stationUrl, { method: 'POST', headers, body: '{}' });
+  assert.equal(calls, 3);
+});
+
+test('failed Stationhead reads are not retained after the in-flight request', async () => {
+  let calls = 0;
+  const cachedFetch = createStationheadReadFetch(async () => {
+    calls += 1;
+    return new Response('failed', { status: 503 });
+  }, () => 120_000);
+  const url = 'https://production1.stationhead.com/station/handle/sakurazaka46jp/guest';
+  const init = { method: 'POST', headers: { authorization: 'Bearer token', 'sth-device-uid': 'device' }, body: '{}' };
+  assert.equal((await cachedFetch(url, init)).status, 503);
+  assert.equal((await cachedFetch(url, init)).status, 503);
+  assert.equal(calls, 2);
 });
 
 test('worker JSON responses do not add pretty-print transfer bytes', async () => {
