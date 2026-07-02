@@ -150,7 +150,9 @@ export function storedDeliveryEmail(state) {
   const subject = text(state?.pending_subject);
   const body = String(state?.pending_body || '');
   const idempotencyKey = text(state?.pending_idempotency_key);
-  if (!eventKind || !subject || !body || !idempotencyKey) return null;
+  const from = text(state?.pending_from_address);
+  const to = text(state?.pending_to_address);
+  if (!eventKind || !subject || !body || !idempotencyKey || !from || !to) return null;
   return {
     eventKind,
     subject,
@@ -160,12 +162,16 @@ export function storedDeliveryEmail(state) {
     observedAt: finite(state?.pending_observed_at),
     baselineSuccessAt: finite(state?.pending_baseline_success_at),
     staleMs: finite(state?.pending_stale_ms),
+    from,
+    to,
   };
 }
 
 async function sendResend(env, email) {
   const cfg = healthAlertConfig(env);
-  if (!cfg.enabled) throw new Error('RESEND_API_KEY or HEALTH_ALERT_TO is not configured');
+  const from = text(email.from) || cfg.from;
+  const to = text(email.to) || cfg.to;
+  if (!cfg.apiKey || !to) throw new Error('RESEND_API_KEY or HEALTH_ALERT_TO is not configured');
   const response = await fetch(RESEND_ENDPOINT, {
     method: 'POST',
     headers: {
@@ -174,8 +180,8 @@ async function sendResend(env, email) {
       'idempotency-key': email.idempotencyKey,
     },
     body: JSON.stringify({
-      from: cfg.from,
-      to: [cfg.to],
+      from,
+      to: [to],
       subject: email.subject,
       text: email.body,
     }),
@@ -228,6 +234,8 @@ async function loadState(env) {
         delivery.baseline_success_at AS pending_baseline_success_at,
         delivery.stale_ms AS pending_stale_ms,
         delivery.subject AS pending_subject,delivery.body AS pending_body,
+        delivery.from_address AS pending_from_address,
+        delivery.to_address AS pending_to_address,
         delivery.idempotency_key AS pending_idempotency_key,
         delivery.last_attempt_at AS pending_last_attempt_at,
         delivery.last_error AS pending_last_error
@@ -268,10 +276,11 @@ async function ensureInitialFailureWindow(env, state, health, now) {
 }
 
 async function createPendingDelivery(env, email, now) {
+  const cfg = healthAlertConfig(env);
   await env.DB.prepare(`INSERT OR IGNORE INTO sh_health_alert_delivery (
       id,event_kind,incident_started_at,observed_at,baseline_success_at,stale_ms,
-      subject,body,idempotency_key,created_at,last_attempt_at,last_error,updated_at
-    ) VALUES (?,?,?,?,?,?,?,?,?,?,NULL,NULL,?)`)
+      subject,body,from_address,to_address,idempotency_key,created_at,last_attempt_at,last_error,updated_at
+    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,NULL,NULL,?)`)
     .bind(
       ALERT_ID,
       email.eventKind,
@@ -281,6 +290,8 @@ async function createPendingDelivery(env, email, now) {
       email.staleMs,
       email.subject,
       email.body,
+      cfg.from,
+      cfg.to,
       email.idempotencyKey,
       now,
       now,
