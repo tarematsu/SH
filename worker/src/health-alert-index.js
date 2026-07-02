@@ -1,5 +1,13 @@
 import app from './main.js';
 import { getCollectorHealthView, runCollectorHealthAlert } from './health-alert.js';
+import {
+  diagnoseScheduledCollection,
+  diagnosticHealthView,
+  inspectCollectorState,
+  prepareDetailedCollectorAlert,
+  sendEmergencyD1Alert,
+} from './collector-diagnostics.js';
+import { isD1Failure, sanitizeFailureDetail } from './collector-failure.js';
 
 const RAW_ERROR_FIELDS = [
   'last_error',
@@ -26,43 +34,120 @@ export function healthResponseStatus(baseStatus, collectorHealth) {
   return baseStatus;
 }
 
+async function emergencyIfNeeded(env, failure) {
+  if (!failure || !isD1Failure(failure.diagnosis || failure)) return;
+  await sendEmergencyD1Alert(env, failure).catch((error) => {
+    console.error(JSON.stringify({
+      event: 'collector_emergency_d1_alert_failed',
+      error: sanitizeFailureDetail(error?.message || error),
+    }));
+  });
+}
+
 export default {
   async scheduled(controller, env, ctx) {
+    const runStartedAt = Date.now();
+    let before = null;
+    let appError = null;
+
+    try {
+      before = await inspectCollectorState(env);
+    } catch (error) {
+      await emergencyIfNeeded(env, error);
+      console.error(JSON.stringify({
+        event: 'collector_diagnostic_preflight_failed',
+        error: sanitizeFailureDetail(error?.message || error),
+      }));
+    }
+
     try {
       await app.scheduled(controller, env, ctx);
-    } finally {
-      await runCollectorHealthAlert(env).catch((error) => {
-        console.error(JSON.stringify({ event: 'collector_health_alert_failed', error: String(error?.message || error) }));
-      });
+    } catch (error) {
+      appError = error;
+      console.error(JSON.stringify({
+        event: 'collector_scheduled_failed',
+        error: sanitizeFailureDetail(error?.message || error),
+      }));
     }
+
+    let diagnosticResult = null;
+    try {
+      diagnosticResult = await diagnoseScheduledCollection(env, before, runStartedAt, appError);
+      await emergencyIfNeeded(env, diagnosticResult.failure);
+    } catch (error) {
+      await emergencyIfNeeded(env, error);
+      console.error(JSON.stringify({
+        event: 'collector_diagnostic_postflight_failed',
+        error: sanitizeFailureDetail(error?.message || error),
+      }));
+    }
+
+    let prepared = null;
+    try {
+      prepared = await prepareDetailedCollectorAlert(env);
+    } catch (error) {
+      await emergencyIfNeeded(env, error);
+      console.error(JSON.stringify({
+        event: 'collector_detailed_alert_prepare_failed',
+        error: sanitizeFailureDetail(error?.message || error),
+      }));
+    }
+
+    const activeIncidentFailure = Boolean(
+      prepared?.diagnosis
+      && prepared?.incidentOpen
+      && !prepared?.pending,
+    );
+
+    if (!activeIncidentFailure) {
+      await runCollectorHealthAlert(env).catch(async (error) => {
+        await emergencyIfNeeded(env, error);
+        console.error(JSON.stringify({
+          event: 'collector_health_alert_failed',
+          error: sanitizeFailureDetail(error?.message || error),
+        }));
+      });
+    } else {
+      console.warn(JSON.stringify({
+        event: 'collector_recovery_deferred',
+        reason: 'active_failure_diagnostic',
+        code: prepared.diagnosis.code,
+        stage: prepared.diagnosis.stage,
+      }));
+    }
+
+    if (appError) throw appError;
+    return diagnosticResult;
   },
 
   async fetch(request, env, ctx) {
     const response = await app.fetch(request, env, ctx);
     const url = new URL(request.url);
     if (request.method !== 'GET' || (url.pathname !== '/' && url.pathname !== '/health')) return response;
-    const [payload, collectorHealth] = await Promise.all([
+    const [payload, collectorHealth, diagnostics] = await Promise.all([
       response.json().catch(() => null),
       getCollectorHealthView(env).catch((error) => {
         console.error(JSON.stringify({
           event: 'collector_health_view_failed',
-          error: String(error?.message || error),
+          error: sanitizeFailureDetail(error?.message || error),
         }));
         return {
           collector_health_ok: false,
           collector_health_error: 'health_check_failed',
         };
       }),
+      diagnosticHealthView(env),
     ]);
     if (!payload) return response;
+    const mergedHealth = { ...collectorHealth, ...diagnostics };
     const headers = new Headers(response.headers);
     headers.set('content-type', 'application/json; charset=utf-8');
     headers.set('cache-control', 'no-store');
     return new Response(JSON.stringify({
       ...sanitizeHealthPayload(payload),
-      ...collectorHealth,
+      ...mergedHealth,
     }), {
-      status: healthResponseStatus(response.status, collectorHealth),
+      status: healthResponseStatus(response.status, mergedHealth),
       headers,
     });
   },
