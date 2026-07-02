@@ -13,7 +13,7 @@ export async function cachedSnapshotCount(db, now = Date.now()) {
     return snapshotCountCache.value;
   }
   if (!snapshotCountCache.pending) {
-    snapshotCountCache.pending = db.prepare('SELECT COUNT(*) AS count FROM snapshots').first()
+    snapshotCountCache.pending = db.prepare('SELECT COUNT(*) AS count FROM sh_channel_snapshots').first()
       .then((row) => {
         const value = Number(row?.count || 0);
         snapshotCountCache.value = value;

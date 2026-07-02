@@ -1,6 +1,9 @@
 const ALERT_ID = 'stationhead-collector';
 const DEFAULT_STALE_MS = 60 * 60 * 1000;
 const MIN_STALE_MS = 5 * 60 * 1000;
+const DEFAULT_RESEND_TIMEOUT_MS = 10_000;
+const MIN_RESEND_TIMEOUT_MS = 1_000;
+const MAX_RESEND_TIMEOUT_MS = 30_000;
 const RESEND_ENDPOINT = 'https://api.resend.com/emails';
 const DEFAULT_FROM = 'Stationhead Monitor <onboarding@resend.dev>';
 const PUBLIC_HEALTH_URL = 'https://skrzk.pages.dev/api/health';
@@ -17,12 +20,18 @@ function text(value) {
 
 export function healthAlertConfig(env = {}) {
   const configuredStaleMs = finite(env.HEALTH_ALERT_STALE_MS);
+  const configuredTimeoutMs = finite(env.HEALTH_ALERT_RESEND_TIMEOUT_MS);
   const staleMs = Math.max(MIN_STALE_MS, configuredStaleMs ?? DEFAULT_STALE_MS);
+  const resendTimeoutMs = Math.min(
+    MAX_RESEND_TIMEOUT_MS,
+    Math.max(MIN_RESEND_TIMEOUT_MS, configuredTimeoutMs ?? DEFAULT_RESEND_TIMEOUT_MS),
+  );
   const to = text(env.HEALTH_ALERT_TO);
   const from = text(env.HEALTH_ALERT_FROM) || DEFAULT_FROM;
   const apiKey = text(env.RESEND_API_KEY);
   return {
     staleMs,
+    resendTimeoutMs,
     to,
     from,
     apiKey,
@@ -123,6 +132,7 @@ async function sendResend(env, email) {
       subject: email.subject,
       text: email.body,
     }),
+    signal: AbortSignal.timeout(cfg.resendTimeoutMs),
   });
   if (!response.ok) {
     const detail = await response.text().catch(() => '');
@@ -157,16 +167,17 @@ async function ensureAlertRow(env, state, now) {
       (id,incident_open,last_observed_success_at,updated_at)
       VALUES (?,0,?,?)`)
     .bind(ALERT_ID, finite(state.last_success_at), now).run();
-  return { ...state, alert_id: ALERT_ID, incident_open: 0 };
+  return loadState(env);
 }
 
 async function ensureInitialFailureWindow(env, state, health, now) {
   if (health.lastSuccessAt != null || finite(state.incident_started_at) != null) return state;
   const startedAt = health.lastRunAt ?? now;
   await env.DB.prepare(`UPDATE sh_health_alert_state
-      SET incident_started_at=?,updated_at=? WHERE id=?`)
+      SET incident_started_at=?,updated_at=?
+      WHERE id=? AND incident_started_at IS NULL`)
     .bind(startedAt, now, ALERT_ID).run();
-  return { ...state, incident_started_at: startedAt };
+  return loadState(env);
 }
 
 async function clearPendingInitialWindow(env, now) {

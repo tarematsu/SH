@@ -1,6 +1,29 @@
 import app from './main.js';
 import { getCollectorHealthView, runCollectorHealthAlert } from './health-alert.js';
 
+const RAW_ERROR_FIELDS = [
+  'last_error',
+  'official_news_last_error',
+  'cloud_host_last_error',
+];
+
+export function sanitizeHealthPayload(payload = {}) {
+  const sanitized = { ...payload };
+  for (const field of RAW_ERROR_FIELDS) {
+    if (!(field in sanitized)) continue;
+    sanitized[`${field}_present`] = Boolean(sanitized[field]);
+    delete sanitized[field];
+  }
+  return sanitized;
+}
+
+export function healthResponseStatus(baseStatus, collectorHealth) {
+  if (baseStatus >= 200 && baseStatus < 300 && collectorHealth?.collector_health_ok === false) {
+    return 503;
+  }
+  return baseStatus;
+}
+
 export default {
   async scheduled(controller, env, ctx) {
     try {
@@ -33,8 +56,11 @@ export default {
     const headers = new Headers(response.headers);
     headers.set('content-type', 'application/json; charset=utf-8');
     headers.set('cache-control', 'no-store');
-    return new Response(JSON.stringify({ ...payload, ...collectorHealth }), {
-      status: response.status,
+    return new Response(JSON.stringify({
+      ...sanitizeHealthPayload(payload),
+      ...collectorHealth,
+    }), {
+      status: healthResponseStatus(response.status, collectorHealth),
       headers,
     });
   },
