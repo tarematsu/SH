@@ -15,6 +15,24 @@ function requestParts(input, init = {}) {
   return { method, url };
 }
 
+function isAppleHost(url) {
+  const hostname = String(url?.hostname || '').toLowerCase();
+  return hostname === 'apple.com'
+    || hostname.endsWith('.apple.com')
+    || hostname === 'mzstatic.com'
+    || hostname.endsWith('.mzstatic.com');
+}
+
+function blockedAppleResponse() {
+  return new Response(JSON.stringify({ results: [] }), {
+    status: 200,
+    headers: {
+      'content-type': 'application/json; charset=utf-8',
+      'x-stationhead-apple-blocked': '1',
+    },
+  });
+}
+
 export function canonicalTrackLookupKey(input, init = {}) {
   const { method, url } = requestParts(input, init);
   if (method !== 'GET' || !url || url.searchParams.get('type') !== 'track_lookup') return null;
@@ -57,6 +75,9 @@ export function createTrackLookupCachedFetch(nativeFetch, options = {}) {
   const clear = () => cache.clear();
 
   async function cachedFetch(input, init = {}) {
+    const { url } = requestParts(input, init);
+    if (isAppleHost(url)) return blockedAppleResponse();
+
     const key = canonicalTrackLookupKey(input, init);
     if (!key) {
       const response = await nativeFetch(input, init);
