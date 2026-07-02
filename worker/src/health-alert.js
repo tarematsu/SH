@@ -33,7 +33,8 @@ export function healthAlertConfig(env = {}) {
 export function evaluateCollectorHealth(state, now = Date.now(), staleMs = DEFAULT_STALE_MS) {
   const lastRunAt = finite(state?.last_run_at);
   const lastSuccessAt = finite(state?.last_success_at);
-  const referenceAt = lastSuccessAt ?? lastRunAt;
+  const pendingStartedAt = finite(state?.incident_started_at);
+  const referenceAt = lastSuccessAt ?? pendingStartedAt;
   const ageMs = referenceAt == null ? null : Math.max(0, now - referenceAt);
   return {
     lastRunAt,
@@ -159,6 +160,24 @@ async function ensureAlertRow(env, state, now) {
   return { ...state, alert_id: ALERT_ID, incident_open: 0 };
 }
 
+async function ensureInitialFailureWindow(env, state, health, now) {
+  if (health.lastSuccessAt != null || finite(state.incident_started_at) != null) return state;
+  const startedAt = health.lastRunAt ?? now;
+  await env.DB.prepare(`UPDATE sh_health_alert_state
+      SET incident_started_at=?,updated_at=? WHERE id=?`)
+    .bind(startedAt, now, ALERT_ID).run();
+  return { ...state, incident_started_at: startedAt };
+}
+
+async function clearPendingInitialWindow(env, now) {
+  await env.DB.prepare(`UPDATE sh_health_alert_state
+      SET incident_started_at=NULL,last_observed_success_at=(
+        SELECT last_success_at FROM sh_worker_collector_state WHERE id='stationhead'
+      ),updated_at=?
+      WHERE id=? AND incident_open=0`)
+    .bind(now, ALERT_ID).run();
+}
+
 async function saveAlertOpened(env, email, health, now) {
   await env.DB.prepare(`UPDATE sh_health_alert_state SET
       incident_open=1,incident_started_at=?,last_alert_at=?,
@@ -193,12 +212,12 @@ export async function getCollectorHealthView(env, now = Date.now()) {
     collector_health_stale_after_ms: cfg.staleMs,
     collector_last_run_at: health.lastRunAt,
     collector_last_success_at: health.lastSuccessAt,
-    collector_last_error: health.lastError,
+    collector_last_error_present: Boolean(health.lastError),
     health_alert_configured: cfg.enabled,
     health_alert_incident_open: Boolean(state.incident_open),
     health_alert_last_sent_at: finite(state.last_alert_at),
     health_alert_last_recovery_at: finite(state.last_recovery_at),
-    health_alert_last_error: state.alert_last_error || null,
+    health_alert_last_error_present: Boolean(state.alert_last_error),
     health_alert_setup_required: !state.alert_table_ready,
   };
 }
@@ -209,10 +228,17 @@ export async function runCollectorHealthAlert(env, now = Date.now()) {
   let state = await loadState(env);
   if (!state.alert_table_ready) return { ok: false, skipped: 'health alert migration required' };
   state = await ensureAlertRow(env, state, now);
-  const health = evaluateCollectorHealth(state, now, cfg.staleMs);
-  if (health.referenceAt == null) return { ok: true, skipped: 'collector has not run yet' };
+  let health = evaluateCollectorHealth(state, now, cfg.staleMs);
+  state = await ensureInitialFailureWindow(env, state, health, now);
+  health = evaluateCollectorHealth(state, now, cfg.staleMs);
+  if (health.referenceAt == null) return { ok: true, skipped: 'collector has not started yet' };
 
   const incidentOpen = Boolean(state.incident_open);
+  if (!health.stale && !incidentOpen && health.lastSuccessAt != null && finite(state.incident_started_at) != null) {
+    await clearPendingInitialWindow(env, now);
+    return { ok: true, stale: false, incidentOpen: false, initialWindowCleared: true };
+  }
+
   if (health.stale && !incidentOpen) {
     if (!cfg.enabled) return { ok: false, skipped: 'Resend is not configured', stale: true };
     const email = buildAlertEmail(health, now, cfg.staleMs);

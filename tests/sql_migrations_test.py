@@ -108,6 +108,7 @@ class MigrationTests(unittest.TestCase):
             self.apply("007_host_session_safety.sql")
             self.apply("008_runtime_query_indexes.sql")
             self.apply("016_email_stream_runtime.sql")
+            self.apply("017_resend_health_alert.sql")
 
         rows = [
             ("stationhead-email:2026-06-08", "2026-06-08", 1781528583000, 1781525193000, 47576224),
@@ -169,6 +170,12 @@ class MigrationTests(unittest.TestCase):
         ).fetchone()
         self.assertEqual(ended[0], 10100)
         self.assertIsNone(ended[1])
+
+        alert = self.db.execute(
+            "SELECT incident_open,incident_started_at,last_alert_at,last_error "
+            "FROM sh_health_alert_state WHERE id='stationhead-collector'"
+        ).fetchone()
+        self.assertEqual(alert, (0, None, None, None))
 
         index_names = {
             row[0]

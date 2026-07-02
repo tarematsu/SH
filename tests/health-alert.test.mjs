@@ -29,9 +29,22 @@ test('collector health becomes stale at the exact threshold', () => {
   assert.equal(health.lastError, 'upstream failed');
 });
 
-test('last run is used until the first successful collection exists', () => {
+test('failed runs do not postpone the initial no-success alert window', () => {
+  const now = 3 * HOUR;
+  const health = evaluateCollectorHealth({
+    last_run_at: now - 1_000,
+    last_success_at: null,
+    incident_started_at: now - HOUR,
+  }, now, HOUR);
+  assert.equal(health.referenceAt, now - HOUR);
+  assert.equal(health.ageMs, HOUR);
+  assert.equal(health.stale, true);
+});
+
+test('collector without success or an initialized alert window is not treated as fresh', () => {
   const health = evaluateCollectorHealth({ last_run_at: 1_000 }, 2_000, HOUR);
-  assert.equal(health.referenceAt, 1_000);
+  assert.equal(health.referenceAt, null);
+  assert.equal(health.ageMs, null);
   assert.equal(health.stale, false);
 });
 
@@ -62,6 +75,15 @@ test('alert and recovery emails use stable incident keys', () => {
   assert.match(recovery.subject, /復旧/);
   assert.match(recovery.body, /Health: https:\/\/skrzk\.pages\.dev\/api\/health/);
   assert.match(recovery.idempotencyKey, /^stationhead-monitor-recovered-/);
+});
+
+test('public health response exposes error presence without raw error details', () => {
+  const source = readFileSync(new URL('../site/functions/api/health.js', import.meta.url), 'utf8');
+  assert.match(source, /collector_last_error_present/);
+  assert.match(source, /alert_last_error_present/);
+  assert.doesNotMatch(source, /collector_last_error:\s*state/);
+  assert.doesNotMatch(source, /alert_last_error:\s*state/);
+  assert.match(source, /error:\s*'health_check_failed'/);
 });
 
 test('health alert migration creates a single incident-state table', () => {
