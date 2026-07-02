@@ -1,4 +1,4 @@
-name: check
+name: Controlled CI
 
 on:
   push:
@@ -6,9 +6,23 @@ on:
       - main
       - refactor/cloud-primary-local-failover
   pull_request:
+  workflow_dispatch:
+    inputs:
+      level:
+        description: Test level
+        required: true
+        type: choice
+        default: quick
+        options:
+          - quick
+          - full
 
 permissions:
   contents: read
+
+concurrency:
+  group: controlled-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   syntax-and-bundle:
@@ -27,11 +41,38 @@ jobs:
             scripts
             tests
             database/migrations
+            package.json
+
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
+
+      - name: Select test level
+        id: mode
+        shell: bash
+        env:
+          MANUAL_LEVEL: ${{ inputs.level }}
+        run: |
+          level="quick"
+          if [[ "${{ github.event_name }}" == "push" ]]; then
+            level="full"
+          elif [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            level="${MANUAL_LEVEL:-quick}"
+          elif git log -1 --pretty=%B | grep -Fqi '[ci full]'; then
+            level="full"
+          fi
+          echo "level=$level" >> "$GITHUB_OUTPUT"
+          echo "Selected CI level: $level"
+
+      - name: Run quick checks
+        if: steps.mode.outputs.level == 'quick'
+        run: npm run check:js && npm run test:js
+
       - name: Install Worker tooling
+        if: steps.mode.outputs.level == 'full'
         working-directory: worker
         run: npm install --no-audit --no-fund
-      - name: Run repository checks
+
+      - name: Run full repository checks
+        if: steps.mode.outputs.level == 'full'
         run: npm run check
