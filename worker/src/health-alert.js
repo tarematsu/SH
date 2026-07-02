@@ -79,16 +79,20 @@ function formatDuration(milliseconds) {
 }
 
 export function buildAlertEmail(health, now, staleMs) {
-  const incidentStartedAt = (health.referenceAt ?? now) + staleMs;
+  const incidentStartedAt = health.referenceAt ?? now;
+  const thresholdReachedAt = incidentStartedAt + staleMs;
   return {
     subject: '【Stationhead Monitor】収集停止を検知',
     idempotencyKey: `stationhead-monitor-down-${incidentStartedAt}`,
     incidentStartedAt,
+    thresholdReachedAt,
     body: [
       `Stationheadの収集が${formatDuration(staleMs)}以上成功していません。`,
       '',
       `最終成功: ${formatJst(health.lastSuccessAt)}`,
       `最終実行: ${formatJst(health.lastRunAt)}`,
+      `障害開始基準: ${formatJst(incidentStartedAt)}`,
+      `停止判定到達: ${formatJst(thresholdReachedAt)}`,
       `停止時間: ${formatDuration(health.ageMs)}`,
       `確認時刻: ${formatJst(now)}`,
       `直近エラー: ${health.lastError || '記録なし'}`,
@@ -108,7 +112,7 @@ export function buildRecoveryEmail(health, state, now) {
       '',
       `復旧確認: ${formatJst(now)}`,
       `最新成功: ${formatJst(health.lastSuccessAt)}`,
-      `障害開始: ${formatJst(incidentStartedAt)}`,
+      `障害開始基準: ${formatJst(incidentStartedAt)}`,
       `障害時間: ${incidentStartedAt == null ? '不明' : formatDuration(now - incidentStartedAt)}`,
       '',
       `Health: ${PUBLIC_HEALTH_URL}`,
