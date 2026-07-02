@@ -2,6 +2,7 @@ const encoder = new TextEncoder();
 
 export const minuteBucket = (value) => Math.floor(Number(value) / 60000) * 60000;
 export const hourBucket = (value) => Math.floor(Number(value) / 3600000) * 3600000;
+export const QUEUE_DUPLICATE_WINDOW_MS = 60 * 60 * 1000;
 
 function inferredKind(id) {
   const value = String(id || '').toLowerCase();
@@ -73,6 +74,15 @@ async function logConflict(db, existing, incoming, resolution, metadata) {
     ).run();
 }
 
+async function recentEquivalentQueueClaim(db, incoming) {
+  if (incoming.dataType !== 'queue') return null;
+  return db.prepare(`SELECT collector_id,collector_kind,source_priority,
+    observed_at,payload_hash,first_seen_at FROM sh_ingest_claims
+    WHERE data_type='queue' AND payload_hash=? AND observed_at>=?
+    ORDER BY source_priority DESC,observed_at DESC LIMIT 1`)
+    .bind(incoming.hash, incoming.observedAt - QUEUE_DUPLICATE_WINDOW_MS).first();
+}
+
 export async function claimWrite(db, options) {
   const incoming = {
     dedupeKey: String(options.dedupeKey || '').slice(0, 500),
@@ -97,10 +107,24 @@ export async function claimWrite(db, options) {
     throw error;
   }
 
+  if (!existing) {
+    const recentQueue = await recentEquivalentQueueClaim(db, incoming).catch((error) => {
+      if (/no such table/i.test(String(error?.message || ''))) return null;
+      throw error;
+    });
+    if (recentQueue && incoming.sourcePriority <= Number(recentQueue.source_priority || 0)) {
+      return {
+        accepted: false,
+        duplicate: true,
+        reason: 'same_queue_payload_checkpoint',
+        hash: incoming.hash,
+        existing: recentQueue,
+      };
+    }
+  }
+
   if (existing?.payload_hash === incoming.hash) {
-    const promoted = incoming.sourcePriority > Number(existing.source_priority || 0)
-      || (incoming.sourcePriority === Number(existing.source_priority || 0)
-          && incoming.observedAt >= Number(existing.observed_at || 0));
+    const promoted = incoming.sourcePriority > Number(existing.source_priority || 0);
     if (promoted) await writeClaim(db, incoming, Number(existing.first_seen_at || Date.now()));
     return {
       accepted: false,
