@@ -9,13 +9,19 @@ permissions:
 jobs:
   probe:
     runs-on: ubuntu-latest
-    timeout-minutes: 3
+    timeout-minutes: 5
     steps:
-      - name: Compact collector probe
+      - name: Trigger and probe collector
         shell: bash
         run: |
           set -euo pipefail
           date -u '+utc=%Y-%m-%dT%H:%M:%SZ'
+          echo '=== scheduled route ==='
+          curl -sS --max-time 120 -X POST \
+            -w '\nHTTP_STATUS=%{http_code}\n' \
+            'https://stationhead-monitor-collector.tarematsu.workers.dev/cdn-cgi/handler/scheduled?cron=%2A+%2A+%2A+%2A+%2A' \
+            | tee /tmp/scheduled.txt
+          sleep 8
           curl -fsS --max-time 30 https://stationhead-monitor-collector.tarematsu.workers.dev/health > /tmp/h.json
           curl -fsS --max-time 30 'https://skrzk.pages.dev/api/dashboard' > /tmp/d.json
           python3 - <<'PY'
