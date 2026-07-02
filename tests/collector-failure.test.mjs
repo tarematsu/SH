@@ -99,7 +99,7 @@ test('authentication control error is used when the collector never starts', () 
   assert.equal(diagnosis.stage, 'stationhead_auth');
 });
 
-test('failure start is moved back to the last successful collection', async () => {
+test('failure start uses the just-recorded event even when the loaded state is stale', async () => {
   let statement = '';
   let bound = [];
   const env = {
@@ -116,16 +116,41 @@ test('failure start is moved back to the last successful collection', async () =
     },
   };
 
-  assert.equal(await alignFailureStartWithLastSuccess(env, {
-    last_success_at: 1000,
-    failure_last_at: 2000,
-  }, 3000), true);
+  assert.equal(await alignFailureStartWithLastSuccess(
+    env,
+    { last_success_at: 1000, failure_last_at: null },
+    { diagnosis: { at: 2000 } },
+    3000,
+  ), true);
   assert.match(statement, /first_failure_at=MIN/);
   assert.deepEqual(bound, [1000, 3000, 1000]);
-  assert.equal(await alignFailureStartWithLastSuccess(env, {
-    last_success_at: 2000,
-    failure_last_at: 1000,
-  }, 3000), false);
+
+  assert.equal(await alignFailureStartWithLastSuccess(
+    env,
+    { last_success_at: 2000, failure_last_at: null },
+    { diagnosis: { at: 1000 } },
+    3000,
+  ), false);
+});
+
+test('alignment reports false when the diagnostic row was not updated', async () => {
+  const env = {
+    DB: {
+      prepare() {
+        return {
+          bind() {
+            return { run: async () => ({ meta: { changes: 0 } }) };
+          },
+        };
+      },
+    },
+  };
+  assert.equal(await alignFailureStartWithLastSuccess(
+    env,
+    { last_success_at: 1000, failure_last_at: 2000 },
+    null,
+    3000,
+  ), false);
 });
 
 test('diagnostic migration is repeatable', () => {
