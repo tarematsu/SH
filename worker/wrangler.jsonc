@@ -1,7 +1,7 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "stationhead-monitor-collector",
-  "main": "src/main.js",
+  "main": "src/health-alert-index.js",
   "compatibility_date": "2026-06-24",
   "workers_dev": true,
   "observability": {
