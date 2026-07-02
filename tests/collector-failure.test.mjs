@@ -8,6 +8,7 @@ import {
   failureEmailLines,
   sanitizeFailureDetail,
 } from '../worker/src/collector-failure.js';
+import { alignFailureStartWithLastSuccess } from '../worker/src/health-alert-index.js';
 import { validateChannelPayload } from '../worker/src/index.js';
 
 const MIGRATION = new URL('../database/migrations/019_collector_failure_diagnostics.sql', import.meta.url);
@@ -98,6 +99,35 @@ test('authentication control error is used when the collector never starts', () 
   assert.equal(diagnosis.stage, 'stationhead_auth');
 });
 
+test('failure start is moved back to the last successful collection', async () => {
+  let statement = '';
+  let bound = [];
+  const env = {
+    DB: {
+      prepare(sql) {
+        statement = sql;
+        return {
+          bind(...values) {
+            bound = values;
+            return { run: async () => ({ meta: { changes: 1 } }) };
+          },
+        };
+      },
+    },
+  };
+
+  assert.equal(await alignFailureStartWithLastSuccess(env, {
+    last_success_at: 1000,
+    failure_last_at: 2000,
+  }, 3000), true);
+  assert.match(statement, /first_failure_at=MIN/);
+  assert.deepEqual(bound, [1000, 3000, 1000]);
+  assert.equal(await alignFailureStartWithLastSuccess(env, {
+    last_success_at: 2000,
+    failure_last_at: 1000,
+  }, 3000), false);
+});
+
 test('diagnostic migration is repeatable', () => {
   const sql = readFileSync(MIGRATION, 'utf8');
   const db = new DatabaseSync(':memory:');
@@ -121,4 +151,5 @@ test('scheduled wrapper prepares detailed messages and has a D1 emergency path',
   assert.match(diagnosticsSource, /D1を経由せずResendへ直接送信/);
   assert.match(wrapperSource, /collector_false_recovery_cancelled/);
   assert.match(wrapperSource, /collector_generic_alert_suppressed/);
+  assert.match(wrapperSource, /alignFailureStartWithLastSuccess/);
 });
