@@ -3,6 +3,9 @@
   "name": "skrzk",
   "compatibility_date": "2026-06-23",
   "pages_build_output_dir": "./public",
+  "vars": {
+    "HEALTH_ALERT_STALE_MS": 3600000
+  },
   "d1_databases": [
     {
       "binding": "DB",

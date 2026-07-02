@@ -3,6 +3,8 @@ import { getCollectorHealthView, runCollectorHealthAlert } from './health-alert.
 
 const RAW_ERROR_FIELDS = [
   'last_error',
+  'auth_last_error',
+  'browser_last_auth_error',
   'official_news_last_error',
   'cloud_host_last_error',
 ];

@@ -1,11 +1,16 @@
 const CACHE_MS = 5 * 60 * 1000;
 const DEFAULT_STALE_MS = 60 * 60 * 1000;
+const MIN_STALE_MS = 5 * 60 * 1000;
 const snapshotCountCache = { value: null, expiresAt: 0, pending: null };
 
 function finite(value) {
   if (value === undefined || value === null || value === '') return null;
   const number = Number(value);
   return Number.isFinite(number) ? number : null;
+}
+
+export function healthStaleMs(env = {}) {
+  return Math.max(MIN_STALE_MS, finite(env.HEALTH_ALERT_STALE_MS) ?? DEFAULT_STALE_MS);
 }
 
 export async function cachedSnapshotCount(db, now = Date.now()) {
@@ -56,12 +61,13 @@ export async function onRequestGet(context) {
       cachedSnapshotCount(context.env.DB, now),
       loadCollectorState(context.env.DB),
     ]);
+    const staleAfterMs = healthStaleMs(context.env);
     const lastRunAt = finite(state?.last_run_at);
     const lastSuccessAt = finite(state?.last_success_at);
     const pendingStartedAt = finite(state?.incident_started_at);
     const referenceAt = lastSuccessAt ?? pendingStartedAt;
     const ageMs = referenceAt == null ? null : Math.max(0, now - referenceAt);
-    const stale = ageMs != null && ageMs >= DEFAULT_STALE_MS;
+    const stale = ageMs != null && ageMs >= staleAfterMs;
     const healthy = referenceAt != null && !stale;
     return Response.json({
       ok: healthy,
@@ -71,7 +77,7 @@ export async function onRequestGet(context) {
       collector_last_run_at: lastRunAt,
       collector_last_success_at: lastSuccessAt,
       collector_age_ms: ageMs,
-      collector_stale_after_ms: DEFAULT_STALE_MS,
+      collector_stale_after_ms: staleAfterMs,
       collector_stale: stale,
       collector_last_error_present: Boolean(state?.last_error),
       alert_setup_required: Boolean(state?.alert_setup_required),
