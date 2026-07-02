@@ -42,11 +42,13 @@ function healthAlertDb({
   stateUpdateChanges = 1,
   deliveryUpdateChanges = 1,
   restoreUpdateChanges = 1,
+  incidentOpen = 0,
+  incidentStartedAt = null,
 } = {}) {
   const state = {
     id: 'stationhead-collector',
-    incident_open: 0,
-    incident_started_at: null,
+    incident_open: incidentOpen,
+    incident_started_at: incidentStartedAt,
     last_observed_success_at: baselineSuccessAt,
     last_error: 'Resend HTTP 500',
     updated_at: 0,
@@ -92,9 +94,10 @@ function healthAlertDb({
                 return { meta: { changes: deliveryUpdateChanges } };
               }
               if (/UPDATE sh_health_alert_state/.test(sql)) {
-                const [incidentStartedAt, observedSuccessAt, updatedAt, id, retiredId, idempotencyKey] = args;
+                const [incidentStartedAtArg, observedSuccessAt, updatedAt, id, retiredId, idempotencyKey] = args;
                 if (
                   id !== state.id
+                  || (/incident_open=0/.test(sql) && state.incident_open !== 0)
                   || delivery.id !== retiredId
                   || delivery.idempotency_key !== idempotencyKey
                   || delivery.last_error !== 'retired_after_recovery'
@@ -103,7 +106,7 @@ function healthAlertDb({
                   return { meta: { changes: 0 } };
                 }
                 state.incident_open = 1;
-                state.incident_started_at = incidentStartedAt;
+                state.incident_started_at = incidentStartedAtArg;
                 state.last_observed_success_at = observedSuccessAt;
                 state.last_error = null;
                 state.updated_at = updatedAt;
@@ -176,6 +179,17 @@ test('stale pending outage state update restores pending delivery', async () => 
   assert.equal(db.delivery.id, 'stationhead-collector');
   assert.equal(db.delivery.last_error, 'Resend HTTP 500');
   assert.equal(db.delivery.updated_at, 0);
+});
+
+test('active outage state is not overwritten when retiring an obsolete pending alert', async () => {
+  const db = healthAlertDb({ incidentOpen: 1, incidentStartedAt: 150 });
+
+  assert.equal(await retireRecoveredPendingAlert({ DB: db }, 200), false);
+
+  assert.equal(db.state.incident_open, 1);
+  assert.equal(db.state.incident_started_at, 150);
+  assert.equal(db.delivery.id, 'stationhead-collector');
+  assert.equal(db.delivery.last_error, 'Resend HTTP 500');
 });
 
 test('failed pending delivery restore is reported without claiming completion', async () => {
