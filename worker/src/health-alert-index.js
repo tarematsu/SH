@@ -7,7 +7,12 @@ import {
   prepareDetailedCollectorAlert,
   sendEmergencyD1Alert,
 } from './collector-diagnostics.js';
-import { isD1Failure, sanitizeFailureDetail } from './collector-failure.js';
+import {
+  diagnosisFromState,
+  isD1Failure,
+  recordCollectorFailure,
+  sanitizeFailureDetail,
+} from './collector-failure.js';
 
 const RAW_ERROR_FIELDS = [
   'last_error',
@@ -73,6 +78,20 @@ export default {
     let diagnosticResult = null;
     try {
       diagnosticResult = await diagnoseScheduledCollection(env, before, runStartedAt, appError);
+      const priorDiagnosis = before ? diagnosisFromState(before) : null;
+      if (
+        diagnosticResult?.failure?.diagnosis?.code === 'COLLECTOR_INTERNAL_ERROR'
+        && priorDiagnosis
+        && priorDiagnosis.code !== 'COLLECTOR_INTERNAL_ERROR'
+      ) {
+        diagnosticResult.failure = { diagnosis: priorDiagnosis };
+        await recordCollectorFailure(
+          env,
+          diagnosticResult.failure,
+          priorDiagnosis.stage,
+          'scheduled-guard-preserved',
+        ).catch(() => {});
+      }
       await emergencyIfNeeded(env, diagnosticResult.failure);
     } catch (error) {
       await emergencyIfNeeded(env, error);
@@ -85,6 +104,16 @@ export default {
     let prepared = null;
     try {
       prepared = await prepareDetailedCollectorAlert(env);
+      if (prepared?.diagnosis && prepared?.incidentOpen && prepared?.pending === 'recovery' && env.DB) {
+        await env.DB.prepare(`DELETE FROM sh_health_alert_delivery
+          WHERE id='stationhead-collector' AND event_kind='recovery'`).run();
+        prepared.pending = null;
+        console.warn(JSON.stringify({
+          event: 'collector_false_recovery_cancelled',
+          code: prepared.diagnosis.code,
+          stage: prepared.diagnosis.stage,
+        }));
+      }
     } catch (error) {
       await emergencyIfNeeded(env, error);
       console.error(JSON.stringify({
@@ -96,7 +125,7 @@ export default {
     const activeIncidentFailure = Boolean(
       prepared?.diagnosis
       && prepared?.incidentOpen
-      && !prepared?.pending,
+      && prepared?.pending !== 'alert',
     );
 
     if (!activeIncidentFailure) {
