@@ -91,6 +91,12 @@ export default {
           priorDiagnosis.stage,
           'scheduled-guard-preserved',
         ).catch(() => {});
+        const originalFirstAt = Number(priorDiagnosis.firstAt || priorDiagnosis.at || 0);
+        if (originalFirstAt > 0 && env.DB) {
+          await env.DB.prepare(`UPDATE sh_collector_failure_state
+            SET first_failure_at=MIN(first_failure_at,?),updated_at=? WHERE id='stationhead'`)
+            .bind(originalFirstAt, Date.now()).run().catch(() => {});
+        }
       }
       await emergencyIfNeeded(env, diagnosticResult.failure);
     } catch (error) {
