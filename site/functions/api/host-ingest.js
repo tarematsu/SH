@@ -196,6 +196,8 @@ async function saveComments(db, observedAt, data) {
   const sessionId = num(data.session_id);
   const comments = Array.isArray(data.comments) ? data.comments : [];
   const ids = [...new Set(comments.map((comment) => num(comment.comment_id)).filter((value) => value != null))];
+  if (sessionId == null || !ids.length) return;
+
   const existingRows = await loadExistingComments(db, sessionId, ids);
   const existingIds = new Set(existingRows.map((row) => Number(row.comment_id)));
   const changed = hostCommentsToWrite(comments, existingRows);
@@ -232,7 +234,7 @@ async function saveComments(db, observedAt, data) {
       AND COALESCE(chat_time_ms,chat_time*1000,observed_at)<=?`)
     .bind(sessionId, observedAt - 120000, observedAt).first();
   const velocity = num(velocityRow?.count) ?? 0;
-  const latestCommentId = ids.length ? Math.max(...ids) : null;
+  const latestCommentId = Math.max(...ids);
   const update = db.prepare(`UPDATE sh_host_station_snapshots SET comment_velocity=?
     WHERE id=(SELECT id FROM sh_host_station_snapshots
       WHERE session_id=? AND observed_at<=?
@@ -244,7 +246,7 @@ async function saveComments(db, observedAt, data) {
       db.prepare(`INSERT OR REPLACE INTO sh_comment_velocity_samples (
           source_scope,station_id,session_id,observed_at,comment_velocity,latest_comment_id
         ) VALUES ('solo',?,?,?,?,?)`)
-        .bind(num(data.station_id) || 0, sessionId || 0, observedAt, velocity, latestCommentId),
+        .bind(num(data.station_id) || 0, sessionId, observedAt, velocity, latestCommentId),
     ]);
   } catch (error) {
     if (!/no such table/i.test(String(error?.message || ''))) throw error;
