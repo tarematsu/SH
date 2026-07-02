@@ -36,7 +36,12 @@ test('queued outage alert remains valid until a newer success exists', () => {
   }), false);
 });
 
-function healthAlertDb({ lastSuccessAt = 101, baselineSuccessAt = 100 } = {}) {
+function healthAlertDb({
+  lastSuccessAt = 101,
+  baselineSuccessAt = 100,
+  stateUpdateChanges = 1,
+  deliveryUpdateChanges = 1,
+} = {}) {
   const state = {
     id: 'stationhead-collector',
     incident_open: 0,
@@ -75,7 +80,7 @@ function healthAlertDb({ lastSuccessAt = 101, baselineSuccessAt = 100 } = {}) {
             async run() {
               if (/UPDATE sh_health_alert_state/.test(sql)) {
                 const [incidentStartedAt, observedSuccessAt, updatedAt, id,, idempotencyKey] = args;
-                if (id !== state.id || delivery.id !== id || delivery.idempotency_key !== idempotencyKey) {
+                if (id !== state.id || delivery.id !== id || delivery.idempotency_key !== idempotencyKey || !stateUpdateChanges) {
                   return { meta: { changes: 0 } };
                 }
                 state.incident_open = 1;
@@ -83,17 +88,17 @@ function healthAlertDb({ lastSuccessAt = 101, baselineSuccessAt = 100 } = {}) {
                 state.last_observed_success_at = observedSuccessAt;
                 state.last_error = null;
                 state.updated_at = updatedAt;
-                return { meta: { changes: 1 } };
+                return { meta: { changes: stateUpdateChanges } };
               }
               if (/UPDATE sh_health_alert_delivery/.test(sql)) {
                 const [retiredId, updatedAt, id, idempotencyKey] = args;
-                if (delivery.id !== id || delivery.idempotency_key !== idempotencyKey) {
+                if (delivery.id !== id || delivery.idempotency_key !== idempotencyKey || !deliveryUpdateChanges) {
                   return { meta: { changes: 0 } };
                 }
                 delivery.id = retiredId;
                 delivery.last_error = 'retired_after_recovery';
                 delivery.updated_at = updatedAt;
-                return { meta: { changes: 1 } };
+                return { meta: { changes: deliveryUpdateChanges } };
               }
               throw new Error(`unexpected sql: ${sql}`);
             },
@@ -131,4 +136,24 @@ test('current pending outage alert is not retired before a newer success exists'
   assert.equal(db.state.incident_open, 0);
   assert.equal(db.delivery.id, 'stationhead-collector');
   assert.equal(db.delivery.last_error, 'Resend HTTP 500');
+});
+
+test('partial pending outage retirement is not reported as completed', async () => {
+  const db = healthAlertDb({ deliveryUpdateChanges: 0 });
+
+  assert.equal(await retireRecoveredPendingAlert({ DB: db }, 200), false);
+
+  assert.equal(db.state.incident_open, 1);
+  assert.equal(db.delivery.id, 'stationhead-collector');
+  assert.equal(db.delivery.last_error, 'Resend HTTP 500');
+});
+
+test('stale pending outage state update is not reported as completed', async () => {
+  const db = healthAlertDb({ stateUpdateChanges: 0 });
+
+  assert.equal(await retireRecoveredPendingAlert({ DB: db }, 200), false);
+
+  assert.equal(db.state.incident_open, 0);
+  assert.match(db.delivery.id, /^retired-200-/);
+  assert.equal(db.delivery.last_error, 'retired_after_recovery');
 });
