@@ -41,6 +41,7 @@ function healthAlertDb({
   baselineSuccessAt = 100,
   stateUpdateChanges = 1,
   deliveryUpdateChanges = 1,
+  restoreUpdateChanges = 1,
 } = {}) {
   const state = {
     id: 'stationhead-collector',
@@ -75,22 +76,12 @@ function healthAlertDb({
                 incident_started_at: delivery.incident_started_at,
                 baseline_success_at: delivery.baseline_success_at,
                 idempotency_key: delivery.idempotency_key,
+                delivery_last_error: delivery.last_error,
+                delivery_updated_at: delivery.updated_at,
               };
             },
             async run() {
-              if (/UPDATE sh_health_alert_state/.test(sql)) {
-                const [incidentStartedAt, observedSuccessAt, updatedAt, id,, idempotencyKey] = args;
-                if (id !== state.id || delivery.id !== id || delivery.idempotency_key !== idempotencyKey || !stateUpdateChanges) {
-                  return { meta: { changes: 0 } };
-                }
-                state.incident_open = 1;
-                state.incident_started_at = incidentStartedAt;
-                state.last_observed_success_at = observedSuccessAt;
-                state.last_error = null;
-                state.updated_at = updatedAt;
-                return { meta: { changes: stateUpdateChanges } };
-              }
-              if (/UPDATE sh_health_alert_delivery/.test(sql)) {
+              if (/UPDATE sh_health_alert_delivery SET\s+id=\?,last_error='retired_after_recovery'/.test(sql)) {
                 const [retiredId, updatedAt, id, idempotencyKey] = args;
                 if (delivery.id !== id || delivery.idempotency_key !== idempotencyKey || !deliveryUpdateChanges) {
                   return { meta: { changes: 0 } };
@@ -100,16 +91,44 @@ function healthAlertDb({
                 delivery.updated_at = updatedAt;
                 return { meta: { changes: deliveryUpdateChanges } };
               }
+              if (/UPDATE sh_health_alert_state/.test(sql)) {
+                const [incidentStartedAt, observedSuccessAt, updatedAt, id, retiredId, idempotencyKey] = args;
+                if (
+                  id !== state.id
+                  || delivery.id !== retiredId
+                  || delivery.idempotency_key !== idempotencyKey
+                  || delivery.last_error !== 'retired_after_recovery'
+                  || !stateUpdateChanges
+                ) {
+                  return { meta: { changes: 0 } };
+                }
+                state.incident_open = 1;
+                state.incident_started_at = incidentStartedAt;
+                state.last_observed_success_at = observedSuccessAt;
+                state.last_error = null;
+                state.updated_at = updatedAt;
+                return { meta: { changes: stateUpdateChanges } };
+              }
+              if (/UPDATE sh_health_alert_delivery SET\s+id=\?,last_error=\?,updated_at=\?/.test(sql)) {
+                const [id, lastError, updatedAt, retiredId, idempotencyKey] = args;
+                if (
+                  delivery.id !== retiredId
+                  || delivery.idempotency_key !== idempotencyKey
+                  || delivery.last_error !== 'retired_after_recovery'
+                  || !restoreUpdateChanges
+                ) {
+                  return { meta: { changes: 0 } };
+                }
+                delivery.id = id;
+                delivery.last_error = lastError;
+                delivery.updated_at = updatedAt;
+                return { meta: { changes: restoreUpdateChanges } };
+              }
               throw new Error(`unexpected sql: ${sql}`);
             },
           };
         },
       };
-    },
-    async batch(statements) {
-      const results = [];
-      for (const statement of statements) results.push(await statement.run());
-      return results;
     },
   };
   return db;
@@ -138,18 +157,29 @@ test('current pending outage alert is not retired before a newer success exists'
   assert.equal(db.delivery.last_error, 'Resend HTTP 500');
 });
 
-test('partial pending outage retirement is not reported as completed', async () => {
+test('stale pending outage delivery update leaves state unchanged', async () => {
   const db = healthAlertDb({ deliveryUpdateChanges: 0 });
 
   assert.equal(await retireRecoveredPendingAlert({ DB: db }, 200), false);
 
-  assert.equal(db.state.incident_open, 1);
+  assert.equal(db.state.incident_open, 0);
   assert.equal(db.delivery.id, 'stationhead-collector');
   assert.equal(db.delivery.last_error, 'Resend HTTP 500');
 });
 
-test('stale pending outage state update is not reported as completed', async () => {
+test('stale pending outage state update restores pending delivery', async () => {
   const db = healthAlertDb({ stateUpdateChanges: 0 });
+
+  assert.equal(await retireRecoveredPendingAlert({ DB: db }, 200), false);
+
+  assert.equal(db.state.incident_open, 0);
+  assert.equal(db.delivery.id, 'stationhead-collector');
+  assert.equal(db.delivery.last_error, 'Resend HTTP 500');
+  assert.equal(db.delivery.updated_at, 0);
+});
+
+test('failed pending delivery restore is reported without claiming completion', async () => {
+  const db = healthAlertDb({ stateUpdateChanges: 0, restoreUpdateChanges: 0 });
 
   assert.equal(await retireRecoveredPendingAlert({ DB: db }, 200), false);
 
