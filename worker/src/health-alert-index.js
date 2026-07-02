@@ -49,15 +49,15 @@ async function emergencyIfNeeded(env, failure) {
   });
 }
 
-export async function alignFailureStartWithLastSuccess(env, state, now = Date.now()) {
+export async function alignFailureStartWithLastSuccess(env, state, failure = null, now = Date.now()) {
   const lastSuccessAt = Number(state?.last_success_at || 0);
-  const failureAt = Number(state?.failure_last_at || 0);
+  const failureAt = Number(failure?.diagnosis?.at || state?.failure_last_at || 0);
   if (!env?.DB || !lastSuccessAt || !failureAt || failureAt < lastSuccessAt) return false;
-  await env.DB.prepare(`UPDATE sh_collector_failure_state
+  const result = await env.DB.prepare(`UPDATE sh_collector_failure_state
     SET first_failure_at=MIN(first_failure_at,?),updated_at=?
     WHERE id='stationhead' AND last_failure_at>=?`)
     .bind(lastSuccessAt, now, lastSuccessAt).run();
-  return true;
+  return Number(result?.meta?.changes || 0) > 0;
 }
 
 export default {
@@ -109,7 +109,11 @@ export default {
             .bind(originalFirstAt, Date.now()).run().catch(() => {});
         }
       }
-      await alignFailureStartWithLastSuccess(env, diagnosticResult?.state).catch((error) => {
+      await alignFailureStartWithLastSuccess(
+        env,
+        diagnosticResult?.state,
+        diagnosticResult?.failure,
+      ).catch((error) => {
         console.warn(JSON.stringify({
           event: 'collector_failure_start_alignment_failed',
           error: sanitizeFailureDetail(error?.message || error),
