@@ -9,64 +9,31 @@ permissions:
 jobs:
   probe:
     runs-on: ubuntu-latest
-    timeout-minutes: 8
-    env:
-      RUN_SECRET: ${{ secrets.RUN_SECRET }}
-      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+    timeout-minutes: 3
     steps:
-      - uses: actions/checkout@v4
-      - name: Probe worker and public dashboard
+      - name: Compact collector probe
         shell: bash
         run: |
           set -euo pipefail
-          echo '=== UTC ==='
-          date -u --iso-8601=seconds
-          echo '=== Worker health ==='
-          curl -fsS --retry 3 --retry-delay 2 --max-time 30 \
-            https://stationhead-monitor-collector.tarematsu.workers.dev/health \
-            | tee /tmp/worker-health.json
-          echo
+          date -u '+utc=%Y-%m-%dT%H:%M:%SZ'
+          curl -fsS --max-time 30 https://stationhead-monitor-collector.tarematsu.workers.dev/health > /tmp/h.json
+          curl -fsS --max-time 30 'https://skrzk.pages.dev/api/dashboard' > /tmp/d.json
           python3 - <<'PY'
           import json, datetime
-          p=json.load(open('/tmp/worker-health.json'))
-          for k,v in p.items():
-              if k.endswith('_at') or k.endswith('_until'):
-                  if isinstance(v,(int,float)) and v:
-                      d=datetime.datetime.fromtimestamp(v/1000, datetime.timezone(datetime.timedelta(hours=9)))
-                      print(f'{k}={v} -> {d.isoformat()}')
-          print(json.dumps(p, ensure_ascii=False, indent=2))
-          PY
-          echo '=== Public dashboard ==='
-          curl -fsS --retry 3 --retry-delay 2 --max-time 30 \
-            'https://skrzk.pages.dev/api/dashboard' \
-            | tee /tmp/dashboard.json
-          echo
-          python3 - <<'PY'
-          import json, datetime
-          p=json.load(open('/tmp/dashboard.json'))
-          for k in ('latest_observed_at','generated_at'):
-              v=p.get(k)
+          JST=datetime.timezone(datetime.timedelta(hours=9))
+          h=json.load(open('/tmp/h.json'))
+          d=json.load(open('/tmp/d.json'))
+          keys=['last_run_at','last_success_at','last_error','collector_lease_until','collector_lease_healthy','auth_token_expires_at','auth_last_error','official_news_last_success_at','official_news_last_error','cloud_host_last_success_at','cloud_host_last_error']
+          for k in keys:
+              v=h.get(k)
               if isinstance(v,(int,float)) and v:
-                  d=datetime.datetime.fromtimestamp(v/1000, datetime.timezone(datetime.timedelta(hours=9)))
-                  print(f'{k}={v} -> {d.isoformat()}')
-          print('keys=', sorted(p.keys()))
-          print('latest=', json.dumps(p.get('latest'), ensure_ascii=False))
+                  v=f'{v} ({datetime.datetime.fromtimestamp(v/1000,JST).isoformat()})'
+              print(f'health.{k}={v}')
+          for k in ['latest_observed_at','generated_at']:
+              v=d.get(k)
+              if isinstance(v,(int,float)) and v:
+                  v=f'{v} ({datetime.datetime.fromtimestamp(v/1000,JST).isoformat()})'
+              print(f'dashboard.{k}={v}')
+          latest=d.get('latest') or {}
+          print('dashboard.latest.observed_at=',latest.get('observed_at'))
           PY
-          echo "RUN_SECRET=$([[ -n \"${RUN_SECRET:-}\" ]] && echo present || echo missing)"
-          echo "CLOUDFLARE_API_TOKEN=$([[ -n \"${CLOUDFLARE_API_TOKEN:-}\" ]] && echo present || echo missing)"
-          if [[ -n "${RUN_SECRET:-}" ]]; then
-            echo '=== Manual collection response ==='
-            curl -sS --max-time 120 -X POST \
-              -H "Authorization: Bearer ${RUN_SECRET}" \
-              -w '\nHTTP_STATUS=%{http_code}\n' \
-              https://stationhead-monitor-collector.tarematsu.workers.dev/run
-          fi
-      - name: Query remote D1 state when credentials exist
-        if: ${{ env.CLOUDFLARE_API_TOKEN != '' && env.CLOUDFLARE_ACCOUNT_ID != '' }}
-        working-directory: worker
-        shell: bash
-        run: |
-          npm install --no-audit --no-fund
-          npx wrangler d1 execute stationhead-monitor --remote --json --command \
-            "SELECT last_run_at,last_success_at,last_error,updated_at FROM sh_worker_collector_state WHERE id='stationhead'; SELECT MAX(observed_at) AS latest_snapshot,COUNT(*) AS snapshots_today FROM sh_channel_snapshots WHERE observed_at>=unixepoch('now','start of day')*1000;"
