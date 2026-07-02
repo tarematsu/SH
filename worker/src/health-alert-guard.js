@@ -31,6 +31,7 @@ export async function retireRecoveredPendingAlert(env, now = Date.now()) {
     row = await env.DB.prepare(`SELECT
         collector.last_success_at,
         delivery.event_kind,
+        delivery.incident_started_at,
         delivery.baseline_success_at,
         delivery.idempotency_key
       FROM sh_health_alert_delivery delivery
@@ -44,12 +45,14 @@ export async function retireRecoveredPendingAlert(env, now = Date.now()) {
 
   if (!pendingAlertIsObsolete(row)) return false;
 
-  const currentSuccessAt = finite(row.last_success_at);
+  const incidentStartedAt = finite(row.incident_started_at)
+    ?? finite(row.baseline_success_at)
+    ?? now;
   const retiredId = retiredDeliveryId(row.idempotency_key, now);
   await env.DB.batch([
     env.DB.prepare(`UPDATE sh_health_alert_state SET
-        incident_open=0,
-        incident_started_at=NULL,
+        incident_open=1,
+        incident_started_at=?,
         last_observed_success_at=?,
         last_error=NULL,
         updated_at=?
@@ -57,7 +60,14 @@ export async function retireRecoveredPendingAlert(env, now = Date.now()) {
         SELECT 1 FROM sh_health_alert_delivery
         WHERE id=? AND idempotency_key=? AND event_kind='alert'
       )`)
-      .bind(currentSuccessAt, now, ALERT_ID, ALERT_ID, row.idempotency_key),
+      .bind(
+        incidentStartedAt,
+        finite(row.baseline_success_at),
+        now,
+        ALERT_ID,
+        ALERT_ID,
+        row.idempotency_key,
+      ),
     env.DB.prepare(`UPDATE sh_health_alert_delivery SET
         id=?,last_error='retired_after_recovery',updated_at=?
       WHERE id=? AND idempotency_key=? AND event_kind='alert'`)
@@ -66,8 +76,9 @@ export async function retireRecoveredPendingAlert(env, now = Date.now()) {
 
   console.log(JSON.stringify({
     event: 'collector_health_alert_retired_after_recovery',
+    incident_started_at: incidentStartedAt,
     baseline_success_at: finite(row.baseline_success_at),
-    current_success_at: currentSuccessAt,
+    current_success_at: finite(row.last_success_at),
   }));
   return true;
 }
