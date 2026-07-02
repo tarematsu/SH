@@ -14,13 +14,13 @@ export function pendingAlertIsObsolete(row) {
   return baselineSuccessAt == null || currentSuccessAt > baselineSuccessAt;
 }
 
-function retiredDeliveryId(idempotencyKey) {
+function retiredDeliveryId(idempotencyKey, now) {
   let hash = 2166136261;
   for (const character of String(idempotencyKey || '')) {
     hash ^= character.charCodeAt(0);
     hash = Math.imul(hash, 16777619);
   }
-  return `retired-${Date.now()}-${(hash >>> 0).toString(36)}`;
+  return `retired-${now}-${(hash >>> 0).toString(36)}`;
 }
 
 export async function retireRecoveredPendingAlert(env, now = Date.now()) {
@@ -45,6 +45,7 @@ export async function retireRecoveredPendingAlert(env, now = Date.now()) {
   if (!pendingAlertIsObsolete(row)) return false;
 
   const currentSuccessAt = finite(row.last_success_at);
+  const retiredId = retiredDeliveryId(row.idempotency_key, now);
   await env.DB.batch([
     env.DB.prepare(`UPDATE sh_health_alert_state SET
         incident_open=0,
@@ -52,12 +53,15 @@ export async function retireRecoveredPendingAlert(env, now = Date.now()) {
         last_observed_success_at=?,
         last_error=NULL,
         updated_at=?
-      WHERE id=?`)
-      .bind(currentSuccessAt, now, ALERT_ID),
+      WHERE id=? AND EXISTS (
+        SELECT 1 FROM sh_health_alert_delivery
+        WHERE id=? AND idempotency_key=? AND event_kind='alert'
+      )`)
+      .bind(currentSuccessAt, now, ALERT_ID, ALERT_ID, row.idempotency_key),
     env.DB.prepare(`UPDATE sh_health_alert_delivery SET
         id=?,last_error='retired_after_recovery',updated_at=?
       WHERE id=? AND idempotency_key=? AND event_kind='alert'`)
-      .bind(retiredDeliveryId(row.idempotency_key), now, ALERT_ID, row.idempotency_key),
+      .bind(retiredId, now, ALERT_ID, row.idempotency_key),
   ]);
 
   console.log(JSON.stringify({
