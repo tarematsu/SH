@@ -8,6 +8,7 @@ import {
   failureEmailLines,
   sanitizeFailureDetail,
 } from '../worker/src/collector-failure.js';
+import { validateChannelPayload } from '../worker/src/index.js';
 
 const MIGRATION = new URL('../database/migrations/019_collector_failure_diagnostics.sql', import.meta.url);
 
@@ -27,7 +28,7 @@ test('classifies Stationhead authentication, API changes, rate limits and timeou
     'STATIONHEAD_AUTH_ERROR',
   );
   assert.equal(
-    diagnoseCollectorFailure(new Error('Stationhead API 404: /channels/alias/buddies'), 'stationhead_channel_request').code,
+    diagnoseCollectorFailure(new Error('Stationhead API 404: channel lookup'), 'stationhead_channel_request').code,
     'STATIONHEAD_API_CHANGED',
   );
   assert.equal(
@@ -44,12 +45,23 @@ test('classifies Stationhead authentication, API changes, rate limits and timeou
   );
 });
 
-test('redacts credentials from stored failure details', () => {
-  const sanitized = sanitizeFailureDetail(
-    'authorization: Bearer eyJabcdefghijabcdefghij.abcdefghijklmno.abcdefghijklmnop re_1234567890abcdefghijkl',
+test('rejects successful Stationhead responses whose required shape changed', () => {
+  assert.throws(() => validateChannelPayload({}, 'buddies'), /channel id is missing/);
+  assert.throws(
+    () => validateChannelPayload({ id: 1, alias: 'buddies' }, 'buddies'),
+    /current_station fields are missing/,
   );
-  assert.doesNotMatch(sanitized, /eyJabcdefghij/);
-  assert.doesNotMatch(sanitized, /re_123456/);
+  assert.throws(
+    () => validateChannelPayload({ id: 1, alias: 'renamed', current_station: null }, 'buddies'),
+    /expected alias=buddies/,
+  );
+  const valid = { id: 1, alias: 'buddies', current_station: null };
+  assert.equal(validateChannelPayload(valid, 'buddies'), valid);
+});
+
+test('redacts credentials from stored failure details', () => {
+  const sanitized = sanitizeFailureDetail('authorization: Bearer placeholder-token-value');
+  assert.doesNotMatch(sanitized, /placeholder-token-value/);
   assert.match(sanitized, /redacted/);
 });
 
@@ -108,5 +120,5 @@ test('scheduled wrapper prepares detailed messages and has a D1 emergency path',
   assert.match(diagnosticsSource, /sendEmergencyD1Alert/);
   assert.match(diagnosticsSource, /D1を経由せずResendへ直接送信/);
   assert.match(wrapperSource, /collector_false_recovery_cancelled/);
-  assert.match(wrapperSource, /collector_recovery_deferred/);
+  assert.match(wrapperSource, /collector_generic_alert_suppressed/);
 });
