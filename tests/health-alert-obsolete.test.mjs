@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   pendingAlertIsObsolete,
   retireRecoveredPendingAlert,
+  shouldReprepareAfterFalseRecoveryCancel,
 } from '../worker/src/health-alert-guard.js';
 
 test('queued outage alert is obsolete after a newer successful collection', () => {
@@ -33,6 +34,35 @@ test('queued outage alert remains valid until a newer success exists', () => {
     event_kind: 'recovery',
     baseline_success_at: 100,
     last_success_at: 101,
+  }), false);
+});
+
+test('false recovery cancellation immediately reopens detailed alert preparation only for active diagnostics', () => {
+  assert.equal(shouldReprepareAfterFalseRecoveryCancel(true, {
+    diagnosis: { code: 'STATIONHEAD_TIMEOUT' },
+    pending: null,
+    incidentOpen: false,
+  }), true);
+
+  assert.equal(shouldReprepareAfterFalseRecoveryCancel(false, {
+    diagnosis: { code: 'STATIONHEAD_TIMEOUT' },
+    pending: null,
+    incidentOpen: false,
+  }), false);
+  assert.equal(shouldReprepareAfterFalseRecoveryCancel(true, {
+    diagnosis: null,
+    pending: null,
+    incidentOpen: false,
+  }), false);
+  assert.equal(shouldReprepareAfterFalseRecoveryCancel(true, {
+    diagnosis: { code: 'STATIONHEAD_TIMEOUT' },
+    pending: 'alert',
+    incidentOpen: false,
+  }), false);
+  assert.equal(shouldReprepareAfterFalseRecoveryCancel(true, {
+    diagnosis: { code: 'STATIONHEAD_TIMEOUT' },
+    pending: null,
+    incidentOpen: true,
   }), false);
 });
 
