@@ -10,6 +10,10 @@ function changed(result) {
   return Number(result?.meta?.changes || 0) > 0;
 }
 
+function hasText(value) {
+  return String(value ?? '').trim() !== '';
+}
+
 export function pendingAlertIsObsolete(row) {
   if (String(row?.event_kind || '') !== 'alert') return false;
   const currentSuccessAt = finite(row?.last_success_at);
@@ -64,6 +68,16 @@ export async function retireRecoveredPendingAlert(env, now = Date.now()) {
   }
 
   if (!pendingAlertIsObsolete(row)) return false;
+  if (!hasText(row?.idempotency_key)) {
+    console.warn(JSON.stringify({
+      event: 'collector_health_alert_retire_skipped',
+      reason: 'missing_idempotency_key',
+      state_updated: false,
+      delivery_retired: false,
+      delivery_restored: false,
+    }));
+    return false;
+  }
 
   const incidentStartedAt = finite(row.incident_started_at)
     ?? finite(row.baseline_success_at)
