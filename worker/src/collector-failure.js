@@ -79,6 +79,10 @@ function finite(value) {
   return Number.isFinite(number) ? number : null;
 }
 
+function occurredAfterSuccess(eventAt, lastSuccessAt) {
+  return eventAt == null || eventAt > lastSuccessAt;
+}
+
 export function sanitizeFailureDetail(value) {
   return text(value)
     .replace(/Bearer\s+[A-Za-z0-9._~+/=-]+/gi, 'Bearer [redacted]')
@@ -245,7 +249,7 @@ export async function clearCollectorFailure(env) {
 export function diagnosisFromState(state = {}) {
   const lastSuccessAt = finite(state.last_success_at) ?? 0;
   const failureAt = finite(state.failure_last_at);
-  if (failureAt != null && failureAt >= lastSuccessAt && state.failure_code) {
+  if (failureAt != null && occurredAfterSuccess(failureAt, lastSuccessAt) && state.failure_code) {
     return {
       code: text(state.failure_code),
       stage: text(state.failure_stage) || 'collector_unknown',
@@ -261,7 +265,7 @@ export function diagnosisFromState(state = {}) {
   }
 
   const authAttemptAt = finite(state.auth_last_attempt_at);
-  if (state.auth_last_error && (authAttemptAt == null || authAttemptAt >= lastSuccessAt)) {
+  if (state.auth_last_error && occurredAfterSuccess(authAttemptAt, lastSuccessAt)) {
     return {
       ...diagnoseCollectorFailure(state.auth_last_error, 'stationhead_auth', authAttemptAt || Date.now()),
       count: null,
@@ -270,7 +274,7 @@ export function diagnosisFromState(state = {}) {
   }
 
   const collectorRunAt = finite(state.last_run_at);
-  if (state.last_error && (collectorRunAt == null || collectorRunAt >= lastSuccessAt)) {
+  if (state.last_error && occurredAfterSuccess(collectorRunAt, lastSuccessAt)) {
     return {
       ...diagnoseCollectorFailure(state.last_error, 'collector_unknown', collectorRunAt || Date.now()),
       count: null,
