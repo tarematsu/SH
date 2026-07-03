@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 
 import { createStationheadTrafficGuard } from '../worker/src/stationhead-traffic-guard.js';
 
-test('Stationhead chat requests are capped at 20 and shared within a minute', async () => {
+test('Stationhead chat requests are capped at 50 and shared within a minute', async () => {
   let calls = 0;
   let requestedUrl = null;
   const guarded = createStationheadTrafficGuard(async (input) => {
@@ -13,16 +13,41 @@ test('Stationhead chat requests are capped at 20 and shared within a minute', as
   }, () => 120_000);
 
   const url = 'https://production1.stationhead.com/station/123/chatHistory?limit=100';
-  const first = await guarded(url, { headers: { authorization: 'Bearer token' } });
-  const second = await guarded(url, { headers: { authorization: 'Bearer token' } });
+  const headers = { authorization: 'Bearer token', 'sth-device-uid': 'device' };
+  const first = await guarded(url, { headers });
+  const second = await guarded(url, { headers });
 
   assert.equal(first.status, 200);
   assert.equal(second.status, 200);
   assert.equal(calls, 1);
-  assert.equal(new URL(requestedUrl).searchParams.get('limit'), '20');
+  assert.equal(new URL(requestedUrl).searchParams.get('limit'), '50');
 });
 
-test('Stationhead traffic is limited to ten upstream requests per minute', async () => {
+test('Stationhead response sharing never crosses authentication sessions', async () => {
+  let calls = 0;
+  const guarded = createStationheadTrafficGuard(async () => {
+    calls += 1;
+    return new Response(JSON.stringify({ calls }), { status: 200 });
+  }, () => 120_000);
+  const url = 'https://production1.stationhead.com/channels/alias/buddies';
+
+  const first = await guarded(url, {
+    headers: { authorization: 'Bearer first', 'sth-device-uid': 'device-a' },
+  });
+  const second = await guarded(url, {
+    headers: { authorization: 'Bearer second', 'sth-device-uid': 'device-b' },
+  });
+  const repeated = await guarded(url, {
+    headers: { authorization: 'Bearer first', 'sth-device-uid': 'device-a' },
+  });
+
+  assert.equal((await first.json()).calls, 1);
+  assert.equal((await second.json()).calls, 2);
+  assert.equal((await repeated.json()).calls, 1);
+  assert.equal(calls, 2);
+});
+
+test('Stationhead traffic is limited to ten upstream data requests per minute', async () => {
   let calls = 0;
   const guarded = createStationheadTrafficGuard(async () => {
     calls += 1;
@@ -40,7 +65,26 @@ test('Stationhead traffic is limited to ten upstream requests per minute', async
   assert.equal(calls, 10);
 });
 
-test('failed Stationhead routes enter a one-minute local backoff', async () => {
+test('authentication has a separate two-request budget after the data budget is exhausted', async () => {
+  let calls = 0;
+  const guarded = createStationheadTrafficGuard(async () => {
+    calls += 1;
+    return new Response('', { status: 200 });
+  }, () => 120_000);
+
+  for (let index = 0; index < 10; index += 1) {
+    assert.equal((await guarded(`https://production1.stationhead.com/channels/alias/test-${index}`)).status, 200);
+  }
+  assert.equal((await guarded('https://production1.stationhead.com/web/token', { method: 'POST', body: '' })).status, 200);
+  assert.equal((await guarded('https://production1.stationhead.com/web/guest/login', { method: 'POST', body: '' })).status, 200);
+
+  const authLimited = await guarded('https://production1.stationhead.com/web/token', { method: 'POST', body: '' });
+  assert.equal(authLimited.status, 429);
+  assert.equal(authLimited.headers.get('x-stationhead-traffic-guard'), 'auth-minute-budget-exhausted');
+  assert.equal(calls, 12);
+});
+
+test('failed Stationhead routes enter a one-minute local backoff per session', async () => {
   let calls = 0;
   let now = 120_000;
   const guarded = createStationheadTrafficGuard(async () => {
@@ -49,15 +93,18 @@ test('failed Stationhead routes enter a one-minute local backoff', async () => {
   }, () => now);
 
   const url = 'https://production1.stationhead.com/channels/alias/buddies';
-  assert.equal((await guarded(url)).status, 503);
-  const backedOff = await guarded(url);
+  const firstSession = { headers: { authorization: 'Bearer first', 'sth-device-uid': 'device-a' } };
+  const secondSession = { headers: { authorization: 'Bearer second', 'sth-device-uid': 'device-b' } };
+  assert.equal((await guarded(url, firstSession)).status, 503);
+  const backedOff = await guarded(url, firstSession);
   assert.equal(backedOff.status, 503);
   assert.equal(backedOff.headers.get('x-stationhead-traffic-guard'), 'temporary-backoff');
-  assert.equal(calls, 1);
+  assert.equal((await guarded(url, secondSession)).status, 503);
+  assert.equal(calls, 2);
 
   now += 60_001;
-  assert.equal((await guarded(url)).status, 503);
-  assert.equal(calls, 2);
+  assert.equal((await guarded(url, firstSession)).status, 503);
+  assert.equal(calls, 3);
 });
 
 test('unapproved Stationhead routes never reach the network', async () => {
@@ -71,16 +118,4 @@ test('unapproved Stationhead routes never reach the network', async () => {
   assert.equal(response.status, 405);
   assert.equal(response.headers.get('x-stationhead-traffic-guard'), 'route-not-allowed');
   assert.equal(calls, 0);
-});
-
-test('authentication routes remain available inside the budget', async () => {
-  let calls = 0;
-  const guarded = createStationheadTrafficGuard(async () => {
-    calls += 1;
-    return new Response('', { status: 200 });
-  }, () => 120_000);
-
-  assert.equal((await guarded('https://production1.stationhead.com/web/token', { method: 'POST', body: '' })).status, 200);
-  assert.equal((await guarded('https://production1.stationhead.com/web/guest/login', { method: 'POST', body: '' })).status, 200);
-  assert.equal(calls, 2);
 });
