@@ -3,6 +3,19 @@ import assert from 'node:assert/strict';
 
 import { createOptionalFetchGuard } from '../worker/src/fetch-guard.js';
 
+test('iTunes requests are blocked without contacting upstream', async () => {
+  let calls = 0;
+  const guarded = createOptionalFetchGuard(async () => {
+    calls += 1;
+    return new Response('{}', { status: 200 });
+  });
+
+  const response = await guarded('https://itunes.apple.com/search?term=test');
+  assert.equal(response.status, 410);
+  assert.equal(response.headers.get('x-stationhead-fetch-guard'), 'blocked:itunes.apple.com');
+  assert.equal(calls, 0);
+});
+
 test('duplicate Spotify requests share one upstream subrequest', async () => {
   let calls = 0;
   let release;
