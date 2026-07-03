@@ -40,6 +40,10 @@ export function healthResponseStatus(baseStatus, collectorHealth) {
   return baseStatus;
 }
 
+function changed(result) {
+  return Number(result?.meta?.changes || 0) > 0;
+}
+
 async function emergencyIfNeeded(env, failure) {
   if (!failure || !isD1Failure(failure.diagnosis || failure)) return;
   await sendEmergencyD1Alert(env, failure).catch((error) => {
@@ -48,6 +52,28 @@ async function emergencyIfNeeded(env, failure) {
       error: sanitizeFailureDetail(error?.message || error),
     }));
   });
+}
+
+export async function cancelFalseRecoveryPending(env, prepared) {
+  if (!prepared?.diagnosis || !prepared?.incidentOpen || prepared?.pending !== 'recovery' || !env?.DB) {
+    return false;
+  }
+
+  const result = await env.DB.prepare(`DELETE FROM sh_health_alert_delivery
+    WHERE id='stationhead-collector' AND event_kind='recovery'`).run();
+  const deleted = changed(result);
+  if (deleted) prepared.pending = null;
+
+  console.warn(JSON.stringify({
+    event: deleted
+      ? 'collector_false_recovery_cancelled'
+      : 'collector_false_recovery_cancel_skipped',
+    reason: deleted ? 'active_failure_diagnostic' : 'stale_recovery_delivery',
+    code: prepared.diagnosis.code,
+    stage: prepared.diagnosis.stage,
+    delivery_deleted: deleted,
+  }));
+  return deleted;
 }
 
 export async function alignFailureStartWithLastSuccess(env, state, failure = null, now = Date.now()) {
@@ -150,16 +176,7 @@ export default {
     let prepared = null;
     try {
       prepared = await prepareDetailedCollectorAlert(env);
-      if (prepared?.diagnosis && prepared?.incidentOpen && prepared?.pending === 'recovery' && env.DB) {
-        await env.DB.prepare(`DELETE FROM sh_health_alert_delivery
-          WHERE id='stationhead-collector' AND event_kind='recovery'`).run();
-        prepared.pending = null;
-        console.warn(JSON.stringify({
-          event: 'collector_false_recovery_cancelled',
-          code: prepared.diagnosis.code,
-          stage: prepared.diagnosis.stage,
-        }));
-      }
+      await cancelFalseRecoveryPending(env, prepared);
     } catch (error) {
       await emergencyIfNeeded(env, error);
       console.error(JSON.stringify({
