@@ -3,6 +3,7 @@ import test from 'node:test';
 
 import {
   alignFailureStartWithLastSuccess,
+  cancelFalseRecoveryPending,
   healthResponseStatus,
   sanitizeHealthPayload,
 } from '../src/health-alert-index.js';
@@ -66,6 +67,32 @@ test('health status is degraded only when the base response was otherwise health
   assert.equal(healthResponseStatus(204, { collector_health_ok: false }), 503);
   assert.equal(healthResponseStatus(500, { collector_health_ok: false }), 500);
   assert.equal(healthResponseStatus(200, { collector_health_ok: true }), 200);
+});
+
+test('active failure cancels only an actually deleted pending recovery delivery', async () => {
+  const prepared = {
+    diagnosis: { code: 'STATIONHEAD_TIMEOUT', stage: 'stationhead_channel_request' },
+    incidentOpen: true,
+    pending: 'recovery',
+  };
+  const db = new RecordingDb({ changes: 1 });
+
+  assert.equal(await cancelFalseRecoveryPending({ DB: db }, prepared), true);
+  assert.equal(prepared.pending, null);
+  assert.equal(db.calls.length, 1);
+  assert.match(db.calls[0].sql, /DELETE FROM sh_health_alert_delivery/);
+  assert.match(db.calls[0].sql, /event_kind='recovery'/);
+
+  const stalePrepared = {
+    diagnosis: { code: 'STATIONHEAD_TIMEOUT', stage: 'stationhead_channel_request' },
+    incidentOpen: true,
+    pending: 'recovery',
+  };
+  const staleDb = new RecordingDb({ changes: 0 });
+
+  assert.equal(await cancelFalseRecoveryPending({ DB: staleDb }, stalePrepared), false);
+  assert.equal(stalePrepared.pending, 'recovery');
+  assert.equal(staleDb.calls.length, 1);
 });
 
 test('collector diagnostics classify realistic upstream, auth, schema and network failures', () => {
