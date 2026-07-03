@@ -38,14 +38,14 @@ test('dashboard HTML keeps accessibility, privacy and live-state anchors', async
   assert.match(html, /rel="noopener"/);
 });
 
-test('browser application remains wired to the three public data APIs', async () => {
+test('browser application remains wired to the dashboard API and resilient refresh flow', async () => {
   const source = await text('public/app.js');
-  for (const endpoint of ['/api/dashboard', '/api/history', '/api/playback']) {
-    assert.match(source, new RegExp(endpoint.replaceAll('/', '\\/')));
-  }
+  assert.match(source, /fetch\(['"]\/api\/dashboard['"]/);
   assert.match(source, /AbortController/);
   assert.match(source, /refreshInFlight/);
   assert.match(source, /escapeText/);
+  assert.match(source, /if \(!document\.hidden\) refresh\(\)/);
+  assert.match(source, /前回表示・前回グラフをそのまま維持/);
 });
 
 test('Pages configuration binds the expected D1 database and output directory', async () => {
