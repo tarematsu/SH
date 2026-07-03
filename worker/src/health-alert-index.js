@@ -37,10 +37,13 @@ export function sanitizeHealthPayload(payload = {}) {
 }
 
 export function healthResponseStatus(baseStatus, collectorHealth) {
-  if (baseStatus >= 200 && baseStatus < 300 && collectorHealth?.collector_health_ok === false) {
+  const status = Number.isInteger(baseStatus) && baseStatus >= 100 && baseStatus <= 599
+    ? baseStatus
+    : 500;
+  if (status >= 200 && status < 300 && collectorHealth?.collector_health_ok === false) {
     return 503;
   }
-  return baseStatus;
+  return status;
 }
 
 function changed(result) {
@@ -217,36 +220,25 @@ export default {
     if (appError) throw appError;
     return diagnosticResult;
   },
-
   async fetch(request, env, ctx) {
     const response = await app.fetch(request, env, ctx);
-    const url = new URL(request.url);
-    if (request.method !== 'GET' || (url.pathname !== '/' && url.pathname !== '/health')) return response;
-    const [payload, collectorHealth, diagnostics] = await Promise.all([
-      response.json().catch(() => null),
-      getCollectorHealthView(env).catch((error) => {
-        console.error(JSON.stringify({
-          event: 'collector_health_view_failed',
-          error: sanitizeFailureDetail(error?.message || error),
-        }));
-        return {
-          collector_health_ok: false,
-          collector_health_error: 'health_check_failed',
-        };
-      }),
-      diagnosticHealthView(env),
-    ]);
-    if (!payload) return response;
-    const mergedHealth = { ...collectorHealth, ...diagnostics };
-    const headers = new Headers(response.headers);
-    headers.set('content-type', 'application/json; charset=utf-8');
-    headers.set('cache-control', 'no-store');
-    return new Response(JSON.stringify({
-      ...sanitizeHealthPayload(payload),
-      ...mergedHealth,
+    if (!new URL(request.url).pathname.endsWith('/health')) return response;
+    let payload = null;
+    try {
+      payload = await response.clone().json();
+    } catch {
+      return response;
+    }
+    const collectorHealth = await getCollectorHealthView(env).catch((error) => ({
+      collector_health_ok: false,
+      collector_health_error_present: true,
+      collector_health_error: sanitizeFailureDetail(error?.message || error),
+    }));
+    return Response.json(sanitizeHealthPayload({
+      ...payload,
+      ...collectorHealth,
     }), {
-      status: healthResponseStatus(response.status, mergedHealth),
-      headers,
+      status: healthResponseStatus(response.status, collectorHealth),
     });
   },
 };
