@@ -80,7 +80,7 @@ function finite(value) {
 }
 
 function occurredAfterSuccess(eventAt, lastSuccessAt) {
-  return eventAt == null || eventAt > lastSuccessAt;
+  return eventAt != null && eventAt > lastSuccessAt;
 }
 
 export function sanitizeFailureDetail(value) {
