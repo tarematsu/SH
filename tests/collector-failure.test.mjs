@@ -121,6 +121,16 @@ test('authentication control error is used when the collector never starts', () 
   assert.equal(diagnosis.stage, 'stationhead_auth');
 });
 
+test('stale untimestamped fallback errors are ignored after success', () => {
+  assert.equal(diagnosisFromState({
+    last_success_at: 2000,
+    auth_last_attempt_at: null,
+    auth_last_error: 'Stationhead authentication failed: guest token failed: status=403',
+    last_run_at: '',
+    last_error: 'Stationhead API 500',
+  }), null);
+});
+
 test('collector success at the same millisecond suppresses stale failure evidence', () => {
   assert.equal(diagnosisFromState({
     last_success_at: 2000,
