@@ -192,7 +192,7 @@ test('failure start alignment updates only incidents that began after the last s
   assert.equal(ignoredDb.calls.length, 0);
 });
 
-test('diagnosisFromState preserves an active incident and ignores one older than success', () => {
+test('diagnosisFromState preserves active incidents and ignores stale recovered errors', () => {
   const active = diagnosisFromState({
     last_success_at: 1_000,
     failure_last_at: 2_000,
@@ -215,4 +215,19 @@ test('diagnosisFromState preserves an active incident and ignores one older than
     failure_code: 'D1_READ_ERROR',
   });
   assert.equal(recovered, null);
+
+  const staleCollectorError = diagnosisFromState({
+    last_success_at: 3_000,
+    last_run_at: 2_000,
+    last_error: 'Stationhead API 503',
+  });
+  assert.equal(staleCollectorError, null);
+
+  const activeCollectorError = diagnosisFromState({
+    last_success_at: 3_000,
+    last_run_at: 4_000,
+    last_error: 'Stationhead API 503',
+  });
+  assert.equal(activeCollectorError.code, 'STATIONHEAD_UPSTREAM_ERROR');
+  assert.equal(activeCollectorError.at, 4_000);
 });
