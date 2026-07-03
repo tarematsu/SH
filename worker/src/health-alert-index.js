@@ -1,6 +1,9 @@
 import app from './main.js';
 import { getCollectorHealthView, runCollectorHealthAlert } from './health-alert.js';
-import { retireRecoveredPendingAlert } from './health-alert-guard.js';
+import {
+  retireRecoveredPendingAlert,
+  shouldReprepareAfterFalseRecoveryCancel,
+} from './health-alert-guard.js';
 import {
   diagnoseScheduledCollection,
   diagnosticHealthView,
@@ -176,7 +179,10 @@ export default {
     let prepared = null;
     try {
       prepared = await prepareDetailedCollectorAlert(env);
-      await cancelFalseRecoveryPending(env, prepared);
+      const cancelledFalseRecovery = await cancelFalseRecoveryPending(env, prepared);
+      if (shouldReprepareAfterFalseRecoveryCancel(cancelledFalseRecovery, prepared)) {
+        prepared = await prepareDetailedCollectorAlert(env);
+      }
     } catch (error) {
       await emergencyIfNeeded(env, error);
       console.error(JSON.stringify({
