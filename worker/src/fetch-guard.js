@@ -117,5 +117,7 @@ export function createOptionalFetchGuard(nativeFetch, nowFn = Date.now) {
 
 if (typeof globalThis.fetch === 'function' && !globalThis.fetch[INSTALL_MARK]) {
   const optionalGuard = createOptionalFetchGuard(globalThis.fetch.bind(globalThis));
-  globalThis.fetch = createStationheadTrafficGuard(optionalGuard);
+  const stationheadGuard = createStationheadTrafficGuard(optionalGuard);
+  Object.defineProperty(stationheadGuard, INSTALL_MARK, { value: true });
+  globalThis.fetch = stationheadGuard;
 }
