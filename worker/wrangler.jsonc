@@ -1,7 +1,7 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "stationhead-monitor-collector",
-  "main": "src/health-alert-index.js",
+  "main": "src/resilient-entry.js",
   "compatibility_date": "2026-06-24",
   "workers_dev": true,
   "observability": {
@@ -9,11 +9,11 @@
   },
   "vars": {
     "CHANNEL_ALIAS": "buddies",
-    "CHAT_LIMIT": 50,
+    "CHAT_LIMIT": 20,
     "STATIONHEAD_APP_VERSION": "1.0.0",
     "COLLECTOR_ID": "cloudflare-worker",
-    "METADATA_LIMIT": 2,
-    "REQUEST_TIMEOUT_MS": 20000,
+    "METADATA_LIMIT": 1,
+    "REQUEST_TIMEOUT_MS": 8000,
     "AUTH_REFRESH_BEFORE_MS": 3600000,
     "AUTH_REFRESH_COOLDOWN_MS": 300000,
     "AUTH_FAILURE_BACKOFF_MS": 900000,
@@ -26,7 +26,7 @@
     "SOLO_BROADCAST_HANDLE": "sakurazaka46jp",
     "SOLO_CONFIRM_POLLS": 2,
     "SOLO_END_CONFIRM_POLLS": 3,
-    "SOLO_CHAT_LIMIT": 50,
+    "SOLO_CHAT_LIMIT": 20,
     "SOLO_PROFILE_INTERVAL_MS": 3600000,
     "WEEKLY_LEADERBOARD_ENABLED": true,
     "WEEKLY_LEADERBOARD_CHECK_MINUTES": 15,
