@@ -13,6 +13,28 @@ import { validateChannelPayload } from '../worker/src/index.js';
 
 const MIGRATION = new URL('../database/migrations/019_collector_failure_diagnostics.sql', import.meta.url);
 
+function alignmentDb({ changes = 1 } = {}) {
+  let statement = '';
+  let bound = [];
+  return {
+    get statement() { return statement; },
+    get bound() { return bound; },
+    env: {
+      DB: {
+        prepare(sql) {
+          statement = sql;
+          return {
+            bind(...values) {
+              bound = values;
+              return { run: async () => ({ meta: { changes } }) };
+            },
+          };
+        },
+      },
+    },
+  };
+}
+
 test('classifies D1 reads and writes separately', () => {
   const read = diagnoseCollectorFailure(new Error('D1_ERROR: database unavailable'), 'd1_read_collector_state', 1000);
   assert.equal(read.code, 'D1_READ_ERROR');
@@ -99,33 +121,93 @@ test('authentication control error is used when the collector never starts', () 
   assert.equal(diagnosis.stage, 'stationhead_auth');
 });
 
-test('failure start is moved back to the last successful collection', async () => {
-  let statement = '';
-  let bound = [];
-  const env = {
-    DB: {
-      prepare(sql) {
-        statement = sql;
-        return {
-          bind(...values) {
-            bound = values;
-            return { run: async () => ({ meta: { changes: 1 } }) };
-          },
-        };
-      },
-    },
-  };
-
-  assert.equal(await alignFailureStartWithLastSuccess(env, {
-    last_success_at: 1000,
-    failure_last_at: 2000,
-  }, 3000), true);
-  assert.match(statement, /first_failure_at=MIN/);
-  assert.deepEqual(bound, [1000, 3000, 1000]);
-  assert.equal(await alignFailureStartWithLastSuccess(env, {
+test('stale untimestamped fallback errors are ignored after success', () => {
+  assert.equal(diagnosisFromState({
     last_success_at: 2000,
-    failure_last_at: 1000,
-  }, 3000), false);
+    auth_last_attempt_at: null,
+    auth_last_error: 'Stationhead authentication failed: guest token failed: status=403',
+    last_run_at: '',
+    last_error: 'Stationhead API 500',
+  }), null);
+});
+
+test('collector success at the same millisecond suppresses stale failure evidence', () => {
+  assert.equal(diagnosisFromState({
+    last_success_at: 2000,
+    failure_first_at: 1000,
+    failure_last_at: 2000,
+    failure_code: 'STATIONHEAD_TIMEOUT',
+    failure_stage: 'stationhead_channel_request',
+    auth_last_attempt_at: 2000,
+    auth_last_error: 'guest token failed: status=403',
+    last_run_at: 2000,
+    last_error: 'Stationhead API 500',
+  }), null);
+
+  assert.equal(diagnosisFromState({
+    last_success_at: 2000,
+    failure_last_at: 2001,
+    failure_code: 'STATIONHEAD_TIMEOUT',
+    failure_stage: 'stationhead_channel_request',
+  }).code, 'STATIONHEAD_TIMEOUT');
+});
+
+test('failure start uses the just-recorded event even when the loaded state is stale', async () => {
+  const db = alignmentDb();
+
+  assert.equal(await alignFailureStartWithLastSuccess(
+    db.env,
+    { last_success_at: 1000, failure_last_at: null },
+    { diagnosis: { at: 2000 } },
+    3000,
+  ), true);
+  assert.match(db.statement, /first_failure_at=CASE/);
+  assert.match(db.statement, /first_failure_at IS NULL/);
+  assert.deepEqual(db.bound, [1000, 1000, 3000, 1000]);
+
+  assert.equal(await alignFailureStartWithLastSuccess(
+    db.env,
+    { last_success_at: 2000, failure_last_at: null },
+    { diagnosis: { at: 1000 } },
+    3000,
+  ), false);
+});
+
+test('failure start alignment treats the success millisecond as recovered', async () => {
+  const db = alignmentDb();
+
+  assert.equal(await alignFailureStartWithLastSuccess(
+    db.env,
+    { last_success_at: 2000, failure_last_at: 2000 },
+    null,
+    3000,
+  ), false);
+  assert.equal(db.statement, '');
+});
+
+test('failure start alignment handles NULL first_failure_at explicitly', async () => {
+  const db = alignmentDb();
+
+  assert.equal(await alignFailureStartWithLastSuccess(
+    db.env,
+    { last_success_at: 1000, failure_last_at: 2000 },
+    null,
+    3000,
+  ), true);
+
+  assert.match(db.statement, /WHEN first_failure_at IS NULL OR first_failure_at>\?/);
+  assert.doesNotMatch(db.statement, /first_failure_at=MIN\(first_failure_at,\?\)/);
+  assert.deepEqual(db.bound, [1000, 1000, 3000, 1000]);
+});
+
+test('alignment reports false when the diagnostic row was not updated', async () => {
+  const db = alignmentDb({ changes: 0 });
+  assert.equal(await alignFailureStartWithLastSuccess(
+    db.env,
+    { last_success_at: 1000, failure_last_at: 2000 },
+    null,
+    3000,
+  ), false);
 });
 
 test('diagnostic migration is repeatable', () => {

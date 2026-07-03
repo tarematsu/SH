@@ -142,6 +142,12 @@ export function cleanSpotifyTitle(rawTitle) {
   };
 }
 
+function commentIdentity(comment) {
+  if (comment?.comment_id != null) return `numeric:${comment.comment_id}`;
+  const rawId = String(comment?.id ?? '').trim();
+  return rawId ? `raw:${rawId}` : null;
+}
+
 export function normalizeComments(payload, stationId, { finite } = {}) {
   const toFinite = finite || ((value) => {
     if (value === undefined || value === null || value === '') return null;
@@ -150,7 +156,7 @@ export function normalizeComments(payload, stationId, { finite } = {}) {
   });
   const candidates = [payload, payload?.items, payload?.data?.items, payload?.chats?.items, payload?.chats];
   const items = candidates.find(Array.isArray) || [];
-  return items.map((chat) => ({
+  const normalized = items.map((chat) => ({
     comment_id: toFinite(chat?.id),
     id: chat?.id,
     station_id: toFinite(chat?.station_id ?? stationId),
@@ -168,46 +174,32 @@ export function normalizeComments(payload, stationId, { finite } = {}) {
     emoji: chat?.account?.emoji ?? null,
     raw: chat,
   })).filter((comment) => comment.comment_id != null || comment.id != null);
-}
 
-async function fetchAppleTrackMetadata(track, config) {
-  if (!track?.apple_music_id) return null;
-  for (const country of ['JP', 'US']) {
-    try {
-      const params = new URLSearchParams({ id: String(track.apple_music_id), entity: 'song', country });
-      const response = await fetch(`https://itunes.apple.com/lookup?${params}`, {
-        headers: { accept: 'application/json' },
-        signal: AbortSignal.timeout(config.requestTimeoutMs),
-      });
-      if (!response.ok) continue;
-      const raw = await response.json();
-      const item = (raw.results || []).find((value) => value.kind === 'song' && value.trackName && value.artistName)
-        || (raw.results || []).find((value) => value.trackName && value.artistName);
-      if (item) return { item, raw };
-    } catch {}
+  const seen = new Set();
+  const deduped = [];
+  for (const comment of normalized) {
+    const identity = commentIdentity(comment);
+    if (!identity || seen.has(identity)) continue;
+    seen.add(identity);
+    deduped.push(comment);
   }
-  return null;
+  return deduped;
 }
 
 export async function fetchTrackMetadata(track, config) {
-  const applePromise = fetchAppleTrackMetadata(track, config);
-
   const spotifyId = track?.spotify_id;
-  const spotifyUrl = spotifyId ? `https://open.spotify.com/track/${encodeURIComponent(spotifyId)}` : null;
-  const spotifyPromise = spotifyUrl
-    ? fetch(`https://open.spotify.com/oembed?url=${encodeURIComponent(spotifyUrl)}`, {
-      headers: { accept: 'application/json' },
-      signal: AbortSignal.timeout(config.requestTimeoutMs),
-    }).then((response) => response.ok ? response.json() : null).catch(() => null)
-    : Promise.resolve(null);
+  if (!spotifyId) return null;
 
-  const [apple, spotify] = await Promise.all([applePromise, spotifyPromise]);
-  if (!apple && !spotify?.title) return null;
+  const spotifyUrl = `https://open.spotify.com/track/${encodeURIComponent(spotifyId)}`;
+  const spotify = await fetch(`https://open.spotify.com/oembed?url=${encodeURIComponent(spotifyUrl)}`, {
+    headers: { accept: 'application/json' },
+    signal: AbortSignal.timeout(config.requestTimeoutMs),
+  }).then((response) => response.ok ? response.json() : null).catch(() => null);
+  if (!spotify?.title) return null;
 
-  const parsed = cleanSpotifyTitle(spotify?.title);
-  const title = apple?.item?.trackName || parsed.title;
-  const artist = apple?.item?.artistName
-    || String(spotify?.author_name || spotify?.author || '').trim()
+  const parsed = cleanSpotifyTitle(spotify.title);
+  const title = parsed.title;
+  const artist = String(spotify.author_name || spotify.author || '').trim()
     || parsed.artist
     || null;
   return {
@@ -216,12 +208,10 @@ export async function fetchTrackMetadata(track, config) {
     title,
     artist,
     display_title: title && artist ? `${title} — ${artist}` : parsed.displayTitle,
-    thumbnail_url: highResolutionArtwork(apple?.item?.artworkUrl100 || apple?.item?.artworkUrl60)
-      || spotify?.thumbnail_url
-      || null,
-    source: apple ? 'apple_itunes_lookup+spotify_oembed' : 'spotify_oembed',
+    thumbnail_url: spotify.thumbnail_url || null,
+    source: 'spotify_oembed',
     fetched_at: Date.now(),
-    raw: { apple: apple?.raw || null, spotify },
+    raw: { spotify },
   };
 }
 
@@ -291,7 +281,11 @@ export async function enrichTracks(env, ingestFn, queue, observedAt, config) {
 
   const limit = config.metadataLimit ?? 3;
   const missing = allMissing.slice(0, limit);
-  const metadata = (await Promise.all(missing.map((track) => fetchTrackMetadata(track, config)))).filter(Boolean);
+  const metadata = [];
+  for (const track of missing) {
+    const item = await fetchTrackMetadata(track, config);
+    if (item) metadata.push(item);
+  }
   if (metadata.length) await ingestFn(env, 'track_metadata', { tracks: metadata }, observedAt);
 
   const completeFetched = metadata.filter((item) => completeMetadata(item, item.spotify_id)).length;

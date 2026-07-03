@@ -1,0 +1,160 @@
+name: Cloudflare build diagnostics
+
+on:
+  push:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
+concurrency:
+  group: cloudflare-build-diagnostics-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  diagnose:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      github.ref == 'refs/heads/main' ||
+      contains(github.event.head_commit.message, '[ci full]') ||
+      github.ref == 'refs/heads/fix/diagnostics-state-20260703'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      CLOUDFLARE_ACCOUNT_ID: "0500f25c2f74e7e76c94a8bcb6c7008b"
+      CLOUDFLARE_BUILDS_API_TOKEN: ${{ secrets.CLOUDFLARE_BUILDS_API_TOKEN }}
+      CLOUDFLARE_WORKER_NAME: stationhead-monitor-collector
+      TARGET_SHA: ${{ github.sha }}
+      TARGET_BRANCH: ${{ github.ref_name }}
+      GH_TOKEN: ${{ github.token }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Watch exact Cloudflare build and collect logs
+        id: monitor
+        shell: bash
+        run: |
+          set +e
+          node .github/scripts/cloudflare-build-diagnostics.mjs
+          code=$?
+          echo "exit_code=$code" >> "$GITHUB_OUTPUT"
+          exit 0
+
+      - name: Prepare success or failure report
+        if: always() && steps.monitor.outputs.exit_code != ''
+        shell: bash
+        env:
+          MONITOR_EXIT_CODE: ${{ steps.monitor.outputs.exit_code }}
+        run: |
+          node --input-type=module <<'NODE'
+          import { mkdir, readFile, writeFile } from 'node:fs/promises';
+
+          const directory = '.cloudflare-build-diagnostics';
+          const read = async (name) => {
+            try {
+              return await readFile(`${directory}/${name}`, 'utf8');
+            } catch {
+              return '';
+            }
+          };
+
+          await mkdir(directory, { recursive: true });
+          let result = {};
+          try {
+            result = JSON.parse(await read('result.json'));
+          } catch {
+            result = {};
+          }
+
+          const exitCode = String(process.env.MONITOR_EXIT_CODE || '1');
+          const succeeded = exitCode === '0' && result.ok === true;
+          const log = await read('build.log');
+          const excerpt = String(log || result.reason || 'No Cloudflare build log was returned.')
+            .split(/\r?\n/)
+            .slice(-180)
+            .join('\n')
+            .slice(-52000)
+            .replace(/```/g, '`\u200b``');
+          const worker = process.env.CLOUDFLARE_WORKER_NAME || 'unknown';
+          const sha = process.env.TARGET_SHA || 'unknown';
+          const branch = process.env.TARGET_BRANCH || 'unknown';
+          const outcome = result.outcome || (succeeded ? 'success' : 'diagnostic-error');
+          const heading = succeeded ? '✅ Success' : '❌ Failure';
+          const open = succeeded ? '' : ' open';
+          const body = `<!-- cloudflare-build-diagnostics:${worker} -->
+          ## Cloudflare Worker build: ${heading}
+
+          - Worker: \`${worker}\`
+          - Commit: \`${sha}\`
+          - Branch: \`${branch}\`
+          - Build UUID: \`${result.build_uuid || 'not-found'}\`
+          - Status: \`${result.status || 'not-found'}\`
+          - Outcome: \`${outcome}\`
+
+          <details${open}>
+          <summary>Build log excerpt (last 180 lines)</summary>
+
+          \`\`\`text
+          ${excerpt}
+          \`\`\`
+
+          </details>
+
+          The complete sanitized log is attached to this GitHub Actions run.
+          `;
+          await writeFile(`${directory}/comment.md`, body.replace(/^          /gm, ''), 'utf8');
+          NODE
+
+      - name: Upload sanitized Cloudflare diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cloudflare-build-diagnostics-${{ github.sha }}
+          path: .cloudflare-build-diagnostics/
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Post or update Cloudflare build report
+        if: always() && steps.monitor.outputs.exit_code != ''
+        shell: bash
+        env:
+          MONITOR_EXIT_CODE: ${{ steps.monitor.outputs.exit_code }}
+        run: |
+          report_file=".cloudflare-build-diagnostics/comment.md"
+          if [ ! -f "$report_file" ]; then
+            echo "Cloudflare report was not generated."
+            exit 0
+          fi
+
+          marker="<!-- cloudflare-build-diagnostics:${CLOUDFLARE_WORKER_NAME} -->"
+          pr_number="$(gh api "repos/$GITHUB_REPOSITORY/commits/$TARGET_SHA/pulls" \
+            -H 'Accept: application/vnd.github+json' \
+            --jq 'map(select(.state == "open"))[0].number // empty')"
+
+          if [ -n "$pr_number" ]; then
+            comment_id="$(gh api --paginate "repos/$GITHUB_REPOSITORY/issues/$pr_number/comments?per_page=100" \
+              --jq ".[] | select(.body | contains(\"$marker\")) | .id" | tail -n 1)"
+            if [ -n "$comment_id" ]; then
+              gh api -X PATCH "repos/$GITHUB_REPOSITORY/issues/comments/$comment_id" \
+                -f body="$(cat "$report_file")" >/dev/null
+            else
+              gh pr comment "$pr_number" --body-file "$report_file"
+            fi
+          elif [ "$MONITOR_EXIT_CODE" != "0" ]; then
+            title="Cloudflare build failed: ${CLOUDFLARE_WORKER_NAME} ${TARGET_SHA:0:12}"
+            issue_number="$(gh issue list --state open --limit 100 --json number,title \
+              --jq ".[] | select(.title == \"$title\") | .number" | head -n 1)"
+            if [ -n "$issue_number" ]; then
+              gh issue comment "$issue_number" --body-file "$report_file"
+            else
+              gh issue create --title "$title" --body-file "$report_file"
+            fi
+          fi
+
+      - name: Fail the diagnostic check
+        if: steps.monitor.outputs.exit_code != '0'
+        shell: bash
+        run: exit "${{ steps.monitor.outputs.exit_code }}"
