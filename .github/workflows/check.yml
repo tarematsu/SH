@@ -1,37 +1,142 @@
-name: check
+name: Exhaustive check
 
 on:
   push:
-    branches:
-      - main
-      - refactor/cloud-primary-local-failover
-  pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
+  pull-requests: write
+  issues: write
+
+concurrency:
+  group: exhaustive-check-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  syntax-and-bundle:
-    if: github.event_name != 'push' || !contains(github.event.head_commit.message, '[codex-local-release]')
+  exhaustive-check:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'push' &&
+        (contains(github.event.head_commit.message, '[ci full]') ||
+         startsWith(github.ref, 'refs/heads/fix/diagnostics-')))
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
-        with:
-          sparse-checkout: |
-            collector
-            scraper
-            worker
-            site
-            tools
-            scripts
-            tests
-            database/migrations
+
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
       - name: Install Worker tooling
         working-directory: worker
-        run: npm install --no-audit --no-fund
-      - name: Run repository checks
-        run: npm run check
+        shell: bash
+        run: |
+          mkdir -p ../.github-exhaustive
+          set -o pipefail
+          npm install --no-audit --no-fund 2>&1 | tee -a ../.github-exhaustive/output.log
+
+      - name: Install Pages tooling
+        working-directory: site
+        shell: bash
+        run: |
+          mkdir -p ../.github-exhaustive
+          set -o pipefail
+          npm install --no-audit --no-fund 2>&1 | tee -a ../.github-exhaustive/output.log
+
+      - name: Run JavaScript, SQL, Worker and Pages integration checks
+        shell: bash
+        run: |
+          mkdir -p .github-exhaustive
+          set -o pipefail
+          npm run check 2>&1 | tee -a .github-exhaustive/output.log
+
+      - name: Audit Worker dependencies
+        working-directory: worker
+        shell: bash
+        run: |
+          set -o pipefail
+          npm audit --audit-level=high 2>&1 | tee -a ../.github-exhaustive/output.log
+
+      - name: Audit Pages dependencies
+        working-directory: site
+        shell: bash
+        run: |
+          set -o pipefail
+          npm audit --audit-level=high 2>&1 | tee -a ../.github-exhaustive/output.log
+
+      - name: Post or update exhaustive check report
+        if: always()
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          JOB_STATUS: ${{ job.status }}
+          TARGET_SHA: ${{ github.sha }}
+          TARGET_BRANCH: ${{ github.ref_name }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          mkdir -p .github-exhaustive
+          node --input-type=module <<'NODE'
+          import { appendFile, readFile, writeFile } from 'node:fs/promises';
+
+          let log = '';
+          try {
+            log = await readFile('.github-exhaustive/output.log', 'utf8');
+          } catch {
+            log = 'No command output was captured. The failure may have occurred in checkout or tool setup.';
+          }
+
+          const status = process.env.JOB_STATUS || 'unknown';
+          const succeeded = status === 'success';
+          const heading = succeeded ? '✅ Success' : '❌ Failure';
+          const open = succeeded ? '' : ' open';
+          const excerpt = String(log)
+            .split(/\r?\n/)
+            .slice(-180)
+            .join('\n')
+            .slice(-52000)
+            .replace(/```/g, '`\u200b``');
+          const body = `<!-- exhaustive-check-report -->
+          ## Exhaustive check: ${heading}
+
+          - Commit: \`${process.env.TARGET_SHA || 'unknown'}\`
+          - Branch: \`${process.env.TARGET_BRANCH || 'unknown'}\`
+          - Job status: \`${status}\`
+          - Actions run: ${process.env.RUN_URL || 'unknown'}
+
+          <details${open}>
+          <summary>Validation output (last 180 lines)</summary>
+
+          \`\`\`text
+          ${excerpt}
+          \`\`\`
+
+          </details>
+          `;
+          const report = body.replace(/^          /gm, '');
+          await writeFile('.github-exhaustive/comment.md', report, 'utf8');
+          if (process.env.GITHUB_STEP_SUMMARY) {
+            await appendFile(process.env.GITHUB_STEP_SUMMARY, report, 'utf8');
+          }
+          NODE
+
+          marker='<!-- exhaustive-check-report -->'
+          pr_number="$(gh api "repos/$GITHUB_REPOSITORY/commits/$TARGET_SHA/pulls" \
+            -H 'Accept: application/vnd.github+json' \
+            --jq 'map(select(.state == "open"))[0].number // empty')"
+
+          if [ -n "$pr_number" ]; then
+            comment_id="$(gh api --paginate "repos/$GITHUB_REPOSITORY/issues/$pr_number/comments?per_page=100" \
+              --jq ".[] | select(.body | contains(\"$marker\")) | .id" | tail -n 1)"
+            if [ -n "$comment_id" ]; then
+              gh api -X PATCH "repos/$GITHUB_REPOSITORY/issues/comments/$comment_id" \
+                -f body="$(cat .github-exhaustive/comment.md)" >/dev/null
+            else
+              gh pr comment "$pr_number" --body-file .github-exhaustive/comment.md
+            fi
+          fi

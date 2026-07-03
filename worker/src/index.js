@@ -318,7 +318,7 @@ export async function collectOnce(env, source = 'manual') {
     }
 
     let commentsSaved = 0;
-    if (state.stationId) {
+    if (state.stationId && config.chatLimit > 0) {
       stage = 'stationhead_chat_history';
       const history = await stationheadJson(
         state,

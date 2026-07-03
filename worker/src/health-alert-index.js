@@ -1,6 +1,10 @@
 import app from './main.js';
 import { getCollectorHealthView, runCollectorHealthAlert } from './health-alert.js';
 import {
+  retireRecoveredPendingAlert,
+  shouldReprepareAfterFalseRecoveryCancel,
+} from './health-alert-guard.js';
+import {
   diagnoseScheduledCollection,
   diagnosticHealthView,
   inspectCollectorState,
@@ -33,10 +37,17 @@ export function sanitizeHealthPayload(payload = {}) {
 }
 
 export function healthResponseStatus(baseStatus, collectorHealth) {
-  if (baseStatus >= 200 && baseStatus < 300 && collectorHealth?.collector_health_ok === false) {
+  const status = Number.isInteger(baseStatus) && baseStatus >= 100 && baseStatus <= 599
+    ? baseStatus
+    : 500;
+  if (status >= 200 && status < 300 && collectorHealth?.collector_health_ok === false) {
     return 503;
   }
-  return baseStatus;
+  return status;
+}
+
+function changed(result) {
+  return Number(result?.meta?.changes || 0) > 0;
 }
 
 async function emergencyIfNeeded(env, failure) {
@@ -49,15 +60,41 @@ async function emergencyIfNeeded(env, failure) {
   });
 }
 
-export async function alignFailureStartWithLastSuccess(env, state, now = Date.now()) {
+export async function cancelFalseRecoveryPending(env, prepared) {
+  if (!prepared?.diagnosis || !prepared?.incidentOpen || prepared?.pending !== 'recovery' || !env?.DB) {
+    return false;
+  }
+
+  const result = await env.DB.prepare(`DELETE FROM sh_health_alert_delivery
+    WHERE id='stationhead-collector' AND event_kind='recovery'`).run();
+  const deleted = changed(result);
+  if (deleted) prepared.pending = null;
+
+  console.warn(JSON.stringify({
+    event: deleted
+      ? 'collector_false_recovery_cancelled'
+      : 'collector_false_recovery_cancel_skipped',
+    reason: deleted ? 'active_failure_diagnostic' : 'stale_recovery_delivery',
+    code: prepared.diagnosis.code,
+    stage: prepared.diagnosis.stage,
+    delivery_deleted: deleted,
+  }));
+  return deleted;
+}
+
+export async function alignFailureStartWithLastSuccess(env, state, failure = null, now = Date.now()) {
   const lastSuccessAt = Number(state?.last_success_at || 0);
-  const failureAt = Number(state?.failure_last_at || 0);
-  if (!env?.DB || !lastSuccessAt || !failureAt || failureAt < lastSuccessAt) return false;
-  await env.DB.prepare(`UPDATE sh_collector_failure_state
-    SET first_failure_at=MIN(first_failure_at,?),updated_at=?
+  const failureAt = Number(failure?.diagnosis?.at || state?.failure_last_at || 0);
+  if (!env?.DB || !lastSuccessAt || !failureAt || failureAt <= lastSuccessAt) return false;
+  const result = await env.DB.prepare(`UPDATE sh_collector_failure_state
+    SET first_failure_at=CASE
+        WHEN first_failure_at IS NULL OR first_failure_at>? THEN ?
+        ELSE first_failure_at
+      END,
+      updated_at=?
     WHERE id='stationhead' AND last_failure_at>=?`)
-    .bind(lastSuccessAt, now, lastSuccessAt).run();
-  return true;
+    .bind(lastSuccessAt, lastSuccessAt, now, lastSuccessAt).run();
+  return Number(result?.meta?.changes || 0) > 0;
 }
 
 export default {
@@ -105,11 +142,19 @@ export default {
         const originalFirstAt = Number(priorDiagnosis.firstAt || priorDiagnosis.at || 0);
         if (originalFirstAt > 0 && env.DB) {
           await env.DB.prepare(`UPDATE sh_collector_failure_state
-            SET first_failure_at=MIN(first_failure_at,?),updated_at=? WHERE id='stationhead'`)
-            .bind(originalFirstAt, Date.now()).run().catch(() => {});
+            SET first_failure_at=CASE
+                WHEN first_failure_at IS NULL OR first_failure_at>? THEN ?
+                ELSE first_failure_at
+              END,
+              updated_at=? WHERE id='stationhead'`)
+            .bind(originalFirstAt, originalFirstAt, Date.now()).run().catch(() => {});
         }
       }
-      await alignFailureStartWithLastSuccess(env, diagnosticResult?.state).catch((error) => {
+      await alignFailureStartWithLastSuccess(
+        env,
+        diagnosticResult?.state,
+        diagnosticResult?.failure,
+      ).catch((error) => {
         console.warn(JSON.stringify({
           event: 'collector_failure_start_alignment_failed',
           error: sanitizeFailureDetail(error?.message || error),
@@ -124,18 +169,22 @@ export default {
       }));
     }
 
+    try {
+      await retireRecoveredPendingAlert(env);
+    } catch (error) {
+      await emergencyIfNeeded(env, error);
+      console.error(JSON.stringify({
+        event: 'collector_pending_alert_retire_failed',
+        error: sanitizeFailureDetail(error?.message || error),
+      }));
+    }
+
     let prepared = null;
     try {
       prepared = await prepareDetailedCollectorAlert(env);
-      if (prepared?.diagnosis && prepared?.incidentOpen && prepared?.pending === 'recovery' && env.DB) {
-        await env.DB.prepare(`DELETE FROM sh_health_alert_delivery
-          WHERE id='stationhead-collector' AND event_kind='recovery'`).run();
-        prepared.pending = null;
-        console.warn(JSON.stringify({
-          event: 'collector_false_recovery_cancelled',
-          code: prepared.diagnosis.code,
-          stage: prepared.diagnosis.stage,
-        }));
+      const cancelledFalseRecovery = await cancelFalseRecoveryPending(env, prepared);
+      if (shouldReprepareAfterFalseRecoveryCancel(cancelledFalseRecovery, prepared)) {
+        prepared = await prepareDetailedCollectorAlert(env);
       }
     } catch (error) {
       await emergencyIfNeeded(env, error);
@@ -171,36 +220,25 @@ export default {
     if (appError) throw appError;
     return diagnosticResult;
   },
-
   async fetch(request, env, ctx) {
     const response = await app.fetch(request, env, ctx);
-    const url = new URL(request.url);
-    if (request.method !== 'GET' || (url.pathname !== '/' && url.pathname !== '/health')) return response;
-    const [payload, collectorHealth, diagnostics] = await Promise.all([
-      response.json().catch(() => null),
-      getCollectorHealthView(env).catch((error) => {
-        console.error(JSON.stringify({
-          event: 'collector_health_view_failed',
-          error: sanitizeFailureDetail(error?.message || error),
-        }));
-        return {
-          collector_health_ok: false,
-          collector_health_error: 'health_check_failed',
-        };
-      }),
-      diagnosticHealthView(env),
-    ]);
-    if (!payload) return response;
-    const mergedHealth = { ...collectorHealth, ...diagnostics };
-    const headers = new Headers(response.headers);
-    headers.set('content-type', 'application/json; charset=utf-8');
-    headers.set('cache-control', 'no-store');
-    return new Response(JSON.stringify({
-      ...sanitizeHealthPayload(payload),
-      ...mergedHealth,
+    if (!new URL(request.url).pathname.endsWith('/health')) return response;
+    let payload = null;
+    try {
+      payload = await response.clone().json();
+    } catch {
+      return response;
+    }
+    const collectorHealth = await getCollectorHealthView(env).catch((error) => ({
+      collector_health_ok: false,
+      collector_health_error_present: true,
+      collector_health_error: sanitizeFailureDetail(error?.message || error),
+    }));
+    return Response.json(sanitizeHealthPayload({
+      ...payload,
+      ...collectorHealth,
     }), {
-      status: healthResponseStatus(response.status, mergedHealth),
-      headers,
+      status: healthResponseStatus(response.status, collectorHealth),
     });
   },
 };
