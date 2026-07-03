@@ -79,8 +79,12 @@ export async function retireRecoveredPendingAlert(env, now = Date.now()) {
     return false;
   }
 
+  const currentSuccessAt = finite(row.last_success_at);
+  const baselineSuccessAt = finite(row.baseline_success_at);
+  const observedSuccessAt = baselineSuccessAt ?? currentSuccessAt;
   const incidentStartedAt = finite(row.incident_started_at)
-    ?? finite(row.baseline_success_at)
+    ?? baselineSuccessAt
+    ?? currentSuccessAt
     ?? now;
   const retiredId = retiredDeliveryId(row.idempotency_key, now);
   const retireResult = await env.DB.prepare(`UPDATE sh_health_alert_delivery SET
@@ -112,7 +116,7 @@ export async function retireRecoveredPendingAlert(env, now = Date.now()) {
     )`)
     .bind(
       incidentStartedAt,
-      finite(row.baseline_success_at),
+      observedSuccessAt,
       now,
       ALERT_ID,
       retiredId,
@@ -141,8 +145,9 @@ export async function retireRecoveredPendingAlert(env, now = Date.now()) {
   console.log(JSON.stringify({
     event: 'collector_health_alert_retired_after_recovery',
     incident_started_at: incidentStartedAt,
-    baseline_success_at: finite(row.baseline_success_at),
-    current_success_at: finite(row.last_success_at),
+    baseline_success_at: baselineSuccessAt,
+    observed_success_at: observedSuccessAt,
+    current_success_at: currentSuccessAt,
   }));
   return true;
 }
