@@ -1,0 +1,234 @@
+name: Apply intermittent collector stall fix
+
+on:
+  push:
+    branches:
+      - fix/isolate-optional-subrequests-20260704
+
+permissions:
+  contents: write
+
+jobs:
+  apply-and-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref_name }}
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Apply source changes
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+
+          def replace_once(path, old, new):
+              file = Path(path)
+              text = file.read_text(encoding='utf-8')
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f'{path}: expected exactly one match, found {count}')
+              file.write_text(text.replace(old, new), encoding='utf-8')
+
+          replace_once(
+              'worker/src/shared.js',
+              "const TRACK_METADATA_CACHE_TTL_MS = 30 * 60 * 1000;\nconst TRACK_METADATA_CACHE_MAX = 16;\nconst trackMetadataQueueCache = new Map();",
+              "const TRACK_METADATA_CACHE_TTL_MS = 30 * 60 * 1000;\nconst TRACK_METADATA_FAILURE_TTL_MS = 5 * 60 * 1000;\nconst TRACK_METADATA_CACHE_MAX = 16;\nconst trackMetadataQueueCache = new Map();\nconst trackMetadataFlights = new Map();\nconst trackMetadataFailures = new Map();",
+          )
+
+          replace_once(
+              'worker/src/shared.js',
+              "export async function fetchTrackMetadata(track, config) {\n  const spotifyId = track?.spotify_id;\n  if (!spotifyId) return null;\n\n  const spotifyUrl = `https://open.spotify.com/track/${encodeURIComponent(spotifyId)}`;\n  const spotify = await fetch(`https://open.spotify.com/oembed?url=${encodeURIComponent(spotifyUrl)}`, {\n    headers: { accept: 'application/json' },\n    signal: AbortSignal.timeout(config.requestTimeoutMs),\n  }).then((response) => response.ok ? response.json() : null).catch(() => null);\n  if (!spotify?.title) return null;\n\n  const parsed = cleanSpotifyTitle(spotify.title);\n  const title = parsed.title;\n  const artist = String(spotify.author_name || spotify.author || '').trim()\n    || parsed.artist\n    || null;\n  return {\n    spotify_id: spotifyId,\n    spotify_url: spotifyUrl,\n    title,\n    artist,\n    display_title: title && artist ? `${title} — ${artist}` : parsed.displayTitle,\n    thumbnail_url: spotify.thumbnail_url || null,\n    source: 'spotify_oembed',\n    fetched_at: Date.now(),\n    raw: { spotify },\n  };\n}",
+              "function metadataRequestTimeoutMs(config = {}) {\n  const configured = positiveNumber(config.metadataRequestTimeoutMs, 5_000);\n  const requestLimit = positiveNumber(config.requestTimeoutMs, configured);\n  return Math.min(configured, requestLimit, 10_000);\n}\n\nfunction metadataFailureBackoffMs(config = {}) {\n  return Math.min(\n    positiveNumber(config.metadataFailureBackoffMs, TRACK_METADATA_FAILURE_TTL_MS),\n    60 * 60 * 1000,\n  );\n}\n\nexport async function fetchTrackMetadata(track, config = {}) {\n  const spotifyId = String(track?.spotify_id || '').trim();\n  if (!spotifyId) return null;\n\n  const now = Date.now();\n  const retryAt = Number(trackMetadataFailures.get(spotifyId) || 0);\n  if (retryAt > now) return null;\n  if (retryAt) trackMetadataFailures.delete(spotifyId);\n\n  const existing = trackMetadataFlights.get(spotifyId);\n  if (existing) return existing;\n\n  const pending = (async () => {\n    const spotifyUrl = `https://open.spotify.com/track/${encodeURIComponent(spotifyId)}`;\n    const response = await fetch(`https://open.spotify.com/oembed?url=${encodeURIComponent(spotifyUrl)}`, {\n      headers: { accept: 'application/json' },\n      signal: AbortSignal.timeout(metadataRequestTimeoutMs(config)),\n    });\n    if (!response.ok) {\n      await response.arrayBuffer().catch(() => {});\n      trackMetadataFailures.set(spotifyId, Date.now() + metadataFailureBackoffMs(config));\n      return null;\n    }\n\n    const spotify = await response.json().catch(() => null);\n    if (!spotify?.title) {\n      trackMetadataFailures.set(spotifyId, Date.now() + metadataFailureBackoffMs(config));\n      return null;\n    }\n\n    trackMetadataFailures.delete(spotifyId);\n    const parsed = cleanSpotifyTitle(spotify.title);\n    const title = parsed.title;\n    const artist = String(spotify.author_name || spotify.author || '').trim()\n      || parsed.artist\n      || null;\n    return {\n      spotify_id: spotifyId,\n      spotify_url: spotifyUrl,\n      title,\n      artist,\n      display_title: title && artist ? `${title} — ${artist}` : parsed.displayTitle,\n      thumbnail_url: spotify.thumbnail_url || null,\n      source: 'spotify_oembed',\n      fetched_at: Date.now(),\n      raw: { spotify },\n    };\n  })().catch(() => {\n    trackMetadataFailures.set(spotifyId, Date.now() + metadataFailureBackoffMs(config));\n    return null;\n  }).finally(() => {\n    if (trackMetadataFlights.get(spotifyId) === pending) trackMetadataFlights.delete(spotifyId);\n  });\n\n  trackMetadataFlights.set(spotifyId, pending);\n  return pending;\n}",
+          )
+
+          replace_once(
+              'worker/src/shared.js',
+              "export function resetTrackMetadataQueueCache() {\n  trackMetadataQueueCache.clear();\n}",
+              "export function resetTrackMetadataQueueCache() {\n  trackMetadataQueueCache.clear();\n  trackMetadataFlights.clear();\n  trackMetadataFailures.clear();\n}",
+          )
+
+          replace_once(
+              'worker/src/shared.js',
+              "  const metadata = [];\n  for (const track of missing) {\n    const item = await fetchTrackMetadata(track, config);\n    if (item) metadata.push(item);\n  }",
+              "  const metadata = (await Promise.all(\n    missing.map((track) => fetchTrackMetadata(track, config)),\n  )).filter(Boolean);",
+          )
+
+          replace_once(
+              'worker/src/index.js',
+              "    metadataLimit: Math.min(numberValue(env.METADATA_LIMIT, 3), 10),\n    requestTimeoutMs: Math.min(numberValue(env.REQUEST_TIMEOUT_MS, 15_000), 30_000),",
+              "    metadataLimit: Math.min(numberValue(env.METADATA_LIMIT, 3), 10),\n    metadataRequestTimeoutMs: Math.min(numberValue(env.METADATA_REQUEST_TIMEOUT_MS, 5_000), 10_000),\n    metadataFailureBackoffMs: Math.min(numberValue(env.METADATA_FAILURE_BACKOFF_MS, 300_000), 3_600_000),\n    requestTimeoutMs: Math.min(numberValue(env.REQUEST_TIMEOUT_MS, 15_000), 30_000),",
+          )
+
+          replace_once(
+              'worker/src/index.js',
+              "    const queue = extractQueue(channel, state.stationId);\n    let queueResult = null;\n    let metadataSaved = 0;\n    if (queue) {\n      stage = 'd1_write_queue';\n      queueResult = await ingest(env, 'queue', queue, observedAt);\n      stage = 'd1_write_track_metadata';\n      metadataSaved = await enrichTracks(env, queue, observedAt, config);\n    }",
+              "    const queue = extractQueue(channel, state.stationId);\n    let queueResult = null;\n    let metadataSaved = 0;\n    if (queue) {\n      stage = 'd1_write_queue';\n      queueResult = await ingest(env, 'queue', queue, observedAt);\n    }",
+          )
+
+          replace_once(
+              'worker/src/index.js',
+              "    await clearCollectorFailure(env).catch((error) => {\n      console.warn(JSON.stringify({\n        event: 'collector_failure_clear_failed',\n        error: sanitizeFailureDetail(error?.message || error),\n      }));\n    });\n\n    return {",
+              "    await clearCollectorFailure(env).catch((error) => {\n      console.warn(JSON.stringify({\n        event: 'collector_failure_clear_failed',\n        error: sanitizeFailureDetail(error?.message || error),\n      }));\n    });\n\n    if (queue) {\n      try {\n        metadataSaved = await enrichTracks(env, queue, observedAt, config);\n      } catch (error) {\n        console.warn(JSON.stringify({\n          event: 'collector_track_metadata_failed',\n          error: sanitizeFailureDetail(error?.message || error),\n        }));\n      }\n    }\n\n    return {",
+          )
+
+          replace_once(
+              'worker/src/optimized-index.js',
+              "const nativeFetch = globalThis.fetch.bind(globalThis);",
+              "const nativeFetch = globalThis.fetch.bind(globalThis);\nconst CHAT_HISTORY_ATTEMPT_TIMEOUT_MS = 8_000;\n\nexport function retryableChatHistoryStatus(status) {\n  const code = Number(status);\n  return code === 400 || code === 408 || code === 413 || code === 425 || code === 429 || code >= 500;\n}",
+          )
+
+          replace_once(
+              'worker/src/optimized-index.js',
+              "        signal: AbortSignal.timeout(15_000),",
+              "        signal: AbortSignal.timeout(CHAT_HISTORY_ATTEMPT_TIMEOUT_MS),",
+          )
+
+          replace_once(
+              'worker/src/optimized-index.js',
+              "      if (response.status < 500) {\n        if (limit !== requestedLimit) {\n          console.warn(JSON.stringify({\n            event: 'stationhead_chat_history_fallback',\n            requested_limit: requestedLimit,\n            successful_limit: limit,\n          }));\n        }\n        return response;\n      }\n\n      lastReason = `HTTP ${response.status} at limit=${limit}`;",
+              "      if (response.ok) {\n        if (limit !== requestedLimit) {\n          console.warn(JSON.stringify({\n            event: 'stationhead_chat_history_fallback',\n            requested_limit: requestedLimit,\n            successful_limit: limit,\n          }));\n        }\n        return response;\n      }\n      if (!retryableChatHistoryStatus(response.status)) return response;\n\n      lastReason = `HTTP ${response.status} at limit=${limit}`;",
+          )
+
+          replace_once(
+              'worker/src/cloud-host-monitor.js',
+              "    metadataLimit: Math.min(positive(env.METADATA_LIMIT, 3), 10),\n    requestTimeoutMs: Math.min(positive(env.REQUEST_TIMEOUT_MS, 20000), 30000),",
+              "    metadataLimit: Math.min(positive(env.METADATA_LIMIT, 3), 10),\n    metadataRequestTimeoutMs: Math.min(positive(env.METADATA_REQUEST_TIMEOUT_MS, 5_000), 10_000),\n    metadataFailureBackoffMs: Math.min(positive(env.METADATA_FAILURE_BACKOFF_MS, 300_000), 3_600_000),\n    requestTimeoutMs: Math.min(positive(env.REQUEST_TIMEOUT_MS, 20000), 30000),",
+          )
+
+          replace_once(
+              'worker/wrangler.jsonc',
+              '    "METADATA_LIMIT": 2,\n    "REQUEST_TIMEOUT_MS": 20000,',
+              '    "METADATA_LIMIT": 2,\n    "METADATA_REQUEST_TIMEOUT_MS": 5000,\n    "METADATA_FAILURE_BACKOFF_MS": 300000,\n    "REQUEST_TIMEOUT_MS": 20000,',
+          )
+
+          shared_tests = Path('tests/worker-shared.test.mjs')
+          shared_tests.write_text(shared_tests.read_text(encoding='utf-8') + r'''
+
+          test('duplicate metadata requests share one Spotify subrequest', async () => {
+            resetTrackMetadataQueueCache();
+            let calls = 0;
+            let release;
+            const gate = new Promise((resolve) => { release = resolve; });
+            await withFetch(async () => {
+              calls += 1;
+              await gate;
+              return new Response(JSON.stringify({ title: 'Track | Spotify', author_name: 'Artist' }), { status: 200 });
+            }, async () => {
+              const config = { requestTimeoutMs: 1000, metadataRequestTimeoutMs: 1000 };
+              const first = fetchTrackMetadata({ spotify_id: 'shared-id' }, config);
+              const second = fetchTrackMetadata({ spotify_id: 'shared-id' }, config);
+              await new Promise((resolve) => setImmediate(resolve));
+              assert.equal(calls, 1);
+              release();
+              const [left, right] = await Promise.all([first, second]);
+              assert.equal(left.title, 'Track');
+              assert.deepEqual(right, left);
+            });
+          });
+
+          test('failed metadata requests use a backoff instead of retrying every minute', async () => {
+            resetTrackMetadataQueueCache();
+            let calls = 0;
+            await withFetch(async () => {
+              calls += 1;
+              return new Response('rate limited', { status: 429 });
+            }, async () => {
+              const config = { requestTimeoutMs: 1000, metadataRequestTimeoutMs: 1000, metadataFailureBackoffMs: 60_000 };
+              assert.equal(await fetchTrackMetadata({ spotify_id: 'failed-id' }, config), null);
+              assert.equal(await fetchTrackMetadata({ spotify_id: 'failed-id' }, config), null);
+              assert.equal(calls, 1);
+            });
+          });
+
+          test('missing queue metadata is fetched in parallel within one timeout window', async () => {
+            resetTrackMetadataQueueCache();
+            let active = 0;
+            let maxActive = 0;
+            let release;
+            const gate = new Promise((resolve) => { release = resolve; });
+            const env = {
+              DB: {
+                prepare() {
+                  return {
+                    bind() { return this; },
+                    async all() { return { results: [] }; },
+                  };
+                },
+              },
+            };
+            let ingested = null;
+            await withFetch(async (request) => {
+              active += 1;
+              maxActive = Math.max(maxActive, active);
+              await gate;
+              active -= 1;
+              const url = new URL(typeof request === 'string' ? request : request.url);
+              const id = new URL(url.searchParams.get('url')).pathname.split('/').at(-1);
+              return new Response(JSON.stringify({ title: `${id} | Spotify`, author_name: 'Artist' }), { status: 200 });
+            }, async () => {
+              const pending = enrichTracks(
+                env,
+                async (_env, type, data) => { ingested = { type, data }; },
+                { tracks: [{ spotify_id: 'one' }, { spotify_id: 'two' }] },
+                1000,
+                { metadataLimit: 2, requestTimeoutMs: 1000, metadataRequestTimeoutMs: 1000 },
+              );
+              await new Promise((resolve) => setImmediate(resolve));
+              assert.equal(maxActive, 2);
+              release();
+              assert.equal(await pending, 2);
+              assert.equal(ingested.type, 'track_metadata');
+              assert.equal(ingested.data.tracks.length, 2);
+            });
+          });
+          '''.replace(/^          /gm, ''), encoding='utf-8')
+
+          Path('tests/worker-chat-history-retry.test.mjs').write_text(r'''import test from 'node:test';
+          import assert from 'node:assert/strict';
+
+          import { retryableChatHistoryStatus } from '../worker/src/optimized-index.js';
+
+          test('chat history retries overload and size-related failures at a smaller limit', () => {
+            for (const status of [400, 408, 413, 425, 429, 500, 503]) {
+              assert.equal(retryableChatHistoryStatus(status), true, String(status));
+            }
+          });
+
+          test('chat history does not hide authentication or missing-route failures', () => {
+            for (const status of [401, 403, 404]) {
+              assert.equal(retryableChatHistoryStatus(status), false, String(status));
+            }
+          });
+          '''.replace(/^          /gm, ''), encoding='utf-8')
+          PY
+
+      - name: Install dependencies
+        run: |
+          npm --prefix worker install --no-audit --no-fund
+          npm --prefix site install --no-audit --no-fund
+
+      - name: Run full repository checks
+        run: npm run check
+
+      - name: Commit validated changes
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -f .github/workflows/apply-intermittent-stall-fix.yml
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git commit -m 'fix: isolate optional subrequests from primary collection'
+          git push origin "HEAD:${GITHUB_REF_NAME}"
