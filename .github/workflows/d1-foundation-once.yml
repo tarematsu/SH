@@ -9,6 +9,8 @@ on:
 
 permissions:
   contents: read
+  issues: write
+  pull-requests: write
 
 concurrency:
   group: d1-foundation-migration-once
@@ -57,3 +59,17 @@ jobs:
         run: >-
           npx wrangler d1 execute stationhead-monitor --remote
           --command "SELECT name FROM sqlite_master WHERE type='table' AND name='sh_email_stream_snapshots';"
+
+      - name: Report result to pull request
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          JOB_STATUS: ${{ job.status }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        shell: bash
+        run: |
+          gh pr comment 79 --body "D1 single-migration run finished with status: **${JOB_STATUS}**
+
+          Target: \`003_email_stream_snapshots.sql\`
+
+          Run: ${RUN_URL}"
