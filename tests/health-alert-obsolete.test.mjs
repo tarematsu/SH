@@ -150,6 +150,18 @@ test('obsolete pending outage alert is retired and preserved as recovery pending
   assert.equal(db.delivery.last_error, 'retired_after_recovery');
 });
 
+test('obsolete pending outage alert without a baseline preserves current success evidence', async () => {
+  const db = healthAlertDb({ lastSuccessAt: 101, baselineSuccessAt: null });
+
+  assert.equal(await retireRecoveredPendingAlert({ DB: db }, 200), true);
+
+  assert.equal(db.state.incident_open, 1);
+  assert.equal(db.state.incident_started_at, 90);
+  assert.equal(db.state.last_observed_success_at, 101);
+  assert.match(db.delivery.id, /^retired-200-/);
+  assert.equal(db.delivery.last_error, 'retired_after_recovery');
+});
+
 test('current pending outage alert is not retired before a newer success exists', async () => {
   const db = healthAlertDb({ lastSuccessAt: 100, baselineSuccessAt: 100 });
 
