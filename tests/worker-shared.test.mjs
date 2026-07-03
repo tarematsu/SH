@@ -6,6 +6,7 @@ import {
   enrichTracks,
   fetchTrackMetadata,
   jsonResponse,
+  normalizeComments,
   resetTrackMetadataQueueCache,
 } from '../worker/src/shared.js';
 
@@ -94,6 +95,24 @@ test('duplicate Stationhead station and comment reads share one response per min
   now += 60_000;
   await cachedFetch(stationUrl, { method: 'POST', headers, body: '{}' });
   assert.equal(calls, 3);
+});
+
+test('comment normalization ignores duplicate upstream IDs before reporting saved counts', () => {
+  const comments = normalizeComments({
+    chats: {
+      items: [
+        { id: 101, text: 'first', account: { id: 1, handle: 'a' } },
+        { id: 101, text: 'duplicate', account: { id: 1, handle: 'a' } },
+        { id: 'external-1', text: 'raw string id', account: { id: 2, handle: 'b' } },
+        { id: 'external-1', text: 'duplicate raw string id', account: { id: 2, handle: 'b' } },
+      ],
+    },
+  }, 55);
+
+  assert.equal(comments.length, 2);
+  assert.deepEqual(comments.map((comment) => comment.id), [101, 'external-1']);
+  assert.deepEqual(comments.map((comment) => comment.text), ['first', 'raw string id']);
+  assert.deepEqual(comments.map((comment) => comment.station_id), [55, 55]);
 });
 
 test('failed Stationhead reads are not retained after the in-flight request', async () => {
