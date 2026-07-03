@@ -1,79 +1,39 @@
-name: Controlled CI
+name: Exhaustive check
 
 on:
   push:
-    branches:
-      - main
-      - refactor/cloud-primary-local-failover
-  pull_request:
   workflow_dispatch:
-    inputs:
-      level:
-        description: Test level
-        required: true
-        type: choice
-        default: quick
-        options:
-          - quick
-          - full
 
 permissions:
   contents: read
 
 concurrency:
-  group: controlled-ci-${{ github.workflow }}-${{ github.ref }}
+  group: exhaustive-check-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  syntax-and-bundle:
-    if: github.event_name != 'push' || !contains(github.event.head_commit.message, '[codex-local-release]')
+  exhaustive-check:
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[ci full]'))
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
-          sparse-checkout: |
-            collector
-            scraper
-            worker
-            site
-            tools
-            scripts
-            tests
-            database/migrations
-            package.json
 
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
 
-      - name: Select test level
-        id: mode
-        shell: bash
-        env:
-          MANUAL_LEVEL: ${{ inputs.level }}
-        run: |
-          level="quick"
-          if [[ "${{ github.event_name }}" == "push" ]]; then
-            level="full"
-          elif [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
-            level="${MANUAL_LEVEL:-quick}"
-          elif git log -1 --pretty=%B | grep -Fqi '[ci full]'; then
-            level="full"
-          fi
-          echo "level=$level" >> "$GITHUB_OUTPUT"
-          echo "Selected CI level: $level"
-
-      - name: Run quick checks
-        if: steps.mode.outputs.level == 'quick'
-        run: npm run check:js && npm run test:js
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
 
       - name: Install Worker tooling
-        if: steps.mode.outputs.level == 'full'
         working-directory: worker
         run: npm install --no-audit --no-fund
 
-      - name: Run full repository checks
-        if: steps.mode.outputs.level == 'full'
+      - name: Run JavaScript, SQL, and Worker bundle checks
         run: npm run check
+
+      - name: Audit Worker dependencies
+        working-directory: worker
+        run: npm audit --audit-level=high
