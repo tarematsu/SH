@@ -1,3 +1,5 @@
+import { createStationheadTrafficGuard } from './stationhead-traffic-guard.js';
+
 const BLOCKED_HOSTS = new Set([
   'itunes.apple.com',
 ]);
@@ -114,5 +116,8 @@ export function createOptionalFetchGuard(nativeFetch, nowFn = Date.now) {
 }
 
 if (typeof globalThis.fetch === 'function' && !globalThis.fetch[INSTALL_MARK]) {
-  globalThis.fetch = createOptionalFetchGuard(globalThis.fetch.bind(globalThis));
+  const optionalGuard = createOptionalFetchGuard(globalThis.fetch.bind(globalThis));
+  const stationheadGuard = createStationheadTrafficGuard(optionalGuard);
+  Object.defineProperty(stationheadGuard, INSTALL_MARK, { value: true });
+  globalThis.fetch = stationheadGuard;
 }
