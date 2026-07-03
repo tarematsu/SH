@@ -98,3 +98,5 @@ jobs:
       - name: Fail if deployment failed
         if: steps.deploy.outputs.code != '0'
         run: exit 1
+
+# This follow-up commit triggers the workflow after the file exists on main.
