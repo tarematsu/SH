@@ -163,6 +163,18 @@ test('failure start uses the just-recorded event even when the loaded state is s
   ), false);
 });
 
+test('failure start alignment treats the success millisecond as recovered', async () => {
+  const db = alignmentDb();
+
+  assert.equal(await alignFailureStartWithLastSuccess(
+    db.env,
+    { last_success_at: 2000, failure_last_at: 2000 },
+    null,
+    3000,
+  ), false);
+  assert.equal(db.statement, '');
+});
+
 test('failure start alignment handles NULL first_failure_at explicitly', async () => {
   const db = alignmentDb();
 
