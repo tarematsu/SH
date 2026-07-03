@@ -6,6 +6,7 @@ on:
       - maintenance/d1-audit-report
     paths:
       - .github/workflows/d1-audit-once.yml
+      - site/scripts/audit-d1-migrations.mjs
 
 permissions:
   contents: read
@@ -73,5 +74,5 @@ jobs:
             cat site/d1-audit-report.md >> "$GITHUB_STEP_SUMMARY"
             gh pr comment 80 --body-file site/d1-audit-report.md
           else
-            gh pr comment 80 --body "D1監査ワークフロー自体が失敗し、調査レポートを生成できませんでした。Actionsログを確認してください。"
+            gh pr comment 80 --body "D1 audit failed before the report was generated."
           fi
