@@ -82,7 +82,7 @@ export async function cancelFalseRecoveryPending(env, prepared) {
 export async function alignFailureStartWithLastSuccess(env, state, failure = null, now = Date.now()) {
   const lastSuccessAt = Number(state?.last_success_at || 0);
   const failureAt = Number(failure?.diagnosis?.at || state?.failure_last_at || 0);
-  if (!env?.DB || !lastSuccessAt || !failureAt || failureAt < lastSuccessAt) return false;
+  if (!env?.DB || !lastSuccessAt || !failureAt || failureAt <= lastSuccessAt) return false;
   const result = await env.DB.prepare(`UPDATE sh_collector_failure_state
     SET first_failure_at=CASE
         WHEN first_failure_at IS NULL OR first_failure_at>? THEN ?
