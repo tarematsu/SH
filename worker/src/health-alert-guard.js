@@ -22,6 +22,15 @@ export function pendingAlertIsObsolete(row) {
   return baselineSuccessAt == null || currentSuccessAt > baselineSuccessAt;
 }
 
+export function shouldReprepareAfterFalseRecoveryCancel(cancelled, prepared) {
+  return Boolean(
+    cancelled
+      && prepared?.diagnosis
+      && prepared?.pending == null
+      && !prepared?.incidentOpen
+  );
+}
+
 function retiredDeliveryId(idempotencyKey, now) {
   let hash = 2166136261;
   for (const character of String(idempotencyKey || '')) {
