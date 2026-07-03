@@ -72,3 +72,5 @@ jobs:
           else
             gh pr comment "$pr_number" --repo "$GITHUB_REPOSITORY" --body-file /tmp/stationhead-runtime/comment.md
           fi
+
+# Triggered after PR creation so the result can be posted to the PR.
