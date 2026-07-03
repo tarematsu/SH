@@ -142,6 +142,12 @@ export function cleanSpotifyTitle(rawTitle) {
   };
 }
 
+function commentIdentity(comment) {
+  if (comment?.comment_id != null) return `numeric:${comment.comment_id}`;
+  const rawId = String(comment?.id ?? '').trim();
+  return rawId ? `raw:${rawId}` : null;
+}
+
 export function normalizeComments(payload, stationId, { finite } = {}) {
   const toFinite = finite || ((value) => {
     if (value === undefined || value === null || value === '') return null;
@@ -150,7 +156,7 @@ export function normalizeComments(payload, stationId, { finite } = {}) {
   });
   const candidates = [payload, payload?.items, payload?.data?.items, payload?.chats?.items, payload?.chats];
   const items = candidates.find(Array.isArray) || [];
-  return items.map((chat) => ({
+  const normalized = items.map((chat) => ({
     comment_id: toFinite(chat?.id),
     id: chat?.id,
     station_id: toFinite(chat?.station_id ?? stationId),
@@ -168,6 +174,16 @@ export function normalizeComments(payload, stationId, { finite } = {}) {
     emoji: chat?.account?.emoji ?? null,
     raw: chat,
   })).filter((comment) => comment.comment_id != null || comment.id != null);
+
+  const seen = new Set();
+  const deduped = [];
+  for (const comment of normalized) {
+    const identity = commentIdentity(comment);
+    if (!identity || seen.has(identity)) continue;
+    seen.add(identity);
+    deduped.push(comment);
+  }
+  return deduped;
 }
 
 export async function fetchTrackMetadata(track, config) {
