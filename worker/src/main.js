@@ -35,7 +35,6 @@ export async function runPrimaryScheduled(controller, env, ctx, scheduled = app.
   const timeoutMs = timeoutOverride ?? primaryWatchdogMs(env);
   let timeoutId = null;
 
-  resetCollectionFlight();
   try {
     return await Promise.race([
       scheduled(controller, env, ctx),
