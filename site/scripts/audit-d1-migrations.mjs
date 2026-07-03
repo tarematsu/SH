@@ -68,15 +68,19 @@ const appliedRepositoryFiles = migrationFiles.filter((name) => applied.has(name)
 const appliedUnknownFiles = [...applied].filter((name) => !migrationFiles.includes(name)).sort();
 
 const typeOrder = new Map([['table', 0], ['view', 1], ['index', 2], ['trigger', 3]]);
-const schemaSql = schemaRows
-  .filter((row) => !String(row.name).startsWith('sqlite_') && row.name !== 'd1_migrations')
+const userSchemaRows = schemaRows.filter((row) => {
+  const name = String(row.name || '');
+  const table = String(row.tbl_name || '');
+  return name.startsWith('sh_') || table.startsWith('sh_');
+});
+const schemaSql = userSchemaRows
   .sort((a, b) => (typeOrder.get(a.type) ?? 9) - (typeOrder.get(b.type) ?? 9) || String(a.name).localeCompare(String(b.name)))
   .map((row) => `${String(row.sql).replace(/;\s*$/, '')};`)
   .join('\n\n');
 writeFileSync(schemaPath, `${schemaSql}\n`, 'utf8');
 
 const knownObjects = new Set(
-  schemaRows
+  userSchemaRows
     .filter((row) => row.type === 'table' || row.type === 'view')
     .map((row) => String(row.name).toLowerCase()),
 );
