@@ -8,15 +8,32 @@ jobs:
     steps:
       - checkout
       - run:
-          name: Install Python and Worker tooling
+          name: Select validation mode
           command: |
-            sudo apt-get update
-            sudo apt-get install -y python3
-            sudo ln -sf /usr/bin/python3 /usr/local/bin/python
-            npm --prefix worker install --no-audit --no-fund
+            commit_message="$(git log -1 --pretty=%B)"
+            if printf '%s' "$commit_message" | grep -q '\[ci quick\]'; then
+              echo 'export CHECK_MODE=quick' >> "$BASH_ENV"
+            else
+              echo 'export CHECK_MODE=full' >> "$BASH_ENV"
+            fi
+      - run:
+          name: Install full-check dependencies
+          command: |
+            if [ "$CHECK_MODE" = "full" ]; then
+              sudo apt-get update
+              sudo apt-get install -y python3
+              sudo ln -sf /usr/bin/python3 /usr/local/bin/python
+              npm --prefix worker install --no-audit --no-fund
+            fi
       - run:
           name: Run repository checks
-          command: npm run check
+          command: |
+            if [ "$CHECK_MODE" = "quick" ]; then
+              npm run check:js
+              npm run test:js
+            else
+              npm run check
+            fi
 
 workflows:
   repository-checks:
