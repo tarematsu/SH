@@ -50,8 +50,30 @@ async function expireLeaseWhenPrimaryFailed(env, runStartedAt) {
 export default {
   async scheduled(controller, env, ctx) {
     const runStartedAt = Date.now();
-    await app.scheduled(controller, env, ctx);
-    await expireLeaseWhenPrimaryFailed(env, runStartedAt);
+    let appError;
+    try {
+      await app.scheduled(controller, env, ctx);
+    } catch (error) {
+      appError = error;
+    }
+
+    let leaseError;
+    try {
+      await expireLeaseWhenPrimaryFailed(env, runStartedAt);
+    } catch (error) {
+      leaseError = error;
+    }
+
+    if (appError) {
+      if (leaseError) {
+        console.error(JSON.stringify({
+          event: 'collector_lease_expiry_failed',
+          error: String(leaseError?.message || leaseError),
+        }));
+      }
+      throw appError;
+    }
+    if (leaseError) throw leaseError;
     ctx.waitUntil(runCloudWeeklyLeaderboard(env));
   },
 
