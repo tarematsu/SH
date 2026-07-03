@@ -15,7 +15,7 @@ jobs:
   exhaustive-check:
     if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[ci full]'))
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
 
@@ -31,9 +31,17 @@ jobs:
         working-directory: worker
         run: npm install --no-audit --no-fund
 
-      - name: Run JavaScript, SQL, and Worker bundle checks
+      - name: Install Pages tooling
+        working-directory: site
+        run: npm install --no-audit --no-fund
+
+      - name: Run JavaScript, SQL, Worker and Pages integration checks
         run: npm run check
 
       - name: Audit Worker dependencies
         working-directory: worker
+        run: npm audit --audit-level=high
+
+      - name: Audit Pages dependencies
+        working-directory: site
         run: npm audit --audit-level=high
