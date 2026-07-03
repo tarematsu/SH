@@ -121,6 +121,27 @@ test('authentication control error is used when the collector never starts', () 
   assert.equal(diagnosis.stage, 'stationhead_auth');
 });
 
+test('collector success at the same millisecond suppresses stale failure evidence', () => {
+  assert.equal(diagnosisFromState({
+    last_success_at: 2000,
+    failure_first_at: 1000,
+    failure_last_at: 2000,
+    failure_code: 'STATIONHEAD_TIMEOUT',
+    failure_stage: 'stationhead_channel_request',
+    auth_last_attempt_at: 2000,
+    auth_last_error: 'guest token failed: status=403',
+    last_run_at: 2000,
+    last_error: 'Stationhead API 500',
+  }), null);
+
+  assert.equal(diagnosisFromState({
+    last_success_at: 2000,
+    failure_last_at: 2001,
+    failure_code: 'STATIONHEAD_TIMEOUT',
+    failure_stage: 'stationhead_channel_request',
+  }).code, 'STATIONHEAD_TIMEOUT');
+});
+
 test('failure start uses the just-recorded event even when the loaded state is stale', async () => {
   const db = alignmentDb();
 
