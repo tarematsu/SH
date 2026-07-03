@@ -1,6 +1,8 @@
+const BLOCKED_HOSTS = new Set([
+  'itunes.apple.com',
+]);
 const OPTIONAL_HOSTS = new Set([
   'open.spotify.com',
-  'itunes.apple.com',
 ]);
 const OPTIONAL_TIMEOUT_MS = 5_000;
 const OPTIONAL_FAILURE_BACKOFF_MS = 5 * 60_000;
@@ -15,6 +17,16 @@ function requestUrl(input) {
 
 function requestMethod(input, init) {
   return String(init?.method || input?.method || 'GET').toUpperCase();
+}
+
+function blockedResponse(hostname) {
+  return new Response('', {
+    status: 410,
+    headers: {
+      'cache-control': 'no-store',
+      'x-stationhead-fetch-guard': `blocked:${hostname}`,
+    },
+  });
 }
 
 function failureResponse(hostname) {
@@ -53,6 +65,7 @@ export function createOptionalFetchGuard(nativeFetch, nowFn = Date.now) {
       return nativeFetch(input, init);
     }
 
+    if (BLOCKED_HOSTS.has(url.hostname)) return blockedResponse(url.hostname);
     if (!OPTIONAL_HOSTS.has(url.hostname)) return nativeFetch(input, init);
 
     const method = requestMethod(input, init);
