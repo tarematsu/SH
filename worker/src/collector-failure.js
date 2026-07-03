@@ -269,9 +269,10 @@ export function diagnosisFromState(state = {}) {
     };
   }
 
-  if (state.last_error) {
+  const collectorRunAt = finite(state.last_run_at);
+  if (state.last_error && (collectorRunAt == null || collectorRunAt >= lastSuccessAt)) {
     return {
-      ...diagnoseCollectorFailure(state.last_error, 'collector_unknown', finite(state.last_run_at) || Date.now()),
+      ...diagnoseCollectorFailure(state.last_error, 'collector_unknown', collectorRunAt || Date.now()),
       count: null,
       source: 'collector-state',
     };
