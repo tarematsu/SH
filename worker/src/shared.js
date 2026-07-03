@@ -281,7 +281,11 @@ export async function enrichTracks(env, ingestFn, queue, observedAt, config) {
 
   const limit = config.metadataLimit ?? 3;
   const missing = allMissing.slice(0, limit);
-  const metadata = (await Promise.all(missing.map((track) => fetchTrackMetadata(track, config)))).filter(Boolean);
+  const metadata = [];
+  for (const track of missing) {
+    const item = await fetchTrackMetadata(track, config);
+    if (item) metadata.push(item);
+  }
   if (metadata.length) await ingestFn(env, 'track_metadata', { tracks: metadata }, observedAt);
 
   const completeFetched = metadata.filter((item) => completeMetadata(item, item.spotify_id)).length;
