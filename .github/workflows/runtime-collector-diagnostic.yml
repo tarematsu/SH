@@ -1,0 +1,74 @@
+name: Runtime collector diagnostic
+
+on:
+  push:
+    branches:
+      - fix/runtime-collector-stall-20260704
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Probe production collector
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -uo pipefail
+          mkdir -p /tmp/stationhead-runtime
+
+          probe() {
+            local name="$1"
+            local url="$2"
+            local body="/tmp/stationhead-runtime/${name}.body"
+            local headers="/tmp/stationhead-runtime/${name}.headers"
+            local code
+            code=$(curl --silent --show-error --location --max-time 25 \
+              --dump-header "$headers" --output "$body" --write-out '%{http_code}' "$url" 2>"/tmp/stationhead-runtime/${name}.stderr" || true)
+            printf '## %s\n\n' "$name"
+            printf -- '- URL: `%s`\n' "$url"
+            printf -- '- HTTP: `%s`\n\n' "${code:-curl-failed}"
+            printf '```text\n'
+            if command -v jq >/dev/null 2>&1 && jq -e . "$body" >/dev/null 2>&1; then
+              jq . "$body" | head -c 12000
+            else
+              head -c 12000 "$body" 2>/dev/null || true
+            fi
+            if [[ -s "/tmp/stationhead-runtime/${name}.stderr" ]]; then
+              printf '\n\nSTDERR:\n'
+              head -c 4000 "/tmp/stationhead-runtime/${name}.stderr"
+            fi
+            printf '\n```\n\n'
+          }
+
+          {
+            echo '<!-- stationhead-runtime-diagnostic -->'
+            echo '# Stationhead production runtime diagnostic'
+            echo
+            echo "- Commit: \`${GITHUB_SHA}\`"
+            echo "- Checked at: \`$(date -u +'%Y-%m-%dT%H:%M:%SZ')\`"
+            echo
+            probe pages-health 'https://skrzk.pages.dev/api/health'
+            probe worker-health 'https://stationhead-monitor-collector.tarematsu.workers.dev/health'
+            probe worker-lease 'https://stationhead-monitor-collector.tarematsu.workers.dev/coordination/lease'
+          } > /tmp/stationhead-runtime/comment.md
+
+          pr_number=$(gh pr list --repo "$GITHUB_REPOSITORY" --head "$GITHUB_REF_NAME" --state open --json number --jq '.[0].number // empty')
+          if [[ -z "$pr_number" ]]; then
+            echo 'No open PR found for this branch.'
+            cat /tmp/stationhead-runtime/comment.md
+            exit 0
+          fi
+
+          existing=$(gh api --paginate "repos/$GITHUB_REPOSITORY/issues/$pr_number/comments" --jq '.[] | select(.body | contains("<!-- stationhead-runtime-diagnostic -->")) | .id' | tail -n 1)
+          if [[ -n "$existing" ]]; then
+            gh api --method PATCH "repos/$GITHUB_REPOSITORY/issues/comments/$existing" --field body=@/tmp/stationhead-runtime/comment.md
+          else
+            gh pr comment "$pr_number" --repo "$GITHUB_REPOSITORY" --body-file /tmp/stationhead-runtime/comment.md
+          fi
