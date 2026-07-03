@@ -1,8 +1,12 @@
 import app from './email-recap-index.js';
 import { runCloudWeeklyLeaderboard } from './cloud-weekly-leaderboard.js';
+import { resetCollectionFlight } from './index.js';
 
 const PRIMARY_LEASE_SCOPE = 'stationhead-primary';
 const PRIMARY_SUCCESS_GRACE_MS = 5000;
+const DEFAULT_PRIMARY_WATCHDOG_MS = 55_000;
+const MIN_PRIMARY_WATCHDOG_MS = 10_000;
+const MAX_PRIMARY_WATCHDOG_MS = 55_000;
 
 function normalizeHealthPayload(payload) {
   if (payload?.cloud_solo_phase === 'idle') {
@@ -10,6 +14,40 @@ function normalizeHealthPayload(payload) {
     if (payload.cloud_solo_station_id === 0) payload.cloud_solo_station_id = null;
   }
   return payload;
+}
+
+function primaryWatchdogMs(env = {}) {
+  const configured = Number(env.PRIMARY_COLLECTION_WATCHDOG_MS ?? DEFAULT_PRIMARY_WATCHDOG_MS);
+  if (!Number.isFinite(configured)) return DEFAULT_PRIMARY_WATCHDOG_MS;
+  return Math.max(MIN_PRIMARY_WATCHDOG_MS, Math.min(MAX_PRIMARY_WATCHDOG_MS, configured));
+}
+
+export class PrimaryCollectionTimeoutError extends Error {
+  constructor(timeoutMs, cron) {
+    super(`Primary Stationhead collection timed out after ${timeoutMs}ms (${cron || 'scheduled'})`);
+    this.name = 'PrimaryCollectionTimeoutError';
+    this.code = 'PRIMARY_COLLECTION_TIMEOUT';
+    this.timeoutMs = timeoutMs;
+  }
+}
+
+export async function runPrimaryScheduled(controller, env, ctx, scheduled = app.scheduled.bind(app), timeoutOverride = null) {
+  const timeoutMs = timeoutOverride ?? primaryWatchdogMs(env);
+  let timeoutId = null;
+
+  try {
+    return await Promise.race([
+      scheduled(controller, env, ctx),
+      new Promise((_, reject) => {
+        timeoutId = setTimeout(
+          () => reject(new PrimaryCollectionTimeoutError(timeoutMs, controller?.cron)),
+          timeoutMs,
+        );
+      }),
+    ]);
+  } finally {
+    if (timeoutId != null) clearTimeout(timeoutId);
+  }
 }
 
 async function expireLeaseWhenPrimaryFailed(env, runStartedAt) {
@@ -50,8 +88,31 @@ async function expireLeaseWhenPrimaryFailed(env, runStartedAt) {
 export default {
   async scheduled(controller, env, ctx) {
     const runStartedAt = Date.now();
-    await app.scheduled(controller, env, ctx);
-    await expireLeaseWhenPrimaryFailed(env, runStartedAt);
+    let appError;
+    try {
+      await runPrimaryScheduled(controller, env, ctx);
+    } catch (error) {
+      resetCollectionFlight();
+      appError = error;
+    }
+
+    let leaseError;
+    try {
+      await expireLeaseWhenPrimaryFailed(env, runStartedAt);
+    } catch (error) {
+      leaseError = error;
+    }
+
+    if (appError) {
+      if (leaseError) {
+        console.error(JSON.stringify({
+          event: 'collector_lease_expiry_failed',
+          error: String(leaseError?.message || leaseError),
+        }));
+      }
+      throw appError;
+    }
+    if (leaseError) throw leaseError;
     ctx.waitUntil(runCloudWeeklyLeaderboard(env));
   },
 
