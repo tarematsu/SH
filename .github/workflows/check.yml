@@ -13,7 +13,11 @@ concurrency:
 
 jobs:
   exhaustive-check:
-    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[ci full]'))
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'push' &&
+        (contains(github.event.head_commit.message, '[ci full]') ||
+         github.ref == 'refs/heads/fix/diagnostics-state-20260703'))
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
