@@ -21,4 +21,5 @@ Before remote application, run the focused local check:
 npm --prefix site run test:d1:email-foundation
 ```
 
+No remote migration is executed by the focused test or by a build where `D1_MIGRATION_NAME` is unset.
 After the remote migration succeeds, remove `D1_MIGRATION_NAME` from the build environment so later builds remain read-only with respect to D1 migrations.
