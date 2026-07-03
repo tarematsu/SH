@@ -1,0 +1,92 @@
+name: Run intermittent stall fix
+
+on:
+  push:
+    branches:
+      - fix/isolate-optional-subrequests-20260704
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+jobs:
+  apply-test-commit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref_name }}
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Execute corrected source patch
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          workflow = Path('.github/workflows/apply-intermittent-stall-fix.yml').read_text(encoding='utf-8')
+          start_marker = "          python - <<'PY'\n"
+          end_marker = "\n          PY\n"
+          start = workflow.index(start_marker) + len(start_marker)
+          end = workflow.index(end_marker, start)
+          lines = workflow[start:end].splitlines()
+          script = '\n'.join(line[10:] if line.startswith('          ') else line for line in lines)
+          script = script.replace(
+              'from pathlib import Path',
+              'from pathlib import Path\nfrom textwrap import dedent',
+              1,
+          )
+          script = script.replace(
+              "shared_tests.write_text(shared_tests.read_text(encoding='utf-8') + r'''",
+              "shared_tests.write_text(shared_tests.read_text(encoding='utf-8') + dedent(r'''",
+          )
+          script = script.replace(
+              "Path('tests/worker-chat-history-retry.test.mjs').write_text(r'''",
+              "Path('tests/worker-chat-history-retry.test.mjs').write_text(dedent(r'''",
+          )
+          script = script.replace(
+              "'''.replace(/^          /gm, ''), encoding='utf-8')",
+              "''').lstrip(), encoding='utf-8')",
+          )
+          exec(compile(script, '<intermittent-stall-fix>', 'exec'))
+          PY
+
+      - name: Install dependencies
+        run: |
+          npm --prefix worker install --no-audit --no-fund
+          npm --prefix site install --no-audit --no-fund
+
+      - name: Run full checks
+        run: npm run check
+
+      - name: Commit validated fix
+        shell: bash
+        run: |
+          rm -f \
+            .github/workflows/apply-intermittent-stall-fix.yml \
+            .github/workflows/run-intermittent-stall-fix.yml \
+            .github/stall-fix-trigger \
+            .github/stall-fix-trigger2 \
+            .github/stall-fix-trigger3
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git commit -m 'fix: isolate optional subrequests from primary collection'
+          git push origin "HEAD:${GITHUB_REF_NAME}"
+
+      - name: Report success
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh pr comment 70 --repo "$GITHUB_REPOSITORY" --body $'## 検証結果\n\n- `npm run check`: 成功\n- Spotifyメタデータの単一飛行・失敗バックオフ・並列取得テスト: 成功\n- コメント履歴の縮小再試行判定テスト: 成功\n- 一時ワークフローとトリガーファイル: 削除済み'
