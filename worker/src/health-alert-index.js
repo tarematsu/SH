@@ -55,9 +55,13 @@ export async function alignFailureStartWithLastSuccess(env, state, failure = nul
   const failureAt = Number(failure?.diagnosis?.at || state?.failure_last_at || 0);
   if (!env?.DB || !lastSuccessAt || !failureAt || failureAt < lastSuccessAt) return false;
   const result = await env.DB.prepare(`UPDATE sh_collector_failure_state
-    SET first_failure_at=MIN(first_failure_at,?),updated_at=?
+    SET first_failure_at=CASE
+        WHEN first_failure_at IS NULL OR first_failure_at>? THEN ?
+        ELSE first_failure_at
+      END,
+      updated_at=?
     WHERE id='stationhead' AND last_failure_at>=?`)
-    .bind(lastSuccessAt, now, lastSuccessAt).run();
+    .bind(lastSuccessAt, lastSuccessAt, now, lastSuccessAt).run();
   return Number(result?.meta?.changes || 0) > 0;
 }
 
@@ -106,8 +110,12 @@ export default {
         const originalFirstAt = Number(priorDiagnosis.firstAt || priorDiagnosis.at || 0);
         if (originalFirstAt > 0 && env.DB) {
           await env.DB.prepare(`UPDATE sh_collector_failure_state
-            SET first_failure_at=MIN(first_failure_at,?),updated_at=? WHERE id='stationhead'`)
-            .bind(originalFirstAt, Date.now()).run().catch(() => {});
+            SET first_failure_at=CASE
+                WHEN first_failure_at IS NULL OR first_failure_at>? THEN ?
+                ELSE first_failure_at
+              END,
+              updated_at=? WHERE id='stationhead'`)
+            .bind(originalFirstAt, originalFirstAt, Date.now()).run().catch(() => {});
         }
       }
       await alignFailureStartWithLastSuccess(
