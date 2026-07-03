@@ -1,6 +1,7 @@
 const ORIGIN = 'https://production1.stationhead.com';
 const MAX_REQUESTS_PER_MINUTE = 10;
-const MAX_CHAT_ITEMS = 20;
+const MAX_AUTH_REQUESTS_PER_MINUTE = 2;
+const MAX_CHAT_ITEMS = 50;
 const REQUEST_TIMEOUT_MS = 8_000;
 const FAILURE_BACKOFF_MS = 60_000;
 const MAX_ENTRIES = 64;
@@ -18,21 +19,33 @@ function bodyOf(input, init) {
   return typeof init.body === 'string' ? init.body.trim() : null;
 }
 
+function headersOf(input, init) {
+  return new Headers(init?.headers || input?.headers || undefined);
+}
+
 function policy(url, method, body) {
   const path = url.pathname.replace(/\/+$/, '') || '/';
-  if (method === 'GET' && /^\/channels\/alias\/[^/]+$/i.test(path)) return { cache: true, name: 'channel' };
+  if (method === 'GET' && /^\/channels\/alias\/[^/]+$/i.test(path)) {
+    return { cache: true, name: 'channel', budget: 'data' };
+  }
   if (method === 'GET' && /^\/station\/[^/]+\/chatHistory$/i.test(path)) {
     const limit = Math.max(1, Number(url.searchParams.get('limit')) || MAX_CHAT_ITEMS);
     url.searchParams.set('limit', String(Math.min(limit, MAX_CHAT_ITEMS)));
-    return { cache: true, name: 'chat' };
+    return { cache: true, name: 'chat', budget: 'data' };
   }
   if (method === 'POST' && /^\/station\/handle\/[^/]+\/guest$/i.test(path)) {
     if (body !== '' && body !== '{}') return null;
-    return { cache: true, name: 'station' };
+    return { cache: true, name: 'station', budget: 'data' };
   }
-  if (method === 'GET' && path === '/account' && url.searchParams.has('ids')) return { cache: true, name: 'account' };
-  if (method === 'POST' && path === '/web/token' && body === '') return { cache: false, name: 'token' };
-  if (method === 'POST' && path === '/web/guest/login' && body === '') return { cache: false, name: 'login' };
+  if (method === 'GET' && path === '/account' && url.searchParams.has('ids')) {
+    return { cache: true, name: 'account', budget: 'data' };
+  }
+  if (method === 'POST' && path === '/web/token' && body === '') {
+    return { cache: false, name: 'token', budget: 'auth' };
+  }
+  if (method === 'POST' && path === '/web/guest/login' && body === '') {
+    return { cache: false, name: 'login', budget: 'auth' };
+  }
   return null;
 }
 
@@ -59,7 +72,8 @@ export function createStationheadTrafficGuard(nextFetch, nowFn = Date.now) {
   const reads = new Map();
   const retryAtByKey = new Map();
   let activeMinute = -1;
-  let requestCount = 0;
+  let dataRequestCount = 0;
+  let authRequestCount = 0;
 
   return async function stationheadTrafficGuard(input, init = {}) {
     let url;
@@ -83,22 +97,42 @@ export function createStationheadTrafficGuard(nextFetch, nowFn = Date.now) {
     const minute = Math.floor(now / 60_000);
     if (minute !== activeMinute) {
       activeMinute = minute;
-      requestCount = 0;
+      dataRequestCount = 0;
+      authRequestCount = 0;
       reads.clear();
     }
 
-    const key = `${method}\n${url.toString()}\n${body || ''}`;
+    const headers = headersOf(input, init);
+    const key = [
+      method,
+      url.toString(),
+      body || '',
+      headers.get('sth-device-uid') || '',
+      headers.get('authorization') || '',
+    ].join('\n');
     const retryAt = Number(retryAtByKey.get(key) || 0);
     if (retryAt > now) return localResponse(503, 'temporary-backoff', retryAt - now);
     if (retryAt) retryAtByKey.delete(key);
 
     if (rule.cache && reads.has(key)) return (await reads.get(key)).clone();
-    if (requestCount >= MAX_REQUESTS_PER_MINUTE) {
+
+    const requestLimit = rule.budget === 'auth'
+      ? MAX_AUTH_REQUESTS_PER_MINUTE
+      : MAX_REQUESTS_PER_MINUTE;
+    const requestCount = rule.budget === 'auth' ? authRequestCount : dataRequestCount;
+    if (requestCount >= requestLimit) {
       const wait = 60_000 - (now % 60_000);
-      console.warn(JSON.stringify({ event: 'stationhead_request_budget_exhausted', limit: MAX_REQUESTS_PER_MINUTE, route: rule.name }));
-      return localResponse(429, 'minute-budget-exhausted', wait);
+      const reason = rule.budget === 'auth' ? 'auth-minute-budget-exhausted' : 'minute-budget-exhausted';
+      console.warn(JSON.stringify({
+        event: 'stationhead_request_budget_exhausted',
+        budget: rule.budget,
+        limit: requestLimit,
+        route: rule.name,
+      }));
+      return localResponse(429, reason, wait);
     }
-    requestCount += 1;
+    if (rule.budget === 'auth') authRequestCount += 1;
+    else dataRequestCount += 1;
 
     const requestInput = input instanceof Request ? new Request(url.toString(), input) : url.toString();
     const pending = Promise.resolve()
