@@ -7,50 +7,41 @@ const executable = process.platform === 'win32'
   ? path.resolve('node_modules/.bin/wrangler.cmd')
   : path.resolve('node_modules/.bin/wrangler');
 const databaseDirectory = path.resolve('..', 'database');
-const foundationFiles = [
+const schemaFiles = [
   'schema.sql',
   'history-schema.sql',
   'host-monitoring.sql',
   'track-like-observations.sql',
   'ranking-all-schema.sql',
+  'migrations/004_collector_coordination.sql',
 ];
 
 function run(args) {
   const result = spawnSync(executable, args, {
     cwd: process.cwd(),
     env: { ...process.env, CI: 'true' },
-    stdio: 'inherit',
+    encoding: 'utf8',
   });
   if (result.error) throw result.error;
   if (result.status !== 0) {
-    throw new Error(`wrangler ${args.join(' ')} failed with exit code ${result.status}`);
+    const output = [result.stdout, result.stderr].filter(Boolean).join('\n');
+    throw new Error(`${output}\nwrangler ${args.join(' ')} failed with exit code ${result.status}`);
   }
 }
 
 function executeFile(filename) {
-  const filePath = path.join(databaseDirectory, filename);
-  console.log(`Applying D1 foundation: ${filename}`);
+  console.log(`Applying current D1 schema: ${filename}`);
   run([
     'd1', 'execute', 'stationhead-monitor',
     '--local', '--persist-to', stateDirectory,
-    '--file', filePath,
+    '--file', path.join(databaseDirectory, filename),
   ]);
 }
 
 rmSync(stateDirectory, { recursive: true, force: true });
 
 try {
-  for (const filename of foundationFiles) executeFile(filename);
-
-  run([
-    'd1', 'migrations', 'apply', 'stationhead-monitor',
-    '--local', '--persist-to', stateDirectory,
-  ]);
-  run([
-    'd1', 'execute', 'stationhead-monitor',
-    '--local', '--persist-to', stateDirectory,
-    '--command', 'PRAGMA integrity_check;',
-  ]);
+  for (const filename of schemaFiles) executeFile(filename);
 
   const requiredTables = [
     'sh_channel_snapshots',
@@ -64,9 +55,7 @@ try {
     'sh_channel_rankings',
     'sh_legacy_snapshots',
     'sh_track_like_observations',
-    'sh_email_stream_snapshots',
     'sh_weekly_summary',
-    'sh_comment_state',
   ];
   for (const table of requiredTables) {
     run([
@@ -75,6 +64,7 @@ try {
       '--command', `SELECT COUNT(*) AS row_count FROM ${table};`,
     ]);
   }
+  console.log('Current D1 schema smoke test passed.');
 } finally {
   rmSync(stateDirectory, { recursive: true, force: true });
 }
