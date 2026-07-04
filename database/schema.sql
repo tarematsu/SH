@@ -79,7 +79,8 @@ CREATE TABLE IF NOT EXISTS sh_queue_items (
   UNIQUE(station_id, start_time, position)
 );
 CREATE INDEX IF NOT EXISTS idx_sh_sh_queue_items_spotify ON sh_queue_items(spotify_id);
-CREATE INDEX IF NOT EXISTS idx_sh_sh_queue_items_isrc ON sh_queue_items(isrc);
+CREATE INDEX IF NOT EXISTS idx_sh_queue_items_isrc_observed_spotify
+  ON sh_queue_items(isrc, observed_at DESC, spotify_id);
 
 CREATE TABLE IF NOT EXISTS sh_raw_events (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
