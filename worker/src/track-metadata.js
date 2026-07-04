@@ -110,22 +110,25 @@ export async function enrichTracks(env,ingestFn,queue,observedAt,config){
   const stored=await env.DB.prepare(`SELECT spotify_id,title,artist,fetched_at
     FROM sh_track_metadata WHERE spotify_id IN (${placeholders})`).bind(...spotifyIds).all();
   const now=Date.now();
-  const settled=new Set((stored.results||[])
-    .filter((item)=>!metadataNeedsRefresh(item,item.spotify_id,now))
+  const storedById=new Map((stored.results||[]).map((item)=>[item.spotify_id,item]));
+  const complete=new Set((stored.results||[])
+    .filter((item)=>completeMetadata(item,item.spotify_id))
     .map((item)=>item.spotify_id));
-  const unresolved=spotifyIds.filter((spotifyId)=>!settled.has(spotifyId));
+  const unresolved=spotifyIds.filter((spotifyId)=>!complete.has(spotifyId));
   if(unresolved.length){
     const repaired=await repairMetadataFromIsrc(env.DB,unresolved,now);
-    for(const spotifyId of repaired)settled.add(spotifyId);
+    for(const spotifyId of repaired)complete.add(spotifyId);
   }
-  const missingAll=candidates.filter((track)=>!settled.has(track.spotify_id));
-  if(!missingAll.length){markCached(key);return 0;}
+  const retryable=candidates.filter((track)=>
+    !complete.has(track.spotify_id)
+    && metadataNeedsRefresh(storedById.get(track.spotify_id),track.spotify_id,now));
+  if(!retryable.length){markCached(key);return 0;}
   const limit=config.metadataLimit??3;
-  const missing=missingAll.slice(0,limit),metadata=[];
+  const missing=retryable.slice(0,limit),metadata=[];
   for(const track of missing){const item=await fetchTrackMetadata(track,config);if(item)metadata.push(item);}
   if(metadata.length)await ingestFn(env,'track_metadata',{tracks:metadata},observedAt);
   const attempted=new Set(metadata.map((item)=>item.spotify_id));
-  if(missingAll.length<=limit&&missing.every((track)=>attempted.has(track.spotify_id)))markCached(key);
+  if(retryable.length<=limit&&missing.every((track)=>attempted.has(track.spotify_id)))markCached(key);
   else queueCache.delete(key);
   return metadata.length;
 }
