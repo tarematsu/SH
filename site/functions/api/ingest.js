@@ -31,9 +31,10 @@ export async function onRequestPost(context) {
     }
     if (body?.type === 'snapshot') {
       const result = await saveLeanSnapshot(env.DB, observedAt, data);
-      if (typeof context.waitUntil === 'function') {
+      const isCloudflareCollector = body?.collector_id === 'cloudflare-worker';
+      if (isCloudflareCollector && typeof context.waitUntil === 'function') {
         context.waitUntil(runDataMaintenanceSafely(env.DB));
-      } else if (new URL(request.url).hostname === 'worker.internal') {
+      } else if (isCloudflareCollector) {
         await runDataMaintenanceSafely(env.DB);
       }
       return json({ ok: true, type: body.type, accepted: true, ...result });
