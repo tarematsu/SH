@@ -47,6 +47,9 @@ jobs:
         shell: bash
         run: |
           set +e
+          if [ -z "$CLOUDFLARE_API_TOKEN" ]; then
+            export CLOUDFLARE_API_TOKEN="$CLOUDFLARE_BUILDS_API_TOKEN"
+          fi
           npm run db:migrate 2>&1 | tee migration.log
           status=${PIPESTATUS[0]}
           if [ "$status" -eq 0 ]; then
