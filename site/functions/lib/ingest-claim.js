@@ -76,7 +76,7 @@ async function logConflict(db, existing, incoming, resolution, metadata) {
 
 async function recentEquivalentQueueClaim(db, incoming) {
   if (incoming.dataType !== 'queue') return null;
-  return db.prepare(`SELECT collector_id,collector_kind,source_priority,
+  return db.prepare(`SELECT dedupe_key,collector_id,collector_kind,source_priority,
     observed_at,payload_hash,first_seen_at FROM sh_ingest_claims
     WHERE data_type='queue' AND payload_hash=? AND observed_at>=?
     ORDER BY source_priority DESC,observed_at DESC LIMIT 1`)
@@ -95,6 +95,33 @@ export async function claimWrite(db, options) {
   };
   if (!incoming.dedupeKey) throw new Error('dedupe key is required');
 
+  let recentQueue = null;
+  let recentQueueChecked = false;
+  const hashScopedQueueKey = incoming.dataType === 'queue'
+    && incoming.dedupeKey.endsWith(`:hash:${incoming.hash}`);
+  if (hashScopedQueueKey) {
+    recentQueueChecked = true;
+    try {
+      recentQueue = await recentEquivalentQueueClaim(db, incoming);
+    } catch (error) {
+      if (/no such table/i.test(String(error?.message || ''))) {
+        return { accepted: true, duplicate: false, reason: 'claims_not_installed', hash: incoming.hash };
+      }
+      throw error;
+    }
+    if (recentQueue && incoming.sourcePriority <= Number(recentQueue.source_priority || 0)) {
+      return {
+        accepted: false,
+        duplicate: true,
+        reason: recentQueue.dedupe_key === incoming.dedupeKey
+          ? 'same_payload'
+          : 'same_queue_payload_checkpoint',
+        hash: incoming.hash,
+        existing: recentQueue,
+      };
+    }
+  }
+
   let existing;
   try {
     existing = await db.prepare(`SELECT collector_id,collector_kind,source_priority,
@@ -108,10 +135,12 @@ export async function claimWrite(db, options) {
   }
 
   if (!existing) {
-    const recentQueue = await recentEquivalentQueueClaim(db, incoming).catch((error) => {
-      if (/no such table/i.test(String(error?.message || ''))) return null;
-      throw error;
-    });
+    if (!recentQueueChecked) {
+      recentQueue = await recentEquivalentQueueClaim(db, incoming).catch((error) => {
+        if (/no such table/i.test(String(error?.message || ''))) return null;
+        throw error;
+      });
+    }
     if (recentQueue && incoming.sourcePriority <= Number(recentQueue.source_priority || 0)) {
       return {
         accepted: false,
