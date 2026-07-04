@@ -41,6 +41,8 @@ try {
     'sh_host_broadcast_sessions',
     'sh_channel_rankings',
     'sh_legacy_snapshots',
+    'sh_email_stream_snapshots',
+    'sh_weekly_summary',
   ];
   for (const table of requiredTables) {
     run([
