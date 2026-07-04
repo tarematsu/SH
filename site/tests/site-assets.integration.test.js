@@ -48,15 +48,17 @@ test('browser application remains wired to the dashboard API and resilient refre
   assert.match(source, /前回表示・前回グラフをそのまま維持/);
 });
 
-test('standalone Stationhead API test page is routed and isolated', async () => {
-  const html = await text('public/stationhead-api-test.html');
+test('standalone Stationhead API test has no rewrite that can create a canonical redirect loop', async () => {
+  const directoryHtml = await text('public/stationhead-api-test/index.html');
+  const rootHtml = await text('public/stationhead-api-test.html');
   const redirects = await text('public/_redirects');
 
-  assert.match(html, /Stationhead Weekly Leaderboard API 通信テスト/);
-  assert.match(html, /\/api\/stationhead-weekly-leaderboard-test/);
-  assert.match(html, /noindex,nofollow,noarchive/);
-  assert.match(redirects, /^\/stationhead-api-test \/stationhead-api-test\.html 200$/m);
-  assert.match(redirects, /^\/stationhead-api-test\/ \/stationhead-api-test\.html 200$/m);
+  for (const html of [directoryHtml, rootHtml]) {
+    assert.match(html, /Stationhead Weekly Leaderboard API 通信テスト/);
+    assert.match(html, /\/api\/stationhead-weekly-leaderboard-test/);
+    assert.match(html, /noindex,nofollow,noarchive/);
+  }
+  assert.doesNotMatch(redirects, /^\/stationhead-api-test\/?\s+/m);
 });
 
 test('Pages configuration binds the expected D1 database and output directory', async () => {
