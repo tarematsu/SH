@@ -2,6 +2,7 @@ const DAY_MS = 86_400_000;
 const HOUR_MS = 3_600_000;
 const JST_OFFSET_MS = 9 * HOUR_MS;
 const CLEANUP_BATCH = 5_000;
+const LEGACY_BACKFILL_BATCH = 5_000;
 const STATE_ID = 'rollup-retention-v1';
 const runtimeState = new WeakMap();
 
@@ -136,12 +137,6 @@ async function rollupFromDaily(db, table, range, now) {
   return upsertSummary(db, table, range.key, aggregate, first, last, host?.primary_host, now);
 }
 
-async function deleteBatch(db, table, timestampColumn, cutoff) {
-  return db.prepare(`DELETE FROM ${table} WHERE id IN (
-      SELECT id FROM ${table} WHERE ${timestampColumn}<? ORDER BY ${timestampColumn} ASC LIMIT ?
-    )`).bind(cutoff, CLEANUP_BATCH).run();
-}
-
 async function cleanup(db, now) {
   await db.batch([
     db.prepare(`DELETE FROM sh_channel_snapshots WHERE id IN (
@@ -159,17 +154,64 @@ async function cleanup(db, now) {
   ]);
 }
 
+async function backfillLegacySamples(db, lastLegacyId) {
+  const boundary = await db.prepare(`SELECT MAX(id) AS batch_end FROM (
+      SELECT id FROM sh_legacy_snapshots WHERE id>? ORDER BY id ASC LIMIT ?
+    )`).bind(lastLegacyId, LEGACY_BACKFILL_BATCH).first();
+  const batchEnd = Number(boundary?.batch_end || 0);
+  if (!batchEnd || batchEnd <= lastLegacyId) {
+    return { lastLegacyId, migrated: 0, complete: true };
+  }
+
+  const hostKey = `lower(trim(host_handle))`;
+  const trackKey = `lower(trim(COALESCE(track_title,''))) || char(31) || lower(trim(COALESCE(artist_name,'')))`;
+  const broadcastKey = `lower(trim(source_note)) || char(31) || lower(trim(COALESCE(host_handle,'')))`;
+
+  await db.batch([
+    db.prepare(`INSERT OR IGNORE INTO sh_legacy_hosts(host_key,handle)
+      SELECT ${hostKey},MIN(host_handle) FROM sh_legacy_snapshots
+      WHERE id>? AND id<=? AND host_handle IS NOT NULL AND trim(host_handle)<>''
+      GROUP BY ${hostKey}`).bind(lastLegacyId, batchEnd),
+    db.prepare(`INSERT OR IGNORE INTO sh_legacy_tracks(track_key,title,artist_name)
+      SELECT ${trackKey},MIN(track_title),MIN(artist_name) FROM sh_legacy_snapshots
+      WHERE id>? AND id<=? AND (trim(COALESCE(track_title,''))<>'' OR trim(COALESCE(artist_name,''))<>'')
+      GROUP BY ${trackKey}`).bind(lastLegacyId, batchEnd),
+    db.prepare(`INSERT OR IGNORE INTO sh_legacy_broadcasts(broadcast_key,event_name,host_id)
+      SELECT ${broadcastKey},MIN(l.source_note),MIN(h.id)
+      FROM sh_legacy_snapshots l
+      LEFT JOIN sh_legacy_hosts h ON h.host_key=lower(trim(l.host_handle))
+      WHERE l.id>? AND l.id<=? AND l.source_note IS NOT NULL AND trim(l.source_note)<>''
+      GROUP BY ${broadcastKey}`).bind(lastLegacyId, batchEnd),
+    db.prepare(`INSERT OR IGNORE INTO sh_legacy_samples(
+        legacy_id,observed_at,observed_jst,listener_count,total_stream_count,
+        track_id,likes,comment_velocity,host_id,total_member_count,broadcast_id,
+        quality_score,quality_flags
+      )
+      SELECT l.id,l.observed_at,l.observed_jst,l.listener_count,l.total_stream_count,
+        t.id,l.likes,l.comment_velocity,h.id,l.total_member_count,b.id,
+        l.quality_score,l.quality_flags
+      FROM sh_legacy_snapshots l
+      LEFT JOIN sh_legacy_hosts h ON h.host_key=lower(trim(l.host_handle))
+      LEFT JOIN sh_legacy_tracks t ON t.track_key=(lower(trim(COALESCE(l.track_title,''))) || char(31) || lower(trim(COALESCE(l.artist_name,''))))
+      LEFT JOIN sh_legacy_broadcasts b ON b.broadcast_key=(lower(trim(l.source_note)) || char(31) || lower(trim(COALESCE(l.host_handle,''))))
+      WHERE l.id>? AND l.id<=?`).bind(lastLegacyId, batchEnd),
+  ]);
+
+  return { lastLegacyId: batchEnd, migrated: batchEnd - lastLegacyId, complete: false };
+}
+
 export async function runDataMaintenance(db, now = Date.now()) {
   if (!db) return { skipped: true, reason: 'missing-db' };
   const cached = runtimeState.get(db);
   if (cached?.nextCheckAt > now) return { skipped: true, reason: 'memory-cadence' };
   runtimeState.set(db, { nextCheckAt: now + HOUR_MS });
 
-  const state = await db.prepare(`SELECT last_rollup_key,last_cleanup_at
+  const state = await db.prepare(`SELECT last_rollup_key,last_cleanup_at,legacy_backfill_id
     FROM sh_data_maintenance_state WHERE id=?`).bind(STATE_ID).first();
   const period = previousDay(now);
   let lastRollupKey = state?.last_rollup_key || null;
   let lastCleanupAt = Number(state?.last_cleanup_at || 0);
+  let legacyBackfillId = Number(state?.legacy_backfill_id || 0);
   let rolledUp = false;
   let cleaned = false;
 
@@ -189,12 +231,23 @@ export async function runDataMaintenance(db, now = Date.now()) {
     cleaned = true;
   }
 
-  await db.prepare(`INSERT INTO sh_data_maintenance_state(id,last_rollup_key,last_cleanup_at,updated_at)
-    VALUES(?,?,?,?) ON CONFLICT(id) DO UPDATE SET
-    last_rollup_key=excluded.last_rollup_key,last_cleanup_at=excluded.last_cleanup_at,
-    updated_at=excluded.updated_at`).bind(STATE_ID, lastRollupKey, lastCleanupAt, now).run();
+  const legacyBackfill = await backfillLegacySamples(db, legacyBackfillId);
+  legacyBackfillId = legacyBackfill.lastLegacyId;
 
-  return { skipped: false, rolledUp, cleaned, periodKey: period.key };
+  await db.prepare(`INSERT INTO sh_data_maintenance_state(
+      id,last_rollup_key,last_cleanup_at,legacy_backfill_id,updated_at
+    ) VALUES(?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET
+    last_rollup_key=excluded.last_rollup_key,last_cleanup_at=excluded.last_cleanup_at,
+    legacy_backfill_id=excluded.legacy_backfill_id,updated_at=excluded.updated_at`)
+    .bind(STATE_ID, lastRollupKey, lastCleanupAt, legacyBackfillId, now).run();
+
+  return {
+    skipped: false,
+    rolledUp,
+    cleaned,
+    periodKey: period.key,
+    legacyBackfill,
+  };
 }
 
 export async function runDataMaintenanceSafely(db, now = Date.now()) {

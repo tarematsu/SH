@@ -29,6 +29,23 @@ function decodeCursor(value) {
   }
 }
 
+function rawHistorySql(source, cursor) {
+  let sql = `SELECT id,observed_at,observed_jst,listener_count,total_stream_count,
+track_title,artist_name,likes,comment_velocity,host_handle,total_member_count,
+source_note,quality_score,quality_flags
+FROM ${source}
+WHERE observed_at>=? AND observed_at<?`;
+  if (cursor) sql += ' AND (observed_at>? OR (observed_at=? AND id>?))';
+  return `${sql} ORDER BY observed_at ASC,id ASC LIMIT ?`;
+}
+
+async function loadRows(db, source, fromTs, toTs, cursor, limit) {
+  const binds = [fromTs, toTs];
+  if (cursor) binds.push(cursor.timestamp, cursor.timestamp, cursor.id);
+  binds.push(limit + 1);
+  return db.prepare(rawHistorySql(source, cursor)).bind(...binds).all();
+}
+
 export async function onRequestGet({ request, env }) {
   if (!env.DB) return json({ ok: false, error: 'DB binding missing' }, 500);
   const url = new URL(request.url);
@@ -39,21 +56,17 @@ export async function onRequestGet({ request, env }) {
   const toTs = Math.min(requestedToTs, fromTs + 31 * 86400000);
   const limit = Math.min(Math.max(Number(url.searchParams.get('limit')) || 200, 20), 500);
   const cursor = decodeCursor(url.searchParams.get('cursor'));
-  let sql = `SELECT id,observed_at,observed_jst,listener_count,total_stream_count,
-track_title,artist_name,likes,comment_velocity,host_handle,total_member_count,
-source_note,quality_score,quality_flags
-FROM sh_legacy_snapshots
-WHERE observed_at>=? AND observed_at<?`;
-  const binds = [fromTs, toTs];
-  if (cursor) {
-    sql += ' AND (observed_at>? OR (observed_at=? AND id>?))';
-    binds.push(cursor.timestamp, cursor.timestamp, cursor.id);
-  }
-  sql += ' ORDER BY observed_at ASC,id ASC LIMIT ?';
-  binds.push(limit + 1);
 
   try {
-    const result = await env.DB.prepare(sql).bind(...binds).all();
+    let result;
+    let source = 'lightweight';
+    try {
+      result = await loadRows(env.DB, 'sh_legacy_history_rows', fromTs, toTs, cursor, limit);
+    } catch (error) {
+      if (!/no such table|no such view/i.test(String(error?.message || ''))) throw error;
+      result = await loadRows(env.DB, 'sh_legacy_snapshots', fromTs, toTs, cursor, limit);
+      source = 'legacy-fallback';
+    }
     const allRows = result.results || [];
     const hasMore = allRows.length > limit;
     const rows = hasMore ? allRows.slice(0, limit) : allRows;
@@ -65,6 +78,7 @@ WHERE observed_at>=? AND observed_at<?`;
       rows,
       has_more: hasMore,
       next_cursor: hasMore ? encodeCursor(rows.at(-1)) : null,
+      storage_source: source,
     });
   } catch (error) {
     return json({ ok: false, error: error?.message || 'raw history error' }, 500);
