@@ -31,8 +31,11 @@ export async function onRequestPost(context) {
     }
     if (body?.type === 'snapshot') {
       const result = await saveLeanSnapshot(env.DB, observedAt, data);
+      const maintenance = runDataMaintenanceSafely(env.DB);
       if (typeof context.waitUntil === 'function') {
-        context.waitUntil(runDataMaintenanceSafely(env.DB));
+        context.waitUntil(maintenance);
+      } else if (new URL(request.url).hostname === 'worker.internal') {
+        await maintenance;
       }
       return json({ ok: true, type: body.type, accepted: true, ...result });
     }
