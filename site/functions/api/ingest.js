@@ -5,7 +5,7 @@ import {
   saveLeanHeartbeat,
   saveLeanQueue,
   saveLeanSnapshot,
-} from '../lib/d1-lean-ingest.js';
+} from '../lib/d1-optimized-ingest.js';
 
 export * from './ingest-core.js';
 export { onRequestGet };

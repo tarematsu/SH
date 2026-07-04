@@ -6,6 +6,7 @@ import {
   queueItemsToWriteLean,
   queueStructuralPayload,
 } from '../functions/lib/d1-lean-ingest.js';
+import { queueLikesPayload } from '../functions/lib/d1-optimized-ingest.js';
 
 test('queue identity ignores bite-only and raw response changes', () => {
   const base = { station_id: 1, queue_id: 2, start_time: 3 };
@@ -33,4 +34,16 @@ test('like history is written only when the value changes', () => {
   const tracks = [{ position: 0, spotify_id: 'abc', bite_count: 10 }];
   assert.equal(planLikeObservations(tracks, [{ track_key: 'abc', like_count: 10 }]).length, 0);
   assert.equal(planLikeObservations(tracks, [{ track_key: 'abc', like_count: 9 }]).length, 1);
+});
+
+test('queue like hash payload is stable across track ordering', () => {
+  const first = queueLikesPayload([
+    { spotify_id: 'b', bite_count: 2 },
+    { spotify_id: 'a', bite_count: 1 },
+  ]);
+  const second = queueLikesPayload([
+    { spotify_id: 'a', bite_count: 1 },
+    { spotify_id: 'b', bite_count: 2 },
+  ]);
+  assert.deepEqual(first, second);
 });
