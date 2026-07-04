@@ -91,6 +91,7 @@ if (typeof globalThis.fetch === 'function' && !globalThis.fetch[STATIONHEAD_READ
 }
 
 const TRACK_METADATA_CACHE_TTL_MS = 30 * 60 * 1000;
+const INCOMPLETE_METADATA_RETRY_MS = 24 * 60 * 60 * 1000;
 const TRACK_METADATA_CACHE_MAX = 16;
 const trackMetadataQueueCache = new Map();
 
@@ -226,6 +227,14 @@ function completeMetadata(value, spotifyId = '') {
   );
 }
 
+export function metadataNeedsRefresh(value, spotifyId = '', now = Date.now()) {
+  if (completeMetadata(value, spotifyId)) return false;
+  const fetchedAt = Number(value?.fetched_at || 0);
+  return !Number.isFinite(fetchedAt)
+    || fetchedAt <= 0
+    || now - fetchedAt >= INCOMPLETE_METADATA_RETRY_MS;
+}
+
 function metadataQueueKey(candidates) {
   return candidates.map((track) => String(track.spotify_id)).sort().join(',');
 }
@@ -266,14 +275,15 @@ export async function enrichTracks(env, ingestFn, queue, observedAt, config) {
 
   const placeholders = candidates.map(() => '?').join(',');
   const stored = await env.DB.prepare(`
-    SELECT spotify_id, title, artist
+    SELECT spotify_id, title, artist, fetched_at
     FROM sh_track_metadata
     WHERE spotify_id IN (${placeholders})
   `).bind(...candidates.map((track) => track.spotify_id)).all();
-  const complete = new Set((stored.results || [])
-    .filter((item) => completeMetadata(item, item.spotify_id))
+  const now = Date.now();
+  const settled = new Set((stored.results || [])
+    .filter((item) => !metadataNeedsRefresh(item, item.spotify_id, now))
     .map((item) => item.spotify_id));
-  const allMissing = candidates.filter((track) => !complete.has(track.spotify_id));
+  const allMissing = candidates.filter((track) => !settled.has(track.spotify_id));
   if (!allMissing.length) {
     markMetadataComplete(cacheKey);
     return 0;
@@ -288,8 +298,11 @@ export async function enrichTracks(env, ingestFn, queue, observedAt, config) {
   }
   if (metadata.length) await ingestFn(env, 'track_metadata', { tracks: metadata }, observedAt);
 
-  const completeFetched = metadata.filter((item) => completeMetadata(item, item.spotify_id)).length;
-  if (allMissing.length <= limit && completeFetched === allMissing.length) markMetadataComplete(cacheKey);
-  else trackMetadataQueueCache.delete(cacheKey);
+  const attemptedIds = new Set(metadata.map((item) => item.spotify_id));
+  if (allMissing.length <= limit && missing.every((track) => attemptedIds.has(track.spotify_id))) {
+    markMetadataComplete(cacheKey);
+  } else {
+    trackMetadataQueueCache.delete(cacheKey);
+  }
   return metadata.length;
 }
