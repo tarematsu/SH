@@ -235,6 +235,40 @@ export function metadataNeedsRefresh(value, spotifyId = '', now = Date.now()) {
     || now - fetchedAt >= INCOMPLETE_METADATA_RETRY_MS;
 }
 
+async function isrcResolvedSpotifyIds(db, spotifyIds) {
+  if (!spotifyIds.length) return new Set();
+  const placeholders = spotifyIds.map(() => '?').join(',');
+  const result = await db.prepare(`
+    WITH ranked AS (
+      SELECT candidate.spotify_id AS candidate_spotify_id,
+        metadata.title,metadata.artist,
+        ROW_NUMBER() OVER (
+          PARTITION BY candidate.spotify_id
+          ORDER BY peer.observed_at DESC,metadata.fetched_at DESC
+        ) AS row_rank
+      FROM sh_queue_items candidate
+      JOIN sh_queue_items peer
+        ON peer.isrc=candidate.isrc
+       AND peer.spotify_id IS NOT NULL
+       AND peer.spotify_id<>''
+       AND peer.spotify_id<>candidate.spotify_id
+      JOIN sh_track_metadata metadata ON metadata.spotify_id=peer.spotify_id
+      WHERE candidate.spotify_id IN (${placeholders})
+        AND candidate.isrc IS NOT NULL AND candidate.isrc<>''
+        AND metadata.title IS NOT NULL AND metadata.title<>''
+        AND metadata.artist IS NOT NULL AND metadata.artist<>''
+        AND metadata.title<>metadata.spotify_id
+        AND metadata.artist<>metadata.spotify_id
+        AND metadata.artist NOT GLOB 'JP[A-Z0-9]*'
+    )
+    SELECT candidate_spotify_id AS spotify_id,title,artist
+    FROM ranked WHERE row_rank=1
+  `).bind(...spotifyIds).all();
+  return new Set((result.results || [])
+    .filter((item) => completeMetadata(item, item.spotify_id))
+    .map((item) => item.spotify_id));
+}
+
 function metadataQueueKey(candidates) {
   return candidates.map((track) => String(track.spotify_id)).sort().join(',');
 }
@@ -273,16 +307,24 @@ export async function enrichTracks(env, ingestFn, queue, observedAt, config) {
   const cacheKey = metadataQueueKey(candidates);
   if (cachedMetadataComplete(cacheKey)) return 0;
 
+  const spotifyIds = candidates.map((track) => track.spotify_id);
   const placeholders = candidates.map(() => '?').join(',');
   const stored = await env.DB.prepare(`
     SELECT spotify_id, title, artist, fetched_at
     FROM sh_track_metadata
     WHERE spotify_id IN (${placeholders})
-  `).bind(...candidates.map((track) => track.spotify_id)).all();
+  `).bind(...spotifyIds).all();
   const now = Date.now();
   const settled = new Set((stored.results || [])
     .filter((item) => !metadataNeedsRefresh(item, item.spotify_id, now))
     .map((item) => item.spotify_id));
+
+  const unresolvedIds = spotifyIds.filter((spotifyId) => !settled.has(spotifyId));
+  if (unresolvedIds.length) {
+    const resolvedByIsrc = await isrcResolvedSpotifyIds(env.DB, unresolvedIds);
+    for (const spotifyId of resolvedByIsrc) settled.add(spotifyId);
+  }
+
   const allMissing = candidates.filter((track) => !settled.has(track.spotify_id));
   if (!allMissing.length) {
     markMetadataComplete(cacheKey);
