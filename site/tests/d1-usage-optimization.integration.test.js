@@ -6,7 +6,10 @@ import {
   queueItemsToWriteLean,
   queueStructuralPayload,
 } from '../functions/lib/d1-lean-ingest.js';
-import { queueLikesPayload } from '../functions/lib/d1-optimized-ingest.js';
+import {
+  hasCompleteLikeSnapshot,
+  queueLikesPayload,
+} from '../functions/lib/d1-optimized-ingest.js';
 
 test('queue identity ignores bite-only and raw response changes', () => {
   const base = { station_id: 1, queue_id: 2, start_time: 3 };
@@ -46,4 +49,16 @@ test('queue like hash payload is stable across track ordering', () => {
     { spotify_id: 'b', bite_count: 2 },
   ]);
   assert.deepEqual(first, second);
+});
+
+test('partial like snapshots remain non-authoritative', () => {
+  assert.equal(hasCompleteLikeSnapshot([]), true);
+  assert.equal(hasCompleteLikeSnapshot([
+    { spotify_id: 'a', bite_count: 1 },
+    { spotify_id: 'b', bite_count: 2 },
+  ]), true);
+  assert.equal(hasCompleteLikeSnapshot([
+    { spotify_id: 'a', bite_count: 1 },
+    { spotify_id: 'b' },
+  ]), false);
 });
