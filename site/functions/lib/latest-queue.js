@@ -19,13 +19,23 @@ SELECT
   lq.observed_at AS queue_observed_at,
   q.observed_at AS item_observed_at,
   q.position,q.queue_track_id,q.stationhead_track_id,q.spotify_id,
-  q.apple_music_id,q.deezer_id,q.isrc,q.duration_ms,q.preview_url,q.bite_count,
+  q.apple_music_id,q.deezer_id,q.isrc,q.duration_ms,q.preview_url,
+  COALESCE(likes.like_count,q.bite_count) AS bite_count,
   m.title,m.artist,m.display_title,m.thumbnail_url,m.spotify_url,
   m.fetched_at AS metadata_fetched_at,m.raw_json AS metadata_raw_json
 FROM latest_queue lq
 LEFT JOIN sh_queue_items q
   ON q.station_id=lq.station_id AND q.start_time=lq.start_time
 LEFT JOIN sh_track_metadata m ON m.spotify_id=q.spotify_id
+LEFT JOIN sh_track_like_observations likes ON likes.id=(
+  SELECT observed.id FROM sh_track_like_observations observed
+  WHERE observed.station_id IS q.station_id
+    AND observed.track_key=COALESCE(
+      CAST(q.queue_track_id AS TEXT),CAST(q.stationhead_track_id AS TEXT),
+      q.spotify_id,q.isrc,'position:'||CAST(q.position AS TEXT)
+    )
+  ORDER BY observed.observed_at DESC,observed.id DESC LIMIT 1
+)
 ORDER BY q.position ASC
 LIMIT 80`;
 
