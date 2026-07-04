@@ -36,8 +36,10 @@ const sql = `SELECT
   (SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='sh_comment_state') AS comment_state_table,
   (SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='sh_comment_minute_counts') AS comment_minute_table,
   (SELECT COUNT(*) FROM pragma_table_info('sh_queue_current') WHERE name='likes_hash') AS likes_hash_column,
-  (SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='idx_sh_queue_items_station_start_position') AS queue_index,
-  (SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='idx_sh_channel_snapshots_latest') AS snapshot_index`;
+  (SELECT COUNT(*) FROM pragma_index_list('sh_queue_items') WHERE origin='u') AS queue_unique_index,
+  (SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='idx_sh_channel_snapshots_latest') AS snapshot_index,
+  (SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='idx_sh_queue_items_station_start_position') AS redundant_queue_index,
+  (SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='idx_sh_track_metadata_spotify_fetched') AS redundant_metadata_index`;
 
 const result = spawnSync(wranglerExecutable, [
   'd1', 'execute', 'stationhead-monitor', '--remote', '--config', wranglerConfigPath,
@@ -66,11 +68,15 @@ if (!row) {
   process.exit(1);
 }
 
-const missing = Object.entries(row)
-  .filter(([, value]) => Number(value) !== 1)
-  .map(([name]) => name);
-if (missing.length) {
-  console.error(`D1 schema verification failed: ${missing.join(', ')}`);
+const required = [
+  'snapshot_table', 'queue_table', 'likes_table', 'comment_state_table',
+  'comment_minute_table', 'likes_hash_column', 'queue_unique_index', 'snapshot_index',
+];
+const missing = required.filter((name) => Number(row[name]) < 1);
+const redundant = ['redundant_queue_index', 'redundant_metadata_index']
+  .filter((name) => Number(row[name]) !== 0);
+if (missing.length || redundant.length) {
+  console.error(`D1 schema verification failed: missing=${missing.join(',') || 'none'} redundant=${redundant.join(',') || 'none'}`);
   process.exit(1);
 }
 
