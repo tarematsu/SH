@@ -22,9 +22,12 @@ test('migration and verification detect both Pages and Workers production branch
   for (const script of [migrator, verifier]) {
     assert.match(script, /CF_PAGES_BRANCH/);
     assert.match(script, /WORKERS_CI_BRANCH/);
-    assert.match(script, /currentBranch === 'main'/);
+    assert.match(script, /currentBranch/);
+    assert.match(script, /main/);
     assert.match(script, /Cloudflare build branch variable is missing/);
   }
+  assert.match(migrator, /currentBranch !== productionBranch/);
+  assert.match(verifier, /currentBranch === 'main'/);
 });
 
 test('remote schema verification skips non-production builds unless forced', () => {
