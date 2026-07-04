@@ -1,15 +1,9 @@
 name: Apply D1 migrations
-# Verification trigger: 2026-07-05
 
 on:
   push:
     branches:
       - main
-    paths:
-      - 'database/migrations/**'
-      - 'site/scripts/apply-d1-migrations.mjs'
-      - 'site/wrangler.jsonc'
-      - '.github/workflows/apply-d1-migrations.yml'
   workflow_dispatch:
 
 permissions:
@@ -43,7 +37,7 @@ jobs:
           cache-dependency-path: site/package-lock.json
       - name: Install dependencies
         run: npm ci --no-audit --no-fund
-      - name: Apply and verify every pending remote D1 migration
+      - name: Apply every pending remote D1 migration
         id: migrate
         shell: bash
         run: |
@@ -53,12 +47,24 @@ jobs:
           fi
           npm run db:migrate 2>&1 | tee migration.log
           status=${PIPESTATUS[0]}
-          if [ "$status" -eq 0 ]; then
-            npx wrangler d1 migrations list stationhead-monitor --remote --config wrangler.jsonc 2>&1 | tee -a migration.log
-            verify_status=${PIPESTATUS[0]}
-            if [ "$verify_status" -ne 0 ]; then
-              status=$verify_status
-            fi
+          echo "exit_code=$status" >> "$GITHUB_OUTPUT"
+          exit 0
+      - name: Verify remote migration list and required schema
+        id: verify
+        if: steps.migrate.outputs.exit_code == '0'
+        shell: bash
+        run: |
+          set +e
+          if [ -z "$CLOUDFLARE_API_TOKEN" ]; then
+            export CLOUDFLARE_API_TOKEN="$CLOUDFLARE_BUILDS_API_TOKEN"
+          fi
+          npx wrangler d1 migrations list stationhead-monitor --remote --config wrangler.jsonc 2>&1 | tee -a migration.log
+          list_status=${PIPESTATUS[0]}
+          if [ "$list_status" -eq 0 ]; then
+            npm run db:verify 2>&1 | tee -a migration.log
+            status=${PIPESTATUS[0]}
+          else
+            status=$list_status
           fi
           echo "exit_code=$status" >> "$GITHUB_OUTPUT"
           exit 0
@@ -68,8 +74,9 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           MIGRATION_EXIT_CODE: ${{ steps.migrate.outputs.exit_code }}
+          VERIFY_EXIT_CODE: ${{ steps.verify.outputs.exit_code }}
         run: |
-          if [ "${MIGRATION_EXIT_CODE:-1}" = "0" ]; then
+          if [ "${MIGRATION_EXIT_CODE:-1}" = "0" ] && [ "${VERIFY_EXIT_CODE:-1}" = "0" ]; then
             result='SUCCESS'
           else
             result='FAILURE'
@@ -79,13 +86,14 @@ jobs:
             echo
             echo "- Commit: $GITHUB_SHA"
             echo "- Run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
-            echo "- Exit code: ${MIGRATION_EXIT_CODE:-missing}"
+            echo "- Migration exit code: ${MIGRATION_EXIT_CODE:-missing}"
+            echo "- Schema verification exit code: ${VERIFY_EXIT_CODE:-missing}"
             echo
             echo '```text'
-            tail -n 120 migration.log 2>/dev/null || echo 'migration.log was not created'
+            tail -n 160 migration.log 2>/dev/null || echo 'migration.log was not created'
             echo '```'
           } > migration-audit.md
           gh issue comment 112 --repo "$GITHUB_REPOSITORY" --body-file migration-audit.md
-      - name: Fail when migration failed
-        if: steps.migrate.outputs.exit_code != '0'
+      - name: Fail when migration or verification failed
+        if: steps.migrate.outputs.exit_code != '0' || steps.verify.outputs.exit_code != '0'
         run: exit 1
