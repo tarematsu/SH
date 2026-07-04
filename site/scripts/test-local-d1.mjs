@@ -13,6 +13,7 @@ const schemaFiles = [
   'host-monitoring.sql',
   'track-like-observations.sql',
   'ranking-all-schema.sql',
+  'migrations/004_collector_coordination.sql',
 ];
 
 function run(args) {
