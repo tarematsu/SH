@@ -1,17 +1,18 @@
-name: Pages PR check
+name: Pages and Worker PR check
 
 on:
   pull_request:
     paths:
       - 'site/**'
       - 'database/**'
+      - 'worker/**'
       - '.github/workflows/pages-pr-check.yml'
 
 permissions:
   contents: read
 
 concurrency:
-  group: pages-pr-${{ github.event.pull_request.number }}
+  group: stationhead-pr-${{ github.event.pull_request.number }}
   cancel-in-progress: true
 
 jobs:
@@ -23,15 +24,32 @@ jobs:
         working-directory: site
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
           cache: npm
           cache-dependency-path: site/package-lock.json
-
       - name: Install dependencies
         run: npm ci --no-audit --no-fund
-
       - name: Run Cloudflare-equivalent Pages build
         run: npm run check && npm run build
+
+  worker-check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: worker
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: worker/package-lock.json
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+      - name: Check Worker bundle
+        run: npm run check
+      - name: Run Worker tests
+        run: npm test
