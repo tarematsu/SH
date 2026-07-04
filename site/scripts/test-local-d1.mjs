@@ -7,7 +7,7 @@ const executable = process.platform === 'win32'
   ? path.resolve('node_modules/.bin/wrangler.cmd')
   : path.resolve('node_modules/.bin/wrangler');
 const databaseDirectory = path.resolve('..', 'database');
-const foundationFiles = [
+const schemaFiles = [
   'schema.sql',
   'history-schema.sql',
   'host-monitoring.sql',
@@ -28,24 +28,19 @@ function run(args) {
 }
 
 function executeFile(filename) {
-  const filePath = path.join(databaseDirectory, filename);
-  console.log(`Applying D1 foundation: ${filename}`);
+  console.log(`Applying current D1 schema: ${filename}`);
   run([
     'd1', 'execute', 'stationhead-monitor',
     '--local', '--persist-to', stateDirectory,
-    '--file', filePath,
+    '--file', path.join(databaseDirectory, filename),
   ]);
 }
 
 rmSync(stateDirectory, { recursive: true, force: true });
 
 try {
-  for (const filename of foundationFiles) executeFile(filename);
+  for (const filename of schemaFiles) executeFile(filename);
 
-  run([
-    'd1', 'migrations', 'apply', 'stationhead-monitor',
-    '--local', '--persist-to', stateDirectory,
-  ]);
   run([
     'd1', 'execute', 'stationhead-monitor',
     '--local', '--persist-to', stateDirectory,
@@ -64,9 +59,7 @@ try {
     'sh_channel_rankings',
     'sh_legacy_snapshots',
     'sh_track_like_observations',
-    'sh_email_stream_snapshots',
     'sh_weekly_summary',
-    'sh_comment_state',
   ];
   for (const table of requiredTables) {
     run([
