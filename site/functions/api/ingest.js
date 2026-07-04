@@ -31,10 +31,11 @@ export async function onRequestPost(context) {
     }
     if (body?.type === 'snapshot') {
       const result = await saveLeanSnapshot(env.DB, observedAt, data);
-      const isCloudflareCollector = body?.collector_id === 'cloudflare-worker';
-      if (isCloudflareCollector && typeof context.waitUntil === 'function') {
+      const shouldMaintain = body?.collector_id === 'cloudflare-worker'
+        && typeof env.DB.exec === 'function';
+      if (shouldMaintain && typeof context.waitUntil === 'function') {
         context.waitUntil(runDataMaintenanceSafely(env.DB));
-      } else if (isCloudflareCollector) {
+      } else if (shouldMaintain) {
         await runDataMaintenanceSafely(env.DB);
       }
       return json({ ok: true, type: body.type, accepted: true, ...result });
