@@ -56,10 +56,10 @@ export const DASHBOARD_CONTEXT_SQL = `WITH latest_channel AS (
   ORDER BY observed_at DESC,id DESC
   LIMIT 1
 ), latest_queue AS (
-  SELECT station_id,queue_id,start_time,is_paused,observed_at
-  FROM sh_queue_snapshots
+  SELECT station_id,queue_id,start_time,is_paused,observed_at,
+    structural_hash,likes_hash
+  FROM sh_queue_current
   WHERE station_id=(SELECT station_id FROM latest_channel)
-  ORDER BY observed_at DESC,id DESC
   LIMIT 1
 ), queue_stats AS (
   SELECT
@@ -79,6 +79,8 @@ SELECT
   latest_queue.start_time AS queue_start_time,
   latest_queue.is_paused AS queue_is_paused,
   latest_queue.observed_at AS queue_observed_at,
+  latest_queue.structural_hash,
+  latest_queue.likes_hash,
   queue_stats.item_observed_at,
   queue_stats.metadata_fetched_at,
   queue_stats.total_items
@@ -115,6 +117,8 @@ function queueHeaderResult(state) {
     queue_start_time: state.start_time,
     queue_is_paused: state.is_paused,
     queue_observed_at: state.observed_at,
+    structural_hash: state.structural_hash,
+    likes_hash: state.likes_hash,
     position: null,
   }] };
 }

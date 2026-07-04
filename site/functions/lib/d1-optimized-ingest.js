@@ -35,12 +35,14 @@ function observationTrackKey(track) {
 }
 
 export function queueLikesPayload(tracks) {
-  return (Array.isArray(tracks) ? tracks : [])
-    .filter((track) => num(track?.bite_count) != null)
-    .map((track) => ({
-      track_key: observationTrackKey(track),
-      like_count: num(track?.bite_count),
-    }))
+  const unique = new Map();
+  for (const track of Array.isArray(tracks) ? tracks : []) {
+    const likeCount = num(track?.bite_count);
+    if (likeCount == null) continue;
+    unique.set(observationTrackKey(track), likeCount);
+  }
+  return [...unique.entries()]
+    .map(([trackKey, likeCount]) => ({ track_key: trackKey, like_count: likeCount }))
     .sort((left, right) => left.track_key.localeCompare(right.track_key));
 }
 
@@ -164,6 +166,27 @@ function queueCurrentStatement(db, values) {
     .bind(...values);
 }
 
+function deleteMissingQueueItemsStatement(db, stationId, startTime, positions) {
+  if (!positions.length) {
+    return db.prepare(`DELETE FROM sh_queue_items
+      WHERE station_id IS ? AND start_time IS ?`).bind(stationId, startTime);
+  }
+  const placeholders = positions.map(() => '?').join(',');
+  return db.prepare(`DELETE FROM sh_queue_items
+    WHERE station_id IS ? AND start_time IS ? AND position NOT IN (${placeholders})`)
+    .bind(stationId, startTime, ...positions);
+}
+
+function deleteMissingCurrentLikesStatement(db, stationId, trackKeys) {
+  if (!trackKeys.length) {
+    return db.prepare('DELETE FROM sh_track_like_current WHERE station_id IS ?').bind(stationId);
+  }
+  const placeholders = trackKeys.map(() => '?').join(',');
+  return db.prepare(`DELETE FROM sh_track_like_current
+    WHERE station_id IS ? AND track_key NOT IN (${placeholders})`)
+    .bind(stationId, ...trackKeys);
+}
+
 export async function saveLeanQueue(db, observedAt, body) {
   const data = body?.data ?? {};
   const structuralPayload = queueStructuralPayload(data);
@@ -229,14 +252,21 @@ export async function saveLeanQueue(db, observedAt, body) {
     : [];
   const observations = likesChanged ? planLikeObservations(tracks, latestRows) : [];
 
-  const statements = [
+  const statements = [];
+  if (structureChanged) {
+    statements.push(
+      deleteMissingQueueItemsStatement(db, stationId, startTime, positions),
+      deleteMissingCurrentLikesStatement(db, stationId, trackKeys),
+    );
+  }
+  statements.push(
     ...queueItemWriteStatements(db, changedTracks, observedAt, stationId, queueId, startTime),
     ...likeWriteStatements(db, observations, observedAt, stationId, queueId, startTime),
     queueCurrentStatement(db, [
       stationId, queueId, startTime, structuralHash, likesHash,
       bool(data?.is_paused), observedAt, Date.now(),
     ]),
-  ];
+  );
   if (structureChanged && claim.accepted) {
     statements.unshift(db.prepare(`INSERT INTO sh_queue_snapshots (
       observed_at,station_id,queue_id,start_time,is_paused,raw_json

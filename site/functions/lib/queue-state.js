@@ -1,14 +1,15 @@
 export const LATEST_QUEUE_STATE_SQL = `WITH latest_queue AS (
-  SELECT station_id,queue_id,start_time,is_paused,observed_at
-  FROM sh_queue_snapshots
+  SELECT station_id,queue_id,start_time,is_paused,observed_at,
+    structural_hash,likes_hash
+  FROM sh_queue_current
   WHERE station_id=?
-  ORDER BY observed_at DESC,id DESC
   LIMIT 1
 )
 SELECT
   lq.station_id AS queue_station_id,lq.queue_id,
   lq.start_time AS queue_start_time,lq.is_paused AS queue_is_paused,
   lq.observed_at AS queue_observed_at,
+  lq.structural_hash,lq.likes_hash,
   MAX(q.observed_at) AS item_observed_at,
   MAX(m.fetched_at) AS metadata_fetched_at,
   COUNT(q.position) AS total_items
@@ -16,7 +17,8 @@ FROM latest_queue lq
 LEFT JOIN sh_queue_items q
   ON q.station_id=lq.station_id AND q.start_time=lq.start_time
 LEFT JOIN sh_track_metadata m ON m.spotify_id=q.spotify_id
-GROUP BY lq.station_id,lq.queue_id,lq.start_time,lq.is_paused,lq.observed_at`;
+GROUP BY lq.station_id,lq.queue_id,lq.start_time,lq.is_paused,lq.observed_at,
+  lq.structural_hash,lq.likes_hash`;
 
 export const DASHBOARD_QUEUE_STATE_SQL = `WITH latest_channel AS (
   SELECT station_id,host_account_id,host_handle
@@ -24,10 +26,10 @@ export const DASHBOARD_QUEUE_STATE_SQL = `WITH latest_channel AS (
   ORDER BY observed_at DESC,id DESC
   LIMIT 1
 ), latest_queue AS (
-  SELECT station_id,queue_id,start_time,is_paused,observed_at
-  FROM sh_queue_snapshots
+  SELECT station_id,queue_id,start_time,is_paused,observed_at,
+    structural_hash,likes_hash
+  FROM sh_queue_current
   WHERE station_id=(SELECT station_id FROM latest_channel)
-  ORDER BY observed_at DESC,id DESC
   LIMIT 1
 )
 SELECT
@@ -36,6 +38,7 @@ SELECT
   latest_queue.start_time AS queue_start_time,
   latest_queue.is_paused AS queue_is_paused,
   latest_queue.observed_at AS queue_observed_at,
+  latest_queue.structural_hash,latest_queue.likes_hash,
   MAX(q.observed_at) AS item_observed_at,
   MAX(m.fetched_at) AS metadata_fetched_at,
   COUNT(q.position) AS total_items
@@ -46,16 +49,24 @@ LEFT JOIN sh_queue_items q
 LEFT JOIN sh_track_metadata m ON m.spotify_id=q.spotify_id
 GROUP BY latest_channel.host_account_id,latest_channel.host_handle,
   latest_queue.station_id,latest_queue.queue_id,latest_queue.start_time,
-  latest_queue.is_paused,latest_queue.observed_at`;
+  latest_queue.is_paused,latest_queue.observed_at,
+  latest_queue.structural_hash,latest_queue.likes_hash`;
 
 export const QUEUE_ITEMS_FOR_STATE_SQL = `SELECT
   q.observed_at AS item_observed_at,
   q.position,q.queue_track_id,q.stationhead_track_id,q.spotify_id,
-  q.apple_music_id,q.deezer_id,q.isrc,q.duration_ms,q.preview_url,q.bite_count,
+  q.apple_music_id,q.deezer_id,q.isrc,q.duration_ms,q.preview_url,
+  COALESCE(likes.like_count,q.bite_count) AS bite_count,
   m.title,m.artist,m.display_title,m.thumbnail_url,m.spotify_url,
   m.fetched_at AS metadata_fetched_at,m.raw_json AS metadata_raw_json
 FROM sh_queue_items q
 LEFT JOIN sh_track_metadata m ON m.spotify_id=q.spotify_id
+LEFT JOIN sh_track_like_current likes
+  ON likes.station_id IS q.station_id
+  AND likes.track_key=COALESCE(
+    CAST(q.queue_track_id AS TEXT),CAST(q.stationhead_track_id AS TEXT),
+    q.spotify_id,q.isrc,'position:'||CAST(q.position AS TEXT)
+  )
 WHERE q.station_id=? AND q.start_time=?
 ORDER BY q.position ASC
 LIMIT 80`;
@@ -77,6 +88,8 @@ export function parseQueueState(row) {
     start_time: row.queue_start_time,
     is_paused: row.queue_is_paused,
     observed_at: row.queue_observed_at,
+    structural_hash: row.structural_hash || '',
+    likes_hash: row.likes_hash || '',
     item_observed_at: row.item_observed_at ?? null,
     metadata_fetched_at: row.metadata_fetched_at ?? null,
     total_items: Number(row.total_items || 0),
@@ -93,8 +106,8 @@ export function hostIdentity(row) {
 export function queueRevision(state, host = '') {
   const queuePart = state ? [
     state.station_id ?? '',state.queue_id ?? '',state.start_time ?? '',
-    state.is_paused ? 1 : 0,state.item_observed_at ?? 0,
-    state.metadata_fetched_at ?? 0,state.total_items ?? 0,
+    state.is_paused ? 1 : 0,state.structural_hash || '',state.likes_hash || '',
+    state.item_observed_at ?? 0,state.metadata_fetched_at ?? 0,state.total_items ?? 0,
   ].join(':') : 'none';
   return `${queuePart}:${host || ''}`;
 }
