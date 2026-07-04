@@ -89,4 +89,3 @@ if (missing.length || redundant.length) {
 }
 
 console.log('Remote D1 schema verification completed successfully.');
-await import('./report-d1-storage.mjs');
