@@ -4,12 +4,25 @@ import { writeFileSync } from 'node:fs';
 const database = process.env.D1_DATABASE || 'stationhead-monitor';
 const config = process.env.D1_CONFIG || 'wrangler.jsonc';
 const outputPath = process.env.D1_REPORT_PATH || 'd1-storage-report.md';
+const apiToken = process.env.CLOUDFLARE_API_TOKEN || process.env.CLOUDFLARE_BUILDS_API_TOKEN || '';
+const accountId = process.env.CLOUDFLARE_ACCOUNT_ID || process.env.CF_ACCOUNT_ID || '';
+
+if (!apiToken) {
+  throw new Error('D1 storage diagnostics failed: Cloudflare API token is missing.');
+}
+
+const runnerEnv = {
+  ...process.env,
+  CI: 'true',
+  CLOUDFLARE_API_TOKEN: apiToken,
+  ...(accountId ? { CLOUDFLARE_ACCOUNT_ID: accountId } : {}),
+};
 
 function runSql(sql) {
   const result = spawnSync(
     process.platform === 'win32' ? 'npx.cmd' : 'npx',
     ['wrangler', 'd1', 'execute', database, '--remote', '--config', config, '--command', sql, '--json'],
-    { encoding: 'utf8', env: process.env, maxBuffer: 20 * 1024 * 1024 },
+    { encoding: 'utf8', env: runnerEnv, maxBuffer: 20 * 1024 * 1024 },
   );
   if (result.status !== 0) {
     throw new Error(`D1 query failed (${result.status}): ${result.stderr || result.stdout}`);
