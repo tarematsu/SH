@@ -42,6 +42,7 @@ function monthlyRange(dayKey) {
 }
 
 function finite(value) {
+  if (value == null || value === '') return null;
   const number = Number(value);
   return Number.isFinite(number) ? number : null;
 }
@@ -155,10 +156,11 @@ async function cleanup(db, now) {
 }
 
 async function backfillLegacySamples(db, lastLegacyId) {
-  const boundary = await db.prepare(`SELECT MAX(id) AS batch_end FROM (
+  const boundary = await db.prepare(`SELECT MAX(id) AS batch_end,COUNT(*) AS batch_count FROM (
       SELECT id FROM sh_legacy_snapshots WHERE id>? ORDER BY id ASC LIMIT ?
     )`).bind(lastLegacyId, LEGACY_BACKFILL_BATCH).first();
   const batchEnd = Number(boundary?.batch_end || 0);
+  const batchCount = Number(boundary?.batch_count || 0);
   if (!batchEnd || batchEnd <= lastLegacyId) {
     return { lastLegacyId, migrated: 0, complete: true };
   }
@@ -197,7 +199,7 @@ async function backfillLegacySamples(db, lastLegacyId) {
       WHERE l.id>? AND l.id<=?`).bind(lastLegacyId, batchEnd),
   ]);
 
-  return { lastLegacyId: batchEnd, migrated: batchEnd - lastLegacyId, complete: false };
+  return { lastLegacyId: batchEnd, migrated: batchCount, complete: false };
 }
 
 export async function runDataMaintenance(db, now = Date.now()) {
