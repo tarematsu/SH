@@ -1,6 +1,7 @@
 import { num } from './api-utils.js';
 
 const MINUTE_MS = 60_000;
+const runtimeCursors = new WeakMap();
 
 function timestampOf(comment, fallback) {
   const milliseconds = num(comment?.chat_time_ms);
@@ -26,6 +27,19 @@ function uniqueComments(comments) {
   return [...unique.entries()].sort((left, right) => left[0] - right[0]);
 }
 
+function cursorMap(db) {
+  let cursors = runtimeCursors.get(db);
+  if (!cursors) {
+    cursors = new Map();
+    runtimeCursors.set(db, cursors);
+  }
+  return cursors;
+}
+
+export function resetCommentCountRuntimeState(db) {
+  if (db) runtimeCursors.delete(db);
+}
+
 export async function saveCommentCounts(db, observedAt, data) {
   const comments = Array.isArray(data?.comments) ? data.comments : [];
   const stationId = num(data?.station_id ?? comments.find((item) => num(item?.station_id) != null)?.station_id);
@@ -43,11 +57,14 @@ export async function saveCommentCounts(db, observedAt, data) {
     };
   }
 
-  if (knownLastId != null && newestIncomingId != null && newestIncomingId <= knownLastId) {
+  const cursors = cursorMap(db);
+  const cachedLastId = num(cursors.get(stationId));
+  const trustedLastId = Math.max(knownLastId ?? 0, cachedLastId ?? 0);
+  if (newestIncomingId != null && trustedLastId > 0 && newestIncomingId <= trustedLastId) {
     return {
       accepted: 0,
       total: reportedTotal ?? 0,
-      last_comment_id: knownLastId,
+      last_comment_id: trustedLastId,
       velocityUpdated: false,
       skipped: true,
       cursorHit: true,
@@ -57,6 +74,7 @@ export async function saveCommentCounts(db, observedAt, data) {
   const state = await db.prepare(`SELECT last_comment_id,total_count,last_observed_at
     FROM sh_comment_state WHERE station_id=?`).bind(stationId).first();
   const lastId = num(state?.last_comment_id) ?? 0;
+  cursors.set(stationId, Math.max(cachedLastId ?? 0, lastId));
   const fresh = ordered.filter(([id]) => id > lastId);
   const derivedTotal = (num(state?.total_count) ?? 0) + fresh.length;
   const total = reportedTotal == null ? derivedTotal : Math.max(derivedTotal, reportedTotal);
@@ -106,6 +124,7 @@ export async function saveCommentCounts(db, observedAt, data) {
       last_observed_at=MAX(sh_comment_state.last_observed_at,excluded.last_observed_at)`)
     .bind(stationId, newestAcceptedId, total, lastObservedAt));
   await db.batch(statements);
+  cursors.set(stationId, newestAcceptedId);
 
   return {
     accepted: fresh.length,
