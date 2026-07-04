@@ -1,4 +1,5 @@
 name: Apply D1 migrations
+# Verification trigger: 2026-07-05
 
 on:
   push:
