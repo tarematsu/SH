@@ -13,26 +13,62 @@ function dayKey(timestamp) {
   return new Date(timestamp + 9 * 3_600_000).toISOString().slice(0, 10);
 }
 
+function commentId(comment) {
+  return num(comment?.comment_id ?? comment?.id);
+}
+
+function uniqueComments(comments) {
+  const unique = new Map();
+  for (const comment of comments) {
+    const id = commentId(comment);
+    if (id != null) unique.set(id, comment);
+  }
+  return [...unique.entries()].sort((left, right) => left[0] - right[0]);
+}
+
 export async function saveCommentCounts(db, observedAt, data) {
   const comments = Array.isArray(data?.comments) ? data.comments : [];
   const stationId = num(data?.station_id ?? comments.find((item) => num(item?.station_id) != null)?.station_id);
-  if (stationId == null || comments.length === 0) {
-    return { accepted: 0, total: num(data?.total_count) ?? 0, velocityUpdated: false, skipped: true };
+  const knownLastId = num(data?.known_last_comment_id);
+  const reportedTotal = num(data?.total_count);
+  const ordered = uniqueComments(comments);
+  const newestIncomingId = ordered.at(-1)?.[0] ?? null;
+  if (stationId == null || ordered.length === 0) {
+    return {
+      accepted: 0,
+      total: reportedTotal ?? 0,
+      last_comment_id: knownLastId,
+      velocityUpdated: false,
+      skipped: true,
+    };
+  }
+
+  if (knownLastId != null && newestIncomingId != null && newestIncomingId <= knownLastId) {
+    return {
+      accepted: 0,
+      total: reportedTotal ?? 0,
+      last_comment_id: knownLastId,
+      velocityUpdated: false,
+      skipped: true,
+      cursorHit: true,
+    };
   }
 
   const state = await db.prepare(`SELECT last_comment_id,total_count,last_observed_at
     FROM sh_comment_state WHERE station_id=?`).bind(stationId).first();
   const lastId = num(state?.last_comment_id) ?? 0;
-  const unique = new Map();
-  for (const comment of comments) {
-    const id = num(comment?.id);
-    if (id != null && id > lastId) unique.set(id, comment);
-  }
-  const fresh = [...unique.entries()].sort((left, right) => left[0] - right[0]);
-  const reportedTotal = num(data?.total_count);
+  const fresh = ordered.filter(([id]) => id > lastId);
   const derivedTotal = (num(state?.total_count) ?? 0) + fresh.length;
   const total = reportedTotal == null ? derivedTotal : Math.max(derivedTotal, reportedTotal);
-  if (!fresh.length) return { accepted: 0, total, velocityUpdated: false, skipped: true };
+  if (!fresh.length) {
+    return {
+      accepted: 0,
+      total,
+      last_comment_id: lastId || knownLastId,
+      velocityUpdated: false,
+      skipped: true,
+    };
+  }
 
   const minutes = new Map();
   const days = new Map();
@@ -61,18 +97,20 @@ export async function saveCommentCounts(db, observedAt, data) {
         comment_count=sh_comment_daily_counts.comment_count+excluded.comment_count`)
       .bind(stationId, day, count));
   }
+  const newestAcceptedId = fresh.at(-1)[0];
   statements.push(db.prepare(`INSERT INTO sh_comment_state(
       station_id,last_comment_id,total_count,last_observed_at
     ) VALUES(?,?,?,?) ON CONFLICT(station_id) DO UPDATE SET
       last_comment_id=MAX(sh_comment_state.last_comment_id,excluded.last_comment_id),
       total_count=MAX(sh_comment_state.total_count,excluded.total_count),
       last_observed_at=MAX(sh_comment_state.last_observed_at,excluded.last_observed_at)`)
-    .bind(stationId, fresh.at(-1)[0], total, lastObservedAt));
+    .bind(stationId, newestAcceptedId, total, lastObservedAt));
   await db.batch(statements);
 
   return {
     accepted: fresh.length,
     total,
+    last_comment_id: newestAcceptedId,
     velocity: null,
     velocityUpdated: false,
   };
