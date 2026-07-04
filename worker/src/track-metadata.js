@@ -188,7 +188,7 @@ export async function enrichTracks(env, ingestFn, queue, observedAt, config) {
     if (track?.spotify_id) unique.set(String(track.spotify_id), track);
   }
   const candidates = [...unique.values()];
-  if (!candidates.length || (config.metadataLimit != null && config.metadataLimit <= 0)) return 0;
+  if (!candidates.length) return 0;
 
   const now = Date.now();
   const uncached = candidates.filter((track) => !metadataStateCached(String(track.spotify_id), now));
@@ -230,26 +230,33 @@ export async function enrichTracks(env, ingestFn, queue, observedAt, config) {
     }
     return true;
   });
-  if (!retryable.length) return 0;
+  if (!retryable.length || (config.metadataLimit != null && config.metadataLimit <= 0)) return 0;
 
   const limit = config.metadataLimit ?? 3;
   const missing = retryable.slice(0, limit);
   const metadata = [];
+  const failedIds = [];
   for (const track of missing) {
     const item = await fetchTrackMetadata(track, config);
-    const spotifyId = String(track.spotify_id);
     if (!item) {
-      cacheMetadataState(spotifyId, now + FAILURE_RETRY_MS);
+      failedIds.push(String(track.spotify_id));
       continue;
     }
     metadata.push(item);
-    cacheMetadataState(
-      spotifyId,
-      completeMetadata(item, spotifyId) ? now + COMPLETE_CACHE_MS : now + RETRY_MS,
-    );
   }
+
   if (metadata.length) {
     await ingestFn(env, 'track_metadata', { tracks: metadata }, observedAt);
+    for (const item of metadata) {
+      const spotifyId = String(item.spotify_id);
+      cacheMetadataState(
+        spotifyId,
+        completeMetadata(item, spotifyId) ? now + COMPLETE_CACHE_MS : now + RETRY_MS,
+      );
+    }
+  }
+  for (const spotifyId of failedIds) {
+    cacheMetadataState(spotifyId, now + FAILURE_RETRY_MS);
   }
   return metadata.length;
 }
