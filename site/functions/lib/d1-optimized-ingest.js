@@ -46,6 +46,11 @@ export function queueLikesPayload(tracks) {
     .sort((left, right) => left.track_key.localeCompare(right.track_key));
 }
 
+export function hasCompleteLikeSnapshot(tracks) {
+  const values = Array.isArray(tracks) ? tracks : [];
+  return values.length === 0 || values.every((track) => num(track?.bite_count) != null);
+}
+
 function compactQueueItemRaw(track, queueId) {
   return rawJson({
     queue_id: num(queueId ?? track?.queue_id),
@@ -192,15 +197,18 @@ export async function saveLeanQueue(db, observedAt, body) {
   const structuralPayload = queueStructuralPayload(data);
   const structuralHash = await payloadHash(structuralPayload);
   const tracks = Array.isArray(data?.tracks) ? data.tracks : [];
-  const likesHash = await payloadHash(queueLikesPayload(tracks));
+  const completeLikes = hasCompleteLikeSnapshot(tracks);
   const stationId = num(data?.station_id);
   const startTime = num(data?.start_time);
   const queueId = num(data?.queue_id);
 
   const current = await db.prepare(`SELECT structural_hash,likes_hash,start_time
     FROM sh_queue_current WHERE station_id IS ?`).bind(stationId).first();
+  const likesHash = completeLikes
+    ? await payloadHash(queueLikesPayload(tracks))
+    : text(current?.likes_hash);
   const structureChanged = current?.structural_hash !== structuralHash;
-  const likesChanged = current?.likes_hash !== likesHash;
+  const likesChanged = completeLikes && current?.likes_hash !== likesHash;
   if (!structureChanged && !likesChanged) {
     return {
       claim: { accepted: false, duplicate: true, reason: 'same_queue_current', hash: structuralHash },
@@ -209,6 +217,7 @@ export async function saveLeanQueue(db, observedAt, body) {
       observationsWritten: 0,
       structureChanged: false,
       likesChanged: false,
+      completeLikes,
     };
   }
 
@@ -236,9 +245,9 @@ export async function saveLeanQueue(db, observedAt, body) {
   const positions = [...new Set(tracks
     .map((track) => num(track?.position))
     .filter((value) => value != null))];
-  const trackKeys = [...new Set(tracks
-    .filter((track) => num(track?.bite_count) != null)
-    .map(observationTrackKey))];
+  const trackKeys = completeLikes
+    ? [...new Set(tracks.map(observationTrackKey))]
+    : [];
   const { existingRows, latestRows } = await loadComparisonState(
     db,
     stationId,
@@ -254,10 +263,10 @@ export async function saveLeanQueue(db, observedAt, body) {
 
   const statements = [];
   if (structureChanged) {
-    statements.push(
-      deleteMissingQueueItemsStatement(db, stationId, startTime, positions),
-      deleteMissingCurrentLikesStatement(db, stationId, trackKeys),
-    );
+    statements.push(deleteMissingQueueItemsStatement(db, stationId, startTime, positions));
+    if (completeLikes) {
+      statements.push(deleteMissingCurrentLikesStatement(db, stationId, trackKeys));
+    }
   }
   statements.push(
     ...queueItemWriteStatements(db, changedTracks, observedAt, stationId, queueId, startTime),
@@ -283,6 +292,7 @@ export async function saveLeanQueue(db, observedAt, body) {
     observationsWritten: observations.length,
     structureChanged,
     likesChanged,
+    completeLikes,
   };
 }
 
