@@ -3,6 +3,13 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
+const force = String(process.env.D1_MIGRATION_FORCE || '').toLowerCase() === 'true';
+const production = process.env.CF_PAGES_BRANCH === 'main';
+if (!force && !production) {
+  console.log(`D1 schema verification skipped: CF_PAGES_BRANCH=${process.env.CF_PAGES_BRANCH || '(not set)'}`);
+  process.exit(0);
+}
+
 const scriptDirectory = path.dirname(fileURLToPath(import.meta.url));
 const siteDirectory = path.resolve(scriptDirectory, '..');
 const wranglerConfigPath = path.join(siteDirectory, 'wrangler.jsonc');
@@ -15,12 +22,8 @@ if (!existsSync(wranglerExecutable)) {
   process.exit(1);
 }
 
-const apiToken = process.env.CLOUDFLARE_API_TOKEN
-  || process.env.CLOUDFLARE_BUILDS_API_TOKEN
-  || '';
-const accountId = process.env.CLOUDFLARE_ACCOUNT_ID
-  || process.env.CF_ACCOUNT_ID
-  || '';
+const apiToken = process.env.CLOUDFLARE_API_TOKEN || process.env.CLOUDFLARE_BUILDS_API_TOKEN || '';
+const accountId = process.env.CLOUDFLARE_ACCOUNT_ID || process.env.CF_ACCOUNT_ID || '';
 if (!apiToken) {
   console.error('D1 schema verification failed: Cloudflare API token is missing.');
   process.exit(1);
@@ -37,8 +40,8 @@ const sql = `SELECT
   (SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='idx_sh_channel_snapshots_latest') AS snapshot_index`;
 
 const result = spawnSync(wranglerExecutable, [
-  'd1', 'execute', 'stationhead-monitor', '--remote',
-  '--config', wranglerConfigPath, '--command', sql, '--json',
+  'd1', 'execute', 'stationhead-monitor', '--remote', '--config', wranglerConfigPath,
+  '--command', sql, '--json',
 ], {
   cwd: siteDirectory,
   encoding: 'utf8',
