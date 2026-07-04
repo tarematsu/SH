@@ -3,6 +3,7 @@ const MIN_TTL_MS = 10 * 1000;
 const MAX_TTL_MS = 15 * 60 * 1000;
 
 const PRIVATE_HEALTH_FIELDS = new Set([
+  'configured',
   'last_error',
   'auth_last_error',
   'browser_last_auth_error',
