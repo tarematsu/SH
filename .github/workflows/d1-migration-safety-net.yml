@@ -9,6 +9,7 @@ on:
       - 'site/scripts/apply-d1-migrations.mjs'
       - 'site/scripts/verify-d1-schema.mjs'
       - 'site/wrangler.jsonc'
+      - '.github/workflows/d1-migration-safety-net.yml'
   workflow_dispatch:
 
 permissions:
