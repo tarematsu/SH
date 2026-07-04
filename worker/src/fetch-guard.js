@@ -6,6 +6,8 @@ const BLOCKED_HOSTS = new Set([
 const OPTIONAL_HOSTS = new Set([
   'open.spotify.com',
 ]);
+const RESEND_HOST = 'api.resend.com';
+const RESEND_SUCCESS_TTL_MS = 60 * 60_000;
 const OPTIONAL_TIMEOUT_MS = 5_000;
 const OPTIONAL_FAILURE_BACKOFF_MS = 5 * 60_000;
 const MAX_TRACKED_REQUESTS = 64;
@@ -19,6 +21,10 @@ function requestUrl(input) {
 
 function requestMethod(input, init) {
   return String(init?.method || input?.method || 'GET').toUpperCase();
+}
+
+function requestHeaders(input, init) {
+  return new Headers(init?.headers || input?.headers || undefined);
 }
 
 function blockedResponse(hostname) {
@@ -52,11 +58,32 @@ function combinedSignal(original, timeoutMs) {
   return original;
 }
 
+async function responseSnapshot(response) {
+  return {
+    status: response.status,
+    statusText: response.statusText,
+    headers: [...response.headers.entries()],
+    body: await response.clone().arrayBuffer(),
+  };
+}
+
+function responseFromSnapshot(snapshot, cacheStatus) {
+  const headers = new Headers(snapshot.headers);
+  headers.set('x-stationhead-resend-cache', cacheStatus);
+  return new Response(snapshot.body.slice(0), {
+    status: snapshot.status,
+    statusText: snapshot.statusText,
+    headers,
+  });
+}
+
 export function createOptionalFetchGuard(nativeFetch, nowFn = Date.now) {
   if (typeof nativeFetch !== 'function') throw new TypeError('nativeFetch must be a function');
 
   const flights = new Map();
   const failures = new Map();
+  const resendFlights = new Map();
+  const resendSuccesses = new Map();
 
   const guardedFetch = async (input, init = {}) => {
     const rawUrl = requestUrl(input);
@@ -68,12 +95,50 @@ export function createOptionalFetchGuard(nativeFetch, nowFn = Date.now) {
     }
 
     if (BLOCKED_HOSTS.has(url.hostname)) return blockedResponse(url.hostname);
-    if (!OPTIONAL_HOSTS.has(url.hostname)) return nativeFetch(input, init);
 
     const method = requestMethod(input, init);
+    const now = Number(nowFn()) || Date.now();
+
+    if (url.hostname === RESEND_HOST && method === 'POST') {
+      const idempotencyKey = requestHeaders(input, init).get('idempotency-key')?.trim();
+      if (!idempotencyKey) return nativeFetch(input, init);
+
+      const successKey = `${url.toString()}\n${idempotencyKey}`;
+      const cached = resendSuccesses.get(successKey);
+      if (cached && cached.expiresAt > now) {
+        return responseFromSnapshot(cached.snapshot, 'hit');
+      }
+      if (cached) resendSuccesses.delete(successKey);
+
+      if (resendFlights.has(successKey)) {
+        return responseFromSnapshot(await resendFlights.get(successKey), 'coalesced');
+      }
+
+      const pending = Promise.resolve()
+        .then(() => nativeFetch(input, init))
+        .then(async (response) => {
+          const snapshot = await responseSnapshot(response);
+          if (response.ok) {
+            resendSuccesses.set(successKey, {
+              snapshot,
+              expiresAt: (Number(nowFn()) || Date.now()) + RESEND_SUCCESS_TTL_MS,
+            });
+            trimMap(resendSuccesses);
+          }
+          return snapshot;
+        })
+        .finally(() => {
+          if (resendFlights.get(successKey) === pending) resendFlights.delete(successKey);
+        });
+      resendFlights.set(successKey, pending);
+      trimMap(resendFlights);
+      return responseFromSnapshot(await pending, 'miss');
+    }
+
+    if (!OPTIONAL_HOSTS.has(url.hostname)) return nativeFetch(input, init);
+
     const dedupe = method === 'GET' || method === 'HEAD';
     const key = `${method}\n${url.toString()}`;
-    const now = Number(nowFn()) || Date.now();
     const retryAt = Number(failures.get(key) || 0);
 
     if (retryAt > now) return failureResponse(url.hostname);
