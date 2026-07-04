@@ -42,7 +42,7 @@ export function liveSummarySql(mode) {
   const periodKey = periodExpression(mode);
   return `WITH prepared AS (
     SELECT id,observed_at,listener_count,total_member_count,
-      COALESCE(current_stream_count,total_listens) AS stream_value,host_handle,
+      validated_stream_count AS stream_value,host_handle,
       ${periodKey} AS period_key
     FROM sh_channel_snapshots WHERE observed_at>=? AND observed_at<?
   ), ranked AS (
@@ -66,7 +66,8 @@ export function liveSummarySql(mode) {
     FROM prepared
   ), aggregated AS (
     SELECT period_key,MIN(observed_at) AS period_start,MAX(observed_at) AS period_end,
-      COUNT(*) AS sample_count,AVG(listener_count) AS listener_avg,
+      COUNT(*) AS sample_count,COUNT(listener_count) AS reliable_sample_count,
+      AVG(listener_count) AS listener_avg,
       MIN(listener_count) AS listener_min,MAX(listener_count) AS listener_max,
       MAX(CASE WHEN stream_first_rank=1 THEN stream_value END) AS stream_start,
       MAX(CASE WHEN stream_last_rank=1 THEN stream_value END) AS stream_end,
@@ -84,7 +85,7 @@ export function liveSummarySql(mode) {
     ) WHERE host_rank=1
   )
   SELECT aggregated.period_key,aggregated.period_start,aggregated.period_end,
-    aggregated.sample_count,aggregated.sample_count AS reliable_sample_count,
+    aggregated.sample_count,aggregated.reliable_sample_count,
     aggregated.listener_avg,aggregated.listener_min,aggregated.listener_max,
     aggregated.stream_start,aggregated.stream_end,
     aggregated.member_start,aggregated.member_end,
@@ -127,8 +128,12 @@ export function combineSummaryRows(base, live) {
     if (bv == null) return av;
     return (av * aCount + bv * bCount) / Math.max(1, aCount + bCount);
   };
-  const baseCount = finiteNumber(base.reliable_sample_count) || finiteNumber(base.sample_count) || 0;
-  const liveCount = finiteNumber(live.reliable_sample_count) || finiteNumber(live.sample_count) || 0;
+  const baseCount = finiteNumber(base.reliable_sample_count)
+    ?? finiteNumber(base.sample_count)
+    ?? 0;
+  const liveCount = finiteNumber(live.reliable_sample_count)
+    ?? finiteNumber(live.sample_count)
+    ?? 0;
   const streamStart = finiteNumber(base.stream_start) ?? finiteNumber(live.stream_start);
   const streamEnd = finiteNumber(live.stream_end) ?? finiteNumber(base.stream_end);
   const memberStart = finiteNumber(base.member_start) ?? finiteNumber(live.member_start);
@@ -138,7 +143,7 @@ export function combineSummaryRows(base, live) {
     ...live,
     period_start: Math.min(finiteNumber(base.period_start) ?? Infinity, finiteNumber(live.period_start) ?? Infinity),
     period_end: Math.max(finiteNumber(base.period_end) ?? 0, finiteNumber(live.period_end) ?? 0),
-    sample_count: (finiteNumber(base.sample_count) || 0) + (finiteNumber(live.sample_count) || 0),
+    sample_count: (finiteNumber(base.sample_count) ?? 0) + (finiteNumber(live.sample_count) ?? 0),
     reliable_sample_count: baseCount + liveCount,
     listener_avg: weightedAverage(base.listener_avg, baseCount, live.listener_avg, liveCount),
     listener_min: extrema([base.listener_min, live.listener_min], 'min'),
