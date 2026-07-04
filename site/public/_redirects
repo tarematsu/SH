@@ -1,2 +1,1 @@
-/stationhead-api-test /stationhead-api-test.html 200
-/stationhead-api-test/ /stationhead-api-test.html 200
+# No custom redirects. Cloudflare Pages serves the static test page directly.
