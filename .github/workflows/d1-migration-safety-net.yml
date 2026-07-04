@@ -1,15 +1,6 @@
 name: D1 migration safety net
 
 on:
-  push:
-    branches:
-      - main
-    paths:
-      - 'database/migrations/**'
-      - 'site/scripts/apply-d1-migrations.mjs'
-      - 'site/scripts/verify-d1-schema.mjs'
-      - 'site/wrangler.jsonc'
-      - '.github/workflows/d1-migration-safety-net.yml'
   workflow_dispatch:
 
 permissions:
@@ -42,9 +33,6 @@ jobs:
           cache-dependency-path: site/package-lock.json
       - name: Install dependencies
         run: npm ci --no-audit --no-fund
-      - name: Let the production build migrate first
-        if: github.event_name == 'push'
-        run: sleep 120
       - name: Apply any remaining migrations
         shell: bash
         run: |
