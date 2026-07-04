@@ -92,10 +92,9 @@ async function rollupDaily(db, period, now) {
   if (!aggregate || Number(aggregate.sample_count || 0) < 1) return false;
 
   const first = await db.prepare(`SELECT
-      (SELECT COALESCE(current_stream_count,total_listens)
+      (SELECT validated_stream_count
        FROM sh_channel_snapshots
-       WHERE observed_at>=? AND observed_at<?
-         AND (current_stream_count IS NOT NULL OR total_listens IS NOT NULL)
+       WHERE observed_at>=? AND observed_at<? AND validated_stream_count IS NOT NULL
        ORDER BY observed_at ASC,id ASC LIMIT 1) AS stream_start,
       (SELECT total_member_count
        FROM sh_channel_snapshots
@@ -103,10 +102,9 @@ async function rollupDaily(db, period, now) {
        ORDER BY observed_at ASC,id ASC LIMIT 1) AS member_start`)
     .bind(period.start, period.end, period.start, period.end).first();
   const last = await db.prepare(`SELECT
-      (SELECT COALESCE(current_stream_count,total_listens)
+      (SELECT validated_stream_count
        FROM sh_channel_snapshots
-       WHERE observed_at>=? AND observed_at<?
-         AND (current_stream_count IS NOT NULL OR total_listens IS NOT NULL)
+       WHERE observed_at>=? AND observed_at<? AND validated_stream_count IS NOT NULL
        ORDER BY observed_at DESC,id DESC LIMIT 1) AS stream_end,
       (SELECT total_member_count
        FROM sh_channel_snapshots

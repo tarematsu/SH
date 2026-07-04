@@ -4,6 +4,9 @@ import { bool, num, rawJson, text } from './api-utils.js';
 const QUERY_CHUNK = 80;
 const BATCH_CHUNK = 80;
 const SNAPSHOT_CHECKPOINT_MS = 5 * 60_000;
+const STREAM_MIN_RISE_LIMIT = 50_000;
+const STREAM_MIN_DROP_LIMIT = 10_000;
+const STREAM_RISE_PER_MINUTE = 10_000;
 
 function chunks(values, size) {
   const result = [];
@@ -22,21 +25,6 @@ function snapshotRawPayload(data) {
   const station = raw.current_station || {};
   const owner = station.owner || {};
   return {
-    channel_id: num(data?.channel_id),
-    station_id: num(data?.station_id),
-    is_launched: bool(data?.is_launched),
-    is_broadcasting: bool(data?.is_broadcasting),
-    chat_status: text(data?.chat_status),
-    listener_count: num(data?.listener_count),
-    online_member_count: num(data?.online_member_count),
-    total_member_count: num(data?.total_member_count),
-    guest_count: num(data?.guest_count),
-    total_listens: num(data?.total_listens),
-    stream_goal: num(data?.stream_goal),
-    current_stream_count: num(data?.current_stream_count),
-    host_account_id: num(data?.host_account_id),
-    host_handle: text(data?.host_handle),
-    broadcast_start_time: num(data?.broadcast_start_time),
     description: text(raw.description || station.status),
     artist_name: text(raw.artist_name),
     accent_color: text(raw.accent_color),
@@ -46,10 +34,6 @@ function snapshotRawPayload(data) {
     },
     current_station: {
       status: text(station.status),
-      streaming_party: {
-        current_stream_count: num(station.streaming_party?.current_stream_count),
-        stream_goal: num(station.streaming_party?.stream_goal),
-      },
       owner: {
         thumbnail: { url: text(owner.thumbnail?.url) },
         medium: { url: text(owner.medium?.url) },
@@ -58,17 +42,80 @@ function snapshotRawPayload(data) {
   };
 }
 
+function snapshotHashPayload(data, validatedStreamCount, compactRaw) {
+  return {
+    channel_id: num(data?.channel_id),
+    station_id: num(data?.station_id),
+    is_launched: bool(data?.is_launched),
+    is_broadcasting: bool(data?.is_broadcasting),
+    chat_status: text(data?.chat_status),
+    listener_count: num(data?.listener_count),
+    online_member_count: num(data?.online_member_count),
+    total_member_count: num(data?.total_member_count),
+    guest_count: num(data?.guest_count),
+    validated_stream_count: validatedStreamCount,
+    stream_goal: num(data?.stream_goal),
+    host_account_id: num(data?.host_account_id),
+    host_handle: text(data?.host_handle),
+    broadcast_start_time: num(data?.broadcast_start_time),
+    metadata: compactRaw,
+  };
+}
+
+function streamCandidates(data) {
+  return [...new Set([
+    num(data?.current_stream_count),
+    num(data?.total_listens),
+  ].filter((value) => value != null && value >= 0))];
+}
+
+export function validatedStreamCount(data, current, observedAt) {
+  const candidates = streamCandidates(data);
+  if (!candidates.length) return null;
+
+  const previous = num(current?.last_stream_count);
+  if (previous == null) {
+    if (candidates.length === 1) return candidates[0];
+    const smallest = Math.min(...candidates);
+    const largest = Math.max(...candidates);
+    if (largest - smallest > Math.max(10_000, smallest * 10)) return largest;
+    return candidates[0];
+  }
+
+  const lastAcceptedAt = Number(
+    current?.last_stream_at
+    ?? current?.last_snapshot_at
+    ?? observedAt,
+  );
+  const elapsedMinutes = Math.max(1, (observedAt - lastAcceptedAt) / 60_000);
+  const riseLimit = Math.max(
+    STREAM_MIN_RISE_LIMIT,
+    Math.abs(previous) * 0.5,
+    elapsedMinutes * STREAM_RISE_PER_MINUTE,
+  );
+  const dropLimit = Math.max(STREAM_MIN_DROP_LIMIT, Math.abs(previous) * 0.1);
+  const continuous = candidates.filter((value) => {
+    const delta = value - previous;
+    return delta <= riseLimit && delta >= -dropLimit;
+  });
+  if (!continuous.length) return null;
+  continuous.sort((left, right) => Math.abs(left - previous) - Math.abs(right - previous));
+  return continuous[0];
+}
+
 export async function saveLeanSnapshot(db, observedAt, data) {
   const channelId = num(data?.channel_id);
   const stationId = num(data?.station_id);
   const channelKey = String(channelId ?? `station:${stationId ?? 0}`);
-  const compactPayload = snapshotRawPayload(data);
-  const hash = await payloadHash(compactPayload);
-  const current = await db.prepare(`SELECT payload_hash,last_snapshot_at
+  const current = await db.prepare(`SELECT payload_hash,last_snapshot_at,last_stream_count,last_stream_at
     FROM sh_snapshot_current WHERE channel_key=?`).bind(channelKey).first();
+  const streamCount = validatedStreamCount(data, current, observedAt);
+  const streamRejected = streamCount == null && streamCandidates(data).length > 0;
+  const compactPayload = snapshotRawPayload(data);
+  const hash = await payloadHash(snapshotHashPayload(data, streamCount, compactPayload));
   if (current?.payload_hash === hash
       && observedAt - Number(current.last_snapshot_at || 0) < SNAPSHOT_CHECKPOINT_MS) {
-    return { inserted: false, skipped: true };
+    return { inserted: false, skipped: true, streamRejected };
   }
 
   const common = [
@@ -76,7 +123,7 @@ export async function saveLeanSnapshot(db, observedAt, data) {
     bool(data?.is_launched), bool(data?.is_broadcasting), text(data?.chat_status),
     num(data?.listener_count), num(data?.online_member_count), num(data?.total_member_count),
     num(data?.guest_count), num(data?.total_listens), num(data?.stream_goal),
-    num(data?.current_stream_count), num(data?.host_account_id), text(data?.host_handle),
+    num(data?.current_stream_count), streamCount, num(data?.host_account_id), text(data?.host_handle),
     num(data?.broadcast_start_time),
   ];
   const velocityBinds = [stationId, observedAt - 120_000, observedAt];
@@ -87,18 +134,29 @@ export async function saveLeanSnapshot(db, observedAt, data) {
       observed_at,channel_id,channel_alias,channel_name,station_id,
       is_launched,is_broadcasting,chat_status,listener_count,online_member_count,
       total_member_count,guest_count,total_listens,stream_goal,current_stream_count,
-      host_account_id,host_handle,broadcast_start_time,comment_velocity,raw_json
-    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,(
+      validated_stream_count,host_account_id,host_handle,broadcast_start_time,comment_velocity,raw_json
+    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,(
       SELECT COALESCE(SUM(comment_count),0) FROM sh_comment_minute_counts
       WHERE station_id=? AND bucket_start>=? AND bucket_start<=?
     ),?)`).bind(...common, ...velocityBinds, compactRaw),
-    db.prepare(`INSERT INTO sh_snapshot_current(channel_key,payload_hash,last_snapshot_at,updated_at)
-      VALUES(?,?,?,?) ON CONFLICT(channel_key) DO UPDATE SET
+    db.prepare(`INSERT INTO sh_snapshot_current(
+        channel_key,payload_hash,last_snapshot_at,last_stream_count,last_stream_at,updated_at
+      ) VALUES(?,?,?,?,?,?) ON CONFLICT(channel_key) DO UPDATE SET
       payload_hash=excluded.payload_hash,last_snapshot_at=excluded.last_snapshot_at,
+      last_stream_count=COALESCE(excluded.last_stream_count,sh_snapshot_current.last_stream_count),
+      last_stream_at=CASE WHEN excluded.last_stream_count IS NOT NULL
+        THEN excluded.last_stream_at ELSE sh_snapshot_current.last_stream_at END,
       updated_at=excluded.updated_at`)
-      .bind(channelKey, hash, observedAt, Date.now()),
+      .bind(
+        channelKey,
+        hash,
+        observedAt,
+        streamCount,
+        streamCount != null ? observedAt : null,
+        Date.now(),
+      ),
   ]);
-  return { inserted: true, skipped: false };
+  return { inserted: true, skipped: false, streamRejected };
 }
 
 export function queueStructuralPayload(data) {
