@@ -1,0 +1,211 @@
+const DAY_MS = 86_400_000;
+const HOUR_MS = 3_600_000;
+const JST_OFFSET_MS = 9 * HOUR_MS;
+const CLEANUP_BATCH = 5_000;
+const STATE_ID = 'rollup-retention-v1';
+const runtimeState = new WeakMap();
+
+function jstDayKey(timestamp) {
+  return new Date(timestamp + JST_OFFSET_MS).toISOString().slice(0, 10);
+}
+
+function dayStartUtc(dayKey) {
+  return Date.parse(`${dayKey}T00:00:00Z`) - JST_OFFSET_MS;
+}
+
+function previousDay(now) {
+  const today = jstDayKey(now);
+  const end = dayStartUtc(today);
+  const start = end - DAY_MS;
+  return { key: jstDayKey(start), start, end };
+}
+
+function weeklyRange(dayKey) {
+  const date = new Date(`${dayKey}T00:00:00Z`);
+  const offset = (date.getUTCDay() + 6) % 7;
+  date.setUTCDate(date.getUTCDate() - offset);
+  const startKey = date.toISOString().slice(0, 10);
+  date.setUTCDate(date.getUTCDate() + 7);
+  return { key: startKey, startKey, endKey: date.toISOString().slice(0, 10) };
+}
+
+function monthlyRange(dayKey) {
+  const [year, month] = dayKey.split('-').map(Number);
+  const start = new Date(Date.UTC(year, month - 1, 1));
+  const end = new Date(Date.UTC(year, month, 1));
+  return {
+    key: dayKey.slice(0, 7),
+    startKey: start.toISOString().slice(0, 10),
+    endKey: end.toISOString().slice(0, 10),
+  };
+}
+
+function finite(value) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+}
+
+async function loadBoundary(db, source, whereSql, binds, order) {
+  return db.prepare(`SELECT period_start,period_end,stream_start,stream_end,member_start,member_end
+    FROM ${source} WHERE ${whereSql} ORDER BY ${order} LIMIT 1`).bind(...binds).first();
+}
+
+async function upsertSummary(db, table, key, aggregate, first, last, primaryHost, updatedAt) {
+  if (!aggregate || Number(aggregate.sample_count || 0) < 1) return false;
+  const streamStart = finite(first?.stream_start);
+  const streamEnd = finite(last?.stream_end);
+  const memberStart = finite(first?.member_start);
+  const memberEnd = finite(last?.member_end);
+  await db.prepare(`INSERT INTO ${table}(
+      period_key,period_start,period_end,sample_count,reliable_sample_count,
+      listener_avg,listener_min,listener_max,stream_start,stream_end,stream_growth,
+      member_start,member_end,member_growth,likes_max,distinct_tracks,primary_host,
+      quality_score,quality_flags,updated_at
+    ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+    ON CONFLICT(period_key) DO UPDATE SET
+      period_start=excluded.period_start,period_end=excluded.period_end,
+      sample_count=excluded.sample_count,reliable_sample_count=excluded.reliable_sample_count,
+      listener_avg=excluded.listener_avg,listener_min=excluded.listener_min,
+      listener_max=excluded.listener_max,stream_start=excluded.stream_start,
+      stream_end=excluded.stream_end,stream_growth=excluded.stream_growth,
+      member_start=excluded.member_start,member_end=excluded.member_end,
+      member_growth=excluded.member_growth,likes_max=excluded.likes_max,
+      distinct_tracks=excluded.distinct_tracks,primary_host=excluded.primary_host,
+      quality_score=excluded.quality_score,quality_flags=excluded.quality_flags,
+      updated_at=excluded.updated_at`).bind(
+    key, finite(aggregate.period_start), finite(aggregate.period_end),
+    Number(aggregate.sample_count || 0), Number(aggregate.reliable_sample_count || aggregate.sample_count || 0),
+    finite(aggregate.listener_avg), finite(aggregate.listener_min), finite(aggregate.listener_max),
+    streamStart, streamEnd, streamStart != null && streamEnd != null && streamEnd >= streamStart ? streamEnd - streamStart : null,
+    memberStart, memberEnd, memberStart != null && memberEnd != null ? memberEnd - memberStart : null,
+    finite(aggregate.likes_max), finite(aggregate.distinct_tracks), primaryHost || null,
+    finite(aggregate.quality_score) ?? 1, '["live_rollup"]', updatedAt,
+  ).run();
+  return true;
+}
+
+async function rollupDaily(db, period, now) {
+  const aggregate = await db.prepare(`SELECT MIN(observed_at) AS period_start,MAX(observed_at) AS period_end,
+      COUNT(*) AS sample_count,COUNT(*) AS reliable_sample_count,
+      AVG(listener_count) AS listener_avg,MIN(listener_count) AS listener_min,
+      MAX(listener_count) AS listener_max,NULL AS likes_max,NULL AS distinct_tracks,1 AS quality_score
+    FROM sh_channel_snapshots WHERE observed_at>=? AND observed_at<?`)
+    .bind(period.start, period.end).first();
+  if (!aggregate || Number(aggregate.sample_count || 0) < 1) return false;
+  const first = await db.prepare(`SELECT observed_at AS period_start,observed_at AS period_end,
+      COALESCE(current_stream_count,total_listens) AS stream_start,
+      COALESCE(current_stream_count,total_listens) AS stream_end,
+      total_member_count AS member_start,total_member_count AS member_end
+    FROM sh_channel_snapshots WHERE observed_at>=? AND observed_at<?
+      AND (current_stream_count IS NOT NULL OR total_listens IS NOT NULL OR total_member_count IS NOT NULL)
+    ORDER BY observed_at ASC,id ASC LIMIT 1`).bind(period.start, period.end).first();
+  const last = await db.prepare(`SELECT observed_at AS period_start,observed_at AS period_end,
+      COALESCE(current_stream_count,total_listens) AS stream_start,
+      COALESCE(current_stream_count,total_listens) AS stream_end,
+      total_member_count AS member_start,total_member_count AS member_end
+    FROM sh_channel_snapshots WHERE observed_at>=? AND observed_at<?
+      AND (current_stream_count IS NOT NULL OR total_listens IS NOT NULL OR total_member_count IS NOT NULL)
+    ORDER BY observed_at DESC,id DESC LIMIT 1`).bind(period.start, period.end).first();
+  const host = await db.prepare(`SELECT host_handle FROM sh_channel_snapshots
+    WHERE observed_at>=? AND observed_at<? AND host_handle IS NOT NULL AND host_handle<>''
+    GROUP BY host_handle ORDER BY COUNT(*) DESC,host_handle ASC LIMIT 1`)
+    .bind(period.start, period.end).first();
+  return upsertSummary(db, 'sh_daily_summary', period.key, aggregate, first, last, host?.host_handle, now);
+}
+
+async function rollupFromDaily(db, table, range, now) {
+  const aggregate = await db.prepare(`SELECT MIN(period_start) AS period_start,MAX(period_end) AS period_end,
+      SUM(sample_count) AS sample_count,SUM(reliable_sample_count) AS reliable_sample_count,
+      CASE WHEN SUM(reliable_sample_count)>0
+        THEN SUM(listener_avg*reliable_sample_count)/SUM(reliable_sample_count) END AS listener_avg,
+      MIN(listener_min) AS listener_min,MAX(listener_max) AS listener_max,
+      MAX(likes_max) AS likes_max,NULL AS distinct_tracks,
+      CASE WHEN SUM(reliable_sample_count)>0
+        THEN SUM(quality_score*reliable_sample_count)/SUM(reliable_sample_count) ELSE 1 END AS quality_score
+    FROM sh_daily_summary WHERE period_key>=? AND period_key<?`)
+    .bind(range.startKey, range.endKey).first();
+  if (!aggregate || Number(aggregate.sample_count || 0) < 1) return false;
+  const first = await loadBoundary(db, 'sh_daily_summary', 'period_key>=? AND period_key<?',
+    [range.startKey, range.endKey], 'period_key ASC');
+  const last = await loadBoundary(db, 'sh_daily_summary', 'period_key>=? AND period_key<?',
+    [range.startKey, range.endKey], 'period_key DESC');
+  const host = await db.prepare(`SELECT primary_host FROM sh_daily_summary
+    WHERE period_key>=? AND period_key<? AND primary_host IS NOT NULL AND primary_host<>''
+    GROUP BY primary_host ORDER BY SUM(reliable_sample_count) DESC,primary_host ASC LIMIT 1`)
+    .bind(range.startKey, range.endKey).first();
+  return upsertSummary(db, table, range.key, aggregate, first, last, host?.primary_host, now);
+}
+
+async function deleteBatch(db, table, timestampColumn, cutoff) {
+  return db.prepare(`DELETE FROM ${table} WHERE id IN (
+      SELECT id FROM ${table} WHERE ${timestampColumn}<? ORDER BY ${timestampColumn} ASC LIMIT ?
+    )`).bind(cutoff, CLEANUP_BATCH).run();
+}
+
+async function cleanup(db, now) {
+  await db.batch([
+    db.prepare(`DELETE FROM sh_channel_snapshots WHERE id IN (
+      SELECT id FROM sh_channel_snapshots WHERE observed_at<? ORDER BY observed_at ASC LIMIT ?
+    )`).bind(now - 90 * DAY_MS, CLEANUP_BATCH),
+    db.prepare(`DELETE FROM sh_raw_events WHERE id IN (
+      SELECT id FROM sh_raw_events WHERE observed_at<? ORDER BY observed_at ASC LIMIT ?
+    )`).bind(now - 7 * DAY_MS, CLEANUP_BATCH),
+    db.prepare(`DELETE FROM sh_realtime_metrics WHERE id IN (
+      SELECT id FROM sh_realtime_metrics WHERE observed_at<? ORDER BY observed_at ASC LIMIT ?
+    )`).bind(now - 7 * DAY_MS, CLEANUP_BATCH),
+    db.prepare(`DELETE FROM sh_queue_snapshots WHERE id IN (
+      SELECT id FROM sh_queue_snapshots WHERE observed_at<? ORDER BY observed_at ASC LIMIT ?
+    )`).bind(now - 30 * DAY_MS, CLEANUP_BATCH),
+  ]);
+}
+
+export async function runDataMaintenance(db, now = Date.now()) {
+  if (!db) return { skipped: true, reason: 'missing-db' };
+  const cached = runtimeState.get(db);
+  if (cached?.nextCheckAt > now) return { skipped: true, reason: 'memory-cadence' };
+  runtimeState.set(db, { nextCheckAt: now + HOUR_MS });
+
+  const state = await db.prepare(`SELECT last_rollup_key,last_cleanup_at
+    FROM sh_data_maintenance_state WHERE id=?`).bind(STATE_ID).first();
+  const period = previousDay(now);
+  let lastRollupKey = state?.last_rollup_key || null;
+  let lastCleanupAt = Number(state?.last_cleanup_at || 0);
+  let rolledUp = false;
+  let cleaned = false;
+
+  if (lastRollupKey !== period.key) {
+    const dailyWritten = await rollupDaily(db, period, now);
+    if (dailyWritten) {
+      await rollupFromDaily(db, 'sh_weekly_summary', weeklyRange(period.key), now);
+      await rollupFromDaily(db, 'sh_monthly_summary', monthlyRange(period.key), now);
+    }
+    lastRollupKey = period.key;
+    rolledUp = true;
+  }
+
+  if (now - lastCleanupAt >= HOUR_MS) {
+    await cleanup(db, now);
+    lastCleanupAt = now;
+    cleaned = true;
+  }
+
+  await db.prepare(`INSERT INTO sh_data_maintenance_state(id,last_rollup_key,last_cleanup_at,updated_at)
+    VALUES(?,?,?,?) ON CONFLICT(id) DO UPDATE SET
+    last_rollup_key=excluded.last_rollup_key,last_cleanup_at=excluded.last_cleanup_at,
+    updated_at=excluded.updated_at`).bind(STATE_ID, lastRollupKey, lastCleanupAt, now).run();
+
+  return { skipped: false, rolledUp, cleaned, periodKey: period.key };
+}
+
+export async function runDataMaintenanceSafely(db, now = Date.now()) {
+  try {
+    return await runDataMaintenance(db, now);
+  } catch (error) {
+    console.error('D1 data maintenance failed', error);
+    return { skipped: true, reason: 'maintenance-error', error: error?.message || String(error) };
+  }
+}
+
+export function resetDataMaintenanceRuntimeState(db) {
+  if (db) runtimeState.delete(db);
+}
