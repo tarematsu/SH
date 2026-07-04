@@ -1,0 +1,38 @@
+name: Pages test matrix
+
+on:
+  pull_request:
+    paths:
+      - 'site/**'
+      - 'database/**'
+      - '.github/workflows/pages-test-matrix.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  test-file:
+    name: test ${{ matrix.file }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        file:
+          - public-api.integration.test.js
+          - ingest.integration.test.js
+          - comment-count-routing.integration.test.js
+          - d1-usage-optimization.integration.test.js
+          - site-assets.integration.test.js
+    defaults:
+      run:
+        working-directory: site
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: site/package-lock.json
+      - run: npm ci --no-audit --no-fund
+      - run: node --test tests/${{ matrix.file }}
