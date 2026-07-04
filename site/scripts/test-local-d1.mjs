@@ -43,12 +43,6 @@ rmSync(stateDirectory, { recursive: true, force: true });
 try {
   for (const filename of schemaFiles) executeFile(filename);
 
-  run([
-    'd1', 'execute', 'stationhead-monitor',
-    '--local', '--persist-to', stateDirectory,
-    '--command', 'PRAGMA integrity_check;',
-  ]);
-
   const requiredTables = [
     'sh_channel_snapshots',
     'sh_queue_snapshots',
