@@ -1,6 +1,23 @@
 const UPSTREAM_URL = 'https://production1.stationhead.com/weeklyLeaderboard';
 const APP_VERSION = '2026.03.27.4';
 const TIMEOUT_MS = 15000;
+const VISIBLE_RESPONSE_HEADERS = new Set([
+  'cf-cache-status',
+  'cf-ray',
+  'connection',
+  'content-length',
+  'content-type',
+  'date',
+  'server',
+  'via',
+  'www-authenticate',
+  'x-amz-cf-id',
+  'x-amz-cf-pop',
+  'x-cache',
+  'x-content-type-options',
+  'x-timing',
+  'x-via',
+]);
 
 function jsonResponse(payload, status = 200) {
   return new Response(JSON.stringify(payload, null, 2), {
@@ -13,26 +30,79 @@ function jsonResponse(payload, status = 200) {
   });
 }
 
+function normalizeBearer(value) {
+  return String(value || '').trim().replace(/^Bearer\s+/i, '').trim();
+}
+
+async function loadSession(env = {}) {
+  let row = null;
+  if (env.DB?.prepare) {
+    row = await env.DB.prepare(`
+      SELECT auth_token, device_uid
+      FROM sh_worker_collector_state
+      WHERE id = 'stationhead'
+    `).first();
+  }
+
+  const authToken = normalizeBearer(row?.auth_token || env.STATIONHEAD_AUTH_TOKEN);
+  const deviceUid = String(row?.device_uid || env.STATIONHEAD_DEVICE_UID || '').trim();
+  if (!authToken || !deviceUid) {
+    throw new Error('Stationhead authenticated session is unavailable. Sync the collector session first.');
+  }
+
+  return {
+    authToken,
+    deviceUid,
+    source: row?.auth_token && row?.device_uid ? 'd1' : 'environment',
+  };
+}
+
 function visibleResponseHeaders(headers) {
   const result = {};
   for (const [name, value] of headers.entries()) {
-    if (name.toLowerCase() === 'set-cookie') continue;
-    result[name] = value;
+    if (VISIBLE_RESPONSE_HEADERS.has(name.toLowerCase())) result[name] = value;
   }
   return result;
 }
 
-export async function onRequestGet() {
-  const deviceUid = crypto.randomUUID();
+function visibleRequestHeaders(headers) {
+  return Object.fromEntries(Object.entries(headers).map(([name, value]) => {
+    const lowerName = name.toLowerCase();
+    if (lowerName === 'authorization') return [name, 'Bearer [redacted]'];
+    if (lowerName === 'sth-device-uid') return [name, '[redacted]'];
+    return [name, value];
+  }));
+}
+
+export async function onRequestGet({ env = {} } = {}) {
+  const startedAt = Date.now();
+  let session;
+  try {
+    session = await loadSession(env);
+  } catch (error) {
+    return jsonResponse({
+      ok: false,
+      fetchedAt: new Date().toISOString(),
+      elapsedMs: Date.now() - startedAt,
+      error: {
+        type: 'configuration',
+        message: String(error?.message || error),
+      },
+    }, 503);
+  }
+
   const requestHeaders = {
-    Accept: 'application/json',
-    'App-Version': APP_VERSION,
+    Accept: 'application/json, text/plain, */*',
+    'Accept-Language': 'ja,en-US;q=0.9,en;q=0.8',
+    Authorization: `Bearer ${session.authToken}`,
+    'App-Version': env.STATIONHEAD_APP_VERSION || APP_VERSION,
     'App-Platform': 'android',
     Service: 'Spotify',
-    'sth-device-uid': deviceUid,
+    Origin: 'https://www.stationhead.com',
+    Referer: 'https://www.stationhead.com/',
+    'sth-device-uid': session.deviceUid,
   };
 
-  const startedAt = Date.now();
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort('upstream timeout'), TIMEOUT_MS);
 
@@ -50,10 +120,15 @@ export async function onRequestGet() {
       ok: upstream.ok,
       fetchedAt: new Date().toISOString(),
       elapsedMs: Date.now() - startedAt,
+      authentication: {
+        source: session.source,
+        bearerTokenPresent: true,
+        deviceUidPresent: true,
+      },
       request: {
         method: 'GET',
         url: UPSTREAM_URL,
-        headers: requestHeaders,
+        headers: visibleRequestHeaders(requestHeaders),
       },
       response: {
         status: upstream.status,
@@ -69,10 +144,15 @@ export async function onRequestGet() {
       ok: false,
       fetchedAt: new Date().toISOString(),
       elapsedMs: Date.now() - startedAt,
+      authentication: {
+        source: session.source,
+        bearerTokenPresent: true,
+        deviceUidPresent: true,
+      },
       request: {
         method: 'GET',
         url: UPSTREAM_URL,
-        headers: requestHeaders,
+        headers: visibleRequestHeaders(requestHeaders),
       },
       error: {
         type: timedOut ? 'timeout' : 'network',
