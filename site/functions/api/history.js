@@ -99,14 +99,15 @@ function parseDateStart(value, fallback) {
 const todayJstString = () => new Date(Date.now() + 9 * 3600000).toISOString().slice(0, 10);
 const todayUtcString = () => new Date().toISOString().slice(0, 10);
 
-export const BROADCAST_SUMMARY_SQL = `WITH summaries AS (
+function broadcastSummarySql(source) {
+  return `WITH summaries AS (
   SELECT source_note AS event_name,MIN(observed_at) AS started_at,
     MAX(observed_at) AS ended_at,MIN(observed_jst) AS started_jst,MAX(observed_jst) AS ended_jst,
     COUNT(*) AS sample_count,ROUND(AVG(listener_count),1) AS listener_avg,
     MIN(listener_count) AS listener_min,MAX(listener_count) AS listener_max,MAX(likes) AS likes_max,
     COUNT(DISTINCT CASE WHEN track_title IS NOT NULL AND track_title<>'' THEN track_title END) AS distinct_tracks,
     host_handle
-  FROM sh_legacy_snapshots
+  FROM ${source}
   WHERE observed_at>=? AND observed_at<? AND host_handle='sakurazaka46jp' AND source_note IS NOT NULL
   GROUP BY source_note,host_handle
 )
@@ -115,10 +116,13 @@ SELECT event_name,started_at,ended_at,started_jst,ended_jst,sample_count,
 FROM summaries
 UNION ALL
 SELECT NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,
-  EXISTS(SELECT 1 FROM sh_legacy_snapshots
+  EXISTS(SELECT 1 FROM ${source}
     WHERE host_handle='sakurazaka46jp' AND source_note IS NOT NULL) AS has_data
 WHERE NOT EXISTS (SELECT 1 FROM summaries)
 ORDER BY started_at ASC`;
+}
+
+export const BROADCAST_SUMMARY_SQL = broadcastSummarySql('sh_legacy_history_rows');
 
 export function parseBroadcastSummaryRows(resultRows) {
   const rows = [];
@@ -135,7 +139,15 @@ export function parseBroadcastSummaryRows(resultRows) {
 async function loadBroadcastPayload(env, from, to) {
   const fromTs = parseDateStart(from, '2024-06-01');
   const toTs = parseDateStart(to, todayJstString()) + 86400000;
-  const result = await env.DB.prepare(BROADCAST_SUMMARY_SQL).bind(fromTs, toTs).all();
+  let result;
+  let storageSource = 'lightweight';
+  try {
+    result = await env.DB.prepare(BROADCAST_SUMMARY_SQL).bind(fromTs, toTs).all();
+  } catch (error) {
+    if (!/no such table|no such view/i.test(String(error?.message || ''))) throw error;
+    result = await env.DB.prepare(broadcastSummarySql('sh_legacy_snapshots')).bind(fromTs, toTs).all();
+    storageSource = 'legacy-fallback';
+  }
   const parsed = parseBroadcastSummaryRows(result.results || []);
   return {
     ok: true,
@@ -144,6 +156,7 @@ async function loadBroadcastPayload(env, from, to) {
     to,
     rows: parsed.rows,
     setup_required: parsed.setupRequired,
+    storage_source: storageSource,
     diagnostic: {
       imported_rows: null,
       imported_events: null,
@@ -155,7 +168,7 @@ async function loadBroadcastPayload(env, from, to) {
 
 async function loadBroadcasts(env, from, to) {
   const payload = await cachedHistoryLoad(
-    `broadcasts:v2:${from}:${to}`,
+    `broadcasts:v3:${from}:${to}`,
     30000,
     () => loadBroadcastPayload(env, from, to),
   );
