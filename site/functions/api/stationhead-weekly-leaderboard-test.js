@@ -1,6 +1,13 @@
 const UPSTREAM_URL = 'https://production1.stationhead.com/weeklyLeaderboard';
 const APP_VERSION = '2026.03.27.4';
 const TIMEOUT_MS = 15000;
+const SENSITIVE_RESPONSE_HEADERS = new Set([
+  'authorization',
+  'cookie',
+  'developer-token',
+  'pusher',
+  'set-cookie',
+]);
 
 function jsonResponse(payload, status = 200) {
   return new Response(JSON.stringify(payload, null, 2), {
@@ -43,8 +50,9 @@ async function loadSession(env = {}) {
 function visibleResponseHeaders(headers) {
   const result = {};
   for (const [name, value] of headers.entries()) {
-    if (name.toLowerCase() === 'set-cookie') continue;
-    result[name] = value;
+    const lowerName = name.toLowerCase();
+    if (lowerName === 'set-cookie' || lowerName === 'cookie') continue;
+    result[name] = SENSITIVE_RESPONSE_HEADERS.has(lowerName) ? '[redacted]' : value;
   }
   return result;
 }
