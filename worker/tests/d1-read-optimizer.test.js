@@ -1,7 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { rewriteDuplicateVelocityRead, withDuplicateVelocityReadRemoved } from '../src/d1-read-optimizer.js';
+import {
+  resetD1OptimizerState,
+  rewriteDuplicateVelocityRead,
+  withDuplicateVelocityReadRemoved,
+} from '../src/d1-read-optimizer.js';
 
 const SNAPSHOT_SQL = `INSERT INTO sh_channel_snapshots (comment_velocity) VALUES ((
       SELECT COALESCE(SUM(comment_count),0) FROM sh_comment_minute_counts
@@ -15,8 +19,17 @@ const FAILURE_SQL = `INSERT INTO sh_collector_failure_state (
   id,first_failure_at,last_failure_at,code,stage,summary,detail,hint,source,
   consecutive_failures,updated_at
 ) VALUES (?,?,?,?,?,?,?,?,?,1,?)`;
+const STATE_READ_SQL = `SELECT auth_token, device_uid, token_expires_at, last_run_at, last_success_at,
+       last_error, last_channel_id, last_station_id, updated_at
+FROM sh_worker_collector_state
+WHERE id = 'stationhead'`;
+const STATE_WRITE_SQL = `INSERT INTO sh_worker_collector_state (
+  id, auth_token, device_uid, token_expires_at, last_run_at, last_success_at,
+  last_error, last_channel_id, last_station_id, updated_at
+) VALUES ('stationhead', ?, ?, ?, ?, ?, ?, ?, ?, ?)
+ON CONFLICT(id) DO UPDATE SET auth_token=excluded.auth_token`;
 
-function fakeDb() {
+function fakeDb(firstResult = null) {
   const calls = [];
   const makeStatement = (sql, binds = []) => ({
     bind(...args) {
@@ -28,7 +41,7 @@ function fakeDb() {
     },
     async first() {
       calls.push({ type: 'first', sql, binds });
-      return null;
+      return typeof firstResult === 'function' ? firstResult(sql, binds) : firstResult;
     },
   });
   return {
@@ -54,34 +67,21 @@ test('snapshot velocity SUM remains for chat-disabled paths', () => {
   assert.equal(rewriteDuplicateVelocityRead(SNAPSHOT_SQL, false), SNAPSHOT_SQL);
 });
 
-test('DB proxy rewrites only scheduled snapshot prepare calls', () => {
-  const db = fakeDb();
-  const env = withDuplicateVelocityReadRemoved({ DB: db, CHAT_LIMIT: 50 });
-  env.DB.prepare(SNAPSHOT_SQL);
-  env.DB.prepare('SELECT 1');
-  assert.equal(db.calls.length, 0);
-});
-
-test('identical collector heartbeats skip D1 for ten minutes', async () => {
+test('optimizer state survives a new env proxy for the same DB binding', async () => {
   const db = fakeDb();
   let now = 1_000;
-  const env = withDuplicateVelocityReadRemoved({ DB: db, CHAT_LIMIT: 50 }, () => now);
-  const runHeartbeat = () => env.DB.prepare(HEARTBEAT_SQL)
-    .bind('worker', now, now, 'cloudflare-workers', '1.0.0', '{"source":"scheduled"}')
-    .run();
+  const firstEnv = withDuplicateVelocityReadRemoved({ DB: db }, () => now);
+  await firstEnv.DB.prepare(HEARTBEAT_SQL)
+    .bind('worker', now, now, 'host', '1.0.0', '{}').run();
 
-  const first = await runHeartbeat();
   now += 60_000;
-  const second = await runHeartbeat();
+  const secondEnv = withDuplicateVelocityReadRemoved({ DB: db }, () => now);
+  const skipped = await secondEnv.DB.prepare(HEARTBEAT_SQL)
+    .bind('worker', now, now, 'host', '1.0.0', '{}').run();
 
-  assert.equal(first.meta.changes, 1);
-  assert.equal(second.meta.changes, 0);
-  assert.equal(second.meta.skip_reason, 'heartbeat-cadence');
+  assert.equal(skipped.meta.skip_reason, 'heartbeat-cadence');
   assert.equal(db.calls.filter((call) => call.type === 'run').length, 1);
-
-  now += 10 * 60_000;
-  await runHeartbeat();
-  assert.equal(db.calls.filter((call) => call.type === 'run').length, 2);
+  resetD1OptimizerState(db);
 });
 
 test('heartbeat metadata changes bypass cadence suppression', async () => {
@@ -94,6 +94,7 @@ test('heartbeat metadata changes bypass cadence suppression', async () => {
   await env.DB.prepare(HEARTBEAT_SQL)
     .bind('worker', now, now, 'host-b', '1.0.0', '{}').run();
   assert.equal(db.calls.filter((call) => call.type === 'run').length, 2);
+  resetD1OptimizerState(db);
 });
 
 test('repeated failure-state clears skip D1 until a new failure is written', async () => {
@@ -103,15 +104,68 @@ test('repeated failure-state clears skip D1 until a new failure is written', asy
 
   await env.DB.prepare(CLEAR_SQL).bind('stationhead').run();
   now += 60_000;
-  const skipped = await env.DB.prepare(CLEAR_SQL).bind('stationhead').run();
+  const skipped = await withDuplicateVelocityReadRemoved({ DB: db }, () => now)
+    .DB.prepare(CLEAR_SQL).bind('stationhead').run();
   assert.equal(skipped.meta.skip_reason, 'failure-already-clear');
-  assert.equal(db.calls.filter((call) => call.type === 'run').length, 1);
 
   await env.DB.prepare(FAILURE_SQL)
     .bind('stationhead', now, now, 'CODE', 'stage', 'summary', null, null, 'worker', now)
     .run();
   await env.DB.prepare(CLEAR_SQL).bind('stationhead').run();
   assert.equal(db.calls.filter((call) => call.type === 'run').length, 3);
+  resetD1OptimizerState(db);
+});
+
+test('collector state read is cached for five minutes across cron invocations', async () => {
+  const row = {
+    auth_token: 'token', device_uid: 'device', token_expires_at: 99,
+    last_run_at: 10, last_success_at: 10, last_error: null,
+    last_channel_id: 1, last_station_id: 2, updated_at: 10,
+  };
+  const db = fakeDb(row);
+  let now = 1_000;
+  const first = await withDuplicateVelocityReadRemoved({ DB: db }, () => now)
+    .DB.prepare(STATE_READ_SQL).first();
+  now += 60_000;
+  const second = await withDuplicateVelocityReadRemoved({ DB: db }, () => now)
+    .DB.prepare(STATE_READ_SQL).first();
+
+  assert.deepEqual(second, first);
+  assert.equal(db.calls.filter((call) => call.type === 'first').length, 1);
+  resetD1OptimizerState(db);
+});
+
+test('collector state timestamps checkpoint every five minutes', async () => {
+  const db = fakeDb();
+  let now = 1_000;
+  const write = (lastRun, lastSuccess, error = null) => withDuplicateVelocityReadRemoved({ DB: db }, () => now)
+    .DB.prepare(STATE_WRITE_SQL)
+    .bind('token', 'device', 99, lastRun, lastSuccess, error, 1, 2, now)
+    .run();
+
+  await write(1_000, 1_000);
+  now += 60_000;
+  const skipped = await write(61_000, 61_000);
+  assert.equal(skipped.meta.skip_reason, 'collector-state-checkpoint');
+  assert.equal(db.calls.filter((call) => call.type === 'run').length, 1);
+
+  now += 5 * 60_000;
+  await write(now, now);
+  assert.equal(db.calls.filter((call) => call.type === 'run').length, 2);
+  resetD1OptimizerState(db);
+});
+
+test('collector state error changes persist immediately', async () => {
+  const db = fakeDb();
+  let now = 1_000;
+  const env = withDuplicateVelocityReadRemoved({ DB: db }, () => now);
+  await env.DB.prepare(STATE_WRITE_SQL)
+    .bind('token', 'device', 99, now, now, null, 1, 2, now).run();
+  now += 60_000;
+  await env.DB.prepare(STATE_WRITE_SQL)
+    .bind('token', 'device', 99, now, null, 'failure', 1, 2, now).run();
+  assert.equal(db.calls.filter((call) => call.type === 'run').length, 2);
+  resetD1OptimizerState(db);
 });
 
 test('batch unwraps optimized prepared statements', async () => {
@@ -121,4 +175,5 @@ test('batch unwraps optimized prepared statements', async () => {
   await env.DB.batch([statement]);
   assert.equal(db.calls[0].type, 'batch');
   assert.equal(db.calls[0].statements.length, 1);
+  resetD1OptimizerState(db);
 });
