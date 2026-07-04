@@ -28,7 +28,7 @@ function runSql(sql) {
   return envelopes.flatMap((entry) => entry?.results || entry?.result?.[0]?.results || []);
 }
 
-function runUnionChunks(selects, chunkSize = 100) {
+function runUnionChunks(selects, chunkSize = 20) {
   const rows = [];
   for (let index = 0; index < selects.length; index += chunkSize) {
     rows.push(...runSql(selects.slice(index, index + chunkSize).join(' UNION ALL ')));
