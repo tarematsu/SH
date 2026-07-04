@@ -1,0 +1,1 @@
+ALTER TABLE sh_comment_state ADD COLUMN total_count INTEGER NOT NULL DEFAULT 0;
