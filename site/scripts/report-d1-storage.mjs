@@ -28,6 +28,14 @@ function runSql(sql) {
   return envelopes.flatMap((entry) => entry?.results || entry?.result?.[0]?.results || []);
 }
 
+function runUnionChunks(selects, chunkSize = 100) {
+  const rows = [];
+  for (let index = 0; index < selects.length; index += chunkSize) {
+    rows.push(...runSql(selects.slice(index, index + chunkSize).join(' UNION ALL ')));
+  }
+  return rows;
+}
+
 function quoteIdentifier(value) {
   return `"${String(value).replaceAll('"', '""')}"`;
 }
@@ -47,10 +55,10 @@ const tables = runSql("SELECT name FROM sqlite_master WHERE type='table' AND nam
   .map((row) => row.name)
   .filter(Boolean);
 
-const columnSql = tables.map((table) =>
+const columnSelects = tables.map((table) =>
   `SELECT ${quoteString(table)} AS table_name,name,type FROM pragma_table_info(${quoteString(table)})`,
-).join(' UNION ALL ');
-const columns = columnSql ? runSql(columnSql) : [];
+);
+const columns = runUnionChunks(columnSelects);
 const columnsByTable = new Map();
 for (const column of columns) {
   if (!columnsByTable.has(column.table_name)) columnsByTable.set(column.table_name, []);
@@ -67,7 +75,7 @@ const definitions = tables.map((table) => {
   return { table, textColumns, timeColumn };
 });
 
-const summarySql = definitions.map(({ table, textColumns, timeColumn }) => {
+const summarySelects = definitions.map(({ table, textColumns, timeColumn }) => {
   const payload = textColumns.length
     ? textColumns.map((column) => `COALESCE(LENGTH(CAST(${quoteIdentifier(column)} AS BLOB)),0)`).join(' + ')
     : '0';
@@ -75,9 +83,9 @@ const summarySql = definitions.map(({ table, textColumns, timeColumn }) => {
     ? `MIN(${quoteIdentifier(timeColumn)}) AS oldest_value,MAX(${quoteIdentifier(timeColumn)}) AS newest_value`
     : 'NULL AS oldest_value,NULL AS newest_value';
   return `SELECT ${quoteString(table)} AS table_name,COUNT(*) AS row_count,COALESCE(SUM(${payload}),0) AS payload_bytes,${times} FROM ${quoteIdentifier(table)}`;
-}).join(' UNION ALL ');
+});
 
-const summaries = summarySql ? runSql(summarySql) : [];
+const summaries = runUnionChunks(summarySelects);
 const definitionMap = new Map(definitions.map((item) => [item.table, item]));
 const rows = summaries.map((summary) => ({
   table: summary.table_name,
@@ -106,11 +114,11 @@ for (const row of rows) {
 }
 
 const monthlyTargets = rows.filter((row) => row.timeColumn && row.rowCount > 0).slice(0, 12);
-const monthlySql = monthlyTargets.map((row) => {
+const monthlySelects = monthlyTargets.map((row) => {
   const unit = Number(row.newest) > 10_000_000_000 ? 1000 : 1;
   return `SELECT ${quoteString(row.table)} AS table_name,strftime('%Y-%m',${quoteIdentifier(row.timeColumn)}/${unit},'unixepoch') AS month,COUNT(*) AS row_count FROM ${quoteIdentifier(row.table)} WHERE ${quoteIdentifier(row.timeColumn)} IS NOT NULL GROUP BY month`;
-}).join(' UNION ALL ');
-const monthlyRows = monthlySql ? runSql(monthlySql) : [];
+});
+const monthlyRows = runUnionChunks(monthlySelects);
 for (const target of monthlyTargets) {
   lines.push('', `## ${target.table}: monthly rows`, '', '| Month | Rows |', '|---|---:|');
   for (const item of monthlyRows.filter((row) => row.table_name === target.table).sort((a, b) => String(b.month).localeCompare(String(a.month))).slice(0, 12)) {
