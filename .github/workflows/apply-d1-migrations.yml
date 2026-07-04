@@ -13,6 +13,7 @@ on:
 
 permissions:
   contents: read
+  issues: write
 
 concurrency:
   group: stationhead-d1-migrations
@@ -41,5 +42,46 @@ jobs:
           cache-dependency-path: site/package-lock.json
       - name: Install dependencies
         run: npm ci --no-audit --no-fund
-      - name: Apply every pending remote D1 migration
-        run: npm run db:migrate
+      - name: Apply and verify every pending remote D1 migration
+        id: migrate
+        shell: bash
+        run: |
+          set +e
+          npm run db:migrate 2>&1 | tee migration.log
+          status=${PIPESTATUS[0]}
+          if [ "$status" -eq 0 ]; then
+            npx wrangler d1 migrations list stationhead-monitor --remote --config wrangler.jsonc 2>&1 | tee -a migration.log
+            verify_status=${PIPESTATUS[0]}
+            if [ "$verify_status" -ne 0 ]; then
+              status=$verify_status
+            fi
+          fi
+          echo "exit_code=$status" >> "$GITHUB_OUTPUT"
+          exit 0
+      - name: Post migration audit
+        if: always()
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          MIGRATION_EXIT_CODE: ${{ steps.migrate.outputs.exit_code }}
+        run: |
+          if [ "${MIGRATION_EXIT_CODE:-1}" = "0" ]; then
+            result='SUCCESS'
+          else
+            result='FAILURE'
+          fi
+          {
+            echo "## Remote D1 migration run: ${result}"
+            echo
+            echo "- Commit: $GITHUB_SHA"
+            echo "- Run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+            echo "- Exit code: ${MIGRATION_EXIT_CODE:-missing}"
+            echo
+            echo '```text'
+            tail -n 120 migration.log 2>/dev/null || echo 'migration.log was not created'
+            echo '```'
+          } > migration-audit.md
+          gh issue comment 112 --repo "$GITHUB_REPOSITORY" --body-file migration-audit.md
+      - name: Fail when migration failed
+        if: steps.migrate.outputs.exit_code != '0'
+        run: exit 1
