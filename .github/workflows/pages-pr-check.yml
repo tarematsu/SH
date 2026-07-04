@@ -32,7 +32,14 @@ jobs:
       - name: Install dependencies
         run: npm ci --no-audit --no-fund
       - name: Run Cloudflare-equivalent Pages build
-        run: npm run check && npm run build
+        shell: bash
+        run: |
+          set -o pipefail
+          if ! (npm run check && npm run build) > /tmp/pages-build.log 2>&1; then
+            tail -n 160 /tmp/pages-build.log
+            exit 1
+          fi
+          tail -n 40 /tmp/pages-build.log
 
   worker-check:
     runs-on: ubuntu-latest
