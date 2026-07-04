@@ -1,12 +1,22 @@
 const UPSTREAM_URL = 'https://production1.stationhead.com/weeklyLeaderboard';
 const APP_VERSION = '2026.03.27.4';
 const TIMEOUT_MS = 15000;
-const SENSITIVE_RESPONSE_HEADERS = new Set([
-  'authorization',
-  'cookie',
-  'developer-token',
-  'pusher',
-  'set-cookie',
+const VISIBLE_RESPONSE_HEADERS = new Set([
+  'cf-cache-status',
+  'cf-ray',
+  'connection',
+  'content-length',
+  'content-type',
+  'date',
+  'server',
+  'via',
+  'www-authenticate',
+  'x-amz-cf-id',
+  'x-amz-cf-pop',
+  'x-cache',
+  'x-content-type-options',
+  'x-timing',
+  'x-via',
 ]);
 
 function jsonResponse(payload, status = 200) {
@@ -50,9 +60,7 @@ async function loadSession(env = {}) {
 function visibleResponseHeaders(headers) {
   const result = {};
   for (const [name, value] of headers.entries()) {
-    const lowerName = name.toLowerCase();
-    if (lowerName === 'set-cookie' || lowerName === 'cookie') continue;
-    result[name] = SENSITIVE_RESPONSE_HEADERS.has(lowerName) ? '[redacted]' : value;
+    if (VISIBLE_RESPONSE_HEADERS.has(name.toLowerCase())) result[name] = value;
   }
   return result;
 }
