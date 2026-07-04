@@ -1,0 +1,1 @@
+DROP INDEX IF EXISTS idx_sh_queue_items_station_start_spotify;
