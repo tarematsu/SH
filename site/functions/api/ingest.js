@@ -1,6 +1,7 @@
 import { onRequestPost as corePost, onRequestGet } from './ingest-core.js';
 import { authorized, json, num } from '../lib/api-utils.js';
 import { saveCommentCounts } from '../lib/comment-counts.js';
+import { runDataMaintenanceSafely } from '../lib/data-maintenance.js';
 import {
   saveLeanHeartbeat,
   saveLeanQueue,
@@ -30,6 +31,9 @@ export async function onRequestPost(context) {
     }
     if (body?.type === 'snapshot') {
       const result = await saveLeanSnapshot(env.DB, observedAt, data);
+      const maintenance = runDataMaintenanceSafely(env.DB);
+      if (typeof context.waitUntil === 'function') context.waitUntil(maintenance);
+      else await maintenance;
       return json({ ok: true, type: body.type, accepted: true, ...result });
     }
     if (body?.type === 'queue') {
