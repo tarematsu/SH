@@ -36,5 +36,5 @@ jobs:
       - name: Check syntax
         run: npm run check
 
-      - name: Run Pages tests
-        run: npm test
+      - name: Run D1 smoke test
+        run: npm run test:d1
