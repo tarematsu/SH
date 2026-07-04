@@ -1,0 +1,2 @@
+DROP INDEX IF EXISTS idx_sh_queue_items_station_start_position;
+DROP INDEX IF EXISTS idx_sh_track_metadata_spotify_fetched;

@@ -3,9 +3,9 @@ export const LATEST_QUEUE_WITH_ITEMS_SQL = `WITH latest_station AS (
   WHERE station_id IS NOT NULL ORDER BY observed_at DESC,id DESC LIMIT 1
 ), latest_queue AS (
   SELECT station_id,queue_id,start_time,is_paused,observed_at
-  FROM sh_queue_snapshots
+  FROM sh_queue_current
   WHERE station_id=(SELECT station_id FROM latest_station)
-  ORDER BY observed_at DESC,id DESC LIMIT 1
+  LIMIT 1
 )
 SELECT lq.station_id AS queue_station_id,lq.queue_id,
   lq.start_time AS queue_start_time,lq.is_paused AS queue_is_paused,
