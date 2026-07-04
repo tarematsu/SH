@@ -26,6 +26,7 @@ test('primary comments update aggregate counters without storing raw comment row
       observed_at: 1_751_500_300_000,
       data: {
         station_id: 3328626,
+        total_count: 102,
         comments: [
           { id: 101, station_id: 3328626, chat_time_ms: 1_751_500_280_000, raw: { id: 101, text: 'one' } },
           { id: 102, station_id: 3328626, chat_time_ms: 1_751_500_290_000, raw: { id: 102, text: 'two' } },
@@ -40,9 +41,12 @@ test('primary comments update aggregate counters without storing raw comment row
   assert.equal(response.status, 200);
   assert.equal(body.ok, true);
   assert.equal(body.accepted, 2);
+  assert.equal(body.total, 102);
   assert.match(sql, /sh_comment_minute_counts/);
   assert.match(sql, /sh_comment_daily_counts/);
   assert.match(sql, /sh_comment_state/);
+  assert.match(sql, /total_count=MAX\(sh_comment_state\.total_count,excluded\.total_count\)/);
+  assert.doesNotMatch(sql, /UPDATE sh_channel_snapshots SET comment_velocity/);
   assert.equal(db.callsMatching(/INSERT INTO sh_comments\b/i).length, 0);
 });
 

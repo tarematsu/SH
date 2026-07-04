@@ -11,13 +11,20 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 const productionBranch = 'main';
-const currentBranch = process.env.CF_PAGES_BRANCH;
+const currentBranch = process.env.CF_PAGES_BRANCH || process.env.WORKERS_CI_BRANCH || '';
+const cloudflareBuild = process.env.CF_PAGES === '1' || process.env.WORKERS_CI === '1';
 const force = String(process.env.D1_MIGRATION_FORCE || '').toLowerCase() === 'true';
 const migrationName = String(process.env.D1_MIGRATION_NAME || '').trim();
 const target = process.env.D1_MIGRATION_TARGET === 'local' ? 'local' : 'remote';
 
 if (!force && currentBranch !== productionBranch) {
-  console.log(`D1 migrations skipped: CF_PAGES_BRANCH=${currentBranch || '(not set)'}`);
+  const source = process.env.CF_PAGES_BRANCH ? 'CF_PAGES_BRANCH'
+    : process.env.WORKERS_CI_BRANCH ? 'WORKERS_CI_BRANCH' : 'branch variable';
+  if (cloudflareBuild && !currentBranch) {
+    console.error('D1 migration failed: Cloudflare build branch variable is missing.');
+    process.exit(1);
+  }
+  console.log(`D1 migrations skipped: ${source}=${currentBranch || '(not set)'}`);
   process.exit(0);
 }
 
