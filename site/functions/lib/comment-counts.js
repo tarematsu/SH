@@ -1,0 +1,1 @@
+export const COMMENT_COUNT_BUCKET_MS = 60000;
