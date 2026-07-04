@@ -20,11 +20,12 @@ function run(args) {
   const result = spawnSync(executable, args, {
     cwd: process.cwd(),
     env: { ...process.env, CI: 'true' },
-    stdio: 'inherit',
+    encoding: 'utf8',
   });
   if (result.error) throw result.error;
   if (result.status !== 0) {
-    throw new Error(`wrangler ${args.join(' ')} failed with exit code ${result.status}`);
+    const output = [result.stdout, result.stderr].filter(Boolean).join('\n');
+    throw new Error(`${output}\nwrangler ${args.join(' ')} failed with exit code ${result.status}`);
   }
 }
 
@@ -69,6 +70,7 @@ try {
       '--command', `SELECT COUNT(*) AS row_count FROM ${table};`,
     ]);
   }
+  console.log('Current D1 schema smoke test passed.');
 } finally {
   rmSync(stateDirectory, { recursive: true, force: true });
 }
