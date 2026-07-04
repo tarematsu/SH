@@ -37,4 +37,12 @@ jobs:
         run: npm run check
 
       - name: Run D1 smoke test
-        run: npm run test:d1
+        run: npm run test:d1 > d1-test.log 2>&1
+
+      - name: Upload D1 log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: d1-test-log
+          path: site/d1-test.log
+          if-no-files-found: error
