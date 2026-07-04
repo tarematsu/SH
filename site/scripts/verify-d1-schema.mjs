@@ -4,9 +4,17 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 const force = String(process.env.D1_MIGRATION_FORCE || '').toLowerCase() === 'true';
-const production = process.env.CF_PAGES_BRANCH === 'main';
+const currentBranch = process.env.CF_PAGES_BRANCH || process.env.WORKERS_CI_BRANCH || '';
+const cloudflareBuild = process.env.CF_PAGES === '1' || process.env.WORKERS_CI === '1';
+const production = currentBranch === 'main';
 if (!force && !production) {
-  console.log(`D1 schema verification skipped: CF_PAGES_BRANCH=${process.env.CF_PAGES_BRANCH || '(not set)'}`);
+  const source = process.env.CF_PAGES_BRANCH ? 'CF_PAGES_BRANCH'
+    : process.env.WORKERS_CI_BRANCH ? 'WORKERS_CI_BRANCH' : 'branch variable';
+  if (cloudflareBuild && !currentBranch) {
+    console.error('D1 schema verification failed: Cloudflare build branch variable is missing.');
+    process.exit(1);
+  }
+  console.log(`D1 schema verification skipped: ${source}=${currentBranch || '(not set)'}`);
   process.exit(0);
 }
 
