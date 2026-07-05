@@ -3,6 +3,7 @@ const HOUR_MS = 3_600_000;
 const JST_OFFSET_MS = 9 * HOUR_MS;
 const CLEANUP_BATCH = 5_000;
 const LEGACY_BACKFILL_BATCH = 5_000;
+const MAINTENANCE_CLAIM_MS = 15 * 60_000;
 const STATE_ID = 'rollup-retention-v1';
 const runtimeState = new WeakMap();
 
@@ -45,6 +46,10 @@ function finite(value) {
   if (value == null || value === '') return null;
   const number = Number(value);
   return Number.isFinite(number) ? number : null;
+}
+
+function changedRows(result) {
+  return Number(result?.meta?.changes ?? result?.changes ?? 0);
 }
 
 async function upsertSummary(db, table, key, aggregate, first, last, primaryHost, updatedAt) {
@@ -225,18 +230,35 @@ export async function runDataMaintenance(db, now = Date.now()) {
   if (cached?.nextCheckAt > now) return { skipped: true, reason: 'memory-cadence' };
   runtimeState.set(db, { nextCheckAt: now + HOUR_MS });
 
+  let claimAt = null;
   try {
     const state = await db.prepare(`SELECT last_rollup_key,last_cleanup_at,legacy_backfill_id,updated_at
       FROM sh_data_maintenance_state WHERE id=?`).bind(STATE_ID).first();
     const lastMaintenanceAt = Number(state?.updated_at || 0);
     if (lastMaintenanceAt > 0 && now - lastMaintenanceAt < HOUR_MS) {
-      runtimeState.set(db, { nextCheckAt: lastMaintenanceAt + HOUR_MS });
-      return {
-        skipped: true,
-        reason: 'persistent-cadence',
-        nextCheckAt: lastMaintenanceAt + HOUR_MS,
-      };
+      const nextCheckAt = lastMaintenanceAt + HOUR_MS;
+      runtimeState.set(db, { nextCheckAt });
+      return { skipped: true, reason: 'persistent-cadence', nextCheckAt };
     }
+
+    claimAt = now - HOUR_MS + MAINTENANCE_CLAIM_MS;
+    const claim = await db.prepare(`INSERT INTO sh_data_maintenance_state(
+        id,last_rollup_key,last_cleanup_at,legacy_backfill_id,updated_at
+      ) VALUES(?,NULL,0,0,?) ON CONFLICT(id) DO UPDATE SET
+      updated_at=excluded.updated_at
+      WHERE sh_data_maintenance_state.updated_at=?`)
+      .bind(STATE_ID, claimAt, lastMaintenanceAt).run();
+    if (changedRows(claim) < 1) {
+      const latest = await db.prepare(`SELECT updated_at FROM sh_data_maintenance_state WHERE id=?`)
+        .bind(STATE_ID).first();
+      const latestAt = Number(latest?.updated_at || 0);
+      const nextCheckAt = latestAt > 0
+        ? latestAt + HOUR_MS
+        : now + MAINTENANCE_CLAIM_MS;
+      runtimeState.set(db, { nextCheckAt });
+      return { skipped: true, reason: 'maintenance-claimed', nextCheckAt };
+    }
+    runtimeState.set(db, { nextCheckAt: claimAt + HOUR_MS });
 
     const period = previousDay(now);
     let lastRollupKey = state?.last_rollup_key || null;
@@ -276,6 +298,7 @@ export async function runDataMaintenance(db, now = Date.now()) {
       legacy_backfill_id=MAX(sh_data_maintenance_state.legacy_backfill_id,excluded.legacy_backfill_id),
       updated_at=MAX(sh_data_maintenance_state.updated_at,excluded.updated_at)`)
       .bind(STATE_ID, lastRollupKey, lastCleanupAt, legacyBackfillId, now).run();
+    runtimeState.set(db, { nextCheckAt: now + HOUR_MS });
 
     return {
       skipped: false,
@@ -285,7 +308,8 @@ export async function runDataMaintenance(db, now = Date.now()) {
       legacyBackfill,
     };
   } catch (error) {
-    runtimeState.delete(db);
+    if (claimAt == null) runtimeState.delete(db);
+    else runtimeState.set(db, { nextCheckAt: claimAt + HOUR_MS });
     throw error;
   }
 }
