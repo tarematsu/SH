@@ -21,6 +21,13 @@ function trackingOfficialTaskContext(ctx, state) {
   });
 }
 
+function logReconcileFailure(error) {
+  console.error(JSON.stringify({
+    event: 'official_news_schedule_reconcile_failed',
+    error: String(error?.message || error),
+  }));
+}
+
 export async function runScheduledWithOfficialReconciliation(
   controller,
   env,
@@ -30,17 +37,11 @@ export async function runScheduledWithOfficialReconciliation(
 ) {
   const state = { officialTask: null };
   const result = await scheduled(controller, env, trackingOfficialTaskContext(ctx, state));
-  const officialDone = state.officialTask
-    ? Promise.allSettled([state.officialTask])
-    : Promise.resolve();
-  const cleanup = officialDone
+  if (!state.officialTask) return result;
+
+  const cleanup = state.officialTask
     .then(() => reconcile(env))
-    .catch((error) => {
-      console.error(JSON.stringify({
-        event: 'official_news_schedule_reconcile_failed',
-        error: String(error?.message || error),
-      }));
-    });
+    .catch(logReconcileFailure);
   if (ctx?.waitUntil) ctx.waitUntil(cleanup);
   else await cleanup;
   return result;
