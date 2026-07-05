@@ -48,6 +48,7 @@ const sql = `SELECT
   (SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='sh_legacy_hosts') AS legacy_hosts_table,
   (SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='sh_legacy_tracks') AS legacy_tracks_table,
   (SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='sh_legacy_broadcasts') AS legacy_broadcasts_table,
+  (SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='sh_stream_goal_prediction_state') AS prediction_state_table,
   (SELECT COUNT(*) FROM sqlite_master WHERE type='view' AND name='sh_legacy_history_rows') AS legacy_history_view,
   (SELECT COUNT(*) FROM pragma_table_info('sh_queue_current') WHERE name='likes_hash') AS likes_hash_column,
   (SELECT COUNT(*) FROM pragma_table_info('sh_channel_snapshots') WHERE name='validated_stream_count') AS validated_stream_column,
@@ -91,9 +92,10 @@ const required = [
   'snapshot_table', 'queue_table', 'likes_table', 'comment_state_table',
   'comment_minute_table', 'maintenance_table', 'legacy_samples_table',
   'legacy_hosts_table', 'legacy_tracks_table', 'legacy_broadcasts_table',
-  'legacy_history_view', 'likes_hash_column', 'validated_stream_column',
-  'last_stream_count_column', 'last_stream_at_column', 'legacy_backfill_column',
-  'queue_unique_index', 'snapshot_index', 'validated_stream_trigger',
+  'prediction_state_table', 'legacy_history_view', 'likes_hash_column',
+  'validated_stream_column', 'last_stream_count_column', 'last_stream_at_column',
+  'legacy_backfill_column', 'queue_unique_index', 'snapshot_index',
+  'validated_stream_trigger',
 ];
 const missing = required.filter((name) => Number(row[name]) < 1);
 const redundant = ['redundant_queue_index', 'redundant_metadata_index']
