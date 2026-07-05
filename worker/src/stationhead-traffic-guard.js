@@ -93,7 +93,7 @@ async function normalizeIdleGuestResponse(response, rule) {
 }
 
 export function createStationheadTrafficGuard(nextFetch, nowFn = Date.now) {
-  if (typeof nextFetch !== 'function') throw new TypeError('nativeFetch must be a function');
+  if (typeof nextFetch !== 'function') throw new TypeError('nextFetch must be a function');
 
   const reads = new Map();
   const retryAtByKey = new Map();
