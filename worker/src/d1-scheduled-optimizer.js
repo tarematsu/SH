@@ -1,6 +1,7 @@
 const RAW_STATEMENT = Symbol('scheduled-optimizer-raw-statement');
 const STATEMENT_META = Symbol('scheduled-optimizer-statement-meta');
 const EMPTY_CLEANUP_BACKOFF_MS = 6 * 60 * 60_000;
+const CLAIM_TIMESTAMP_TOLERANCE_MS = 5_000;
 
 export const OFFICIAL_NEWS_CLAIM_SQL = `INSERT INTO sh_official_news_monitor_state
   (id,last_check_at,last_success_at,last_error,updated_at)
@@ -98,8 +99,11 @@ export function withScheduledD1Optimizations(env, nowFn = Date.now) {
         if (property === 'run' && meta.kind === 'official-news-state-write') {
           return async (...args) => {
             const [, lastCheckAt, lastSuccessAt, lastError] = meta.binds || [];
+            const claimTimestampMatches = Math.abs(
+              Number(lastCheckAt || 0) - state.officialClaimAt,
+            ) <= CLAIM_TIMESTAMP_TOLERANCE_MS;
             const isRedundantClaimWrite = state.officialClaimAt > 0
-              && Number(lastCheckAt) === state.officialClaimAt
+              && claimTimestampMatches
               && (lastSuccessAt ?? null) === state.officialLastSuccessAt
               && (lastError ?? null) == null;
             if (isRedundantClaimWrite) return skippedResult('official-news-claim-already-persisted');
@@ -154,4 +158,4 @@ export function withScheduledD1Optimizations(env, nowFn = Date.now) {
   });
 }
 
-export { EMPTY_CLEANUP_BACKOFF_MS };
+export { CLAIM_TIMESTAMP_TOLERANCE_MS, EMPTY_CLEANUP_BACKOFF_MS };
