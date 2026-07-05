@@ -11,12 +11,15 @@ const migration = readFileSync(
   'utf8',
 );
 
-test('automatic D1 recovery only runs for migration-related main changes', () => {
-  assert.match(workflow, /branches:\s*\n\s*- main/);
-  assert.match(workflow, /database\/migrations\/\*\*/);
+test('D1 recovery remains a manual fallback and cannot race Cloudflare builds', () => {
   assert.match(workflow, /workflow_dispatch:/);
+  assert.doesNotMatch(workflow, /\bpush:/);
+  assert.doesNotMatch(workflow, /\bschedule:/);
+  assert.doesNotMatch(workflow, /sleep\s+120/);
+  assert.match(workflow, /group: stationhead-d1-migrations/);
   assert.match(workflow, /cancel-in-progress: false/);
-  assert.match(workflow, /sleep 120/);
+  assert.match(workflow, /D1_MIGRATION_FORCE: ['"]true['"]/);
+  assert.match(workflow, /D1_MIGRATION_TARGET: remote/);
   assert.match(workflow, /npm run db:migrate/);
   assert.match(workflow, /npm run db:verify/);
 });
