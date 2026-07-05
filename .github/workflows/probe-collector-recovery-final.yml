@@ -1,0 +1,79 @@
+name: Probe final production collector recovery
+
+on:
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: Wait for healthy production collector
+        shell: bash
+        run: |
+          set -euo pipefail
+          success=0
+          for attempt in $(seq 1 12); do
+            echo "attempt=$attempt"
+            curl -fsS --connect-timeout 10 --max-time 20 \
+              https://stationhead-monitor-collector.tarematsu.workers.dev/health \
+              -o health.json || true
+            curl -fsS --connect-timeout 10 --max-time 20 \
+              https://stationhead-monitor-collector.tarematsu.workers.dev/coordination/lease \
+              -o lease.json || true
+            python - <<'PY' && success=1 && break || true
+          import json
+          import time
+          from pathlib import Path
+
+          health_path = Path('health.json')
+          lease_path = Path('lease.json')
+          if not health_path.exists() or not lease_path.exists():
+              raise SystemExit(1)
+
+          health = json.loads(health_path.read_text(encoding='utf-8'))
+          lease = json.loads(lease_path.read_text(encoding='utf-8'))
+          now = int(time.time() * 1000)
+          last_success = int(health.get('last_success_at') or health.get('collector_last_success_at') or 0)
+          age = now - last_success if last_success else None
+          result = {
+              'now': now,
+              'last_run_at': health.get('last_run_at') or health.get('collector_last_run_at'),
+              'last_success_at': last_success,
+              'success_age_ms': age,
+              'collector_health_ok': health.get('collector_health_ok'),
+              'collector_health_stale': health.get('collector_health_stale'),
+              'lease_healthy': lease.get('healthy'),
+              'lease_holder': lease.get('holder_id'),
+              'lease_until': lease.get('lease_until'),
+              'server_time': lease.get('server_time'),
+          }
+          print(json.dumps(result, ensure_ascii=False))
+
+          if not health.get('ok'):
+              raise SystemExit(1)
+          if not last_success or age is None or age > 360_000:
+              raise SystemExit(1)
+          if health.get('collector_health_ok') is False or health.get('collector_health_stale') is True:
+              raise SystemExit(1)
+          if lease.get('healthy') is not True:
+              raise SystemExit(1)
+          if lease.get('holder_id') != 'cloudflare-worker':
+              raise SystemExit(1)
+          if int(lease.get('lease_until') or 0) <= int(lease.get('server_time') or now):
+              raise SystemExit(1)
+          PY
+            sleep 20
+          done
+          echo '--- health ---'
+          cat health.json
+          echo
+          echo '--- lease ---'
+          cat lease.json
+          echo
+          test "$success" = 1
