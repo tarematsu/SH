@@ -55,7 +55,7 @@ function nextMonthKey(monthKey) {
 export function expectedPeriodBounds(mode, periodKey) {
   if (mode === 'daily') {
     if (!validDate(periodKey)) return null;
-    const start = Date.parse(`${periodKey}T00:00:00Z`);
+    const start = Date.parse(`${periodKey}T00:00:00+09:00`);
     return Number.isFinite(start) ? { start, end: start + DAY_MS } : null;
   }
   if (mode === 'weekly') {
@@ -78,17 +78,17 @@ export function expectedPeriodBounds(mode, periodKey) {
 export function parseRangeStart(mode, value, fallback) {
   const text = validDate(value) ? value : fallback;
   if (!validDate(text)) return NaN;
-  return Date.parse(mode === 'daily'
-    ? `${text}T00:00:00Z`
-    : `${text}T00:00:00+09:00`);
+  return Date.parse(`${text}T00:00:00+09:00`);
 }
 
 export function currentPeriodKey(mode, now = Date.now()) {
-  if (mode === 'daily') return new Date(now).toISOString().slice(0, 10);
   const shifted = new Date(now + JST_OFFSET_MS);
   const year = shifted.getUTCFullYear();
   const month = shifted.getUTCMonth() + 1;
   const day = shifted.getUTCDate();
+  if (mode === 'daily') {
+    return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+  }
   if (mode === 'monthly') return `${year}-${String(month).padStart(2, '0')}`;
   const monday = new Date(Date.UTC(year, month - 1, day));
   monday.setUTCDate(monday.getUTCDate() - ((monday.getUTCDay() + 6) % 7));
