@@ -1,14 +1,17 @@
 import app from './email-recap-index.js';
 import { reconcileSupersededAnnouncements } from './official-news-reconcile.js';
 
-function trackingContext(ctx, tasks) {
+function trackingOfficialTaskContext(ctx, state) {
   if (!ctx?.waitUntil) return ctx;
   return new Proxy(ctx, {
     get(target, property, receiver) {
       if (property === 'waitUntil') {
         return (task) => {
           const pending = Promise.resolve(task);
-          tasks.push(pending);
+          // email-recap-index delegates to official-news-index first. Its monitor
+          // registers the first waitUntil task; later tasks belong to host/profile
+          // monitoring and must not delay schedule reconciliation.
+          if (!state.officialTask) state.officialTask = pending;
           return target.waitUntil(pending);
         };
       }
@@ -25,9 +28,12 @@ export async function runScheduledWithOfficialReconciliation(
   scheduled = app.scheduled.bind(app),
   reconcile = reconcileSupersededAnnouncements,
 ) {
-  const tasks = [];
-  const result = await scheduled(controller, env, trackingContext(ctx, tasks));
-  const cleanup = Promise.allSettled(tasks)
+  const state = { officialTask: null };
+  const result = await scheduled(controller, env, trackingOfficialTaskContext(ctx, state));
+  const officialDone = state.officialTask
+    ? Promise.allSettled([state.officialTask])
+    : Promise.resolve();
+  const cleanup = officialDone
     .then(() => reconcile(env))
     .catch((error) => {
       console.error(JSON.stringify({
