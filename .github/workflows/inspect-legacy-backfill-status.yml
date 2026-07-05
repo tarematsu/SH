@@ -44,24 +44,26 @@ jobs:
               https://api.cloudflare.com/client/v4/accounts \
               | jq -r '.result[0].id // empty')"
           fi
-          set +e
-          npx wrangler d1 execute stationhead-monitor --remote --json --command="SELECT
-            (SELECT COUNT(*) FROM sh_legacy_snapshots) AS legacy_rows,
-            (SELECT COUNT(*) FROM sh_legacy_samples) AS normalized_rows,
-            (SELECT COUNT(*) FROM sh_legacy_snapshots l WHERE NOT EXISTS (SELECT 1 FROM sh_legacy_samples s WHERE s.legacy_id=l.id)) AS remaining_rows,
-            (SELECT MAX(id) FROM sh_legacy_snapshots) AS legacy_max_id,
-            (SELECT MAX(legacy_id) FROM sh_legacy_samples) AS normalized_max_id,
-            (SELECT legacy_backfill_id FROM sh_data_maintenance_state WHERE id='rollup-retention-v1') AS backfill_cursor,
-            (SELECT updated_at FROM sh_data_maintenance_state WHERE id='rollup-retention-v1') AS maintenance_updated_at,
-            (SELECT COUNT(*) FROM sh_legacy_hosts) AS host_rows,
-            (SELECT COUNT(*) FROM sh_legacy_tracks) AS track_rows,
-            (SELECT COUNT(*) FROM sh_legacy_broadcasts) AS broadcast_rows,
-            (SELECT COUNT(*) FROM sh_legacy_history_rows) AS compatibility_rows,
-            (SELECT COUNT(*) FROM sh_legacy_samples s LEFT JOIN sh_legacy_snapshots l ON l.id=s.legacy_id WHERE l.id IS NULL) AS orphan_samples;" > legacy-backfill-status.log 2>&1
-          status=$?
-          echo "wrangler_exit_status=${status}" >> legacy-backfill-status.log
+
+          : > legacy-backfill-status.log
+          run_query() {
+            label="$1"
+            sql="$2"
+            echo "=== ${label} ===" >> legacy-backfill-status.log
+            set +e
+            npx wrangler d1 execute stationhead-monitor --remote --json --command="${sql}" \
+              >> legacy-backfill-status.log 2>&1
+            status=$?
+            set -e
+            echo "exit_status=${status}" >> legacy-backfill-status.log
+          }
+
+          set -e
+          run_query legacy_table "SELECT COUNT(*) AS legacy_rows,MIN(id) AS legacy_min_id,MAX(id) AS legacy_max_id,MIN(observed_at) AS first_observed_at,MAX(observed_at) AS last_observed_at FROM sh_legacy_snapshots;"
+          run_query schema_objects "SELECT type,name FROM sqlite_master WHERE name LIKE 'sh_legacy_%' OR name LIKE '%migration%' ORDER BY type,name;"
+          run_query maintenance_columns "PRAGMA table_info(sh_data_maintenance_state);"
+          run_query migration_history "SELECT * FROM d1_migrations ORDER BY id DESC LIMIT 15;"
           cat legacy-backfill-status.log
-          exit 0
       - name: Upload inspection result
         if: always()
         uses: actions/upload-artifact@v4
