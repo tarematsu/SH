@@ -1,5 +1,5 @@
 import app from './email-recap-index.js';
-import { reconcileSupersededAnnouncements } from './official-news-reconcile.js';
+import { reconcileOfficialAnnouncements } from './official-news-reconcile.js';
 
 function trackingOfficialTaskContext(ctx, state) {
   if (!ctx?.waitUntil) return ctx;
@@ -33,7 +33,7 @@ export async function runScheduledWithOfficialReconciliation(
   env,
   ctx,
   scheduled = app.scheduled.bind(app),
-  reconcile = reconcileSupersededAnnouncements,
+  reconcile = reconcileOfficialAnnouncements,
 ) {
   const runStartedAt = Date.now();
   const state = { officialTask: null };
