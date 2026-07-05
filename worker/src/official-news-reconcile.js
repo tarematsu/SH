@@ -4,6 +4,13 @@ WHERE stale.status='scheduled'
   AND stale.scheduled_at IS NOT NULL
   AND EXISTS (
     SELECT 1
+    FROM sh_official_news_monitor_state AS monitor
+    WHERE monitor.id='official-news'
+      AND monitor.last_success_at IS NOT NULL
+      AND monitor.last_success_at=monitor.last_check_at
+  )
+  AND EXISTS (
+    SELECT 1
     FROM sh_official_news_announcements AS current
     WHERE current.news_id=stale.news_id
       AND current.id<>stale.id
