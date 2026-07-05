@@ -191,10 +191,9 @@ async function markMissedAnnouncements(env, cfg, now) {
 async function checkOfficialNews(env, cfg, now) {
   const state = await monitorState(env);
   if (Number(state?.last_check_at || 0) && now - Number(state.last_check_at) < cfg.checkIntervalMs) return;
-  await saveMonitorState(env, { lastCheckAt: now, lastSuccessAt: state?.last_success_at, lastError: null });
-  await markMissedAnnouncements(env, cfg, now);
 
   try {
+    await markMissedAnnouncements(env, cfg, now);
     const response = await timedFetch(NEWS_LIST_URL, {
       headers: { accept: 'text/html,application/xhtml+xml', 'user-agent': 'stationhead-monitor/1.0' },
       cf: { cacheEverything: true, cacheTtl: Math.floor(cfg.checkIntervalMs / 1000) },
