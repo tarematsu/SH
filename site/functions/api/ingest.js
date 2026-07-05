@@ -11,6 +11,12 @@ import {
 export * from './ingest-core.js';
 export { onRequestGet };
 
+export function isPendingStreamSchemaError(error) {
+  const message = String(error?.message || error || '');
+  return /no such column:\s*(?:last_stream_count|last_stream_at|validated_stream_count)\b/i.test(message)
+    || /table\s+sh_channel_snapshots\s+has no column named\s+validated_stream_count/i.test(message);
+}
+
 export async function onRequestPost(context) {
   const { request, env } = context;
   if (!authorized(request, env) || !env.DB) return corePost(context);
@@ -62,6 +68,13 @@ export async function onRequestPost(context) {
     }
     return corePost(context);
   } catch (error) {
+    if (body?.type === 'snapshot' && isPendingStreamSchemaError(error)) {
+      console.warn(JSON.stringify({
+        event: 'snapshot_schema_fallback',
+        reason: String(error?.message || error),
+      }));
+      return corePost(context);
+    }
     console.error(error);
     return json({ ok: false, error: error?.message || 'database error' }, 500);
   }
