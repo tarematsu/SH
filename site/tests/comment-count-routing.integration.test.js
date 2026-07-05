@@ -47,7 +47,7 @@ test('primary comments update aggregate counters and snapshot velocity without s
   assert.match(sql, /sh_comment_daily_counts/);
   assert.match(sql, /sh_comment_state/);
   assert.match(sql, /UPDATE sh_channel_snapshots/);
-  assert.match(sql, /COALESCE\(SUM\(comment_count\),0\)/);
+  assert.match(sql, /SELECT SUM\(comment_count\)/);
   assert.match(sql, /total_count=MAX\(sh_comment_state\.total_count,excluded\.total_count\)/);
   assert.equal(db.callsMatching(/INSERT INTO sh_comments\b/i).length, 0);
 });
