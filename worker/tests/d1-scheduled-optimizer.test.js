@@ -5,6 +5,7 @@ import {
   EMPTY_CLEANUP_BACKOFF_MS,
   MAINTENANCE_CADENCE_MS,
   OFFICIAL_NEWS_CLAIM_SQL,
+  OFFICIAL_NEWS_FAILURE_SQL,
   scheduledStatementKind,
   withScheduledD1Optimizations
 } from '../src/d1-scheduled-optimizer.js';
@@ -34,6 +35,7 @@ class FakeDb {
     this.claimResult = { last_success_at: 5_000, last_error: null };
     this.runCalls = [];
     this.batchChanges = [0, 0, 0, 0];
+    this.runErrorMatcher = null;
   }
 
   prepare(sql) {
@@ -47,6 +49,7 @@ class FakeDb {
 
   async run(sql, binds) {
     this.runCalls.push({ sql, binds });
+    if (this.runErrorMatcher?.(sql, binds)) throw new Error('missed announcement update failed');
     return { success: true, meta: { changes: 1 } };
   }
 
@@ -64,6 +67,8 @@ const OFFICIAL_READ_SQL = `SELECT last_check_at,last_success_at,last_error
 const OFFICIAL_WRITE_SQL = `INSERT INTO sh_official_news_monitor_state
   (id,last_check_at,last_success_at,last_error,updated_at)
   VALUES (?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET last_check_at=excluded.last_check_at`;
+const OFFICIAL_MISSED_SQL = `UPDATE sh_official_news_announcements SET status='missed',updated_at=?
+  WHERE status='scheduled' AND scheduled_at IS NOT NULL AND scheduled_at<?`;
 const MAINTENANCE_FINAL_SQL = `INSERT INTO sh_data_maintenance_state(
   id,last_rollup_key,last_cleanup_at,legacy_backfill_id,updated_at
 ) VALUES(?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET
@@ -102,6 +107,35 @@ test('successful official check skips the redundant post-claim start write', asy
   assert.equal(db.runCalls.length, 1);
 });
 
+test('missed-announcement cleanup failure is recorded and releases the next cron retry', async () => {
+  const intervalMs = 30 * 60_000;
+  const now = 2_000_000;
+  const db = new FakeDb();
+  db.runErrorMatcher = (sql) => sql === OFFICIAL_MISSED_SQL;
+  const env = withScheduledD1Optimizations({
+    DB: db,
+    OFFICIAL_NEWS_CHECK_INTERVAL_MS: intervalMs
+  }, () => now);
+
+  await env.DB.prepare(OFFICIAL_READ_SQL).bind('official-news').first();
+  await assert.rejects(
+    env.DB.prepare(OFFICIAL_MISSED_SQL).bind(now, now - 5_000).run(),
+    /missed announcement update failed/
+  );
+
+  assert.equal(db.runCalls.length, 2);
+  assert.equal(db.runCalls[0].sql, OFFICIAL_MISSED_SQL);
+  assert.equal(db.runCalls[1].sql, OFFICIAL_NEWS_FAILURE_SQL);
+  assert.deepEqual(db.runCalls[1].binds, [
+    'official-news',
+    now - intervalMs,
+    5_000,
+    'missed announcement update failed',
+    now
+  ]);
+  assert.equal(db.runCalls[1].binds[1] <= now - intervalMs, true);
+});
+
 test('empty retention cleanup persists a six-hour cleanup interval', async () => {
   const now = 20_000;
   const db = new FakeDb();
@@ -129,10 +163,11 @@ test('empty retention cleanup persists a six-hour cleanup interval', async () =>
 test('retention cleanup statements and final state write are classified', () => {
   assert.equal(
     scheduledStatementKind(`DELETE FROM sh_channel_snapshots WHERE id IN (
-      SELECT id FROM sh_channel_snapshots WHERE observed_at<? LIMIT ?
-    )`),
+      SELECT id FROM sh_channel_snapshots WHERE observed_at<? LIMIT ?)
+    `),
     'retention-cleanup'
   );
+  assert.equal(scheduledStatementKind(OFFICIAL_MISSED_SQL), 'official-news-expiry-write');
   assert.equal(scheduledStatementKind(MAINTENANCE_FINAL_SQL), 'maintenance-final-state');
   assert.equal(EMPTY_CLEANUP_BACKOFF_MS, 6 * 60 * 60_000);
 });
