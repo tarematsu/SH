@@ -1,7 +1,6 @@
 const DAY_MS = 86_400_000;
 const HOUR_MS = 3_600_000;
 const JST_OFFSET_MS = 9 * HOUR_MS;
-const CLEANUP_BATCH = 5_000;
 const LEGACY_BACKFILL_BATCH = 1_000;
 const MAINTENANCE_CLAIM_MS = 15 * 60_000;
 const STATE_ID = 'rollup-retention-v1';
@@ -160,23 +159,6 @@ async function rollupFromDaily(db, table, range, now) {
   return upsertSummary(db, table, range.key, aggregate, first, last, host?.primary_host, now);
 }
 
-async function cleanup(db, now) {
-  await db.batch([
-    db.prepare(`DELETE FROM sh_channel_snapshots WHERE id IN (
-      SELECT id FROM sh_channel_snapshots WHERE observed_at<? ORDER BY observed_at ASC LIMIT ?
-    )`).bind(now - 90 * DAY_MS, CLEANUP_BATCH),
-    db.prepare(`DELETE FROM sh_raw_events WHERE id IN (
-      SELECT id FROM sh_raw_events WHERE observed_at<? ORDER BY observed_at ASC LIMIT ?
-    )`).bind(now - 7 * DAY_MS, CLEANUP_BATCH),
-    db.prepare(`DELETE FROM sh_realtime_metrics WHERE id IN (
-      SELECT id FROM sh_realtime_metrics WHERE observed_at<? ORDER BY observed_at ASC LIMIT ?
-    )`).bind(now - 7 * DAY_MS, CLEANUP_BATCH),
-    db.prepare(`DELETE FROM sh_queue_snapshots WHERE id IN (
-      SELECT id FROM sh_queue_snapshots WHERE observed_at<? ORDER BY observed_at ASC LIMIT ?
-    )`).bind(now - 30 * DAY_MS, CLEANUP_BATCH),
-  ]);
-}
-
 async function backfillLegacySamples(db, lastLegacyId) {
   const boundary = await db.prepare(`SELECT MAX(id) AS batch_end,COUNT(*) AS batch_count FROM (
       SELECT id FROM sh_legacy_snapshots WHERE id>? ORDER BY id ASC LIMIT ?
@@ -262,10 +244,10 @@ export async function runDataMaintenance(db, now = Date.now()) {
 
     const period = previousDay(now);
     let lastRollupKey = state?.last_rollup_key || null;
-    let lastCleanupAt = Number(state?.last_cleanup_at || 0);
+    const lastCleanupAt = Number(state?.last_cleanup_at || 0);
     let legacyBackfillId = Number(state?.legacy_backfill_id || 0);
     let rolledUp = false;
-    let cleaned = false;
+    const cleaned = false;
 
     if (lastRollupKey !== period.key) {
       const dailyWritten = await rollupDaily(db, period, now);
@@ -277,12 +259,8 @@ export async function runDataMaintenance(db, now = Date.now()) {
       }
     }
 
-    if (now - lastCleanupAt >= HOUR_MS) {
-      await cleanup(db, now);
-      lastCleanupAt = now;
-      cleaned = true;
-    }
-
+    // Historical rows are intentionally retained. Maintenance still performs
+    // rollups and the bounded legacy backfill, but never issues retention DELETEs.
     const legacyBackfill = await backfillLegacySamples(db, legacyBackfillId);
     legacyBackfillId = legacyBackfill.lastLegacyId;
 
