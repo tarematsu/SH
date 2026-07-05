@@ -29,7 +29,11 @@ function statementKind(sql) {
   if (/^select last_success_at,\s*last_error from sh_worker_collector_state where id\s*=\s*'stationhead'/.test(compact)) {
     return 'collector-state-health-read';
   }
-  if (compact.startsWith('insert into sh_worker_collector_state')) return 'collector-state-write';
+  if (compact.startsWith('insert into sh_worker_collector_state')) {
+    return /values\s*\(\s*'stationhead'\s*,\s*\?/.test(compact)
+      ? 'collector-state-write'
+      : 'collector-state-invalidate-write';
+  }
   return null;
 }
 
@@ -107,6 +111,13 @@ export function withDuplicateVelocityReadRemoved(env, nowFn = Date.now) {
     shared.failureClearUntil = 0;
   }
 
+  function invalidateCollectorState() {
+    shared.collectorState = null;
+    shared.collectorStateExpiresAt = 0;
+    shared.collectorStatePersistedAt = 0;
+    shared.collectorStateSignature = null;
+  }
+
   function wrapStatement(statement, meta) {
     return new Proxy(statement, {
       get(target, property) {
@@ -156,6 +167,11 @@ export function withDuplicateVelocityReadRemoved(env, nowFn = Date.now) {
               if (result?.success !== false) shared.failureClearUntil = now + FAILURE_CLEAR_TTL_MS;
               return result;
             }
+            if (meta.kind === 'collector-state-invalidate-write') {
+              const result = await target.run(...args);
+              if (result?.success !== false) invalidateCollectorState();
+              return result;
+            }
             if (meta.kind === 'collector-state-write') {
               const next = collectorStateFromBinds(meta.binds, now);
               const signature = collectorStateSignature(next);
@@ -195,7 +211,14 @@ export function withDuplicateVelocityReadRemoved(env, nowFn = Date.now) {
         return async (statements) => {
           const list = Array.isArray(statements) ? statements : [];
           if (list.some((item) => item?.[STATEMENT_META]?.kind === 'failure-write')) noteFailureWrite();
-          return target.batch(list.map((item) => item?.[RAW_STATEMENT] || item));
+          const invalidatesCollectorState = list.some(
+            (item) => item?.[STATEMENT_META]?.kind === 'collector-state-invalidate-write',
+          );
+          const results = await target.batch(list.map((item) => item?.[RAW_STATEMENT] || item));
+          if (invalidatesCollectorState && results.every((result) => result?.success !== false)) {
+            invalidateCollectorState();
+          }
+          return results;
         };
       }
       const value = Reflect.get(target, property, target);

@@ -28,6 +28,16 @@ const STATE_WRITE_SQL = `INSERT INTO sh_worker_collector_state (
   last_error, last_channel_id, last_station_id, updated_at
 ) VALUES ('stationhead', ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(id) DO UPDATE SET auth_token=excluded.auth_token`;
+const AUTH_STATE_WRITE_SQL = `INSERT INTO sh_worker_collector_state (
+  id, auth_token, device_uid, token_expires_at,
+  last_run_at, last_success_at, last_error,
+  last_channel_id, last_station_id, updated_at
+) VALUES (?, ?, ?, ?, NULL, NULL, NULL, NULL, NULL, ?)
+ON CONFLICT(id) DO UPDATE SET
+  auth_token = excluded.auth_token,
+  device_uid = excluded.device_uid,
+  token_expires_at = excluded.token_expires_at,
+  updated_at = excluded.updated_at`;
 
 function fakeDb(firstResult = null) {
   const calls = [];
@@ -132,6 +142,40 @@ test('collector state read is cached for five minutes across cron invocations', 
 
   assert.deepEqual(second, first);
   assert.equal(db.calls.filter((call) => call.type === 'first').length, 1);
+  resetD1OptimizerState(db);
+});
+
+test('auth state saves always execute and invalidate the collector state cache', async () => {
+  const before = {
+    auth_token: 'old-token', device_uid: 'old-device', token_expires_at: 100,
+    last_run_at: 10, last_success_at: 10, last_error: null,
+    last_channel_id: 1, last_station_id: 2, updated_at: 10,
+  };
+  const after = {
+    ...before,
+    auth_token: 'new-token', device_uid: 'new-device', token_expires_at: 999,
+    updated_at: 2_000,
+  };
+  let reads = 0;
+  const db = fakeDb(() => {
+    reads += 1;
+    return reads === 1 ? before : after;
+  });
+  let now = 1_000;
+  const env = withDuplicateVelocityReadRemoved({ DB: db }, () => now);
+
+  assert.deepEqual(await env.DB.prepare(STATE_READ_SQL).first(), before);
+  await env.DB.prepare(AUTH_STATE_WRITE_SQL)
+    .bind('stationhead', 'new-token', 'new-device', 999, 2_000).run();
+
+  now += 60_000;
+  const reloaded = await env.DB.prepare(STATE_READ_SQL).first();
+  assert.deepEqual(reloaded, after);
+  assert.equal(db.calls.filter((call) => call.type === 'first').length, 2);
+
+  await env.DB.prepare(AUTH_STATE_WRITE_SQL)
+    .bind('stationhead', 'newer-token', 'newer-device', 1_999, 3_000).run();
+  assert.equal(db.calls.filter((call) => call.type === 'run').length, 2);
   resetD1OptimizerState(db);
 });
 
