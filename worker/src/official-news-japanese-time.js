@@ -54,7 +54,13 @@ function promotionInsert(env, row, scheduledAt, completedAt) {
         WHEN sh_official_news_announcements.status IN ('active','ended')
           THEN sh_official_news_announcements.status
         ELSE 'scheduled'
-      END`)
+      END
+    WHERE sh_official_news_announcements.news_url IS NOT excluded.news_url
+       OR sh_official_news_announcements.published_date IS NOT excluded.published_date
+       OR sh_official_news_announcements.title IS NOT excluded.title
+       OR sh_official_news_announcements.event_name IS NOT excluded.event_name
+       OR sh_official_news_announcements.raw_text IS NOT excluded.raw_text
+       OR sh_official_news_announcements.status NOT IN ('scheduled','active','ended')`)
     .bind(
       row.news_id,row.news_url,row.published_date,row.title,row.event_name,
       scheduledAt,row.detected_at || completedAt,completedAt,'scheduled',row.raw_text,
@@ -84,12 +90,11 @@ export async function promoteJapaneseHourAnnouncements(
       scheduledAt,
       completedAt,
     ));
-    statements.push(env.DB.prepare(`UPDATE sh_official_news_announcements
-      SET status='superseded',updated_at=?
-      WHERE id=? AND status='time_unknown'`)
-      .bind(completedAt, row.id));
-    await env.DB.batch(statements);
-    promoted += times.length;
+    const results = await env.DB.batch(statements);
+    promoted += (results || []).reduce(
+      (total, item) => total + Number(item?.meta?.changes || 0),
+      0,
+    );
   }
 
   return { promoted, skipped: false };
