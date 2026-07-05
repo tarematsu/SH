@@ -119,3 +119,49 @@ test('scheduled reconciliation waits for official news but not unrelated backgro
     'unrelated-finished'
   ]);
 });
+
+test('rejected official news tasks do not reconcile schedules', async () => {
+  const held = [];
+  let reconciliations = 0;
+  const ctx = {
+    waitUntil(task) {
+      held.push(Promise.resolve(task).catch(() => {}));
+    }
+  };
+  const originalError = console.error;
+  console.error = () => {};
+  try {
+    const result = await runScheduledWithOfficialReconciliation(
+      { cron: '* * * * *' },
+      {},
+      ctx,
+      async (_controller, _env, wrappedCtx) => {
+        wrappedCtx.waitUntil(Promise.reject(new Error('news failed unexpectedly')));
+        return 'primary-complete';
+      },
+      async () => {
+        reconciliations += 1;
+      }
+    );
+    assert.equal(result, 'primary-complete');
+    await Promise.all(held);
+    assert.equal(reconciliations, 0);
+  } finally {
+    console.error = originalError;
+  }
+});
+
+test('missing official news tasks avoid an unnecessary D1 reconciliation', async () => {
+  let reconciliations = 0;
+  const result = await runScheduledWithOfficialReconciliation(
+    { cron: '* * * * *' },
+    {},
+    { waitUntil() {} },
+    async () => 'primary-complete',
+    async () => {
+      reconciliations += 1;
+    }
+  );
+  assert.equal(result, 'primary-complete');
+  assert.equal(reconciliations, 0);
+});
