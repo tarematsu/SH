@@ -121,6 +121,45 @@ test('repeated event labels are split into time-separated broadcast sessions', (
   assert.equal(parsed.rows[1].distinct_tracks, 1);
 });
 
+test('an intervening event splits repeated labels even inside the time gap', () => {
+  const db = createHistoryDatabase();
+  const start = Date.parse('2025-01-01T00:00:00Z');
+  const rows = [
+    { id: 1, offset: 0, source_note: 'Event A', listener_count: 100 },
+    { id: 2, offset: 60_000, source_note: 'Event A', listener_count: 110 },
+    { id: 3, offset: 120_000, source_note: 'Event B', listener_count: 200 },
+    { id: 4, offset: 180_000, source_note: 'Event B', listener_count: 210 },
+    { id: 5, offset: 240_000, source_note: 'Event A', listener_count: 300 },
+    { id: 6, offset: 300_000, source_note: 'Event A', listener_count: 310 },
+  ];
+  for (const row of rows) {
+    insertRow(db, {
+      id: row.id,
+      observed_at: start + row.offset,
+      listener_count: row.listener_count,
+      track_title: `Song ${row.id}`,
+      artist_name: 'Artist',
+      likes: row.id,
+      host_handle: 'sakurazaka46jp',
+      source_note: row.source_note,
+    });
+  }
+
+  const result = db.prepare(broadcastSummarySql('sh_legacy_history_rows')).all(
+    start - 1,
+    start + 360_000,
+    BROADCAST_SESSION_GAP_MS,
+  );
+  const parsed = parseBroadcastSummaryRows(result);
+
+  assert.equal(parsed.rows.length, 3);
+  assert.deepEqual(parsed.rows.map((row) => row.event_name), ['Event A', 'Event B', 'Event A']);
+  assert.deepEqual(parsed.rows.map((row) => row.sample_count), [2, 2, 2]);
+  assert.deepEqual(parsed.rows.map((row) => row.listener_avg), [105, 205, 305]);
+  assert.equal(parsed.rows[0].ended_at, start + 60_000);
+  assert.equal(parsed.rows[2].started_at, start + 240_000);
+});
+
 test('an empty requested range reports existing setup without inventing a broadcast', () => {
   const db = createHistoryDatabase();
   const start = Date.parse('2025-01-01T00:00:00Z');
