@@ -1,0 +1,74 @@
+name: Probe production collector recovery
+
+on:
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Fetch production health and lease
+        shell: bash
+        run: |
+          set -euo pipefail
+          for attempt in 1 2 3 4 5; do
+            echo "attempt=$attempt"
+            curl -fsS --connect-timeout 10 --max-time 20 \
+              https://stationhead-monitor-collector.tarematsu.workers.dev/health \
+              -o health.json || true
+            curl -fsS --connect-timeout 10 --max-time 20 \
+              https://stationhead-monitor-collector.tarematsu.workers.dev/coordination/lease \
+              -o lease.json || true
+            if [ -s health.json ] && [ -s lease.json ]; then
+              break
+            fi
+            sleep 15
+          done
+          echo '--- health ---'
+          cat health.json
+          echo
+          echo '--- lease ---'
+          cat lease.json
+          echo
+          test -s health.json
+          test -s lease.json
+      - name: Validate recent cloud collection
+        shell: python
+        run: |
+          import json
+          import time
+
+          with open('health.json', encoding='utf-8') as handle:
+              health = json.load(handle)
+          with open('lease.json', encoding='utf-8') as handle:
+              lease = json.load(handle)
+
+          now = int(time.time() * 1000)
+          last_success = int(health.get('last_success_at') or 0)
+          holder = lease.get('holder_id') or lease.get('lease', {}).get('holder_id')
+          healthy = lease.get('healthy')
+          if healthy is None:
+              healthy = lease.get('lease', {}).get('healthy')
+
+          print(json.dumps({
+              'now': now,
+              'last_success_at': last_success,
+              'age_ms': now - last_success if last_success else None,
+              'holder_id': holder,
+              'healthy': healthy,
+          }, ensure_ascii=False))
+
+          if not health.get('ok'):
+              raise SystemExit('health endpoint is not ok')
+          if not last_success or now - last_success > 180_000:
+              raise SystemExit('collector has no success within the last 3 minutes')
+          if holder not in (None, 'cloudflare-worker'):
+              raise SystemExit(f'unexpected lease holder: {holder}')
+          if healthy is False:
+              raise SystemExit('cloud lease is unhealthy')
