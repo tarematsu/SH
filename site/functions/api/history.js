@@ -112,17 +112,22 @@ export function broadcastSummarySql(source) {
     AND source_note IS NOT NULL AND trim(source_note)<>''
 ), ordered AS (
   SELECT eligible.*,
+    LAG(event_key) OVER (
+      PARTITION BY host_key ORDER BY observed_at ASC,id ASC
+    ) AS previous_event_key,
     LAG(observed_at) OVER (
-      PARTITION BY event_key,host_key ORDER BY observed_at ASC,id ASC
+      PARTITION BY host_key ORDER BY observed_at ASC,id ASC
     ) AS previous_observed_at
   FROM eligible
 ), segmented AS (
   SELECT ordered.*,
     SUM(CASE
-      WHEN previous_observed_at IS NULL OR observed_at-previous_observed_at>? THEN 1
-      ELSE 0
+      WHEN previous_observed_at IS NULL
+        OR previous_event_key<>event_key
+        OR observed_at-previous_observed_at>?
+      THEN 1 ELSE 0
     END) OVER (
-      PARTITION BY event_key,host_key ORDER BY observed_at ASC,id ASC
+      PARTITION BY host_key ORDER BY observed_at ASC,id ASC
       ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
     ) AS session_number
   FROM ordered
@@ -137,7 +142,7 @@ export function broadcastSummarySql(source) {
     END) AS distinct_tracks,
     MIN(trim(host_handle)) AS host_handle
   FROM segmented
-  GROUP BY event_key,host_key,session_number
+  GROUP BY host_key,session_number
 )
 SELECT event_name,started_at,ended_at,started_jst,ended_jst,sample_count,
   listener_avg,listener_min,listener_max,likes_max,distinct_tracks,host_handle,1 AS has_data
@@ -199,7 +204,7 @@ async function loadBroadcastPayload(env, from, to) {
 
 async function loadBroadcasts(env, from, to) {
   const payload = await cachedHistoryLoad(
-    `broadcasts:v4:${from}:${to}`,
+    `broadcasts:v5:${from}:${to}`,
     30000,
     () => loadBroadcastPayload(env, from, to),
   );
