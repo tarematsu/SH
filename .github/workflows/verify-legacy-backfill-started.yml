@@ -1,0 +1,114 @@
+name: Verify legacy backfill started
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: site
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_BUILDS_API_TOKEN: ${{ secrets.CLOUDFLARE_BUILDS_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: site/package-lock.json
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+      - name: Wait for production schema and first backfill batch
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -z "${CLOUDFLARE_API_TOKEN:-}" ]; then
+            export CLOUDFLARE_API_TOKEN="${CLOUDFLARE_BUILDS_API_TOKEN:-}"
+          fi
+          if [ -z "${CLOUDFLARE_ACCOUNT_ID:-}" ]; then
+            export CLOUDFLARE_ACCOUNT_ID="${CF_ACCOUNT_ID:-}"
+          fi
+          if [ -z "${CLOUDFLARE_ACCOUNT_ID:-}" ] && [ -n "${CLOUDFLARE_API_TOKEN:-}" ]; then
+            export CLOUDFLARE_ACCOUNT_ID="$(curl -fsS \
+              -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
+              https://api.cloudflare.com/client/v4/accounts \
+              | jq -r '.result[0].id // empty')"
+          fi
+
+          : > legacy-backfill-verification.log
+          success=0
+          for attempt in $(seq 1 20); do
+            echo "=== attempt ${attempt} ===" | tee -a legacy-backfill-verification.log
+            npx wrangler d1 execute stationhead-monitor --remote --json --command="SELECT
+              (SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='sh_data_maintenance_state') AS maintenance_table,
+              (SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='sh_legacy_samples') AS samples_table,
+              (SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='sh_legacy_hosts') AS hosts_table,
+              (SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='sh_legacy_tracks') AS tracks_table,
+              (SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='sh_legacy_broadcasts') AS broadcasts_table,
+              (SELECT COUNT(*) FROM sqlite_master WHERE type='view' AND name='sh_legacy_history_rows') AS history_view,
+              (SELECT COUNT(*) FROM sqlite_master WHERE type='trigger' AND name='trg_sh_channel_snapshots_validated_stream') AS stream_trigger,
+              (SELECT COUNT(*) FROM pragma_table_info('sh_data_maintenance_state') WHERE name='legacy_backfill_id') AS backfill_column,
+              (SELECT COUNT(*) FROM pragma_table_info('sh_channel_snapshots') WHERE name='validated_stream_count') AS validated_stream_column,
+              (SELECT COUNT(*) FROM pragma_table_info('sh_snapshot_current') WHERE name='last_stream_count') AS last_stream_count_column,
+              (SELECT COUNT(*) FROM pragma_table_info('sh_snapshot_current') WHERE name='last_stream_at') AS last_stream_at_column,
+              (SELECT COUNT(*) FROM d1_migrations WHERE name='100_add_data_maintenance_state.sql') AS migration_100,
+              (SELECT COUNT(*) FROM d1_migrations WHERE name='101_add_lightweight_legacy_history.sql') AS migration_101,
+              (SELECT COUNT(*) FROM d1_migrations WHERE name='102_add_validated_stream_continuity.sql') AS migration_102;" > schema.json
+            cat schema.json >> legacy-backfill-verification.log
+
+            schema_ready=$(python - <<'PY'
+          import json
+          data=json.load(open('schema.json',encoding='utf-8'))
+          rows=[]
+          for entry in data if isinstance(data,list) else [data]:
+              rows.extend(entry.get('results') or entry.get('result',[{}])[0].get('results',[]))
+          row=rows[0] if rows else {}
+          print('1' if row and all(int(value or 0) > 0 for value in row.values()) else '0')
+          PY
+            )
+
+            if [ "$schema_ready" = 1 ]; then
+              npx wrangler d1 execute stationhead-monitor --remote --json --command="SELECT
+                (SELECT COUNT(*) FROM sh_legacy_snapshots) AS legacy_rows,
+                (SELECT COUNT(*) FROM sh_legacy_samples) AS normalized_rows,
+                (SELECT MIN(legacy_id) FROM sh_legacy_samples) AS normalized_min_id,
+                (SELECT MAX(legacy_id) FROM sh_legacy_samples) AS normalized_max_id,
+                (SELECT legacy_backfill_id FROM sh_data_maintenance_state WHERE id='rollup-retention-v1') AS backfill_cursor,
+                (SELECT updated_at FROM sh_data_maintenance_state WHERE id='rollup-retention-v1') AS maintenance_updated_at;" > progress.json
+              cat progress.json >> legacy-backfill-verification.log
+              if python - <<'PY'
+          import json
+          data=json.load(open('progress.json',encoding='utf-8'))
+          rows=[]
+          for entry in data if isinstance(data,list) else [data]:
+              rows.extend(entry.get('results') or entry.get('result',[{}])[0].get('results',[]))
+          row=rows[0] if rows else {}
+          normalized=int(row.get('normalized_rows') or 0)
+          cursor=int(row.get('backfill_cursor') or 0)
+          print(json.dumps(row,ensure_ascii=False))
+          raise SystemExit(0 if normalized > 0 and cursor > 0 else 1)
+          PY
+              then
+                success=1
+                break
+              fi
+            fi
+            sleep 30
+          done
+          test "$success" = 1
+      - name: Upload verification log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: legacy-backfill-verification
+          path: site/legacy-backfill-verification.log
