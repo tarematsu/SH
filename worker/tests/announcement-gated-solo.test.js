@@ -51,6 +51,10 @@ test('official news is refreshed often enough to support the early window', () =
   assert.equal(workerConfig().vars.OFFICIAL_NEWS_CHECK_INTERVAL_MS, 5 * 60_000);
 });
 
+test('generic official article rescans stay bounded while Stationhead titles remain eligible', () => {
+  assert.equal(workerConfig().vars.OFFICIAL_NEWS_BODY_SCAN_COUNT, 1);
+});
+
 test('idle solo monitor only runs inside an official announcement window', async () => {
   const calls = [];
   const config = {
