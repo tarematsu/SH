@@ -36,17 +36,20 @@ export function normalizeComments(payload,stationId,{finite}={}){
   });
   const candidates=[payload,payload?.items,payload?.data?.items,payload?.chats?.items,payload?.chats];
   const items=candidates.find(Array.isArray)||[];
-  const normalized=items.map((chat)=>({
-    comment_id:toFinite(chat?.id),id:chat?.id,
-    station_id:toFinite(chat?.station_id??stationId),
-    account_id:toFinite(chat?.account_id??chat?.account?.id),
-    handle:chat?.account?.handle??null,text:chat?.text??null,text_with_xml:chat?.text_with_xml??null,
-    chat_time:toFinite(chat?.chat_time),chat_time_ms:toFinite(chat?.chat_time_ms),
-    all_access_chat:chat?.all_access_chat??null,boost_chat:chat?.boost_chat??null,
-    followers:toFinite(chat?.account?.followers),following:toFinite(chat?.account?.following),
-    active_stream_days:toFinite(chat?.active_stream_days??chat?.account?.active_stream_days),
-    emoji:chat?.account?.emoji??null,raw:chat,
-  })).filter((comment)=>comment.comment_id!=null||comment.id!=null);
+  const normalized=items.map((chat)=>{
+    const rawId=chat?.comment_id??chat?.id;
+    return {
+      comment_id:toFinite(rawId),id:rawId,
+      station_id:toFinite(chat?.station_id??stationId),
+      account_id:toFinite(chat?.account_id??chat?.account?.id),
+      handle:chat?.account?.handle??null,text:chat?.text??null,text_with_xml:chat?.text_with_xml??null,
+      chat_time:toFinite(chat?.chat_time),chat_time_ms:toFinite(chat?.chat_time_ms),
+      all_access_chat:chat?.all_access_chat??null,boost_chat:chat?.boost_chat??null,
+      followers:toFinite(chat?.account?.followers),following:toFinite(chat?.account?.following),
+      active_stream_days:toFinite(chat?.active_stream_days??chat?.account?.active_stream_days),
+      emoji:chat?.account?.emoji??null,raw:chat,
+    };
+  }).filter((comment)=>comment.comment_id!=null||comment.id!=null);
   const seen=new Set(),out=[];
   for(const comment of normalized){const id=commentIdentity(comment);if(!id||seen.has(id))continue;seen.add(id);out.push(comment);}
   return out;
