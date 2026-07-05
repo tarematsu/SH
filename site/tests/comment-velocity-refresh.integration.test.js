@@ -24,12 +24,16 @@ test('comment velocity refreshes even when the poll contains no new comments', a
   assert.equal(updates[0].sql, COMMENT_VELOCITY_UPDATE_SQL);
   assert.deepEqual(
     updates[0].params,
-    [3328626, observedAt - 120_000, observedAt, 3328626, observedAt],
+    [
+      3328626, observedAt - 120_000, observedAt,
+      3328626, observedAt,
+      3328626, observedAt - 120_000, observedAt,
+    ],
   );
 });
 
 test('comment velocity update changes only the latest snapshot when the value differs', () => {
   assert.match(COMMENT_VELOCITY_UPDATE_SQL, /ORDER BY observed_at DESC,id DESC LIMIT 1/);
   assert.match(COMMENT_VELOCITY_UPDATE_SQL, /COALESCE\(comment_velocity,-1\)<>/);
-  assert.match(COMMENT_VELOCITY_UPDATE_SQL, /COALESCE\(SUM\(comment_count\),0\)/);
+  assert.match(COMMENT_VELOCITY_UPDATE_SQL, /SELECT SUM\(comment_count\)/);
 });
