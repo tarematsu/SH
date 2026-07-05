@@ -13,8 +13,14 @@ WHERE validated_stream_count IS NULL;
 
 WITH ordered AS (
   SELECT id,validated_stream_count AS value,
-    LAG(validated_stream_count) OVER (PARTITION BY channel_id ORDER BY observed_at,id) AS previous_value,
-    LEAD(validated_stream_count) OVER (PARTITION BY channel_id ORDER BY observed_at,id) AS next_value
+    LAG(validated_stream_count) OVER (
+      PARTITION BY COALESCE(CAST(channel_id AS TEXT),'station:' || COALESCE(CAST(station_id AS TEXT),'0'))
+      ORDER BY observed_at,id
+    ) AS previous_value,
+    LEAD(validated_stream_count) OVER (
+      PARTITION BY COALESCE(CAST(channel_id AS TEXT),'station:' || COALESCE(CAST(station_id AS TEXT),'0'))
+      ORDER BY observed_at,id
+    ) AS next_value
   FROM sh_channel_snapshots
   WHERE validated_stream_count IS NOT NULL
 ), isolated_outliers AS (
@@ -27,6 +33,10 @@ WITH ordered AS (
 UPDATE sh_channel_snapshots
 SET validated_stream_count=NULL
 WHERE id IN (SELECT id FROM isolated_outliers);
+
+UPDATE sh_channel_snapshots
+SET current_stream_count=validated_stream_count,
+    total_listens=validated_stream_count;
 
 UPDATE sh_snapshot_current
 SET last_stream_count=(
@@ -52,3 +62,12 @@ SET last_stream_count=(
       LIMIT 1
     )
 WHERE last_stream_count IS NULL OR last_stream_at IS NULL;
+
+CREATE TRIGGER IF NOT EXISTS trg_sh_channel_snapshots_validated_stream
+AFTER INSERT ON sh_channel_snapshots
+WHEN NEW.current_stream_count IS NOT NEW.validated_stream_count
+BEGIN
+  UPDATE sh_channel_snapshots
+  SET current_stream_count=NEW.validated_stream_count
+  WHERE id=NEW.id;
+END;
