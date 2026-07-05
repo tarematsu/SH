@@ -1,5 +1,6 @@
 const RAW_STATEMENT = Symbol('scheduled-optimizer-raw-statement');
 const STATEMENT_META = Symbol('scheduled-optimizer-statement-meta');
+const MAINTENANCE_CADENCE_MS = 60 * 60_000;
 const EMPTY_CLEANUP_BACKOFF_MS = 6 * 60 * 60_000;
 const CLAIM_TIMESTAMP_TOLERANCE_MS = 5_000;
 
@@ -138,8 +139,9 @@ export function withScheduledD1Optimizations(env, nowFn = Date.now) {
               (sum, index) => sum + changedRows(results?.[index]),
               0,
             );
+            const now = Number(nowFn()) || Date.now();
             state.emptyCleanupBackoffUntil = totalChanges === 0
-              ? (Number(nowFn()) || Date.now()) + EMPTY_CLEANUP_BACKOFF_MS
+              ? now + EMPTY_CLEANUP_BACKOFF_MS - MAINTENANCE_CADENCE_MS
               : 0;
           }
           return results;
@@ -158,4 +160,8 @@ export function withScheduledD1Optimizations(env, nowFn = Date.now) {
   });
 }
 
-export { CLAIM_TIMESTAMP_TOLERANCE_MS, EMPTY_CLEANUP_BACKOFF_MS };
+export {
+  CLAIM_TIMESTAMP_TOLERANCE_MS,
+  EMPTY_CLEANUP_BACKOFF_MS,
+  MAINTENANCE_CADENCE_MS
+};
