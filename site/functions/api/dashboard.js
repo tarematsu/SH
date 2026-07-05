@@ -268,7 +268,10 @@ export async function onRequestGet(context) {
     unchanged: false,
     contextPromise: null,
   };
-  const predictionPromise = loadPredictionState(context.env.DB);
+  const predictionPromise = loadPredictionState(context.env.DB).catch((error) => {
+    console.error(error);
+    return null;
+  });
   const response = await legacyDashboard({
     ...context,
     env: { ...context.env, DB: proxyDatabase(context.env.DB, queueContext) },
