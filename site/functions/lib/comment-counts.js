@@ -4,19 +4,22 @@ const MINUTE_MS = 60_000;
 const VELOCITY_WINDOW_MS = 2 * MINUTE_MS;
 const runtimeCursors = new WeakMap();
 
-export const COMMENT_VELOCITY_UPDATE_SQL = `WITH velocity(value) AS (
-  SELECT COALESCE(SUM(comment_count),0)
+export const COMMENT_VELOCITY_UPDATE_SQL = `UPDATE sh_channel_snapshots
+SET comment_velocity=COALESCE((
+  SELECT SUM(comment_count)
   FROM sh_comment_minute_counts
   WHERE station_id=? AND bucket_start>=? AND bucket_start<=?
-), target(id) AS (
+),0)
+WHERE id=(
   SELECT id FROM sh_channel_snapshots
   WHERE station_id=? AND observed_at<=?
   ORDER BY observed_at DESC,id DESC LIMIT 1
 )
-UPDATE sh_channel_snapshots
-SET comment_velocity=(SELECT value FROM velocity)
-WHERE id=(SELECT id FROM target)
-  AND COALESCE(comment_velocity,-1)<>(SELECT value FROM velocity)`;
+AND COALESCE(comment_velocity,-1)<>COALESCE((
+  SELECT SUM(comment_count)
+  FROM sh_comment_minute_counts
+  WHERE station_id=? AND bucket_start>=? AND bucket_start<=?
+),0)`;
 
 function timestampOf(comment, fallback) {
   const milliseconds = num(comment?.chat_time_ms);
@@ -52,11 +55,15 @@ function cursorMap(db) {
 }
 
 function commentVelocityStatement(db, stationId, observedAt) {
+  const windowStart = observedAt - VELOCITY_WINDOW_MS;
   return db.prepare(COMMENT_VELOCITY_UPDATE_SQL).bind(
     stationId,
-    observedAt - VELOCITY_WINDOW_MS,
+    windowStart,
     observedAt,
     stationId,
+    observedAt,
+    stationId,
+    windowStart,
     observedAt,
   );
 }
