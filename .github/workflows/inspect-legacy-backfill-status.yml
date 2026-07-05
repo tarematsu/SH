@@ -1,0 +1,58 @@
+name: Inspect legacy backfill status
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: site
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_BUILDS_API_TOKEN: ${{ secrets.CLOUDFLARE_BUILDS_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: site/package-lock.json
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+      - name: Inspect production legacy migration
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -z "${CLOUDFLARE_API_TOKEN:-}" ]; then
+            export CLOUDFLARE_API_TOKEN="${CLOUDFLARE_BUILDS_API_TOKEN:-}"
+          fi
+          if [ -z "${CLOUDFLARE_ACCOUNT_ID:-}" ]; then
+            export CLOUDFLARE_ACCOUNT_ID="${CF_ACCOUNT_ID:-}"
+          fi
+          npx wrangler d1 execute stationhead-monitor --remote --json --command="SELECT
+            (SELECT COUNT(*) FROM sh_legacy_snapshots) AS legacy_rows,
+            (SELECT COUNT(*) FROM sh_legacy_samples) AS normalized_rows,
+            (SELECT COUNT(*) FROM sh_legacy_snapshots l WHERE NOT EXISTS (SELECT 1 FROM sh_legacy_samples s WHERE s.legacy_id=l.id)) AS remaining_rows,
+            (SELECT MAX(id) FROM sh_legacy_snapshots) AS legacy_max_id,
+            (SELECT MAX(legacy_id) FROM sh_legacy_samples) AS normalized_max_id,
+            (SELECT legacy_backfill_id FROM sh_data_maintenance_state WHERE id='rollup-retention-v1') AS backfill_cursor,
+            (SELECT updated_at FROM sh_data_maintenance_state WHERE id='rollup-retention-v1') AS maintenance_updated_at,
+            (SELECT COUNT(*) FROM sh_legacy_hosts) AS host_rows,
+            (SELECT COUNT(*) FROM sh_legacy_tracks) AS track_rows,
+            (SELECT COUNT(*) FROM sh_legacy_broadcasts) AS broadcast_rows,
+            (SELECT COUNT(*) FROM sh_legacy_history_rows) AS compatibility_rows,
+            (SELECT COUNT(*) FROM sh_legacy_samples s LEFT JOIN sh_legacy_snapshots l ON l.id=s.legacy_id WHERE l.id IS NULL) AS orphan_samples;" | tee legacy-backfill-status.json
+      - name: Upload inspection result
+        uses: actions/upload-artifact@v4
+        with:
+          name: legacy-backfill-status
+          path: site/legacy-backfill-status.json
