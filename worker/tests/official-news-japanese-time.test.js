@@ -27,7 +27,7 @@ test('promotion only reads time-unknown rows after a successful check in this cr
   assert.match(PROMOTABLE_TIME_UNKNOWN_SQL, /last_check_at>=\?/);
 });
 
-test('a recovered Japanese schedule is inserted atomically before the placeholder is retired', async () => {
+test('a recovered Japanese schedule is upserted while the source row remains available for corrections', async () => {
   const batches = [];
   const prepared = [];
   const row = {
@@ -71,9 +71,9 @@ test('a recovered Japanese schedule is inserted atomically before the placeholde
   assert.deepEqual(result, { promoted: 1, skipped: false });
   assert.deepEqual(prepared[0].binds, [2000]);
   assert.equal(batches.length, 1);
-  assert.equal(batches[0].length, 2);
+  assert.equal(batches[0].length, 1);
   assert.match(batches[0][0].sql, /INSERT INTO sh_official_news_announcements/);
+  assert.match(batches[0][0].sql, /WHERE sh_official_news_announcements\.news_url IS NOT excluded\.news_url/);
   assert.equal(batches[0][0].binds[5], Date.UTC(2025, 11, 30, 11, 0));
-  assert.match(batches[0][1].sql, /status='superseded'/);
-  assert.deepEqual(batches[0][1].binds, [3000, 9]);
+  assert.equal(prepared.some((statement) => /status='superseded'/.test(statement.sql)), false);
 });
