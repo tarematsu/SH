@@ -208,7 +208,7 @@ async function backfillLegacySamples(db, lastLegacyId) {
       )
       SELECT l.id,l.observed_at,l.observed_jst,l.listener_count,l.total_stream_count,
         t.id,l.likes,l.comment_velocity,h.id,l.total_member_count,b.id,
-        l.quality_score,l.quality_flags
+        COALESCE(l.quality_score,1),COALESCE(l.quality_flags,'[]')
       FROM sh_legacy_snapshots l
       LEFT JOIN sh_legacy_hosts h ON h.host_key=lower(trim(l.host_handle))
       LEFT JOIN sh_legacy_tracks t ON t.track_key=(lower(trim(COALESCE(l.track_title,''))) || char(31) || lower(trim(COALESCE(l.artist_name,''))))
@@ -225,48 +225,69 @@ export async function runDataMaintenance(db, now = Date.now()) {
   if (cached?.nextCheckAt > now) return { skipped: true, reason: 'memory-cadence' };
   runtimeState.set(db, { nextCheckAt: now + HOUR_MS });
 
-  const state = await db.prepare(`SELECT last_rollup_key,last_cleanup_at,legacy_backfill_id
-    FROM sh_data_maintenance_state WHERE id=?`).bind(STATE_ID).first();
-  const period = previousDay(now);
-  let lastRollupKey = state?.last_rollup_key || null;
-  let lastCleanupAt = Number(state?.last_cleanup_at || 0);
-  let legacyBackfillId = Number(state?.legacy_backfill_id || 0);
-  let rolledUp = false;
-  let cleaned = false;
-
-  if (lastRollupKey !== period.key) {
-    const dailyWritten = await rollupDaily(db, period, now);
-    if (dailyWritten) {
-      await rollupFromDaily(db, 'sh_weekly_summary', weeklyRange(period.key), now);
-      await rollupFromDaily(db, 'sh_monthly_summary', monthlyRange(period.key), now);
-      lastRollupKey = period.key;
-      rolledUp = true;
+  try {
+    const state = await db.prepare(`SELECT last_rollup_key,last_cleanup_at,legacy_backfill_id,updated_at
+      FROM sh_data_maintenance_state WHERE id=?`).bind(STATE_ID).first();
+    const lastMaintenanceAt = Number(state?.updated_at || 0);
+    if (lastMaintenanceAt > 0 && now - lastMaintenanceAt < HOUR_MS) {
+      runtimeState.set(db, { nextCheckAt: lastMaintenanceAt + HOUR_MS });
+      return {
+        skipped: true,
+        reason: 'persistent-cadence',
+        nextCheckAt: lastMaintenanceAt + HOUR_MS,
+      };
     }
+
+    const period = previousDay(now);
+    let lastRollupKey = state?.last_rollup_key || null;
+    let lastCleanupAt = Number(state?.last_cleanup_at || 0);
+    let legacyBackfillId = Number(state?.legacy_backfill_id || 0);
+    let rolledUp = false;
+    let cleaned = false;
+
+    if (lastRollupKey !== period.key) {
+      const dailyWritten = await rollupDaily(db, period, now);
+      if (dailyWritten) {
+        await rollupFromDaily(db, 'sh_weekly_summary', weeklyRange(period.key), now);
+        await rollupFromDaily(db, 'sh_monthly_summary', monthlyRange(period.key), now);
+        lastRollupKey = period.key;
+        rolledUp = true;
+      }
+    }
+
+    if (now - lastCleanupAt >= HOUR_MS) {
+      await cleanup(db, now);
+      lastCleanupAt = now;
+      cleaned = true;
+    }
+
+    const legacyBackfill = await backfillLegacySamples(db, legacyBackfillId);
+    legacyBackfillId = legacyBackfill.lastLegacyId;
+
+    await db.prepare(`INSERT INTO sh_data_maintenance_state(
+        id,last_rollup_key,last_cleanup_at,legacy_backfill_id,updated_at
+      ) VALUES(?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET
+      last_rollup_key=CASE
+        WHEN sh_data_maintenance_state.last_rollup_key IS NULL THEN excluded.last_rollup_key
+        WHEN excluded.last_rollup_key IS NULL THEN sh_data_maintenance_state.last_rollup_key
+        WHEN excluded.last_rollup_key>sh_data_maintenance_state.last_rollup_key THEN excluded.last_rollup_key
+        ELSE sh_data_maintenance_state.last_rollup_key END,
+      last_cleanup_at=MAX(sh_data_maintenance_state.last_cleanup_at,excluded.last_cleanup_at),
+      legacy_backfill_id=MAX(sh_data_maintenance_state.legacy_backfill_id,excluded.legacy_backfill_id),
+      updated_at=MAX(sh_data_maintenance_state.updated_at,excluded.updated_at)`)
+      .bind(STATE_ID, lastRollupKey, lastCleanupAt, legacyBackfillId, now).run();
+
+    return {
+      skipped: false,
+      rolledUp,
+      cleaned,
+      periodKey: period.key,
+      legacyBackfill,
+    };
+  } catch (error) {
+    runtimeState.delete(db);
+    throw error;
   }
-
-  if (now - lastCleanupAt >= HOUR_MS) {
-    await cleanup(db, now);
-    lastCleanupAt = now;
-    cleaned = true;
-  }
-
-  const legacyBackfill = await backfillLegacySamples(db, legacyBackfillId);
-  legacyBackfillId = legacyBackfill.lastLegacyId;
-
-  await db.prepare(`INSERT INTO sh_data_maintenance_state(
-      id,last_rollup_key,last_cleanup_at,legacy_backfill_id,updated_at
-    ) VALUES(?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET
-    last_rollup_key=excluded.last_rollup_key,last_cleanup_at=excluded.last_cleanup_at,
-    legacy_backfill_id=excluded.legacy_backfill_id,updated_at=excluded.updated_at`)
-    .bind(STATE_ID, lastRollupKey, lastCleanupAt, legacyBackfillId, now).run();
-
-  return {
-    skipped: false,
-    rolledUp,
-    cleaned,
-    periodKey: period.key,
-    legacyBackfill,
-  };
 }
 
 export async function runDataMaintenanceSafely(db, now = Date.now()) {
