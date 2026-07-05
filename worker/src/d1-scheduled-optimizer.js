@@ -3,6 +3,7 @@ const STATEMENT_META = Symbol('scheduled-optimizer-statement-meta');
 const MAINTENANCE_CADENCE_MS = 60 * 60_000;
 const EMPTY_CLEANUP_BACKOFF_MS = 6 * 60 * 60_000;
 const CLAIM_TIMESTAMP_TOLERANCE_MS = 5_000;
+const DEFAULT_OFFICIAL_NEWS_INTERVAL_MS = 30 * 60_000;
 
 export const OFFICIAL_NEWS_CLAIM_SQL = `INSERT INTO sh_official_news_monitor_state
   (id,last_check_at,last_success_at,last_error,updated_at)
@@ -25,6 +26,11 @@ ON CONFLICT(id) DO UPDATE SET
 
 function compactSql(value) {
   return String(value || '').replace(/\s+/g, ' ').trim().toLowerCase();
+}
+
+function officialNewsIntervalMs(env = {}) {
+  const configured = Number(env.OFFICIAL_NEWS_CHECK_INTERVAL_MS || DEFAULT_OFFICIAL_NEWS_INTERVAL_MS);
+  return Number.isFinite(configured) ? Math.max(1, configured) : DEFAULT_OFFICIAL_NEWS_INTERVAL_MS;
 }
 
 export function scheduledStatementKind(sql) {
@@ -78,12 +84,13 @@ export function withScheduledD1Optimizations(env, nowFn = Date.now) {
 
   async function persistOfficialNewsFailure(error, fallbackNow) {
     const now = Number(fallbackNow) || Number(nowFn()) || Date.now();
-    const lastCheckAt = state.officialClaimAt || now;
+    const claimAt = state.officialClaimAt || now;
+    const retryableLastCheckAt = Math.max(0, claimAt - officialNewsIntervalMs(env));
     try {
       await db.prepare(OFFICIAL_NEWS_FAILURE_SQL)
         .bind(
           'official-news',
-          lastCheckAt,
+          retryableLastCheckAt,
           state.officialLastSuccessAt,
           failureMessage(error),
           now,
@@ -115,7 +122,7 @@ export function withScheduledD1Optimizations(env, nowFn = Date.now) {
         if (property === 'first' && meta.kind === 'official-news-state-read') {
           return async () => {
             const now = Number(nowFn()) || Date.now();
-            const intervalMs = Math.max(1, Number(env.OFFICIAL_NEWS_CHECK_INTERVAL_MS || 30 * 60_000));
+            const intervalMs = officialNewsIntervalMs(env);
             const id = meta.binds?.[0] || 'official-news';
             const claimed = await db.prepare(OFFICIAL_NEWS_CLAIM_SQL)
               .bind(id, now, now, now - intervalMs)
