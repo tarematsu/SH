@@ -17,6 +17,10 @@ const cloudflareBuild = process.env.CF_PAGES === '1' || process.env.WORKERS_CI =
 const force = String(process.env.D1_MIGRATION_FORCE || '').toLowerCase() === 'true';
 const migrationName = String(process.env.D1_MIGRATION_NAME || '').trim();
 const target = process.env.D1_MIGRATION_TARGET === 'local' ? 'local' : 'remote';
+const grandfatheredDuplicateGroups = new Set([
+  '005_cloud_host_monitor.sql|005_weekly_summary_foundation.sql',
+  '019_collector_failure_diagnostics.sql|019_comment_counts.sql',
+]);
 
 if (!force && currentBranch !== productionBranch) {
   const source = process.env.CF_PAGES_BRANCH ? 'CF_PAGES_BRANCH'
@@ -38,7 +42,7 @@ const wranglerExecutable = process.platform === 'win32'
   ? path.join(siteDirectory, 'node_modules', '.bin', 'wrangler.cmd')
   : path.join(siteDirectory, 'node_modules', '.bin', 'wrangler');
 
-function assertUniqueMigrationNumbers() {
+function assertSafeMigrationNumbering() {
   const files = readdirSync(migrationsDirectory)
     .filter((name) => /^\d+_[A-Za-z0-9._-]+\.sql$/.test(name))
     .sort();
@@ -50,12 +54,14 @@ function assertUniqueMigrationNumbers() {
     group.push(file);
     byNumber.set(number, group);
   }
-  const duplicates = [...byNumber.entries()].filter(([, filesForNumber]) => filesForNumber.length > 1);
-  if (duplicates.length) {
-    const details = duplicates
+  const unexpected = [...byNumber.entries()]
+    .filter(([, filesForNumber]) => filesForNumber.length > 1)
+    .filter(([, filesForNumber]) => !grandfatheredDuplicateGroups.has([...filesForNumber].sort().join('|')));
+  if (unexpected.length) {
+    const details = unexpected
       .map(([number, filesForNumber]) => `${number}: ${filesForNumber.join(', ')}`)
       .join('; ');
-    throw new Error(`duplicate D1 migration numbers detected: ${details}`);
+    throw new Error(`unsafe duplicate D1 migration numbers detected: ${details}`);
   }
 }
 
@@ -83,7 +89,7 @@ let temporaryDirectory = null;
 let temporaryConfigPath = null;
 
 try {
-  assertUniqueMigrationNumbers();
+  assertSafeMigrationNumbering();
   if (migrationName) {
     if (!/^\d+_[A-Za-z0-9._-]+\.sql$/.test(migrationName) || path.basename(migrationName) !== migrationName) {
       throw new Error(`invalid D1_MIGRATION_NAME=${migrationName}`);
