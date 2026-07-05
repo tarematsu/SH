@@ -26,6 +26,9 @@ function statementKind(sql) {
       && compact.includes("from sh_worker_collector_state where id = 'stationhead'")) {
     return 'collector-state-read';
   }
+  if (/^select last_success_at,\s*last_error from sh_worker_collector_state where id\s*=\s*'stationhead'/.test(compact)) {
+    return 'collector-state-health-read';
+  }
   if (compact.startsWith('insert into sh_worker_collector_state')) return 'collector-state-write';
   return null;
 }
@@ -80,6 +83,20 @@ function collectorStateSignature(row) {
   ]);
 }
 
+function cachedCollectorStateResult(kind, row) {
+  if (kind === 'collector-state-health-read') {
+    return {
+      last_success_at: row?.last_success_at ?? null,
+      last_error: row?.last_error ?? null,
+    };
+  }
+  return row ? { ...row } : row;
+}
+
+function isCollectorStateRead(kind) {
+  return kind === 'collector-state-read' || kind === 'collector-state-health-read';
+}
+
 export function withDuplicateVelocityReadRemoved(env, nowFn = Date.now) {
   if (!env?.DB) return env;
   const db = env.DB;
@@ -101,10 +118,10 @@ export function withDuplicateVelocityReadRemoved(env, nowFn = Date.now) {
         if (property === 'first') {
           return async (...args) => {
             const now = Number(nowFn()) || Date.now();
-            if (meta.kind === 'collector-state-read'
+            if (isCollectorStateRead(meta.kind)
                 && shared.collectorState
                 && shared.collectorStateExpiresAt > now) {
-              return { ...shared.collectorState };
+              return cachedCollectorStateResult(meta.kind, shared.collectorState);
             }
             const result = await target.first(...args);
             if (meta.kind === 'collector-state-read' && result) {
