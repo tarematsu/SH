@@ -36,6 +36,7 @@ test('runtime repair migrations use versions beyond the applied production range
     '100_add_data_maintenance_state.sql',
     '101_add_lightweight_legacy_history.sql',
     '102_add_validated_stream_continuity.sql',
+    '103_seed_legacy_backfill.sql',
   ];
   for (const file of required) assert.equal(migrationFiles.includes(file), true, file);
 
