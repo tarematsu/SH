@@ -19,6 +19,19 @@ function normalizeHealthPayload(payload) {
   return payload;
 }
 
+export async function rewriteHealthResponse(response) {
+  const payload = await response.clone().json().catch(() => null);
+  if (!payload) return response;
+
+  const headers = new Headers(response.headers);
+  headers.delete('content-length');
+  return new Response(JSON.stringify(normalizeHealthPayload(payload)), {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  });
+}
+
 function primaryWatchdogMs(env = {}) {
   const configured = Number(env.PRIMARY_COLLECTION_WATCHDOG_MS ?? DEFAULT_PRIMARY_WATCHDOG_MS);
   if (!Number.isFinite(configured)) return DEFAULT_PRIMARY_WATCHDOG_MS;
@@ -273,11 +286,6 @@ export default {
       return response;
     }
 
-    const payload = await response.json().catch(() => null);
-    if (!payload) return response;
-    return new Response(JSON.stringify(normalizeHealthPayload(payload)), {
-      status: response.status,
-      headers: response.headers,
-    });
+    return rewriteHealthResponse(response);
   },
 };
