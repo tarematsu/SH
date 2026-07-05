@@ -1,7 +1,7 @@
 import { onRequestPost as saveLeaderboard } from '../../site/functions/api/leaderboard-ingest.js';
 import { positiveNumber as positive } from './shared.js';
 
-const SOURCE_URL = 'https://www.stationhead.com/on/api/weeklyleaderboard';
+export const WEEKLY_LEADERBOARD_SOURCE_URL = 'https://production1.stationhead.com/weeklyLeaderboard';
 const SOURCE = 'stationhead_official_cloud';
 
 function jstParts(now = Date.now()) {
@@ -93,7 +93,7 @@ async function fetchLeaderboard(env, now, context) {
   };
   if (context?.auth_token) headers.authorization = `Bearer ${context.auth_token}`;
   if (context?.device_uid) headers['sth-device-uid'] = context.device_uid;
-  const response = await fetch(`${SOURCE_URL}?_=${now}`, {
+  const response = await fetch(`${WEEKLY_LEADERBOARD_SOURCE_URL}?_=${now}`, {
     headers, cache: 'no-store',
     signal: AbortSignal.timeout(Math.min(positive(env.REQUEST_TIMEOUT_MS, 20000), 30000)),
   });
