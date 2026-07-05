@@ -1,4 +1,4 @@
-import app from './main.js';
+import app from './scheduled-main.js';
 import { getCollectorHealthView, runCollectorHealthAlert } from './health-alert.js';
 import {
   retireRecoveredPendingAlert,

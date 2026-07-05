@@ -1,4 +1,4 @@
-import coreApp from './main.js';
+import coreApp from './scheduled-main.js';
 import diagnosticApp from './health-alert-index.js';
 
 const DEFAULT_DIAGNOSTIC_INTERVAL_MINUTES = 10;
