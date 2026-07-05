@@ -35,12 +35,13 @@ export async function runScheduledWithOfficialReconciliation(
   scheduled = app.scheduled.bind(app),
   reconcile = reconcileSupersededAnnouncements,
 ) {
+  const runStartedAt = Date.now();
   const state = { officialTask: null };
   const result = await scheduled(controller, env, trackingOfficialTaskContext(ctx, state));
   if (!state.officialTask) return result;
 
   const cleanup = state.officialTask
-    .then(() => reconcile(env))
+    .then(() => reconcile(env, runStartedAt))
     .catch(logReconcileFailure);
   if (ctx?.waitUntil) ctx.waitUntil(cleanup);
   else await cleanup;
