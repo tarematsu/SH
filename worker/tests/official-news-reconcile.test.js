@@ -62,13 +62,20 @@ test('missing optional announcement tables skip reconciliation', async () => {
   );
 });
 
-test('scheduled reconciliation waits for registered background news tasks', async () => {
+test('scheduled reconciliation waits for official news but not unrelated background work', async () => {
   const order = [];
   const held = [];
   let releaseNews;
+  let releaseUnrelated;
   const newsTask = new Promise((resolve) => {
     releaseNews = () => {
       order.push('news-finished');
+      resolve();
+    };
+  });
+  const unrelatedTask = new Promise((resolve) => {
+    releaseUnrelated = () => {
+      order.push('unrelated-finished');
       resolve();
     };
   });
@@ -79,6 +86,7 @@ test('scheduled reconciliation waits for registered background news tasks', asyn
   };
   const scheduled = async (_controller, _env, wrappedCtx) => {
     wrappedCtx.waitUntil(newsTask);
+    wrappedCtx.waitUntil(unrelatedTask);
     order.push('scheduled-returned');
     return 'primary-complete';
   };
@@ -96,8 +104,18 @@ test('scheduled reconciliation waits for registered background news tasks', asyn
   );
   assert.equal(result, 'primary-complete');
   assert.deepEqual(order, ['scheduled-returned']);
+  assert.equal(held.length, 3);
 
   releaseNews();
-  await Promise.all(held);
+  await held[2];
   assert.deepEqual(order, ['scheduled-returned', 'news-finished', 'reconciled']);
+
+  releaseUnrelated();
+  await held[1];
+  assert.deepEqual(order, [
+    'scheduled-returned',
+    'news-finished',
+    'reconciled',
+    'unrelated-finished'
+  ]);
 });
