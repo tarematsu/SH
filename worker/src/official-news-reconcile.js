@@ -1,3 +1,5 @@
+import { promoteJapaneseHourAnnouncements } from './official-news-japanese-time.js';
+
 export const RECONCILE_SUPERSEDED_ANNOUNCEMENTS_SQL = `UPDATE sh_official_news_announcements AS stale
 SET status='superseded',updated_at=?
 WHERE stale.status='scheduled'
@@ -36,6 +38,28 @@ export async function reconcileSupersededAnnouncements(
   } catch (error) {
     if (/no such table/i.test(String(error?.message || ''))) {
       return { changes: 0, skipped: true };
+    }
+    throw error;
+  }
+}
+
+export async function reconcileOfficialAnnouncements(
+  env,
+  runStartedAt = Date.now(),
+  completedAt = Date.now(),
+) {
+  if (!env?.DB) return { promoted: 0, changes: 0, skipped: true };
+  try {
+    const promotion = await promoteJapaneseHourAnnouncements(env, runStartedAt, completedAt);
+    const reconciliation = await reconcileSupersededAnnouncements(env, runStartedAt, completedAt);
+    return {
+      promoted: Number(promotion.promoted || 0),
+      changes: Number(reconciliation.changes || 0),
+      skipped: Boolean(promotion.skipped && reconciliation.skipped),
+    };
+  } catch (error) {
+    if (/no such table/i.test(String(error?.message || ''))) {
+      return { promoted: 0, changes: 0, skipped: true };
     }
     throw error;
   }
