@@ -109,6 +109,11 @@ function isrcCandidates(tracks) {
   return [...unique.values()];
 }
 
+export function metadataRepairCandidates(tracks, configuredLimit) {
+  const limit = Math.max(0, Math.floor(Number(configuredLimit) || 0));
+  return limit > 0 ? (tracks || []).slice(0, limit) : [];
+}
+
 async function repairMetadataFromIsrc(db, tracks, now) {
   const candidates = isrcCandidates(tracks);
   if (!candidates.length) return new Set();
@@ -211,8 +216,13 @@ export async function enrichTracks(env, ingestFn, queue, observedAt, config) {
   }
 
   const unresolved = uncached.filter((track) => !complete.has(String(track.spotify_id)));
-  if (unresolved.length) {
-    const repaired = await repairMetadataFromIsrc(env.DB, unresolved, now);
+  const metadataLimit = Math.max(0, Math.floor(Number(config.metadataLimit ?? 3) || 0));
+  const repairLimit = config.metadataRepairLimit == null
+    ? metadataLimit
+    : Math.max(0, Math.floor(Number(config.metadataRepairLimit) || 0));
+  const repairCandidates = metadataRepairCandidates(unresolved, repairLimit);
+  if (repairCandidates.length) {
+    const repaired = await repairMetadataFromIsrc(env.DB, repairCandidates, now);
     for (const spotifyId of repaired) {
       complete.add(spotifyId);
       cacheMetadataState(spotifyId, now + COMPLETE_CACHE_MS);
@@ -230,10 +240,9 @@ export async function enrichTracks(env, ingestFn, queue, observedAt, config) {
     }
     return true;
   });
-  if (!retryable.length || (config.metadataLimit != null && config.metadataLimit <= 0)) return 0;
+  if (!retryable.length || metadataLimit <= 0) return 0;
 
-  const limit = config.metadataLimit ?? 3;
-  const missing = retryable.slice(0, limit);
+  const missing = retryable.slice(0, metadataLimit);
   const metadata = [];
   const failedIds = [];
   for (const track of missing) {
