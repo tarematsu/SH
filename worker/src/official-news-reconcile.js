@@ -6,8 +6,8 @@ WHERE stale.status='scheduled'
     SELECT 1
     FROM sh_official_news_announcements AS current
     WHERE current.news_id=stale.news_id
-      AND current.scheduled_at IS NOT NULL
       AND current.id<>stale.id
+      AND current.status<>'superseded'
       AND current.updated_at>stale.updated_at
   )`;
 
