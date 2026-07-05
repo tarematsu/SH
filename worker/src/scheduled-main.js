@@ -1,5 +1,5 @@
 import mainApp, { withD1WriteThrottling } from './main.js';
-import app from './email-recap-index.js';
+import app from './official-news-reconcile-entry.js';
 import { runCloudHostMonitor } from './cloud-host-monitor.js';
 import { runCloudWeeklyLeaderboard } from './cloud-weekly-leaderboard.js';
 import { resetCollectionFlight } from './index.js';
