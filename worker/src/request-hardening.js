@@ -1,4 +1,5 @@
 const EMAIL_RECAP_PATH = '/ingest/email-recap';
+const LEASE_PATH = '/coordination/lease';
 const RUN_PATH = '/run';
 const DEFAULT_REPLAY_TTL_MS = 10 * 60 * 1000;
 const MAX_REPLAY_ENTRIES = 32;
@@ -14,6 +15,12 @@ export function isRealIsoDate(value) {
   return date.getUTCFullYear() === year
     && date.getUTCMonth() === month - 1
     && date.getUTCDate() === day;
+}
+
+export function isMondayWeekStart(value) {
+  const text = String(value || '').trim();
+  return isRealIsoDate(text)
+    && new Date(`${text}T00:00:00Z`).getUTCDay() === 1;
 }
 
 function json(data, status) {
@@ -42,6 +49,14 @@ function cloneStored(stored, replayed = false) {
   return new Response(stored.body, { status: stored.status, headers });
 }
 
+function authorizedInternalRequest(request, env = {}) {
+  const supplied = request.headers.get('authorization') || '';
+  const expected = [env.EMAIL_RECAP_SECRET, env.RUN_SECRET]
+    .map((value) => String(value || '').trim())
+    .filter(Boolean);
+  return expected.some((secret) => supplied === `Bearer ${secret}`);
+}
+
 export function createRequestHardenedApp(app, nowFn = Date.now) {
   const completed = new Map();
   const flights = new Map();
@@ -61,6 +76,11 @@ export function createRequestHardenedApp(app, nowFn = Date.now) {
     async fetch(request, env, ctx) {
       const url = new URL(request.url);
 
+      if (request.method === 'GET' && url.pathname === LEASE_PATH
+          && !authorizedInternalRequest(request, env)) {
+        return json({ ok: false, error: 'unauthorized' }, 401);
+      }
+
       if (request.method === 'POST' && url.pathname === EMAIL_RECAP_PATH) {
         const bodyText = await request.clone().text();
         let body;
@@ -69,7 +89,7 @@ export function createRequestHardenedApp(app, nowFn = Date.now) {
         } catch {
           return app.fetch(request, env, ctx);
         }
-        if (!isRealIsoDate(body?.week_of)) {
+        if (!isMondayWeekStart(body?.week_of)) {
           return json({ ok: false, error: 'invalid week_of' }, 400);
         }
 
