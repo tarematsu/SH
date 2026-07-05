@@ -1,4 +1,5 @@
 const ORIGIN = 'https://production1.stationhead.com';
+const OFFICIAL_IDLE_PATH = '/station/handle/sakurazaka46jp/guest';
 const MAX_REQUESTS_PER_MINUTE = 10;
 const MAX_AUTH_REQUESTS_PER_MINUTE = 2;
 const MAX_CHAT_ITEMS = 50;
@@ -35,7 +36,12 @@ function policy(url, method, body) {
   }
   if (method === 'POST' && /^\/station\/handle\/[^/]+\/guest$/i.test(path)) {
     if (body !== '' && body !== '{}') return null;
-    return { cache: true, name: 'station', budget: 'data' };
+    return {
+      cache: true,
+      name: 'station',
+      budget: 'data',
+      idleNotFound: path.toLowerCase() === OFFICIAL_IDLE_PATH,
+    };
   }
   if (method === 'GET' && path === '/account' && url.searchParams.has('ids')) {
     return { cache: true, name: 'account', budget: 'data' };
@@ -67,7 +73,7 @@ function retryable(status) {
 }
 
 async function normalizeIdleGuestResponse(response, rule) {
-  if (rule?.name !== 'station' || Number(response?.status) !== 404) return response;
+  if (!rule?.idleNotFound || Number(response?.status) !== 404) return response;
   const body = await response.clone().text().catch(() => '');
   let payload = null;
   try {
