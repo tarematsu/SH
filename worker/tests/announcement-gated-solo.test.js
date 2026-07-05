@@ -17,12 +17,38 @@ function statementResult(row, calls) {
   };
 }
 
-test('official announcement window starts ten minutes before the scheduled time', () => {
-  const config = JSON.parse(readFileSync(
+function workerConfig() {
+  return JSON.parse(readFileSync(
     new URL('../wrangler.jsonc', import.meta.url),
     'utf8'
   ));
-  assert.equal(config.vars.OFFICIAL_NEWS_EARLY_WINDOW_MS, 10 * 60_000);
+}
+
+function guest404() {
+  return Response.json({
+    error: {
+      status: '404',
+      code: '1001',
+      detail: 'Not in database'
+    }
+  }, { status: 404 });
+}
+
+const guestInit = {
+  method: 'POST',
+  headers: {
+    authorization: 'Bearer token',
+    'sth-device-uid': 'device'
+  },
+  body: '{}'
+};
+
+test('official announcement window starts ten minutes before the scheduled time', () => {
+  assert.equal(workerConfig().vars.OFFICIAL_NEWS_EARLY_WINDOW_MS, 10 * 60_000);
+});
+
+test('official news is refreshed often enough to support the early window', () => {
+  assert.equal(workerConfig().vars.OFFICIAL_NEWS_CHECK_INTERVAL_MS, 5 * 60_000);
 });
 
 test('idle solo monitor only runs inside an official announcement window', async () => {
@@ -92,35 +118,36 @@ test('announcement-free idle state skips the solo endpoint', async () => {
   }), false);
 });
 
-test('Stationhead guest 404 code 1001 becomes a cached idle response', async () => {
+test('the official solo guest 404 becomes a cached idle response', async () => {
   let requests = 0;
-  const nativeFetch = async () => {
+  const guarded = createStationheadTrafficGuard(async () => {
     requests += 1;
-    return Response.json({
-      error: {
-        status: '404',
-        code: '1001',
-        detail: 'Not in database'
-      }
-    }, { status: 404 });
-  };
-  const guarded = createStationheadTrafficGuard(nativeFetch, () => 60_000);
+    return guest404();
+  }, () => 60_000);
   const url = 'https://production1.stationhead.com/station/handle/sakurazaka46jp/guest';
-  const init = {
-    method: 'POST',
-    headers: {
-      authorization: 'Bearer token',
-      'sth-device-uid': 'device'
-    },
-    body: '{}'
-  };
 
-  const first = await guarded(url, init);
-  const second = await guarded(url, init);
+  const first = await guarded(url, guestInit);
+  const second = await guarded(url, guestInit);
 
   assert.equal(first.status, 200);
   assert.equal(first.headers.get('x-stationhead-broadcast-state'), 'idle');
   assert.deepEqual(await first.json(), {});
   assert.equal(second.status, 200);
   assert.equal(requests, 1);
+});
+
+test('an unknown guest handle keeps its 404 so configuration mistakes remain visible', async () => {
+  let requests = 0;
+  const guarded = createStationheadTrafficGuard(async () => {
+    requests += 1;
+    return guest404();
+  }, () => 60_000);
+  const url = 'https://production1.stationhead.com/station/handle/sakurazaka46jp-typo/guest';
+
+  const first = await guarded(url, guestInit);
+  const second = await guarded(url, guestInit);
+
+  assert.equal(first.status, 404);
+  assert.equal(second.status, 404);
+  assert.equal(requests, 2);
 });
