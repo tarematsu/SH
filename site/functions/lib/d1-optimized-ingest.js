@@ -264,9 +264,9 @@ export async function saveLeanQueue(db, observedAt, body) {
   const statements = [];
   if (structureChanged) {
     statements.push(deleteMissingQueueItemsStatement(db, stationId, startTime, positions));
-    if (completeLikes) {
-      statements.push(deleteMissingCurrentLikesStatement(db, stationId, trackKeys));
-    }
+  }
+  if (likesChanged) {
+    statements.push(deleteMissingCurrentLikesStatement(db, stationId, trackKeys));
   }
   statements.push(
     ...queueItemWriteStatements(db, changedTracks, observedAt, stationId, queueId, startTime),

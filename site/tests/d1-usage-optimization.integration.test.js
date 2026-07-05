@@ -9,7 +9,10 @@ import {
 import {
   hasCompleteLikeSnapshot,
   queueLikesPayload,
+  saveLeanQueue,
 } from '../functions/lib/d1-optimized-ingest.js';
+import { payloadHash } from '../functions/lib/ingest-claim.js';
+import { FakeD1Database } from './helpers/fake-d1.js';
 
 test('queue identity ignores bite-only and raw response changes', () => {
   const base = { station_id: 1, queue_id: 2, start_time: 3 };
@@ -61,4 +64,33 @@ test('partial like snapshots remain non-authoritative', () => {
     { spotify_id: 'a', bite_count: 1 },
     { spotify_id: 'b' },
   ]), false);
+});
+
+test('structural-only queue changes do not reconcile current likes', async () => {
+  const data = {
+    station_id: 1,
+    queue_id: 2,
+    start_time: 3,
+    is_paused: false,
+    tracks: [{ position: 0, spotify_id: 'abc', duration_ms: 1000, bite_count: 10 }],
+  };
+  const likesHash = await payloadHash(queueLikesPayload(data.tracks));
+  const db = new FakeD1Database([
+    {
+      kind: 'first',
+      matcher: 'FROM sh_queue_current',
+      result: { structural_hash: 'previous-structure', likes_hash: likesHash, start_time: 3 },
+    },
+  ]);
+
+  const result = await saveLeanQueue(db, 1_700_000_000_000, {
+    collector_id: 'cloudflare-worker',
+    data,
+  });
+  const batchedSql = db.batches.flatMap((batch) => batch.map((statement) => statement.sql));
+
+  assert.equal(result.structureChanged, true);
+  assert.equal(result.likesChanged, false);
+  assert.equal(batchedSql.some((sql) => sql.includes('DELETE FROM sh_queue_items')), true);
+  assert.equal(batchedSql.some((sql) => sql.includes('DELETE FROM sh_track_like_current')), false);
 });
