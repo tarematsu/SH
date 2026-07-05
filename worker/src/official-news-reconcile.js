@@ -8,6 +8,7 @@ WHERE stale.status='scheduled'
     WHERE monitor.id='official-news'
       AND monitor.last_success_at IS NOT NULL
       AND monitor.last_success_at=monitor.last_check_at
+      AND monitor.last_check_at>=?
   )
   AND EXISTS (
     SELECT 1
@@ -18,11 +19,15 @@ WHERE stale.status='scheduled'
       AND current.updated_at>stale.updated_at
   )`;
 
-export async function reconcileSupersededAnnouncements(env, now = Date.now()) {
+export async function reconcileSupersededAnnouncements(
+  env,
+  runStartedAt = Date.now(),
+  completedAt = Date.now(),
+) {
   if (!env?.DB) return { changes: 0, skipped: true };
   try {
     const result = await env.DB.prepare(RECONCILE_SUPERSEDED_ANNOUNCEMENTS_SQL)
-      .bind(now)
+      .bind(completedAt, runStartedAt)
       .run();
     return {
       changes: Number(result?.meta?.changes || 0),
