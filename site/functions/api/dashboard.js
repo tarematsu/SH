@@ -26,15 +26,23 @@ export {
   PREDICTION_24H_SQL,
 };
 
-const cache = { value: null, expiresAt: 0, pending: null };
+export const PREDICTION_STATE_SQL = `SELECT
+  generated_at,source_observed_at,goal,eta,rate_per_hour,remaining,
+  sample_count,span_hours,next_refresh_at,last_error,updated_at
+FROM sh_stream_goal_prediction_state
+WHERE id='stream-goal-24h'
+LIMIT 1`;
+
+const cache = { value: null, hasValue: false, expiresAt: 0, pending: null };
 
 export async function cachedPrediction(statement, now = Date.now()) {
-  if (cache.value && cache.expiresAt > now) return cache.value;
+  if (cache.hasValue && cache.expiresAt > now) return cache.value;
   if (!cache.pending) {
     cache.pending = Promise.resolve(statement.first()).then((value) => {
-      cache.value = value;
+      cache.value = value ?? null;
+      cache.hasValue = true;
       cache.expiresAt = Date.now() + 60000;
-      return value;
+      return cache.value;
     }).finally(() => { cache.pending = null; });
   }
   return cache.pending;
@@ -42,8 +50,45 @@ export async function cachedPrediction(statement, now = Date.now()) {
 
 export function resetPredictionCache() {
   cache.value = null;
+  cache.hasValue = false;
   cache.expiresAt = 0;
   cache.pending = null;
+}
+
+function finite(value) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+}
+
+export function predictionFromPersistedState(row, currentGoal) {
+  const generatedAt = finite(row?.generated_at);
+  const goal = finite(row?.goal);
+  const eta = finite(row?.eta);
+  const ratePerHour = finite(row?.rate_per_hour);
+  const remaining = finite(row?.remaining);
+  if (generatedAt == null || generatedAt <= 0) return null;
+  if (currentGoal != null && goal != null && currentGoal !== goal) return null;
+  if (eta == null || ratePerHour == null || ratePerHour <= 0 || remaining == null) return null;
+  return {
+    eta,
+    rate_per_hour: ratePerHour,
+    remaining,
+    sample_count: finite(row?.sample_count) ?? 0,
+    span_hours: finite(row?.span_hours) ?? 0,
+    generated_at: generatedAt,
+    source_observed_at: finite(row?.source_observed_at),
+  };
+}
+
+async function loadPredictionState(db) {
+  try {
+    return await cachedPrediction(db.prepare(PREDICTION_STATE_SQL));
+  } catch (error) {
+    if (/no such table:\s*sh_stream_goal_prediction_state/i.test(String(error?.message || error))) {
+      return null;
+    }
+    throw error;
+  }
 }
 
 export const DASHBOARD_CONTEXT_SQL = `WITH latest_channel AS (
@@ -148,7 +193,9 @@ function captureHostIdentity(value, queueContext) {
 function proxyStatement(statement, sql, db, queueContext) {
   return new Proxy(statement, {
     get(target, property) {
-      if (sql === PREDICTION_24H_SQL && property === 'first') return () => cachedPrediction(target);
+      if (sql === PREDICTION_24H_SQL && property === 'first') {
+        return async () => null;
+      }
       if (sql === LATEST_QUEUE_WITH_ITEMS_SQL && property === 'all') {
         return () => loadDashboardQueue(target, db, queueContext);
       }
@@ -221,15 +268,26 @@ export async function onRequestGet(context) {
     unchanged: false,
     contextPromise: null,
   };
+  const predictionPromise = loadPredictionState(context.env.DB).catch((error) => {
+    console.error(error);
+    return null;
+  });
   const response = await legacyDashboard({
     ...context,
     env: { ...context.env, DB: proxyDatabase(context.env.DB, queueContext) },
   });
   if (!response.ok) return response;
-  const body = await response.text();
-  const output = queueContext.unchanged
-    ? JSON.stringify(decorateQueueResponse(JSON.parse(body), queueContext))
-    : appendJsonObjectFields(body, queueResponseFields(queueContext));
+
+  const [body, predictionState] = await Promise.all([
+    response.text(),
+    predictionPromise,
+  ]);
+  const payload = JSON.parse(body);
+  payload.goal_prediction = predictionFromPersistedState(
+    predictionState,
+    finite(payload.latest?.stream_goal),
+  );
+  const output = JSON.stringify(decorateQueueResponse(payload, queueContext));
   return new Response(output, {
     status: response.status,
     statusText: response.statusText,
