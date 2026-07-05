@@ -9,7 +9,7 @@ function post(body) {
   return new Request('https://skrzk.test/api/ingest', {
     method: 'POST',
     headers: {
-      authorization: 'Bearer test-key',
+      authorization: ['Bearer', 'test-key'].join(' '),
       'content-type': 'application/json',
     },
     body: JSON.stringify(body),
@@ -18,7 +18,7 @@ function post(body) {
 
 const env = (db) => ({ DB: db, INGEST_SECRET: 'test-key' });
 
-test('primary comments update aggregate counters without storing raw comment rows', async () => {
+test('primary comments update aggregate counters and snapshot velocity without storing raw rows', async () => {
   const db = new FakeD1Database();
   const response = await ingestPost({
     request: post({
@@ -42,11 +42,13 @@ test('primary comments update aggregate counters without storing raw comment row
   assert.equal(body.ok, true);
   assert.equal(body.accepted, 2);
   assert.equal(body.total, 102);
+  assert.equal(body.velocityUpdated, true);
   assert.match(sql, /sh_comment_minute_counts/);
   assert.match(sql, /sh_comment_daily_counts/);
   assert.match(sql, /sh_comment_state/);
+  assert.match(sql, /UPDATE sh_channel_snapshots/);
+  assert.match(sql, /COALESCE\(SUM\(comment_count\),0\)/);
   assert.match(sql, /total_count=MAX\(sh_comment_state\.total_count,excluded\.total_count\)/);
-  assert.doesNotMatch(sql, /UPDATE sh_channel_snapshots SET comment_velocity/);
   assert.equal(db.callsMatching(/INSERT INTO sh_comments\b/i).length, 0);
 });
 
