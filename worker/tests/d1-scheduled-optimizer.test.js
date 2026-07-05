@@ -107,17 +107,19 @@ test('successful official check skips the redundant post-claim start write', asy
   assert.equal(db.runCalls.length, 1);
 });
 
-test('missed-announcement cleanup failure is persisted against the held claim', async () => {
+test('missed-announcement cleanup failure is recorded and releases the next cron retry', async () => {
+  const intervalMs = 30 * 60_000;
+  const now = 2_000_000;
   const db = new FakeDb();
   db.runErrorMatcher = (sql) => sql === OFFICIAL_MISSED_SQL;
   const env = withScheduledD1Optimizations({
     DB: db,
-    OFFICIAL_NEWS_CHECK_INTERVAL_MS: 30 * 60_000
-  }, () => 10_000);
+    OFFICIAL_NEWS_CHECK_INTERVAL_MS: intervalMs
+  }, () => now);
 
   await env.DB.prepare(OFFICIAL_READ_SQL).bind('official-news').first();
   await assert.rejects(
-    env.DB.prepare(OFFICIAL_MISSED_SQL).bind(10_000, -5_000).run(),
+    env.DB.prepare(OFFICIAL_MISSED_SQL).bind(now, now - 5_000).run(),
     /missed announcement update failed/
   );
 
@@ -126,11 +128,12 @@ test('missed-announcement cleanup failure is persisted against the held claim', 
   assert.equal(db.runCalls[1].sql, OFFICIAL_NEWS_FAILURE_SQL);
   assert.deepEqual(db.runCalls[1].binds, [
     'official-news',
-    10_000,
+    now - intervalMs,
     5_000,
     'missed announcement update failed',
-    10_000
+    now
   ]);
+  assert.equal(db.runCalls[1].binds[1] <= now - intervalMs, true);
 });
 
 test('empty retention cleanup persists a six-hour cleanup interval', async () => {
@@ -160,8 +163,8 @@ test('empty retention cleanup persists a six-hour cleanup interval', async () =>
 test('retention cleanup statements and final state write are classified', () => {
   assert.equal(
     scheduledStatementKind(`DELETE FROM sh_channel_snapshots WHERE id IN (
-      SELECT id FROM sh_channel_snapshots WHERE observed_at<? LIMIT ?
-    )`),
+      SELECT id FROM sh_channel_snapshots WHERE observed_at<? LIMIT ?)
+    `),
     'retention-cleanup'
   );
   assert.equal(scheduledStatementKind(OFFICIAL_MISSED_SQL), 'official-news-expiry-write');
