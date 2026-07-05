@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
+import { EMAIL_RECAP_UPSERT_SQL } from '../src/email-recap-index.js';
 import {
   alignFailureStartWithLastSuccess,
   cancelFalseRecoveryPending,
@@ -45,6 +46,13 @@ class RecordingDb {
     return new RecordingStatement(this, sql);
   }
 }
+
+test('email recap upsert skips unchanged conflict rows', () => {
+  assert.match(EMAIL_RECAP_UPSERT_SQL, /ON CONFLICT\(source_key\) DO UPDATE SET/);
+  assert.match(EMAIL_RECAP_UPSERT_SQL, /WHERE sh_email_stream_snapshots\.email_sent_at IS NOT excluded\.email_sent_at/);
+  assert.match(EMAIL_RECAP_UPSERT_SQL, /validation_notes IS NOT excluded\.validation_notes/);
+  assert.doesNotMatch(EMAIL_RECAP_UPSERT_SQL, /imported_at IS NOT excluded\.imported_at/);
+});
 
 test('health payload strips raw upstream errors while preserving boolean evidence', () => {
   const result = sanitizeHealthPayload({
@@ -91,6 +99,7 @@ test('active failure cancels only an actually deleted pending recovery delivery'
   const staleDb = new RecordingDb({ changes: 0 });
 
   assert.equal(await cancelFalseRecoveryPending({ DB: staleDb }, stalePrepared), false);
+  assert.equal(prepared.pending, null);
   assert.equal(stalePrepared.pending, 'recovery');
   assert.equal(staleDb.calls.length, 1);
 });

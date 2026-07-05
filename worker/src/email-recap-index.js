@@ -222,6 +222,39 @@ UNION ALL
 SELECT 2 AS result_kind,source_key,week_of,stream_count FROM following
 ORDER BY result_kind ASC,week_of ASC`;
 
+export const EMAIL_RECAP_UPSERT_SQL = `
+  INSERT INTO sh_email_stream_snapshots (
+    source_key,week_of,email_sent_at,effective_at,stream_count,source,
+    validation_status,timing_basis,timing_offset_minutes,reference_source,
+    estimated_stream_count,difference,relative_difference,nearest_distance_minutes,
+    validation_notes,imported_at
+  ) VALUES (?,?,?,?,?,'stationhead_email_recap',?,'email_sent_minus_offset',?,?,?,?,?,?,?,?)
+  ON CONFLICT(source_key) DO UPDATE SET
+    email_sent_at=excluded.email_sent_at,
+    effective_at=excluded.effective_at,
+    stream_count=excluded.stream_count,
+    validation_status=excluded.validation_status,
+    timing_basis=excluded.timing_basis,
+    timing_offset_minutes=excluded.timing_offset_minutes,
+    reference_source=excluded.reference_source,
+    estimated_stream_count=excluded.estimated_stream_count,
+    difference=excluded.difference,
+    relative_difference=excluded.relative_difference,
+    nearest_distance_minutes=excluded.nearest_distance_minutes,
+    validation_notes=excluded.validation_notes,
+    imported_at=excluded.imported_at
+  WHERE sh_email_stream_snapshots.email_sent_at IS NOT excluded.email_sent_at
+     OR sh_email_stream_snapshots.effective_at IS NOT excluded.effective_at
+     OR sh_email_stream_snapshots.stream_count IS NOT excluded.stream_count
+     OR sh_email_stream_snapshots.validation_status IS NOT excluded.validation_status
+     OR sh_email_stream_snapshots.timing_offset_minutes IS NOT excluded.timing_offset_minutes
+     OR sh_email_stream_snapshots.reference_source IS NOT excluded.reference_source
+     OR sh_email_stream_snapshots.estimated_stream_count IS NOT excluded.estimated_stream_count
+     OR sh_email_stream_snapshots.difference IS NOT excluded.difference
+     OR sh_email_stream_snapshots.relative_difference IS NOT excluded.relative_difference
+     OR sh_email_stream_snapshots.nearest_distance_minutes IS NOT excluded.nearest_distance_minutes
+     OR sh_email_stream_snapshots.validation_notes IS NOT excluded.validation_notes`;
+
 export async function loadEmailSeriesContext(db, sourceKey, weekOf) {
   const result = await db.prepare(EMAIL_SERIES_CONTEXT_SQL).bind(sourceKey, weekOf, weekOf).all();
   let existing = null;
@@ -350,28 +383,7 @@ async function ingest(request, env) {
   });
   const importedAt = Date.now();
 
-  await env.DB.prepare(`
-    INSERT INTO sh_email_stream_snapshots (
-      source_key,week_of,email_sent_at,effective_at,stream_count,source,
-      validation_status,timing_basis,timing_offset_minutes,reference_source,
-      estimated_stream_count,difference,relative_difference,nearest_distance_minutes,
-      validation_notes,imported_at
-    ) VALUES (?,?,?,?,?,'stationhead_email_recap',?,'email_sent_minus_offset',?,?,?,?,?,?,?,?)
-    ON CONFLICT(source_key) DO UPDATE SET
-      email_sent_at=excluded.email_sent_at,
-      effective_at=excluded.effective_at,
-      stream_count=excluded.stream_count,
-      validation_status=excluded.validation_status,
-      timing_basis=excluded.timing_basis,
-      timing_offset_minutes=excluded.timing_offset_minutes,
-      reference_source=excluded.reference_source,
-      estimated_stream_count=excluded.estimated_stream_count,
-      difference=excluded.difference,
-      relative_difference=excluded.relative_difference,
-      nearest_distance_minutes=excluded.nearest_distance_minutes,
-      validation_notes=excluded.validation_notes,
-      imported_at=excluded.imported_at
-  `).bind(
+  const writeResult = await env.DB.prepare(EMAIL_RECAP_UPSERT_SQL).bind(
     sourceKey,
     weekOf,
     emailSentAt,
@@ -387,10 +399,12 @@ async function ingest(request, env) {
     notes,
     importedAt,
   ).run();
+  const changed = Number(writeResult?.meta?.changes ?? 1);
 
   return json({
     ok: true,
-    imported: true,
+    imported: changed > 0,
+    unchanged: changed === 0,
     source_key: sourceKey,
     week_of: weekOf,
     email_sent_at: emailSentAt,
