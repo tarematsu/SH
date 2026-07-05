@@ -239,6 +239,41 @@ function normalizeComments(payload, stationId) {
   return sharedNormalizeComments(payload, stationId);
 }
 
+export async function collectOptionalComments(env, state, config, observedAt, dependencies = {}) {
+  if (!state?.stationId || Number(config?.chatLimit || 0) <= 0) {
+    return { commentsSaved: 0, degraded: false, errorStage: null };
+  }
+
+  const requestJson = dependencies.requestJson || stationheadJson;
+  const writeIngest = dependencies.writeIngest || ingest;
+  const warn = dependencies.warn || console.warn;
+  let stage = 'stationhead_chat_history';
+
+  try {
+    const history = await requestJson(
+      state,
+      config,
+      `/station/${encodeURIComponent(state.stationId)}/chatHistory?limit=${config.chatLimit}`,
+    );
+    stage = 'stationhead_chat_payload';
+    const comments = normalizeComments(history, state.stationId);
+    stage = 'd1_write_comments';
+    await writeIngest(env, 'comments', {
+      station_id: state.stationId,
+      comments,
+      raw_meta: { next: history?.chats?.next ?? history?.next ?? null },
+    }, observedAt);
+    return { commentsSaved: comments.length, degraded: false, errorStage: null };
+  } catch (error) {
+    warn(JSON.stringify({
+      event: 'optional_comment_collection_failed',
+      stage,
+      error: sanitizeFailureDetail(error?.message || error),
+    }));
+    return { commentsSaved: 0, degraded: true, errorStage: stage };
+  }
+}
+
 function extractQueue(channel, stationId) {
   const station = channel?.current_station || {};
   const queue = station?.queue || channel?.queue || null;
@@ -317,23 +352,7 @@ export async function collectOnce(env, source = 'manual') {
       metadataSaved = await enrichTracks(env, queue, observedAt, config);
     }
 
-    let commentsSaved = 0;
-    if (state.stationId && config.chatLimit > 0) {
-      stage = 'stationhead_chat_history';
-      const history = await stationheadJson(
-        state,
-        config,
-        `/station/${encodeURIComponent(state.stationId)}/chatHistory?limit=${config.chatLimit}`,
-      );
-      const comments = normalizeComments(history, state.stationId);
-      commentsSaved = comments.length;
-      stage = 'd1_write_comments';
-      await ingest(env, 'comments', {
-        station_id: state.stationId,
-        comments,
-        raw_meta: { next: history?.chats?.next ?? history?.next ?? null },
-      }, observedAt);
-    }
+    const commentResult = await collectOptionalComments(env, state, config, observedAt);
 
     stage = 'd1_write_collector_state';
     await saveState(env, state, {
@@ -356,7 +375,9 @@ export async function collectOnce(env, source = 'manual') {
       channel_alias: config.channelAlias,
       channel_id: state.channelId,
       station_id: state.stationId,
-      comments_saved: commentsSaved,
+      comments_saved: commentResult.commentsSaved,
+      comments_degraded: commentResult.degraded,
+      comments_error_stage: commentResult.errorStage,
       queue_tracks: queue?.tracks?.length || 0,
       queue_inspected: Boolean(queueResult?.queue_inspected),
       queue_items_written: Number(queueResult?.queue_items_written || 0),
