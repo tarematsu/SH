@@ -66,6 +66,26 @@ function retryable(status) {
   return code === 408 || code === 425 || code === 429 || code >= 500;
 }
 
+async function normalizeIdleGuestResponse(response, rule) {
+  if (rule?.name !== 'station' || Number(response?.status) !== 404) return response;
+  const body = await response.clone().text().catch(() => '');
+  let payload = null;
+  try {
+    payload = body ? JSON.parse(body) : null;
+  } catch {
+    return response;
+  }
+  const error = payload?.error || {};
+  if (String(error.code || '') !== '1001' || !/not in database/i.test(String(error.detail || ''))) {
+    return response;
+  }
+  const headers = new Headers(response.headers);
+  headers.set('content-type', 'application/json; charset=utf-8');
+  headers.set('cache-control', 'no-store');
+  headers.set('x-stationhead-broadcast-state', 'idle');
+  return new Response('{}', { status: 200, headers });
+}
+
 export function createStationheadTrafficGuard(nextFetch, nowFn = Date.now) {
   if (typeof nextFetch !== 'function') throw new TypeError('nextFetch must be a function');
 
@@ -137,6 +157,7 @@ export function createStationheadTrafficGuard(nextFetch, nowFn = Date.now) {
     const requestInput = input instanceof Request ? new Request(url.toString(), input) : url.toString();
     const pending = Promise.resolve()
       .then(() => nextFetch(requestInput, { ...init, signal: signalWithTimeout(init?.signal) }))
+      .then((response) => normalizeIdleGuestResponse(response, rule))
       .then((response) => {
         if (retryable(response?.status)) {
           retryAtByKey.set(key, (Number(nowFn()) || Date.now()) + FAILURE_BACKOFF_MS);

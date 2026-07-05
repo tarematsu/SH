@@ -29,6 +29,8 @@ function cfg(env) {
     soloEndConfirmPolls: positive(env.SOLO_END_CONFIRM_POLLS, 3),
     soloChatLimit: Math.min(positive(env.SOLO_CHAT_LIMIT, 50), 100),
     soloProfileIntervalMs: positive(env.SOLO_PROFILE_INTERVAL_MS, 60 * 60 * 1000),
+    officialEarlyWindowMs: positive(env.OFFICIAL_NEWS_EARLY_WINDOW_MS, 10 * 60 * 1000),
+    officialLateWindowMs: positive(env.OFFICIAL_NEWS_LATE_WINDOW_MS, 90 * 60 * 1000),
     metadataLimit: Math.min(positive(env.METADATA_LIMIT, 3), 10),
     requestTimeoutMs: Math.min(positive(env.REQUEST_TIMEOUT_MS, 20000), 30000),
     appVersion: env.STATIONHEAD_APP_VERSION || '1.0.0',
@@ -264,6 +266,25 @@ async function recoverSoloState(env, config) {
   };
 }
 
+export async function shouldProbeSolo(env, config, state, now = Date.now()) {
+  if (state?.sessionId || state?.phase === 'provisional' || state?.phase === 'active') return true;
+  try {
+    const due = await env.DB.prepare(`SELECT 1 AS due
+      FROM sh_official_news_announcements
+      WHERE scheduled_at IS NOT NULL AND (
+        (status='scheduled' AND scheduled_at>=? AND scheduled_at<=?)
+        OR status='active'
+      )
+      LIMIT 1`)
+      .bind(now - config.officialLateWindowMs, now + config.officialEarlyWindowMs)
+      .first();
+    return Boolean(due?.due);
+  } catch (error) {
+    if (/no such table/i.test(String(error?.message || ''))) return false;
+    throw error;
+  }
+}
+
 async function account(env, config, auth, accountId) {
   if (!accountId) return null;
   const channel = await env.DB.prepare(`SELECT channel_id FROM sh_channel_snapshots
@@ -424,8 +445,8 @@ async function collectSoloDetails(env, config, auth, state, station, now) {
   return { lastQueueHash, lastProfileAt };
 }
 
-async function probeSolo(env, config, auth, now) {
-  const state = await recoverSoloState(env, config);
+async function probeSolo(env, config, auth, now, recoveredState = null) {
+  const state = recoveredState || await recoverSoloState(env, config);
   const [station, buddies] = await Promise.all([
     stationRequest(`/station/handle/${encodeURIComponent(config.soloHandle)}/guest`, config, auth, {
       method: 'POST',
@@ -493,7 +514,7 @@ async function probeSolo(env, config, auth, now) {
       broadcast_id: stationIdentity.broadcastId,
       broadcast_stream_id: stationIdentity.broadcastStreamId,
       started_at: stationIdentity.broadcastStartTime || now,
-      detection_reason: 'cloud_station_id_diff',
+      detection_reason: 'official_announcement_window',
       buddies_station_id: buddiesStationId,
       channel_id: stationIdentity.channelId,
       channel_alias: stationIdentity.channelAlias,
@@ -536,10 +557,11 @@ export async function runCloudHostMonitor(env) {
   const now = Date.now();
   try {
     const auth = await session(env);
-    await Promise.all([
-      collectGeneralProfile(env, config, auth, now),
-      probeSolo(env, config, auth, now),
-    ]);
+    const soloState = await recoverSoloState(env, config);
+    const probeDue = await shouldProbeSolo(env, config, soloState, now);
+    const tasks = [collectGeneralProfile(env, config, auth, now)];
+    if (probeDue) tasks.push(probeSolo(env, config, auth, now, soloState));
+    await Promise.all(tasks);
   } catch (error) {
     const message = String(error?.message || error).slice(0, 1000);
     console.error(JSON.stringify({ event: 'cloud_host_monitor_failed', error: message }));

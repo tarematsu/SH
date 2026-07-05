@@ -8,7 +8,7 @@
     "deploy": "wrangler deploy",
     "tail": "wrangler tail",
     "check": "npm run check:syntax && npm run check:bundle",
-    "check:syntax": "node --check src/main.js && node --check src/scheduled-main.js && node --check src/cadenced-entry.js && node --check src/resilient-entry.js && node --check src/d1-scheduled-optimizer.js && node --check src/email-recap-index.js && node --check src/cloud-host-monitor.js && node --check src/cloud-weekly-leaderboard.js && node --check tests/collector.integration.test.js && node --check tests/diagnostic-cadence.test.js && node --check tests/d1-scheduled-optimizer.test.js",
+    "check:syntax": "node --check src/main.js && node --check src/scheduled-main.js && node --check src/cadenced-entry.js && node --check src/resilient-entry.js && node --check src/d1-scheduled-optimizer.js && node --check src/email-recap-index.js && node --check src/official-news-index.js && node --check src/cloud-host-monitor.js && node --check src/stationhead-traffic-guard.js && node --check src/cloud-weekly-leaderboard.js && node --check tests/collector.integration.test.js && node --check tests/diagnostic-cadence.test.js && node --check tests/d1-scheduled-optimizer.test.js && node --check tests/announcement-gated-solo.test.js",
     "check:bundle": "wrangler deploy --dry-run --outdir=dist-dry-run",
     "test": "node --test tests/*.test.js"
   },
