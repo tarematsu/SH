@@ -1,7 +1,22 @@
 import { num } from './api-utils.js';
 
 const MINUTE_MS = 60_000;
+const VELOCITY_WINDOW_MS = 2 * MINUTE_MS;
 const runtimeCursors = new WeakMap();
+
+export const COMMENT_VELOCITY_UPDATE_SQL = `WITH velocity(value) AS (
+  SELECT COALESCE(SUM(comment_count),0)
+  FROM sh_comment_minute_counts
+  WHERE station_id=? AND bucket_start>=? AND bucket_start<=?
+), target(id) AS (
+  SELECT id FROM sh_channel_snapshots
+  WHERE station_id=? AND observed_at<=?
+  ORDER BY observed_at DESC,id DESC LIMIT 1
+)
+UPDATE sh_channel_snapshots
+SET comment_velocity=(SELECT value FROM velocity)
+WHERE id=(SELECT id FROM target)
+  AND COALESCE(comment_velocity,-1)<>(SELECT value FROM velocity)`;
 
 function timestampOf(comment, fallback) {
   const milliseconds = num(comment?.chat_time_ms);
@@ -36,6 +51,21 @@ function cursorMap(db) {
   return cursors;
 }
 
+function commentVelocityStatement(db, stationId, observedAt) {
+  return db.prepare(COMMENT_VELOCITY_UPDATE_SQL).bind(
+    stationId,
+    observedAt - VELOCITY_WINDOW_MS,
+    observedAt,
+    stationId,
+    observedAt,
+  );
+}
+
+async function refreshCommentVelocity(db, stationId, observedAt) {
+  const result = await commentVelocityStatement(db, stationId, observedAt).run();
+  return Number(result?.meta?.changes || 0) > 0;
+}
+
 export function resetCommentCountRuntimeState(db) {
   if (db) runtimeCursors.delete(db);
 }
@@ -47,7 +77,7 @@ export async function saveCommentCounts(db, observedAt, data) {
   const reportedTotal = num(data?.total_count);
   const ordered = uniqueComments(comments);
   const newestIncomingId = ordered.at(-1)?.[0] ?? null;
-  if (stationId == null || ordered.length === 0) {
+  if (stationId == null) {
     return {
       accepted: 0,
       total: reportedTotal ?? 0,
@@ -56,16 +86,27 @@ export async function saveCommentCounts(db, observedAt, data) {
       skipped: true,
     };
   }
+  if (ordered.length === 0) {
+    const velocityUpdated = await refreshCommentVelocity(db, stationId, observedAt);
+    return {
+      accepted: 0,
+      total: reportedTotal ?? 0,
+      last_comment_id: knownLastId,
+      velocityUpdated,
+      skipped: true,
+    };
+  }
 
   const cursors = cursorMap(db);
   const cachedLastId = num(cursors.get(stationId));
   const trustedLastId = Math.max(knownLastId ?? 0, cachedLastId ?? 0);
   if (newestIncomingId != null && trustedLastId > 0 && newestIncomingId <= trustedLastId) {
+    const velocityUpdated = await refreshCommentVelocity(db, stationId, observedAt);
     return {
       accepted: 0,
       total: reportedTotal ?? 0,
       last_comment_id: trustedLastId,
-      velocityUpdated: false,
+      velocityUpdated,
       skipped: true,
       cursorHit: true,
     };
@@ -79,11 +120,12 @@ export async function saveCommentCounts(db, observedAt, data) {
   const derivedTotal = (num(state?.total_count) ?? 0) + fresh.length;
   const total = reportedTotal == null ? derivedTotal : Math.max(derivedTotal, reportedTotal);
   if (!fresh.length) {
+    const velocityUpdated = await refreshCommentVelocity(db, stationId, observedAt);
     return {
       accepted: 0,
       total,
       last_comment_id: lastId || knownLastId,
-      velocityUpdated: false,
+      velocityUpdated,
       skipped: true,
     };
   }
@@ -123,7 +165,10 @@ export async function saveCommentCounts(db, observedAt, data) {
       total_count=MAX(sh_comment_state.total_count,excluded.total_count),
       last_observed_at=MAX(sh_comment_state.last_observed_at,excluded.last_observed_at)`)
     .bind(stationId, newestAcceptedId, total, lastObservedAt));
-  await db.batch(statements);
+  statements.push(commentVelocityStatement(db, stationId, observedAt));
+  const results = await db.batch(statements);
+  const velocityResult = results.at(-1);
+  const velocityUpdated = Number(velocityResult?.meta?.changes || 0) > 0;
   cursors.set(stationId, newestAcceptedId);
 
   return {
@@ -131,6 +176,6 @@ export async function saveCommentCounts(db, observedAt, data) {
     total,
     last_comment_id: newestAcceptedId,
     velocity: null,
-    velocityUpdated: false,
+    velocityUpdated,
   };
 }
