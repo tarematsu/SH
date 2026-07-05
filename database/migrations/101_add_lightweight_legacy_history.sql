@@ -1,6 +1,3 @@
-ALTER TABLE sh_data_maintenance_state
-  ADD COLUMN legacy_backfill_id INTEGER NOT NULL DEFAULT 0;
-
 CREATE TABLE IF NOT EXISTS sh_legacy_hosts (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   host_key TEXT NOT NULL UNIQUE,
