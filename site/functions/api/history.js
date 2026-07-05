@@ -18,6 +18,7 @@ const json = (data, status = 200, headers = {}) =>
   new Response(JSON.stringify(data), { status, headers: { ...JSON_HEADERS, ...headers } });
 const HISTORY_CACHE_MAX = 32;
 const historyLoadCache = new Map();
+export const BROADCAST_SESSION_GAP_MS = 6 * 60 * 60 * 1000;
 
 function promoteCacheEntry(key, entry) {
   historyLoadCache.delete(key);
@@ -99,17 +100,44 @@ function parseDateStart(value, fallback) {
 const todayJstString = () => new Date(Date.now() + 9 * 3600000).toISOString().slice(0, 10);
 const todayUtcString = () => new Date().toISOString().slice(0, 10);
 
-function broadcastSummarySql(source) {
-  return `WITH summaries AS (
-  SELECT source_note AS event_name,MIN(observed_at) AS started_at,
+export function broadcastSummarySql(source) {
+  return `WITH eligible AS (
+  SELECT id,observed_at,observed_jst,listener_count,track_title,artist_name,
+    likes,host_handle,source_note,
+    lower(trim(source_note)) AS event_key,
+    lower(trim(host_handle)) AS host_key
+  FROM ${source}
+  WHERE observed_at>=? AND observed_at<?
+    AND lower(trim(host_handle))='sakurazaka46jp'
+    AND source_note IS NOT NULL AND trim(source_note)<>''
+), ordered AS (
+  SELECT eligible.*,
+    LAG(observed_at) OVER (
+      PARTITION BY event_key,host_key ORDER BY observed_at ASC,id ASC
+    ) AS previous_observed_at
+  FROM eligible
+), segmented AS (
+  SELECT ordered.*,
+    SUM(CASE
+      WHEN previous_observed_at IS NULL OR observed_at-previous_observed_at>? THEN 1
+      ELSE 0
+    END) OVER (
+      PARTITION BY event_key,host_key ORDER BY observed_at ASC,id ASC
+      ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+    ) AS session_number
+  FROM ordered
+), summaries AS (
+  SELECT MIN(trim(source_note)) AS event_name,MIN(observed_at) AS started_at,
     MAX(observed_at) AS ended_at,MIN(observed_jst) AS started_jst,MAX(observed_jst) AS ended_jst,
     COUNT(*) AS sample_count,ROUND(AVG(listener_count),1) AS listener_avg,
     MIN(listener_count) AS listener_min,MAX(listener_count) AS listener_max,MAX(likes) AS likes_max,
-    COUNT(DISTINCT CASE WHEN track_title IS NOT NULL AND track_title<>'' THEN track_title END) AS distinct_tracks,
-    host_handle
-  FROM ${source}
-  WHERE observed_at>=? AND observed_at<? AND host_handle='sakurazaka46jp' AND source_note IS NOT NULL
-  GROUP BY source_note,host_handle
+    COUNT(DISTINCT CASE
+      WHEN trim(COALESCE(track_title,''))<>'' OR trim(COALESCE(artist_name,''))<>''
+      THEN lower(trim(COALESCE(track_title,''))) || char(31) || lower(trim(COALESCE(artist_name,'')))
+    END) AS distinct_tracks,
+    MIN(trim(host_handle)) AS host_handle
+  FROM segmented
+  GROUP BY event_key,host_key,session_number
 )
 SELECT event_name,started_at,ended_at,started_jst,ended_jst,sample_count,
   listener_avg,listener_min,listener_max,likes_max,distinct_tracks,host_handle,1 AS has_data
@@ -117,7 +145,8 @@ FROM summaries
 UNION ALL
 SELECT NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,
   EXISTS(SELECT 1 FROM ${source}
-    WHERE host_handle='sakurazaka46jp' AND source_note IS NOT NULL) AS has_data
+    WHERE lower(trim(host_handle))='sakurazaka46jp'
+      AND source_note IS NOT NULL AND trim(source_note)<>'') AS has_data
 WHERE NOT EXISTS (SELECT 1 FROM summaries)
 ORDER BY started_at ASC`;
 }
@@ -142,10 +171,12 @@ async function loadBroadcastPayload(env, from, to) {
   let result;
   let storageSource = 'lightweight';
   try {
-    result = await env.DB.prepare(BROADCAST_SUMMARY_SQL).bind(fromTs, toTs).all();
+    result = await env.DB.prepare(BROADCAST_SUMMARY_SQL)
+      .bind(fromTs, toTs, BROADCAST_SESSION_GAP_MS).all();
   } catch (error) {
     if (!/no such table|no such view/i.test(String(error?.message || ''))) throw error;
-    result = await env.DB.prepare(broadcastSummarySql('sh_legacy_snapshots')).bind(fromTs, toTs).all();
+    result = await env.DB.prepare(broadcastSummarySql('sh_legacy_snapshots'))
+      .bind(fromTs, toTs, BROADCAST_SESSION_GAP_MS).all();
     storageSource = 'legacy-fallback';
   }
   const parsed = parseBroadcastSummaryRows(result.results || []);
@@ -168,7 +199,7 @@ async function loadBroadcastPayload(env, from, to) {
 
 async function loadBroadcasts(env, from, to) {
   const payload = await cachedHistoryLoad(
-    `broadcasts:v3:${from}:${to}`,
+    `broadcasts:v4:${from}:${to}`,
     30000,
     () => loadBroadcastPayload(env, from, to),
   );
