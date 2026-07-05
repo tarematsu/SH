@@ -1,0 +1,30 @@
+name: Dispatch D1 repair
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  actions: write
+  contents: read
+
+jobs:
+  dispatch:
+    if: github.event.pull_request.head.repo.full_name == github.repository && github.head_ref == 'apply-production-d1-repair'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Dispatch existing D1 migration safety net
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          REPAIR_REF: ${{ github.head_ref }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail-with-body --silent --show-error \
+            -X POST \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${REPOSITORY}/actions/workflows/d1-migration-safety-net.yml/dispatches" \
+            -d "{\"ref\":\"${REPAIR_REF}\"}"
