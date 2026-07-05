@@ -6,12 +6,10 @@ import { fileURLToPath } from 'node:url';
 const repairBranch = 'apply-production-d1-repair';
 const branch = process.env.WORKERS_CI_BRANCH
   || process.env.CF_PAGES_BRANCH
-  || process.env.GITHUB_HEAD_REF
-  || process.env.GITHUB_REF_NAME
   || '';
 
 if (branch !== repairBranch) {
-  console.log(`Production D1 repair skipped: branch=${branch || '(unknown)'}`);
+  console.log(`Production D1 repair skipped: Cloudflare branch=${branch || '(unknown)'}`);
   process.exit(0);
 }
 
@@ -41,7 +39,7 @@ function run(args, options = {}) {
   return result;
 }
 
-console.log(`Applying production D1 repair from branch ${branch}.`);
+console.log(`Applying production D1 repair from Cloudflare branch ${branch}.`);
 run([
   'd1', 'migrations', 'apply', 'stationhead-monitor',
   '--remote', '--config', configPath,
