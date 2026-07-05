@@ -9,7 +9,10 @@ import {
 import {
   hasCompleteLikeSnapshot,
   queueLikesPayload,
+  saveLeanQueue,
 } from '../functions/lib/d1-optimized-ingest.js';
+import { payloadHash } from '../functions/lib/ingest-claim.js';
+import { FakeD1Database } from './helpers/fake-d1.js';
 
 test('queue identity ignores bite-only and raw response changes', () => {
   const base = { station_id: 1, queue_id: 2, start_time: 3 };
@@ -61,4 +64,25 @@ test('partial like snapshots remain non-authoritative', () => {
     { spotify_id: 'a', bite_count: 1 },
     { spotify_id: 'b' },
   ]), false);
+});
+
+test('queue structure changes do not delete-check current likes when likes are unchanged', async () => {
+  const tracks = [{ position: 0, queue_id: 3, spotify_id: 'abc', duration_ms: 1000, bite_count: 10 }];
+  const likesHash = await payloadHash(queueLikesPayload(tracks));
+  const db = new FakeD1Database()
+    .route('first', /FROM sh_queue_current/i, {
+      structural_hash: 'old-structure',
+      likes_hash: likesHash,
+      start_time: 3,
+    });
+
+  const result = await saveLeanQueue(db, 123456, {
+    collector_id: 'test-collector',
+    data: { station_id: 1, queue_id: 3, start_time: 3, tracks },
+  });
+
+  assert.equal(result.structureChanged, true);
+  assert.equal(result.likesChanged, false);
+  assert.equal(db.callsMatching(/DELETE FROM sh_track_like_current/i).length, 0);
+  assert.equal(db.callsMatching(/SELECT track_key,observed_at,like_count/i).length, 0);
 });
