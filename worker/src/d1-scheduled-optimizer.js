@@ -14,6 +14,15 @@ ON CONFLICT(id) DO UPDATE SET
 WHERE COALESCE(sh_official_news_monitor_state.last_check_at,0)<=?
 RETURNING last_success_at,last_error`;
 
+export const OFFICIAL_NEWS_FAILURE_SQL = `INSERT INTO sh_official_news_monitor_state
+  (id,last_check_at,last_success_at,last_error,updated_at)
+VALUES (?,?,?,?,?)
+ON CONFLICT(id) DO UPDATE SET
+  last_check_at=excluded.last_check_at,
+  last_success_at=excluded.last_success_at,
+  last_error=excluded.last_error,
+  updated_at=excluded.updated_at`;
+
 function compactSql(value) {
   return String(value || '').replace(/\s+/g, ' ').trim().toLowerCase();
 }
@@ -25,6 +34,10 @@ export function scheduledStatementKind(sql) {
   }
   if (compact.startsWith('insert into sh_official_news_monitor_state')) {
     return 'official-news-state-write';
+  }
+  if (compact.startsWith("update sh_official_news_announcements set status='missed',updated_at=?")
+      && compact.includes("where status='scheduled'")) {
+    return 'official-news-expiry-write';
   }
   if (compact.startsWith('delete from sh_channel_snapshots where id in (')
       || compact.startsWith('delete from sh_raw_events where id in (')
@@ -50,6 +63,10 @@ function changedRows(result) {
   return Number(result?.meta?.changes ?? result?.changes ?? 0);
 }
 
+function failureMessage(error) {
+  return String(error?.message || error).slice(0, 1000);
+}
+
 export function withScheduledD1Optimizations(env, nowFn = Date.now) {
   if (!env?.DB) return env;
   const db = env.DB;
@@ -58,6 +75,26 @@ export function withScheduledD1Optimizations(env, nowFn = Date.now) {
     officialLastSuccessAt: null,
     emptyCleanupBackoffUntil: 0,
   };
+
+  async function persistOfficialNewsFailure(error, fallbackNow) {
+    const now = Number(fallbackNow) || Number(nowFn()) || Date.now();
+    const lastCheckAt = state.officialClaimAt || now;
+    try {
+      await db.prepare(OFFICIAL_NEWS_FAILURE_SQL)
+        .bind(
+          'official-news',
+          lastCheckAt,
+          state.officialLastSuccessAt,
+          failureMessage(error),
+          now,
+        )
+        .run();
+    } catch (stateError) {
+      console.error('official-news-failure-state-write-failed', {
+        error: failureMessage(stateError),
+      });
+    }
+  }
 
   function wrapStatement(statement, meta) {
     return new Proxy(statement, {
@@ -95,6 +132,16 @@ export function withScheduledD1Optimizations(env, nowFn = Date.now) {
               last_success_at: state.officialLastSuccessAt,
               last_error: claimed.last_error ?? null,
             };
+          };
+        }
+        if (property === 'run' && meta.kind === 'official-news-expiry-write') {
+          return async (...args) => {
+            try {
+              return await target.run(...args);
+            } catch (error) {
+              await persistOfficialNewsFailure(error, meta.binds?.[0]);
+              throw error;
+            }
           };
         }
         if (property === 'run' && meta.kind === 'official-news-state-write') {
