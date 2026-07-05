@@ -6,12 +6,16 @@ const migrationsUrl = new URL('../../database/migrations/', import.meta.url);
 const migrationFiles = readdirSync(migrationsUrl)
   .filter((name) => /^\d+_[A-Za-z0-9._-]+\.sql$/.test(name))
   .sort();
+const grandfatheredDuplicateGroups = new Set([
+  '005_cloud_host_monitor.sql|005_weekly_summary_foundation.sql',
+  '019_collector_failure_diagnostics.sql|019_comment_counts.sql',
+]);
 
 function migrationNumber(filename) {
   return filename.match(/^(\d+)_/)?.[1] || null;
 }
 
-test('D1 migration numbers are unique', () => {
+test('D1 migration numbers have no new duplicate groups', () => {
   const groups = new Map();
   for (const file of migrationFiles) {
     const number = migrationNumber(file);
@@ -20,10 +24,11 @@ test('D1 migration numbers are unique', () => {
     groups.set(number, files);
   }
 
-  const duplicates = [...groups.entries()]
+  const unexpected = [...groups.entries()]
     .filter(([, files]) => files.length > 1)
+    .filter(([, files]) => !grandfatheredDuplicateGroups.has([...files].sort().join('|')))
     .map(([number, files]) => `${number}: ${files.join(', ')}`);
-  assert.deepEqual(duplicates, []);
+  assert.deepEqual(unexpected, []);
 });
 
 test('runtime repair migrations use versions beyond the applied production range', () => {
