@@ -32,6 +32,7 @@ test('reconciliation only supersedes older pending schedules for the same articl
   assert.deepEqual(result, { changes: 2, skipped: false });
   assert.equal(calls[0].sql, RECONCILE_SUPERSEDED_ANNOUNCEMENTS_SQL);
   assert.match(calls[0].sql, /stale\.status='scheduled'/);
+  assert.match(calls[0].sql, /monitor\.last_success_at=monitor\.last_check_at/);
   assert.match(calls[0].sql, /current\.news_id=stale\.news_id/);
   assert.match(calls[0].sql, /current\.status<>'superseded'/);
   assert.match(calls[0].sql, /current\.updated_at>stale\.updated_at/);
