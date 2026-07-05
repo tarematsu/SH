@@ -28,12 +28,8 @@ function todayJstString(now) {
   return new Date(now + 9 * 3600000).toISOString().slice(0, 10);
 }
 
-function todayUtcString(now) {
-  return new Date(now).toISOString().slice(0, 10);
-}
-
 function periodExpression(mode) {
-  if (mode === 'daily') return `strftime('%Y-%m-%d', observed_at / 1000, 'unixepoch')`;
+  if (mode === 'daily') return `strftime('%Y-%m-%d', observed_at / 1000, 'unixepoch', '+9 hours')`;
   if (mode === 'monthly') return `strftime('%Y-%m', observed_at / 1000, 'unixepoch', '+9 hours')`;
   return `date(observed_at / 1000,'unixepoch','+9 hours','-' || ((CAST(strftime('%w', observed_at / 1000, 'unixepoch', '+9 hours') AS INTEGER) + 6) % 7) || ' days')`;
 }
@@ -42,8 +38,8 @@ export function liveSummarySql(mode) {
   const periodKey = periodExpression(mode);
   return `WITH prepared AS (
     SELECT id,observed_at,listener_count,total_member_count,
-      validated_stream_count AS stream_value,host_handle,
-      ${periodKey} AS period_key
+      COALESCE(validated_stream_count,current_stream_count,total_listens) AS stream_value,
+      host_handle,${periodKey} AS period_key
     FROM sh_channel_snapshots WHERE observed_at>=? AND observed_at<?
   ), ranked AS (
     SELECT prepared.*,
@@ -169,7 +165,7 @@ export async function loadSummaryWithLive(env, mode, from, to, now = Date.now())
     `SELECT ${SUMMARY_COLUMNS} FROM ${table} WHERE period_key>=? AND period_key<=? ORDER BY period_key ASC LIMIT ?`,
   ).bind(from, to, limit).all();
   const baseRows = baseResult.results || [];
-  const fallbackTo = mode === 'daily' ? todayUtcString(now) : todayJstString(now);
+  const fallbackTo = todayJstString(now);
   const fromTs = parseRangeStart(mode, from, '2024-06-01');
   const toTs = parseRangeStart(mode, to, fallbackTo) + DAY_MS;
   const lastBaseEnd = finiteNumber(baseRows.at(-1)?.period_end);
