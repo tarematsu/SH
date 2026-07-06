@@ -40,6 +40,7 @@ if (!apiToken) {
 const sql = `SELECT
   (SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='sh_snapshot_current') AS snapshot_table,
   (SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='sh_queue_current') AS queue_table,
+  (SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='sh_playback_channel_current') AS playback_current_table,
   (SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='sh_track_like_current') AS likes_table,
   (SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='sh_comment_state') AS comment_state_table,
   (SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='sh_comment_minute_counts') AS comment_minute_table,
@@ -89,13 +90,13 @@ if (!row) {
 }
 
 const required = [
-  'snapshot_table', 'queue_table', 'likes_table', 'comment_state_table',
-  'comment_minute_table', 'maintenance_table', 'legacy_samples_table',
-  'legacy_hosts_table', 'legacy_tracks_table', 'legacy_broadcasts_table',
-  'prediction_state_table', 'legacy_history_view', 'likes_hash_column',
-  'validated_stream_column', 'last_stream_count_column', 'last_stream_at_column',
-  'legacy_backfill_column', 'queue_unique_index', 'snapshot_index',
-  'validated_stream_trigger',
+  'snapshot_table', 'queue_table', 'playback_current_table', 'likes_table',
+  'comment_state_table', 'comment_minute_table', 'maintenance_table',
+  'legacy_samples_table', 'legacy_hosts_table', 'legacy_tracks_table',
+  'legacy_broadcasts_table', 'prediction_state_table', 'legacy_history_view',
+  'likes_hash_column', 'validated_stream_column', 'last_stream_count_column',
+  'last_stream_at_column', 'legacy_backfill_column', 'queue_unique_index',
+  'snapshot_index', 'validated_stream_trigger',
 ];
 const missing = required.filter((name) => Number(row[name]) < 1);
 const redundant = ['redundant_queue_index', 'redundant_metadata_index']
