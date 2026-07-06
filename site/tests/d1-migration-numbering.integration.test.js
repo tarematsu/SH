@@ -31,7 +31,7 @@ test('D1 migration numbers have no new duplicate groups', () => {
   assert.deepEqual(unexpected, []);
 });
 
-test('runtime repair migrations use versions beyond the applied production range', () => {
+test('runtime repair migrations include the complete UTC rebuild chain', () => {
   const required = [
     '100_add_data_maintenance_state.sql',
     '101_add_lightweight_legacy_history.sql',
@@ -39,6 +39,15 @@ test('runtime repair migrations use versions beyond the applied production range
     '103_seed_legacy_backfill.sql',
     '104_stream_goal_prediction_state.sql',
     '106_backfill_missing_daily_summaries.sql',
+    '107_add_utc_metric_history_view.sql',
+    '108_add_utc_legacy_metric_view.sql',
+    '109_add_combined_utc_metric_view.sql',
+    '110_add_utc_daily_metric_view.sql',
+    '111_rebuild_daily_summaries_utc.sql',
+    '112_add_utc_weekly_metric_view.sql',
+    '120_rebuild_weekly_summaries_utc.sql',
+    '125_add_utc_monthly_metric_view.sql',
+    '126_rebuild_monthly_summaries_utc.sql',
   ];
   for (const file of required) assert.equal(migrationFiles.includes(file), true, file);
 
