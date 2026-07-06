@@ -10,21 +10,35 @@ https://www.stationhead.com/buddy46
 
 The goal is not to scrape the visible DOM first. The goal is to run a real browser once, capture the network traffic, and identify the JSON endpoint that contains the current station and playback queue.
 
-## Setup
+## Run from GitHub Actions
+
+After this workflow exists on the default branch, run it from GitHub:
+
+1. Open the repository on GitHub.
+2. Go to **Actions**.
+3. Choose **Stationhead browser discovery**.
+4. Click **Run workflow**.
+5. Keep the default URL, or enter another Stationhead page.
+6. Use `auto_click=true` if queue traffic only starts after a play/listen/join button.
+7. Download the `stationhead-browser-discovery` artifact after the run finishes.
+
+The artifact contains `summary.md`, `candidate-responses.json`, saved candidate JSON files, `page.html`, `page-state.json`, `network.json`, console logs, errors, and a screenshot.
+
+## Setup for local runs
 
 ```bash
 npm install
 npx playwright install chromium
 ```
 
-For a one-off run without keeping dependencies installed:
+For a one-off local run without keeping dependencies installed:
 
 ```bash
 npm install --no-save playwright
 npx playwright install chromium
 ```
 
-## Run
+## Run locally
 
 ```bash
 npm run discover:stationhead -- --url=https://www.stationhead.com/buddy46 --duration-ms=45000
