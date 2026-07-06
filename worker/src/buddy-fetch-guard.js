@@ -1,5 +1,3 @@
-import { collectBuddyPlaybackReady } from './buddy-runtime.js';
-
 function booleanValue(value, fallback = false) {
   if (value === undefined || value === null || value === '') return fallback;
   if (typeof value === 'boolean') return value;
@@ -8,6 +6,10 @@ function booleanValue(value, fallback = false) {
   if (['true', '1', 'yes', 'on'].includes(normalized)) return true;
   if (['false', '0', 'no', 'off'].includes(normalized)) return false;
   return Boolean(value);
+}
+
+function present(value) {
+  return value !== undefined && value !== null && value !== '';
 }
 
 export function validateBuddyQueuePayload(payload, expectedAlias = 'buddy46') {
@@ -21,20 +23,26 @@ export function validateBuddyQueuePayload(payload, expectedAlias = 'buddy46') {
   }
 
   const station = payload.current_station || {};
-  const broadcasting = booleanValue(station.is_broadcasting ?? payload.is_broadcasting);
+  const broadcastingValue = station.is_broadcasting ?? payload.is_broadcasting;
+  const broadcastingKnown = present(broadcastingValue);
+  const broadcasting = booleanValue(broadcastingValue);
   const queue = station.queue || payload.queue || null;
+  if (!queue && !broadcastingKnown) {
+    throw new Error('Stationhead buddy playback response is missing broadcasting state and queue');
+  }
   if (broadcasting && !queue) {
     throw new Error('Stationhead buddy playback response is broadcasting without a queue');
   }
-  if (
-    broadcasting
-    && !Object.prototype.hasOwnProperty.call(queue, 'queue_tracks')
-    && !Object.prototype.hasOwnProperty.call(queue, 'tracks')
-  ) {
+
+  const hasQueueTracks = Boolean(queue)
+    && Object.prototype.hasOwnProperty.call(queue, 'queue_tracks');
+  const hasTracks = Boolean(queue)
+    && Object.prototype.hasOwnProperty.call(queue, 'tracks');
+  if (broadcasting && !hasQueueTracks && !hasTracks) {
     throw new Error('Stationhead buddy playback response is missing queue tracks');
   }
-  const tracks = queue?.queue_tracks ?? queue?.tracks;
-  if (tracks !== undefined && !Array.isArray(tracks)) {
+  const tracks = hasQueueTracks ? queue.queue_tracks : hasTracks ? queue.tracks : undefined;
+  if ((hasQueueTracks || hasTracks) && !Array.isArray(tracks)) {
     throw new Error('Stationhead buddy playback queue tracks are not an array');
   }
   return payload;
@@ -55,13 +63,4 @@ export function createBuddyGuardedFetch(baseFetch = fetch, expectedAlias = 'budd
     validateBuddyQueuePayload(payload, expectedAlias);
     return response;
   };
-}
-
-export function collectBuddyPlaybackGuarded(env, observedAt = Date.now(), dependencies = {}) {
-  const alias = String(env?.BUDDY_PLAYBACK_ALIAS || 'buddy46').trim().toLowerCase() || 'buddy46';
-  const baseFetch = dependencies.fetch || fetch;
-  return collectBuddyPlaybackReady(env, observedAt, {
-    ...dependencies,
-    fetch: createBuddyGuardedFetch(baseFetch, alias),
-  });
 }
