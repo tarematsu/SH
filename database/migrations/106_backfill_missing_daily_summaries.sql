@@ -1,7 +1,7 @@
 WITH RECURSIVE dates(period_key,period_start,period_end) AS (
   SELECT '2026-06-26',
-    unixepoch('2026-06-25 15:00:00')*1000,
-    unixepoch('2026-06-26 15:00:00')*1000
+    unixepoch('2026-06-26 00:00:00')*1000,
+    unixepoch('2026-06-27 00:00:00')*1000
   UNION ALL
   SELECT date(period_key,'+1 day'),period_start+86400000,period_end+86400000
   FROM dates WHERE period_key<'2026-07-03'
@@ -10,14 +10,14 @@ WITH RECURSIVE dates(period_key,period_start,period_end) AS (
     COALESCE(validated_stream_count,current_stream_count,total_listens) AS stream_value,
     total_member_count,host_handle,0 AS source_priority
   FROM sh_channel_snapshots
-  WHERE observed_at>=unixepoch('2026-06-25 15:00:00')*1000
-    AND observed_at<unixepoch('2026-07-03 15:00:00')*1000+86400000
+  WHERE observed_at>=unixepoch('2026-06-26 00:00:00')*1000
+    AND observed_at<unixepoch('2026-07-04 00:00:00')*1000
   UNION ALL
   SELECT id,observed_at,listener_count,total_stream_count AS stream_value,
     total_member_count,host_handle,1 AS source_priority
   FROM sh_legacy_history_rows
-  WHERE observed_at>=unixepoch('2026-06-25 15:00:00')*1000
-    AND observed_at<unixepoch('2026-07-03 15:00:00')*1000+86400000
+  WHERE observed_at>=unixepoch('2026-06-26 00:00:00')*1000
+    AND observed_at<unixepoch('2026-07-04 00:00:00')*1000
 ), deduped AS (
   SELECT id,observed_at,listener_count,stream_value,total_member_count,host_handle
   FROM (
@@ -105,7 +105,7 @@ SELECT aggregated.period_key,aggregated.period_start,aggregated.period_end,
     THEN aggregated.member_end-aggregated.member_start
   END,
   NULL,NULL,primary_hosts.host_handle,1,
-  '["historical_gap_backfill"]',unixepoch('now')*1000
+  '["historical_gap_backfill","utc_period"]',unixepoch('now')*1000
 FROM aggregated
 LEFT JOIN primary_hosts ON primary_hosts.period_key=aggregated.period_key
 WHERE aggregated.sample_count>0
