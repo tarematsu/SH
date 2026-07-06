@@ -2,7 +2,10 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
-import { runProductionScheduled } from '../src/production-entry.js';
+import {
+  runProductionScheduled,
+  withBuddyPlaybackDeferred,
+} from '../src/production-entry.js';
 
 test('production cron runs primary before buddy46 collection', async () => {
   const calls = [];
@@ -26,7 +29,11 @@ test('production cron runs primary before buddy46 collection', async () => {
 
   assert.equal(result, 'done');
   assert.equal(calls.length, 2);
-  assert.deepEqual(calls[0], ['primary', controller, env, ctx]);
+  assert.equal(calls[0][0], 'primary');
+  assert.equal(calls[0][1], controller);
+  assert.equal(calls[0][2].marker, true);
+  assert.equal(calls[0][2].__DEFER_BUDDY_PLAYBACK, true);
+  assert.equal(calls[0][3], ctx);
   assert.deepEqual(calls[1], ['buddy', env, ctx, 300_000]);
   assert.equal(waitUntilTasks.length, 1);
   assert.equal(await waitUntilTasks[0], 'buddy-done');
@@ -63,6 +70,16 @@ test('production cron attaches buddy46 collection to waitUntil after primary com
   releaseBuddy();
   await waitUntilTasks[0];
   assert.deepEqual(calls, ['primary-done', 'buddy-start', 'buddy-done']);
+});
+
+test('production primary env defers inner buddy playback without mutating the original env', () => {
+  const env = { marker: true };
+  const deferred = withBuddyPlaybackDeferred(env);
+  assert.notEqual(deferred, env);
+  assert.equal(deferred.marker, true);
+  assert.equal(deferred.__DEFER_BUDDY_PLAYBACK, true);
+  assert.equal('__DEFER_BUDDY_PLAYBACK' in deferred, true);
+  assert.equal(env.__DEFER_BUDDY_PLAYBACK, undefined);
 });
 
 test('Wrangler deploys the production cron wrapper', () => {

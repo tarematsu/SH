@@ -8,6 +8,7 @@ import { sanitizeFailureDetail } from './collector-failure.js';
 import coreApp from './scheduled-main.js';
 import diagnosticApp from './health-alert-index.js';
 
+export const DEFER_BUDDY_PLAYBACK_FLAG = '__DEFER_BUDDY_PLAYBACK';
 const DEFAULT_DIAGNOSTIC_INTERVAL_MINUTES = 10;
 const FAILURE_DIAGNOSTIC_WINDOW_MS = 10 * 60_000;
 let forceDiagnosticsUntil = 0;
@@ -39,6 +40,10 @@ export function resetBuddyPlaybackFlightForTests() {
 export function scheduledTimestamp(controller, fallback = Date.now()) {
   const value = Number(controller?.scheduledTime);
   return Number.isFinite(value) && value >= 0 ? value : fallback;
+}
+
+export function shouldDeferBuddyPlayback(env = {}) {
+  return Boolean(env?.[DEFER_BUDDY_PLAYBACK_FLAG]);
 }
 
 function safeNow(now) {
@@ -100,7 +105,7 @@ export function scheduleBuddyPlayback(
 export default {
   async scheduled(controller, env, ctx) {
     const scheduledAt = scheduledTimestamp(controller);
-    scheduleBuddyPlayback(env, ctx, scheduledAt);
+    if (!shouldDeferBuddyPlayback(env)) scheduleBuddyPlayback(env, ctx, scheduledAt);
     if (shouldRunFullDiagnostics(scheduledAt, env)) {
       try {
         return await diagnosticApp.scheduled(controller, env, ctx);
