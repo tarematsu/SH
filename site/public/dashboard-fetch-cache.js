@@ -30,6 +30,10 @@
       .slice(-300);
   }
 
+  function hasUsableQueue() {
+    return Array.isArray(state.queue) && state.queue.length > 0;
+  }
+
   function sameGoal(payload) {
     const currentGoal = Number(payload?.latest?.stream_goal);
     const previousGoal = Number(state.lastPayload?.latest?.stream_goal);
@@ -55,10 +59,11 @@
     if (payload.delta) {
       state.history = mergeHistory(state.history, payload.history);
       payload.history = state.history;
-      if (payload.queue_unchanged) {
+      if (payload.queue_unchanged && hasUsableQueue()) {
         payload.queue = state.queue;
         payload.queue_status = { ...(state.queueStatus || {}), ...(payload.queue_status || {}) };
       } else {
+        payload.queue_unchanged = false;
         state.queue = Array.isArray(payload.queue) ? payload.queue : [];
         state.queueStatus = payload.queue_status || null;
       }
@@ -74,7 +79,8 @@
       state.latestObservedAt,
       Number(payload.latest_observed_at || payload.latest?.observed_at || 0),
     );
-    if (payload.queue_revision) state.queueRevision = String(payload.queue_revision);
+    if (payload.queue_revision && hasUsableQueue()) state.queueRevision = String(payload.queue_revision);
+    if (!hasUsableQueue()) state.queueRevision = '';
     state.lastPayload = structuredClone(payload);
     return payload;
   }
@@ -102,7 +108,8 @@
     }
 
     if (state.latestObservedAt > 0) url.searchParams.set('since', String(state.latestObservedAt));
-    if (state.queueRevision) url.searchParams.set('queue_revision', state.queueRevision);
+    if (state.queueRevision && hasUsableQueue()) url.searchParams.set('queue_revision', state.queueRevision);
+    if (!hasUsableQueue()) url.searchParams.delete('queue_revision');
 
     const requestInput = input instanceof Request
       ? new Request(url.toString(), input)

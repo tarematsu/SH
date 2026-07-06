@@ -48,6 +48,26 @@ test('browser application remains wired to the dashboard API and resilient refre
   assert.match(source, /前回表示・前回グラフをそのまま維持/);
 });
 
+test('dashboard display guards preserve ETA and expose comment velocity to chart overlays', async () => {
+  const html = await text('public/index.html');
+  const source = await text('public/dashboard-display-guards.js');
+  assert.match(html, /\/dashboard-display-guards\.js/);
+  assert.ok(
+    html.indexOf('/dashboard-display-guards.js') < html.indexOf('/comment-velocity-chart.js'),
+    'display guards must run before the comment velocity chart wrapper',
+  );
+  assert.match(source, /lastGoalPrediction/);
+  assert.match(source, /commentVelocityValues/);
+  assert.match(source, /commentVelocityMax/);
+});
+
+test('dashboard fetch cache does not request queue-unchanged deltas without a local queue', async () => {
+  const source = await text('public/dashboard-fetch-cache.js');
+  assert.match(source, /function hasUsableQueue/);
+  assert.match(source, /if \(state\.queueRevision && hasUsableQueue\(\)\)/);
+  assert.match(source, /payload\.queue_unchanged = false/);
+});
+
 test('dashboard fetch cache preserves a compatible last goal prediction on delta payloads', async () => {
   const source = await text('public/dashboard-fetch-cache.js');
   assert.match(source, /function mergeGoalPrediction/);
