@@ -33,6 +33,10 @@ if (!existsSync(wranglerExecutable)) {
 const apiToken = process.env.CLOUDFLARE_API_TOKEN || process.env.CLOUDFLARE_BUILDS_API_TOKEN || '';
 const accountId = process.env.CLOUDFLARE_ACCOUNT_ID || process.env.CF_ACCOUNT_ID || '';
 if (!apiToken) {
+  if (cloudflareBuild && !force) {
+    console.warn('D1 schema verification skipped: this Cloudflare build has no API token; runtime schema bootstrap will verify availability through live use.');
+    process.exit(0);
+  }
   console.error('D1 schema verification failed: Cloudflare API token is missing.');
   process.exit(1);
 }
