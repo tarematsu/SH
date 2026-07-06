@@ -1,7 +1,7 @@
-import { existsSync, readFileSync, readdirSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
+import { spawnSync } from 'node:child_process';
 
-export const TOKENLESS_MIGRATION_BASELINE = 126;
 export const RUNTIME_MIGRATION_COVERAGE = {
   '127_add_secondary_playback_current.sql': {
     runtime_file: 'worker/src/buddy-runtime.js',
@@ -9,18 +9,27 @@ export const RUNTIME_MIGRATION_COVERAGE = {
   },
 };
 
-export function migrationNumber(name) {
-  const match = String(name || '').match(/^(\d+)_/);
-  return match ? Number(match[1]) : null;
+export function changedMigrationNames(repositoryRoot) {
+  const result = spawnSync('git', [
+    'diff-tree', '--no-commit-id', '--name-only', '--diff-filter=AM', '-r',
+    'HEAD', '--', 'database/migrations',
+  ], {
+    cwd: repositoryRoot,
+    encoding: 'utf8',
+  });
+  if (result.error || result.status !== 0) {
+    throw new Error(`cannot inspect changed migrations: ${result.error?.message || result.stderr || `git exited ${result.status}`}`);
+  }
+  return String(result.stdout || '')
+    .split(/\r?\n/)
+    .map((value) => value.trim())
+    .filter(Boolean)
+    .map((value) => path.basename(value))
+    .filter((name) => /^\d+_[A-Za-z0-9._-]+\.sql$/.test(name));
 }
 
 export function uncoveredRuntimeMigrations(names, coverage = RUNTIME_MIGRATION_COVERAGE) {
-  return names
-    .filter((name) => {
-      const number = migrationNumber(name);
-      return number != null && number > TOKENLESS_MIGRATION_BASELINE;
-    })
-    .filter((name) => !coverage[name]);
+  return names.filter((name) => !coverage[name]);
 }
 
 function createdTables(sql) {
@@ -28,20 +37,21 @@ function createdTables(sql) {
     .map((match) => match[1]);
 }
 
-export function assertRuntimeMigrationCoverage(repositoryRoot) {
-  const migrationsDirectory = path.join(repositoryRoot, 'database', 'migrations');
-  const names = readdirSync(migrationsDirectory)
-    .filter((name) => /^\d+_[A-Za-z0-9._-]+\.sql$/.test(name))
-    .sort();
-  const uncovered = uncoveredRuntimeMigrations(names);
+export function assertRuntimeMigrationCoverage(repositoryRoot, names = null) {
+  const changed = names || changedMigrationNames(repositoryRoot);
+  const uncovered = uncoveredRuntimeMigrations(changed);
   if (uncovered.length) {
-    throw new Error(`tokenless D1 build has migrations without runtime coverage: ${uncovered.join(', ')}`);
+    throw new Error(`tokenless D1 build has changed migrations without runtime coverage: ${uncovered.join(', ')}`);
   }
 
-  for (const [migrationName, definition] of Object.entries(RUNTIME_MIGRATION_COVERAGE)) {
-    if (!names.includes(migrationName)) continue;
-    const migrationPath = path.join(migrationsDirectory, migrationName);
+  for (const migrationName of changed) {
+    const definition = RUNTIME_MIGRATION_COVERAGE[migrationName];
+    if (!definition) continue;
+    const migrationPath = path.join(repositoryRoot, 'database', 'migrations', migrationName);
     const runtimePath = path.join(repositoryRoot, definition.runtime_file);
+    if (!existsSync(migrationPath)) {
+      throw new Error(`changed migration file is missing: ${migrationName}`);
+    }
     if (!existsSync(runtimePath)) {
       throw new Error(`runtime migration coverage file is missing: ${definition.runtime_file}`);
     }
