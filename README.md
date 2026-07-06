@@ -1,4 +1,4 @@
-# Stationhead Monitor
+# Stationhead
 
 Cloudflare Workerを主系、Windows Local Collectorを自動フェイルオーバー系として運用するStationhead監視システムです。
 
