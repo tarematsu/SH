@@ -77,6 +77,10 @@ const accountId = process.env.CLOUDFLARE_ACCOUNT_ID
   || process.env.CF_ACCOUNT_ID
   || '';
 if (target === 'remote' && !apiToken) {
+  if (cloudflareBuild && !force) {
+    console.warn('D1 migrations skipped: this Cloudflare build has no API token; runtime schema bootstrap and the manual migration workflow remain available.');
+    process.exit(0);
+  }
   console.error('D1 migration failed: configure CLOUDFLARE_API_TOKEN or CLOUDFLARE_BUILDS_API_TOKEN.');
   process.exit(1);
 }
