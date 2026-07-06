@@ -1,3 +1,4 @@
+import { normalizeBuddyQueuePayload } from './buddy-fetch-guard.js';
 import {
   fetchTrackMetadata,
   metadataNeedsRefresh,
@@ -70,6 +71,10 @@ function enabled(value) {
 
 function missingTable(error) {
   return /no such table:\s*sh_playback_channel_current/i.test(String(error?.message || error));
+}
+
+export function buddyHandleStationPath(alias = DEFAULT_ALIAS) {
+  return `/station/handle/${encodeURIComponent(String(alias || DEFAULT_ALIAS).trim().toLowerCase() || DEFAULT_ALIAS)}/guest`;
 }
 
 function trimMetadataFailures() {
@@ -159,17 +164,25 @@ export function validateBuddyChannelPayload(channel, expectedAlias = DEFAULT_ALI
   if (actualAlias !== String(expectedAlias).trim().toLowerCase()) {
     throw new Error(`Stationhead alias mismatch: expected ${expectedAlias}, received ${actualAlias}`);
   }
-  if (!('current_station' in channel) && !('current_station_id' in channel)) {
-    throw new Error('Stationhead buddy playback response is missing current station fields');
+  const queue = channel?.current_station?.queue || channel?.queue || null;
+  const stationId = queue?.station_id
+    ?? channel?.current_station?.id
+    ?? channel?.current_station_id
+    ?? channel?.id
+    ?? channel?.broadcast?.station_id;
+  if (stationId == null && !queue) {
+    throw new Error('Stationhead buddy playback response is missing station fields');
   }
   return channel;
 }
 
 async function fetchChannel(env, session, config, request = fetch) {
   const response = await request(
-    `${API_BASE}/channels/alias/${encodeURIComponent(config.alias)}`,
+    `${API_BASE}${buddyHandleStationPath(config.alias)}`,
     {
+      method: 'POST',
       headers: stationheadHeaders(session, config),
+      body: '',
       signal: AbortSignal.timeout(config.requestTimeoutMs),
     },
   );
@@ -177,14 +190,16 @@ async function fetchChannel(env, session, config, request = fetch) {
     const body = await response.text().catch(() => '');
     throw new Error(`Stationhead buddy playback API ${response.status}: ${body.slice(0, 200)}`);
   }
-  return validateBuddyChannelPayload(await response.json(), config.alias);
+  const payload = normalizeBuddyQueuePayload(await response.json(), config.alias);
+  return validateBuddyChannelPayload(payload, config.alias);
 }
 
 export function extractBuddyPlayback(channel, alias = DEFAULT_ALIAS, maxTracks = DEFAULT_MAX_TRACKS) {
   const station = channel?.current_station || {};
   const queue = station?.queue || channel?.queue || null;
-  const host = station?.broadcast?.broadcasters?.find((item) => item?.is_host)
-    || station?.broadcast?.broadcasters?.[0]
+  const broadcast = station?.broadcast || channel?.broadcast || null;
+  const host = broadcast?.broadcasters?.find((item) => item?.is_host)
+    || broadcast?.broadcasters?.[0]
     || null;
   const rawTracks = queue?.queue_tracks ?? queue?.tracks ?? [];
   if (!Array.isArray(rawTracks)) {
@@ -206,7 +221,7 @@ export function extractBuddyPlayback(channel, alias = DEFAULT_ALIAS, maxTracks =
   });
   return {
     channel_alias: alias,
-    station_id: finiteNumber(queue?.station_id ?? station?.id ?? channel?.current_station_id),
+    station_id: finiteNumber(queue?.station_id ?? station?.id ?? channel?.current_station_id ?? channel?.id ?? broadcast?.station_id),
     queue_id: finiteNumber(queue?.id),
     start_time: finiteNumber(queue?.start_time),
     is_paused: booleanValue(queue?.is_paused),
