@@ -6,6 +6,7 @@ import {
   cachedPrediction,
   decorateQueueResponse,
   resetPredictionCache,
+  selectGoalPrediction,
 } from '../functions/api/dashboard.js';
 import {
   cachedHistoryLoad,
@@ -157,4 +158,28 @@ test('dashboard prediction cache coalesces D1 reads and response decoration is s
   const appended = appendJsonObjectFields('{"ok":true}', { queue_revision: 'rev-2' });
   assert.deepEqual(JSON.parse(appended), { ok: true, queue_revision: 'rev-2' });
   resetPredictionCache();
+});
+
+test('dashboard keeps calculated goal prediction when persisted state is unavailable', () => {
+  const calculated = {
+    eta: 1783400000000,
+    rate_per_hour: 12000,
+    remaining: 100000,
+    sample_count: 80,
+    span_hours: 12,
+  };
+  assert.equal(selectGoalPrediction(null, calculated, 53240000), calculated);
+});
+
+test('dashboard prefers valid persisted goal prediction over calculated fallback', () => {
+  const calculated = { eta: 1783400000000, rate_per_hour: 12000, remaining: 100000 };
+  const persisted = selectGoalPrediction({
+    generated_at: 1783300000000,
+    goal: 53240000,
+    eta: 1783500000000,
+    rate_per_hour: 15000,
+    remaining: 90000,
+  }, calculated, 53240000);
+  assert.notEqual(persisted, calculated);
+  assert.equal(persisted.rate_per_hour, 15000);
 });
