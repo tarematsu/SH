@@ -33,6 +33,21 @@ export function text(value) {
   return value === undefined || value === null ? null : String(value);
 }
 
+export function isAppleMusicKey(key) {
+  return String(key || '').replace(/[_\s-]+/g, '').toLowerCase().includes('applemusic');
+}
+
+export function stripAppleMusicFields(value) {
+  if (Array.isArray(value)) return value.map(stripAppleMusicFields);
+  if (!value || typeof value !== 'object') return value;
+  const output = {};
+  for (const [key, child] of Object.entries(value)) {
+    if (isAppleMusicKey(key)) continue;
+    output[key] = stripAppleMusicFields(child);
+  }
+  return output;
+}
+
 export function rawJson(value) {
-  return JSON.stringify(value ?? null);
+  return JSON.stringify(stripAppleMusicFields(value) ?? null);
 }

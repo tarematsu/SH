@@ -1,4 +1,4 @@
-import { json, num } from '../lib/api-utils.js';
+import { json, num, stripAppleMusicFields } from '../lib/api-utils.js';
 import {
   attachBuddyCollectorStatus,
   loadBuddyCollectorStatus,
@@ -20,7 +20,7 @@ const PLAYBACK_CORS_HEADERS = Object.freeze({
 export { computePlayback };
 
 function playbackJson(data, status = 200, cache = null) {
-  return json(data, status, cache, PLAYBACK_CORS_HEADERS);
+  return json(stripAppleMusicFields(data), status, cache, PLAYBACK_CORS_HEADERS);
 }
 
 export function onRequestOptions() {
@@ -94,7 +94,7 @@ function parseQueueJson(value) {
   if (!value) return [];
   try {
     const parsed = JSON.parse(value);
-    return Array.isArray(parsed) ? parsed : null;
+    return Array.isArray(parsed) ? stripAppleMusicFields(parsed) : null;
   } catch {
     return null;
   }
@@ -142,7 +142,7 @@ export function secondaryPlaybackPayload(row, generatedAt = Date.now()) {
   const parsed = parseQueueJson(row.queue_json);
   const queueCorrupt = parsed === null;
   const source = parsed || [];
-  const rows = source.map((track, index) => ({
+  const rows = source.map((track, index) => stripAppleMusicFields({
     ...track,
     observed_at: checkedAt,
     station_id: stationId,
@@ -167,7 +167,9 @@ export function secondaryPlaybackPayload(row, generatedAt = Date.now()) {
   const visiblePlayback = stale
     ? { ...playback, currentIndex: -1, progressMs: 0, anchorAt: null }
     : playback;
-  const queue = rows.map((track, index) => normalizePlaybackTrack(track, index, visiblePlayback));
+  const queue = rows.map((track, index) => stripAppleMusicFields(
+    normalizePlaybackTrack(track, index, visiblePlayback),
+  ));
   const playing = !stale && broadcasting && !paused && !ended && visiblePlayback.currentIndex >= 0;
 
   return {
@@ -260,7 +262,9 @@ export async function onRequestGet({ request, env }) {
     }
 
     const playback = computePlayback(rows, generatedAt);
-    const queue = rows.map((track, index) => normalizePlaybackTrack(track, index, playback));
+    const queue = rows.map((track, index) => stripAppleMusicFields(
+      normalizePlaybackTrack(track, index, playback),
+    ));
     const paused = storedBoolean(latestQueue.is_paused);
     const broadcasting = storedBoolean(latest?.is_broadcasting);
     const playing = broadcasting && !paused && playback.currentIndex >= 0;

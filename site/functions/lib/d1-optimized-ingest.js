@@ -1,4 +1,4 @@
-import { bool, num, rawJson, text } from './api-utils.js';
+import { bool, num, rawJson, stripAppleMusicFields, text } from './api-utils.js';
 import {
   planLikeObservations,
   queueItemsToWriteLean,
@@ -132,9 +132,9 @@ async function loadComparisonState(db, stationId, startTime, positions, trackKey
 function queueItemWriteStatements(db, tracks, observedAt, stationId, queueId, startTime) {
   return tracks.map((track) => db.prepare(`INSERT INTO sh_queue_items (
       observed_at,station_id,queue_id,start_time,position,
-      queue_track_id,stationhead_track_id,spotify_id,apple_music_id,
+      queue_track_id,stationhead_track_id,spotify_id,
       deezer_id,isrc,duration_ms,preview_url,bite_count,raw_json
-    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
     ON CONFLICT(station_id,start_time,position) DO UPDATE SET
       observed_at=excluded.observed_at,queue_id=excluded.queue_id,
       queue_track_id=excluded.queue_track_id,stationhead_track_id=excluded.stationhead_track_id,
@@ -144,8 +144,8 @@ function queueItemWriteStatements(db, tracks, observedAt, stationId, queueId, st
     .bind(
       observedAt, stationId, queueId, startTime, num(track?.position),
       num(track?.queue_track_id), num(track?.stationhead_track_id),
-      text(track?.spotify_id), null, text(track?.deezer_id),
-      text(track?.isrc), num(track?.duration_ms), text(track?.preview_url),
+      text(track?.spotify_id), text(track?.deezer_id), text(track?.isrc),
+      num(track?.duration_ms), text(track?.preview_url),
       num(track?.bite_count), compactQueueItemRaw(track, queueId),
     ));
 }
@@ -154,8 +154,8 @@ function likeWriteStatements(db, observations, observedAt, stationId, queueId, s
   return observations.flatMap(({ trackKey, track }) => [
     db.prepare(`INSERT INTO sh_track_like_current (
       station_id,track_key,queue_id,start_time,position,queue_track_id,
-      stationhead_track_id,spotify_id,apple_music_id,isrc,like_count,observed_at
-    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(station_id,track_key) DO UPDATE SET
+      stationhead_track_id,spotify_id,isrc,like_count,observed_at
+    ) VALUES (?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(station_id,track_key) DO UPDATE SET
       queue_id=excluded.queue_id,start_time=excluded.start_time,position=excluded.position,
       queue_track_id=excluded.queue_track_id,stationhead_track_id=excluded.stationhead_track_id,
       spotify_id=excluded.spotify_id,apple_music_id=NULL,isrc=excluded.isrc,
@@ -164,17 +164,16 @@ function likeWriteStatements(db, observations, observedAt, stationId, queueId, s
       .bind(
         stationId, trackKey, queueId, startTime, num(track?.position),
         num(track?.queue_track_id), num(track?.stationhead_track_id),
-        text(track?.spotify_id), null, text(track?.isrc),
-        num(track?.bite_count), observedAt,
+        text(track?.spotify_id), text(track?.isrc), num(track?.bite_count), observedAt,
       ),
     db.prepare(`INSERT INTO sh_track_like_observations (
       observed_at,station_id,queue_id,start_time,position,
-      queue_track_id,stationhead_track_id,spotify_id,apple_music_id,isrc,
+      queue_track_id,stationhead_track_id,spotify_id,isrc,
       track_key,like_count,source,raw_json
-    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).bind(
+    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`).bind(
       observedAt, stationId, queueId, startTime, num(track?.position),
       num(track?.queue_track_id), num(track?.stationhead_track_id),
-      text(track?.spotify_id), null, text(track?.isrc),
+      text(track?.spotify_id), text(track?.isrc),
       trackKey, num(track?.bite_count), 'collector', rawJson({ bite_count: num(track?.bite_count) }),
     ),
   ]);
@@ -218,7 +217,7 @@ function deleteMissingCurrentLikesStatement(db, stationId, trackKeys) {
 }
 
 export async function saveLeanQueue(db, observedAt, body) {
-  const data = body?.data ?? {};
+  const data = stripAppleMusicFields(body?.data ?? {});
   const structuralPayload = queueStructuralPayload(data);
   const structuralHash = await payloadHash(structuralPayload);
   const tracks = Array.isArray(data?.tracks) ? data.tracks : [];
