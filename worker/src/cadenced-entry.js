@@ -1,8 +1,8 @@
 import {
   buddyPlaybackConfig,
-  collectBuddyPlayback,
   shouldRunBuddyPlayback,
 } from './buddy-playback.js';
+import { collectBuddyPlaybackReady } from './buddy-runtime.js';
 import coreApp from './scheduled-main.js';
 import diagnosticApp from './health-alert-index.js';
 
@@ -43,7 +43,7 @@ export function scheduleBuddyPlayback(
   env,
   ctx,
   scheduledAt = Date.now(),
-  runner = collectBuddyPlayback,
+  runner = collectBuddyPlaybackReady,
   now = Date.now,
 ) {
   const config = buddyPlaybackConfig(env);
