@@ -1,8 +1,21 @@
 import {
+  DEFER_BUDDY_PLAYBACK_FLAG,
   scheduleBuddyPlayback,
   scheduledTimestamp,
 } from './cadenced-entry.js';
 import resilientApp from './resilient-entry.js';
+
+export function withBuddyPlaybackDeferred(env = {}) {
+  return new Proxy(env, {
+    get(target, property, receiver) {
+      if (property === DEFER_BUDDY_PLAYBACK_FLAG) return true;
+      return Reflect.get(target, property, receiver);
+    },
+    has(target, property) {
+      return property === DEFER_BUDDY_PLAYBACK_FLAG || Reflect.has(target, property);
+    },
+  });
+}
 
 async function runBuddyPlaybackAfterPrimary(scheduleBuddy, env, ctx, scheduledAt) {
   try {
@@ -21,7 +34,7 @@ export async function runProductionScheduled(controller, env, ctx, dependencies 
   const app = dependencies.app || resilientApp;
   const scheduledAt = scheduledTimestamp(controller);
 
-  const primaryResult = await app.scheduled(controller, env, ctx);
+  const primaryResult = await app.scheduled(controller, withBuddyPlaybackDeferred(env), ctx);
   const buddyTask = runBuddyPlaybackAfterPrimary(scheduleBuddy, env, ctx, scheduledAt);
   if (typeof ctx?.waitUntil === 'function') ctx.waitUntil(buddyTask);
   else await buddyTask;
