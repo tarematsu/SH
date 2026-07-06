@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 
+export const TOKENLESS_SCHEMA_BASELINE = 'a835cdf3619970af7e3e82fa8d77187376dafd11';
 export const RUNTIME_MIGRATION_COVERAGE = {
   '127_add_secondary_playback_current.sql': {
     runtime_file: 'worker/src/buddy-runtime.js',
@@ -9,18 +10,28 @@ export const RUNTIME_MIGRATION_COVERAGE = {
   },
 };
 
-export function changedMigrationNames(repositoryRoot) {
-  const result = spawnSync('git', [
-    'diff-tree', '--no-commit-id', '--name-only', '--diff-filter=AM', '-r',
-    'HEAD', '--', 'database/migrations',
-  ], {
+function gitOutput(repositoryRoot, args) {
+  const result = spawnSync('git', args, {
     cwd: repositoryRoot,
     encoding: 'utf8',
   });
-  if (result.error || result.status !== 0) {
-    throw new Error(`cannot inspect changed migrations: ${result.error?.message || result.stderr || `git exited ${result.status}`}`);
+  if (result.error || result.status !== 0) return null;
+  return String(result.stdout || '');
+}
+
+export function changedMigrationNames(repositoryRoot) {
+  const baselineOutput = gitOutput(repositoryRoot, [
+    'diff', '--name-only', '--diff-filter=AM',
+    `${TOKENLESS_SCHEMA_BASELINE}..HEAD`, '--', 'database/migrations',
+  ]);
+  const output = baselineOutput ?? gitOutput(repositoryRoot, [
+    'diff-tree', '--no-commit-id', '--name-only', '--diff-filter=AM', '-r',
+    'HEAD', '--', 'database/migrations',
+  ]);
+  if (output == null) {
+    throw new Error('cannot inspect changed migrations with git');
   }
-  return String(result.stdout || '')
+  return output
     .split(/\r?\n/)
     .map((value) => value.trim())
     .filter(Boolean)
@@ -29,7 +40,16 @@ export function changedMigrationNames(repositoryRoot) {
 }
 
 export function uncoveredRuntimeMigrations(names, coverage = RUNTIME_MIGRATION_COVERAGE) {
-  return names.filter((name) => !coverage[name]);
+  return [...new Set(names)].filter((name) => !coverage[name]);
+}
+
+function migrationStatements(sql) {
+  return String(sql)
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/^\s*--.*$/gm, '')
+    .split(';')
+    .map((statement) => statement.trim())
+    .filter(Boolean);
 }
 
 function createdTables(sql) {
@@ -38,7 +58,7 @@ function createdTables(sql) {
 }
 
 export function assertRuntimeMigrationCoverage(repositoryRoot, names = null) {
-  const changed = names || changedMigrationNames(repositoryRoot);
+  const changed = [...new Set(names || changedMigrationNames(repositoryRoot))];
   const uncovered = uncoveredRuntimeMigrations(changed);
   if (uncovered.length) {
     throw new Error(`tokenless D1 build has changed migrations without runtime coverage: ${uncovered.join(', ')}`);
@@ -58,6 +78,14 @@ export function assertRuntimeMigrationCoverage(repositoryRoot, names = null) {
     const migrationSql = readFileSync(migrationPath, 'utf8');
     const runtimeSource = readFileSync(runtimePath, 'utf8');
     const tables = createdTables(migrationSql);
+    const allowedStatements = definition.required_tables.map(
+      (table) => new RegExp(`^CREATE\\s+TABLE\\s+IF\\s+NOT\\s+EXISTS\\s+${table}\\b`, 'i'),
+    );
+    const unsupported = migrationStatements(migrationSql)
+      .filter((statement) => !allowedStatements.some((pattern) => pattern.test(statement)));
+    if (unsupported.length) {
+      throw new Error(`${migrationName} contains statements without runtime coverage`);
+    }
     for (const table of definition.required_tables) {
       if (!tables.includes(table)) {
         throw new Error(`${migrationName} no longer creates required table ${table}`);
