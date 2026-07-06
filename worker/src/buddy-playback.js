@@ -14,7 +14,8 @@ const METADATA_FAILURE_RETRY_MS = 15 * 60_000;
 const METADATA_FAILURE_CACHE_MAX = 256;
 const USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36';
 
-export const BUDDY_PLAYBACK_SELECT_SQL = `SELECT state_hash,queue_json,checked_at,changed_at
+export const BUDDY_PLAYBACK_SELECT_SQL = `SELECT station_id,queue_id,start_time,is_paused,
+  is_broadcasting,host_account_id,host_handle,state_hash,queue_json,checked_at,changed_at
   FROM sh_playback_channel_current WHERE channel_alias=?`;
 
 export const BUDDY_PLAYBACK_TOUCH_SQL = `UPDATE sh_playback_channel_current
@@ -324,6 +325,13 @@ async function stateHash(value) {
   return [...new Uint8Array(digest)].map((value) => value.toString(16).padStart(2, '0')).join('');
 }
 
+function displayStateChanged(current, queue) {
+  if (!current) return true;
+  return booleanValue(current.is_broadcasting) !== queue.is_broadcasting
+    || finiteNumber(current.host_account_id) !== queue.host_account_id
+    || (String(current.host_handle || '').trim() || null) !== queue.host_handle;
+}
+
 export async function collectBuddyPlayback(env, now = Date.now(), dependencies = {}) {
   if (!env?.DB) return { skipped: true, reason: 'db-binding-missing' };
   const config = buddyPlaybackConfig(env);
@@ -358,17 +366,16 @@ export async function collectBuddyPlayback(env, now = Date.now(), dependencies =
     queue_id: queue.queue_id,
     start_time: queue.start_time,
     is_paused: queue.is_paused,
-    is_broadcasting: queue.is_broadcasting,
-    host_account_id: queue.host_account_id,
-    host_handle: queue.host_handle,
     tracks: queue.tracks,
   };
   const hash = await (dependencies.stateHash || stateHash)(playbackState);
   const queueJson = JSON.stringify(tracks);
   const playbackChanged = current?.state_hash !== hash;
   const contentChanged = current?.queue_json !== queueJson;
+  const displayChanged = displayStateChanged(current, queue);
+  const changed = playbackChanged || contentChanged || displayChanged;
 
-  if (!playbackChanged && !contentChanged) {
+  if (!changed) {
     await env.DB.prepare(BUDDY_PLAYBACK_TOUCH_SQL).bind(now, config.alias).run();
   } else {
     const changedAt = playbackChanged ? now : finiteNumber(current?.changed_at, now);
@@ -391,9 +398,10 @@ export async function collectBuddyPlayback(env, now = Date.now(), dependencies =
   return {
     skipped: false,
     channel_alias: config.alias,
-    changed: playbackChanged || contentChanged,
+    changed,
     playback_changed: playbackChanged,
     content_changed: contentChanged,
+    display_changed: displayChanged,
     tracks: tracks.length,
     checked_at: now,
   };
