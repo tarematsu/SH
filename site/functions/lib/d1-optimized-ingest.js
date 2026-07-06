@@ -8,7 +8,8 @@ import {
 import { claimWrite, payloadHash, sourceIdentity } from './ingest-claim.js';
 
 const QUERY_CHUNK = 80;
-const BATCH_CHUNK = 80;
+export const D1_BATCH_STATEMENT_LIMIT = 40;
+export const D1_BATCH_VARIABLE_LIMIT = 800;
 
 export { saveLeanSnapshot };
 
@@ -20,8 +21,33 @@ function chunks(values, size) {
   return result;
 }
 
+function statementBindCount(statement) {
+  return Array.isArray(statement?.params) ? statement.params.length : 0;
+}
+
+export function splitD1Batches(statements) {
+  const groups = [];
+  let current = [];
+  let bindCount = 0;
+  for (const statement of Array.isArray(statements) ? statements : []) {
+    const nextBindCount = statementBindCount(statement);
+    if (current.length > 0 && (
+      current.length >= D1_BATCH_STATEMENT_LIMIT
+      || bindCount + nextBindCount > D1_BATCH_VARIABLE_LIMIT
+    )) {
+      groups.push(current);
+      current = [];
+      bindCount = 0;
+    }
+    current.push(statement);
+    bindCount += nextBindCount;
+  }
+  if (current.length) groups.push(current);
+  return groups;
+}
+
 async function runBatches(db, statements) {
-  for (const group of chunks(statements, BATCH_CHUNK)) {
+  for (const group of splitD1Batches(statements)) {
     if (group.length) await db.batch(group);
   }
 }
