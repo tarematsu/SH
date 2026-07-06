@@ -1,10 +1,23 @@
 export const LATEST_QUEUE_WITH_ITEMS_SQL = `WITH latest_station AS (
   SELECT station_id FROM sh_channel_snapshots
   WHERE station_id IS NOT NULL ORDER BY observed_at DESC,id DESC LIMIT 1
-), latest_queue AS (
-  SELECT station_id,queue_id,start_time,is_paused,observed_at
+), station_queue AS (
+  SELECT station_id,queue_id,start_time,is_paused,observed_at,0 AS priority
   FROM sh_queue_current
   WHERE station_id=(SELECT station_id FROM latest_station)
+), recent_queue AS (
+  SELECT station_id,queue_id,start_time,is_paused,observed_at,1 AS priority
+  FROM sh_queue_current
+  ORDER BY observed_at DESC
+  LIMIT 1
+), latest_queue AS (
+  SELECT station_id,queue_id,start_time,is_paused,observed_at
+  FROM (
+    SELECT * FROM station_queue
+    UNION ALL
+    SELECT * FROM recent_queue
+  )
+  ORDER BY priority ASC,observed_at DESC
   LIMIT 1
 )
 SELECT lq.station_id AS queue_station_id,lq.queue_id,
