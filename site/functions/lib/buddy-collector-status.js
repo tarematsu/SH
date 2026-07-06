@@ -76,7 +76,7 @@ export async function loadBuddyCollectorStatus(db, alias) {
 export function attachBuddyCollectorStatus(payload, collector) {
   const observedAt = num(payload?.latest_observed_at);
   const failedAfterData = collector?.status === 'error'
-    && (num(collector.last_attempt_at) ?? 0) >= (observedAt ?? 0);
+    && (num(collector.last_attempt_at) ?? 0) > (observedAt ?? 0);
   const neverCollected = collector?.status === 'never' && observedAt == null;
   const stale = Boolean(payload?.stale || failedAfterData || neverCollected);
   const queue = stale
