@@ -22,14 +22,10 @@ export function inferArtistFromDisplayTitle(displayTitle, title) {
 
 export function metadataFallback(rawValue) {
   const raw = safeJson(rawValue, {}) || {};
-  const appleResults = raw?.apple?.results || raw?.results || [];
-  const apple = Array.isArray(appleResults)
-    ? appleResults.find((item) => item?.artistName || item?.trackName)
-    : null;
   const spotify = raw?.spotify || raw;
   return {
-    artist: apple?.artistName || spotify?.author_name || spotify?.author || null,
-    title: apple?.trackName || spotify?.title || null,
+    artist: spotify?.author_name || spotify?.author || null,
+    title: spotify?.title || null,
   };
 }
 
@@ -78,7 +74,6 @@ export function normalizePlaybackTrack(track, index, playback) {
     queue_track_id: num(track.queue_track_id),
     stationhead_track_id: num(track.stationhead_track_id),
     spotify_id: spotifyId,
-    apple_music_id: String(track.apple_music_id || '').trim() || null,
     deezer_id: String(track.deezer_id || '').trim() || null,
     isrc: String(track.isrc || '').trim() || null,
     duration_ms: durationMs,
