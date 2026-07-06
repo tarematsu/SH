@@ -3,6 +3,9 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 
 export const TOKENLESS_SCHEMA_BASELINE = 'a835cdf3619970af7e3e82fa8d77187376dafd11';
+export const DATA_ONLY_MIGRATIONS = new Set([
+  '105_backfill_comment_velocity_history.sql',
+]);
 export const RUNTIME_MIGRATION_COVERAGE = {
   '127_add_secondary_playback_current.sql': {
     runtime_file: 'worker/src/buddy-runtime.js',
@@ -36,7 +39,7 @@ export function changedMigrationNames(repositoryRoot) {
 }
 
 export function uncoveredRuntimeMigrations(names, coverage = RUNTIME_MIGRATION_COVERAGE) {
-  return [...new Set(names)].filter((name) => !coverage[name]);
+  return [...new Set(names)].filter((name) => !coverage[name] && !DATA_ONLY_MIGRATIONS.has(name));
 }
 
 function migrationStatements(sql) {
@@ -61,6 +64,7 @@ export function assertRuntimeMigrationCoverage(repositoryRoot, names = null) {
   }
 
   for (const migrationName of changed) {
+    if (DATA_ONLY_MIGRATIONS.has(migrationName)) continue;
     const definition = RUNTIME_MIGRATION_COVERAGE[migrationName];
     if (!definition) continue;
     const migrationPath = path.join(repositoryRoot, 'database', 'migrations', migrationName);

@@ -42,6 +42,10 @@ function config(env = {}) {
   };
 }
 
+export function buddyHandleStationPath(alias = 'buddy46') {
+  return `/station/handle/${encodeURIComponent(String(alias || 'buddy46').trim().toLowerCase() || 'buddy46')}/guest`;
+}
+
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -109,8 +113,8 @@ async function acquireDirectSession(env, request = fetch) {
 
   const verifyResponse = await stationheadFetch(
     cfg,
-    `/channels/alias/${encodeURIComponent(cfg.alias)}`,
-    { headers: authHeaders },
+    buddyHandleStationPath(cfg.alias),
+    { method: 'POST', headers: authHeaders, body: '' },
     request,
   );
   if (!verifyResponse.ok) {
