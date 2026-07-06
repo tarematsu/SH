@@ -30,6 +30,12 @@
       .slice(-300);
   }
 
+  function mergeGoalPrediction(payload) {
+    if (payload?.goal_prediction) return;
+    const previous = state.lastPayload?.goal_prediction;
+    if (previous) payload.goal_prediction = structuredClone(previous);
+  }
+
   function mergePayload(payload) {
     if (!payload?.ok) return payload;
     if (payload.delta) {
@@ -42,6 +48,7 @@
         state.queue = Array.isArray(payload.queue) ? payload.queue : [];
         state.queueStatus = payload.queue_status || null;
       }
+      mergeGoalPrediction(payload);
       payload.delta = false;
     } else {
       state.history = mergeHistory([], payload.history);
