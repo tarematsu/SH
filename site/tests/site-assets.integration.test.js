@@ -48,9 +48,11 @@ test('browser application remains wired to the dashboard API and resilient refre
   assert.match(source, /前回表示・前回グラフをそのまま維持/);
 });
 
-test('dashboard fetch cache preserves the last goal prediction on delta payloads', async () => {
+test('dashboard fetch cache preserves a compatible last goal prediction on delta payloads', async () => {
   const source = await text('public/dashboard-fetch-cache.js');
   assert.match(source, /function mergeGoalPrediction/);
+  assert.match(source, /function sameGoal/);
+  assert.match(source, /function alreadyReachedGoal/);
   assert.match(source, /state\.lastPayload\?\.goal_prediction/);
   assert.match(source, /payload\.goal_prediction = structuredClone\(previous\)/);
 });
