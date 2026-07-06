@@ -7,10 +7,14 @@
     "check": "npm run check:js && npm run test:js && npm run test:sql && npm run check:worker-bundle && npm run test:worker && npm run check:site && npm run test:site",
     "check:js": "node scripts/check-js-syntax.mjs",
     "check:worker-bundle": "npm --prefix worker run check:bundle",
+    "discover:stationhead": "node scripts/discover-stationhead-page.mjs",
     "test:worker": "npm --prefix worker test",
     "check:site": "npm --prefix site run check",
     "test:site": "npm --prefix site test",
     "test:js": "node --test tests/*.test.mjs",
     "test:sql": "python -m unittest tests.sql_migrations_test"
+  },
+  "devDependencies": {
+    "playwright": "^1.54.0"
   }
 }
