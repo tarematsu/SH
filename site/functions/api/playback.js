@@ -1,4 +1,8 @@
 import { json, num } from '../lib/api-utils.js';
+import {
+  attachBuddyCollectorStatus,
+  loadBuddyCollectorStatus,
+} from '../lib/buddy-collector-status.js';
 import { parseLatestQueueRows } from '../lib/latest-queue.js';
 import { computePlayback, normalizePlaybackTrack } from '../lib/playback.js';
 import { hostIdentity, queueRevision, stateFromQueue } from '../lib/queue-state.js';
@@ -182,16 +186,27 @@ export function secondaryPlaybackPayload(row, generatedAt = Date.now()) {
 }
 
 async function secondaryPlaybackResponse(db, alias, generatedAt) {
+  const collector = await loadBuddyCollectorStatus(db, alias);
   try {
     const row = await db.prepare(SECONDARY_PLAYBACK_SQL).bind(alias).first();
+    const payload = row
+      ? secondaryPlaybackPayload(row, generatedAt)
+      : emptySecondaryPayload(alias, generatedAt);
     return json(
-      row ? secondaryPlaybackPayload(row, generatedAt) : emptySecondaryPayload(alias, generatedAt),
+      attachBuddyCollectorStatus(payload, collector),
       200,
       CACHE_CONTROL,
     );
   } catch (error) {
     if (missingPlaybackTable(error)) {
-      return json(emptySecondaryPayload(alias, generatedAt, true), 200, CACHE_CONTROL);
+      return json(
+        attachBuddyCollectorStatus(
+          emptySecondaryPayload(alias, generatedAt, true),
+          collector,
+        ),
+        200,
+        CACHE_CONTROL,
+      );
     }
     throw error;
   }
