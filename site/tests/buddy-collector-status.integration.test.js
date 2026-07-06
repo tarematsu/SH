@@ -15,6 +15,13 @@ test('missing buddy collector heartbeat is reported as never collected', () => {
   assert.equal(status.last_success_at, null);
 });
 
+test('malformed buddy collector metadata is reported as unknown', () => {
+  const status = buddyCollectorStatus({ last_seen_at: 1234, metadata_json: '{broken' });
+  assert.equal(status.status, 'unknown');
+  assert.equal(status.last_attempt_at, 1234);
+  assert.equal(status.failure_code, 'COLLECTOR_STATUS_INVALID');
+});
+
 test('a failed collection newer than playback data marks the feed stale', () => {
   const payload = attachBuddyCollectorStatus({
     latest_observed_at: 1000,
@@ -85,4 +92,22 @@ test('secondary playback endpoint exposes collector failure when no queue row ex
   assert.equal(body.collector.failure_code, 'STATIONHEAD_AUTH_ERROR');
   assert.equal(body.collector.last_error, 'authentication failed');
   assert.deepEqual(body.queue, []);
+});
+
+test('collector health read failure does not take down the playback endpoint', async () => {
+  const db = new FakeD1Database()
+    .route('first', 'sh_collector_heartbeats', () => {
+      throw new Error('D1 temporary read failure');
+    })
+    .route('first', 'sh_playback_channel_current', null);
+
+  const response = await onRequestGet({
+    request: new Request('https://skrzk.test/api/playback?channel=buddy46'),
+    env: { DB: db },
+  });
+  const body = await responseJson(response);
+
+  assert.equal(response.status, 200);
+  assert.equal(body.collector.status, 'unknown');
+  assert.equal(body.collector.failure_code, 'D1_READ_ERROR');
 });
