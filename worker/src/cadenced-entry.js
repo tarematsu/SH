@@ -4,6 +4,7 @@ import {
 } from './buddy-playback.js';
 import { collectBuddyPlaybackGuarded } from './buddy-collection-runner.js';
 import { recordBuddyFailure, recordBuddySuccess } from './buddy-health.js';
+import { sanitizeFailureDetail } from './collector-failure.js';
 import coreApp from './scheduled-main.js';
 import diagnosticApp from './health-alert-index.js';
 
@@ -48,7 +49,7 @@ function safeNow(now) {
 function healthWriteError(event, error) {
   console.error(JSON.stringify({
     event,
-    error: String(error?.message || error),
+    error: sanitizeFailureDetail(error?.message || error),
   }));
 }
 
@@ -81,7 +82,7 @@ export function scheduleBuddyPlayback(
         .catch((healthError) => healthWriteError('buddy_playback_health_failure_write_failed', healthError));
       console.error(JSON.stringify({
         event: 'buddy_playback_collection_failed',
-        error: String(error?.message || error),
+        error: sanitizeFailureDetail(error?.message || error),
       }));
       return { skipped: true, reason: 'collection-failed' };
     }
