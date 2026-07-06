@@ -82,6 +82,21 @@ CREATE INDEX IF NOT EXISTS idx_sh_sh_queue_items_spotify ON sh_queue_items(spoti
 CREATE INDEX IF NOT EXISTS idx_sh_queue_items_isrc_observed_spotify
   ON sh_queue_items(isrc, observed_at DESC, spotify_id);
 
+CREATE TABLE IF NOT EXISTS sh_playback_channel_current (
+  channel_alias TEXT PRIMARY KEY,
+  station_id INTEGER,
+  queue_id INTEGER,
+  start_time INTEGER,
+  is_paused INTEGER NOT NULL DEFAULT 0,
+  is_broadcasting INTEGER NOT NULL DEFAULT 0,
+  host_account_id INTEGER,
+  host_handle TEXT,
+  state_hash TEXT NOT NULL,
+  queue_json TEXT NOT NULL,
+  checked_at INTEGER NOT NULL,
+  changed_at INTEGER NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS sh_raw_events (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   observed_at INTEGER NOT NULL,
