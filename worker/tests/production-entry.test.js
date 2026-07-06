@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
 import { runProductionScheduled } from '../src/production-entry.js';
@@ -25,4 +26,10 @@ test('production cron schedules buddy46 before delegating to the resilient colle
   assert.equal(calls.length, 2);
   assert.deepEqual(calls[0], ['buddy', env, ctx, 300_000]);
   assert.deepEqual(calls[1], ['primary', controller, env, ctx]);
+});
+
+test('Wrangler deploys the production cron wrapper', () => {
+  const config = JSON.parse(readFileSync(new URL('../wrangler.jsonc', import.meta.url), 'utf8'));
+  assert.equal(config.main, 'src/production-entry.js');
+  assert.deepEqual(config.triggers?.crons, ['* * * * *']);
 });
