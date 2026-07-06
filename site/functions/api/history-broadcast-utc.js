@@ -1,5 +1,6 @@
-export const BROADCAST_SESSION_GAP_MS=6*60*60*1000;
-export function broadcastSummarySql(source){
+export const BROADCAST_SESSION_GAP_MS = 6 * 60 * 60 * 1000;
+
+export function broadcastSummarySql(source) {
   return `WITH eligible AS (
   SELECT id,observed_at,listener_count,track_title,artist_name,likes,host_handle,source_note,
     lower(trim(source_note)) AS event_key,lower(trim(host_handle)) AS host_key
@@ -38,13 +39,24 @@ SELECT event_name,started_at,ended_at,started_utc,ended_utc,
   sample_count,listener_avg,listener_min,listener_max,likes_max,distinct_tracks,host_handle,1 AS has_data
 FROM summaries
 UNION ALL
-SELECT NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,0
+SELECT NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,
+  EXISTS(SELECT 1 FROM ${source}
+    WHERE lower(trim(host_handle))='sakurazaka46jp'
+      AND source_note IS NOT NULL AND trim(source_note)<>'') AS has_data
 WHERE NOT EXISTS(SELECT 1 FROM summaries)
 ORDER BY started_at ASC`;
 }
-export const BROADCAST_SUMMARY_SQL=broadcastSummarySql('sh_legacy_history_rows');
-export function parseBroadcastSummaryRows(resultRows){
-  const rows=[];let hasData=false;
-  for(const source of resultRows||[]){if(Number(source?.has_data)===1)hasData=true;if(source?.event_name==null)continue;const{has_data:ignored,...row}=source;rows.push(row);}
-  return{rows,setupRequired:rows.length===0&&!hasData};
+
+export const BROADCAST_SUMMARY_SQL = broadcastSummarySql('sh_legacy_history_rows');
+
+export function parseBroadcastSummaryRows(resultRows) {
+  const rows = [];
+  let hasData = false;
+  for (const source of resultRows || []) {
+    if (Number(source?.has_data) === 1) hasData = true;
+    if (source?.event_name == null) continue;
+    const { has_data: ignored, ...row } = source;
+    rows.push(row);
+  }
+  return { rows, setupRequired: rows.length === 0 && !hasData };
 }
