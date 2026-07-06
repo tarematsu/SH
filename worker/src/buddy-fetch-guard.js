@@ -28,6 +28,13 @@ function unwrapPayload(payload) {
     || payload;
 }
 
+function handleStationUrl(sourceUrl, alias) {
+  const url = new URL(sourceUrl.toString());
+  url.pathname = `/station/handle/${encodeURIComponent(alias)}/guest`;
+  url.search = '';
+  return url;
+}
+
 export function normalizeBuddyQueuePayload(payload, expectedAlias = 'buddy46') {
   const source = unwrapPayload(payload);
   if (!source || typeof source !== 'object' || Array.isArray(source)) return source;
@@ -103,16 +110,23 @@ export function validateBuddyQueuePayload(payload, expectedAlias = 'buddy46') {
 
 export function createBuddyGuardedFetch(baseFetch = fetch, expectedAlias = 'buddy46') {
   return async (input, init) => {
-    const response = await baseFetch(input, init);
-    if (!response?.ok) return response;
-
     const value = requestUrl(input);
-    if (!value) return response;
+    if (!value) return baseFetch(input, init);
     const url = new URL(value);
-    const match = url.pathname.match(/\/channels\/alias\/([^/]+)$/i);
-    if (!match || decodeURIComponent(match[1]).toLowerCase() !== expectedAlias.toLowerCase()) {
-      return response;
+    const channelMatch = url.pathname.match(/\/channels\/alias\/([^/]+)$/i);
+    const handleMatch = url.pathname.match(/\/station\/handle\/([^/]+)\/guest$/i);
+    const requestedAlias = decodeURIComponent(channelMatch?.[1] || handleMatch?.[1] || '').toLowerCase();
+    if (requestedAlias !== expectedAlias.toLowerCase()) {
+      return baseFetch(input, init);
     }
+
+    const requestUrlValue = channelMatch ? handleStationUrl(url, expectedAlias).toString() : url.toString();
+    const response = await baseFetch(requestUrlValue, {
+      ...init,
+      method: 'POST',
+      body: '',
+    });
+    if (!response?.ok) return response;
 
     const payload = normalizeBuddyQueuePayload(await response.clone().json(), expectedAlias);
     validateBuddyQueuePayload(payload, expectedAlias);
