@@ -21,11 +21,11 @@ function gitOutput(repositoryRoot, args) {
 
 export function changedMigrationNames(repositoryRoot) {
   const baselineOutput = gitOutput(repositoryRoot, [
-    'diff', '--name-only', '--diff-filter=AM',
+    'diff', '--name-only', '--diff-filter=ACDMR',
     `${TOKENLESS_SCHEMA_BASELINE}..HEAD`, '--', 'database/migrations',
   ]);
   const output = baselineOutput ?? gitOutput(repositoryRoot, [
-    'diff-tree', '--no-commit-id', '--name-only', '--diff-filter=AM', '-r',
+    'diff-tree', '--no-commit-id', '--name-only', '--diff-filter=ACDMR', '-r',
     'HEAD', '--', 'database/migrations',
   ]);
   if (output == null) {
