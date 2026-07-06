@@ -34,7 +34,8 @@ export function text(value) {
 }
 
 export function isAppleMusicKey(key) {
-  return String(key || '').replace(/[_\s-]+/g, '').toLowerCase().includes('applemusic');
+  const normalized = String(key || '').replace(/[_\s-]+/g, '').toLowerCase();
+  return normalized === 'apple' || normalized.includes('applemusic');
 }
 
 export function stripAppleMusicFields(value) {
