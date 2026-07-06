@@ -2,7 +2,8 @@ import {
   buddyPlaybackConfig,
   shouldRunBuddyPlayback,
 } from './buddy-playback.js';
-import { collectBuddyPlaybackGuarded } from './buddy-fetch-guard.js';
+import { collectBuddyPlaybackGuarded } from './buddy-collection-runner.js';
+import { recordBuddyFailure, recordBuddySuccess } from './buddy-health.js';
 import coreApp from './scheduled-main.js';
 import diagnosticApp from './health-alert-index.js';
 
@@ -39,6 +40,18 @@ export function scheduledTimestamp(controller, fallback = Date.now()) {
   return Number.isFinite(value) && value >= 0 ? value : fallback;
 }
 
+function safeNow(now) {
+  const value = Number(now());
+  return Number.isFinite(value) ? value : Date.now();
+}
+
+function healthWriteError(event, error) {
+  console.error(JSON.stringify({
+    event,
+    error: String(error?.message || error),
+  }));
+}
+
 export function scheduleBuddyPlayback(
   env,
   ctx,
@@ -56,16 +69,23 @@ export function scheduleBuddyPlayback(
     return buddyPlaybackFlight;
   }
 
-  const observedAt = Number(now());
-  const task = Promise.resolve()
-    .then(() => runner(env, Number.isFinite(observedAt) ? observedAt : Date.now()))
-    .catch((error) => {
+  const observedAt = safeNow(now);
+  const task = Promise.resolve().then(async () => {
+    try {
+      const result = await runner(env, observedAt);
+      await recordBuddySuccess(env, config.alias, result, safeNow(now))
+        .catch((error) => healthWriteError('buddy_playback_health_success_write_failed', error));
+      return result;
+    } catch (error) {
+      await recordBuddyFailure(env, config.alias, error, safeNow(now))
+        .catch((healthError) => healthWriteError('buddy_playback_health_failure_write_failed', healthError));
       console.error(JSON.stringify({
         event: 'buddy_playback_collection_failed',
         error: String(error?.message || error),
       }));
       return { skipped: true, reason: 'collection-failed' };
-    });
+    }
+  });
   buddyPlaybackFlight = task.finally(() => {
     if (buddyPlaybackFlight === task || buddyPlaybackFlight === wrappedTask) {
       buddyPlaybackFlight = null;
