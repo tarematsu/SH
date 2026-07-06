@@ -1,7 +1,6 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
-import { fileURLToPath } from 'node:url';
 
 const DEFAULT_URL = 'https://www.stationhead.com/buddy46';
 const DEFAULT_DURATION_MS = 45_000;
@@ -144,43 +143,49 @@ async function main() {
   const candidates = [];
   const consoleMessages = [];
   const errors = [];
+  const responseTasks = [];
 
   page.on('console', (message) => {
     consoleMessages.push({ type: message.type(), text: truncate(message.text(), 1000) });
   });
   page.on('pageerror', (error) => errors.push({ message: error.message, stack: truncate(error.stack, 2000) }));
-  page.on('response', async (response) => {
-    const request = response.request();
-    const url = response.url();
-    const entry = {
-      url,
-      status: response.status(),
-      method: request.method(),
-      resource_type: request.resourceType(),
-      source: classifyUrl(url),
-      from_service_worker: response.fromServiceWorker(),
-      timing: response.timing(),
-    };
-    network.push(entry);
+  page.on('response', (response) => {
+    const task = (async () => {
+      const request = response.request();
+      const url = response.url();
+      const entry = {
+        url,
+        status: response.status(),
+        method: request.method(),
+        resource_type: request.resourceType(),
+        source: classifyUrl(url),
+        from_service_worker: response.fromServiceWorker(),
+        timing: response.timing(),
+      };
+      network.push(entry);
 
-    if (!['stationhead-api', 'stationhead-web'].includes(entry.source)) return;
-    const { headers, text, json } = await maybeJson(response);
-    entry.content_type = headers['content-type'] || headers['Content-Type'] || null;
-    if (!text || !containsKeyword(`${url}\n${text}`)) return;
+      if (!['stationhead-api', 'stationhead-web'].includes(entry.source)) return;
+      const { headers, text, json } = await maybeJson(response);
+      entry.content_type = headers['content-type'] || headers['Content-Type'] || null;
+      if (!text || !containsKeyword(`${url}\n${text}`)) return;
 
-    const filename = `${String(candidates.length + 1).padStart(3, '0')}-${safeName(new URL(url).pathname)}-${hash(url)}.${json ? 'json' : 'txt'}`;
-    await writeFile(path.join(outDir, filename), json ? `${JSON.stringify(json, null, 2)}\n` : text);
-    candidates.push({
-      url,
-      status: entry.status,
-      method: entry.method,
-      resource_type: entry.resource_type,
-      content_type: entry.content_type,
-      file: filename,
-      keyword_hit: KEYWORDS.filter((keyword) => containsKeyword(`${url}\n${text}`) && `${url}\n${text}`.toLowerCase().includes(keyword.toLowerCase())),
-      json_summary: json ? summarizeJson(json) : null,
-      text_preview: json ? null : truncate(text, 1000),
+      const filename = `${String(candidates.length + 1).padStart(3, '0')}-${safeName(new URL(url).pathname)}-${hash(url)}.${json ? 'json' : 'txt'}`;
+      await writeFile(path.join(outDir, filename), json ? `${JSON.stringify(json, null, 2)}\n` : text);
+      candidates.push({
+        url,
+        status: entry.status,
+        method: entry.method,
+        resource_type: entry.resource_type,
+        content_type: entry.content_type,
+        file: filename,
+        keyword_hit: KEYWORDS.filter((keyword) => `${url}\n${text}`.toLowerCase().includes(keyword.toLowerCase())),
+        json_summary: json ? summarizeJson(json) : null,
+        text_preview: json ? null : truncate(text, 1000),
+      });
+    })().catch((error) => {
+      errors.push({ message: `response capture failed: ${error.message}`, stack: truncate(error.stack, 2000) });
     });
+    responseTasks.push(task);
   });
 
   await page.goto(targetUrl, { waitUntil: 'domcontentloaded', timeout: 60_000 });
@@ -188,6 +193,7 @@ async function main() {
   const clicked = shouldClick ? await autoClick(page, outDir) : null;
   if (clicked) await page.waitForTimeout(5000);
   await page.waitForTimeout(Math.max(1000, Number.isFinite(durationMs) ? durationMs : DEFAULT_DURATION_MS));
+  await Promise.allSettled(responseTasks);
 
   const pageState = await page.evaluate(() => {
     const text = document.body?.innerText || '';
