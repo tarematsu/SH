@@ -18,6 +18,7 @@ Thumbs.db
 
 # Generated local tooling state and diagnostic captures
 .wrangler/
+.stationhead-discovery/
 collector/.leaderboard-capture-browser/
 collector/.profile-capture-browser/
 collector/captures/

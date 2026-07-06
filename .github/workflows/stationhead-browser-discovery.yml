@@ -1,0 +1,93 @@
+name: Stationhead browser discovery
+
+on:
+  workflow_dispatch:
+    inputs:
+      url:
+        description: 'Stationhead page URL to inspect'
+        required: true
+        default: 'https://www.stationhead.com/buddy46'
+      duration_ms:
+        description: 'Extra wait time after page load, in milliseconds'
+        required: true
+        default: '45000'
+      auto_click:
+        description: 'Try clicking the first listen/play/join-style control'
+        required: true
+        type: boolean
+        default: false
+      headed:
+        description: 'Run with a visible browser through xvfb-run'
+        required: true
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  discover:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      DISCOVERY_OUT: .stationhead-discovery/actions
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Run Stationhead discovery headless
+        if: ${{ !inputs.headed }}
+        run: |
+          ARGS=(
+            --url="${{ inputs.url }}"
+            --duration-ms="${{ inputs.duration_ms }}"
+            --out="$DISCOVERY_OUT"
+          )
+          if [ "${{ inputs.auto_click }}" = "true" ]; then
+            ARGS+=(--auto-click)
+          fi
+          npm run discover:stationhead -- "${ARGS[@]}"
+
+      - name: Run Stationhead discovery headed
+        if: ${{ inputs.headed }}
+        run: |
+          ARGS=(
+            --url="${{ inputs.url }}"
+            --duration-ms="${{ inputs.duration_ms }}"
+            --out="$DISCOVERY_OUT"
+            --headed
+          )
+          if [ "${{ inputs.auto_click }}" = "true" ]; then
+            ARGS+=(--auto-click)
+          fi
+          xvfb-run --auto-servernum npm run discover:stationhead -- "${ARGS[@]}"
+
+      - name: Print summary
+        if: always()
+        run: |
+          if [ -f "$DISCOVERY_OUT/summary.md" ]; then
+            cat "$DISCOVERY_OUT/summary.md"
+          else
+            echo "No discovery summary was generated."
+          fi
+
+      - name: Upload discovery artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stationhead-browser-discovery
+          path: .stationhead-discovery/
+          if-no-files-found: warn
+          retention-days: 7
