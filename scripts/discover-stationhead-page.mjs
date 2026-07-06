@@ -6,7 +6,7 @@ const DEFAULT_URL = 'https://www.stationhead.com/buddy46';
 const DEFAULT_DURATION_MS = 45_000;
 const KEYWORDS = [
   'queue', 'queue_tracks', 'current_station', 'station', 'broadcast', 'spotify_id',
-  'apple_music_id', 'deezer_id', 'track', 'tracks', 'chatHistory', 'station/handle',
+  'deezer_id', 'track', 'tracks', 'chatHistory', 'station/handle',
   'channels/alias', 'playback', 'now_playing', 'is_broadcasting',
 ];
 
@@ -160,7 +160,7 @@ async function main() {
         resource_type: request.resourceType(),
         source: classifyUrl(url),
         from_service_worker: response.fromServiceWorker(),
-        timing: response.timing(),
+        timing: typeof response.timing === 'function' ? response.timing() : null,
       };
       network.push(entry);
 

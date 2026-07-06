@@ -42,7 +42,6 @@ test('playback endpoint maps a live queue into current-track state and cache hea
     queue_track_id: 1001,
     stationhead_track_id: 2001,
     spotify_id: 'spotify-track-1',
-    apple_music_id: null,
     deezer_id: null,
     isrc: 'JPTEST000001',
     duration_ms: 180_000,
@@ -70,6 +69,7 @@ test('playback endpoint maps a live queue into current-track state and cache hea
   assert.equal(body.queue[0].is_current, true);
   assert.equal(body.queue[0].title, 'Integration Song');
   assert.equal(body.queue[0].artist, 'Integration Artist');
+  assert.equal('apple_music_id' in body.queue[0], false);
   assert.match(body.queue_revision, /^[a-z0-9_-]+/i);
 });
 

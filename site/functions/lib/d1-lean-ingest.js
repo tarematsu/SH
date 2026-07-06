@@ -170,7 +170,6 @@ export function queueStructuralPayload(data) {
       queue_track_id: num(track?.queue_track_id),
       stationhead_track_id: num(track?.stationhead_track_id),
       spotify_id: text(track?.spotify_id),
-      apple_music_id: text(track?.apple_music_id),
       deezer_id: text(track?.deezer_id),
       isrc: text(track?.isrc),
       duration_ms: num(track?.duration_ms),
@@ -193,7 +192,6 @@ function structuralItemState(track, queueId = null) {
     queue_track_id: num(track?.queue_track_id),
     stationhead_track_id: num(track?.stationhead_track_id),
     spotify_id: text(track?.spotify_id),
-    apple_music_id: text(track?.apple_music_id),
     deezer_id: text(track?.deezer_id),
     isrc: text(track?.isrc),
     duration_ms: num(track?.duration_ms),
@@ -229,7 +227,7 @@ function queueItemLookupStatements(db, stationId, startTime, positions) {
   return chunks(positions, QUERY_CHUNK).filter((group) => group.length).map((group) => {
     const placeholders = group.map(() => '?').join(',');
     return db.prepare(`SELECT position,queue_id,queue_track_id,stationhead_track_id,
-      spotify_id,apple_music_id,deezer_id,isrc,duration_ms,preview_url
+      spotify_id,deezer_id,isrc,duration_ms,preview_url
       FROM sh_queue_items
       WHERE station_id IS ? AND start_time IS ? AND position IN (${placeholders})`)
       .bind(stationId, startTime, ...group);
@@ -285,13 +283,13 @@ function queueItemWriteStatements(db, tracks, observedAt, stationId, queueId, st
     ON CONFLICT(station_id,start_time,position) DO UPDATE SET
       observed_at=excluded.observed_at,queue_id=excluded.queue_id,
       queue_track_id=excluded.queue_track_id,stationhead_track_id=excluded.stationhead_track_id,
-      spotify_id=excluded.spotify_id,apple_music_id=excluded.apple_music_id,
+      spotify_id=excluded.spotify_id,apple_music_id=NULL,
       deezer_id=excluded.deezer_id,isrc=excluded.isrc,duration_ms=excluded.duration_ms,
       preview_url=excluded.preview_url,raw_json=excluded.raw_json`)
     .bind(
       observedAt, stationId, queueId, startTime, num(track?.position),
       num(track?.queue_track_id), num(track?.stationhead_track_id),
-      text(track?.spotify_id), text(track?.apple_music_id), text(track?.deezer_id),
+      text(track?.spotify_id), null, text(track?.deezer_id),
       text(track?.isrc), num(track?.duration_ms), text(track?.preview_url),
       num(track?.bite_count), compactQueueItemRaw(track),
     ));
@@ -305,12 +303,12 @@ function likeWriteStatements(db, observations, observedAt, stationId, queueId, s
     ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(station_id,track_key) DO UPDATE SET
       queue_id=excluded.queue_id,start_time=excluded.start_time,position=excluded.position,
       queue_track_id=excluded.queue_track_id,stationhead_track_id=excluded.stationhead_track_id,
-      spotify_id=excluded.spotify_id,apple_music_id=excluded.apple_music_id,isrc=excluded.isrc,
+      spotify_id=excluded.spotify_id,apple_music_id=NULL,isrc=excluded.isrc,
       like_count=excluded.like_count,observed_at=excluded.observed_at`)
       .bind(
         stationId, trackKey, queueId, startTime, num(track?.position),
         num(track?.queue_track_id), num(track?.stationhead_track_id),
-        text(track?.spotify_id), text(track?.apple_music_id), text(track?.isrc),
+        text(track?.spotify_id), null, text(track?.isrc),
         num(track?.bite_count), observedAt,
       ),
     db.prepare(`INSERT INTO sh_track_like_observations (
@@ -320,7 +318,7 @@ function likeWriteStatements(db, observations, observedAt, stationId, queueId, s
     ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).bind(
       observedAt, stationId, queueId, startTime, num(track?.position),
       num(track?.queue_track_id), num(track?.stationhead_track_id),
-      text(track?.spotify_id), text(track?.apple_music_id), text(track?.isrc),
+      text(track?.spotify_id), null, text(track?.isrc),
       trackKey, num(track?.bite_count), 'collector', rawJson({ bite_count: num(track?.bite_count) }),
     ),
   ]);
