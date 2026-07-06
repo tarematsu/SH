@@ -4,8 +4,15 @@ import { computePlayback, normalizePlaybackTrack } from '../lib/playback.js';
 import { hostIdentity, queueRevision, stateFromQueue } from '../lib/queue-state.js';
 
 const CACHE_CONTROL = 'public, max-age=5, s-maxage=10, stale-while-revalidate=30';
+const DEFAULT_CHANNEL_ALIAS = 'buddies';
+const SECONDARY_STALE_MS = 15 * 60_000;
 
 export { computePlayback };
+
+export const SECONDARY_PLAYBACK_SQL = `SELECT channel_alias,station_id,queue_id,start_time,
+  is_paused,is_broadcasting,host_account_id,host_handle,state_hash,queue_json,
+  checked_at,changed_at
+FROM sh_playback_channel_current WHERE channel_alias=? LIMIT 1`;
 
 export const PLAYBACK_FEED_SQL = `WITH latest_channel AS (
   SELECT observed_at,station_id,is_broadcasting,host_account_id,host_handle,broadcast_start_time
@@ -56,12 +63,115 @@ export function parsePlaybackFeedRows(rows = []) {
   return { latest, latestQueue, queue };
 }
 
-export async function onRequestGet({ env }) {
+function requestedChannel(request) {
+  if (!request?.url) return DEFAULT_CHANNEL_ALIAS;
+  const value = new URL(request.url).searchParams.get('channel');
+  return String(value || DEFAULT_CHANNEL_ALIAS).trim().toLowerCase() || DEFAULT_CHANNEL_ALIAS;
+}
+
+function parseQueueJson(value) {
+  if (!value) return [];
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function storedBoolean(value) {
+  return value === true || Number(value) === 1;
+}
+
+export function secondaryPlaybackPayload(row, generatedAt = Date.now()) {
+  const alias = String(row?.channel_alias || '').trim() || null;
+  if (!row) {
+    return {
+      ok: true,
+      channel_alias: alias,
+      generated_at: generatedAt,
+      latest_observed_at: null,
+      queue_observed_at: null,
+      station_id: null,
+      is_broadcasting: false,
+      playing: false,
+      stale: true,
+      queue_revision: null,
+      queue_status: null,
+      queue: [],
+    };
+  }
+
+  const checkedAt = num(row.checked_at);
+  const startTime = num(row.start_time);
+  const stationId = num(row.station_id);
+  const queueId = num(row.queue_id);
+  const source = parseQueueJson(row.queue_json);
+  const rows = source.map((track, index) => ({
+    ...track,
+    observed_at: checkedAt,
+    station_id: stationId,
+    queue_id: queueId,
+    start_time: startTime,
+    position: num(track?.position) ?? index,
+  }));
+  const playback = computePlayback(rows, generatedAt);
+  const queue = rows.map((track, index) => normalizePlaybackTrack(track, index, playback));
+  const paused = storedBoolean(row.is_paused);
+  const broadcasting = storedBoolean(row.is_broadcasting);
+  const playing = broadcasting && !paused && playback.currentIndex >= 0;
+
+  return {
+    ok: true,
+    channel_alias: alias,
+    generated_at: generatedAt,
+    latest_observed_at: checkedAt,
+    queue_observed_at: checkedAt,
+    changed_at: num(row.changed_at),
+    station_id: stationId,
+    is_broadcasting: broadcasting,
+    host_account_id: num(row.host_account_id),
+    host_handle: row.host_handle || null,
+    playing,
+    stale: checkedAt == null || generatedAt - checkedAt > SECONDARY_STALE_MS,
+    queue_revision: row.state_hash || null,
+    queue_status: {
+      queue_id: queueId,
+      start_time: startTime,
+      is_paused: paused,
+      playing,
+      current_index: playback.currentIndex,
+      progress_ms: playback.progressMs,
+      anchor_at: playback.anchorAt,
+      queue_end_at: playback.queueEndAt,
+      total_items: queue.length,
+    },
+    queue,
+  };
+}
+
+async function secondaryPlaybackResponse(db, alias, generatedAt) {
+  const row = await db.prepare(SECONDARY_PLAYBACK_SQL).bind(alias).first();
+  const payload = row
+    ? secondaryPlaybackPayload(row, generatedAt)
+    : {
+      ...secondaryPlaybackPayload(null, generatedAt),
+      channel_alias: alias,
+    };
+  return json(payload, 200, CACHE_CONTROL);
+}
+
+export async function onRequestGet({ request, env }) {
   const db = env.DB;
   if (!db) return json({ ok: false, error: 'DB binding missing' }, 500, 'no-store');
 
   try {
     const generatedAt = Date.now();
+    const channelAlias = requestedChannel(request);
+    if (channelAlias !== DEFAULT_CHANNEL_ALIAS) {
+      return await secondaryPlaybackResponse(db, channelAlias, generatedAt);
+    }
+
     const result = await db.prepare(PLAYBACK_FEED_SQL).all();
     const { latest, latestQueue, queue: rows } = parsePlaybackFeedRows(result.results || []);
     const revision = queueRevision(stateFromQueue(latestQueue, rows), hostIdentity(latest));
@@ -69,6 +179,7 @@ export async function onRequestGet({ env }) {
     if (!latestQueue) {
       return json({
         ok: true,
+        channel_alias: DEFAULT_CHANNEL_ALIAS,
         generated_at: generatedAt,
         latest_observed_at: num(latest?.observed_at),
         station_id: num(latest?.station_id),
@@ -88,6 +199,7 @@ export async function onRequestGet({ env }) {
 
     return json({
       ok: true,
+      channel_alias: DEFAULT_CHANNEL_ALIAS,
       generated_at: generatedAt,
       latest_observed_at: num(latest?.observed_at),
       queue_observed_at: num(latestQueue.observed_at),
