@@ -73,40 +73,54 @@ function parseQueueJson(value) {
   if (!value) return [];
   try {
     const parsed = JSON.parse(value);
-    return Array.isArray(parsed) ? parsed : [];
+    return Array.isArray(parsed) ? parsed : null;
   } catch {
-    return [];
+    return null;
   }
 }
 
 function storedBoolean(value) {
-  return value === true || Number(value) === 1;
+  if (value === true || value === 1) return true;
+  if (value === false || value === 0 || value == null || value === '') return false;
+  const normalized = String(value).trim().toLowerCase();
+  return ['true', '1', 'yes', 'on'].includes(normalized);
+}
+
+function missingPlaybackTable(error) {
+  return /no such table:\s*sh_playback_channel_current/i.test(String(error?.message || error));
+}
+
+function emptySecondaryPayload(alias, generatedAt, setupRequired = false) {
+  return {
+    ok: true,
+    channel_alias: alias || null,
+    generated_at: generatedAt,
+    latest_observed_at: null,
+    queue_observed_at: null,
+    changed_at: null,
+    station_id: null,
+    is_broadcasting: false,
+    playing: false,
+    stale: true,
+    setup_required: setupRequired,
+    queue_revision: null,
+    queue_status: null,
+    queue: [],
+  };
 }
 
 export function secondaryPlaybackPayload(row, generatedAt = Date.now()) {
   const alias = String(row?.channel_alias || '').trim() || null;
-  if (!row) {
-    return {
-      ok: true,
-      channel_alias: alias,
-      generated_at: generatedAt,
-      latest_observed_at: null,
-      queue_observed_at: null,
-      station_id: null,
-      is_broadcasting: false,
-      playing: false,
-      stale: true,
-      queue_revision: null,
-      queue_status: null,
-      queue: [],
-    };
-  }
+  if (!row) return emptySecondaryPayload(alias, generatedAt);
 
   const checkedAt = num(row.checked_at);
+  const changedAt = num(row.changed_at);
   const startTime = num(row.start_time);
   const stationId = num(row.station_id);
   const queueId = num(row.queue_id);
-  const source = parseQueueJson(row.queue_json);
+  const parsed = parseQueueJson(row.queue_json);
+  const queueCorrupt = parsed === null;
+  const source = parsed || [];
   const rows = source.map((track, index) => ({
     ...track,
     observed_at: checkedAt,
@@ -115,11 +129,21 @@ export function secondaryPlaybackPayload(row, generatedAt = Date.now()) {
     start_time: startTime,
     position: num(track?.position) ?? index,
   }));
-  const playback = computePlayback(rows, generatedAt);
-  const queue = rows.map((track, index) => normalizePlaybackTrack(track, index, playback));
   const paused = storedBoolean(row.is_paused);
   const broadcasting = storedBoolean(row.is_broadcasting);
-  const playing = broadcasting && !paused && playback.currentIndex >= 0;
+  const playbackAt = paused
+    ? changedAt ?? checkedAt ?? generatedAt
+    : generatedAt;
+  const computed = computePlayback(rows, playbackAt);
+  const ended = !paused
+    && computed.queueEndAt != null
+    && playbackAt >= computed.queueEndAt
+    && rows.length > 0;
+  const playback = ended
+    ? { ...computed, currentIndex: -1, progressMs: 0, anchorAt: null }
+    : computed;
+  const queue = rows.map((track, index) => normalizePlaybackTrack(track, index, playback));
+  const playing = broadcasting && !paused && !ended && playback.currentIndex >= 0;
 
   return {
     ok: true,
@@ -127,19 +151,22 @@ export function secondaryPlaybackPayload(row, generatedAt = Date.now()) {
     generated_at: generatedAt,
     latest_observed_at: checkedAt,
     queue_observed_at: checkedAt,
-    changed_at: num(row.changed_at),
+    changed_at: changedAt,
     station_id: stationId,
     is_broadcasting: broadcasting,
     host_account_id: num(row.host_account_id),
     host_handle: row.host_handle || null,
     playing,
-    stale: checkedAt == null || generatedAt - checkedAt > SECONDARY_STALE_MS,
+    stale: queueCorrupt || checkedAt == null || generatedAt - checkedAt > SECONDARY_STALE_MS,
+    queue_corrupt: queueCorrupt,
+    setup_required: false,
     queue_revision: row.state_hash || null,
     queue_status: {
       queue_id: queueId,
       start_time: startTime,
       is_paused: paused,
       playing,
+      ended,
       current_index: playback.currentIndex,
       progress_ms: playback.progressMs,
       anchor_at: playback.anchorAt,
@@ -151,14 +178,19 @@ export function secondaryPlaybackPayload(row, generatedAt = Date.now()) {
 }
 
 async function secondaryPlaybackResponse(db, alias, generatedAt) {
-  const row = await db.prepare(SECONDARY_PLAYBACK_SQL).bind(alias).first();
-  const payload = row
-    ? secondaryPlaybackPayload(row, generatedAt)
-    : {
-      ...secondaryPlaybackPayload(null, generatedAt),
-      channel_alias: alias,
-    };
-  return json(payload, 200, CACHE_CONTROL);
+  try {
+    const row = await db.prepare(SECONDARY_PLAYBACK_SQL).bind(alias).first();
+    return json(
+      row ? secondaryPlaybackPayload(row, generatedAt) : emptySecondaryPayload(alias, generatedAt),
+      200,
+      CACHE_CONTROL,
+    );
+  } catch (error) {
+    if (missingPlaybackTable(error)) {
+      return json(emptySecondaryPayload(alias, generatedAt, true), 200, CACHE_CONTROL);
+    }
+    throw error;
+  }
 }
 
 export async function onRequestGet({ request, env }) {
@@ -183,7 +215,7 @@ export async function onRequestGet({ request, env }) {
         generated_at: generatedAt,
         latest_observed_at: num(latest?.observed_at),
         station_id: num(latest?.station_id),
-        is_broadcasting: Boolean(latest?.is_broadcasting),
+        is_broadcasting: storedBoolean(latest?.is_broadcasting),
         host_handle: latest?.host_handle || null,
         queue_revision: revision,
         queue_status: null,
@@ -193,8 +225,8 @@ export async function onRequestGet({ request, env }) {
 
     const playback = computePlayback(rows, generatedAt);
     const queue = rows.map((track, index) => normalizePlaybackTrack(track, index, playback));
-    const paused = Boolean(latestQueue.is_paused);
-    const broadcasting = latest?.is_broadcasting !== 0 && latest?.is_broadcasting !== false;
+    const paused = storedBoolean(latestQueue.is_paused);
+    const broadcasting = storedBoolean(latest?.is_broadcasting);
     const playing = broadcasting && !paused && playback.currentIndex >= 0;
 
     return json({
