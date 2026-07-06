@@ -9,9 +9,9 @@
   if (!allButton) return;
 
   allButton.onclick = () => {
-    document.getElementById('to').value = todayJst();
+    document.getElementById('to').value = new Date().toISOString().slice(0, 10);
     document.getElementById('from').value = defaultFrom;
-    $$('.range-presets button').forEach((button) => {
+    document.querySelectorAll('.range-presets button').forEach((button) => {
       button.classList.toggle('active', button.dataset.days === 'all');
     });
     nextCursor = null;
