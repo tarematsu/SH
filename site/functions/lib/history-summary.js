@@ -24,14 +24,14 @@ function finiteNumber(value) {
   return Number.isFinite(number) ? number : null;
 }
 
-function todayJstString(now) {
-  return new Date(now + 9 * 3600000).toISOString().slice(0, 10);
+function todayUtcString(now) {
+  return new Date(now).toISOString().slice(0, 10);
 }
 
 function periodExpression(mode) {
-  if (mode === 'daily') return `strftime('%Y-%m-%d', observed_at / 1000, 'unixepoch', '+9 hours')`;
-  if (mode === 'monthly') return `strftime('%Y-%m', observed_at / 1000, 'unixepoch', '+9 hours')`;
-  return `date(observed_at / 1000,'unixepoch','+9 hours','-' || ((CAST(strftime('%w', observed_at / 1000, 'unixepoch', '+9 hours') AS INTEGER) + 6) % 7) || ' days')`;
+  if (mode === 'daily') return `strftime('%Y-%m-%d', observed_at / 1000, 'unixepoch')`;
+  if (mode === 'monthly') return `strftime('%Y-%m', observed_at / 1000, 'unixepoch')`;
+  return `date(observed_at / 1000,'unixepoch','-' || ((CAST(strftime('%w', observed_at / 1000, 'unixepoch') AS INTEGER) + 6) % 7) || ' days')`;
 }
 
 export function liveSummarySql(mode) {
@@ -104,7 +104,7 @@ function normalizeLiveRow(row) {
     likes_max: null,
     distinct_tracks: null,
     quality_score: 1,
-    quality_flags: '["live_collector"]',
+    quality_flags: '["live_collector","utc_period"]',
     live_collector: true,
   };
 }
@@ -153,7 +153,7 @@ export function combineSummaryRows(base, live) {
     member_end: memberEnd,
     member_growth: memberStart != null && memberEnd != null ? memberEnd - memberStart : null,
     primary_host: live.primary_host || base.primary_host,
-    quality_flags: '["historical_import","live_collector"]',
+    quality_flags: '["historical_import","live_collector","utc_period"]',
     live_collector: true,
   };
 }
@@ -165,7 +165,7 @@ export async function loadSummaryWithLive(env, mode, from, to, now = Date.now())
     `SELECT ${SUMMARY_COLUMNS} FROM ${table} WHERE period_key>=? AND period_key<=? ORDER BY period_key ASC LIMIT ?`,
   ).bind(from, to, limit).all();
   const baseRows = baseResult.results || [];
-  const fallbackTo = todayJstString(now);
+  const fallbackTo = todayUtcString(now);
   const fromTs = parseRangeStart(mode, from, '2024-06-01');
   const toTs = parseRangeStart(mode, to, fallbackTo) + DAY_MS;
   const lastBaseEnd = finiteNumber(baseRows.at(-1)?.period_end);
