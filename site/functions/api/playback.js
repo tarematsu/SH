@@ -142,8 +142,12 @@ export function secondaryPlaybackPayload(row, generatedAt = Date.now()) {
   const playback = ended
     ? { ...computed, currentIndex: -1, progressMs: 0, anchorAt: null }
     : computed;
-  const queue = rows.map((track, index) => normalizePlaybackTrack(track, index, playback));
-  const playing = broadcasting && !paused && !ended && playback.currentIndex >= 0;
+  const stale = queueCorrupt || checkedAt == null || generatedAt - checkedAt > SECONDARY_STALE_MS;
+  const visiblePlayback = stale
+    ? { ...playback, currentIndex: -1, progressMs: 0, anchorAt: null }
+    : playback;
+  const queue = rows.map((track, index) => normalizePlaybackTrack(track, index, visiblePlayback));
+  const playing = !stale && broadcasting && !paused && !ended && visiblePlayback.currentIndex >= 0;
 
   return {
     ok: true,
@@ -157,7 +161,7 @@ export function secondaryPlaybackPayload(row, generatedAt = Date.now()) {
     host_account_id: num(row.host_account_id),
     host_handle: row.host_handle || null,
     playing,
-    stale: queueCorrupt || checkedAt == null || generatedAt - checkedAt > SECONDARY_STALE_MS,
+    stale,
     queue_corrupt: queueCorrupt,
     setup_required: false,
     queue_revision: row.state_hash || null,
@@ -167,10 +171,10 @@ export function secondaryPlaybackPayload(row, generatedAt = Date.now()) {
       is_paused: paused,
       playing,
       ended,
-      current_index: playback.currentIndex,
-      progress_ms: playback.progressMs,
-      anchor_at: playback.anchorAt,
-      queue_end_at: playback.queueEndAt,
+      current_index: visiblePlayback.currentIndex,
+      progress_ms: visiblePlayback.progressMs,
+      anchor_at: visiblePlayback.anchorAt,
+      queue_end_at: visiblePlayback.queueEndAt,
       total_items: queue.length,
     },
     queue,
