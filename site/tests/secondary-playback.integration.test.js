@@ -9,7 +9,7 @@ import {
 import { FakeD1Database, responseJson } from './helpers/fake-d1.js';
 
 const migration = readFileSync(
-  new URL('../../database/migrations/107_add_secondary_playback_current.sql', import.meta.url),
+  new URL('../../database/migrations/127_add_secondary_playback_current.sql', import.meta.url),
   'utf8',
 );
 
