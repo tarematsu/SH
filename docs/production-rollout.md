@@ -10,7 +10,7 @@
 ## Deploy
 
 ```powershell
-cd C:\stationhead-monitor
+cd C:\Stationhead
 git pull
 
 cd worker
@@ -50,7 +50,7 @@ npx wrangler d1 execute stationhead-monitor --remote --command="SELECT id,phase,
 ## Enable local automatic failover
 
 ```powershell
-cd C:\stationhead-monitor\collector
+cd C:\Stationhead\collector
 npm install
 npm start
 ```
@@ -74,7 +74,7 @@ npm run start:active
 Then verify that logical claims retain Cloud priority 100 and that conflicts are audited rather than duplicated.
 
 ```powershell
-cd C:\stationhead-monitor\worker
+cd C:\Stationhead\worker
 npx wrangler d1 execute stationhead-monitor --remote --command="SELECT data_type,collector_id,source_priority,COUNT(*) AS count FROM sh_ingest_claims WHERE observed_at>unixepoch('now','-10 minutes')*1000 GROUP BY data_type,collector_id,source_priority;"
 
 npx wrangler d1 execute stationhead-monitor --remote --command="SELECT resolution,COUNT(*) AS count FROM sh_ingest_conflicts WHERE detected_at>unixepoch('now','-10 minutes')*1000 GROUP BY resolution;"
@@ -88,7 +88,7 @@ Worker code rollback does not require dropping the new tables or triggers. They 
 2. Start the local Collector directly:
 
 ```powershell
-cd C:\stationhead-monitor\collector
+cd C:\Stationhead\collector
 npm run start:direct
 ```
 
@@ -96,7 +96,7 @@ npm run start:direct
 4. To stop the email-to-weekly overlay only:
 
 ```powershell
-cd C:\stationhead-monitor\worker
+cd C:\Stationhead\worker
 npx wrangler d1 execute stationhead-monitor --remote --command="DROP TRIGGER IF EXISTS trg_sh_email_stream_weekly_insert; DROP TRIGGER IF EXISTS trg_sh_email_stream_weekly_update;"
 ```
 
