@@ -4,6 +4,7 @@ import test from 'node:test';
 
 import {
   onRequestGet as playbackGet,
+  onRequestOptions as playbackOptions,
   secondaryPlaybackPayload,
 } from '../functions/api/playback.js';
 import { FakeD1Database, responseJson } from './helpers/fake-d1.js';
@@ -126,8 +127,17 @@ test('secondary playback endpoint stays available before migration is applied', 
   const body = await responseJson(response);
 
   assert.equal(response.status, 200);
+  assert.equal(response.headers.get('access-control-allow-origin'), '*');
   assert.equal(body.channel_alias, 'buddy46');
   assert.equal(body.setup_required, true);
   assert.equal(body.stale, true);
   assert.deepEqual(body.queue, []);
+});
+
+test('playback endpoint answers CORS preflight without credentials', async () => {
+  const response = playbackOptions();
+  assert.equal(response.status, 204);
+  assert.equal(response.headers.get('access-control-allow-origin'), '*');
+  assert.equal(response.headers.get('access-control-allow-methods'), 'GET, OPTIONS');
+  assert.equal(response.headers.get('access-control-allow-headers'), 'Accept');
 });
