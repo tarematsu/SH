@@ -34,7 +34,7 @@ const discoveredHandleResponse = {
       id: 5000967664,
       track: {
         spotify_id: '3V0aOhJIgKTkzJy7uonAOz',
-        apple_music_id: '1588194501',
+        apple_music_id: 'example-non-spotify-id',
         deezer_id: '1508616832',
         duration: 273653,
         isrc: 'JPU902102712',
@@ -51,7 +51,7 @@ test('buddy46 collector targets the personal handle station endpoint', () => {
   assert.equal(buddyHandleStationPath('buddy46'), '/station/handle/buddy46/guest');
 });
 
-test('discovered handle station response validates and extracts playback', () => {
+test('discovered handle station response validates and extracts Spotify-only playback', () => {
   const normalized = normalizeBuddyQueuePayload(discoveredHandleResponse, 'buddy46');
   assert.equal(normalized.alias, 'buddy46');
   assert.doesNotThrow(() => validateBuddyChannelPayload(normalized, 'buddy46'));
