@@ -34,7 +34,10 @@ test('production cron runs primary before buddy46 collection', async () => {
   assert.equal(calls[0][2].marker, true);
   assert.equal(calls[0][2].__DEFER_BUDDY_PLAYBACK, true);
   assert.equal(calls[0][3], ctx);
-  assert.deepEqual(calls[1], ['buddy', env, ctx, 300_000]);
+  assert.equal(calls[1][0], 'buddy');
+  assert.equal(calls[1][1], env);
+  assert.equal(calls[1][2].waitUntil, undefined);
+  assert.equal(calls[1][3], 300_000);
   assert.equal(waitUntilTasks.length, 1);
   assert.equal(await waitUntilTasks[0], 'buddy-done');
 });
@@ -70,6 +73,34 @@ test('production cron attaches buddy46 collection to waitUntil after primary com
   releaseBuddy();
   await waitUntilTasks[0];
   assert.deepEqual(calls, ['primary-done', 'buddy-start', 'buddy-done']);
+});
+
+test('production cron still schedules buddy46 after a primary failure', async () => {
+  const calls = [];
+  const waitUntilTasks = [];
+  const primaryError = new Error('primary failed');
+  const run = runProductionScheduled(
+    { scheduledTime: 300_000 },
+    {},
+    { waitUntil(task) { waitUntilTasks.push(task); } },
+    {
+      scheduleBuddyPlayback() {
+        calls.push('buddy-start');
+        return Promise.resolve('buddy-done');
+      },
+      app: {
+        async scheduled() {
+          calls.push('primary-start');
+          throw primaryError;
+        },
+      },
+    },
+  );
+
+  await assert.rejects(run, primaryError);
+  assert.deepEqual(calls, ['primary-start', 'buddy-start']);
+  assert.equal(waitUntilTasks.length, 1);
+  assert.equal(await waitUntilTasks[0], 'buddy-done');
 });
 
 test('production primary env defers inner buddy playback without mutating the original env', () => {
