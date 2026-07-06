@@ -12,6 +12,12 @@ function present(value) {
   return value !== undefined && value !== null && value !== '';
 }
 
+function requestUrl(input) {
+  if (typeof input === 'string') return input;
+  if (input instanceof URL) return input.href;
+  return input?.url;
+}
+
 export function validateBuddyQueuePayload(payload, expectedAlias = 'buddy46') {
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
     throw new Error('Stationhead buddy playback response is not an object');
@@ -53,7 +59,9 @@ export function createBuddyGuardedFetch(baseFetch = fetch, expectedAlias = 'budd
     const response = await baseFetch(input, init);
     if (!response?.ok) return response;
 
-    const url = new URL(typeof input === 'string' ? input : input.url);
+    const value = requestUrl(input);
+    if (!value) return response;
+    const url = new URL(value);
     const match = url.pathname.match(/\/channels\/alias\/([^/]+)$/i);
     if (!match || decodeURIComponent(match[1]).toLowerCase() !== expectedAlias.toLowerCase()) {
       return response;
