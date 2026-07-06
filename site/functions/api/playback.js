@@ -57,7 +57,7 @@ SELECT
   queue.observed_at AS queue_observed_at,
   items.observed_at AS item_observed_at,
   items.position,items.queue_track_id,items.stationhead_track_id,items.spotify_id,
-  items.apple_music_id,items.deezer_id,items.isrc,items.duration_ms,
+  items.deezer_id,items.isrc,items.duration_ms,
   items.preview_url,items.bite_count,
   metadata.title,metadata.artist,metadata.display_title,metadata.thumbnail_url,
   metadata.spotify_url,metadata.fetched_at AS metadata_fetched_at,

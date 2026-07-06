@@ -212,7 +212,6 @@ export function extractBuddyPlayback(channel, alias = DEFAULT_ALIAS, maxTracks =
       queue_track_id: finiteNumber(item?.id),
       stationhead_track_id: finiteNumber(track?.id),
       spotify_id: String(track?.spotify_id || '').trim() || null,
-      apple_music_id: String(track?.apple_music_id || '').trim() || null,
       deezer_id: String(track?.deezer_id || '').trim() || null,
       isrc: String(track?.isrc || '').trim() || null,
       duration_ms: Math.max(0, finiteNumber(track?.duration, 0)),

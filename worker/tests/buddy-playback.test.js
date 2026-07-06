@@ -92,6 +92,7 @@ const channel = {
         track: {
           id: 2,
           spotify_id: 'sp1',
+          apple_music_id: 'apple-ignored',
           duration: 180_000,
           isrc: 'JPX',
           bite_count: 999,
@@ -127,6 +128,7 @@ test('buddy playback extracts a compact queue without converting nulls to zero',
   assert.equal(value.queue_id, 99);
   assert.equal(value.is_broadcasting, true);
   assert.equal(value.tracks[0].spotify_id, 'sp1');
+  assert.equal('apple_music_id' in value.tracks[0], false);
   assert.equal('bite_count' in value.tracks[0], false);
 
   const empty = extractBuddyPlayback({
@@ -175,7 +177,7 @@ test('changed playback replaces the one current-state row with compact JSON', as
   const upsert = db.calls.find((call) => call.sql === BUDDY_PLAYBACK_UPSERT_SQL);
   assert.ok(upsert);
   assert.match(upsert.params[9], /Song/);
-  assert.doesNotMatch(upsert.params[9], /metadata_raw_json|metadata_fetched_at|bite_count|oversized/);
+  assert.doesNotMatch(upsert.params[9], /metadata_raw_json|metadata_fetched_at|bite_count|oversized|apple_music_id/);
   assert.equal(db.calls.some((call) => call.sql === BUDDY_PLAYBACK_TOUCH_SQL), false);
 });
 

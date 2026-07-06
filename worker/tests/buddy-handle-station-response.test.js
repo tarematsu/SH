@@ -67,4 +67,5 @@ test('discovered handle station response validates and extracts playback', () =>
   assert.equal(playback.tracks[0].queue_track_id, 5000967664);
   assert.equal(playback.tracks[0].stationhead_track_id, 24124293);
   assert.equal(playback.tracks[0].spotify_id, '3V0aOhJIgKTkzJy7uonAOz');
+  assert.equal('apple_music_id' in playback.tracks[0], false);
 });
