@@ -4,6 +4,7 @@ import test from 'node:test';
 import { createBuddyCollectionDependencies } from '../src/buddy-collection-runner.js';
 import {
   createBuddyGuardedFetch,
+  normalizeBuddyQueuePayload,
   validateBuddyQueuePayload,
 } from '../src/buddy-fetch-guard.js';
 
@@ -36,6 +37,36 @@ test('off-air payload may omit a queue', () => {
     current_station: { is_broadcasting: false },
   };
   assert.equal(validateBuddyQueuePayload(payload), payload);
+});
+
+test('normalizes wrapped Stationhead channel payloads for collection', () => {
+  const normalized = normalizeBuddyQueuePayload({
+    data: {
+      current_station_id: 46,
+      is_broadcasting: true,
+      queue: { id: 7, queue_tracks: [] },
+    },
+  }, 'buddy46');
+
+  assert.equal(normalized.alias, 'buddy46');
+  assert.equal(normalized.current_station.id, 46);
+  assert.equal(normalized.current_station.queue.id, 7);
+  assert.doesNotThrow(() => validateBuddyQueuePayload(normalized, 'buddy46'));
+});
+
+test('guarded fetch returns the normalized channel body to the collector', async () => {
+  const guarded = createBuddyGuardedFetch(async () => new Response(JSON.stringify({
+    data: {
+      current_station_id: 46,
+      is_broadcasting: true,
+      queue: { id: 7, queue_tracks: [] },
+    },
+  }), { status: 200 }), 'buddy46');
+
+  const response = await guarded('https://example.invalid/channels/alias/buddy46');
+  const body = await response.json();
+  assert.equal(body.alias, 'buddy46');
+  assert.equal(body.current_station.queue.id, 7);
 });
 
 test('guarded fetch rejects incomplete live payloads', async () => {
