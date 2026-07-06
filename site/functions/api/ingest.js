@@ -1,5 +1,5 @@
 import { onRequestPost as corePost, onRequestGet } from './ingest-core.js';
-import { authorized, json, num } from '../lib/api-utils.js';
+import { authorized, json, num, stripAppleMusicFields } from '../lib/api-utils.js';
 import { saveCommentCounts } from '../lib/comment-counts.js';
 import { runDataMaintenanceSafely } from '../lib/data-maintenance.js';
 import {
@@ -17,6 +17,12 @@ export function isPendingStreamSchemaError(error) {
     || /table\s+sh_channel_snapshots\s+has no column named\s+validated_stream_count/i.test(message);
 }
 
+function spotifyOnlyBody(body) {
+  return body?.type === 'queue'
+    ? { ...body, data: stripAppleMusicFields(body?.data ?? {}) }
+    : body;
+}
+
 export async function onRequestPost(context) {
   const { request, env } = context;
   if (!authorized(request, env) || !env.DB) return corePost(context);
@@ -27,6 +33,7 @@ export async function onRequestPost(context) {
   } catch {
     return corePost(context);
   }
+  body = spotifyOnlyBody(body);
 
   const observedAt = num(body?.observed_at) ?? Date.now();
   const data = body?.data ?? {};
