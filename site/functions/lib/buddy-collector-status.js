@@ -6,10 +6,24 @@ export const BUDDY_COLLECTOR_STATUS_SQL = `SELECT last_seen_at,metadata_json
 function safeJson(value) {
   try {
     const parsed = JSON.parse(value || '{}');
-    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : null;
   } catch {
-    return {};
+    return null;
   }
+}
+
+function emptyStatus(status = 'never') {
+  return {
+    status,
+    last_attempt_at: null,
+    last_success_at: null,
+    last_error: null,
+    failure_code: null,
+    failure_stage: null,
+    failure_summary: null,
+    failure_hint: null,
+    tracks: null,
+  };
 }
 
 export function buddyCollectorId(alias = 'buddy46') {
@@ -17,22 +31,18 @@ export function buddyCollectorId(alias = 'buddy46') {
 }
 
 export function buddyCollectorStatus(row) {
-  if (!row) {
+  if (!row) return emptyStatus('never');
+  const metadata = safeJson(row.metadata_json);
+  if (!metadata || !['ok', 'error'].includes(metadata.status)) {
     return {
-      status: 'never',
-      last_attempt_at: null,
-      last_success_at: null,
-      last_error: null,
-      failure_code: null,
-      failure_stage: null,
-      failure_summary: null,
-      failure_hint: null,
-      tracks: null,
+      ...emptyStatus('unknown'),
+      last_attempt_at: num(row.last_seen_at),
+      last_error: 'collector status metadata is unavailable',
+      failure_code: 'COLLECTOR_STATUS_INVALID',
     };
   }
-  const metadata = safeJson(row.metadata_json);
   return {
-    status: metadata.status === 'error' ? 'error' : 'ok',
+    status: metadata.status,
     last_attempt_at: num(metadata.last_attempt_at) ?? num(row.last_seen_at),
     last_success_at: num(metadata.last_success_at),
     last_error: metadata.last_error || null,
@@ -54,7 +64,12 @@ export async function loadBuddyCollectorStatus(db, alias) {
     if (/no such table:\s*sh_collector_heartbeats/i.test(String(error?.message || error))) {
       return buddyCollectorStatus(null);
     }
-    throw error;
+    return {
+      ...emptyStatus('unknown'),
+      last_error: 'collector status could not be read',
+      failure_code: 'D1_READ_ERROR',
+      failure_stage: 'd1_read_collector_state',
+    };
   }
 }
 
