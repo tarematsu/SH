@@ -18,6 +18,7 @@ npx wrangler d1 execute stationhead-monitor --remote --file=..\database\migratio
 npx wrangler d1 execute stationhead-monitor --remote --file=..\database\migrations\005_cloud_host_monitor.sql
 npx wrangler d1 execute stationhead-monitor --remote --file=..\database\migrations\006_email_weekly_summary.sql
 npx wrangler d1 execute stationhead-monitor --remote --file=..\database\migrations\007_host_session_safety.sql
+npx wrangler d1 execute stationhead-monitor --remote --file=..\database\migrations\008_buddy_auth_control.sql
 npx wrangler deploy --config .\wrangler.jsonc
 ```
 
@@ -45,6 +46,8 @@ npx wrangler d1 execute stationhead-monitor --remote --command="SELECT scope,hol
 npx wrangler d1 execute stationhead-monitor --remote --command="SELECT data_type,collector_id,source_priority,COUNT(*) AS count FROM sh_ingest_claims GROUP BY data_type,collector_id,source_priority ORDER BY data_type,source_priority DESC;"
 
 npx wrangler d1 execute stationhead-monitor --remote --command="SELECT id,phase,session_id,station_id,datetime(last_success_at/1000,'unixepoch','+9 hours') AS last_success_jst,last_error FROM sh_cloud_host_monitor_state ORDER BY id;"
+
+npx wrangler d1 execute stationhead-monitor --remote --command="SELECT id,datetime(updated_at/1000,'unixepoch','+9 hours') AS updated_at_jst,last_error,datetime(lock_until/1000,'unixepoch','+9 hours') AS lock_until_jst FROM sh_worker_auth_control ORDER BY id;"
 ```
 
 ## Enable local automatic failover
