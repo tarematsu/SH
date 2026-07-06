@@ -72,6 +72,10 @@
     return latest;
   }
 
+  function hasLocalQueue() {
+    return Array.isArray(playbackQueue) && playbackQueue.length > 0;
+  }
+
   function mergeHistoryBucket(row, cutoff) {
     const observedAt = Number(row?.observed_at);
     if (!Number.isFinite(observedAt) || observedAt < cutoff) return false;
@@ -191,7 +195,7 @@
       }
       const params = new URLSearchParams();
       if (lastDashboardObservedAt) params.set('since', String(lastDashboardObservedAt));
-      if (lastDashboardObservedAt && lastQueueRevision) params.set('queue_revision', lastQueueRevision);
+      if (lastDashboardObservedAt && lastQueueRevision && hasLocalQueue()) params.set('queue_revision', lastQueueRevision);
       const dashboardUrl = params.size ? `/api/dashboard?${params}` : '/api/dashboard';
       const response = await fetch(dashboardUrl, {
         signal: refreshAbortController.signal,
@@ -228,9 +232,10 @@
 
       const responseRevision = String(data.queue_revision || '');
       const queueUnchanged = Boolean(
-        data.queue_unchanged && lastQueueRevision && responseRevision === lastQueueRevision,
+        data.queue_unchanged && lastQueueRevision && responseRevision === lastQueueRevision && hasLocalQueue(),
       );
-      if (responseRevision) lastQueueRevision = responseRevision;
+      if (responseRevision && (hasLocalQueue() || !data.queue_unchanged)) lastQueueRevision = responseRevision;
+      if (!hasLocalQueue()) lastQueueRevision = '';
       const playing = data.queue_status?.playing
         ?? (latest.is_broadcasting !== 0 && latest.is_broadcasting !== false && !data.queue_status?.is_paused);
 
@@ -248,6 +253,7 @@
           response_age_ms: responseAgeMs,
           playing,
         });
+        if (queue.length && responseRevision) lastQueueRevision = responseRevision;
         playbackActive = Boolean(playing);
       }
 
