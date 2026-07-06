@@ -10,8 +10,25 @@ import { hostIdentity, queueRevision, stateFromQueue } from '../lib/queue-state.
 const CACHE_CONTROL = 'public, max-age=5, s-maxage=10, stale-while-revalidate=30';
 const DEFAULT_CHANNEL_ALIAS = 'buddies';
 const SECONDARY_STALE_MS = 15 * 60_000;
+const PLAYBACK_CORS_HEADERS = Object.freeze({
+  'access-control-allow-origin': '*',
+  'access-control-allow-methods': 'GET, OPTIONS',
+  'access-control-allow-headers': 'Accept',
+  'access-control-max-age': '86400',
+});
 
 export { computePlayback };
+
+function playbackJson(data, status = 200, cache = null) {
+  return json(data, status, cache, PLAYBACK_CORS_HEADERS);
+}
+
+export function onRequestOptions() {
+  return new Response(null, {
+    status: 204,
+    headers: PLAYBACK_CORS_HEADERS,
+  });
+}
 
 export const SECONDARY_PLAYBACK_SQL = `SELECT channel_alias,station_id,queue_id,start_time,
   is_paused,is_broadcasting,host_account_id,host_handle,state_hash,queue_json,
@@ -192,14 +209,14 @@ async function secondaryPlaybackResponse(db, alias, generatedAt) {
     const payload = row
       ? secondaryPlaybackPayload(row, generatedAt)
       : emptySecondaryPayload(alias, generatedAt);
-    return json(
+    return playbackJson(
       attachBuddyCollectorStatus(payload, collector),
       200,
       CACHE_CONTROL,
     );
   } catch (error) {
     if (missingPlaybackTable(error)) {
-      return json(
+      return playbackJson(
         attachBuddyCollectorStatus(
           emptySecondaryPayload(alias, generatedAt, true),
           collector,
@@ -214,7 +231,7 @@ async function secondaryPlaybackResponse(db, alias, generatedAt) {
 
 export async function onRequestGet({ request, env }) {
   const db = env.DB;
-  if (!db) return json({ ok: false, error: 'DB binding missing' }, 500, 'no-store');
+  if (!db) return playbackJson({ ok: false, error: 'DB binding missing' }, 500, 'no-store');
 
   try {
     const generatedAt = Date.now();
@@ -228,7 +245,7 @@ export async function onRequestGet({ request, env }) {
     const revision = queueRevision(stateFromQueue(latestQueue, rows), hostIdentity(latest));
 
     if (!latestQueue) {
-      return json({
+      return playbackJson({
         ok: true,
         channel_alias: DEFAULT_CHANNEL_ALIAS,
         generated_at: generatedAt,
@@ -248,7 +265,7 @@ export async function onRequestGet({ request, env }) {
     const broadcasting = storedBoolean(latest?.is_broadcasting);
     const playing = broadcasting && !paused && playback.currentIndex >= 0;
 
-    return json({
+    return playbackJson({
       ok: true,
       channel_alias: DEFAULT_CHANNEL_ALIAS,
       generated_at: generatedAt,
@@ -276,6 +293,6 @@ export async function onRequestGet({ request, env }) {
     }, 200, CACHE_CONTROL);
   } catch (error) {
     console.error(error);
-    return json({ ok: false, error: error?.message || 'playback feed error' }, 500, 'no-store');
+    return playbackJson({ ok: false, error: error?.message || 'playback feed error' }, 500, 'no-store');
   }
 }
