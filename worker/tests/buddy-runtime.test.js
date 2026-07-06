@@ -3,6 +3,7 @@ import test from 'node:test';
 
 import {
   BUDDY_PLAYBACK_SCHEMA_SQL,
+  buddyHandleStationPath,
   ensureBuddyPlaybackSchema,
   resetBuddyRuntimeForTests,
 } from '../src/buddy-runtime.js';
@@ -42,4 +43,8 @@ test('buddy runtime creates the current-state table once per isolate', async () 
 test('buddy runtime rejects a missing D1 binding', async () => {
   resetBuddyRuntimeForTests();
   await assert.rejects(ensureBuddyPlaybackSchema({}), /D1 binding is missing/);
+});
+
+test('buddy runtime verifies sessions with the handle station endpoint', () => {
+  assert.equal(buddyHandleStationPath('buddy46'), '/station/handle/buddy46/guest');
 });
