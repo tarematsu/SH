@@ -80,6 +80,12 @@ export function predictionFromPersistedState(row, currentGoal) {
   };
 }
 
+export function selectGoalPrediction(persistedRow, calculatedPrediction, currentGoal) {
+  return predictionFromPersistedState(persistedRow, currentGoal)
+    || calculatedPrediction
+    || null;
+}
+
 async function loadPredictionState(db) {
   try {
     return await cachedPrediction(db.prepare(PREDICTION_STATE_SQL));
@@ -283,8 +289,9 @@ export async function onRequestGet(context) {
     predictionPromise,
   ]);
   const payload = JSON.parse(body);
-  payload.goal_prediction = predictionFromPersistedState(
+  payload.goal_prediction = selectGoalPrediction(
     predictionState,
+    payload.goal_prediction,
     finite(payload.latest?.stream_goal),
   );
   const output = JSON.stringify(decorateQueueResponse(payload, queueContext));
