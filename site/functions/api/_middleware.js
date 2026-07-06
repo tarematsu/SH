@@ -19,10 +19,7 @@ function canonicalRequest(request) {
     aKey.localeCompare(bKey) || aValue.localeCompare(bValue));
   url.search = '';
   for (const [key, value] of sorted) url.searchParams.append(key, value);
-  return new Request(url.toString(), {
-    method: 'GET',
-    headers: { accept: 'application/json' },
-  });
+  return new Request(url.toString(), { method: 'GET', headers: { accept: 'application/json' } });
 }
 
 function tagged(response, state) {
@@ -48,11 +45,7 @@ function jsonResponse(response, payload) {
 
 function utcDayRange(now = Date.now()) {
   const date = new Date(now);
-  const currentStart = Date.UTC(
-    date.getUTCFullYear(),
-    date.getUTCMonth(),
-    date.getUTCDate(),
-  );
+  const currentStart = Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate());
   return { previousStart: currentStart - 86_400_000, currentStart };
 }
 
@@ -121,25 +114,39 @@ async function withUtcDashboard(response, db) {
   }
 }
 
-async function withUtcRawHistory(response) {
+async function withUtcHistory(response) {
   try {
     const payload = await response.clone().json();
-    if (!payload?.ok || payload.mode !== 'raw') return response;
+    if (!payload?.ok) return response;
     payload.timezone = 'UTC';
-    payload.rows = (payload.rows || []).map((row) => {
-      const observedAt = Number(row?.observed_at);
-      const observedUtc = Number.isFinite(observedAt)
-        ? new Date(observedAt).toISOString().replace('.000Z', 'Z')
-        : row?.observed_utc ?? null;
-      return {
+
+    if (payload.mode === 'raw') {
+      payload.rows = (payload.rows || []).map((row) => {
+        const observedAt = Number(row?.observed_at);
+        const observedUtc = Number.isFinite(observedAt)
+          ? new Date(observedAt).toISOString().replace('.000Z', 'Z')
+          : row?.observed_utc ?? null;
+        return { ...row, observed_utc: observedUtc, observed_jst: observedUtc };
+      });
+    }
+
+    if (payload.mode === 'ranking') {
+      payload.rows = (payload.rows || []).map((row) => {
+        if (!row?.synthetic || !/^\d{4}-\d{2}-\d{2}$/.test(String(row.ranking_date || ''))) return row;
+        return { ...row, observed_at: Date.parse(`${row.ranking_date}T00:00:00Z`) };
+      });
+    }
+
+    if (payload.mode === 'broadcasts') {
+      payload.rows = (payload.rows || []).map((row) => ({
         ...row,
-        observed_utc: observedUtc,
-        observed_jst: observedUtc,
-      };
-    });
+        started_jst: row.started_utc ?? row.started_jst ?? null,
+        ended_jst: row.ended_utc ?? row.ended_jst ?? null,
+      }));
+    }
     return jsonResponse(response, payload);
   } catch (error) {
-    console.error('UTC raw-history normalization failed', error);
+    console.error('UTC history normalization failed', error);
     return response;
   }
 }
@@ -152,9 +159,7 @@ export async function onRequest(context) {
   const policy = cachePolicy(url);
   if (!policy) {
     let response = await context.next();
-    if (url.pathname === '/api/history' && url.searchParams.get('mode') === 'raw' && response.ok) {
-      response = await withUtcRawHistory(response);
-    }
+    if (url.pathname === '/api/history' && response.ok) response = await withUtcHistory(response);
     return response;
   }
 
@@ -172,6 +177,9 @@ export async function onRequest(context) {
       let origin = await context.next();
       if (url.pathname === '/api/dashboard' && origin.ok) {
         origin = await withUtcDashboard(origin, context.env?.DB);
+      }
+      if (url.pathname === '/api/history' && origin.ok) {
+        origin = await withUtcHistory(origin);
       }
       const headers = new Headers(origin.headers);
       if (origin.ok) {
