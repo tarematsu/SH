@@ -6,6 +6,7 @@ import {
   resetDiagnosticFailureWindow,
   scheduleBuddyPlayback,
   scheduledTimestamp,
+  shouldDeferBuddyPlayback,
   shouldRunFullDiagnostics,
 } from '../src/cadenced-entry.js';
 
@@ -45,4 +46,9 @@ test('buddy playback uses wall-clock observation time and is attached to waitUnt
   assert.equal(result, pending);
   assert.deepEqual(await result, { skipped: false });
   assert.equal(receivedAt, 360_000);
+});
+
+test('production wrapper flag defers cadenced buddy playback', () => {
+  assert.equal(shouldDeferBuddyPlayback({}), false);
+  assert.equal(shouldDeferBuddyPlayback({ __DEFER_BUDDY_PLAYBACK: true }), true);
 });
