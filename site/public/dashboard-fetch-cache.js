@@ -1,4 +1,28 @@
 (() => {
+  const forceUtc = (options) => ({ ...(options || {}), timeZone: 'UTC' });
+  const nativeDateTimeFormat = Intl.DateTimeFormat;
+  function UtcDateTimeFormat(locales, options) {
+    return new nativeDateTimeFormat(locales, forceUtc(options));
+  }
+  Object.setPrototypeOf(UtcDateTimeFormat, nativeDateTimeFormat);
+  UtcDateTimeFormat.prototype = nativeDateTimeFormat.prototype;
+  Intl.DateTimeFormat = UtcDateTimeFormat;
+  for (const method of ['toLocaleString', 'toLocaleDateString', 'toLocaleTimeString']) {
+    const native = Date.prototype[method];
+    Date.prototype[method] = function utcLocaleDate(locales, options) {
+      return native.call(this, locales, forceUtc(options));
+    };
+  }
+  document.documentElement.dataset.timezone = 'UTC';
+  const liveKicker = document.querySelector('.hero .eyebrow');
+  if (liveKicker) liveKicker.textContent = 'STATIONHEAD LIVE MONITOR · UTC';
+  const chartKicker = document.querySelector('.chart-panel .eyebrow');
+  if (chartKicker) chartKicker.textContent = 'LAST 24 HOURS · UTC';
+  const chartDetail = document.getElementById('mainChartDetail');
+  if (chartDetail) chartDetail.textContent = 'グラフをタッチまたはクリックすると、その時点のUTC日時と数値を表示します。';
+  const etaLabel = document.querySelector('.prediction-card small');
+  if (etaLabel) etaLabel.textContent = '予測到達時期（UTC）';
+
   const nativeFetch = window.fetch.bind(window);
   const state = {
     latestObservedAt: 0,
@@ -32,6 +56,7 @@
 
   function mergePayload(payload) {
     if (!payload?.ok) return payload;
+    payload.timezone = 'UTC';
     if (payload.delta) {
       state.history = mergeHistory(state.history, payload.history);
       payload.history = state.history;
