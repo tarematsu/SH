@@ -4,23 +4,27 @@ import {
 } from './cadenced-entry.js';
 import resilientApp from './resilient-entry.js';
 
+async function runBuddyPlaybackAfterPrimary(scheduleBuddy, env, ctx, scheduledAt) {
+  try {
+    return await scheduleBuddy(env, ctx, scheduledAt);
+  } catch (error) {
+    console.error(JSON.stringify({
+      event: 'buddy_playback_after_primary_failed',
+      error: String(error?.message || error),
+    }));
+    return null;
+  }
+}
+
 export async function runProductionScheduled(controller, env, ctx, dependencies = {}) {
   const scheduleBuddy = dependencies.scheduleBuddyPlayback || scheduleBuddyPlayback;
   const app = dependencies.app || resilientApp;
   const scheduledAt = scheduledTimestamp(controller);
-  const buddyTask = Promise.resolve(scheduleBuddy(env, ctx, scheduledAt));
-  const primaryTask = Promise.resolve(app.scheduled(controller, env, ctx));
 
-  const [primaryResult] = await Promise.all([
-    primaryTask,
-    buddyTask.catch((error) => {
-      console.error(JSON.stringify({
-        event: 'buddy_playback_wait_failed',
-        error: String(error?.message || error),
-      }));
-      return null;
-    }),
-  ]);
+  const primaryResult = await app.scheduled(controller, env, ctx);
+  const buddyTask = runBuddyPlaybackAfterPrimary(scheduleBuddy, env, ctx, scheduledAt);
+  if (typeof ctx?.waitUntil === 'function') ctx.waitUntil(buddyTask);
+  else await buddyTask;
   return primaryResult;
 }
 
