@@ -9,6 +9,7 @@ import diagnosticApp from './health-alert-index.js';
 const DEFAULT_DIAGNOSTIC_INTERVAL_MINUTES = 10;
 const FAILURE_DIAGNOSTIC_WINDOW_MS = 10 * 60_000;
 let forceDiagnosticsUntil = 0;
+let buddyPlaybackFlight = null;
 
 export function diagnosticIntervalMinutes(env = {}) {
   const configured = Number(env.DIAGNOSTIC_INTERVAL_MINUTES ?? DEFAULT_DIAGNOSTIC_INTERVAL_MINUTES);
@@ -29,6 +30,10 @@ export function resetDiagnosticFailureWindow() {
   forceDiagnosticsUntil = 0;
 }
 
+export function resetBuddyPlaybackFlightForTests() {
+  buddyPlaybackFlight = null;
+}
+
 export function scheduledTimestamp(controller, fallback = Date.now()) {
   const value = Number(controller?.scheduledTime);
   return Number.isFinite(value) && value >= 0 ? value : fallback;
@@ -46,6 +51,10 @@ export function scheduleBuddyPlayback(
   if (!shouldRunBuddyPlayback(scheduledAt, config.intervalMs)) {
     return Promise.resolve({ skipped: true, reason: 'not-due' });
   }
+  if (buddyPlaybackFlight) {
+    if (ctx && typeof ctx.waitUntil === 'function') ctx.waitUntil(buddyPlaybackFlight);
+    return buddyPlaybackFlight;
+  }
 
   const observedAt = Number(now());
   const task = Promise.resolve()
@@ -57,8 +66,14 @@ export function scheduleBuddyPlayback(
       }));
       return { skipped: true, reason: 'collection-failed' };
     });
-  if (ctx && typeof ctx.waitUntil === 'function') ctx.waitUntil(task);
-  return task;
+  buddyPlaybackFlight = task.finally(() => {
+    if (buddyPlaybackFlight === task || buddyPlaybackFlight === wrappedTask) {
+      buddyPlaybackFlight = null;
+    }
+  });
+  const wrappedTask = buddyPlaybackFlight;
+  if (ctx && typeof ctx.waitUntil === 'function') ctx.waitUntil(wrappedTask);
+  return wrappedTask;
 }
 
 export default {
