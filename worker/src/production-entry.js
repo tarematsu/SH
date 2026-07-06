@@ -17,9 +17,19 @@ export function withBuddyPlaybackDeferred(env = {}) {
   });
 }
 
+function withoutWaitUntil(ctx) {
+  if (!ctx || typeof ctx !== 'object') return ctx;
+  return new Proxy(ctx, {
+    get(target, property, receiver) {
+      if (property === 'waitUntil') return undefined;
+      return Reflect.get(target, property, receiver);
+    },
+  });
+}
+
 async function runBuddyPlaybackAfterPrimary(scheduleBuddy, env, ctx, scheduledAt) {
   try {
-    return await scheduleBuddy(env, ctx, scheduledAt);
+    return await scheduleBuddy(env, withoutWaitUntil(ctx), scheduledAt);
   } catch (error) {
     console.error(JSON.stringify({
       event: 'buddy_playback_after_primary_failed',
@@ -34,10 +44,19 @@ export async function runProductionScheduled(controller, env, ctx, dependencies 
   const app = dependencies.app || resilientApp;
   const scheduledAt = scheduledTimestamp(controller);
 
-  const primaryResult = await app.scheduled(controller, withBuddyPlaybackDeferred(env), ctx);
+  let primaryResult;
+  let primaryError = null;
+  try {
+    primaryResult = await app.scheduled(controller, withBuddyPlaybackDeferred(env), ctx);
+  } catch (error) {
+    primaryError = error;
+  }
+
   const buddyTask = runBuddyPlaybackAfterPrimary(scheduleBuddy, env, ctx, scheduledAt);
   if (typeof ctx?.waitUntil === 'function') ctx.waitUntil(buddyTask);
   else await buddyTask;
+
+  if (primaryError) throw primaryError;
   return primaryResult;
 }
 
