@@ -4,21 +4,19 @@ const JSON_HEADERS = {
   vary: 'accept-encoding',
 };
 const json = (data, status = 200) => new Response(JSON.stringify(data), { status, headers: JSON_HEADERS });
-const JST_OFFSET_MS = 9 * 3_600_000;
 
 function validDateText(value) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(String(value || ''))) return false;
-  const timestamp = Date.parse(`${value}T00:00:00+09:00`);
-  if (!Number.isFinite(timestamp)) return false;
-  return new Date(timestamp + JST_OFFSET_MS).toISOString().slice(0, 10) === value;
+  const timestamp = Date.parse(`${value}T00:00:00Z`);
+  return Number.isFinite(timestamp) && new Date(timestamp).toISOString().slice(0, 10) === value;
 }
 
 function parseDateStart(value) {
-  return Date.parse(`${value}T00:00:00+09:00`);
+  return Date.parse(`${value}T00:00:00Z`);
 }
 
-function todayJstString() {
-  return new Date(Date.now() + JST_OFFSET_MS).toISOString().slice(0, 10);
+function todayUtcString() {
+  return new Date().toISOString().slice(0, 10);
 }
 
 function encodeCursor(row) {
@@ -41,7 +39,9 @@ export function decodeRawHistoryCursor(value) {
 }
 
 export function rawHistorySql(source, cursor) {
-  let sql = `SELECT id,observed_at,observed_jst,listener_count,total_stream_count,
+  let sql = `SELECT id,observed_at,
+strftime('%Y-%m-%dT%H:%M:%SZ',observed_at/1000,'unixepoch') AS observed_utc,
+observed_jst,listener_count,total_stream_count,
 track_title,artist_name,likes,comment_velocity,host_handle,total_member_count,
 source_note,quality_score,quality_flags
 FROM ${source}
@@ -61,25 +61,21 @@ export async function onRequestGet({ request, env }) {
   if (!env.DB) return json({ ok: false, error: 'DB binding missing' }, 500);
   const url = new URL(request.url);
   const from = url.searchParams.get('from') || '2024-06-01';
-  const to = url.searchParams.get('to') || todayJstString();
+  const to = url.searchParams.get('to') || todayUtcString();
   if (!validDateText(from) || !validDateText(to)) {
-    return json({ ok: false, error: 'from and to must be valid YYYY-MM-DD dates' }, 400);
+    return json({ ok: false, error: 'from and to must be valid UTC YYYY-MM-DD dates' }, 400);
   }
 
   const fromTs = parseDateStart(from);
   const toTs = parseDateStart(to) + 86_400_000;
-  if (fromTs >= toTs) {
-    return json({ ok: false, error: 'from must not be after to' }, 400);
-  }
+  if (fromTs >= toTs) return json({ ok: false, error: 'from must not be after to' }, 400);
 
   const limit = Math.min(Math.max(Number(url.searchParams.get('limit')) || 200, 20), 500);
   const cursorValue = url.searchParams.get('cursor');
   const cursor = decodeRawHistoryCursor(cursorValue);
-  if (cursorValue && !cursor) {
-    return json({ ok: false, error: 'invalid cursor' }, 400);
-  }
+  if (cursorValue && !cursor) return json({ ok: false, error: 'invalid cursor' }, 400);
   if (cursor && (cursor.timestamp < fromTs || cursor.timestamp >= toTs)) {
-    return json({ ok: false, error: 'cursor is outside the requested range' }, 400);
+    return json({ ok: false, error: 'cursor is outside the requested UTC range' }, 400);
   }
 
   try {
@@ -98,6 +94,7 @@ export async function onRequestGet({ request, env }) {
     return json({
       ok: true,
       mode: 'raw',
+      timezone: 'UTC',
       from,
       to,
       rows,
