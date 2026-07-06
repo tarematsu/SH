@@ -10,6 +10,7 @@ export const BUDDY_HEALTH_SCHEMA_SQL = `CREATE TABLE IF NOT EXISTS sh_collector_
 )`;
 
 const VERSION = 'buddy-playback-v1';
+let healthSchemaReady = false;
 
 export function buddyHealthId(alias = 'buddy46') {
   return `${String(alias || 'buddy46').trim().toLowerCase()}-playback`;
@@ -38,7 +39,14 @@ function failureStage(error) {
   return 'collector_unknown';
 }
 
+async function ensureHealthSchema(env) {
+  if (healthSchemaReady) return;
+  await env.DB.prepare(BUDDY_HEALTH_SCHEMA_SQL).run();
+  healthSchemaReady = true;
+}
+
 async function currentHealth(env, collectorId) {
+  await ensureHealthSchema(env);
   return env.DB.prepare(`SELECT first_seen_at,last_seen_at,metadata_json
     FROM sh_collector_heartbeats WHERE collector_id=? LIMIT 1`)
     .bind(collectorId)
@@ -46,7 +54,7 @@ async function currentHealth(env, collectorId) {
 }
 
 async function writeHealth(env, collectorId, at, metadata) {
-  await env.DB.prepare(BUDDY_HEALTH_SCHEMA_SQL).run();
+  await ensureHealthSchema(env);
   await env.DB.prepare(`INSERT INTO sh_collector_heartbeats (
       collector_id,first_seen_at,last_seen_at,hostname,version,metadata_json
     ) VALUES (?,?,?,?,?,?)
@@ -95,4 +103,8 @@ export async function recordBuddyFailure(env, alias, error, at = Date.now()) {
     tracks: Number.isFinite(Number(previous.tracks)) ? Number(previous.tracks) : null,
   });
   return true;
+}
+
+export function resetBuddyHealthForTests() {
+  healthSchemaReady = false;
 }
