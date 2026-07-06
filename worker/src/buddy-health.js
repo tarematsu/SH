@@ -30,11 +30,11 @@ function failureStage(error) {
   if (/401|403|auth|token|session|guest login|guest verification/i.test(detail)) {
     return 'stationhead_auth';
   }
-  if (/queue|payload|response|alias|current_station/i.test(detail)) {
-    return 'stationhead_channel_payload';
-  }
   if (/D1|SQLITE|database|no such table|no such column/i.test(detail)) {
     return 'd1_write_queue';
+  }
+  if (/queue|payload|response|alias|current_station/i.test(detail)) {
+    return 'stationhead_channel_payload';
   }
   return 'collector_unknown';
 }
@@ -68,19 +68,17 @@ async function writeHealth(env, collectorId, at, metadata) {
 
 export async function recordBuddySuccess(env, alias, result = {}, at = Date.now()) {
   if (!env?.DB) return false;
-  const collectorId = buddyHealthId(alias);
-  const current = await currentHealth(env, collectorId).catch(() => null);
-  const previous = safeJson(current?.metadata_json);
-  await writeHealth(env, collectorId, at, {
+  await writeHealth(env, buddyHealthId(alias), at, {
     status: 'ok',
     last_attempt_at: at,
     last_success_at: at,
     last_error: null,
     failure_code: null,
     failure_stage: null,
+    failure_summary: null,
+    failure_hint: null,
     tracks: Number.isFinite(Number(result?.tracks)) ? Number(result.tracks) : null,
     changed: result?.changed === true,
-    previous_failure_at: previous.status === 'error' ? previous.last_attempt_at || null : null,
   });
   return true;
 }
