@@ -4,11 +4,12 @@ import test from 'node:test';
 
 import { runProductionScheduled } from '../src/production-entry.js';
 
-test('production cron runs buddy46 collection and delegates to the resilient collector', async () => {
+test('production cron runs primary before buddy46 collection', async () => {
   const calls = [];
+  const waitUntilTasks = [];
   const controller = { scheduledTime: 300_000, cron: '* * * * *' };
   const env = { marker: true };
-  const ctx = { waitUntil() {} };
+  const ctx = { waitUntil(task) { waitUntilTasks.push(task); } };
 
   const result = await runProductionScheduled(controller, env, ctx, {
     scheduleBuddyPlayback(receivedEnv, receivedCtx, scheduledAt) {
@@ -25,18 +26,21 @@ test('production cron runs buddy46 collection and delegates to the resilient col
 
   assert.equal(result, 'done');
   assert.equal(calls.length, 2);
-  assert.deepEqual(calls[0], ['buddy', env, ctx, 300_000]);
-  assert.deepEqual(calls[1], ['primary', controller, env, ctx]);
+  assert.deepEqual(calls[0], ['primary', controller, env, ctx]);
+  assert.deepEqual(calls[1], ['buddy', env, ctx, 300_000]);
+  assert.equal(waitUntilTasks.length, 1);
+  assert.equal(await waitUntilTasks[0], 'buddy-done');
 });
 
-test('production cron waits for the buddy46 task before completing', async () => {
+test('production cron attaches buddy46 collection to waitUntil after primary completes', async () => {
   const calls = [];
+  const waitUntilTasks = [];
   let releaseBuddy;
   const buddyGate = new Promise((resolve) => { releaseBuddy = resolve; });
   const run = runProductionScheduled(
     { scheduledTime: 300_000 },
     {},
-    { waitUntil() {} },
+    { waitUntil(task) { waitUntilTasks.push(task); } },
     {
       scheduleBuddyPlayback() {
         calls.push('buddy-start');
@@ -52,10 +56,13 @@ test('production cron waits for the buddy46 task before completing', async () =>
   );
 
   await Promise.resolve();
-  assert.deepEqual(calls, ['buddy-start', 'primary-done']);
-  releaseBuddy();
+  assert.deepEqual(calls, ['primary-done', 'buddy-start']);
   assert.equal(await run, 'done');
-  assert.deepEqual(calls, ['buddy-start', 'primary-done', 'buddy-done']);
+  assert.equal(waitUntilTasks.length, 1);
+  assert.deepEqual(calls, ['primary-done', 'buddy-start']);
+  releaseBuddy();
+  await waitUntilTasks[0];
+  assert.deepEqual(calls, ['primary-done', 'buddy-start', 'buddy-done']);
 });
 
 test('Wrangler deploys the production cron wrapper', () => {
