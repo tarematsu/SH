@@ -68,6 +68,7 @@
       state.history = mergeHistory([], payload.history);
       state.queue = Array.isArray(payload.queue) ? payload.queue : [];
       state.queueStatus = payload.queue_status || null;
+      mergeGoalPrediction(payload);
     }
 
     state.latestObservedAt = Math.max(
