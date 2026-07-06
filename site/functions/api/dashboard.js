@@ -106,11 +106,26 @@ export const DASHBOARD_CONTEXT_SQL = `WITH latest_channel AS (
   FROM sh_channel_snapshots
   ORDER BY observed_at DESC,id DESC
   LIMIT 1
+), station_queue AS (
+  SELECT station_id,queue_id,start_time,is_paused,observed_at,
+    structural_hash,likes_hash,0 AS priority
+  FROM sh_queue_current
+  WHERE station_id=(SELECT station_id FROM latest_channel)
+), recent_queue AS (
+  SELECT station_id,queue_id,start_time,is_paused,observed_at,
+    structural_hash,likes_hash,1 AS priority
+  FROM sh_queue_current
+  ORDER BY observed_at DESC
+  LIMIT 1
 ), latest_queue AS (
   SELECT station_id,queue_id,start_time,is_paused,observed_at,
     structural_hash,likes_hash
-  FROM sh_queue_current
-  WHERE station_id=(SELECT station_id FROM latest_channel)
+  FROM (
+    SELECT * FROM station_queue
+    UNION ALL
+    SELECT * FROM recent_queue
+  )
+  ORDER BY priority ASC,observed_at DESC
   LIMIT 1
 ), queue_stats AS (
   SELECT
@@ -199,9 +214,6 @@ function captureHostIdentity(value, queueContext) {
 function proxyStatement(statement, sql, db, queueContext) {
   return new Proxy(statement, {
     get(target, property) {
-      if (sql === PREDICTION_24H_SQL && property === 'first') {
-        return async () => null;
-      }
       if (sql === LATEST_QUEUE_WITH_ITEMS_SQL && property === 'all') {
         return () => loadDashboardQueue(target, db, queueContext);
       }
