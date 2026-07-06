@@ -1,4 +1,8 @@
-import { runBuddyPlayback } from './buddy-playback.js';
+import {
+  buddyPlaybackConfig,
+  collectBuddyPlayback,
+  shouldRunBuddyPlayback,
+} from './buddy-playback.js';
 import coreApp from './scheduled-main.js';
 import diagnosticApp from './health-alert-index.js';
 
@@ -33,11 +37,19 @@ export function scheduledTimestamp(controller, fallback = Date.now()) {
 export function scheduleBuddyPlayback(
   env,
   ctx,
-  now = Date.now(),
-  runner = runBuddyPlayback,
+  scheduledAt = Date.now(),
+  runner = collectBuddyPlayback,
+  now = Date.now,
 ) {
+  const config = buddyPlaybackConfig(env);
+  if (!config.enabled) return Promise.resolve({ skipped: true, reason: 'disabled' });
+  if (!shouldRunBuddyPlayback(scheduledAt, config.intervalMs)) {
+    return Promise.resolve({ skipped: true, reason: 'not-due' });
+  }
+
+  const observedAt = Number(now());
   const task = Promise.resolve()
-    .then(() => runner(env, now))
+    .then(() => runner(env, Number.isFinite(observedAt) ? observedAt : Date.now()))
     .catch((error) => {
       console.error(JSON.stringify({
         event: 'buddy_playback_collection_failed',
