@@ -36,6 +36,16 @@ function tagged(response, state) {
   });
 }
 
+function jsonResponse(response, payload) {
+  const headers = new Headers(response.headers);
+  headers.delete('content-length');
+  return new Response(JSON.stringify(payload), {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  });
+}
+
 function utcDayRange(now = Date.now()) {
   const date = new Date(now);
   const currentStart = Date.UTC(
@@ -104,16 +114,32 @@ async function withUtcDashboard(response, db) {
       total_listens: latestListens != null && previousListens != null
         ? latestListens - previousListens : null,
     };
-
-    const headers = new Headers(response.headers);
-    headers.delete('content-length');
-    return new Response(JSON.stringify(payload), {
-      status: response.status,
-      statusText: response.statusText,
-      headers,
-    });
+    return jsonResponse(response, payload);
   } catch (error) {
     console.error('UTC dashboard normalization failed', error);
+    return response;
+  }
+}
+
+async function withUtcRawHistory(response) {
+  try {
+    const payload = await response.clone().json();
+    if (!payload?.ok || payload.mode !== 'raw') return response;
+    payload.timezone = 'UTC';
+    payload.rows = (payload.rows || []).map((row) => {
+      const observedAt = Number(row?.observed_at);
+      const observedUtc = Number.isFinite(observedAt)
+        ? new Date(observedAt).toISOString().replace('.000Z', 'Z')
+        : row?.observed_utc ?? null;
+      return {
+        ...row,
+        observed_utc: observedUtc,
+        observed_jst: observedUtc,
+      };
+    });
+    return jsonResponse(response, payload);
+  } catch (error) {
+    console.error('UTC raw-history normalization failed', error);
     return response;
   }
 }
@@ -124,7 +150,13 @@ export async function onRequest(context) {
 
   const url = new URL(request.url);
   const policy = cachePolicy(url);
-  if (!policy) return context.next();
+  if (!policy) {
+    let response = await context.next();
+    if (url.pathname === '/api/history' && url.searchParams.get('mode') === 'raw' && response.ok) {
+      response = await withUtcRawHistory(response);
+    }
+    return response;
+  }
 
   const cache = caches.default;
   const cacheKey = canonicalRequest(request);
