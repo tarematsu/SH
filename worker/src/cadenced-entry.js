@@ -1,3 +1,4 @@
+import { runBuddyPlayback } from './buddy-playback.js';
 import coreApp from './scheduled-main.js';
 import diagnosticApp from './health-alert-index.js';
 
@@ -24,8 +25,19 @@ export function resetDiagnosticFailureWindow() {
   forceDiagnosticsUntil = 0;
 }
 
+function scheduleBuddyPlayback(env, ctx) {
+  const task = runBuddyPlayback(env).catch((error) => {
+    console.error(JSON.stringify({
+      event: 'buddy_playback_collection_failed',
+      error: String(error?.message || error),
+    }));
+  });
+  if (ctx && typeof ctx.waitUntil === 'function') ctx.waitUntil(task);
+}
+
 export default {
   async scheduled(controller, env, ctx) {
+    scheduleBuddyPlayback(env, ctx);
     if (shouldRunFullDiagnostics(Date.now(), env)) {
       try {
         return await diagnosticApp.scheduled(controller, env, ctx);
