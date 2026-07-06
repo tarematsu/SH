@@ -1,3 +1,4 @@
+import { runBuddyPlayback } from './buddy-playback.js';
 import coreApp from './scheduled-main.js';
 import diagnosticApp from './health-alert-index.js';
 
@@ -24,20 +25,46 @@ export function resetDiagnosticFailureWindow() {
   forceDiagnosticsUntil = 0;
 }
 
+export function scheduledTimestamp(controller, fallback = Date.now()) {
+  const value = Number(controller?.scheduledTime);
+  return Number.isFinite(value) && value >= 0 ? value : fallback;
+}
+
+export function scheduleBuddyPlayback(
+  env,
+  ctx,
+  now = Date.now(),
+  runner = runBuddyPlayback,
+) {
+  const task = Promise.resolve()
+    .then(() => runner(env, now))
+    .catch((error) => {
+      console.error(JSON.stringify({
+        event: 'buddy_playback_collection_failed',
+        error: String(error?.message || error),
+      }));
+      return { skipped: true, reason: 'collection-failed' };
+    });
+  if (ctx && typeof ctx.waitUntil === 'function') ctx.waitUntil(task);
+  return task;
+}
+
 export default {
   async scheduled(controller, env, ctx) {
-    if (shouldRunFullDiagnostics(Date.now(), env)) {
+    const scheduledAt = scheduledTimestamp(controller);
+    scheduleBuddyPlayback(env, ctx, scheduledAt);
+    if (shouldRunFullDiagnostics(scheduledAt, env)) {
       try {
         return await diagnosticApp.scheduled(controller, env, ctx);
       } catch (error) {
-        markDiagnosticFailure();
+        markDiagnosticFailure(scheduledAt);
         throw error;
       }
     }
     try {
       return await coreApp.scheduled(controller, env, ctx);
     } catch (error) {
-      markDiagnosticFailure();
+      markDiagnosticFailure(scheduledAt);
       throw error;
     }
   },

@@ -47,6 +47,7 @@ try {
     'sh_channel_snapshots',
     'sh_queue_snapshots',
     'sh_queue_items',
+    'sh_playback_channel_current',
     'sh_track_metadata',
     'sh_ingest_claims',
     'sh_host_broadcast_sessions',
