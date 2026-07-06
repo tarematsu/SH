@@ -106,6 +106,15 @@ function expectedQueueJson(metadata = metadataRow) {
   return JSON.stringify(attachBuddyMetadata(queue, new Map([['sp1', metadata]])));
 }
 
+function currentDisplayState(overrides = {}) {
+  return {
+    is_broadcasting: 1,
+    host_account_id: 9,
+    host_handle: 'host46',
+    ...overrides,
+  };
+}
+
 test('buddy playback runs only in five-minute buckets', () => {
   assert.equal(shouldRunBuddyPlayback(0, 300_000), true);
   assert.equal(shouldRunBuddyPlayback(240_000, 300_000), false);
@@ -173,6 +182,7 @@ test('changed playback replaces the one current-state row with compact JSON', as
 test('metadata-only refresh updates queue JSON without resetting playback changed_at', async () => {
   const db = new FakeDb({
     current: {
+      ...currentDisplayState(),
       state_hash: 'same',
       queue_json: '[]',
       checked_at: 300_000,
@@ -188,6 +198,32 @@ test('metadata-only refresh updates queue JSON without resetting playback change
 
   assert.equal(result.playback_changed, false);
   assert.equal(result.content_changed, true);
+  assert.equal(result.display_changed, false);
+  const upsert = db.calls.find((call) => call.sql === BUDDY_PLAYBACK_UPSERT_SQL);
+  assert.ok(upsert);
+  assert.equal(upsert.params[11], 123_000);
+});
+
+test('broadcast-only changes update display state without moving the playback anchor', async () => {
+  const db = new FakeDb({
+    current: {
+      ...currentDisplayState({ is_broadcasting: 0 }),
+      state_hash: 'same',
+      queue_json: expectedQueueJson(),
+      checked_at: 300_000,
+      changed_at: 123_000,
+    },
+    metadata: [metadataRow],
+  });
+  const result = await collectBuddyPlayback({ DB: db }, 600_000, {
+    loadSession: async () => ({ authToken: 'token', deviceUid: 'device' }),
+    fetchChannel: async () => channel,
+    stateHash: async () => 'same',
+  });
+
+  assert.equal(result.playback_changed, false);
+  assert.equal(result.content_changed, false);
+  assert.equal(result.display_changed, true);
   const upsert = db.calls.find((call) => call.sql === BUDDY_PLAYBACK_UPSERT_SQL);
   assert.ok(upsert);
   assert.equal(upsert.params[11], 123_000);
@@ -196,6 +232,7 @@ test('metadata-only refresh updates queue JSON without resetting playback change
 test('unchanged playback updates only checked_at', async () => {
   const db = new FakeDb({
     current: {
+      ...currentDisplayState(),
       state_hash: 'same',
       queue_json: expectedQueueJson(),
       checked_at: 300_000,
