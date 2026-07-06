@@ -26,7 +26,7 @@
     const cutoff = Date.now() - 24 * 60 * 60 * 1000;
     return [...rows.values()]
       .filter((row) => Number(row.observed_at) >= cutoff)
-      .sort((left, right) => Number(left.observed_at) - Number(right))
+      .sort((left, right) => Number(left.observed_at) - Number(right.observed_at))
       .slice(-300);
   }
 
