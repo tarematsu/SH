@@ -26,12 +26,26 @@
     const cutoff = Date.now() - 24 * 60 * 60 * 1000;
     return [...rows.values()]
       .filter((row) => Number(row.observed_at) >= cutoff)
-      .sort((left, right) => Number(left.observed_at) - Number(right.observed_at))
+      .sort((left, right) => Number(left.observed_at) - Number(right))
       .slice(-300);
   }
 
+  function sameGoal(payload) {
+    const currentGoal = Number(payload?.latest?.stream_goal);
+    const previousGoal = Number(state.lastPayload?.latest?.stream_goal);
+    return !Number.isFinite(currentGoal)
+      || !Number.isFinite(previousGoal)
+      || currentGoal === previousGoal;
+  }
+
+  function alreadyReachedGoal(payload) {
+    const current = Number(payload?.latest?.current_stream_count);
+    const goal = Number(payload?.latest?.stream_goal);
+    return Number.isFinite(current) && Number.isFinite(goal) && goal > 0 && current >= goal;
+  }
+
   function mergeGoalPrediction(payload) {
-    if (payload?.goal_prediction) return;
+    if (payload?.goal_prediction || !sameGoal(payload) || alreadyReachedGoal(payload)) return;
     const previous = state.lastPayload?.goal_prediction;
     if (previous) payload.goal_prediction = structuredClone(previous);
   }
