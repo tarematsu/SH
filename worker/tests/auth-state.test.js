@@ -50,7 +50,7 @@ class FakeDb {
 test('readAuthState bootstraps missing auth control table and retries the read', async () => {
   resetAuthStateForTests();
   const db = new FakeDb({
-    auth_token: 'Bearer token',
+    auth_token: 'token',
     device_uid: 'device-1',
     control_id: 'stationhead',
     lock_until: 0,
@@ -58,7 +58,7 @@ test('readAuthState bootstraps missing auth control table and retries the read',
 
   const state = await readAuthState({ DB: db }, 'stationhead');
 
-  assert.equal(state.authToken, 'Bearer token');
+  assert.equal(state.authToken, 'token');
   assert.equal(state.deviceUid, 'device-1');
   assert.equal(db.sql.includes(AUTH_CONTROL_SCHEMA_SQL), true);
   assert.equal(db.sql.filter((sql) => sql.includes('LEFT JOIN sh_worker_auth_control')).length, 2);
