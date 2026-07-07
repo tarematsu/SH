@@ -1,3 +1,5 @@
+import { finiteNumber as finite } from './shared.js';
+
 const PREDICTION_STATE_ID = 'stream-goal-24h';
 const PREDICTION_DAY_MS = 24 * 60 * 60_000;
 const DEFAULT_PREDICTION_INTERVAL_MS = 30 * 60_000;
@@ -62,17 +64,17 @@ const FAIL_STREAM_GOAL_PREDICTION_SQL = `UPDATE sh_stream_goal_prediction_state 
   next_refresh_at=?,last_error=?,updated_at=?
 WHERE id=?`;
 
-function finite(value) {
-  const number = Number(value);
-  return Number.isFinite(number) ? number : null;
+function clamp(value, min, max, fallback) {
+  const number = Number(value ?? fallback);
+  return Number.isFinite(number) ? Math.max(min, Math.min(max, Math.trunc(number))) : fallback;
 }
 
 export function streamGoalPredictionIntervalMs(env = {}) {
-  const configured = Number(env.STREAM_GOAL_PREDICTION_INTERVAL_MS ?? DEFAULT_PREDICTION_INTERVAL_MS);
-  if (!Number.isFinite(configured)) return DEFAULT_PREDICTION_INTERVAL_MS;
-  return Math.max(
+  return clamp(
+    env.STREAM_GOAL_PREDICTION_INTERVAL_MS,
     MIN_PREDICTION_INTERVAL_MS,
-    Math.min(MAX_PREDICTION_INTERVAL_MS, Math.trunc(configured)),
+    MAX_PREDICTION_INTERVAL_MS,
+    DEFAULT_PREDICTION_INTERVAL_MS,
   );
 }
 
@@ -90,7 +92,6 @@ export function predictionFromAggregate(row, generatedAt = Date.now()) {
   const spanMs = firstT == null || lastT == null ? 0 : Math.max(0, lastT - firstT);
   const spanHours = spanMs / 3600000;
   const remaining = goal == null || latest == null ? null : Math.max(0, Math.round(goal - latest));
-
   const base = {
     generatedAt,
     sourceObservedAt,
@@ -105,22 +106,15 @@ export function predictionFromAggregate(row, generatedAt = Date.now()) {
   if (
     goal == null || goal <= 0 || latest == null || sampleCount < 5 || spanMs < 15 * 60_000
     || [xMean, yMean, xyMean, xxMean].some((value) => value == null)
-  ) {
-    return base;
-  }
+  ) return base;
 
-  const covariance = xyMean - xMean * yMean;
   const variance = xxMean - xMean * xMean;
-  if (!Number.isFinite(variance) || variance <= 0) return base;
-
-  const ratePerHour = covariance / variance;
-  if (!Number.isFinite(ratePerHour) || ratePerHour <= 0) return base;
+  const ratePerHour = (xyMean - xMean * yMean) / variance;
+  if (!Number.isFinite(variance) || variance <= 0 || !Number.isFinite(ratePerHour) || ratePerHour <= 0) return base;
 
   return {
     ...base,
-    eta: remaining === 0
-      ? generatedAt
-      : Math.round(generatedAt + (remaining / ratePerHour) * 3600000),
+    eta: remaining === 0 ? generatedAt : Math.round(generatedAt + (remaining / ratePerHour) * 3600000),
     ratePerHour,
   };
 }
@@ -130,8 +124,22 @@ function predictionFailureMessage(error) {
 }
 
 function predictionTableMissing(error) {
-  return /no such table:\s*sh_stream_goal_prediction_state/i.test(
-    String(error?.message || error),
+  return /no such table:\s*sh_stream_goal_prediction_state/i.test(String(error?.message || error));
+}
+
+function savePredictionStatement(env, prediction, now, intervalMs) {
+  return env.DB.prepare(SAVE_STREAM_GOAL_PREDICTION_SQL).bind(
+    prediction.generatedAt,
+    prediction.sourceObservedAt,
+    prediction.goal,
+    prediction.eta,
+    prediction.ratePerHour,
+    prediction.remaining,
+    prediction.sampleCount,
+    prediction.spanHours,
+    now + intervalMs,
+    now,
+    PREDICTION_STATE_ID,
   );
 }
 
@@ -145,9 +153,7 @@ export async function runStreamGoalPrediction(env, now = Date.now()) {
       .bind(PREDICTION_STATE_ID, now + PREDICTION_CLAIM_LEASE_MS, now, now)
       .first();
   } catch (error) {
-    if (predictionTableMissing(error)) {
-      return { skipped: true, reason: 'prediction-state-setup-required' };
-    }
+    if (predictionTableMissing(error)) return { skipped: true, reason: 'prediction-state-setup-required' };
     throw error;
   }
 
@@ -158,21 +164,7 @@ export async function runStreamGoalPrediction(env, now = Date.now()) {
       .bind(now - PREDICTION_DAY_MS)
       .first();
     const prediction = predictionFromAggregate(aggregate, now);
-    await env.DB.prepare(SAVE_STREAM_GOAL_PREDICTION_SQL)
-      .bind(
-        prediction.generatedAt,
-        prediction.sourceObservedAt,
-        prediction.goal,
-        prediction.eta,
-        prediction.ratePerHour,
-        prediction.remaining,
-        prediction.sampleCount,
-        prediction.spanHours,
-        now + intervalMs,
-        now,
-        PREDICTION_STATE_ID,
-      )
-      .run();
+    await savePredictionStatement(env, prediction, now, intervalMs).run();
 
     console.log(JSON.stringify({
       event: 'stream_goal_prediction_refreshed',
@@ -185,12 +177,7 @@ export async function runStreamGoalPrediction(env, now = Date.now()) {
     return { skipped: false, ...prediction, nextRefreshAt: now + intervalMs };
   } catch (error) {
     await env.DB.prepare(FAIL_STREAM_GOAL_PREDICTION_SQL)
-      .bind(
-        now + PREDICTION_RETRY_MS,
-        predictionFailureMessage(error),
-        now,
-        PREDICTION_STATE_ID,
-      )
+      .bind(now + PREDICTION_RETRY_MS, predictionFailureMessage(error), now, PREDICTION_STATE_ID)
       .run()
       .catch(() => {});
     throw error;
