@@ -98,7 +98,7 @@ function lowerResolutionThumbnail(src) {
       return url.href;
     }
     if (/i\.scdn\.co$/i.test(url.hostname)) {
-      url.pathname = url.pathname.replace(/(ab67616d0000)(?:b273|01e02|048b)([a-f0-9]{40,})$/i, '$1640$2');
+      url.pathname = url.pathname.replace(/ab67616d0000(?:b273|01e02|04851)/i, 'ab67616d00004851');
       return url.href;
     }
     if (/mosaic\.scdn\.co$/i.test(url.hostname)) {
