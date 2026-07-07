@@ -20,6 +20,10 @@ const PLAYBACK_CORS_HEADERS = Object.freeze({
 export { computePlayback };
 
 function playbackJson(data, status = 200, cache = null) {
+  if (data?.raw_payload_passthrough === true) {
+    const { raw_payload_passthrough: _rawPayloadPassthrough, ...payload } = data;
+    return json(payload, status, cache, PLAYBACK_CORS_HEADERS);
+  }
   return json(stripAppleMusicFields(data), status, cache, PLAYBACK_CORS_HEADERS);
 }
 
@@ -93,8 +97,7 @@ function requestedChannel(request) {
 function parseQueueJson(value) {
   if (!value) return [];
   try {
-    const parsed = JSON.parse(value);
-    return Array.isArray(parsed) ? stripAppleMusicFields(parsed) : null;
+    return JSON.parse(value);
   } catch {
     return null;
   }
@@ -130,6 +133,34 @@ function emptySecondaryPayload(alias, generatedAt, setupRequired = false) {
   };
 }
 
+function secondaryRawPlaybackPayload(row, rawPayload, generatedAt = Date.now()) {
+  const alias = String(row?.channel_alias || '').trim() || null;
+  const checkedAt = num(row.checked_at);
+  const changedAt = num(row.changed_at);
+  const stale = checkedAt == null || generatedAt - checkedAt > SECONDARY_STALE_MS;
+  return {
+    ok: true,
+    channel_alias: alias,
+    generated_at: generatedAt,
+    latest_observed_at: checkedAt,
+    queue_observed_at: checkedAt,
+    changed_at: changedAt,
+    station_id: num(row.station_id),
+    is_broadcasting: storedBoolean(row.is_broadcasting),
+    host_account_id: num(row.host_account_id),
+    host_handle: row.host_handle || null,
+    playing: false,
+    stale,
+    raw_payload_mode: true,
+    raw_payload_passthrough: true,
+    setup_required: false,
+    queue_revision: row.state_hash || null,
+    queue_status: null,
+    queue: [],
+    raw_payload: rawPayload,
+  };
+}
+
 export function secondaryPlaybackPayload(row, generatedAt = Date.now()) {
   const alias = String(row?.channel_alias || '').trim() || null;
   if (!row) return emptySecondaryPayload(alias, generatedAt);
@@ -140,8 +171,11 @@ export function secondaryPlaybackPayload(row, generatedAt = Date.now()) {
   const stationId = num(row.station_id);
   const queueId = num(row.queue_id);
   const parsed = parseQueueJson(row.queue_json);
-  const queueCorrupt = parsed === null;
-  const source = parsed || [];
+  if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+    return secondaryRawPlaybackPayload(row, parsed, generatedAt);
+  }
+  const queueCorrupt = parsed === null || !Array.isArray(parsed);
+  const source = Array.isArray(parsed) ? parsed : [];
   const rows = source.map((track, index) => stripAppleMusicFields({
     ...track,
     observed_at: checkedAt,
