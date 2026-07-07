@@ -77,7 +77,6 @@ export function normalizePlaybackTrack(track, index, playback) {
     deezer_id: String(track.deezer_id || '').trim() || null,
     isrc: String(track.isrc || '').trim() || null,
     duration_ms: durationMs,
-    preview_url: track.preview_url || null,
     bite_count: num(track.bite_count),
     artist: artist || null,
     title: title || track.display_title || spotifyId || '曲情報なし',
