@@ -125,36 +125,18 @@ test('queue ingest claims, snapshots and writes changed tracks in one request fl
   assert.equal(db.callsMatching(/INSERT INTO sh_track_like_observations/, 'run').length, 1);
 });
 
-test('same queue hashes return before track tables are read', async () => {
+test('queue ingest keeps accepting checkpoint writes without forcing duplicate claims', async () => {
   const observedAt = 1_751_500_160_000;
-  const queuePayload = {
-    station_id: 3328626,
-    queue_id: 41,
-    start_time: 1_751_500_000_000,
-    is_paused: 0,
-    tracks: [{
-      position: 0,
-      queue_track_id: 100,
-      stationhead_track_id: 200,
-      spotify_id: 'spotify-1',
-      deezer_id: null,
-      isrc: null,
-      duration_ms: 180_000,
-      preview_url: null,
-      bite_count: 15,
-    }],
-  };
-  const db = new FakeD1Database().route('first', /FROM sh_queue_snapshots/, {
-    raw_json: JSON.stringify(queuePayload),
-    item_observed_at: observedAt,
-  });
+  const db = new FakeD1Database();
   const response = await ingestPost({
     request: post('https://skrzk.test/api/ingest', {
       type: 'queue',
       collector_id: 'integration-collector',
       observed_at: observedAt,
       data: {
-        ...queuePayload,
+        station_id: 3328626,
+        queue_id: 41,
+        start_time: 1_751_500_000_000,
         is_paused: false,
         tracks: [{
           position: 0,
@@ -172,10 +154,12 @@ test('same queue hashes return before track tables are read', async () => {
 
   assert.equal(body.accepted, true);
   assert.equal(body.duplicate, false);
-  assert.equal(body.queue_inspected, false);
-  assert.equal(db.callsMatching(/sh_queue_items/).length, 0);
-  assert.equal(db.callsMatching(/sh_track_like_current/).length, 0);
+  assert.equal(body.queue_inspected, true);
+  assert.equal(body.queue_items_written, 1);
+  assert.equal(body.like_observations_written, 1);
   assert.equal(db.callsMatching(/sh_ingest_claims/, 'run').length, 1);
+  assert.equal(db.callsMatching(/sh_queue_items/).length, 1);
+  assert.equal(db.callsMatching(/sh_track_like_observations/).length, 1);
 });
 
 test('host snapshot ingest creates a claim and persists one session observation', async () => {
