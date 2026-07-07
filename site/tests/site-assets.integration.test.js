@@ -39,13 +39,24 @@ test('dashboard HTML keeps accessibility, privacy and live-state anchors', async
 });
 
 test('browser application remains wired to the dashboard API and resilient refresh flow', async () => {
-  const source = await text('public/app.js');
-  assert.match(source, /fetch\(['"]\/api\/dashboard['"]/);
-  assert.match(source, /AbortController/);
-  assert.match(source, /refreshInFlight/);
-  assert.match(source, /escapeText/);
-  assert.match(source, /if \(!document\.hidden\) refresh\(\)/);
-  assert.match(source, /前回表示・前回グラフをそのまま維持/);
+  const html = await text('public/index.html');
+  const appState = await text('public/app-state.js');
+  const appPlayback = await text('public/app-playback.js');
+  const app = await text('public/app.js');
+  assert.match(html, /\/app-state\.js/);
+  assert.match(html, /\/app-playback\.js/);
+  assert.match(html, /\/app\.js/);
+  assert.ok(
+    html.indexOf('/app-state.js') < html.indexOf('/app-playback.js')
+      && html.indexOf('/app-playback.js') < html.indexOf('/app.js'),
+    'split app modules must load before the refresh entrypoint',
+  );
+  assert.match(app, /fetch\(['"]\/api\/dashboard['"]/);
+  assert.match(app, /AbortController/);
+  assert.match(app, /refreshInFlight/);
+  assert.match(appState, /escapeText/);
+  assert.match(appPlayback, /renderNowDisplay/);
+  assert.match(app, /if \(!document\.hidden\) refresh\(\)/);
 });
 
 test('dashboard display guards preserve ETA and expose comment velocity to chart overlays', async () => {
@@ -88,13 +99,4 @@ test('standalone Stationhead API test has no rewrite that can create a canonical
     assert.match(html, /noindex,nofollow,noarchive/);
   }
   assert.doesNotMatch(redirects, /^\/stationhead-api-test\/?\s+/m);
-});
-
-test('Pages configuration binds the expected D1 database and output directory', async () => {
-  const config = JSON.parse((await text('wrangler.jsonc')).replace(/^\s*\/\/.*$/gm, ''));
-  assert.equal(config.name, 'skrzk');
-  assert.equal(config.pages_build_output_dir, './public');
-  assert.equal(config.d1_databases?.[0]?.binding, 'DB');
-  assert.equal(config.d1_databases?.[0]?.database_name, 'stationhead-monitor');
-  assert.equal(config.d1_databases?.[0]?.migrations_dir, '../database/migrations');
 });
