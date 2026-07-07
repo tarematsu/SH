@@ -198,6 +198,15 @@ async function probeD1Write(env, now) {
   }
 }
 
+function failureAlreadyRecordedThisRun(state, runStartedAt) {
+  const failureAt = finite(state?.failure_last_at);
+  return Boolean(
+    failureAt != null
+      && failureAt >= runStartedAt - 5_000
+      && text(state?.failure_code),
+  );
+}
+
 export async function diagnoseScheduledCollection(env, before, runStartedAt, appError = null) {
   let after;
   try {
@@ -223,8 +232,10 @@ export async function diagnoseScheduledCollection(env, before, runStartedAt, app
   }
 
   if (failure) {
-    await recordCollectorFailure(env, failure, failure.diagnosis?.stage || 'collector_unknown', 'scheduled-guard')
-      .catch(() => {});
+    if (!failureAlreadyRecordedThisRun(after, runStartedAt)) {
+      await recordCollectorFailure(env, failure, failure.diagnosis?.stage || 'collector_unknown', 'scheduled-guard')
+        .catch(() => {});
+    }
   } else if (lastSuccessAt >= runStartedAt && (!before || lastSuccessAt > (finite(before.last_success_at) ?? 0))) {
     await clearCollectorFailure(env).catch((error) => {
       console.warn(JSON.stringify({
