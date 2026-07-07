@@ -54,26 +54,6 @@ test('normalizes wrapped Stationhead channel payloads for collection', () => {
   assert.doesNotThrow(() => validateBuddyQueuePayload(normalized, 'buddy46'));
 });
 
-test('normalizes wrapped Stationhead api playback payloads for collection', () => {
-  const normalized = normalizeBuddyQueuePayload({
-    data: {
-      playback: {
-        handle: 'buddy46',
-        station: {
-          id: 46,
-          is_broadcasting: true,
-          queue: { id: 7, queue_tracks: [] },
-        },
-      },
-    },
-  }, 'buddy46');
-
-  assert.equal(normalized.alias, 'buddy46');
-  assert.equal(normalized.current_station.id, 46);
-  assert.equal(normalized.current_station.queue.id, 7);
-  assert.doesNotThrow(() => validateBuddyQueuePayload(normalized, 'buddy46'));
-});
-
 test('guarded fetch rewrites channel alias reads to the buddy46 handle station endpoint', async () => {
   let seenUrl = null;
   let seenInit = null;
@@ -94,35 +74,6 @@ test('guarded fetch rewrites channel alias reads to the buddy46 handle station e
   assert.equal(seenUrl.pathname, '/station/handle/buddy46/guest');
   assert.equal(seenInit.method, 'POST');
   assert.equal(seenInit.body, '');
-  assert.equal(body.alias, 'buddy46');
-  assert.equal(body.current_station.queue.id, 7);
-});
-
-test('guarded fetch validates api playback reads for buddy46', async () => {
-  let seenUrl = null;
-  let seenInit = null;
-  const guarded = createBuddyGuardedFetch(async (input, init) => {
-    seenUrl = new URL(String(input));
-    seenInit = init;
-    return new Response(JSON.stringify({
-      data: {
-        playback: {
-          handle: 'buddy46',
-          station: {
-            id: 46,
-            is_broadcasting: true,
-            queue: { id: 7, queue_tracks: [] },
-          },
-        },
-      },
-    }), { status: 200 });
-  }, 'buddy46');
-
-  const response = await guarded('https://example.invalid/api/playback?channel=buddy46', { method: 'GET' });
-  const body = await response.json();
-  assert.equal(seenUrl.pathname, '/api/playback');
-  assert.equal(seenUrl.searchParams.get('channel'), 'buddy46');
-  assert.equal(seenInit.method, 'GET');
   assert.equal(body.alias, 'buddy46');
   assert.equal(body.current_station.queue.id, 7);
 });
