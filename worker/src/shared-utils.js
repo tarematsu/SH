@@ -1,4 +1,5 @@
 export const jsonResponse=(data,status=200)=>new Response(JSON.stringify(data),{status,headers:{'content-type':'application/json; charset=utf-8'}});
+export const jsonNoStoreResponse=(data,status=200)=>new Response(JSON.stringify(data),{status,headers:{'content-type':'application/json; charset=utf-8','cache-control':'no-store'}});
 export const normalizeBearer=(value)=>String(value||'').replace(/^Bearer\s+/i,'').trim();
 
 export function jwtExpiryMs(token){
@@ -10,8 +11,17 @@ export function jwtExpiryMs(token){
   }catch{return 0;}
 }
 
+export function finiteNumber(value){
+  if(value===undefined||value===null||value==='')return null;
+  const n=Number(value);return Number.isFinite(n)?n:null;
+}
+
 export function positiveNumber(value,fallback){
   const n=Number(value??fallback);return Number.isFinite(n)&&n>0?n:fallback;
+}
+
+export async function timedFetch(url,options,timeoutMs){
+  return fetch(url,{...(options||{}),signal:AbortSignal.timeout(timeoutMs)});
 }
 
 export function highResolutionArtwork(url){
@@ -30,10 +40,7 @@ function commentIdentity(comment){
 }
 
 export function normalizeComments(payload,stationId,{finite}={}){
-  const toFinite=finite||((value)=>{
-    if(value===undefined||value===null||value==='')return null;
-    const n=Number(value);return Number.isFinite(n)?n:null;
-  });
+  const toFinite=finite||finiteNumber;
   const candidates=[payload,payload?.items,payload?.data?.items,payload?.chats?.items,payload?.chats];
   const items=candidates.find(Array.isArray)||[];
   const normalized=items.map((chat)=>{
