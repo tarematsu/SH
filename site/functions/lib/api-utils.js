@@ -60,7 +60,6 @@ export function isUnusedPublicPlaybackKey(key) {
     || normalized === 'queueid'
     || normalized === 'queuetrackid'
     || normalized === 'isrc'
-    || normalized === 'bitecount'
     || normalized === 'metadatafetchedat'
     || normalized === 'rawjson'
     || normalized === 'metadatarawjson'

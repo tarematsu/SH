@@ -64,6 +64,7 @@ export function normalizePlaybackTrack(track, index, playback) {
     : inferArtistFromDisplayTitle(track.display_title || fallback.title, title || fallback.title);
   const spotifyId = String(track.spotify_id || '').trim() || null;
   const durationMs = Math.max(0, num(track.duration_ms) || 0);
+  const isCurrent = index === playback.currentIndex;
 
   return {
     observed_at: num(track.observed_at),
@@ -76,7 +77,8 @@ export function normalizePlaybackTrack(track, index, playback) {
     title: title || track.display_title || spotifyId || '曲情報なし',
     thumbnail_url: track.thumbnail_url || null,
     spotify_url: track.spotify_url || (spotifyId ? `https://open.spotify.com/track/${spotifyId}` : null),
-    is_current: index === playback.currentIndex,
-    progress_ms: index === playback.currentIndex ? playback.progressMs : 0,
+    ...(isCurrent ? { bite_count: num(track.bite_count) } : {}),
+    is_current: isCurrent,
+    progress_ms: isCurrent ? playback.progressMs : 0,
   };
 }
