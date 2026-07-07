@@ -206,10 +206,3 @@ export function createStationheadTrafficGuard(nextFetch, nowFn = Date.now) {
     return (await pending).clone();
   };
 }
-
-if (typeof globalThis.fetch === 'function' && !globalThis.fetch[INSTALL_MARK]) {
-  const optionalGuard = createOptionalFetchGuard(globalThis.fetch.bind(globalThis));
-  const stationheadGuard = createStationheadTrafficGuard(optionalGuard);
-  Object.defineProperty(stationheadGuard, INSTALL_MARK, { value: true });
-  globalThis.fetch = stationheadGuard;
-}
