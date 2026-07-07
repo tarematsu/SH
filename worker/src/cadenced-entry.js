@@ -9,8 +9,7 @@ import coreApp from './scheduled-main.js';
 import diagnosticApp from './health-alert-index.js';
 
 export const DEFER_BUDDY_PLAYBACK_FLAG = '__DEFER_BUDDY_PLAYBACK';
-const DEFAULT_DIAGNOSTIC_INTERVAL_MINUTES = 10;
-const FAILURE_DIAGNOSTIC_WINDOW_MS = 10 * 60_000;
+const DEFAULT_DIAGNOSTIC_INTERVAL_MINUTES = 30;
 let forceDiagnosticsUntil = 0;
 let buddyPlaybackFlight = null;
 
@@ -25,8 +24,8 @@ export function shouldRunFullDiagnostics(now = Date.now(), env = {}) {
     || Math.floor(now / 60_000) % diagnosticIntervalMinutes(env) === 0;
 }
 
-export function markDiagnosticFailure(now = Date.now()) {
-  forceDiagnosticsUntil = Math.max(forceDiagnosticsUntil, now + FAILURE_DIAGNOSTIC_WINDOW_MS);
+export function markDiagnosticFailure(_now = Date.now()) {
+  forceDiagnosticsUntil = 0;
 }
 
 export function resetDiagnosticFailureWindow() {
