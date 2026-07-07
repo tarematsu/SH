@@ -73,7 +73,6 @@ function ensurePrimaryScheduledFlight(controller, env, ctx, scheduled, runners) 
 }
 
 function abandonPrimaryFlight(flight, resetCollector) {
-  releasePrimaryFlight(flight);
   try {
     resetCollector?.();
   } catch (error) {
