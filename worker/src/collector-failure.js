@@ -201,21 +201,11 @@ export async function recordCollectorFailure(
         consecutive_failures,updated_at
       ) VALUES (?,?,?,?,?,?,?,?,?,1,?)
       ON CONFLICT(id) DO UPDATE SET
-        first_failure_at=CASE
-          WHEN sh_collector_failure_state.code=excluded.code
-           AND sh_collector_failure_state.stage=excluded.stage
-          THEN MIN(sh_collector_failure_state.first_failure_at,excluded.first_failure_at)
-          ELSE excluded.first_failure_at
-        END,
+        first_failure_at=MIN(sh_collector_failure_state.first_failure_at,excluded.first_failure_at),
         last_failure_at=excluded.last_failure_at,
         code=excluded.code,stage=excluded.stage,summary=excluded.summary,
         detail=excluded.detail,hint=excluded.hint,source=excluded.source,
-        consecutive_failures=CASE
-          WHEN sh_collector_failure_state.code=excluded.code
-           AND sh_collector_failure_state.stage=excluded.stage
-          THEN sh_collector_failure_state.consecutive_failures+1
-          ELSE 1
-        END,
+        consecutive_failures=sh_collector_failure_state.consecutive_failures+1,
         updated_at=excluded.updated_at`)
       .bind(
         STATE_ID,
@@ -299,7 +289,7 @@ export function failureEmailLines(diagnosis) {
     `原因コード: ${diagnosis.code}`,
     `失敗段階: ${diagnosis.stageLabel || stageLabel(diagnosis.stage)}`,
     `原因記録時刻: ${diagnosis.at ? new Date(diagnosis.at).toISOString() : '不明'}`,
-    ...(diagnosis.count ? [`同種の連続失敗: ${diagnosis.count}回`] : []),
+    ...(diagnosis.count ? [`連続失敗: ${diagnosis.count}回`] : []),
     `詳細: ${diagnosis.detail || '記録なし'}`,
     `確認候補: ${diagnosis.hint || 'Workerログを確認してください。'}`,
   ];
