@@ -1,17 +1,17 @@
 import { normalizeComments } from './shared.js';
 import { sanitizeFailureDetail } from './collector-failure.js';
 import { ingest } from './collector-ingest.js';
-import { stationheadJson } from './collector-config.js';
+import { shJson } from './collector-config.js';
 
 export async function collectOptionalComments(env, state, config, observedAt, dependencies = {}) {
   if (!state?.stationId || Number(config?.chatLimit || 0) <= 0) {
     return { commentsSaved: 0, degraded: false, errorStage: null };
   }
 
-  const requestJson = dependencies.requestJson || stationheadJson;
+  const requestJson = dependencies.requestJson || shJson;
   const writeIngest = dependencies.writeIngest || ingest;
   const warn = dependencies.warn || console.warn;
-  let stage = 'stationhead_chat_history';
+  let stage = 'sh_chat_history';
 
   try {
     const history = await requestJson(
@@ -19,7 +19,7 @@ export async function collectOptionalComments(env, state, config, observedAt, de
       config,
       `/station/${encodeURIComponent(state.stationId)}/chatHistory?limit=${config.chatLimit}`,
     );
-    stage = 'stationhead_chat_payload';
+    stage = 'sh_chat_payload';
     const comments = normalizeComments(history, state.stationId);
     stage = 'd1_write_comments';
     await writeIngest(env, 'comments', {
@@ -30,7 +30,7 @@ export async function collectOptionalComments(env, state, config, observedAt, de
     return { commentsSaved: comments.length, degraded: false, errorStage: null };
   } catch (error) {
     warn(JSON.stringify({
-      event: 'optional_comment_collection_failed',
+      event: 'comment_collection_failed',
       stage,
       error: sanitizeFailureDetail(error?.message || error),
     }));
