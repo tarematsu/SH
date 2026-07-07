@@ -3,22 +3,37 @@
   const BUCKET_MS = 5 * 60_000;
   const WINDOW_MS = 24 * 60 * 60_000;
 
+  function velocityValue(row) {
+    const candidates = [
+      row?.comment_velocity,
+      row?.comment_velocity_max,
+      row?.comments_velocity,
+      row?.comment_rate,
+      row?.comment_count_delta,
+    ];
+    for (const candidate of candidates) {
+      const value = Number(candidate);
+      if (Number.isFinite(value)) return Math.max(0, value);
+    }
+    return null;
+  }
+
   function mergeRow(row, cutoff) {
     const observedAt = Number(row?.observed_at);
     if (!Number.isFinite(observedAt) || observedAt < cutoff) return false;
     const bucket = Math.floor(observedAt / BUCKET_MS) * BUCKET_MS;
     const previous = buckets.get(bucket);
-    const previousVelocity = Number(previous?.comment_velocity);
-    const nextVelocity = Number(row?.comment_velocity);
-    const commentVelocity = Number.isFinite(previousVelocity) || Number.isFinite(nextVelocity)
-      ? Math.max(Number.isFinite(previousVelocity) ? previousVelocity : 0, Number.isFinite(nextVelocity) ? nextVelocity : 0)
+    const previousVelocity = velocityValue(previous);
+    const nextVelocity = velocityValue(row);
+    const commentVelocity = previousVelocity != null || nextVelocity != null
+      ? Math.max(previousVelocity ?? 0, nextVelocity ?? 0)
       : null;
     if (!previous || observedAt >= Number(previous.observed_at)) {
-      buckets.set(bucket, { ...row, comment_velocity: commentVelocity });
+      buckets.set(bucket, { ...row, comment_velocity: commentVelocity, comment_velocity_max: commentVelocity });
       return true;
     }
     if (commentVelocity !== previous.comment_velocity) {
-      buckets.set(bucket, { ...previous, comment_velocity: commentVelocity });
+      buckets.set(bucket, { ...previous, comment_velocity: commentVelocity, comment_velocity_max: commentVelocity });
       return true;
     }
     return false;
