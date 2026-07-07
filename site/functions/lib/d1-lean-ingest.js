@@ -370,3 +370,30 @@ export async function saveLeanQueue(db, observedAt, body) {
   await runBatches(db, statements);
   return { claim, inspected: true, itemsWritten: changedTracks.length, observationsWritten: observations.length };
 }
+
+function stableHeartbeatMetadata(data) {
+  const metadata = { ...(data || {}) };
+  for (const key of [
+    'collector_id', 'hostname', 'version', 'observed_at', 'last_seen_at',
+    'heartbeat_at', 'timestamp', 'sent_at', 'now',
+  ]) delete metadata[key];
+  return metadata;
+}
+
+export async function saveLeanHeartbeat(db, observedAt, data) {
+  const result = await db.prepare(`INSERT INTO sh_collector_heartbeats (
+      collector_id,first_seen_at,last_seen_at,hostname,version,metadata_json
+    ) VALUES (?,?,?,?,?,?)
+    ON CONFLICT(collector_id) DO UPDATE SET
+      last_seen_at=excluded.last_seen_at,hostname=excluded.hostname,
+      version=excluded.version,metadata_json=excluded.metadata_json
+    WHERE excluded.last_seen_at-sh_collector_heartbeats.last_seen_at>=600000
+       OR excluded.hostname IS NOT sh_collector_heartbeats.hostname
+       OR excluded.version IS NOT sh_collector_heartbeats.version
+       OR excluded.metadata_json IS NOT sh_collector_heartbeats.metadata_json`)
+    .bind(
+      text(data?.collector_id), observedAt, observedAt,
+      text(data?.hostname), text(data?.version), rawJson(stableHeartbeatMetadata(data)),
+    ).run();
+  return { accepted: Number(result?.meta?.changes || 0) > 0 };
+}
