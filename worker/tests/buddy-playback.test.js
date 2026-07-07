@@ -5,7 +5,6 @@ import {
   BUDDY_PLAYBACK_TOUCH_SQL,
   BUDDY_PLAYBACK_UPSERT_SQL,
   attachBuddyMetadata,
-  buddyPlaybackApiPath,
   collectBuddyPlayback,
   extractBuddyPlayback,
   shouldRunBuddyPlayback,
@@ -123,10 +122,6 @@ test('buddy playback runs only in five-minute buckets', () => {
   assert.equal(shouldRunBuddyPlayback(300_000, 300_000), true);
 });
 
-test('buddy playback api path targets channel playback for the alias', () => {
-  assert.equal(buddyPlaybackApiPath('Buddy46'), '/api/playback?channel=buddy46');
-});
-
 test('buddy playback extracts a compact queue without converting nulls to zero', () => {
   const value = extractBuddyPlayback(channel);
   assert.equal(value.station_id, 46);
@@ -184,59 +179,6 @@ test('changed playback replaces the one current-state row with compact JSON', as
   assert.match(upsert.params[9], /Song/);
   assert.doesNotMatch(upsert.params[9], /metadata_raw_json|metadata_fetched_at|bite_count|oversized|apple_music_id/);
   assert.equal(db.calls.some((call) => call.sql === BUDDY_PLAYBACK_TOUCH_SQL), false);
-});
-
-test('default buddy playback fetch uses api playback before the handle fallback', async () => {
-  const db = new FakeDb({ metadata: [metadataRow] });
-  const seen = [];
-  const result = await collectBuddyPlayback({ DB: db }, 600_000, {
-    loadSession: async () => ({ authToken: 'token', deviceUid: 'device' }),
-    fetch: async (input, init) => {
-      const url = new URL(String(input));
-      seen.push({ url, init });
-      return new Response(JSON.stringify({
-        data: {
-          playback: {
-            handle: 'buddy46',
-            station: channel.current_station,
-          },
-        },
-      }), { status: 200 });
-    },
-    stateHash: async () => 'hash-new',
-  });
-
-  assert.equal(result.skipped, false);
-  assert.equal(seen.length, 1);
-  assert.equal(seen[0].url.origin, 'https://www.stationhead.com');
-  assert.equal(seen[0].url.pathname, '/api/playback');
-  assert.equal(seen[0].url.searchParams.get('channel'), 'buddy46');
-  assert.equal(seen[0].init.method, 'GET');
-});
-
-test('default buddy playback fetch falls back to the handle station endpoint', async () => {
-  const db = new FakeDb({ metadata: [metadataRow] });
-  const seen = [];
-  const result = await collectBuddyPlayback({ DB: db }, 600_000, {
-    loadSession: async () => ({ authToken: 'token', deviceUid: 'device' }),
-    fetch: async (input, init) => {
-      const url = new URL(String(input));
-      seen.push({ url, init });
-      if (url.pathname === '/api/playback') {
-        return new Response('missing', { status: 404 });
-      }
-      return new Response(JSON.stringify({ data: channel }), { status: 200 });
-    },
-    stateHash: async () => 'hash-new',
-  });
-
-  assert.equal(result.skipped, false);
-  assert.equal(seen.length, 2);
-  assert.equal(seen[0].url.pathname, '/api/playback');
-  assert.equal(seen[1].url.origin, 'https://production1.stationhead.com');
-  assert.equal(seen[1].url.pathname, '/station/handle/buddy46/guest');
-  assert.equal(seen[1].init.method, 'POST');
-  assert.equal(seen[1].init.body, '');
 });
 
 test('metadata-only refresh updates queue JSON without resetting playback changed_at', async () => {

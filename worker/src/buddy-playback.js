@@ -6,7 +6,6 @@ import {
 } from './shared.js';
 
 const API_BASE = 'https://production1.stationhead.com';
-const WEB_BASE = 'https://www.stationhead.com';
 const DEFAULT_ALIAS = 'buddy46';
 const DEFAULT_INTERVAL_MS = 5 * 60_000;
 const DEFAULT_MAX_TRACKS = 80;
@@ -74,16 +73,8 @@ function missingTable(error) {
   return /no such table:\s*sh_playback_channel_current/i.test(String(error?.message || error));
 }
 
-function normalizeAlias(alias = DEFAULT_ALIAS) {
-  return String(alias || DEFAULT_ALIAS).trim().toLowerCase() || DEFAULT_ALIAS;
-}
-
-export function buddyPlaybackApiPath(alias = DEFAULT_ALIAS) {
-  return `/api/playback?channel=${encodeURIComponent(normalizeAlias(alias))}`;
-}
-
 export function buddyHandleStationPath(alias = DEFAULT_ALIAS) {
-  return `/station/handle/${encodeURIComponent(normalizeAlias(alias))}/guest`;
+  return `/station/handle/${encodeURIComponent(String(alias || DEFAULT_ALIAS).trim().toLowerCase() || DEFAULT_ALIAS)}/guest`;
 }
 
 function trimMetadataFailures() {
@@ -107,7 +98,7 @@ function markMetadataFailure(spotifyId, now) {
 export function buddyPlaybackConfig(env = {}) {
   return {
     enabled: enabled(env.BUDDY_PLAYBACK_ENABLED),
-    alias: normalizeAlias(env.BUDDY_PLAYBACK_ALIAS || DEFAULT_ALIAS),
+    alias: String(env.BUDDY_PLAYBACK_ALIAS || DEFAULT_ALIAS).trim().toLowerCase() || DEFAULT_ALIAS,
     intervalMs: positiveInteger(env.BUDDY_PLAYBACK_INTERVAL_MS, DEFAULT_INTERVAL_MS),
     maxTracks: positiveInteger(env.BUDDY_PLAYBACK_MAX_TRACKS, DEFAULT_MAX_TRACKS, 80),
     metadataLimit: positiveInteger(
@@ -185,42 +176,22 @@ export function validateBuddyChannelPayload(channel, expectedAlias = DEFAULT_ALI
   return channel;
 }
 
-async function readChannelResponse(response, config, label) {
+async function fetchChannel(env, session, config, request = fetch) {
+  const response = await request(
+    `${API_BASE}${buddyHandleStationPath(config.alias)}`,
+    {
+      method: 'POST',
+      headers: stationheadHeaders(session, config),
+      body: '',
+      signal: AbortSignal.timeout(config.requestTimeoutMs),
+    },
+  );
   if (!response.ok) {
     const body = await response.text().catch(() => '');
-    throw new Error(`${label} ${response.status}: ${body.slice(0, 200)}`);
+    throw new Error(`Stationhead buddy playback API ${response.status}: ${body.slice(0, 200)}`);
   }
   const payload = normalizeBuddyQueuePayload(await response.json(), config.alias);
   return validateBuddyChannelPayload(payload, config.alias);
-}
-
-async function fetchChannel(env, session, config, request = fetch) {
-  const headers = stationheadHeaders(session, config);
-  const attempts = [
-    {
-      label: 'Stationhead buddy playback API',
-      url: `${WEB_BASE}${buddyPlaybackApiPath(config.alias)}`,
-      init: { method: 'GET', headers },
-    },
-    {
-      label: 'Stationhead buddy playback handle API',
-      url: `${API_BASE}${buddyHandleStationPath(config.alias)}`,
-      init: { method: 'POST', headers, body: '' },
-    },
-  ];
-  const errors = [];
-  for (const attempt of attempts) {
-    try {
-      const response = await request(attempt.url, {
-        ...attempt.init,
-        signal: AbortSignal.timeout(config.requestTimeoutMs),
-      });
-      return await readChannelResponse(response, config, attempt.label);
-    } catch (error) {
-      errors.push(String(error?.message || error));
-    }
-  }
-  throw new Error(errors.join('; '));
 }
 
 export function extractBuddyPlayback(channel, alias = DEFAULT_ALIAS, maxTracks = DEFAULT_MAX_TRACKS) {
