@@ -1,9 +1,8 @@
-import { ensureAuthControlRow, readAuthState } from './auth-state.js';
+import { BUDDY_AUTH_STATE_ID, ensureAuthControlRow, readAuthState } from './auth-state.js';
 import { collectBuddyPlayback } from './buddy-playback.js';
 import { jwtExpiryMs, normalizeBearer } from './shared.js';
 
 const API_ORIGIN = 'https://production1.stationhead.com';
-const STATE_ID = 'stationhead';
 const DEFAULT_REQUEST_TIMEOUT_MS = 8_000;
 const AUTH_REFRESH_MARGIN_MS = 5 * 60_000;
 const AUTH_LOCK_MS = 60_000;
@@ -34,10 +33,16 @@ function positive(value, fallback, maximum = Number.MAX_SAFE_INTEGER) {
   return Math.min(number, maximum);
 }
 
+export function buddyAuthStateId(env = {}) {
+  return String(env.BUDDY_PLAYBACK_AUTH_STATE_ID || BUDDY_AUTH_STATE_ID).trim().toLowerCase()
+    || BUDDY_AUTH_STATE_ID;
+}
+
 function config(env = {}) {
   return {
     alias: String(env.BUDDY_PLAYBACK_ALIAS || 'buddy46').trim().toLowerCase() || 'buddy46',
-    appVersion: String(env.STATIONHEAD_APP_VERSION || '1.0.0'),
+    authStateId: buddyAuthStateId(env),
+    appVersion: String(env.STATIONHEAD_APP_VERSION || env.SH_APP_VERSION || '1.0.0'),
     timeoutMs: positive(env.REQUEST_TIMEOUT_MS, DEFAULT_REQUEST_TIMEOUT_MS, 30_000),
   };
 }
@@ -55,11 +60,14 @@ function usableSession(state, now = Date.now()) {
   return !state.tokenExpiresAt || state.tokenExpiresAt - now > AUTH_REFRESH_MARGIN_MS;
 }
 
-function withAuthState(env, state) {
+function withBuddyAuthState(env, state) {
   return new Proxy(env, {
     get(target, property, receiver) {
-      if (property === '__stationheadAuthState') return state;
+      if (property === '__buddyAuthState') return state;
       return Reflect.get(target, property, receiver);
+    },
+    has(target, property) {
+      return property === '__buddyAuthState' || Reflect.has(target, property);
     },
   });
 }
@@ -125,7 +133,7 @@ async function acquireDirectSession(env, request = fetch) {
   return { authToken, deviceUid, tokenExpiresAt: jwtExpiryMs(authToken) || null };
 }
 
-async function saveSession(env, state, now = Date.now()) {
+async function saveSession(env, stateId, state, now = Date.now()) {
   await env.DB.prepare(`INSERT INTO sh_worker_collector_state (
       id,auth_token,device_uid,token_expires_at,last_run_at,last_success_at,last_error,
       last_channel_id,last_station_id,updated_at
@@ -135,47 +143,51 @@ async function saveSession(env, state, now = Date.now()) {
       device_uid=excluded.device_uid,
       token_expires_at=excluded.token_expires_at,
       updated_at=excluded.updated_at`)
-    .bind(STATE_ID, state.authToken, state.deviceUid, state.tokenExpiresAt, now)
+    .bind(stateId, state.authToken, state.deviceUid, state.tokenExpiresAt, now)
     .run();
 }
 
-async function finishRefresh(env, error = null, now = Date.now()) {
+async function finishRefresh(env, stateId, error = null, now = Date.now()) {
   await env.DB.prepare(`UPDATE sh_worker_auth_control SET
       last_success_at=CASE WHEN ? IS NULL THEN ? ELSE last_success_at END,
       last_error=?,lock_until=0,updated_at=? WHERE id=?`)
-    .bind(error, now, error, now, STATE_ID)
+    .bind(error, now, error, now, stateId)
     .run();
 }
 
-async function claimRefresh(env, now = Date.now()) {
-  await ensureAuthControlRow(env, STATE_ID, now);
+async function claimRefresh(env, stateId, now = Date.now()) {
+  await ensureAuthControlRow(env, stateId, now);
   const result = await env.DB.prepare(`UPDATE sh_worker_auth_control SET
       lock_until=?,last_attempt_at=?,updated_at=?
     WHERE id=? AND COALESCE(lock_until,0)<?`)
-    .bind(now + AUTH_LOCK_MS, now, now, STATE_ID, now)
+    .bind(now + AUTH_LOCK_MS, now, now, stateId, now)
     .run();
   return Number(result?.meta?.changes || 0) > 0;
 }
 
-async function waitForRefresh(env, previousSuccessAt, nowFn = Date.now) {
+async function waitForRefresh(env, stateId, previousSuccessAt, nowFn = Date.now) {
   const deadline = nowFn() + AUTH_WAIT_MS;
   while (nowFn() < deadline) {
     await sleep(1_000);
-    const state = await readAuthState(env, STATE_ID);
+    const state = await readAuthState(env, stateId);
     if (state.lastSuccessAt > previousSuccessAt && usableSession(state, nowFn())) return state;
     if (state.lockUntil <= nowFn()) break;
   }
   return null;
 }
 
-async function refreshSession(env, dependencies = {}) {
+async function refreshSession(env, dependencies = {}, options = {}) {
   if (refreshFlight) return refreshFlight;
   refreshFlight = Promise.resolve().then(async () => {
+    const cfg = config(env);
+    const stateId = cfg.authStateId;
     const nowFn = dependencies.now || Date.now;
     const now = nowFn();
-    const initial = await readAuthState(env, STATE_ID);
-    if (!await claimRefresh(env, now)) {
-      const waited = await waitForRefresh(env, initial.lastSuccessAt, nowFn);
+    const initial = await readAuthState(env, stateId);
+    if (!options.force && usableSession(initial, now)) return initial;
+
+    if (!await claimRefresh(env, stateId, now)) {
+      const waited = await waitForRefresh(env, stateId, initial.lastSuccessAt, nowFn);
       if (waited) return waited;
       throw new Error('buddy46 authentication refresh lock timed out');
     }
@@ -185,12 +197,12 @@ async function refreshSession(env, dependencies = {}) {
         env,
         dependencies.fetch,
       );
-      await saveSession(env, acquired, nowFn());
-      await finishRefresh(env, null, nowFn());
-      return readAuthState(env, STATE_ID);
+      await saveSession(env, stateId, acquired, nowFn());
+      await finishRefresh(env, stateId, null, nowFn());
+      return readAuthState(env, stateId);
     } catch (error) {
       const message = String(error?.message || error).slice(0, 800);
-      await finishRefresh(env, message, nowFn()).catch(() => {});
+      await finishRefresh(env, stateId, message, nowFn()).catch(() => {});
       throw error;
     }
   }).finally(() => {
@@ -218,11 +230,11 @@ export async function collectBuddyPlaybackReady(env, observedAt = Date.now(), de
 
   const collect = dependencies.collect || collectBuddyPlayback;
   try {
-    return await collect(withAuthState(env, state), observedAt, dependencies);
+    return await collect(withBuddyAuthState(env, state), observedAt, dependencies);
   } catch (error) {
     if (!isAuthFailure(error)) throw error;
-    state = await refreshSession(env, dependencies);
-    return collect(withAuthState(env, state), observedAt, dependencies);
+    state = await refreshSession(env, dependencies, { force: true });
+    return collect(withBuddyAuthState(env, state), observedAt, dependencies);
   }
 }
 
