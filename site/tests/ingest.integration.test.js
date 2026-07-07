@@ -148,7 +148,6 @@ test('same queue hashes return before track tables are read', async () => {
     }],
   };
   const structuralHash = await payloadHash(queuePayload);
-  const likesHash = await payloadHash(queueLikesPayload(queuePayload.tracks));
   const db = new FakeD1Database().route('first', /FROM sh_ingest_claims/, {
     dedupe_key: `station:${queuePayload.station_id}:queue:${queuePayload.start_time}:minute:${Math.floor(observedAt / 60000) * 60000}:hash:${structuralHash}`,
     collector_id: 'integration-collector',
@@ -187,7 +186,6 @@ test('same queue hashes return before track tables are read', async () => {
   assert.equal(db.callsMatching(/sh_queue_items/).length, 0);
   assert.equal(db.callsMatching(/sh_track_like_current/).length, 0);
   assert.equal(db.callsMatching(/sh_ingest_claims/, 'run').length, 0);
-  assert.ok(likesHash);
 });
 
 test('host snapshot ingest creates a claim and persists one session observation', async () => {
@@ -215,27 +213,32 @@ test('host snapshot ingest creates a claim and persists one session observation'
   assert.equal(response.status, 200);
   assert.equal(body.ok, true);
   assert.equal(body.accepted, true);
+  assert.equal(db.callsMatching(/INSERT INTO sh_ingest_claims/, 'run').length, 1);
+  assert.equal(db.callsMatching(/INSERT INTO sh_host_station_snapshots/, 'run').length, 1);
 });
 
 test('important websocket events are stored while unknown events are intentionally ignored', async () => {
-  const db = new FakeD1Database();
-  const response = await ingestPost({
-    request: post('https://skrzk.test/api/ingest', {
-      type: 'websocket_event',
-      collector_id: 'integration-collector',
+  const importantDb = new FakeD1Database();
+  const important = await hostIngestPost({
+    request: post('https://skrzk.test/api/host-ingest', {
+      type: 'solo_ws_event',
       observed_at: 1_751_500_300_000,
-      data: {
-        event_type: 'station.stats',
-        station_id: 3328626,
-        stream_count: 1000,
-        unknown_payload: { ignored: true },
-      },
+      data: { session_id: 9001, station_id: 3328626, event: 'listenerCount', data: { count: 321 } },
     }),
-    env: env(db),
+    env: env(importantDb),
   });
-  const body = await responseJson(response);
+  assert.equal((await responseJson(important)).stored, true);
+  assert.equal(importantDb.callsMatching(/INSERT INTO sh_host_raw_events/, 'run').length, 1);
 
-  assert.equal(response.status, 200);
-  assert.equal(body.ok, true);
-  assert.equal(body.accepted, true);
+  const ignoredDb = new FakeD1Database();
+  const ignored = await hostIngestPost({
+    request: post('https://skrzk.test/api/host-ingest', {
+      type: 'solo_ws_event',
+      observed_at: 1_751_500_305_000,
+      data: { session_id: 9001, station_id: 3328626, event: 'typingIndicator', data: {} },
+    }),
+    env: env(ignoredDb),
+  });
+  assert.equal((await responseJson(ignored)).stored, false);
+  assert.equal(ignoredDb.callsMatching(/INSERT INTO sh_host_raw_events/).length, 0);
 });
