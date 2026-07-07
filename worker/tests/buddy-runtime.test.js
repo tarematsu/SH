@@ -144,7 +144,7 @@ test('buddy runtime reuses a usable buddy46 session without refreshing', async (
 test('buddy runtime refreshes stale auth and saves it under the buddy46 state id', async () => {
   resetBuddyRuntimeForTests();
   const db = new FakeDb();
-  db.state.token_expires_at = 0;
+  db.state.token_expires_at = 1;
   let acquireCalls = 0;
   let collectedAuth = null;
   const result = await collectBuddyPlaybackReady({ DB: db }, 3000, {
