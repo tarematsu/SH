@@ -1,5 +1,9 @@
 import { num } from '../lib/api-utils.js';
-import { computePlayback as computePlaybackWithAnchors, safeJson } from '../lib/playback.js';
+import {
+  computePlayback as computePlaybackWithAnchors,
+  normalizePlaybackTrack,
+  safeJson,
+} from '../lib/playback.js';
 import { LATEST_QUEUE_WITH_ITEMS_SQL, parseLatestQueueRows } from '../lib/latest-queue.js';
 
 const json = (data, status = 200, cache = 'public, max-age=20, s-maxage=30, stale-while-revalidate=90') =>
@@ -86,32 +90,6 @@ export async function cachedHostMetric(db, metricColumn, hostScope, start, end, 
 
 export function resetHostMetricCache() {
   hostMetricCache.clear();
-}
-
-function inferArtistFromDisplayTitle(displayTitle, title) {
-  const display = String(displayTitle || '').trim();
-  const knownTitle = String(title || '').trim();
-  if (!display) return null;
-  for (const separator of [' — ', ' – ', ' - ', ' · ', ' • ']) {
-    const index = display.lastIndexOf(separator);
-    if (index <= 0) continue;
-    const left = display.slice(0, index).trim();
-    const right = display.slice(index + separator.length).trim();
-    if (!right || /^JP[A-Z0-9]{8,}$/i.test(right)) continue;
-    if (!knownTitle || left === knownTitle || display.startsWith(`${knownTitle}${separator}`)) return right;
-  }
-  return null;
-}
-
-function metadataFallback(rawValue) {
-  const raw = safeJson(rawValue, {}) || {};
-  const appleResults = raw?.apple?.results || raw?.results || [];
-  const apple = Array.isArray(appleResults) ? appleResults.find((item) => item?.artistName || item?.trackName) : null;
-  const spotify = raw?.spotify || raw;
-  return {
-    artist: apple?.artistName || spotify?.author_name || spotify?.author || null,
-    title: apple?.trackName || spotify?.title || null,
-  };
 }
 
 export function linearRegressionPrediction(rows, goal, now = Date.now()) {
@@ -253,28 +231,49 @@ function publicLatest(latest, channel, station, owner, goal) {
   };
 }
 
+function compactQueueStatus(latestQueue, latest, playback, totalItems) {
+  if (!latestQueue) return null;
+  const playing = latest?.is_broadcasting !== 0
+    && latest?.is_broadcasting !== false
+    && !latestQueue.is_paused
+    && playback.currentIndex >= 0;
+  return {
+    is_paused: Boolean(latestQueue.is_paused),
+    playing,
+    current_index: playback.currentIndex,
+    progress_ms: playback.progressMs,
+    anchor_at: playback.anchorAt,
+    queue_end_at: playback.queueEndAt,
+    total_items: totalItems,
+  };
+}
+
 export async function onRequestGet({ request, env }) {
   const db = env.DB;
   if (!db) return json({ ok: false, error: 'DB binding missing' }, 500, 'no-store');
   try {
     const url = new URL(request.url);
     const since = Math.max(0, Number(url.searchParams.get('since')) || 0);
+    const includeHistory = url.searchParams.get('history') !== '0';
     const initial = since <= 0;
     const listensRange = jstDayRange(Date.now(), 9);
     const memberRange = jstDayRange(Date.now(), 16);
 
-    const historyStatement = initial
-      ? db.prepare(HISTORY_24H_SQL)
-      : db.prepare(`SELECT observed_at,listener_count,online_member_count,total_member_count,
-          total_listens,current_stream_count,stream_goal,comment_velocity
-        FROM sh_channel_snapshots WHERE observed_at>?
-        ORDER BY observed_at ASC,id ASC LIMIT 180`).bind(since);
+    const historyStatement = !includeHistory
+      ? null
+      : initial
+        ? db.prepare(HISTORY_24H_SQL)
+        : db.prepare(`SELECT observed_at,listener_count,online_member_count,total_member_count,
+            total_listens,current_stream_count,stream_goal,comment_velocity
+          FROM sh_channel_snapshots WHERE observed_at>?
+          ORDER BY observed_at ASC,id ASC LIMIT 180`).bind(since);
 
+    const predictionStatement = initial && includeHistory ? null : db.prepare(PREDICTION_24H_SQL);
     const [latest, historyResult, queueResult, predictionResult] = await Promise.all([
       db.prepare(LATEST_SQL).first(),
-      historyStatement.all(),
+      historyStatement ? historyStatement.all() : Promise.resolve({ results: [] }),
       db.prepare(LATEST_QUEUE_WITH_ITEMS_SQL).all(),
-      initial ? Promise.resolve(null) : db.prepare(PREDICTION_24H_SQL).first(),
+      predictionStatement ? predictionStatement.first() : Promise.resolve(null),
     ]);
 
     const hostScope = hostScopeFromSnapshot(latest);
@@ -289,43 +288,16 @@ export async function onRequestGet({ request, env }) {
     const generatedAt = Date.now();
     const playback = computePlaybackWithAnchors(queue, generatedAt);
     const startIndex = Math.max(0, playback.currentIndex);
-    const enrichedQueue = queue.slice(startIndex).map((track, index) => {
-      const fallback = metadataFallback(track.metadata_raw_json);
-      const artist = String(track.artist || fallback.artist || '').trim();
-      const validArtist = artist && !/^JP[A-Z0-9]{8,}$/i.test(artist)
-        ? artist : inferArtistFromDisplayTitle(track.display_title || fallback.title, track.title || fallback.title);
-      return {
-        observed_at: track.observed_at,
-        station_id: track.station_id,
-        queue_id: track.queue_id,
-        start_time: track.start_time,
-        position: track.position,
-        queue_track_id: track.queue_track_id,
-        stationhead_track_id: track.stationhead_track_id,
-        spotify_id: track.spotify_id,
-        apple_music_id: track.apple_music_id,
-        deezer_id: track.deezer_id,
-        isrc: track.isrc,
-        duration_ms: track.duration_ms,
-        preview_url: track.preview_url,
-        bite_count: track.bite_count,
-        artist: validArtist || null,
-        title: track.title || fallback.title || null,
-        display_title: track.display_title || (fallback.title && validArtist ? `${fallback.title} — ${validArtist}` : fallback.title) || track.title || track.spotify_id || '曲情報なし',
-        thumbnail_url: track.thumbnail_url || null,
-        spotify_url: track.spotify_url || (track.spotify_id ? `https://open.spotify.com/track/${track.spotify_id}` : null),
-        metadata_fetched_at: track.metadata_fetched_at,
-        is_current: startIndex + index === playback.currentIndex,
-        progress_ms: startIndex + index === playback.currentIndex ? playback.progressMs : 0,
-      };
-    });
+    const enrichedQueue = queue.slice(startIndex).map((track, index) => (
+      normalizePlaybackTrack(track, startIndex + index, playback)
+    ));
 
     const channel = safeJson(latest?.raw_json, {}) || {};
     const station = channel.current_station || {};
     const owner = station.owner || {};
     const streaming = station.streaming_party || {};
     const goal = latest?.stream_goal ?? streaming.stream_goal ?? null;
-    const goalPrediction = initial
+    const goalPrediction = initial && includeHistory
       ? linearRegressionPrediction(history, num(goal), generatedAt)
       : linearRegressionPredictionFromAggregate(predictionResult, num(goal), generatedAt);
 
@@ -333,6 +305,7 @@ export async function onRequestGet({ request, env }) {
       ok: true,
       generated_at: generatedAt,
       delta: !initial,
+      history_deferred: initial && !includeHistory,
       latest_observed_at: latest?.observed_at || since,
       latest: publicLatest(latest, channel, station, owner, goal),
       history,
@@ -350,15 +323,7 @@ export async function onRequestGet({ request, env }) {
       } : null,
       goal_prediction: goalPrediction,
       queue: enrichedQueue,
-      queue_status: latestQueue ? {
-        ...latestQueue,
-        playing: latest?.is_broadcasting !== 0 && latest?.is_broadcasting !== false && !latestQueue.is_paused && playback.currentIndex >= 0,
-        current_index: playback.currentIndex,
-        progress_ms: playback.progressMs,
-        anchor_at: playback.anchorAt,
-        queue_end_at: playback.queueEndAt,
-        total_items: queue.length,
-      } : null,
+      queue_status: compactQueueStatus(latestQueue, latest, playback, queue.length),
     });
   } catch (error) {
     console.error(error);

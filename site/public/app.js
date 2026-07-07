@@ -1,3 +1,33 @@
+let dashboardHistoryRequested = false;
+
+function renderHistory(history) {
+  if (!Array.isArray(history) || !history.length) return;
+  const signature = `${history.length}:${history[0]?.observed_at}:${history.at(-1)?.observed_at}:${history.at(-1)?.online_member_count}:${history.at(-1)?.current_stream_count}`;
+  if (signature === lastRenderSignature) return;
+  lastRenderSignature = signature;
+  selectedMainChartIndex = null;
+  lastHistoryRows = history;
+  requestAnimationFrame(() => drawChart(history));
+}
+
+async function loadDashboardHistory() {
+  if (dashboardHistoryRequested) return;
+  dashboardHistoryRequested = true;
+  try {
+    const response = await fetch('/api/dashboard-history', {
+      cache: 'no-store',
+      headers: { accept: 'application/json' },
+    });
+    if (!response.ok) throw new Error(`history API error: ${response.status}`);
+    const data = await response.json();
+    if (!data.ok) throw new Error(data.error || 'history API error');
+    renderHistory(data.history);
+  } catch (error) {
+    console.error(error);
+    dashboardHistoryRequested = false;
+  }
+}
+
 async function refresh() {
   if (refreshInFlight) return;
   refreshInFlight = true;
@@ -5,7 +35,7 @@ async function refresh() {
   refreshAbortController = new AbortController();
 
   try {
-    const response = await fetch('/api/dashboard', {
+    const response = await fetch('/api/dashboard?history=0', {
       cache: 'no-store',
       signal: refreshAbortController.signal,
       headers: { 'accept': 'application/json' },
@@ -50,16 +80,8 @@ async function refresh() {
       playing,
     });
 
-    const history = Array.isArray(data.history) ? data.history : [];
-    if (history.length) {
-      const signature = `${history.length}:${history[0]?.observed_at}:${history.at(-1)?.observed_at}:${history.at(-1)?.online_member_count}:${history.at(-1)?.current_stream_count}`;
-      if (signature !== lastRenderSignature) {
-        lastRenderSignature = signature;
-        selectedMainChartIndex = null;
-        lastHistoryRows = history;
-        requestAnimationFrame(() => drawChart(history));
-      }
-    }
+    renderHistory(data.history);
+    if (data.history_deferred || !lastHistoryRows.length) loadDashboardHistory();
   } catch (error) {
     if (error?.name !== 'AbortError') {
       console.error(error);

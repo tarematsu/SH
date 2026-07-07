@@ -189,11 +189,16 @@ function renderNow(track, queue = [], currentIndex = 0, host = {}, playback = {}
 }
 
 function renderQueue(queue, totalItems) {
-  el('queueCount').textContent = `${number(totalItems ?? queue.length)}曲`;
+  const visibleLimit = 20;
   const upcoming = queue.filter(t => !t.is_current);
+  const visible = upcoming.slice(0, visibleLimit);
+  const hiddenCount = Math.max(0, upcoming.length - visible.length);
+  el('queueCount').textContent = hiddenCount > 0
+    ? `${number(totalItems ?? queue.length)}曲 / 表示 ${visible.length}曲`
+    : `${number(totalItems ?? queue.length)}曲`;
   const box = el('queue');
-  if (!upcoming.length) { box.innerHTML = '<p class="muted">次の曲はありません。</p>'; return; }
-  box.replaceChildren(...upcoming.map((track, index) => {
+  if (!visible.length) { box.innerHTML = '<p class="muted">次の曲はありません。</p>'; return; }
+  box.replaceChildren(...visible.map((track, index) => {
     const row = document.createElement('a');
     row.className = 'queue-item';
     const trackUrl = safeSpotifyUrl(track);
