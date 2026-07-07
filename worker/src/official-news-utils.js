@@ -1,15 +1,15 @@
-import { positiveNumber as positive } from './shared.js';
+import {
+  finiteNumber,
+  positiveNumber as positive,
+  timedFetch,
+} from './shared.js';
 
 export const NEWS_LIST_URL = 'https://sakurazaka46.com/s/s46/news/list';
 export const NEWS_ORIGIN = 'https://sakurazaka46.com';
 export const STATIONHEAD_ORIGIN = 'https://production1.stationhead.com';
 export const OFFICIAL_NEWS_STATE_ID = 'official-news';
-
-export function finite(value) {
-  if (value === undefined || value === null || value === '') return null;
-  const number = Number(value);
-  return Number.isFinite(number) ? number : null;
-}
+export const finite = finiteNumber;
+export { timedFetch };
 
 export function officialNewsConfig(env) {
   return {
@@ -23,8 +23,4 @@ export function officialNewsConfig(env) {
     appVersion: env.STATIONHEAD_APP_VERSION || '1.0.0',
     requestTimeoutMs: Math.min(positive(env.REQUEST_TIMEOUT_MS, 20_000), 30_000),
   };
-}
-
-export async function timedFetch(url, options, timeoutMs) {
-  return fetch(url, { ...options, signal: AbortSignal.timeout(timeoutMs) });
 }
