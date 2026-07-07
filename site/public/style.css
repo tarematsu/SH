@@ -24,6 +24,21 @@ button.spotify-link{font:inherit;cursor:pointer}
   border: 1px solid transparent;
 }
 .queue-item:last-child { margin-bottom: 0; }
+.queue-load-more {
+  width: 100%;
+  margin-top: 6px;
+  padding: 11px 12px;
+  border: 1px solid rgba(246,199,217,.28);
+  border-radius: 14px;
+  background: rgba(255,255,255,.055);
+  color: var(--text);
+  font: inherit;
+  font-size: .82rem;
+  font-weight: 800;
+  cursor: pointer;
+}
+.queue-load-more:hover { background: rgba(255,255,255,.09); }
+.queue-load-more:disabled { cursor: wait; opacity: .68; }
 .queue-hint { margin-top: 8px; color: var(--muted); font-size: .68rem; text-align: right; }
 .queue-list::-webkit-scrollbar { width: 8px; }
 .queue-list::-webkit-scrollbar-track { background: rgba(255,255,255,.035); border-radius: 999px; }
