@@ -307,9 +307,11 @@ export async function onRequestGet(context) {
     finite(payload.latest?.stream_goal),
   );
   const output = JSON.stringify(decorateQueueResponse(payload, queueContext));
+  const headers = new Headers(response.headers);
+  headers.set('cache-control', 'no-store');
   return new Response(output, {
     status: response.status,
     statusText: response.statusText,
-    headers: response.headers,
+    headers,
   });
 }
