@@ -84,6 +84,27 @@ async function discardDisabledDeliveries(env) {
   }
 }
 
+async function discardResolvedDiagnosticDelivery(env, prepared) {
+  if (!env?.DB || prepared?.diagnosis || prepared?.pending !== 'alert') return false;
+  try {
+    const result = await env.DB.prepare(`DELETE FROM sh_health_alert_delivery
+      WHERE id=?
+        AND event_kind='alert'
+        AND idempotency_key LIKE 'stationhead-monitor-diagnostic-%'`)
+      .bind(ALERT_ID).run();
+    const deleted = changed(result);
+    if (deleted) {
+      console.warn(JSON.stringify({
+        event: 'collector_resolved_diagnostic_delivery_discarded',
+      }));
+    }
+    return deleted;
+  } catch (error) {
+    if (/no such table/i.test(String(error?.message || ''))) return false;
+    throw error;
+  }
+}
+
 async function closeRecoveredIncidentWithoutEmail(env, prepared, now = Date.now()) {
   if (!env?.DB || !prepared?.incidentOpen || !recoveredSinceIncident(prepared.state)) return false;
   const recoveredAt = finite(prepared.state.last_success_at) ?? now;
@@ -252,6 +273,9 @@ export default {
     let prepared = null;
     try {
       prepared = await prepareDetailedCollectorAlert(env);
+      if (await discardResolvedDiagnosticDelivery(env, prepared)) {
+        prepared = await prepareDetailedCollectorAlert(env);
+      }
       const closedWithoutMail = await closeRecoveredIncidentWithoutEmail(env, prepared);
       if (closedWithoutMail) prepared = await prepareDetailedCollectorAlert(env);
       const cancelledFalseRecovery = await cancelFalseRecoveryPending(env, prepared);
