@@ -148,14 +148,17 @@ test('same queue hashes return before track tables are read', async () => {
     }],
   };
   const structuralHash = await payloadHash(queuePayload);
-  const db = new FakeD1Database().route('first', /FROM sh_ingest_claims/, {
-    dedupe_key: `station:${queuePayload.station_id}:queue:${queuePayload.start_time}:minute:${Math.floor(observedAt / 60000) * 60000}:hash:${structuralHash}`,
-    collector_id: 'integration-collector',
-    collector_kind: 'local',
-    source_priority: 70,
-    observed_at: observedAt,
-    payload_hash: structuralHash,
-    first_seen_at: observedAt,
+  const db = new FakeD1Database().route('first', /FROM sh_ingest_claims/, ({ params }) => {
+    const hash = params[0] || structuralHash;
+    return {
+      dedupe_key: `station:${queuePayload.station_id}:queue:${queuePayload.start_time}:minute:${Math.floor(observedAt / 60000) * 60000}:hash:${hash}`,
+      collector_id: 'integration-collector',
+      collector_kind: 'local',
+      source_priority: 70,
+      observed_at: observedAt,
+      payload_hash: hash,
+      first_seen_at: observedAt,
+    };
   });
   const response = await ingestPost({
     request: post('https://skrzk.test/api/ingest', {
