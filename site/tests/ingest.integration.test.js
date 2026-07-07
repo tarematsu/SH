@@ -159,7 +159,7 @@ test('queue ingest keeps accepting checkpoint writes without forcing duplicate c
   assert.equal(body.like_observations_written, 1);
   assert.equal(db.callsMatching(/sh_ingest_claims/, 'run').length, 1);
   assert.equal(db.callsMatching(/INSERT INTO sh_queue_items/, 'run').length, 1);
-  assert.equal(db.callsMatching(/INSERT OR IGNORE INTO sh_track_like_observations/, 'run').length, 1);
+  assert.equal(db.callsMatching(/INSERT INTO sh_track_like_observations/, 'run').length, 1);
 });
 
 test('host snapshot ingest creates a claim and persists one session observation', async () => {
