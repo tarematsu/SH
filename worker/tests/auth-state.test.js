@@ -4,6 +4,7 @@ import test from 'node:test';
 import {
   AUTH_CONTROL_SCHEMA_SQL,
   ensureAuthControlRow,
+  parseAuthState,
   readAuthState,
   resetAuthStateForTests,
 } from '../src/auth-state.js';
@@ -74,4 +75,26 @@ test('ensureAuthControlRow creates the auth control table before inserting the r
     AUTH_CONTROL_SCHEMA_SQL,
     'INSERT OR IGNORE INTO sh_worker_auth_control (id,updated_at) VALUES (?,?)',
   ]);
+});
+
+test('buddy46 auth state does not fall back to the shared buddies credentials', () => {
+  const state = parseAuthState(null, {
+    STATIONHEAD_AUTH_TOKEN: 'Bearer buddies-token',
+    STATIONHEAD_DEVICE_UID: 'buddies-device',
+  }, 'buddy46');
+
+  assert.equal(state.authToken, '');
+  assert.equal(state.deviceUid, '');
+});
+
+test('buddy46 auth state can use only buddy-scoped fallback credentials', () => {
+  const state = parseAuthState(null, {
+    STATIONHEAD_AUTH_TOKEN: 'Bearer buddies-token',
+    STATIONHEAD_DEVICE_UID: 'buddies-device',
+    BUDDY_PLAYBACK_AUTH_TOKEN: 'Bearer buddy-token',
+    BUDDY_PLAYBACK_DEVICE_UID: 'buddy-device',
+  }, 'buddy46');
+
+  assert.equal(state.authToken, 'buddy-token');
+  assert.equal(state.deviceUid, 'buddy-device');
 });
