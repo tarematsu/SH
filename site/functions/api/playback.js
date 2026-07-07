@@ -1,4 +1,4 @@
-import { json, num, stripAppleMusicFields } from '../lib/api-utils.js';
+import { json, num, stripAppleMusicFields, stripPlaybackPublicFields } from '../lib/api-utils.js';
 import {
   attachBuddyCollectorStatus,
   loadBuddyCollectorStatus,
@@ -21,7 +21,7 @@ export { computePlayback };
 
 function playbackJson(data, status = 200, cache = null) {
   const { raw_payload_passthrough: _rawPayloadPassthrough, ...payload } = data || {};
-  return json(stripAppleMusicFields(payload), status, cache, PLAYBACK_CORS_HEADERS);
+  return json(stripPlaybackPublicFields(payload), status, cache, PLAYBACK_CORS_HEADERS);
 }
 
 export function onRequestOptions() {
