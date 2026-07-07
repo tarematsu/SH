@@ -1,6 +1,5 @@
 import { normalizeComments as normalizeStationheadComments } from './shared.js';
 import {
-  OFFICIAL_NEWS_STATE_ID,
   STATIONHEAD_ORIGIN,
   finite,
   timedFetch,
@@ -83,8 +82,7 @@ const DB_BATCH_SIZE = 80;
 
 async function runDbBatches(db, statements) {
   for (let index = 0; index < statements.length; index += DB_BATCH_SIZE) {
-    const group = statements.slice(index, index + DB_BATCH_SIZE);
-    if (group.length) await db.batch(group);
+    await db.batch(statements.slice(index, index + DB_BATCH_SIZE));
   }
 }
 
@@ -149,30 +147,19 @@ async function loadExistingOfficialComments(env, announcementIds, commentIds) {
 }
 
 export function officialCommentsToWrite(announcements, comments, existingRows) {
-  const existing = new Map((existingRows || []).map((row) => [
-    `${row.announcement_id}:${row.comment_id}`,
-    row.raw_json,
-  ]));
-  const encodedComments = (comments || []).map((comment) => ({
-    comment,
-    raw: JSON.stringify(comment.raw),
-  }));
-  const result = [];
-  for (const announcement of announcements || []) {
-    for (const { comment, raw } of encodedComments) {
-      const key = `${announcement.id}:${comment.commentId}`;
-      if (!existing.has(key) || existing.get(key) !== raw) {
-        result.push({ announcementId: announcement.id, comment, raw });
-      }
-    }
-  }
-  return result;
+  const existing = new Map((existingRows || []).map((row) => [`${row.announcement_id}:${row.comment_id}`, row.raw_json]));
+  const encodedComments = (comments || []).map((comment) => ({ comment, raw: JSON.stringify(comment.raw) }));
+  return (announcements || []).flatMap((announcement) => encodedComments.flatMap(({ comment, raw }) => (
+    !existing.has(`${announcement.id}:${comment.commentId}`) || existing.get(`${announcement.id}:${comment.commentId}`) !== raw
+      ? [{ announcementId: announcement.id, comment, raw }]
+      : []
+  )));
 }
 
 export function officialCommentWriteCounts(changedComments) {
   const counts = new Map();
-  for (const item of changedComments || []) {
-    const id = Number(item.announcementId);
+  for (const { announcementId } of changedComments || []) {
+    const id = Number(announcementId);
     counts.set(id, (counts.get(id) || 0) + 1);
   }
   return counts;
@@ -212,12 +199,7 @@ export async function probeAnnouncements(env, cfg, now) {
   if (!session?.auth_token || !session?.device_uid) throw new Error('Stationhead worker session unavailable');
   const station = await stationRequest(`/station/handle/${encodeURIComponent(cfg.handle)}/guest`, cfg, session, { method: 'POST', body: '{}' });
   const identity = stationIdentity(station);
-  const active = Boolean(
-    station?.is_broadcasting
-    && station?.broadcast
-    && identity.stationId
-    && identity.stationId !== finite(session.buddies_station_id)
-  );
+  const active = Boolean(station?.is_broadcasting && station?.broadcast && identity.stationId && identity.stationId !== finite(session.buddies_station_id));
 
   const comments = active
     ? await fetchComments(identity.stationId, cfg, session).catch((error) => {
