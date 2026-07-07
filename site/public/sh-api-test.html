@@ -1,0 +1,152 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex,nofollow,noarchive">
+  <title>SH API 通信テスト</title>
+  <style>
+    :root { color-scheme: dark; font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: #0f1118; color: #f5f7fb; }
+    main { width: min(1100px, calc(100% - 28px)); margin: 28px auto 56px; }
+    h1 { margin: 0 0 8px; font-size: clamp(1.6rem, 4vw, 2.4rem); }
+    p { line-height: 1.65; }
+    code { overflow-wrap: anywhere; }
+    .muted { color: #aeb6c7; }
+    .panel { margin-top: 18px; padding: 18px; border: 1px solid #2b3140; border-radius: 14px; background: #171b25; }
+    .controls { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
+    button { border: 0; border-radius: 10px; padding: 12px 18px; background: #6c7cff; color: white; font: inherit; font-weight: 700; cursor: pointer; }
+    button:disabled { opacity: .55; cursor: wait; }
+    button.secondary { background: #30384a; }
+    .status { min-height: 1.5em; color: #cbd2e0; }
+    .summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin-top: 16px; }
+    .metric { padding: 12px; border-radius: 10px; background: #10131b; }
+    .metric small { display: block; color: #929db0; margin-bottom: 5px; }
+    .metric strong { font-size: 1.15rem; }
+    details { margin-top: 14px; }
+    summary { cursor: pointer; font-weight: 700; }
+    pre { overflow: auto; max-height: 520px; padding: 14px; border-radius: 10px; background: #0b0d13; border: 1px solid #272d3a; white-space: pre-wrap; word-break: break-word; line-height: 1.45; }
+    .ok { color: #74e39a; }
+    .error { color: #ff8d8d; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>SH Weekly Leaderboard API 通信テスト</h1>
+    <p class="muted">既存の収集・表示システムとは独立した診断ページです。ボタンを押すとサーバー側から <code>GET https://production1.stationhead.com/weeklyLeaderboard</code> を実行し、送受信内容を表示します。</p>
+
+    <section class="panel">
+      <div class="controls">
+        <button id="runButton" type="button">APIへ通信</button>
+        <button id="copyButton" class="secondary" type="button" disabled>結果をコピー</button>
+        <span id="status" class="status" aria-live="polite">未実行</span>
+      </div>
+      <div id="summary" class="summary" hidden></div>
+    </section>
+
+    <section id="resultPanel" class="panel" hidden>
+      <details open>
+        <summary>送信内容</summary>
+        <pre id="requestOutput"></pre>
+      </details>
+      <details open>
+        <summary>応答情報</summary>
+        <pre id="responseOutput"></pre>
+      </details>
+      <details open>
+        <summary>応答本文</summary>
+        <pre id="bodyOutput"></pre>
+      </details>
+    </section>
+  </main>
+
+  <script>
+    const endpoint = '/api/sh-weekly-leaderboard-test';
+    const runButton = document.getElementById('runButton');
+    const copyButton = document.getElementById('copyButton');
+    const status = document.getElementById('status');
+    const summary = document.getElementById('summary');
+    const resultPanel = document.getElementById('resultPanel');
+    const requestOutput = document.getElementById('requestOutput');
+    const responseOutput = document.getElementById('responseOutput');
+    const bodyOutput = document.getElementById('bodyOutput');
+    let lastPayload = null;
+
+    function formatJson(value) {
+      return JSON.stringify(value, null, 2);
+    }
+
+    function readableBody(text) {
+      if (!text) return '(空の応答)';
+      try { return formatJson(JSON.parse(text)); } catch { return text; }
+    }
+
+    function metric(label, value) {
+      return `<div class="metric"><small>${label}</small><strong>${value}</strong></div>`;
+    }
+
+    runButton.addEventListener('click', async () => {
+      runButton.disabled = true;
+      copyButton.disabled = true;
+      status.className = 'status';
+      status.textContent = '通信中...';
+      summary.hidden = true;
+      resultPanel.hidden = true;
+      lastPayload = null;
+
+      try {
+        const response = await fetch(`${endpoint}?t=${Date.now()}`, { cache: 'no-store' });
+        const payload = await response.json();
+        lastPayload = payload;
+
+        const upstream = payload.response || {};
+        let accountCount = '-';
+        if (upstream.bodyText) {
+          try {
+            const parsed = JSON.parse(upstream.bodyText);
+            accountCount = Array.isArray(parsed.accounts) ? parsed.accounts.length : '-';
+          } catch {}
+        }
+
+        summary.innerHTML = [
+          metric('結果', payload.ok ? '成功' : '失敗'),
+          metric('HTTP', upstream.status ?? response.status),
+          metric('所要時間', `${payload.elapsedMs ?? '-'} ms`),
+          metric('本文サイズ', `${upstream.bodyBytes ?? 0} bytes`),
+          metric('accounts件数', accountCount),
+        ].join('');
+        summary.hidden = false;
+
+        requestOutput.textContent = formatJson(payload.request || {});
+        responseOutput.textContent = formatJson(payload.response ? {
+          status: upstream.status,
+          statusText: upstream.statusText,
+          headers: upstream.headers,
+          bodyBytes: upstream.bodyBytes,
+          fetchedAt: payload.fetchedAt,
+          elapsedMs: payload.elapsedMs,
+        } : { error: payload.error, fetchedAt: payload.fetchedAt, elapsedMs: payload.elapsedMs });
+        bodyOutput.textContent = payload.response ? readableBody(upstream.bodyText) : formatJson(payload.error || payload);
+        resultPanel.hidden = false;
+        status.textContent = payload.ok ? '通信成功' : '通信失敗';
+        status.classList.add(payload.ok ? 'ok' : 'error');
+        copyButton.disabled = false;
+      } catch (error) {
+        status.textContent = `ページ側エラー: ${error.message}`;
+        status.classList.add('error');
+        responseOutput.textContent = String(error.stack || error);
+        resultPanel.hidden = false;
+      } finally {
+        runButton.disabled = false;
+      }
+    });
+
+    copyButton.addEventListener('click', async () => {
+      if (!lastPayload) return;
+      await navigator.clipboard.writeText(formatJson(lastPayload));
+      status.textContent = '結果をクリップボードへコピーしました';
+    });
+  </script>
+</body>
+</html>
