@@ -119,14 +119,6 @@ export function predictionFromAggregate(row, generatedAt = Date.now()) {
   };
 }
 
-function predictionFailureMessage(error) {
-  return String(error?.message || error).slice(0, 1000);
-}
-
-function predictionTableMissing(error) {
-  return /no such table:\s*sh_stream_goal_prediction_state/i.test(String(error?.message || error));
-}
-
 function savePredictionStatement(env, prediction, now, intervalMs) {
   return env.DB.prepare(SAVE_STREAM_GOAL_PREDICTION_SQL).bind(
     prediction.generatedAt,
@@ -153,7 +145,9 @@ export async function runStreamGoalPrediction(env, now = Date.now()) {
       .bind(PREDICTION_STATE_ID, now + PREDICTION_CLAIM_LEASE_MS, now, now)
       .first();
   } catch (error) {
-    if (predictionTableMissing(error)) return { skipped: true, reason: 'prediction-state-setup-required' };
+    if (/no such table:\s*sh_stream_goal_prediction_state/i.test(String(error?.message || error))) {
+      return { skipped: true, reason: 'prediction-state-setup-required' };
+    }
     throw error;
   }
 
@@ -177,7 +171,7 @@ export async function runStreamGoalPrediction(env, now = Date.now()) {
     return { skipped: false, ...prediction, nextRefreshAt: now + intervalMs };
   } catch (error) {
     await env.DB.prepare(FAIL_STREAM_GOAL_PREDICTION_SQL)
-      .bind(now + PREDICTION_RETRY_MS, predictionFailureMessage(error), now, PREDICTION_STATE_ID)
+      .bind(now + PREDICTION_RETRY_MS, String(error?.message || error).slice(0, 1000), now, PREDICTION_STATE_ID)
       .run()
       .catch(() => {});
     throw error;
