@@ -7,6 +7,7 @@ import {
 
 const API_BASE = 'https://production1.stationhead.com';
 const DEFAULT_ALIAS = 'buddy46';
+const DEFAULT_AUTH_STATE_ID = 'buddy46';
 const DEFAULT_INTERVAL_MS = 5 * 60_000;
 const DEFAULT_MAX_TRACKS = 80;
 const DEFAULT_METADATA_LIMIT = 1;
@@ -73,6 +74,18 @@ function missingTable(error) {
   return /no such table:\s*sh_playback_channel_current/i.test(String(error?.message || error));
 }
 
+function buddyAuthStateId(env = {}) {
+  return String(env.BUDDY_PLAYBACK_AUTH_STATE_ID || DEFAULT_AUTH_STATE_ID).trim().toLowerCase()
+    || DEFAULT_AUTH_STATE_ID;
+}
+
+function buddyScopedCredentials(env = {}) {
+  return {
+    authToken: env.BUDDY_PLAYBACK_AUTH_TOKEN || env.BUDDY46_AUTH_TOKEN,
+    deviceUid: env.BUDDY_PLAYBACK_DEVICE_UID || env.BUDDY46_DEVICE_UID,
+  };
+}
+
 export function buddyHandleStationPath(alias = DEFAULT_ALIAS) {
   return `/station/handle/${encodeURIComponent(String(alias || DEFAULT_ALIAS).trim().toLowerCase() || DEFAULT_ALIAS)}/guest`;
 }
@@ -99,6 +112,7 @@ export function buddyPlaybackConfig(env = {}) {
   return {
     enabled: enabled(env.BUDDY_PLAYBACK_ENABLED),
     alias: String(env.BUDDY_PLAYBACK_ALIAS || DEFAULT_ALIAS).trim().toLowerCase() || DEFAULT_ALIAS,
+    authStateId: buddyAuthStateId(env),
     intervalMs: positiveInteger(env.BUDDY_PLAYBACK_INTERVAL_MS, DEFAULT_INTERVAL_MS),
     maxTracks: positiveInteger(env.BUDDY_PLAYBACK_MAX_TRACKS, DEFAULT_MAX_TRACKS, 80),
     metadataLimit: positiveInteger(
@@ -111,7 +125,7 @@ export function buddyPlaybackConfig(env = {}) {
       DEFAULT_REQUEST_TIMEOUT_MS,
       30_000,
     ),
-    appVersion: String(env.STATIONHEAD_APP_VERSION || '1.0.0'),
+    appVersion: String(env.STATIONHEAD_APP_VERSION || env.SH_APP_VERSION || '1.0.0'),
   };
 }
 
@@ -123,19 +137,21 @@ export function shouldRunBuddyPlayback(now = Date.now(), intervalMs = DEFAULT_IN
 }
 
 async function loadSession(env) {
-  const cached = env.__stationheadAuthState;
+  const cached = env.__buddyAuthState;
   if (cached) {
-    const authToken = normalizeBearer(cached.authToken || env.STATIONHEAD_AUTH_TOKEN);
-    const deviceUid = String(cached.deviceUid || env.STATIONHEAD_DEVICE_UID || '').trim();
+    const authToken = normalizeBearer(cached.authToken || buddyScopedCredentials(env).authToken);
+    const deviceUid = String(cached.deviceUid || buddyScopedCredentials(env).deviceUid || '').trim();
     if (authToken && deviceUid) return { authToken, deviceUid };
   }
 
+  const config = buddyPlaybackConfig(env);
   const row = await env.DB.prepare(`SELECT auth_token,device_uid
-    FROM sh_worker_collector_state WHERE id='stationhead'`).first();
-  const authToken = normalizeBearer(row?.auth_token || env.STATIONHEAD_AUTH_TOKEN);
-  const deviceUid = String(row?.device_uid || env.STATIONHEAD_DEVICE_UID || '').trim();
+    FROM sh_worker_collector_state WHERE id=?`).bind(config.authStateId).first();
+  const fallback = buddyScopedCredentials(env);
+  const authToken = normalizeBearer(row?.auth_token || fallback.authToken);
+  const deviceUid = String(row?.device_uid || fallback.deviceUid || '').trim();
   if (!authToken || !deviceUid) {
-    throw new Error('Stationhead session is missing for buddy46 playback collection');
+    throw new Error('buddy46 session is missing for playback collection');
   }
   return { authToken, deviceUid };
 }
