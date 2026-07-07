@@ -9,7 +9,7 @@ import { hostIdentity, queueRevision, stateFromQueue } from '../lib/queue-state.
 
 const CACHE_CONTROL = 'public, max-age=5, s-maxage=10, stale-while-revalidate=30';
 const DEFAULT_CHANNEL_ALIAS = 'buddies';
-const SECONDARY_STALE_MS = 15 * 60_000;
+const SECONDARY_STALE_MS = 4 * 60 * 60_000;
 const PLAYBACK_CORS_HEADERS = Object.freeze({
   'access-control-allow-origin': '*',
   'access-control-allow-methods': 'GET, OPTIONS',
@@ -157,6 +157,46 @@ function rawQueue(payload) {
   return payload?.current_station?.queue || payload?.queue || null;
 }
 
+function firstText(...values) {
+  for (const value of values) {
+    const text = String(value || '').trim();
+    if (text) return text;
+  }
+  return null;
+}
+
+function trackThumbnail(item, track) {
+  return firstText(
+    track?.thumbnail_url,
+    track?.image_url,
+    track?.album_art_url,
+    track?.artwork_url,
+    track?.album?.thumbnail_url,
+    track?.album?.image_url,
+    track?.album?.images?.[0]?.url,
+    item?.thumbnail_url,
+    item?.image_url,
+    item?.album_art_url,
+    item?.artwork_url,
+  );
+}
+
+function applyMetadata(row, metadata = new Map()) {
+  const spotifyId = String(row?.spotify_id || '').trim();
+  const meta = spotifyId ? metadata.get(spotifyId) : null;
+  if (!meta) return row;
+  return {
+    ...row,
+    title: row.title || meta.title || null,
+    artist: row.artist || meta.artist || null,
+    display_title: row.display_title || meta.display_title || null,
+    thumbnail_url: row.thumbnail_url || meta.thumbnail_url || null,
+    spotify_url: row.spotify_url || meta.spotify_url || (spotifyId ? `https://open.spotify.com/track/${spotifyId}` : null),
+    metadata_fetched_at: row.metadata_fetched_at || meta.fetched_at || null,
+    metadata_raw_json: row.metadata_raw_json || meta.raw_json || null,
+  };
+}
+
 function rawTrackToPlaybackRow(item, index, context) {
   const track = item?.track || item || {};
   const spotifyId = String(track.spotify_id || item?.spotify_id || '').trim() || null;
@@ -169,9 +209,35 @@ function rawTrackToPlaybackRow(item, index, context) {
     title: track?.title || null,
     artist: track?.artist || track?.artist_name || null,
     display_title: track?.display_title || null,
-    thumbnail_url: track?.thumbnail_url || track?.image_url || track?.album_art_url || null,
+    thumbnail_url: trackThumbnail(item, track),
     spotify_url: track?.spotify_url || null,
   });
+}
+
+function queueItemsFromParsedQueue(parsed) {
+  if (Array.isArray(parsed)) return parsed;
+  const queue = rawQueue(parsed);
+  if (Array.isArray(queue?.queue_tracks)) return queue.queue_tracks;
+  if (Array.isArray(queue?.tracks)) return queue.tracks;
+  return [];
+}
+
+function spotifyIdsFromQueueJson(value) {
+  const parsed = parseQueueJson(value);
+  return [...new Set(queueItemsFromParsedQueue(parsed)
+    .map((item) => String((item?.track || item || {})?.spotify_id || item?.spotify_id || '').trim())
+    .filter(Boolean))];
+}
+
+async function loadMetadataForQueueJson(db, value) {
+  const spotifyIds = spotifyIdsFromQueueJson(value).slice(0, 100);
+  if (!spotifyIds.length) return new Map();
+  const placeholders = spotifyIds.map(() => '?').join(',');
+  const result = await db.prepare(`SELECT spotify_id,title,artist,display_title,
+      thumbnail_url,spotify_url,fetched_at,raw_json
+    FROM sh_track_metadata WHERE spotify_id IN (${placeholders})`)
+    .bind(...spotifyIds).all();
+  return new Map((result.results || []).map((row) => [String(row.spotify_id), row]));
 }
 
 function visiblePlaybackState(rows, playbackAt, stale, paused = false) {
@@ -203,7 +269,9 @@ function secondaryRawPlaybackPayload(row, rawPayload, generatedAt = Date.now(), 
     : Array.isArray(queueSource?.tracks)
       ? queueSource.tracks
       : [];
-  const rows = sourceTracks.map((track, index) => rawTrackToPlaybackRow(track, index, { startTime }));
+  const rows = sourceTracks
+    .map((track, index) => rawTrackToPlaybackRow(track, index, { startTime }))
+    .map((track) => applyMetadata(track, options.metadata));
   const playbackAt = paused
     ? changedAt ?? checkedAt ?? generatedAt
     : generatedAt;
@@ -254,11 +322,11 @@ export function secondaryPlaybackPayload(row, generatedAt = Date.now(), options 
   }
   const queueCorrupt = parsed === null || !Array.isArray(parsed);
   const source = Array.isArray(parsed) ? parsed : [];
-  const rows = source.map((track, index) => stripAppleMusicFields({
+  const rows = source.map((track, index) => applyMetadata(stripAppleMusicFields({
     ...track,
     start_time: startTime,
     position: num(track?.position) ?? index,
-  }));
+  }), options.metadata));
   const paused = storedBoolean(row.is_paused);
   const broadcasting = storedBoolean(row.is_broadcasting);
   const playbackAt = paused
@@ -344,8 +412,9 @@ async function secondaryPlaybackResponse(db, alias, generatedAt, includeRawPaylo
   const collector = await loadBuddyCollectorStatus(db, alias);
   try {
     const row = await db.prepare(SECONDARY_PLAYBACK_SQL).bind(alias).first();
+    const metadata = row ? await loadMetadataForQueueJson(db, row.queue_json) : new Map();
     const payload = row
-      ? secondaryPlaybackPayload(row, generatedAt, { includeRawPayload })
+      ? secondaryPlaybackPayload(row, generatedAt, { includeRawPayload, metadata })
       : emptySecondaryPayload(alias, generatedAt);
     return playbackJson(
       attachBuddyCollectorStatus(payload, collector),
