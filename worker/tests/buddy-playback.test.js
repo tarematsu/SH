@@ -37,10 +37,11 @@ class Statement {
 }
 
 class FakeDb {
-  constructor({ current = null, metadata = [], currentError = null } = {}) {
+  constructor({ current = null, metadata = [], currentError = null, authRow = { auth_token: 'token', device_uid: 'device' } } = {}) {
     this.current = current;
     this.metadata = metadata;
     this.currentError = currentError;
+    this.authRow = authRow;
     this.calls = [];
   }
 
@@ -55,7 +56,7 @@ class FakeDb {
   async resolve(kind, sql, params) {
     this.calls.push({ kind, sql, params });
     if (kind === 'first' && sql.includes('sh_worker_collector_state')) {
-      return { auth_token: 'token', device_uid: 'device' };
+      return this.authRow;
     }
     if (kind === 'first' && sql.includes('sh_playback_channel_current')) {
       if (this.currentError) throw this.currentError;
@@ -179,6 +180,27 @@ test('changed playback replaces the one current-state row with compact JSON', as
   assert.match(upsert.params[9], /Song/);
   assert.doesNotMatch(upsert.params[9], /metadata_raw_json|metadata_fetched_at|bite_count|oversized|apple_music_id/);
   assert.equal(db.calls.some((call) => call.sql === BUDDY_PLAYBACK_TOUCH_SQL), false);
+});
+
+test('buddy playback loads only the buddy46 auth state when no runtime session is injected', async () => {
+  const db = new FakeDb();
+  let observedSession = null;
+  await collectBuddyPlayback({
+    DB: db,
+    STATIONHEAD_AUTH_TOKEN: 'Bearer buddies-token',
+    STATIONHEAD_DEVICE_UID: 'buddies-device',
+  }, 600_000, {
+    fetchChannel: async (_env, session) => {
+      observedSession = session;
+      return channel;
+    },
+    stateHash: async () => 'hash-new',
+  });
+
+  const authSelect = db.calls.find((call) => call.sql.includes('sh_worker_collector_state'));
+  assert.deepEqual(authSelect.params, ['buddy46']);
+  assert.equal(observedSession.authToken, 'token');
+  assert.equal(observedSession.deviceUid, 'device');
 });
 
 test('metadata-only refresh updates queue JSON without resetting playback changed_at', async () => {
