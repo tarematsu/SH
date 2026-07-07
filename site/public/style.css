@@ -128,8 +128,6 @@ button.spotify-link{font:inherit;cursor:pointer}
 .daily-delta.positive { color: #73e6a2; }
 .daily-delta.negative { color: #ff8f9a; }
 .daily-delta.neutral { color: var(--muted); }
-.online-range { display:flex; flex-direction:column; gap:2px; line-height:1.25; }
-.online-range[hidden] { display:none; }
 @media (max-width: 560px) {
   .daily-delta { font-size: .64rem; white-space: nowrap; }
   .metric > span { white-space: normal; line-height: 1.2; min-height: 2.4em; }
