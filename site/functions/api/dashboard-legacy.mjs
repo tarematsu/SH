@@ -158,7 +158,8 @@ const LATEST_SQL = `SELECT
   host_account_id,host_handle,broadcast_start_time,comment_velocity,raw_json
 FROM sh_channel_snapshots ORDER BY observed_at DESC,id DESC LIMIT 1`;
 
-export const HISTORY_24H_SQL = `WITH ranked AS (
+function historyBucketSql(whereClause) {
+  return `WITH ranked AS (
   SELECT id,observed_at,listener_count,online_member_count,total_member_count,
     total_listens,current_stream_count,stream_goal,
     MAX(COALESCE(comment_velocity, 0)) OVER (
@@ -169,11 +170,15 @@ export const HISTORY_24H_SQL = `WITH ranked AS (
       ORDER BY observed_at DESC,id DESC
     ) AS rn
   FROM sh_channel_snapshots
-  WHERE observed_at >= (unixepoch('now','-24 hours')*1000)
+  WHERE ${whereClause}
 )
 SELECT observed_at,listener_count,online_member_count,total_member_count,
   total_listens,current_stream_count,stream_goal,comment_velocity_max AS comment_velocity
 FROM ranked WHERE rn=1 ORDER BY observed_at ASC LIMIT 300`;
+}
+
+export const HISTORY_24H_SQL = historyBucketSql("observed_at >= (unixepoch('now','-24 hours')*1000)");
+export const HISTORY_SINCE_SQL = historyBucketSql('observed_at>?');
 
 export const PREDICTION_24H_SQL = `WITH ranked AS (
   SELECT id,observed_at,current_stream_count,
@@ -267,10 +272,7 @@ export async function onRequestGet({ request, env }) {
       ? null
       : initial
         ? db.prepare(HISTORY_24H_SQL)
-        : db.prepare(`SELECT observed_at,listener_count,online_member_count,total_member_count,
-            total_listens,current_stream_count,stream_goal,comment_velocity
-          FROM sh_channel_snapshots WHERE observed_at>?
-          ORDER BY observed_at ASC,id ASC LIMIT 180`).bind(since);
+        : db.prepare(HISTORY_SINCE_SQL).bind(since);
 
     const predictionStatement = initial && includeHistory ? null : db.prepare(PREDICTION_24H_SQL);
     const [latest, historyResult, queueResult, predictionResult] = await Promise.all([

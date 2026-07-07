@@ -1,4 +1,4 @@
-function downsampleRows(rows, maxPoints = 240) {
+function downsampleRows(rows, maxPoints = 300) {
   if (!Array.isArray(rows)) return [];
   const valid = rows.filter(row => Number.isFinite(Number(row?.observed_at)));
   if (valid.length <= maxPoints) return valid;
@@ -8,7 +8,7 @@ function downsampleRows(rows, maxPoints = 240) {
 
 function commentVelocityState(sampled) {
   const values = sampled.map((row) => {
-    const value = Number(row?.comment_velocity);
+    const value = Number(row?.comment_velocity ?? row?.comment_velocity_max);
     return Number.isFinite(value) ? Math.max(0, value) : null;
   });
   const maximum = values.reduce((max, value) => (
@@ -26,17 +26,17 @@ function drawCommentVelocityBars(ctx, dimensions, xPositions, velocityValues, ve
 
   ctx.save();
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  ctx.globalCompositeOperation = 'destination-over';
+  ctx.globalCompositeOperation = 'source-over';
+  ctx.fillStyle = barColor;
   for (let index = 0; index < velocityValues.length; index += 1) {
     const value = velocityValues[index];
     if (value == null || value <= 0) continue;
     const previousGap = index > 0 ? xPositions[index] - xPositions[index - 1] : Infinity;
     const nextGap = index < xPositions.length - 1 ? xPositions[index + 1] - xPositions[index] : Infinity;
     const nearestGap = Math.min(previousGap, nextGap);
-    const barWidth = Math.max(2, Math.min(14, Number.isFinite(nearestGap) ? nearestGap * 0.72 : 8));
-    const barHeight = Math.max(2, plotHeight * value / Math.max(1, velocityMaximum));
-    ctx.globalAlpha = index === selectionIndex ? 0.48 : 0.24;
-    ctx.fillStyle = barColor;
+    const barWidth = Math.max(2, Math.min(14, Number.isFinite(nearestGap) ? nearestGap * 0.68 : 8));
+    const barHeight = Math.max(3, plotHeight * value / Math.max(1, velocityMaximum));
+    ctx.globalAlpha = index === selectionIndex ? 0.58 : 0.34;
     ctx.fillRect(xPositions[index] - barWidth / 2, plotBottom - barHeight, barWidth, barHeight);
   }
   ctx.restore();
@@ -82,8 +82,8 @@ function drawChart(rows = lastHistoryRows, selectionIndex = selectedMainChartInd
     : pad.left + plotWidth * index / Math.max(1, sampled.length - 1));
 
   const intervals = times.slice(1).map((time, index) => time - times[index]).filter((value) => value > 0).sort((a, b) => a - b);
-  const medianInterval = intervals.length ? intervals[Math.floor(intervals.length / 2)] : 60_000;
-  const gapThreshold = Math.max(5 * 60_000, medianInterval * 4);
+  const medianInterval = intervals.length ? intervals[Math.floor(intervals.length / 2)] : 5 * 60_000;
+  const gapThreshold = Math.max(10 * 60_000, medianInterval * 4);
 
   const rangeFor = (values, minimumPadding = 1) => {
     if (!values.length) return { min: 0, max: 1, range: 1 };
@@ -94,9 +94,6 @@ function drawChart(rows = lastHistoryRows, selectionIndex = selectedMainChartInd
     const max = rawMax + padding;
     return { min, max, range: Math.max(1, max - min) };
   };
-
-  const velocity = commentVelocityState(sampled);
-  drawCommentVelocityBars(ctx, { height, dpr, pad, plotHeight }, xPositions, velocity.values, velocity.maximum, selectionIndex);
 
   const onlineScale = rangeFor(onlineValues, 5);
   const playScale = rangeFor(playValues, 10);
@@ -122,6 +119,9 @@ function drawChart(rows = lastHistoryRows, selectionIndex = selectedMainChartInd
     ctx.fillStyle = playColor;
     ctx.fillText(compact.format(Math.round(playScale.max - playScale.range * ratio)), width - pad.right + 9, y + 4);
   }
+
+  const velocity = commentVelocityState(sampled);
+  drawCommentVelocityBars(ctx, { height, dpr, pad, plotHeight }, xPositions, velocity.values, velocity.maximum, selectionIndex);
 
   const yFor = (value, scale) => height - pad.bottom - (value - scale.min) * plotHeight / scale.range;
   const drawSeries = (key, scale, color) => {
