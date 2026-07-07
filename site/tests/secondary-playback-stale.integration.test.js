@@ -36,7 +36,7 @@ test('fresh secondary playback still reports the current track', () => {
 });
 
 test('stale secondary playback cannot appear as currently playing', () => {
-  const payload = secondaryPlaybackPayload(row({ checked_at: 300_000 }), 1_300_001);
+  const payload = secondaryPlaybackPayload(row({ checked_at: 300_000 }), 15_000_001);
   assert.equal(payload.stale, true);
   assert.equal(payload.playing, false);
   assert.equal(payload.queue_status.playing, false);
