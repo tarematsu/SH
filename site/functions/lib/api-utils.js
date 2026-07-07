@@ -57,7 +57,15 @@ export function isUnusedPublicPlaybackKey(key) {
     || normalized === 'deezerid'
     || normalized === 'stationheadtrackid'
     || normalized === 'displaytitle'
-    || normalized === 'queueid';
+    || normalized === 'queueid'
+    || normalized === 'queuetrackid'
+    || normalized === 'isrc'
+    || normalized === 'bitecount'
+    || normalized === 'metadatafetchedat'
+    || normalized === 'rawjson'
+    || normalized === 'metadatarawjson'
+    || normalized === 'responsetimestamp'
+    || normalized === 'type';
 }
 
 export function shouldStripPublicPlaybackKey(key) {
