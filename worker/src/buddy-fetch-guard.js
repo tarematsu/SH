@@ -39,6 +39,10 @@ function accountHandleMatches(value, expectedAlias) {
   return String(value || '').trim().toLowerCase() === String(expectedAlias || '').trim().toLowerCase();
 }
 
+function broadcasterAccount(item) {
+  return item?.account || (item?.handle ? item : null) || null;
+}
+
 function hasExpectedAccountHandle(source, expectedAlias) {
   if (!source || typeof source !== 'object' || Array.isArray(source)) return false;
   if (accountHandleMatches(source.account?.handle, expectedAlias)) return true;
@@ -50,16 +54,90 @@ function hasExpectedAccountHandle(source, expectedAlias) {
       ? source.current_station.broadcast.broadcasters : []),
   ];
   return broadcasters.some((item) => accountHandleMatches(
-    item?.account?.handle || item?.handle,
+    broadcasterAccount(item)?.handle,
     expectedAlias,
   ));
+}
+
+function hostBroadcaster(source, expectedAlias) {
+  const candidates = [
+    ...(Array.isArray(source?.broadcast?.broadcasters) ? source.broadcast.broadcasters : []),
+    ...(Array.isArray(source?.current_station?.broadcast?.broadcasters)
+      ? source.current_station.broadcast.broadcasters : []),
+  ];
+  const matched = candidates.find((item) => accountHandleMatches(
+    broadcasterAccount(item)?.handle,
+    expectedAlias,
+  ));
+  if (matched) return { ...matched, is_host: matched.is_host ?? true };
+  const account = source?.account || source?.host?.account || (source?.host?.handle ? source.host : null);
+  if (!account) return null;
+  return {
+    is_host: true,
+    account_id: source?.account_id ?? source?.host_account_id ?? account.id ?? null,
+    account,
+  };
+}
+
+function stationIdFromShareUrl(value) {
+  const match = String(value || '').match(/station\/(\d+)/i);
+  return match ? Number(match[1]) : null;
+}
+
+function adaptHandleStationPayload(source, expectedAlias) {
+  const expected = String(expectedAlias || 'buddy46').trim().toLowerCase() || 'buddy46';
+  const queue = source?.current_station?.queue || source?.queue || null;
+  const sourceStation = source?.current_station
+    || source?.station
+    || source?.broadcast?.station
+    || {};
+  const stationId = sourceStation.id
+    ?? source.current_station_id
+    ?? queue?.station_id
+    ?? source.station_id
+    ?? source.id
+    ?? stationIdFromShareUrl(source.share_url);
+  const station = {
+    ...sourceStation,
+    id: stationId,
+    is_broadcasting: sourceStation.is_broadcasting ?? source.is_broadcasting,
+    queue: sourceStation.queue || queue,
+  };
+  const broadcaster = hostBroadcaster(source, expected);
+  const broadcast = station.broadcast || source.broadcast || {};
+  if (broadcaster) {
+    station.broadcast = {
+      ...broadcast,
+      broadcasters: [
+        broadcaster,
+        ...(Array.isArray(broadcast.broadcasters)
+          ? broadcast.broadcasters.filter((item) => !accountHandleMatches(
+            broadcasterAccount(item)?.handle,
+            expected,
+          ))
+          : []),
+      ],
+    };
+  } else if (broadcast && Object.keys(broadcast).length) {
+    station.broadcast = broadcast;
+  }
+
+  return {
+    ...source,
+    alias: expected,
+    channel_alias: expected,
+    current_station_id: source.current_station_id ?? stationId,
+    current_station: station,
+  };
 }
 
 export function normalizeBuddyQueuePayload(payload, expectedAlias = 'buddy46') {
   const source = unwrapPayload(payload);
   if (!source || typeof source !== 'object' || Array.isArray(source)) return source;
-  const normalized = { ...source };
   const expected = String(expectedAlias || 'buddy46').trim().toLowerCase() || 'buddy46';
+  const normalized = hasExpectedAccountHandle(source, expected)
+    ? adaptHandleStationPayload(source, expected)
+    : { ...source };
   const sourceAlias = String(
     normalized.alias
       || normalized.channel_alias
@@ -67,6 +145,7 @@ export function normalizeBuddyQueuePayload(payload, expectedAlias = 'buddy46') {
       || expected,
   ).trim().toLowerCase() || expected;
   normalized.alias = hasExpectedAccountHandle(normalized, expected) ? expected : sourceAlias;
+  normalized.channel_alias = normalized.alias;
 
   const sourceStation = normalized.current_station
     || normalized.station
@@ -74,9 +153,9 @@ export function normalizeBuddyQueuePayload(payload, expectedAlias = 'buddy46') {
     || null;
   if (sourceStation && typeof sourceStation === 'object' && !Array.isArray(sourceStation)) {
     normalized.current_station = { ...sourceStation };
-  } else if (!normalized.current_station && (normalized.current_station_id || normalized.queue)) {
+  } else if (!normalized.current_station && (normalized.current_station_id || normalized.queue || normalized.id)) {
     normalized.current_station = {
-      id: normalized.current_station_id,
+      id: normalized.current_station_id ?? normalized.queue?.station_id ?? normalized.id,
       is_broadcasting: normalized.is_broadcasting,
       queue: normalized.queue,
     };
@@ -85,6 +164,13 @@ export function normalizeBuddyQueuePayload(payload, expectedAlias = 'buddy46') {
   if (normalized.current_station && typeof normalized.current_station === 'object') {
     const station = { ...normalized.current_station };
     if (!station.queue && normalized.queue) station.queue = normalized.queue;
+    if (!present(station.id)) {
+      station.id = normalized.current_station_id
+        ?? normalized.queue?.station_id
+        ?? normalized.station_id
+        ?? normalized.id
+        ?? stationIdFromShareUrl(normalized.share_url);
+    }
     if (!present(station.is_broadcasting) && present(normalized.is_broadcasting)) {
       station.is_broadcasting = normalized.is_broadcasting;
     }
