@@ -72,6 +72,7 @@ const metadataRow = {
   title: 'Song',
   artist: 'Artist',
   display_title: 'Song — Artist',
+  thumbnail_url: 'cover',
   fetched_at: 300_000,
 };
 
@@ -97,6 +98,7 @@ const channel = {
           duration: 180_000,
           isrc: 'JPX',
           bite_count: 999,
+          image_url: 'raw-cover',
         },
       }],
     },
@@ -129,6 +131,7 @@ test('buddy playback extracts a compact queue without converting nulls to zero',
   assert.equal(value.queue_id, 99);
   assert.equal(value.is_broadcasting, true);
   assert.equal(value.tracks[0].spotify_id, 'sp1');
+  assert.equal(value.tracks[0].thumbnail_url, 'raw-cover');
   assert.equal('apple_music_id' in value.tracks[0], false);
   assert.equal('bite_count' in value.tracks[0], false);
 
@@ -145,6 +148,13 @@ test('buddy playback extracts a compact queue without converting nulls to zero',
   assert.equal(empty.start_time, null);
   assert.equal(empty.is_paused, false);
   assert.equal(empty.is_broadcasting, false);
+});
+
+test('buddy metadata preserves raw thumbnail when Spotify metadata has not filled it yet', () => {
+  const queue = extractBuddyPlayback(channel);
+  const [track] = attachBuddyMetadata(queue, new Map([['sp1', { ...metadataRow, thumbnail_url: null }]]));
+  assert.equal(track.thumbnail_url, 'raw-cover');
+  assert.equal(track.spotify_url, 'https://open.spotify.com/track/sp1');
 });
 
 test('buddy playback rejects malformed channel payloads before replacing current state', () => {
@@ -178,6 +188,7 @@ test('changed playback replaces the one current-state row with compact JSON', as
   const upsert = db.calls.find((call) => call.sql === BUDDY_PLAYBACK_UPSERT_SQL);
   assert.ok(upsert);
   assert.match(upsert.params[9], /Song/);
+  assert.match(upsert.params[9], /cover/);
   assert.doesNotMatch(upsert.params[9], /metadata_raw_json|metadata_fetched_at|bite_count|oversized|apple_music_id/);
   assert.equal(db.calls.some((call) => call.sql === BUDDY_PLAYBACK_TOUCH_SQL), false);
 });
