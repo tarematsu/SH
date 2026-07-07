@@ -6,6 +6,8 @@ import {
 } from '../lib/playback.js';
 import { LATEST_QUEUE_WITH_ITEMS_SQL, parseLatestQueueRows } from '../lib/latest-queue.js';
 
+const INITIAL_QUEUE_ITEMS = 11;
+
 const json = (data, status = 200, cache = 'public, max-age=20, s-maxage=30, stale-while-revalidate=90') =>
   new Response(JSON.stringify(data), {
     status,
@@ -231,7 +233,7 @@ function publicLatest(latest, channel, station, owner, goal) {
   };
 }
 
-function compactQueueStatus(latestQueue, latest, playback, totalItems) {
+function compactQueueStatus(latestQueue, latest, playback, totalItems, loadedItems = totalItems) {
   if (!latestQueue) return null;
   const playing = latest?.is_broadcasting !== 0
     && latest?.is_broadcasting !== false
@@ -245,6 +247,8 @@ function compactQueueStatus(latestQueue, latest, playback, totalItems) {
     anchor_at: playback.anchorAt,
     queue_end_at: playback.queueEndAt,
     total_items: totalItems,
+    loaded_items: loadedItems,
+    has_more: loadedItems < totalItems,
   };
 }
 
@@ -288,7 +292,8 @@ export async function onRequestGet({ request, env }) {
     const generatedAt = Date.now();
     const playback = computePlaybackWithAnchors(queue, generatedAt);
     const startIndex = Math.max(0, playback.currentIndex);
-    const enrichedQueue = queue.slice(startIndex).map((track, index) => (
+    const queueWindow = queue.slice(startIndex, startIndex + INITIAL_QUEUE_ITEMS);
+    const enrichedQueue = queueWindow.map((track, index) => (
       normalizePlaybackTrack(track, startIndex + index, playback)
     ));
 
@@ -323,7 +328,7 @@ export async function onRequestGet({ request, env }) {
       } : null,
       goal_prediction: goalPrediction,
       queue: enrichedQueue,
-      queue_status: compactQueueStatus(latestQueue, latest, playback, queue.length),
+      queue_status: compactQueueStatus(latestQueue, latest, playback, queue.length, queueWindow.length),
     });
   } catch (error) {
     console.error(error);
