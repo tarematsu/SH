@@ -77,8 +77,10 @@ export function normalizePlaybackTrack(track, index, playback) {
     title: title || track.display_title || spotifyId || '曲情報なし',
     thumbnail_url: track.thumbnail_url || null,
     spotify_url: track.spotify_url || (spotifyId ? `https://open.spotify.com/track/${spotifyId}` : null),
-    ...(isCurrent ? { bite_count: num(track.bite_count) } : {}),
-    is_current: isCurrent,
-    progress_ms: isCurrent ? playback.progressMs : 0,
+    ...(isCurrent ? {
+      bite_count: num(track.bite_count),
+      is_current: true,
+      progress_ms: playback.progressMs,
+    } : {}),
   };
 }
