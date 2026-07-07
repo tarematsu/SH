@@ -22,8 +22,14 @@ function unwrapPayload(payload) {
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return payload;
   return payload.channel
     || payload.data?.channel
+    || payload.data?.playback?.channel
+    || payload.data?.playback
     || payload.data
+    || payload.playback?.channel
+    || payload.playback
     || payload.result?.channel
+    || payload.result?.playback?.channel
+    || payload.result?.playback
     || payload.result
     || payload;
 }
@@ -35,6 +41,17 @@ function handleStationUrl(sourceUrl, alias) {
   return url;
 }
 
+function playbackRequestAlias(url) {
+  if (!/^\/api\/playback(?:\/|$)/i.test(url.pathname)) return '';
+  const pathAlias = url.pathname.match(/^\/api\/playback\/([^/]+)$/i)?.[1];
+  return decodeURIComponent(pathAlias
+    || url.searchParams.get('channel')
+    || url.searchParams.get('alias')
+    || url.searchParams.get('handle')
+    || url.searchParams.get('channel_alias')
+    || '');
+}
+
 export function normalizeBuddyQueuePayload(payload, expectedAlias = 'buddy46') {
   const source = unwrapPayload(payload);
   if (!source || typeof source !== 'object' || Array.isArray(source)) return source;
@@ -43,6 +60,7 @@ export function normalizeBuddyQueuePayload(payload, expectedAlias = 'buddy46') {
     normalized.alias
       || normalized.channel_alias
       || normalized.slug
+      || normalized.handle
       || expectedAlias,
   ).trim().toLowerCase() || expectedAlias;
 
@@ -115,16 +133,19 @@ export function createBuddyGuardedFetch(baseFetch = fetch, expectedAlias = 'budd
     const url = new URL(value);
     const channelMatch = url.pathname.match(/\/channels\/alias\/([^/]+)$/i);
     const handleMatch = url.pathname.match(/\/station\/handle\/([^/]+)\/guest$/i);
-    const requestedAlias = decodeURIComponent(channelMatch?.[1] || handleMatch?.[1] || '').toLowerCase();
+    const playbackAlias = playbackRequestAlias(url);
+    const requestedAlias = decodeURIComponent(
+      channelMatch?.[1] || handleMatch?.[1] || playbackAlias || '',
+    ).toLowerCase();
     if (requestedAlias !== expectedAlias.toLowerCase()) {
       return baseFetch(input, init);
     }
 
     const requestUrlValue = channelMatch ? handleStationUrl(url, expectedAlias).toString() : url.toString();
+    const needsHandlePost = Boolean(channelMatch || handleMatch);
     const response = await baseFetch(requestUrlValue, {
       ...init,
-      method: 'POST',
-      body: '',
+      ...(needsHandlePost ? { method: 'POST', body: '' } : {}),
     });
     if (!response?.ok) return response;
 
