@@ -54,6 +54,25 @@ test('normalizes wrapped Stationhead channel payloads for collection', () => {
   assert.doesNotThrow(() => validateBuddyQueuePayload(normalized, 'buddy46'));
 });
 
+test('normalizes handle station payloads whose channel alias differs from the host handle', () => {
+  const normalized = normalizeBuddyQueuePayload({
+    alias: 'buddies',
+    account: { handle: 'buddy46' },
+    current_station: {
+      id: 3858517,
+      is_broadcasting: true,
+      queue: { id: 3858517, station_id: 3858517, queue_tracks: [] },
+      broadcast: {
+        broadcasters: [{ is_host: true, account: { handle: 'buddy46' } }],
+      },
+    },
+  }, 'buddy46');
+
+  assert.equal(normalized.alias, 'buddy46');
+  assert.equal(normalized.current_station.queue.station_id, 3858517);
+  assert.doesNotThrow(() => validateBuddyQueuePayload(normalized, 'buddy46'));
+});
+
 test('guarded fetch rewrites channel alias reads to the buddy46 handle station endpoint', async () => {
   let seenUrl = null;
   let seenInit = null;
