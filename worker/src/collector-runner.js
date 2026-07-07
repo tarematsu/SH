@@ -2,7 +2,6 @@ import { jwtExpiryMs } from './shared.js';
 import {
   asCollectorFailure,
   clearCollectorFailure,
-  recordCollectorFailure,
   sanitizeFailureDetail,
 } from './collector-failure.js';
 import { COLLECTOR_VERSION, configFromEnv, stationheadJson } from './collector-config.js';
@@ -104,7 +103,6 @@ export async function collectOnce(env, source = 'manual') {
         tokenExpiresAt: jwtExpiryMs(state.authToken) || state.tokenExpiresAt,
       }).catch(() => {});
     }
-    await recordCollectorFailure(env, failure, failure.diagnosis.stage, source).catch(() => {});
     throw failure;
   }
 }
