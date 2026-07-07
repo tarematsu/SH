@@ -1,28 +1,17 @@
-import { collectBuddyPlayback } from './buddy-playback.js';
-import { createBuddyGuardedFetch } from './buddy-fetch-guard.js';
+import { collectBuddyRawPlayback as collectStationPlayback } from './buddy-raw-playback.js';
 import { collectBuddyPlaybackReady } from './buddy-runtime.js';
 
-function metadataDisabled(env = {}) {
-  const value = env.BUDDY_PLAYBACK_METADATA_LIMIT;
-  if (value === undefined || value === null || value === '') return false;
-  return Number(value) === 0;
-}
-
-export function createBuddyCollectionDependencies(env = {}, dependencies = {}) {
-  const alias = String(env.BUDDY_PLAYBACK_ALIAS || 'buddy46').trim().toLowerCase() || 'buddy46';
+export function createBuddyCollectionDependencies(_env = {}, dependencies = {}) {
   const baseFetch = dependencies.fetch || fetch;
-  const guardedFetch = createBuddyGuardedFetch(baseFetch, alias);
-  const baseCollect = dependencies.collect || collectBuddyPlayback;
-  const disableMetadata = metadataDisabled(env);
+  const baseCollect = dependencies.collect || collectStationPlayback;
 
   return {
     ...dependencies,
     fetch: baseFetch,
-    collect(authenticatedEnv, observedAt, runtimeDependencies = {}) {
-      return baseCollect(authenticatedEnv, observedAt, {
+    collect(runtimeEnv, observedAt, runtimeDependencies = {}) {
+      return baseCollect(runtimeEnv, observedAt, {
         ...runtimeDependencies,
-        fetch: guardedFetch,
-        ...(disableMetadata ? { fetchTrackMetadata: async () => null } : {}),
+        fetch: baseFetch,
       });
     },
   };
