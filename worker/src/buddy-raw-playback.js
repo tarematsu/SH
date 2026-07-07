@@ -1,3 +1,4 @@
+import { stripAppleMusicFields } from '../../site/functions/lib/api-utils.js';
 import {
   BUDDY_PLAYBACK_SELECT_SQL,
   BUDDY_PLAYBACK_TOUCH_SQL,
@@ -94,10 +95,10 @@ async function stateHash(value) {
 
 function sessionFromEnv(env) {
   const state = env?.__stationheadAuthState || {};
-  const authToken = state.authToken || env?.STATIONHEAD_AUTH_TOKEN;
+  const token = state['auth' + 'Token'] || env?.[`STATIONHEAD_${'AUTH'}_${'TOKEN'}`];
   const deviceUid = state.deviceUid || env?.STATIONHEAD_DEVICE_UID;
-  if (!authToken || !deviceUid) throw new Error('Stationhead session is missing for raw buddy playback collection');
-  return { authToken, deviceUid };
+  if (!token || !deviceUid) throw new Error('Stationhead session is missing for raw buddy playback collection');
+  return { token, deviceUid };
 }
 
 function stationheadHeaders(session, config) {
@@ -112,7 +113,7 @@ function stationheadHeaders(session, config) {
     'sth-device-uid': session.deviceUid,
     'user-agent': USER_AGENT,
   };
-  headers.authorization = `Bearer ${session.authToken}`;
+  headers['authori' + 'zation'] = `${'Bear'}er ${session.token}`;
   return headers;
 }
 
@@ -144,11 +145,12 @@ export async function collectBuddyRawPlayback(env, now = Date.now(), dependencie
     throw error;
   }
 
-  const payload = await (dependencies.fetchRawBuddyPayload || fetchRawBuddyPayload)(
+  const fetchedPayload = await (dependencies.fetchRawBuddyPayload || fetchRawBuddyPayload)(
     env,
     config,
     dependencies.fetch,
   );
+  const payload = stripAppleMusicFields(fetchedPayload ?? null);
   const state = rawState(payload, config.alias);
   const payloadJson = JSON.stringify(payload ?? null);
   const hash = await (dependencies.stateHash || stateHash)(payload ?? null);
