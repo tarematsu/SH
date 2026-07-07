@@ -155,13 +155,34 @@ function stationheadHeaders(session, config) {
   };
 }
 
+function handleMatches(value, expectedAlias) {
+  return String(value || '').trim().toLowerCase() === String(expectedAlias || '').trim().toLowerCase();
+}
+
+function channelMatchesExpectedHandle(channel, expectedAlias) {
+  if (!channel || typeof channel !== 'object' || Array.isArray(channel)) return false;
+  if (handleMatches(channel.account?.handle, expectedAlias)) return true;
+  if (handleMatches(channel.host?.handle, expectedAlias)) return true;
+  if (handleMatches(channel.host?.account?.handle, expectedAlias)) return true;
+  const broadcasters = [
+    ...(Array.isArray(channel.broadcast?.broadcasters) ? channel.broadcast.broadcasters : []),
+    ...(Array.isArray(channel.current_station?.broadcast?.broadcasters)
+      ? channel.current_station.broadcast.broadcasters : []),
+  ];
+  return broadcasters.some((item) => handleMatches(
+    item?.account?.handle || item?.handle,
+    expectedAlias,
+  ));
+}
+
 export function validateBuddyChannelPayload(channel, expectedAlias = DEFAULT_ALIAS) {
   if (!channel || typeof channel !== 'object' || Array.isArray(channel)) {
     throw new Error('Stationhead buddy playback response is not an object');
   }
+  const expected = String(expectedAlias).trim().toLowerCase();
   const actualAlias = String(channel.alias || channel.channel_alias || '').trim().toLowerCase();
   if (!actualAlias) throw new Error('Stationhead buddy playback response is missing channel alias');
-  if (actualAlias !== String(expectedAlias).trim().toLowerCase()) {
+  if (actualAlias !== expected && !channelMatchesExpectedHandle(channel, expected)) {
     throw new Error(`Stationhead alias mismatch: expected ${expectedAlias}, received ${actualAlias}`);
   }
   const queue = channel?.current_station?.queue || channel?.queue || null;
