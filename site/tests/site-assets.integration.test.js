@@ -51,7 +51,8 @@ test('browser application remains wired to the dashboard API and resilient refre
       && html.indexOf('/app-playback.js') < html.indexOf('/app.js'),
     'split app modules must load before the refresh entrypoint',
   );
-  assert.match(app, /fetch\(['"]\/api\/dashboard['"]/);
+  assert.match(app, /fetch\(['"]\/api\/dashboard\?history=0['"]/);
+  assert.match(app, /\/api\/dashboard-history/);
   assert.match(app, /AbortController/);
   assert.match(app, /refreshInFlight/);
   assert.match(appState, /escapeText/);
@@ -59,17 +60,16 @@ test('browser application remains wired to the dashboard API and resilient refre
   assert.match(app, /if \(!document\.hidden\) refresh\(\)/);
 });
 
-test('dashboard display guards preserve ETA and expose comment velocity to chart overlays', async () => {
+test('dashboard chart renderer preserves ETA and comment velocity overlays', async () => {
   const html = await text('public/index.html');
-  const source = await text('public/dashboard-display-guards.js');
+  const guards = await text('public/dashboard-display-guards.js');
+  const chart = await text('public/app-chart.js');
   assert.match(html, /\/dashboard-display-guards\.js/);
-  assert.ok(
-    html.indexOf('/dashboard-display-guards.js') < html.indexOf('/comment-velocity-chart.js'),
-    'display guards must run before the comment velocity chart wrapper',
-  );
-  assert.match(source, /lastGoalPrediction/);
-  assert.match(source, /commentVelocityValues/);
-  assert.match(source, /commentVelocityMax/);
+  assert.doesNotMatch(html, /\/comment-velocity-chart\.js/);
+  assert.match(guards, /lastGoalPrediction/);
+  assert.match(chart, /commentVelocityValues/);
+  assert.match(chart, /commentVelocityMax/);
+  assert.match(chart, /drawCommentVelocityBars/);
 });
 
 test('dashboard fetch cache does not request queue-unchanged deltas without a local queue', async () => {
