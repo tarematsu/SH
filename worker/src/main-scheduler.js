@@ -30,10 +30,7 @@ export class PrimaryCollectionTimeoutError extends Error {
 }
 
 function auxiliaryTasks(flight, env, includeFailureOnly, runners = DEFAULT_AUXILIARY_RUNNERS) {
-  return Object.entries(runners).flatMap(([name, runner]) => {
-    const task = typeof runner === 'function'
-      ? { failureEvent: `${name}_failed`, run: runner }
-      : runner;
+  return Object.entries(runners).flatMap(([name, task]) => {
     if (task.onFailureOnly && !includeFailureOnly) return [];
     if (!flight[name]) flight[name] = Promise.resolve().then(() => task.run(env));
     return [{ failureEvent: task.failureEvent || 'scheduled_auxiliary_failed', promise: flight[name] }];
