@@ -37,20 +37,16 @@ function auxiliaryTasks(flight, env, includeFailureOnly, runners = DEFAULT_AUXIL
   });
 }
 
-function reportAuxiliaryFailures(tasks, results) {
-  for (const [index, result] of results.entries()) {
-    if (result.status !== 'rejected') continue;
-    console.error(JSON.stringify({
-      event: tasks[index]?.failureEvent || 'scheduled_auxiliary_failed',
-      error: String(result.reason?.message || result.reason),
-    }));
-  }
-}
-
 function startAuxiliaryOnce(flight, env, includeFailureOnly, runners) {
   const tasks = auxiliaryTasks(flight, env, includeFailureOnly, runners);
   return Promise.allSettled(tasks.map((task) => task.promise)).then((results) => {
-    reportAuxiliaryFailures(tasks, results);
+    for (const [index, result] of results.entries()) {
+      if (result.status !== 'rejected') continue;
+      console.error(JSON.stringify({
+        event: tasks[index]?.failureEvent || 'scheduled_auxiliary_failed',
+        error: String(result.reason?.message || result.reason),
+      }));
+    }
     return results;
   });
 }
