@@ -48,9 +48,7 @@ export {
 export default {
   async scheduled(controller, env, ctx) {
     await app.scheduled(controller, env, ctx);
-    const cfg = officialNewsConfig(env);
-    const now = Date.now();
-    ctx.waitUntil(runOfficialNewsMonitor(env, cfg, now));
+    ctx.waitUntil(runOfficialNewsMonitor(env, officialNewsConfig(env), Date.now()));
   },
 
   async fetch(request, env, ctx) {
