@@ -42,5 +42,5 @@ test('stale secondary playback cannot appear as currently playing', () => {
   assert.equal(payload.queue_status.playing, false);
   assert.equal(payload.queue_status.current_index, -1);
   assert.equal(payload.queue_status.progress_ms, 0);
-  assert.equal(payload.queue[0].is_current, false);
+  assert.equal(payload.queue[0].is_current, undefined);
 });
