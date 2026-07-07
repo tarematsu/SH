@@ -47,7 +47,11 @@ export function isPreviewKey(key) {
   return normalized === 'preview' || normalized === 'previewurl';
 }
 
-export function isUnusedPlaybackKey(key) {
+export function shouldStripPlaybackKey(key) {
+  return isAppleMusicKey(key) || isPreviewKey(key);
+}
+
+export function isUnusedPublicPlaybackKey(key) {
   const normalized = normalizedPlaybackKey(key);
   return normalized === 'deezer'
     || normalized === 'deezerid'
@@ -56,19 +60,27 @@ export function isUnusedPlaybackKey(key) {
     || normalized === 'queueid';
 }
 
-export function shouldStripPlaybackKey(key) {
-  return isAppleMusicKey(key) || isPreviewKey(key) || isUnusedPlaybackKey(key);
+export function shouldStripPublicPlaybackKey(key) {
+  return shouldStripPlaybackKey(key) || isUnusedPublicPlaybackKey(key);
 }
 
-export function stripPlaybackFields(value) {
-  if (Array.isArray(value)) return value.map(stripPlaybackFields);
+function stripFields(value, shouldStripKey) {
+  if (Array.isArray(value)) return value.map((item) => stripFields(item, shouldStripKey));
   if (!value || typeof value !== 'object') return value;
   const output = {};
   for (const [key, child] of Object.entries(value)) {
-    if (shouldStripPlaybackKey(key)) continue;
-    output[key] = stripPlaybackFields(child);
+    if (shouldStripKey(key)) continue;
+    output[key] = stripFields(child, shouldStripKey);
   }
   return output;
+}
+
+export function stripPlaybackFields(value) {
+  return stripFields(value, shouldStripPlaybackKey);
+}
+
+export function stripPlaybackPublicFields(value) {
+  return stripFields(value, shouldStripPublicPlaybackKey);
 }
 
 export function stripAppleMusicFields(value) {
