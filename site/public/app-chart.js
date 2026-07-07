@@ -6,11 +6,23 @@ function downsampleRows(rows, maxPoints = 300) {
   return Array.from({ length: maxPoints }, (_, i) => valid[Math.round(i * step)]);
 }
 
+function commentVelocityValue(row) {
+  const candidates = [
+    row?.comment_velocity,
+    row?.comment_velocity_max,
+    row?.comments_velocity,
+    row?.comment_rate,
+    row?.comment_count_delta,
+  ];
+  for (const candidate of candidates) {
+    const value = Number(candidate);
+    if (Number.isFinite(value)) return Math.max(0, value);
+  }
+  return null;
+}
+
 function commentVelocityState(sampled) {
-  const values = sampled.map((row) => {
-    const value = Number(row?.comment_velocity ?? row?.comment_velocity_max);
-    return Number.isFinite(value) ? Math.max(0, value) : null;
-  });
+  const values = sampled.map(commentVelocityValue);
   const maximum = values.reduce((max, value) => (
     Number.isFinite(value) ? Math.max(max, value) : max
   ), 0);
@@ -28,15 +40,16 @@ function drawCommentVelocityBars(ctx, dimensions, xPositions, velocityValues, ve
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.globalCompositeOperation = 'source-over';
   ctx.fillStyle = barColor;
+  ctx.strokeStyle = barColor;
   for (let index = 0; index < velocityValues.length; index += 1) {
     const value = velocityValues[index];
     if (value == null || value <= 0) continue;
     const previousGap = index > 0 ? xPositions[index] - xPositions[index - 1] : Infinity;
     const nextGap = index < xPositions.length - 1 ? xPositions[index + 1] - xPositions[index] : Infinity;
     const nearestGap = Math.min(previousGap, nextGap);
-    const barWidth = Math.max(2, Math.min(14, Number.isFinite(nearestGap) ? nearestGap * 0.68 : 8));
-    const barHeight = Math.max(3, plotHeight * value / Math.max(1, velocityMaximum));
-    ctx.globalAlpha = index === selectionIndex ? 0.58 : 0.34;
+    const barWidth = Math.max(3, Math.min(16, Number.isFinite(nearestGap) ? nearestGap * 0.72 : 9));
+    const barHeight = Math.max(4, plotHeight * value / Math.max(1, velocityMaximum));
+    ctx.globalAlpha = index === selectionIndex ? 0.72 : 0.5;
     ctx.fillRect(xPositions[index] - barWidth / 2, plotBottom - barHeight, barWidth, barHeight);
   }
   ctx.restore();
@@ -207,11 +220,11 @@ function showMainChartDetail(index) {
   selectedMainChartIndex = index;
   const detail = el('mainChartDetail');
   if (detail) {
-    const velocity = mainChartState?.commentVelocityValues?.[index];
+    const velocity = commentVelocityValue(row);
     detail.innerHTML = `<time>${escapeText(new Date(Number(row.observed_at)).toLocaleString('ja-JP', { year:'numeric', month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit', second:'2-digit' }))}</time>` +
       `<div><span>オンライン</span><strong>${number(row.online_member_count)}人</strong></div>` +
       `<div><span>再生数</span><strong>${number(row.current_stream_count)}</strong></div>` +
-      `<div><span>コメント勢い</span><strong>${Number.isFinite(velocity) ? number(velocity) : '-'}件 / 2分</strong></div>`;
+      `<div><span>コメント勢い</span><strong>${velocity != null ? number(velocity) : '-'}件 / 2分</strong></div>`;
   }
   drawChart(lastHistoryRows, index);
 }
