@@ -1,5 +1,8 @@
 import { normalizeBearer, jwtExpiryMs } from './shared.js';
 
+export const DEFAULT_AUTH_STATE_ID = 'stationhead';
+export const BUDDY_AUTH_STATE_ID = 'buddy46';
+
 export const AUTH_CONTROL_SCHEMA_SQL = `CREATE TABLE IF NOT EXISTS sh_worker_auth_control (
   id TEXT PRIMARY KEY,
   last_attempt_at INTEGER,
@@ -29,9 +32,27 @@ function missingAuthControlTable(error) {
   return /no such table:\s*sh_worker_auth_control/i.test(String(error?.message || error));
 }
 
-export function parseAuthState(row, env = {}) {
-  const authToken = normalizeBearer(row?.auth_token || env.STATIONHEAD_AUTH_TOKEN);
-  const deviceUid = String(row?.device_uid || env.STATIONHEAD_DEVICE_UID || '').trim();
+function normalizedStateId(stateId = DEFAULT_AUTH_STATE_ID) {
+  return String(stateId || DEFAULT_AUTH_STATE_ID).trim().toLowerCase() || DEFAULT_AUTH_STATE_ID;
+}
+
+function fallbackCredentials(env = {}, stateId = DEFAULT_AUTH_STATE_ID) {
+  if (normalizedStateId(stateId) === BUDDY_AUTH_STATE_ID) {
+    return {
+      authToken: env.BUDDY_PLAYBACK_AUTH_TOKEN || env.BUDDY46_AUTH_TOKEN,
+      deviceUid: env.BUDDY_PLAYBACK_DEVICE_UID || env.BUDDY46_DEVICE_UID,
+    };
+  }
+  return {
+    authToken: env.STATIONHEAD_AUTH_TOKEN || env.SH_AUTH_TOKEN,
+    deviceUid: env.STATIONHEAD_DEVICE_UID || env.SH_DEVICE_UID,
+  };
+}
+
+export function parseAuthState(row, env = {}, stateId = DEFAULT_AUTH_STATE_ID) {
+  const fallback = fallbackCredentials(env, stateId);
+  const authToken = normalizeBearer(row?.auth_token || fallback.authToken);
+  const deviceUid = String(row?.device_uid || fallback.deviceUid || '').trim();
   return {
     authToken,
     deviceUid,
@@ -58,19 +79,19 @@ export async function ensureAuthControlSchema(env) {
   return true;
 }
 
-export async function readAuthState(env, stateId = 'stationhead') {
+export async function readAuthState(env, stateId = DEFAULT_AUTH_STATE_ID) {
   try {
     const row = await env.DB.prepare(AUTH_STATE_SQL).bind(stateId).first();
-    return parseAuthState(row, env);
+    return parseAuthState(row, env, stateId);
   } catch (error) {
     if (!missingAuthControlTable(error)) throw error;
     await ensureAuthControlSchema(env);
     const row = await env.DB.prepare(AUTH_STATE_SQL).bind(stateId).first();
-    return parseAuthState(row, env);
+    return parseAuthState(row, env, stateId);
   }
 }
 
-export async function ensureAuthControlRow(env, stateId = 'stationhead', now = Date.now()) {
+export async function ensureAuthControlRow(env, stateId = DEFAULT_AUTH_STATE_ID, now = Date.now()) {
   await ensureAuthControlSchema(env);
   await env.DB.prepare(`INSERT OR IGNORE INTO sh_worker_auth_control (id,updated_at) VALUES (?,?)`)
     .bind(stateId, now).run();
