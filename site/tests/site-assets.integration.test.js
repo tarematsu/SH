@@ -100,3 +100,12 @@ test('standalone Stationhead API test has no rewrite that can create a canonical
   }
   assert.doesNotMatch(redirects, /^\/stationhead-api-test\/?\s+/m);
 });
+
+test('Pages configuration binds the expected D1 database and output directory', async () => {
+  const config = JSON.parse((await text('wrangler.jsonc')).replace(/^\s*\/\/.*$/gm, ''));
+  assert.equal(config.name, 'skrzk');
+  assert.equal(config.pages_build_output_dir, './public');
+  assert.equal(config.d1_databases?.[0]?.binding, 'DB');
+  assert.equal(config.d1_databases?.[0]?.database_name, 'stationhead-monitor');
+  assert.equal(config.d1_databases?.[0]?.migrations_dir, '../database/migrations');
+});
