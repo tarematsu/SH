@@ -177,8 +177,6 @@ async function refreshSession(env, dependencies = {}) {
     if (!await claimRefresh(env, now)) {
       const waited = await waitForRefresh(env, initial.lastSuccessAt, nowFn);
       if (waited) return waited;
-      const latest = await readAuthState(env, STATE_ID);
-      if (usableSession(latest, nowFn())) return latest;
       throw new Error('buddy46 authentication refresh lock timed out');
     }
 
@@ -210,14 +208,13 @@ export async function ensureBuddyPlaybackSchema(env) {
 }
 
 function isAuthFailure(error) {
-  return /\b401\b|session expired|unauthori[sz]ed/i.test(String(error?.message || error));
+  return /\b401\b|\b403\b|session expired|unauthori[sz]ed|Stationhead buddy playback API\s+404|Not in database/i
+    .test(String(error?.message || error));
 }
 
 export async function collectBuddyPlaybackReady(env, observedAt = Date.now(), dependencies = {}) {
   await ensureBuddyPlaybackSchema(env);
-  const nowFn = dependencies.now || Date.now;
-  let state = await readAuthState(env, STATE_ID);
-  if (!usableSession(state, nowFn())) state = await refreshSession(env, dependencies);
+  let state = await refreshSession(env, dependencies);
 
   const collect = dependencies.collect || collectBuddyPlayback;
   try {
