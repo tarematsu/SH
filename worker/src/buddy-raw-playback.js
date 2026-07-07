@@ -1,3 +1,4 @@
+import { stripAppleMusicFields } from '../../site/functions/lib/api-utils.js';
 import {
   BUDDY_PLAYBACK_SELECT_SQL,
   BUDDY_PLAYBACK_TOUCH_SQL,
@@ -144,11 +145,12 @@ export async function collectBuddyRawPlayback(env, now = Date.now(), dependencie
     throw error;
   }
 
-  const payload = await (dependencies.fetchRawBuddyPayload || fetchRawBuddyPayload)(
+  const fetchedPayload = await (dependencies.fetchRawBuddyPayload || fetchRawBuddyPayload)(
     env,
     config,
     dependencies.fetch,
   );
+  const payload = stripAppleMusicFields(fetchedPayload ?? null);
   const state = rawState(payload, config.alias);
   const payloadJson = JSON.stringify(payload ?? null);
   const hash = await (dependencies.stateHash || stateHash)(payload ?? null);
