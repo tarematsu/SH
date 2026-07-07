@@ -88,8 +88,32 @@ function setImage(element, src) {
   }
 }
 
+function lowerResolutionThumbnail(src) {
+  const value = String(src || '').trim();
+  if (!value) return '';
+  try {
+    const url = new URL(value, location.href);
+    if (/stationhead-production1-images\.s3\.amazonaws\.com$/i.test(url.hostname)) {
+      url.pathname = url.pathname.replace(/\/(?:76|200|340|672|800|960)\//, '/200/');
+      return url.href;
+    }
+    if (/i\.scdn\.co$/i.test(url.hostname)) {
+      url.pathname = url.pathname.replace(/ab67616d0000(?:b273|01e02|04851)/i, 'ab67616d00004851');
+      return url.href;
+    }
+    if (/mosaic\.scdn\.co$/i.test(url.hostname)) {
+      url.pathname = url.pathname.replace(/\/(?:640|300)\//, '/60/');
+      return url.href;
+    }
+    return value;
+  } catch {
+    return value;
+  }
+}
+
 function playbackImage(src, className = '', eager = false) {
-  const safeSrc = escapeText(src || '');
+  const imageSrc = eager ? src : lowerResolutionThumbnail(src);
+  const safeSrc = escapeText(imageSrc || '');
   const attributes = [
     className ? `class="${escapeText(className)}"` : '',
     `src="${safeSrc}"`,
