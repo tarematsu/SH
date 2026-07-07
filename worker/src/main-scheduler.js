@@ -15,8 +15,9 @@ let primaryScheduledFlight = null;
 
 function primaryWatchdogMs(env = {}) {
   const configured = Number(env.PRIMARY_COLLECTION_WATCHDOG_MS ?? DEFAULT_PRIMARY_WATCHDOG_MS);
-  if (!Number.isFinite(configured)) return DEFAULT_PRIMARY_WATCHDOG_MS;
-  return Math.max(MIN_PRIMARY_WATCHDOG_MS, Math.min(MAX_PRIMARY_WATCHDOG_MS, configured));
+  return Number.isFinite(configured)
+    ? Math.max(MIN_PRIMARY_WATCHDOG_MS, Math.min(MAX_PRIMARY_WATCHDOG_MS, configured))
+    : DEFAULT_PRIMARY_WATCHDOG_MS;
 }
 
 export class PrimaryCollectionTimeoutError extends Error {
@@ -28,12 +29,15 @@ export class PrimaryCollectionTimeoutError extends Error {
   }
 }
 
-function normalizeAuxiliaryRunners(runners = DEFAULT_AUXILIARY_RUNNERS) {
-  return Object.entries(runners).map(([name, runner]) => (
-    typeof runner === 'function'
-      ? { name, failureEvent: `${name}_failed`, run: runner, onFailureOnly: false }
-      : { name, onFailureOnly: false, ...runner }
-  ));
+function auxiliaryTasks(flight, env, includeFailureOnly, runners = DEFAULT_AUXILIARY_RUNNERS) {
+  return Object.entries(runners).flatMap(([name, runner]) => {
+    const task = typeof runner === 'function'
+      ? { failureEvent: `${name}_failed`, run: runner }
+      : runner;
+    if (task.onFailureOnly && !includeFailureOnly) return [];
+    if (!flight[name]) flight[name] = Promise.resolve().then(() => task.run(env));
+    return [{ failureEvent: task.failureEvent || 'scheduled_auxiliary_failed', promise: flight[name] }];
+  });
 }
 
 function reportAuxiliaryFailures(tasks, results) {
@@ -47,12 +51,7 @@ function reportAuxiliaryFailures(tasks, results) {
 }
 
 function startAuxiliaryOnce(flight, env, includeFailureOnly, runners) {
-  const tasks = [];
-  for (const runner of normalizeAuxiliaryRunners(runners)) {
-    if (runner.onFailureOnly && !includeFailureOnly) continue;
-    if (!flight[runner.name]) flight[runner.name] = Promise.resolve().then(() => runner.run(env));
-    tasks.push({ failureEvent: runner.failureEvent, promise: flight[runner.name] });
-  }
+  const tasks = auxiliaryTasks(flight, env, includeFailureOnly, runners);
   flight.auxiliary = Promise.allSettled(tasks.map((task) => task.promise)).then((results) => {
     reportAuxiliaryFailures(tasks, results);
     return results;
@@ -68,9 +67,7 @@ function ensurePrimaryScheduledFlight(controller, env, ctx, scheduled, runners) 
   if (primaryScheduledFlight) return primaryScheduledFlight;
 
   let signalTimeout;
-  const timeoutOutcome = new Promise((resolve) => {
-    signalTimeout = () => resolve({ failed: true });
-  });
+  const timeoutOutcome = new Promise((resolve) => { signalTimeout = () => resolve({ failed: true }); });
   const flight = {
     primary: Promise.resolve().then(() => scheduled(controller, env, ctx)),
     auxiliary: null,
@@ -80,15 +77,9 @@ function ensurePrimaryScheduledFlight(controller, env, ctx, scheduled, runners) 
   primaryScheduledFlight = flight;
 
   const primaryOutcome = flight.primary.then(
-    () => {
-      releasePrimaryFlight(flight);
-      return { failed: false };
-    },
-    () => {
-      releasePrimaryFlight(flight);
-      return { failed: true };
-    },
-  );
+    () => ({ failed: false }),
+    () => ({ failed: true }),
+  ).finally(() => releasePrimaryFlight(flight));
   flight.lifecycle = Promise.race([primaryOutcome, timeoutOutcome])
     .then(({ failed }) => startAuxiliaryOnce(flight, env, failed, runners));
   ctx?.waitUntil?.(flight.lifecycle);
@@ -121,8 +112,13 @@ export async function runPrimaryScheduled(
   options = {},
 ) {
   const timeoutMs = timeoutOverride ?? primaryWatchdogMs(env);
-  const runners = options.auxiliaryRunners || DEFAULT_AUXILIARY_RUNNERS;
-  const flight = ensurePrimaryScheduledFlight(controller, env, ctx, scheduled, runners);
+  const flight = ensurePrimaryScheduledFlight(
+    controller,
+    env,
+    ctx,
+    scheduled,
+    options.auxiliaryRunners || DEFAULT_AUXILIARY_RUNNERS,
+  );
   let timeoutId = null;
 
   try {
