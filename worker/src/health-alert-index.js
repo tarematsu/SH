@@ -69,11 +69,14 @@ async function discardDisabledDeliveries(env) {
   if (!env?.DB) return false;
   try {
     const result = await env.DB.prepare(`DELETE FROM sh_health_alert_delivery
-      WHERE id=? AND event_kind='recovery'`).bind(ALERT_ID).run();
+      WHERE id=? AND (
+        event_kind='recovery'
+        OR (event_kind='alert' AND idempotency_key LIKE 'stationhead-monitor-down-%')
+      )`).bind(ALERT_ID).run();
     const deleted = changed(result);
     if (deleted) {
       console.warn(JSON.stringify({
-        event: 'collector_recovery_delivery_discarded',
+        event: 'collector_disabled_delivery_discarded',
       }));
     }
     return deleted;
