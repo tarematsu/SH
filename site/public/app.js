@@ -78,6 +78,7 @@ async function refresh() {
       anchor_at: data.queue_status?.anchor_at,
       response_age_ms: responseAgeMs,
       playing,
+      total_items: data.queue_status?.total_items,
     });
 
     renderHistory(data.history);
