@@ -13,12 +13,12 @@ state/
 *.log
 .DS_Store
 Thumbs.db
-.stationhead-session.json
+.*-session.json
 .weekly-leaderboard-state.json
 
 # Generated local tooling state and diagnostic captures
 .wrangler/
-.stationhead-discovery/
+.*-discovery/
 collector/.leaderboard-capture-browser/
 collector/.profile-capture-browser/
 collector/captures/
