@@ -130,11 +130,71 @@ function emptySecondaryPayload(alias, generatedAt, setupRequired = false) {
   };
 }
 
+function rawQueue(payload) {
+  return payload?.current_station?.queue || payload?.queue || null;
+}
+
+function rawTrackToPlaybackRow(item, index, context) {
+  const track = item?.track || item || {};
+  const spotifyId = String(track.spotify_id || item?.spotify_id || '').trim() || null;
+  return stripAppleMusicFields({
+    observed_at: context.checkedAt,
+    station_id: context.stationId,
+    queue_id: context.queueId,
+    start_time: context.startTime,
+    position: index,
+    queue_track_id: num(item?.id ?? item?.queue_track_id),
+    stationhead_track_id: num(track?.id ?? item?.stationhead_track_id),
+    spotify_id: spotifyId,
+    duration_ms: num(track?.duration_ms ?? track?.duration),
+    bite_count: num(track?.bite_count ?? item?.bite_count),
+    title: track?.title || null,
+    artist: track?.artist || track?.artist_name || null,
+    display_title: track?.display_title || null,
+    thumbnail_url: track?.thumbnail_url || track?.image_url || track?.album_art_url || null,
+    spotify_url: track?.spotify_url || (spotifyId ? `https://open.spotify.com/track/${spotifyId}` : null),
+  });
+}
+
 function secondaryRawPlaybackPayload(row, rawPayload, generatedAt = Date.now()) {
   const alias = String(row?.channel_alias || '').trim() || null;
   const checkedAt = num(row.checked_at);
   const changedAt = num(row.changed_at);
+  const queueSource = rawQueue(rawPayload);
+  const stationId = num(row.station_id ?? queueSource?.station_id ?? rawPayload?.station_id ?? rawPayload?.id);
+  const queueId = num(row.queue_id ?? queueSource?.id);
+  const startTime = num(row.start_time ?? queueSource?.start_time);
+  const paused = storedBoolean(row.is_paused ?? queueSource?.is_paused);
+  const broadcasting = storedBoolean(row.is_broadcasting ?? rawPayload?.is_broadcasting);
+  const sourceTracks = Array.isArray(queueSource?.queue_tracks)
+    ? queueSource.queue_tracks
+    : Array.isArray(queueSource?.tracks)
+      ? queueSource.tracks
+      : [];
+  const rows = sourceTracks.map((track, index) => rawTrackToPlaybackRow(track, index, {
+    checkedAt,
+    stationId,
+    queueId,
+    startTime,
+  }));
+  const playbackAt = paused
+    ? changedAt ?? checkedAt ?? generatedAt
+    : generatedAt;
+  const computed = computePlayback(rows, playbackAt);
+  const ended = !paused
+    && computed.queueEndAt != null
+    && playbackAt >= computed.queueEndAt
+    && rows.length > 0;
+  const playback = ended
+    ? { ...computed, currentIndex: -1, progressMs: 0, anchorAt: null }
+    : computed;
   const stale = checkedAt == null || generatedAt - checkedAt > SECONDARY_STALE_MS;
+  const visiblePlayback = stale
+    ? { ...playback, currentIndex: -1, progressMs: 0, anchorAt: null }
+    : playback;
+  const queue = rows.map((track, index) => normalizePlaybackTrack(track, index, visiblePlayback));
+  const playing = !stale && broadcasting && !paused && !ended && visiblePlayback.currentIndex >= 0;
+
   return {
     ok: true,
     channel_alias: alias,
@@ -142,18 +202,29 @@ function secondaryRawPlaybackPayload(row, rawPayload, generatedAt = Date.now()) 
     latest_observed_at: checkedAt,
     queue_observed_at: checkedAt,
     changed_at: changedAt,
-    station_id: num(row.station_id),
-    is_broadcasting: storedBoolean(row.is_broadcasting),
+    station_id: stationId,
+    is_broadcasting: broadcasting,
     host_account_id: num(row.host_account_id),
     host_handle: row.host_handle || null,
-    playing: false,
+    playing,
     stale,
     raw_payload_mode: true,
     raw_payload_passthrough: true,
     setup_required: false,
     queue_revision: row.state_hash || null,
-    queue_status: null,
-    queue: [],
+    queue_status: {
+      queue_id: queueId,
+      start_time: startTime,
+      is_paused: paused,
+      playing,
+      ended,
+      current_index: visiblePlayback.currentIndex,
+      progress_ms: visiblePlayback.progressMs,
+      anchor_at: visiblePlayback.anchorAt,
+      queue_end_at: visiblePlayback.queueEndAt,
+      total_items: queue.length,
+    },
+    queue,
     raw_payload: rawPayload,
   };
 }
