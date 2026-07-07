@@ -49,11 +49,10 @@ function reportAuxiliaryFailures(tasks, results) {
 
 function startAuxiliaryOnce(flight, env, includeFailureOnly, runners) {
   const tasks = auxiliaryTasks(flight, env, includeFailureOnly, runners);
-  flight.auxiliary = Promise.allSettled(tasks.map((task) => task.promise)).then((results) => {
+  return Promise.allSettled(tasks.map((task) => task.promise)).then((results) => {
     reportAuxiliaryFailures(tasks, results);
     return results;
   });
-  return flight.auxiliary;
 }
 
 function releasePrimaryFlight(flight) {
@@ -67,8 +66,6 @@ function ensurePrimaryScheduledFlight(controller, env, ctx, scheduled, runners) 
   const timeoutOutcome = new Promise((resolve) => { signalTimeout = () => resolve({ failed: true }); });
   const flight = {
     primary: Promise.resolve().then(() => scheduled(controller, env, ctx)),
-    auxiliary: null,
-    lifecycle: null,
     signalTimeout,
   };
   primaryScheduledFlight = flight;
@@ -77,9 +74,9 @@ function ensurePrimaryScheduledFlight(controller, env, ctx, scheduled, runners) 
     () => ({ failed: false }),
     () => ({ failed: true }),
   ).finally(() => releasePrimaryFlight(flight));
-  flight.lifecycle = Promise.race([primaryOutcome, timeoutOutcome])
+  const lifecycle = Promise.race([primaryOutcome, timeoutOutcome])
     .then(({ failed }) => startAuxiliaryOnce(flight, env, failed, runners));
-  ctx?.waitUntil?.(flight.lifecycle);
+  ctx?.waitUntil?.(lifecycle);
   return flight;
 }
 
