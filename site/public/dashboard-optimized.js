@@ -1,135 +1,14 @@
 (() => {
   const baseDrawChart = drawChart;
-  const historyBuckets = new Map();
-  const integerFormatter = new Intl.NumberFormat('ja-JP');
-  const dateTimeFormatter = new Intl.DateTimeFormat('ja-JP', {
-    month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit',
-  });
+  const dom = window.DashboardDom;
+  const historyCache = window.DashboardHistoryCache;
   let lastDashboardObservedAt = 0;
   let lastQueueRevision = '';
   let hiddenAt = 0;
   let playbackActive = null;
 
-  function formatNumber(value) {
-    return value == null || !Number.isFinite(Number(value)) ? '-' : integerFormatter.format(Number(value));
-  }
-
-  function formatDateTime(value) {
-    return value ? dateTimeFormatter.format(new Date(Number(value))) : '-';
-  }
-
-  function setText(target, value) {
-    if (!target) return false;
-    const text = String(value ?? '');
-    if (target.textContent === text) return false;
-    target.textContent = text;
-    return true;
-  }
-
-  function setStyle(target, property, value) {
-    if (!target || target.style[property] === value) return false;
-    target.style[property] = value;
-    return true;
-  }
-
-  function setImageIfChanged(target, src) {
-    if (!target) return false;
-    const visible = Boolean(src);
-    let changed = false;
-    if (target.hidden === visible) {
-      target.hidden = !visible;
-      changed = true;
-    }
-    if (visible && target.getAttribute('src') !== src) {
-      target.src = src;
-      changed = true;
-    }
-    return changed;
-  }
-
-  function renderDailyDeltaIfChanged(elementId, value) {
-    const node = el(elementId);
-    if (!node) return;
-    const n = Number(value);
-    if (!Number.isFinite(n)) {
-      setText(node, '');
-      if (!node.hidden) node.hidden = true;
-      return;
-    }
-    const sign = n > 0 ? '+' : n < 0 ? '−' : '±';
-    setText(node, `前日 ${sign}${formatNumber(Math.abs(n))}`);
-    const className = `daily-delta ${n > 0 ? 'positive' : n < 0 ? 'negative' : 'neutral'}`;
-    if (node.className !== className) node.className = className;
-    if (node.hidden) node.hidden = false;
-  }
-
-  function latestObservedAt(rows) {
-    let latest = 0;
-    for (const row of Array.isArray(rows) ? rows : []) {
-      const value = Number(row?.observed_at);
-      if (Number.isFinite(value) && value > latest) latest = value;
-    }
-    return latest;
-  }
-
   function hasLocalQueue() {
     return Array.isArray(playbackQueue) && playbackQueue.length > 0;
-  }
-
-  function mergeHistoryBucket(row, cutoff) {
-    const observedAt = Number(row?.observed_at);
-    if (!Number.isFinite(observedAt) || observedAt < cutoff) return false;
-    const bucket = Math.floor(observedAt / 300000) * 300000;
-    const previous = historyBuckets.get(bucket);
-    const previousVelocity = Number(previous?.comment_velocity);
-    const nextVelocity = Number(row?.comment_velocity);
-    const commentVelocity = Number.isFinite(previousVelocity) || Number.isFinite(nextVelocity)
-      ? Math.max(Number.isFinite(previousVelocity) ? previousVelocity : 0, Number.isFinite(nextVelocity) ? nextVelocity : 0)
-      : null;
-    if (!previous || observedAt >= Number(previous.observed_at)) {
-      historyBuckets.set(bucket, { ...row, comment_velocity: commentVelocity });
-      return true;
-    }
-    if (commentVelocity !== previous.comment_velocity) {
-      historyBuckets.set(bucket, { ...previous, comment_velocity: commentVelocity });
-      return true;
-    }
-    return false;
-  }
-
-  function seedHistoryBuckets(rows, cutoff = Date.now() - 86400000) {
-    historyBuckets.clear();
-    for (const row of Array.isArray(rows) ? rows : []) mergeHistoryBucket(row, cutoff);
-  }
-
-  function mergeDashboardHistory(rows, delta) {
-    const cutoff = Date.now() - 86400000;
-    const incoming = Array.isArray(rows) ? rows : [];
-    let changed = false;
-
-    if (!delta || !historyBuckets.size) {
-      historyBuckets.clear();
-      if (delta) {
-        for (const row of lastHistoryRows) changed = mergeHistoryBucket(row, cutoff) || changed;
-      }
-      for (const row of incoming) changed = mergeHistoryBucket(row, cutoff) || changed;
-      changed = true;
-    } else {
-      for (const row of incoming) changed = mergeHistoryBucket(row, cutoff) || changed;
-    }
-
-    const cutoffBucket = Math.floor(cutoff / 300000) * 300000;
-    for (const bucket of historyBuckets.keys()) {
-      if (bucket >= cutoffBucket) continue;
-      historyBuckets.delete(bucket);
-      changed = true;
-    }
-
-    if (!changed) return { rows: lastHistoryRows, changed: false };
-    return {
-      rows: [...historyBuckets.values()].sort((a, b) => Number(a.observed_at) - Number(b.observed_at)),
-      changed: true,
-    };
   }
 
   function syncPlaybackActivity(playing) {
@@ -159,7 +38,7 @@
 
   drawChart = function drawChartWithoutDiscardingHistory(rows = lastHistoryRows, selectionIndex = selectedMainChartIndex) {
     const fullRows = Array.isArray(rows) ? rows : [];
-    if (!historyBuckets.size && fullRows.length) seedHistoryBuckets(fullRows);
+    if (!historyCache.hasRows() && fullRows.length) historyCache.seed(fullRows);
     baseDrawChart(fullRows, selectionIndex);
     lastHistoryRows = fullRows;
   };
@@ -172,7 +51,7 @@
 
     try {
       if (!lastDashboardObservedAt && lastHistoryRows.length) {
-        lastDashboardObservedAt = latestObservedAt(lastHistoryRows);
+        lastDashboardObservedAt = dom.latestObservedAt(lastHistoryRows);
       }
       const params = new URLSearchParams();
       if (lastDashboardObservedAt) params.set('since', String(lastDashboardObservedAt));
@@ -187,28 +66,28 @@
       if (!data.ok) throw new Error(data.error || 'API error');
       const latest = data.latest || {};
 
-      setText(el('channelName'), latest.channel_name || 'Buddies');
-      setText(el('description'), latest.description || latest.artist_name || '');
-      setImageIfChanged(el('channelImage'), latest.channel_image || latest.logo_image);
+      dom.setText(el('channelName'), latest.channel_name || 'Buddies');
+      dom.setText(el('description'), latest.description || latest.artist_name || '');
+      dom.setImageIfChanged(el('channelImage'), latest.channel_image || latest.logo_image);
       if (latest.accent_color && document.documentElement.style.getPropertyValue('--accent') !== latest.accent_color) {
         document.documentElement.style.setProperty('--accent', latest.accent_color);
       }
 
-      setText(el('online'), formatNumber(latest.online_member_count));
-      setText(el('members'), formatNumber(latest.total_member_count));
-      setText(el('totalListens'), formatNumber(latest.total_listens));
-      renderDailyDeltaIfChanged('membersDelta', data.daily_change?.total_member_count);
-      renderDailyDeltaIfChanged('listensDelta', data.daily_change?.total_listens);
-      setText(el('updated'), `最終取得 ${formatDateTime(latest.observed_at)}`);
+      dom.setText(el('online'), dom.formatNumber(latest.online_member_count));
+      dom.setText(el('members'), dom.formatNumber(latest.total_member_count));
+      dom.setText(el('totalListens'), dom.formatNumber(latest.total_listens));
+      dom.renderDailyDeltaIfChanged('membersDelta', data.daily_change?.total_member_count);
+      dom.renderDailyDeltaIfChanged('listensDelta', data.daily_change?.total_listens);
+      dom.setText(el('updated'), `最終取得 ${dom.formatDateTime(latest.observed_at)}`);
 
       const count = Number(latest.current_stream_count) || 0;
       const goal = Number(latest.stream_goal) || 0;
       const pct = goal ? Math.min(100, count / goal * 100) : 0;
-      setText(el('streamCount'), formatNumber(count));
-      setText(el('streamGoal'), formatNumber(goal));
-      setStyle(el('goalBar'), 'width', `${pct}%`);
-      setText(el('goalPercent'), `${pct.toFixed(2)}%`);
-      setText(el('goalRemaining'), goal ? `残り ${formatNumber(Math.max(0, goal - count))}` : '-');
+      dom.setText(el('streamCount'), dom.formatNumber(count));
+      dom.setText(el('streamGoal'), dom.formatNumber(goal));
+      dom.setStyle(el('goalBar'), 'width', `${pct}%`);
+      dom.setText(el('goalPercent'), `${pct.toFixed(2)}%`);
+      dom.setText(el('goalRemaining'), goal ? `残り ${dom.formatNumber(Math.max(0, goal - count))}` : '-');
       renderPrediction(data.goal_prediction, count, goal);
 
       const responseRevision = String(data.queue_revision || '');
@@ -240,7 +119,7 @@
 
       const latestObserved = Number(data.latest_observed_at);
       if (Number.isFinite(latestObserved) && latestObserved > 0) lastDashboardObservedAt = latestObserved;
-      const historyState = mergeDashboardHistory(data.history, Boolean(data.delta));
+      const historyState = historyCache.merge(data.history, Boolean(data.delta), lastHistoryRows);
       if (historyState.changed) {
         const history = historyState.rows;
         lastHistoryRows = history;
