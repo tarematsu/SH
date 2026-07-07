@@ -27,6 +27,9 @@ function safeJson(value) {
 
 function failureStage(error) {
   const detail = String(error?.message || error || '');
+  if (/Stationhead buddy playback API\s+\d+|buddy playback API\s+\d+|Not in database/i.test(detail)) {
+    return 'stationhead_channel_request';
+  }
   if (/401|403|auth|token|session|guest login|guest verification/i.test(detail)) {
     return 'stationhead_auth';
   }
