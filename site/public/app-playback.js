@@ -97,7 +97,7 @@ function renderSimulatedQueue() {
     ...track,
     is_current: index === simulatedCurrentIndex,
   }));
-  renderQueue(queueForDisplay, playbackQueue.length);
+  renderQueue(queueForDisplay, playbackQueueTotalItems || playbackQueue.length);
 }
 
 function advanceSimulatedTrack(carryMs = 0) {
@@ -155,6 +155,7 @@ function updateNowPlayingProgress() {
 function renderNow(track, queue = [], currentIndex = 0, host = {}, playback = {}) {
   stopNowPlayingTimer();
   playbackQueue = Array.isArray(queue) ? queue.slice() : [];
+  playbackQueueTotalItems = Number(playback.total_items) || playbackQueue.length;
   simulatedCurrentIndex = track ? Math.max(0, currentIndex) : -1;
   currentNowPlayingHost = track ? { ...host } : {};
 
@@ -188,30 +189,71 @@ function renderNow(track, queue = [], currentIndex = 0, host = {}, playback = {}
   if (shouldAdvance) nowPlayingTimer = setInterval(updateNowPlayingProgress, 1000);
 }
 
+function queueItemNode(track, index) {
+  const row = document.createElement('a');
+  row.className = 'queue-item';
+  const trackUrl = safeSpotifyUrl(track);
+  row.href = trackUrl || '#';
+  row.target = trackUrl ? '_blank' : '';
+  row.rel = 'noopener noreferrer';
+  row.innerHTML = `
+    <span class="queue-no">${index + 1}</span>
+    ${playbackImage(track.thumbnail_url)}
+    <span class="queue-copy"><strong>${escapeText(track.title || track.display_title || track.spotify_id || '曲名不明')}</strong>${inferredArtist(track) ? `<small>${escapeText(inferredArtist(track))}</small>` : ''}</span>
+    <span class="queue-duration">${duration(track.duration_ms)}</span>`;
+  return row;
+}
+
+async function loadMoreQueue() {
+  if (playbackQueueLoadingMore) return;
+  const offset = Math.max(0, playbackQueue.length);
+  if (!playbackQueueTotalItems || offset >= playbackQueueTotalItems) return;
+  playbackQueueLoadingMore = true;
+  renderSimulatedQueue();
+  try {
+    const response = await fetch(`/api/dashboard-queue?offset=${offset}&limit=20`, {
+      cache: 'no-store',
+      headers: { accept: 'application/json' },
+    });
+    if (!response.ok) throw new Error(`queue API error: ${response.status}`);
+    const data = await response.json();
+    if (!data.ok) throw new Error(data.error || 'queue API error');
+    const extra = Array.isArray(data.queue) ? data.queue : [];
+    playbackQueue.push(...extra);
+    playbackQueueTotalItems = Number(data.total_items) || playbackQueueTotalItems;
+  } catch (error) {
+    console.error(error);
+  } finally {
+    playbackQueueLoadingMore = false;
+    renderSimulatedQueue();
+  }
+}
+
 function renderQueue(queue, totalItems) {
-  const visibleLimit = 20;
   const upcoming = queue.filter(t => !t.is_current);
-  const visible = upcoming.slice(0, visibleLimit);
-  const hiddenCount = Math.max(0, upcoming.length - visible.length);
-  el('queueCount').textContent = hiddenCount > 0
-    ? `${number(totalItems ?? queue.length)}曲 / 表示 ${visible.length}曲`
-    : `${number(totalItems ?? queue.length)}曲`;
+  const loadedItems = queue.length;
+  const remaining = Math.max(0, (totalItems ?? loadedItems) - loadedItems);
   const box = el('queue');
-  if (!visible.length) { box.innerHTML = '<p class="muted">次の曲はありません。</p>'; return; }
-  box.replaceChildren(...visible.map((track, index) => {
-    const row = document.createElement('a');
-    row.className = 'queue-item';
-    const trackUrl = safeSpotifyUrl(track);
-    row.href = trackUrl || '#';
-    row.target = trackUrl ? '_blank' : '';
-    row.rel = 'noopener noreferrer';
-    row.innerHTML = `
-      <span class="queue-no">${index + 1}</span>
-      ${playbackImage(track.thumbnail_url)}
-      <span class="queue-copy"><strong>${escapeText(track.title || track.display_title || track.spotify_id || '曲名不明')}</strong>${inferredArtist(track) ? `<small>${escapeText(inferredArtist(track))}</small>` : ''}</span>
-      <span class="queue-duration">${duration(track.duration_ms)}</span>`;
-    return row;
-  }));
+  el('queueCount').textContent = remaining > 0
+    ? `${number(totalItems ?? loadedItems)}曲 / 読込 ${loadedItems}曲`
+    : `${number(totalItems ?? loadedItems)}曲`;
+  if (!upcoming.length && remaining <= 0) {
+    box.innerHTML = '<p class="muted">次の曲はありません。</p>';
+    return;
+  }
+  const nodes = upcoming.map((track, index) => queueItemNode(track, index));
+  if (remaining > 0) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'queue-load-more';
+    button.disabled = playbackQueueLoadingMore;
+    button.textContent = playbackQueueLoadingMore
+      ? '読み込み中...'
+      : `続きを読み込む（残り${number(remaining)}曲）`;
+    button.addEventListener('click', loadMoreQueue);
+    nodes.push(button);
+  }
+  box.replaceChildren(...nodes);
 }
 
 function renderPrediction(prediction, current, goal) {
