@@ -397,7 +397,7 @@ export function attachBuddyMetadata(queue, metadata) {
 
 async function stateHash(value) {
   const bytes = new TextEncoder().encode(JSON.stringify(value));
-  const digest = await crypto.subtle.digest('SHA-256', value);
+  const digest = await crypto.subtle.digest('SHA-256', bytes);
   return [...new Uint8Array(digest)].map((value) => value.toString(16).padStart(2, '0')).join('');
 }
 
