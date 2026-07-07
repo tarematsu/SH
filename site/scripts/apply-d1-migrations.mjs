@@ -19,6 +19,7 @@ const migrationName = String(process.env.D1_MIGRATION_NAME || '').trim();
 const target = process.env.D1_MIGRATION_TARGET === 'local' ? 'local' : 'remote';
 const grandfatheredDuplicateGroups = new Set([
   '005_cloud_host_monitor.sql|005_weekly_summary_foundation.sql',
+  '008_buddy_auth_control.sql|008_runtime_query_indexes.sql',
   '019_collector_failure_diagnostics.sql|019_comment_counts.sql',
 ]);
 
