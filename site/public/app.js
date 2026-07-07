@@ -24,7 +24,7 @@ const escapeText = (value) => String(value ?? '')
   .replaceAll('&', '&amp;')
   .replaceAll('<', '&lt;')
   .replaceAll('>', '&gt;')
-  .replaceAll('\"', '&quot;')
+  .replaceAll('"', '&quot;')
   .replaceAll("'", '&#39;');
 
 function inferredArtist(track) {
@@ -78,8 +78,19 @@ function renderDailyDelta(elementId, value) {
 }
 
 function setImage(element, src) {
-  if (src) { element.src = src; element.hidden = false; }
-  else element.hidden = true;
+  if (!element) return;
+  if (src) {
+    if (element.getAttribute('src') !== src) element.src = src;
+    element.hidden = false;
+  } else {
+    element.hidden = true;
+    element.removeAttribute('src');
+  }
+}
+
+function thumbnailImg(src, className = '', eager = false) {
+  const safeSrc = escapeText(src || '');
+  return `<img${className ? ` class="${escapeText(className)}"` : ''} src="${safeSrc}" alt="" decoding="async" loading="${eager ? 'eager' : 'lazy'}" ${src ? '' : 'hidden'}>`;
 }
 
 function downsampleRows(rows, maxPoints = 240) {
@@ -273,14 +284,11 @@ function stopNowPlayingTimer() {
   nowPlayingTimer = null;
 }
 
-function currentSimulatedTrack() {
-  return simulatedCurrentIndex >= 0 ? playbackQueue[simulatedCurrentIndex] || null : null;
-}
-
 function safeSpotifyUrl(track) {
-  const url = track?.spotify_url || (track?.spotify_id ? `https://open.spotify.com/track/${track.spotify_id}` : '');
-  if (!url) return '';
-  try { return new URL(url).protocol === 'https:' ? url : ''; } catch { return ''; }
+  const explicit = String(track?.spotify_url || '').trim();
+  if (/^https:\/\/open\.spotify\.com\/track\/[A-Za-z0-9]+/i.test(explicit)) return explicit;
+  const id = String(track?.spotify_id || '').trim();
+  return /^[A-Za-z0-9]{10,}$/.test(id) ? `https://open.spotify.com/track/${encodeURIComponent(id)}` : '';
 }
 
 function openTrackOnSpotify(track) {
@@ -288,14 +296,15 @@ function openTrackOnSpotify(track) {
   if (url) window.open(url, '_blank', 'noopener,noreferrer');
 }
 
-function renderNowDisplay(track, progressMs = 0, host = {}) {
-  const box = el('nowPlaying');
+function currentSimulatedTrack() {
+  return simulatedCurrentIndex >= 0 ? playbackQueue[simulatedCurrentIndex] : null;
+}
+
+function renderNowDisplay(track, progressMs = 0, host = currentNowPlayingHost) {
+  const box = el('now');
   if (!box) return;
   if (!track) {
-    box.className = 'now-content empty';
-    box.removeAttribute('role');
-    box.removeAttribute('tabindex');
-    box.removeAttribute('title');
+    box.className = 'now-content';
     box.onclick = null;
     box.onkeydown = null;
     box.textContent = 'キュー情報がありません';
@@ -324,7 +333,7 @@ function renderNowDisplay(track, progressMs = 0, host = {}) {
   }
 
   box.innerHTML = `
-    <img class="cover" src="${escapeText(track.thumbnail_url || '')}" alt="" ${track.thumbnail_url ? '' : 'hidden'}>
+    ${thumbnailImg(track.thumbnail_url, 'cover', true)}
     <div class="track-copy">
       <h3>${escapeText(title)}</h3>
       ${artist ? `<p>${escapeText(artist)}</p>` : ''}
@@ -472,7 +481,7 @@ function renderQueue(queue, totalItems) {
     row.rel = 'noopener noreferrer';
     row.innerHTML = `
       <span class="queue-no">${index + 1}</span>
-      <img src="${escapeText(track.thumbnail_url || '')}" alt="" ${track.thumbnail_url ? '' : 'hidden'}>
+      ${thumbnailImg(track.thumbnail_url)}
       <span class="queue-copy"><strong>${escapeText(track.title || track.display_title || track.spotify_id || '曲名不明')}</strong>${inferredArtist(track) ? `<small>${escapeText(inferredArtist(track))}</small>` : ''}</span>
       <span class="queue-duration">${duration(track.duration_ms)}</span>`;
     return row;
