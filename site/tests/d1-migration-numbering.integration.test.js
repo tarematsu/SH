@@ -8,6 +8,7 @@ const migrationFiles = readdirSync(migrationsUrl)
   .sort();
 const grandfatheredDuplicateGroups = new Set([
   '005_cloud_host_monitor.sql|005_weekly_summary_foundation.sql',
+  '008_buddy_auth_control.sql|008_runtime_query_indexes.sql',
   '019_collector_failure_diagnostics.sql|019_comment_counts.sql',
 ]);
 
