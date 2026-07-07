@@ -94,10 +94,10 @@ async function stateHash(value) {
 }
 
 function sessionFromEnv(env) {
-  const state = env?.__stationheadAuthState || {};
-  const token = state['auth' + 'Token'] || env?.[`STATIONHEAD_${'AUTH'}_${'TOKEN'}`];
-  const deviceUid = state.deviceUid || env?.STATIONHEAD_DEVICE_UID;
-  if (!token || !deviceUid) throw new Error('Stationhead session is missing for raw buddy playback collection');
+  const state = env?.__buddyAuthState || {};
+  const token = state['auth' + 'Token'] || env?.BUDDY_PLAYBACK_AUTH_TOKEN || env?.BUDDY46_AUTH_TOKEN;
+  const deviceUid = state.deviceUid || env?.BUDDY_PLAYBACK_DEVICE_UID || env?.BUDDY46_DEVICE_UID;
+  if (!token || !deviceUid) throw new Error('buddy46 session is missing for raw playback collection');
   return { token, deviceUid };
 }
 
