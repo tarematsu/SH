@@ -149,7 +149,7 @@ test('guarded fetch leaves unrelated requests unchanged', async () => {
   assert.equal(await guarded('https://example.invalid/web/token'), response);
 });
 
-test('authentication keeps the original fetch while collection uses the guard', async () => {
+test('raw playback dependencies pass the original fetch through to collection', async () => {
   const baseFetch = async () => new Response('{}', { status: 200 });
   let received = null;
   const dependencies = createBuddyCollectionDependencies({}, {
@@ -162,12 +162,16 @@ test('authentication keeps the original fetch while collection uses the guard', 
 
   assert.equal(dependencies.fetch, baseFetch);
   await dependencies.collect({}, 123, {});
-  assert.notEqual(received.fetch, baseFetch);
+  assert.equal(received.fetch, baseFetch);
 });
 
-test('metadata limit zero prevents the external metadata fetch dependency', async () => {
+test('raw playback dependencies do not wrap metadata fetch helpers', async () => {
   let externalCalls = 0;
   let received = null;
+  const metadataHelper = async () => {
+    externalCalls += 1;
+    return { spotify_id: 'passthrough' };
+  };
   const dependencies = createBuddyCollectionDependencies({
     BUDDY_PLAYBACK_METADATA_LIMIT: '0',
   }, {
@@ -177,12 +181,8 @@ test('metadata limit zero prevents the external metadata fetch dependency', asyn
     },
   });
 
-  await dependencies.collect({}, 123, {
-    fetchTrackMetadata: async () => {
-      externalCalls += 1;
-      return { spotify_id: 'unexpected' };
-    },
-  });
-  assert.equal(await received.fetchTrackMetadata({ spotify_id: 'sp1' }), null);
-  assert.equal(externalCalls, 0);
+  await dependencies.collect({}, 123, { fetchTrackMetadata: metadataHelper });
+  assert.equal(received.fetchTrackMetadata, metadataHelper);
+  assert.deepEqual(await received.fetchTrackMetadata({ spotify_id: 'sp1' }), { spotify_id: 'passthrough' });
+  assert.equal(externalCalls, 1);
 });
