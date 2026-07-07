@@ -38,17 +38,30 @@ export function isAppleMusicKey(key) {
   return normalized === 'apple' || normalized.includes('applemusic');
 }
 
-export function stripAppleMusicFields(value) {
-  if (Array.isArray(value)) return value.map(stripAppleMusicFields);
+export function isPreviewKey(key) {
+  const normalized = String(key || '').replace(/[_\s-]+/g, '').toLowerCase();
+  return normalized === 'preview' || normalized === 'previewurl';
+}
+
+export function shouldStripPlaybackKey(key) {
+  return isAppleMusicKey(key) || isPreviewKey(key);
+}
+
+export function stripPlaybackFields(value) {
+  if (Array.isArray(value)) return value.map(stripPlaybackFields);
   if (!value || typeof value !== 'object') return value;
   const output = {};
   for (const [key, child] of Object.entries(value)) {
-    if (isAppleMusicKey(key)) continue;
-    output[key] = stripAppleMusicFields(child);
+    if (shouldStripPlaybackKey(key)) continue;
+    output[key] = stripPlaybackFields(child);
   }
   return output;
 }
 
+export function stripAppleMusicFields(value) {
+  return stripPlaybackFields(value);
+}
+
 export function rawJson(value) {
-  return JSON.stringify(stripAppleMusicFields(value) ?? null);
+  return JSON.stringify(stripPlaybackFields(value) ?? null);
 }
