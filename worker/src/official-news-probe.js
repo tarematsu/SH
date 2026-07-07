@@ -1,3 +1,4 @@
+import { normalizeComments as normalizeStationheadComments } from './shared.js';
 import {
   OFFICIAL_NEWS_STATE_ID,
   STATIONHEAD_ORIGIN,
@@ -55,24 +56,22 @@ function stationIdentity(station) {
   };
 }
 
-function normalizeComments(payload) {
-  const candidates = [payload, payload?.items, payload?.data?.items, payload?.chats?.items, payload?.chats];
-  const items = candidates.find(Array.isArray) || [];
-  return items.map((chat) => ({
-    commentId: finite(chat?.id),
-    accountId: finite(chat?.account_id ?? chat?.account?.id),
-    handle: chat?.account?.handle || null,
-    text: chat?.text || null,
-    chatTime: finite(chat?.chat_time),
-    chatTimeMs: finite(chat?.chat_time_ms),
-    raw: chat,
+function normalizeOfficialComments(payload) {
+  return normalizeStationheadComments(payload, null, { finite }).map((comment) => ({
+    commentId: finite(comment.comment_id ?? comment.id),
+    accountId: comment.account_id,
+    handle: comment.handle,
+    text: comment.text,
+    chatTime: comment.chat_time,
+    chatTimeMs: comment.chat_time_ms,
+    raw: comment.raw,
   })).filter((comment) => comment.commentId != null);
 }
 
 async function fetchComments(stationId, cfg, session) {
   for (const limit of [50, 20]) {
     try {
-      return normalizeComments(await stationRequest(`/station/${stationId}/chatHistory?limit=${limit}`, cfg, session));
+      return normalizeOfficialComments(await stationRequest(`/station/${stationId}/chatHistory?limit=${limit}`, cfg, session));
     } catch (error) {
       if (limit === 20) throw error;
     }
