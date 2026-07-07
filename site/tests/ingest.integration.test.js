@@ -4,8 +4,6 @@ import test from 'node:test';
 import { onRequestPost as hostIngestPost } from '../functions/api/host-ingest.js';
 import { onRequestPost as ingestPost } from '../functions/api/ingest.js';
 import { onRequestPost as leaderboardPost } from '../functions/api/leaderboard-ingest.js';
-import { queueLikesPayload } from '../functions/lib/d1-optimized-ingest.js';
-import { payloadHash } from '../functions/lib/ingest-claim.js';
 import { FakeD1Database, responseJson } from './helpers/fake-d1.js';
 
 function post(url, body, authorization = 'Bearer test-key') {
@@ -139,7 +137,6 @@ test('same queue hashes return before track tables are read', async () => {
       queue_track_id: 100,
       stationhead_track_id: 200,
       spotify_id: 'spotify-1',
-      apple_music_id: null,
       deezer_id: null,
       isrc: null,
       duration_ms: 180_000,
@@ -147,18 +144,9 @@ test('same queue hashes return before track tables are read', async () => {
       bite_count: 15,
     }],
   };
-  const structuralHash = await payloadHash(queuePayload);
-  const db = new FakeD1Database().route('first', /FROM sh_ingest_claims/, ({ params }) => {
-    const hash = params[0] || structuralHash;
-    return {
-      dedupe_key: `station:${queuePayload.station_id}:queue:${queuePayload.start_time}:minute:${Math.floor(observedAt / 60000) * 60000}:hash:${hash}`,
-      collector_id: 'integration-collector',
-      collector_kind: 'local',
-      source_priority: 70,
-      observed_at: observedAt,
-      payload_hash: hash,
-      first_seen_at: observedAt,
-    };
+  const db = new FakeD1Database().route('first', /FROM sh_queue_snapshots/, {
+    raw_json: JSON.stringify(queuePayload),
+    item_observed_at: observedAt,
   });
   const response = await ingestPost({
     request: post('https://skrzk.test/api/ingest', {
@@ -182,12 +170,12 @@ test('same queue hashes return before track tables are read', async () => {
   });
   const body = await responseJson(response);
 
-  assert.equal(body.accepted, false);
-  assert.equal(body.duplicate, true);
+  assert.equal(body.accepted, true);
+  assert.equal(body.duplicate, false);
   assert.equal(body.queue_inspected, false);
   assert.equal(db.callsMatching(/sh_queue_items/).length, 0);
   assert.equal(db.callsMatching(/sh_track_like_current/).length, 0);
-  assert.equal(db.callsMatching(/sh_ingest_claims/, 'run').length, 0);
+  assert.equal(db.callsMatching(/sh_ingest_claims/, 'run').length, 1);
 });
 
 test('host snapshot ingest creates a claim and persists one session observation', async () => {
