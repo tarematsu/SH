@@ -42,10 +42,9 @@ export const PLAYBACK_FEED_SQL = `WITH latest_channel AS (
   ORDER BY observed_at DESC,id DESC
   LIMIT 1
 ), latest_queue AS (
-  SELECT station_id,queue_id,start_time,is_paused,observed_at
-  FROM sh_queue_snapshots
+  SELECT station_id,queue_id,start_time,is_paused,observed_at,structural_hash,likes_hash
+  FROM sh_queue_current
   WHERE station_id=(SELECT station_id FROM latest_channel)
-  ORDER BY observed_at DESC,id DESC
   LIMIT 1
 )
 SELECT
@@ -55,7 +54,7 @@ SELECT
   channel.broadcast_start_time,
   queue.station_id AS queue_station_id,queue.queue_id,
   queue.start_time AS queue_start_time,queue.is_paused AS queue_is_paused,
-  queue.observed_at AS queue_observed_at,
+  queue.observed_at AS queue_observed_at,queue.structural_hash,queue.likes_hash,
   items.observed_at AS item_observed_at,
   items.position,items.queue_track_id,items.stationhead_track_id,items.spotify_id,
   items.deezer_id,items.isrc,items.duration_ms,
@@ -82,6 +81,10 @@ export function parsePlaybackFeedRows(rows = []) {
     broadcast_start_time: head.broadcast_start_time,
   } : null;
   const { latestQueue, queue } = parseLatestQueueRows(rows);
+  if (latestQueue && head) {
+    latestQueue.structural_hash = head.structural_hash || '';
+    latestQueue.likes_hash = head.likes_hash || '';
+  }
   return { latest, latestQueue, queue };
 }
 
@@ -171,6 +174,21 @@ function rawTrackToPlaybackRow(item, index, context) {
   });
 }
 
+function visiblePlaybackState(rows, playbackAt, stale, paused = false) {
+  const computed = computePlayback(rows, playbackAt);
+  const ended = !paused
+    && computed.queueEndAt != null
+    && playbackAt >= computed.queueEndAt
+    && rows.length > 0;
+  const playback = ended
+    ? { ...computed, currentIndex: -1, progressMs: 0, anchorAt: null }
+    : computed;
+  const visiblePlayback = stale
+    ? { ...playback, currentIndex: -1, progressMs: 0, anchorAt: null }
+    : playback;
+  return { computed, ended, visiblePlayback };
+}
+
 function secondaryRawPlaybackPayload(row, rawPayload, generatedAt = Date.now(), options = {}) {
   const alias = String(row?.channel_alias || '').trim() || null;
   const checkedAt = num(row.checked_at);
@@ -189,18 +207,8 @@ function secondaryRawPlaybackPayload(row, rawPayload, generatedAt = Date.now(), 
   const playbackAt = paused
     ? changedAt ?? checkedAt ?? generatedAt
     : generatedAt;
-  const computed = computePlayback(rows, playbackAt);
-  const ended = !paused
-    && computed.queueEndAt != null
-    && playbackAt >= computed.queueEndAt
-    && rows.length > 0;
-  const playback = ended
-    ? { ...computed, currentIndex: -1, progressMs: 0, anchorAt: null }
-    : computed;
   const stale = checkedAt == null || generatedAt - checkedAt > SECONDARY_STALE_MS;
-  const visiblePlayback = stale
-    ? { ...playback, currentIndex: -1, progressMs: 0, anchorAt: null }
-    : playback;
+  const { ended, visiblePlayback } = visiblePlaybackState(rows, playbackAt, stale, paused);
   const queue = rows.map((track, index) => normalizePlaybackTrack(track, index, visiblePlayback));
   const playing = !stale && broadcasting && !paused && !ended && visiblePlayback.currentIndex >= 0;
   const payload = {
@@ -256,18 +264,8 @@ export function secondaryPlaybackPayload(row, generatedAt = Date.now(), options 
   const playbackAt = paused
     ? changedAt ?? checkedAt ?? generatedAt
     : generatedAt;
-  const computed = computePlayback(rows, playbackAt);
-  const ended = !paused
-    && computed.queueEndAt != null
-    && playbackAt >= computed.queueEndAt
-    && rows.length > 0;
-  const playback = ended
-    ? { ...computed, currentIndex: -1, progressMs: 0, anchorAt: null }
-    : computed;
   const stale = queueCorrupt || checkedAt == null || generatedAt - checkedAt > SECONDARY_STALE_MS;
-  const visiblePlayback = stale
-    ? { ...playback, currentIndex: -1, progressMs: 0, anchorAt: null }
-    : playback;
+  const { ended, visiblePlayback } = visiblePlaybackState(rows, playbackAt, stale, paused);
   const queue = rows.map((track, index) => stripAppleMusicFields(
     normalizePlaybackTrack(track, index, visiblePlayback),
   ));
@@ -296,6 +294,48 @@ export function secondaryPlaybackPayload(row, generatedAt = Date.now(), options 
       playback: visiblePlayback,
       totalItems: queue.length,
     }),
+    queue,
+  };
+}
+
+function primaryPlaybackPayload({ latest, latestQueue, rows, revision }, generatedAt = Date.now()) {
+  const latestObservedAt = num(latest?.observed_at);
+  const queueObservedAt = num(latestQueue?.observed_at);
+  const checkedAt = Math.max(latestObservedAt ?? 0, queueObservedAt ?? 0) || null;
+  const paused = storedBoolean(latestQueue?.is_paused);
+  const broadcasting = storedBoolean(latest?.is_broadcasting);
+  const playbackAt = paused
+    ? queueObservedAt ?? latestObservedAt ?? generatedAt
+    : generatedAt;
+  const stale = checkedAt == null || generatedAt - checkedAt > SECONDARY_STALE_MS;
+  const { ended, visiblePlayback } = visiblePlaybackState(rows, playbackAt, stale, paused);
+  const queue = rows.map((track, index) => stripAppleMusicFields(
+    normalizePlaybackTrack(track, index, visiblePlayback),
+  ));
+  const playing = !stale && broadcasting && !paused && !ended && visiblePlayback.currentIndex >= 0;
+
+  return {
+    ok: true,
+    channel_alias: DEFAULT_CHANNEL_ALIAS,
+    generated_at: generatedAt,
+    latest_observed_at: latestObservedAt,
+    queue_observed_at: queueObservedAt,
+    changed_at: null,
+    station_id: num(latestQueue?.station_id ?? latest?.station_id),
+    is_broadcasting: broadcasting,
+    host_account_id: num(latest?.host_account_id),
+    host_handle: latest?.host_handle || null,
+    playing,
+    stale,
+    setup_required: false,
+    queue_revision: revision,
+    queue_status: latestQueue ? playbackStatus({
+      paused,
+      playing,
+      ended,
+      playback: visiblePlayback,
+      totalItems: queue.length,
+    }) : null,
     queue,
   };
 }
@@ -341,48 +381,11 @@ export async function onRequestGet({ request, env }) {
     const result = await db.prepare(PLAYBACK_FEED_SQL).all();
     const { latest, latestQueue, queue: rows } = parsePlaybackFeedRows(result.results || []);
     const revision = queueRevision(stateFromQueue(latestQueue, rows), hostIdentity(latest));
-
-    if (!latestQueue) {
-      return playbackJson({
-        ok: true,
-        channel_alias: DEFAULT_CHANNEL_ALIAS,
-        generated_at: generatedAt,
-        latest_observed_at: num(latest?.observed_at),
-        is_broadcasting: storedBoolean(latest?.is_broadcasting),
-        queue_revision: revision,
-        queue_status: null,
-        queue: [],
-      }, 200, CACHE_CONTROL);
-    }
-
-    const playback = computePlayback(rows, generatedAt);
-    const queue = rows.map((track, index) => stripAppleMusicFields(
-      normalizePlaybackTrack(track, index, playback),
-    ));
-    const paused = storedBoolean(latestQueue.is_paused);
-    const broadcasting = storedBoolean(latest?.is_broadcasting);
-    const playing = broadcasting && !paused && playback.currentIndex >= 0;
-
-    return playbackJson({
-      ok: true,
-      channel_alias: DEFAULT_CHANNEL_ALIAS,
-      generated_at: generatedAt,
-      latest_observed_at: num(latest?.observed_at),
-      queue_observed_at: num(latestQueue.observed_at),
-      station_id: num(latestQueue.station_id),
-      is_broadcasting: broadcasting,
-      host_handle: latest?.host_handle || null,
-      playing,
-      queue_revision: revision,
-      queue_status: playbackStatus({
-        paused,
-        playing,
-        ended: false,
-        playback,
-        totalItems: queue.length,
-      }),
-      queue,
-    }, 200, CACHE_CONTROL);
+    return playbackJson(
+      primaryPlaybackPayload({ latest, latestQueue, rows, revision }, generatedAt),
+      200,
+      CACHE_CONTROL,
+    );
   } catch (error) {
     console.error(error);
     return playbackJson({ ok: false, error: error?.message || 'playback feed error' }, 500, 'no-store');
