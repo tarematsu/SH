@@ -142,9 +142,10 @@ export function createBuddyGuardedFetch(baseFetch = fetch, expectedAlias = 'budd
     }
 
     const requestUrlValue = channelMatch ? handleStationUrl(url, expectedAlias).toString() : url.toString();
+    const needsHandlePost = Boolean(channelMatch || handleMatch);
     const response = await baseFetch(requestUrlValue, {
       ...init,
-      ...(channelMatch ? { method: 'POST', body: '' } : {}),
+      ...(needsHandlePost ? { method: 'POST', body: '' } : {}),
     });
     if (!response?.ok) return response;
 
