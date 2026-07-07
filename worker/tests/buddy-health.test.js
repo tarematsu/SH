@@ -97,3 +97,22 @@ test('buddy health preserves the last success when a later collection fails', as
   assert.equal(metadata.failure_stage, 'stationhead_channel_payload');
   assert.match(metadata.last_error, /missing queue tracks/);
 });
+
+test('buddy health classifies Stationhead not-found responses as upstream API failures', async () => {
+  resetBuddyHealthForTests();
+  const db = new FakeDb();
+  const env = { DB: db };
+
+  await recordBuddyFailure(
+    env,
+    'buddy46',
+    new Error('Stationhead buddy playback API 404: {"error":{"detail":"Not in database"}}'),
+    3000,
+  );
+
+  const metadata = JSON.parse(db.row.metadata_json);
+  assert.equal(metadata.status, 'error');
+  assert.equal(metadata.failure_code, 'STATIONHEAD_API_CHANGED');
+  assert.equal(metadata.failure_stage, 'stationhead_channel_request');
+  assert.match(metadata.last_error, /Not in database/);
+});
