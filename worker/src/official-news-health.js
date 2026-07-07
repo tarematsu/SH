@@ -1,3 +1,4 @@
+import { jsonResponse } from './shared.js';
 import { OFFICIAL_NEWS_STATE_ID, finite } from './official-news-utils.js';
 
 export const OFFICIAL_HEALTH_SQL = `SELECT
@@ -17,21 +18,15 @@ export async function officialNewsHealth(env, baseResponse) {
   const base = await baseResponse.json().catch(() => ({}));
   try {
     const state = await loadOfficialHealthState(env);
-    return new Response(JSON.stringify({
+    return jsonResponse({
       ...base,
       official_news_last_check_at: finite(state?.last_check_at),
       official_news_last_success_at: finite(state?.last_success_at),
       official_news_last_error: state?.last_error || null,
       official_news_upcoming_count: Number(state?.upcoming_count || 0),
       official_news_active_count: Number(state?.active_count || 0),
-    }), {
-      status: baseResponse.status,
-      headers: { 'content-type': 'application/json; charset=utf-8' },
-    });
+    }, baseResponse.status);
   } catch {
-    return new Response(JSON.stringify({ ...base, official_news_setup_required: true }), {
-      status: baseResponse.status,
-      headers: { 'content-type': 'application/json; charset=utf-8' },
-    });
+    return jsonResponse({ ...base, official_news_setup_required: true }, baseResponse.status);
   }
 }
