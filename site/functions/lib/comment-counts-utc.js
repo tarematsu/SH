@@ -106,6 +106,17 @@ export async function saveCommentCounts(db, observedAt, data) {
 
   const cursors = cursorMap(db);
   const cachedLastId = num(cursors.get(stationId));
+  if (knownLastId != null && newestIncomingId != null && newestIncomingId <= knownLastId) {
+    cursors.set(stationId, Math.max(cachedLastId ?? 0, knownLastId));
+    return {
+      accepted: 0,
+      total: reportedTotal ?? 0,
+      last_comment_id: knownLastId,
+      velocityUpdated: false,
+      skipped: true,
+      cursorHit: true,
+    };
+  }
   const trustedLastId = Math.max(knownLastId ?? 0, cachedLastId ?? 0);
   if (newestIncomingId != null && trustedLastId > 0 && newestIncomingId <= trustedLastId) {
     const velocityUpdated = await refreshCommentVelocity(db, stationId, observedAt);
