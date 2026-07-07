@@ -18,6 +18,7 @@ import {
   sanitizeFailureDetail,
 } from './collector-failure.js';
 
+const ALERT_ID = 'stationhead-collector';
 const RAW_ERROR_FIELDS = [
   'last_error',
   'auth_last_error',
@@ -48,6 +49,58 @@ export function healthResponseStatus(baseStatus, collectorHealth) {
 
 function changed(result) {
   return Number(result?.meta?.changes || 0) > 0;
+}
+
+function finite(value) {
+  if (value === undefined || value === null || value === '') return null;
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+}
+
+function recoveredSinceIncident(state = {}) {
+  const lastSuccessAt = finite(state.last_success_at);
+  const baseline = finite(state.last_observed_success_at)
+    ?? finite(state.incident_started_at)
+    ?? finite(state.last_alert_at);
+  return lastSuccessAt != null && baseline != null && lastSuccessAt > baseline;
+}
+
+async function discardDisabledDeliveries(env) {
+  if (!env?.DB) return false;
+  try {
+    const result = await env.DB.prepare(`DELETE FROM sh_health_alert_delivery
+      WHERE id=? AND event_kind='recovery'`).bind(ALERT_ID).run();
+    const deleted = changed(result);
+    if (deleted) {
+      console.warn(JSON.stringify({
+        event: 'collector_recovery_delivery_discarded',
+      }));
+    }
+    return deleted;
+  } catch (error) {
+    if (/no such table/i.test(String(error?.message || ''))) return false;
+    throw error;
+  }
+}
+
+async function closeRecoveredIncidentWithoutEmail(env, prepared, now = Date.now()) {
+  if (!env?.DB || !prepared?.incidentOpen || !recoveredSinceIncident(prepared.state)) return false;
+  const recoveredAt = finite(prepared.state.last_success_at) ?? now;
+  await env.DB.batch([
+    env.DB.prepare(`UPDATE sh_health_alert_state SET
+        incident_open=0,incident_started_at=NULL,last_recovery_at=?,
+        last_observed_success_at=?,last_error=NULL,updated_at=?
+      WHERE id=?`)
+      .bind(recoveredAt, recoveredAt, now, ALERT_ID),
+    env.DB.prepare(`DELETE FROM sh_health_alert_delivery
+      WHERE id=? AND event_kind='recovery'`)
+      .bind(ALERT_ID),
+  ]);
+  console.log(JSON.stringify({
+    event: 'collector_recovered_without_recovery_email',
+    recovered_at: recoveredAt,
+  }));
+  return true;
 }
 
 async function emergencyIfNeeded(env, failure) {
@@ -171,6 +224,7 @@ export default {
 
     try {
       await retireRecoveredPendingAlert(env);
+      await discardDisabledDeliveries(env);
     } catch (error) {
       await emergencyIfNeeded(env, error);
       console.error(JSON.stringify({
@@ -182,6 +236,8 @@ export default {
     let prepared = null;
     try {
       prepared = await prepareDetailedCollectorAlert(env);
+      const closedWithoutMail = await closeRecoveredIncidentWithoutEmail(env, prepared);
+      if (closedWithoutMail) prepared = await prepareDetailedCollectorAlert(env);
       const cancelledFalseRecovery = await cancelFalseRecoveryPending(env, prepared);
       if (shouldReprepareAfterFalseRecoveryCancel(cancelledFalseRecovery, prepared)) {
         prepared = await prepareDetailedCollectorAlert(env);
@@ -198,9 +254,8 @@ export default {
       prepared?.diagnosis
       && prepared?.pending === 'alert',
     );
-    const shouldRunStandardAlert = !prepared?.diagnosis || detailedAlertReady;
 
-    if (shouldRunStandardAlert) {
+    if (detailedAlertReady) {
       await runCollectorHealthAlert(env).catch(async (error) => {
         await emergencyIfNeeded(env, error);
         console.error(JSON.stringify({
@@ -211,14 +266,15 @@ export default {
     } else {
       console.warn(JSON.stringify({
         event: 'collector_generic_alert_suppressed',
-        reason: prepared?.incidentOpen ? 'active_failure_diagnostic' : 'diagnostic_alert_not_due',
+        reason: prepared?.incidentOpen ? 'incident_open_without_pending_alert' : 'diagnostic_alert_not_due',
         code: prepared?.diagnosis?.code || null,
         stage: prepared?.diagnosis?.stage || null,
+        consecutive_failures: prepared?.consecutiveFailures || null,
+        min_consecutive_failures: prepared?.minConsecutiveFailures || null,
       }));
     }
 
     if (appError) throw appError;
-    return diagnosticResult;
   },
   async fetch(request, env, ctx) {
     const response = await app.fetch(request, env, ctx);
