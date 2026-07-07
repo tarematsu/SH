@@ -35,16 +35,38 @@ function handleStationUrl(sourceUrl, alias) {
   return url;
 }
 
+function accountHandleMatches(value, expectedAlias) {
+  return String(value || '').trim().toLowerCase() === String(expectedAlias || '').trim().toLowerCase();
+}
+
+function hasExpectedAccountHandle(source, expectedAlias) {
+  if (!source || typeof source !== 'object' || Array.isArray(source)) return false;
+  if (accountHandleMatches(source.account?.handle, expectedAlias)) return true;
+  if (accountHandleMatches(source.host?.handle, expectedAlias)) return true;
+  if (accountHandleMatches(source.host?.account?.handle, expectedAlias)) return true;
+  const broadcasters = [
+    ...(Array.isArray(source.broadcast?.broadcasters) ? source.broadcast.broadcasters : []),
+    ...(Array.isArray(source.current_station?.broadcast?.broadcasters)
+      ? source.current_station.broadcast.broadcasters : []),
+  ];
+  return broadcasters.some((item) => accountHandleMatches(
+    item?.account?.handle || item?.handle,
+    expectedAlias,
+  ));
+}
+
 export function normalizeBuddyQueuePayload(payload, expectedAlias = 'buddy46') {
   const source = unwrapPayload(payload);
   if (!source || typeof source !== 'object' || Array.isArray(source)) return source;
   const normalized = { ...source };
-  normalized.alias = String(
+  const expected = String(expectedAlias || 'buddy46').trim().toLowerCase() || 'buddy46';
+  const sourceAlias = String(
     normalized.alias
       || normalized.channel_alias
       || normalized.slug
-      || expectedAlias,
-  ).trim().toLowerCase() || expectedAlias;
+      || expected,
+  ).trim().toLowerCase() || expected;
+  normalized.alias = hasExpectedAccountHandle(normalized, expected) ? expected : sourceAlias;
 
   const sourceStation = normalized.current_station
     || normalized.station
