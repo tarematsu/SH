@@ -29,16 +29,12 @@ export class PrimaryCollectionTimeoutError extends Error {
   }
 }
 
-function auxiliaryTasks(flight, env, includeFailureOnly, runners = DEFAULT_AUXILIARY_RUNNERS) {
-  return Object.entries(runners).flatMap(([name, task]) => {
+function startAuxiliaryOnce(flight, env, includeFailureOnly, runners = DEFAULT_AUXILIARY_RUNNERS) {
+  const tasks = Object.entries(runners).flatMap(([name, task]) => {
     if (task.onFailureOnly && !includeFailureOnly) return [];
     if (!flight[name]) flight[name] = Promise.resolve().then(() => task.run(env));
     return [{ failureEvent: task.failureEvent || 'scheduled_auxiliary_failed', promise: flight[name] }];
   });
-}
-
-function startAuxiliaryOnce(flight, env, includeFailureOnly, runners) {
-  const tasks = auxiliaryTasks(flight, env, includeFailureOnly, runners);
   return Promise.allSettled(tasks.map((task) => task.promise)).then((results) => {
     for (const [index, result] of results.entries()) {
       if (result.status !== 'rejected') continue;
