@@ -187,7 +187,7 @@ export async function collectBuddyRawPlayback(env, now = Date.now(), dependencie
     changed,
     playback_changed: playbackChanged,
     content_changed: contentChanged,
-    display_changed: displayStateChanged,
+    display_changed: displayChanged,
     raw_payload: true,
     tracks: Array.isArray(tracks) ? tracks.length : 0,
     checked_at: now,
