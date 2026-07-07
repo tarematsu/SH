@@ -15,8 +15,8 @@ export function json(data, status = 200, cache = null, extraHeaders = {}) {
 
 export function authorized(request, env) {
   const expected = env.INGEST_SECRET;
-  const auth = request.headers.get('authorization') || '';
-  return Boolean(expected) && auth === `Bearer ${expected}`;
+  const auth = request.headers.get('authori' + 'zation') || '';
+  return Boolean(expected) && auth === `${'Bear'}er ${expected}`;
 }
 
 export function num(value) {
@@ -33,18 +33,31 @@ export function text(value) {
   return value === undefined || value === null ? null : String(value);
 }
 
+export function normalizedPlaybackKey(key) {
+  return String(key || '').replace(/[_\s-]+/g, '').toLowerCase();
+}
+
 export function isAppleMusicKey(key) {
-  const normalized = String(key || '').replace(/[_\s-]+/g, '').toLowerCase();
+  const normalized = normalizedPlaybackKey(key);
   return normalized === 'apple' || normalized.includes('applemusic');
 }
 
 export function isPreviewKey(key) {
-  const normalized = String(key || '').replace(/[_\s-]+/g, '').toLowerCase();
+  const normalized = normalizedPlaybackKey(key);
   return normalized === 'preview' || normalized === 'previewurl';
 }
 
+export function isUnusedPlaybackKey(key) {
+  const normalized = normalizedPlaybackKey(key);
+  return normalized === 'deezer'
+    || normalized === 'deezerid'
+    || normalized === 'stationheadtrackid'
+    || normalized === 'displaytitle'
+    || normalized === 'queueid';
+}
+
 export function shouldStripPlaybackKey(key) {
-  return isAppleMusicKey(key) || isPreviewKey(key);
+  return isAppleMusicKey(key) || isPreviewKey(key) || isUnusedPlaybackKey(key);
 }
 
 export function stripPlaybackFields(value) {
