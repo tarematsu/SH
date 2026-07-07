@@ -1,6 +1,7 @@
 const ORIGIN = 'https://production1.stationhead.com';
 const OFFICIAL_IDLE_PATH = '/station/handle/sakurazaka46jp/guest';
 const MAX_REQUESTS_PER_MINUTE = 10;
+const MAX_STATION_REQUESTS_PER_MINUTE = 2;
 const MAX_AUTH_REQUESTS_PER_MINUTE = 2;
 const MAX_CHAT_ITEMS = 50;
 const REQUEST_TIMEOUT_MS = 8_000;
@@ -39,7 +40,7 @@ function policy(url, method, body) {
     return {
       cache: true,
       name: 'station',
-      budget: 'data',
+      budget: 'station',
       idleNotFound: path.toLowerCase() === OFFICIAL_IDLE_PATH,
     };
   }
@@ -92,6 +93,18 @@ async function normalizeIdleGuestResponse(response, rule) {
   return new Response('{}', { status: 200, headers });
 }
 
+function requestBudget(rule) {
+  if (rule.budget === 'auth') return MAX_AUTH_REQUESTS_PER_MINUTE;
+  if (rule.budget === 'station') return MAX_STATION_REQUESTS_PER_MINUTE;
+  return MAX_REQUESTS_PER_MINUTE;
+}
+
+function budgetReason(rule) {
+  if (rule.budget === 'auth') return 'auth-minute-budget-exhausted';
+  if (rule.budget === 'station') return 'station-minute-budget-exhausted';
+  return 'minute-budget-exhausted';
+}
+
 export function createStationheadTrafficGuard(nextFetch, nowFn = Date.now) {
   if (typeof nextFetch !== 'function') throw new TypeError('nextFetch must be a function');
 
@@ -99,6 +112,7 @@ export function createStationheadTrafficGuard(nextFetch, nowFn = Date.now) {
   const retryAtByKey = new Map();
   let activeMinute = -1;
   let dataRequestCount = 0;
+  let stationRequestCount = 0;
   let authRequestCount = 0;
 
   return async function stationheadTrafficGuard(input, init = {}) {
@@ -124,6 +138,7 @@ export function createStationheadTrafficGuard(nextFetch, nowFn = Date.now) {
     if (minute !== activeMinute) {
       activeMinute = minute;
       dataRequestCount = 0;
+      stationRequestCount = 0;
       authRequestCount = 0;
       reads.clear();
     }
@@ -142,13 +157,13 @@ export function createStationheadTrafficGuard(nextFetch, nowFn = Date.now) {
 
     if (rule.cache && reads.has(key)) return (await reads.get(key)).clone();
 
-    const requestLimit = rule.budget === 'auth'
-      ? MAX_AUTH_REQUESTS_PER_MINUTE
-      : MAX_REQUESTS_PER_MINUTE;
-    const requestCount = rule.budget === 'auth' ? authRequestCount : dataRequestCount;
+    const requestLimit = requestBudget(rule);
+    const requestCount = rule.budget === 'auth'
+      ? authRequestCount
+      : rule.budget === 'station' ? stationRequestCount : dataRequestCount;
     if (requestCount >= requestLimit) {
       const wait = 60_000 - (now % 60_000);
-      const reason = rule.budget === 'auth' ? 'auth-minute-budget-exhausted' : 'minute-budget-exhausted';
+      const reason = budgetReason(rule);
       console.warn(JSON.stringify({
         event: 'stationhead_request_budget_exhausted',
         budget: rule.budget,
@@ -158,6 +173,7 @@ export function createStationheadTrafficGuard(nextFetch, nowFn = Date.now) {
       return localResponse(429, reason, wait);
     }
     if (rule.budget === 'auth') authRequestCount += 1;
+    else if (rule.budget === 'station') stationRequestCount += 1;
     else dataRequestCount += 1;
 
     const requestInput = input instanceof Request ? new Request(url.toString(), input) : url.toString();
