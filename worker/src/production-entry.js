@@ -40,7 +40,7 @@ export async function runProductionScheduled(controller, env, ctx, dependencies 
     primaryError = error;
   }
 
-  const buddyTask = Promise.resolve().then(async () => {
+  const buddyTask = (async () => {
     try {
       return await scheduleBuddy(env, withoutWaitUntil(ctx), scheduledAt);
     } catch (error) {
@@ -50,7 +50,7 @@ export async function runProductionScheduled(controller, env, ctx, dependencies 
       }));
       return null;
     }
-  });
+  })();
   if (typeof ctx?.waitUntil === 'function') ctx.waitUntil(buddyTask);
   else await buddyTask;
 
