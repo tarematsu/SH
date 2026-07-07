@@ -6,7 +6,6 @@ import {
 } from './health-alert-guard.js';
 import {
   diagnoseScheduledCollection,
-  diagnosticHealthView,
   inspectCollectorState,
   prepareDetailedCollectorAlert,
   sendEmergencyD1Alert,
@@ -14,7 +13,6 @@ import {
 import {
   diagnosisFromState,
   isD1Failure,
-  recordCollectorFailure,
   sanitizeFailureDetail,
 } from './collector-failure.js';
 
@@ -153,6 +151,31 @@ export async function alignFailureStartWithLastSuccess(env, state, failure = nul
   return Number(result?.meta?.changes || 0) > 0;
 }
 
+async function preservePriorDiagnosisWithoutCounting(env, priorDiagnosis, now = Date.now()) {
+  if (!env?.DB || !priorDiagnosis?.code) return false;
+  const originalFirstAt = Number(priorDiagnosis.firstAt || priorDiagnosis.at || 0);
+  const result = await env.DB.prepare(`UPDATE sh_collector_failure_state SET
+      first_failure_at=CASE
+        WHEN ?>0 AND (first_failure_at IS NULL OR first_failure_at>?) THEN ?
+        ELSE first_failure_at
+      END,
+      code=?,stage=?,summary=?,detail=?,hint=?,source=?,updated_at=?
+    WHERE id='stationhead'`)
+    .bind(
+      originalFirstAt,
+      originalFirstAt,
+      originalFirstAt,
+      priorDiagnosis.code,
+      priorDiagnosis.stage,
+      priorDiagnosis.summary,
+      priorDiagnosis.detail || null,
+      priorDiagnosis.hint || null,
+      'scheduled-guard-preserved',
+      now,
+    ).run();
+  return Number(result?.meta?.changes || 0) > 0;
+}
+
 export default {
   async scheduled(controller, env, ctx) {
     const runStartedAt = Date.now();
@@ -189,22 +212,12 @@ export default {
         && priorDiagnosis.code !== 'COLLECTOR_INTERNAL_ERROR'
       ) {
         diagnosticResult.failure = { diagnosis: priorDiagnosis };
-        await recordCollectorFailure(
-          env,
-          diagnosticResult.failure,
-          priorDiagnosis.stage,
-          'scheduled-guard-preserved',
-        ).catch(() => {});
-        const originalFirstAt = Number(priorDiagnosis.firstAt || priorDiagnosis.at || 0);
-        if (originalFirstAt > 0 && env.DB) {
-          await env.DB.prepare(`UPDATE sh_collector_failure_state
-            SET first_failure_at=CASE
-                WHEN first_failure_at IS NULL OR first_failure_at>? THEN ?
-                ELSE first_failure_at
-              END,
-              updated_at=? WHERE id='stationhead'`)
-            .bind(originalFirstAt, originalFirstAt, Date.now()).run().catch(() => {});
-        }
+        await preservePriorDiagnosisWithoutCounting(env, priorDiagnosis).catch((error) => {
+          console.warn(JSON.stringify({
+            event: 'collector_prior_diagnosis_preserve_failed',
+            error: sanitizeFailureDetail(error?.message || error),
+          }));
+        });
       }
       await alignFailureStartWithLastSuccess(
         env,
