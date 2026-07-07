@@ -6,6 +6,42 @@ function downsampleRows(rows, maxPoints = 240) {
   return Array.from({ length: maxPoints }, (_, i) => valid[Math.round(i * step)]);
 }
 
+function commentVelocityState(sampled) {
+  const values = sampled.map((row) => {
+    const value = Number(row?.comment_velocity);
+    return Number.isFinite(value) ? Math.max(0, value) : null;
+  });
+  const maximum = values.reduce((max, value) => (
+    Number.isFinite(value) ? Math.max(max, value) : max
+  ), 0);
+  return { values, maximum };
+}
+
+function drawCommentVelocityBars(ctx, dimensions, xPositions, velocityValues, velocityMaximum, selectionIndex) {
+  if (!velocityValues?.length || velocityMaximum <= 0) return;
+  const { height, dpr, pad, plotHeight } = dimensions;
+  const plotBottom = height - pad.bottom;
+  const styles = getComputedStyle(document.documentElement);
+  const barColor = styles.getPropertyValue('--comment-accent').trim() || '#55d6be';
+
+  ctx.save();
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.globalCompositeOperation = 'destination-over';
+  for (let index = 0; index < velocityValues.length; index += 1) {
+    const value = velocityValues[index];
+    if (value == null || value <= 0) continue;
+    const previousGap = index > 0 ? xPositions[index] - xPositions[index - 1] : Infinity;
+    const nextGap = index < xPositions.length - 1 ? xPositions[index + 1] - xPositions[index] : Infinity;
+    const nearestGap = Math.min(previousGap, nextGap);
+    const barWidth = Math.max(2, Math.min(14, Number.isFinite(nearestGap) ? nearestGap * 0.72 : 8));
+    const barHeight = Math.max(2, plotHeight * value / Math.max(1, velocityMaximum));
+    ctx.globalAlpha = index === selectionIndex ? 0.48 : 0.24;
+    ctx.fillStyle = barColor;
+    ctx.fillRect(xPositions[index] - barWidth / 2, plotBottom - barHeight, barWidth, barHeight);
+  }
+  ctx.restore();
+}
+
 function drawChart(rows = lastHistoryRows, selectionIndex = selectedMainChartIndex) {
   const canvas = el('chart');
   if (!canvas) return;
@@ -58,6 +94,9 @@ function drawChart(rows = lastHistoryRows, selectionIndex = selectedMainChartInd
     const max = rawMax + padding;
     return { min, max, range: Math.max(1, max - min) };
   };
+
+  const velocity = commentVelocityState(sampled);
+  drawCommentVelocityBars(ctx, { height, dpr, pad, plotHeight }, xPositions, velocity.values, velocity.maximum, selectionIndex);
 
   const onlineScale = rangeFor(onlineValues, 5);
   const playScale = rangeFor(playValues, 10);
@@ -153,7 +192,12 @@ function drawChart(rows = lastHistoryRows, selectionIndex = selectedMainChartInd
     }
   }
 
-  mainChartState = { sampled, xPositions };
+  mainChartState = {
+    sampled,
+    xPositions,
+    commentVelocityValues: velocity.values,
+    commentVelocityMax: velocity.maximum,
+  };
 }
 
 function showMainChartDetail(index) {
@@ -163,9 +207,11 @@ function showMainChartDetail(index) {
   selectedMainChartIndex = index;
   const detail = el('mainChartDetail');
   if (detail) {
+    const velocity = mainChartState?.commentVelocityValues?.[index];
     detail.innerHTML = `<time>${escapeText(new Date(Number(row.observed_at)).toLocaleString('ja-JP', { year:'numeric', month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit', second:'2-digit' }))}</time>` +
       `<div><span>オンライン</span><strong>${number(row.online_member_count)}人</strong></div>` +
-      `<div><span>再生数</span><strong>${number(row.current_stream_count)}</strong></div>`;
+      `<div><span>再生数</span><strong>${number(row.current_stream_count)}</strong></div>` +
+      `<div><span>コメント勢い</span><strong>${Number.isFinite(velocity) ? number(velocity) : '-'}件 / 2分</strong></div>`;
   }
   drawChart(lastHistoryRows, index);
 }
