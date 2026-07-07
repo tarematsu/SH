@@ -15,6 +15,7 @@ const ALERT_ID = 'stationhead-collector';
 const DEFAULT_STALE_MS = 60 * 60 * 1000;
 const MIN_STALE_MS = 5 * 60 * 1000;
 const DEFAULT_RESEND_TIMEOUT_MS = 10_000;
+const DEFAULT_MIN_CONSECUTIVE_FAILURES = 2;
 const RESEND_ENDPOINT = 'https://api.resend.com/emails';
 const DEFAULT_FROM = 'Stationhead Monitor <onboarding@resend.dev>';
 const PUBLIC_HEALTH_URL = 'https://skrzk.pages.dev/api/health';
@@ -30,9 +31,14 @@ function text(value) {
 }
 
 function config(env = {}) {
+  const minConsecutiveFailures = Math.max(
+    1,
+    Math.trunc(finite(env.HEALTH_ALERT_MIN_CONSECUTIVE_FAILURES) ?? DEFAULT_MIN_CONSECUTIVE_FAILURES),
+  );
   return {
     staleMs: Math.max(MIN_STALE_MS, finite(env.HEALTH_ALERT_STALE_MS) ?? DEFAULT_STALE_MS),
     timeoutMs: Math.min(30_000, Math.max(1_000, finite(env.HEALTH_ALERT_RESEND_TIMEOUT_MS) ?? DEFAULT_RESEND_TIMEOUT_MS)),
+    minConsecutiveFailures,
     apiKey: text(env.RESEND_API_KEY),
     to: text(env.HEALTH_ALERT_TO),
     from: text(env.HEALTH_ALERT_FROM) || DEFAULT_FROM,
@@ -231,17 +237,19 @@ export async function diagnoseScheduledCollection(env, before, runStartedAt, app
   return { state: after, failure };
 }
 
-function detailedAlertBody(state, diagnosis, now, staleMs, referenceAt) {
+function detailedAlertBody(state, diagnosis, now, minConsecutiveFailures, referenceAt) {
   return [
-    `Stationheadの収集が${formatDuration(staleMs)}以上正常完了していません。`,
+    `Stationheadの収集で${minConsecutiveFailures}回連続の取得エラーを検知しました。`,
     '',
     ...failureEmailLines(diagnosis),
     '',
     `最終成功: ${formatJst(finite(state.last_success_at))}`,
     `最終実行: ${formatJst(finite(state.last_run_at))}`,
     `障害開始基準: ${formatJst(referenceAt)}`,
-    `停止時間: ${formatDuration(now - referenceAt)}`,
+    `監視上の経過: ${formatDuration(now - referenceAt)}`,
     `確認時刻: ${formatJst(now)}`,
+    '',
+    '復旧通知は送信しません。',
     '',
     `Health: ${PUBLIC_HEALTH_URL}`,
   ].join('\n');
@@ -256,14 +264,24 @@ export async function prepareDetailedCollectorAlert(env, now = Date.now()) {
 
   if (!diagnosis) return { state, diagnosis: null, incidentOpen, pending, prepared: false };
 
-  const referenceAt = finite(diagnosis.firstAt) ?? finite(diagnosis.at) ?? finite(state.last_success_at) ?? now;
-  const stale = now - referenceAt >= cfg.staleMs;
-  if (!stale || incidentOpen || pending || !cfg.apiKey || !cfg.to || !state.delivery_table_ready) {
-    return { state, diagnosis, incidentOpen, pending, stale, prepared: false };
+  const consecutiveFailures = finite(diagnosis.count) ?? 1;
+  const ready = consecutiveFailures >= cfg.minConsecutiveFailures;
+  if (!ready || incidentOpen || pending || !cfg.apiKey || !cfg.to || !state.delivery_table_ready) {
+    return {
+      state,
+      diagnosis,
+      incidentOpen,
+      pending,
+      consecutiveFailures,
+      minConsecutiveFailures: cfg.minConsecutiveFailures,
+      stale: ready,
+      prepared: false,
+    };
   }
 
-  const subject = `【Stationhead Monitor】収集停止: ${diagnosis.summary}`;
-  const idempotencyKey = `stationhead-monitor-diagnostic-${referenceAt}-${cfg.staleMs}-${diagnosis.code}`;
+  const referenceAt = finite(diagnosis.firstAt) ?? finite(diagnosis.at) ?? finite(state.last_success_at) ?? now;
+  const subject = `【Stationhead Monitor】収集エラーが${cfg.minConsecutiveFailures}回連続`;
+  const idempotencyKey = `stationhead-monitor-diagnostic-${referenceAt}-${cfg.minConsecutiveFailures}-${diagnosis.code}`;
   await env.DB.prepare(`INSERT OR IGNORE INTO sh_health_alert_delivery (
       id,event_kind,incident_started_at,observed_at,baseline_success_at,stale_ms,
       subject,body,from_address,to_address,idempotency_key,created_at,last_attempt_at,last_error,updated_at
@@ -274,9 +292,9 @@ export async function prepareDetailedCollectorAlert(env, now = Date.now()) {
       referenceAt,
       now,
       finite(state.last_success_at),
-      cfg.staleMs,
+      null,
       subject,
-      detailedAlertBody(state, diagnosis, now, cfg.staleMs, referenceAt),
+      detailedAlertBody(state, diagnosis, now, cfg.minConsecutiveFailures, referenceAt),
       cfg.from,
       cfg.to,
       idempotencyKey,
@@ -284,7 +302,16 @@ export async function prepareDetailedCollectorAlert(env, now = Date.now()) {
       now,
     ).run();
 
-  return { state, diagnosis, incidentOpen, pending: 'alert', stale: true, prepared: true };
+  return {
+    state,
+    diagnosis,
+    incidentOpen,
+    pending: 'alert',
+    consecutiveFailures,
+    minConsecutiveFailures: cfg.minConsecutiveFailures,
+    stale: true,
+    prepared: true,
+  };
 }
 
 function shortHash(value) {
