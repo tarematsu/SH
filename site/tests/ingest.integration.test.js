@@ -148,11 +148,14 @@ test('same queue hashes return before track tables are read', async () => {
     }],
   };
   const structuralHash = await payloadHash(queuePayload);
-  const likesHash = await payloadHash(queueLikesPayload(queuePayload.tracks));
-  const db = new FakeD1Database().route('first', /FROM sh_queue_current/, {
-    structural_hash: structuralHash,
-    likes_hash: likesHash,
-    start_time: queuePayload.start_time,
+  const db = new FakeD1Database().route('first', /FROM sh_ingest_claims/, {
+    dedupe_key: `station:${queuePayload.station_id}:queue:${queuePayload.start_time}:minute:${Math.floor(observedAt / 60000) * 60000}:hash:${structuralHash}`,
+    collector_id: 'integration-collector',
+    collector_kind: 'local',
+    source_priority: 70,
+    observed_at: observedAt,
+    payload_hash: structuralHash,
+    first_seen_at: observedAt,
   });
   const response = await ingestPost({
     request: post('https://skrzk.test/api/ingest', {
@@ -178,11 +181,11 @@ test('same queue hashes return before track tables are read', async () => {
 
   assert.equal(body.accepted, false);
   assert.equal(body.duplicate, true);
-  assert.equal(body.claim_reason, 'same_queue_current');
+  assert.equal(body.claim_reason, 'same_payload');
   assert.equal(body.queue_inspected, false);
   assert.equal(db.callsMatching(/sh_queue_items/).length, 0);
   assert.equal(db.callsMatching(/sh_track_like_current/).length, 0);
-  assert.equal(db.callsMatching(/sh_ingest_claims/).length, 0);
+  assert.equal(db.callsMatching(/sh_ingest_claims/, 'run').length, 0);
 });
 
 test('host snapshot ingest creates a claim and persists one session observation', async () => {

@@ -22,20 +22,27 @@ function gitOutput(repositoryRoot, args) {
   return String(result.stdout || '');
 }
 
-export function changedMigrationNames(repositoryRoot) {
-  const output = gitOutput(repositoryRoot, [
-    'diff', '--name-only', '--diff-filter=ACDMR',
-    `${TOKENLESS_SCHEMA_BASELINE}..HEAD`, '--', 'database/migrations',
-  ]);
-  if (output == null) {
-    throw new Error(`cannot inspect D1 migrations since baseline ${TOKENLESS_SCHEMA_BASELINE}; fetch sufficient git history`);
-  }
-  return output
+function migrationNames(output) {
+  return String(output || '')
     .split(/\r?\n/)
     .map((value) => value.trim())
     .filter(Boolean)
     .map((value) => path.basename(value))
     .filter((name) => /^\d+_[A-Za-z0-9._-]+\.sql$/.test(name));
+}
+
+export function changedMigrationNames(repositoryRoot) {
+  const baselineOutput = gitOutput(repositoryRoot, [
+    'diff', '--name-only', '--diff-filter=ACDMR',
+    `${TOKENLESS_SCHEMA_BASELINE}..HEAD`, '--', 'database/migrations',
+  ]);
+  if (baselineOutput != null) return migrationNames(baselineOutput);
+
+  const headOutput = gitOutput(repositoryRoot, [
+    'diff', '--name-only', '--diff-filter=ACDMR',
+    'HEAD^..HEAD', '--', 'database/migrations',
+  ]);
+  return headOutput == null ? [] : migrationNames(headOutput);
 }
 
 export function uncoveredRuntimeMigrations(names, coverage = RUNTIME_MIGRATION_COVERAGE) {
