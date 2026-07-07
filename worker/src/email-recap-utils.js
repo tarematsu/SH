@@ -1,21 +1,10 @@
+import { finiteNumber, jsonNoStoreResponse } from './shared.js';
+
 export const EMAIL_RECAP_PATH = '/ingest/email-recap';
 export const EMAIL_RECAP_LEASE_PATH = '/coordination/lease';
 export const DEFAULT_EMAIL_RECAP_OFFSET_MINUTES = 57;
-
-export function json(data, status = 200) {
-  return new Response(JSON.stringify(data), {
-    status,
-    headers: {
-      'content-type': 'application/json; charset=utf-8',
-      'cache-control': 'no-store',
-    },
-  });
-}
-
-export function finite(value) {
-  const number = Number(value);
-  return Number.isFinite(number) ? number : null;
-}
+export const json = jsonNoStoreResponse;
+export const finite = finiteNumber;
 
 export function validDate(value) {
   return /^\d{4}-\d{2}-\d{2}$/.test(String(value || ''));
