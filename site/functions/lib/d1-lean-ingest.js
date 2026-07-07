@@ -1,5 +1,5 @@
 import { claimWrite, payloadHash, sourceIdentity } from './ingest-claim.js';
-import { bool, num, rawJson, text } from './api-utils.js';
+import { bool, num, rawJson, stripAppleMusicFields, text } from './api-utils.js';
 
 const QUERY_CHUNK = 80;
 const BATCH_CHUNK = 80;
@@ -173,7 +173,6 @@ export function queueStructuralPayload(data) {
       deezer_id: text(track?.deezer_id),
       isrc: text(track?.isrc),
       duration_ms: num(track?.duration_ms),
-      preview_url: text(track?.preview_url),
     })),
   };
 }
@@ -195,7 +194,6 @@ function structuralItemState(track, queueId = null) {
     deezer_id: text(track?.deezer_id),
     isrc: text(track?.isrc),
     duration_ms: num(track?.duration_ms),
-    preview_url: text(track?.preview_url),
   };
 }
 
@@ -227,7 +225,7 @@ function queueItemLookupStatements(db, stationId, startTime, positions) {
   return chunks(positions, QUERY_CHUNK).filter((group) => group.length).map((group) => {
     const placeholders = group.map(() => '?').join(',');
     return db.prepare(`SELECT position,queue_id,queue_track_id,stationhead_track_id,
-      spotify_id,deezer_id,isrc,duration_ms,preview_url
+      spotify_id,deezer_id,isrc,duration_ms
       FROM sh_queue_items
       WHERE station_id IS ? AND start_time IS ? AND position IN (${placeholders})`)
       .bind(stationId, startTime, ...group);
@@ -285,12 +283,12 @@ function queueItemWriteStatements(db, tracks, observedAt, stationId, queueId, st
       queue_track_id=excluded.queue_track_id,stationhead_track_id=excluded.stationhead_track_id,
       spotify_id=excluded.spotify_id,apple_music_id=NULL,
       deezer_id=excluded.deezer_id,isrc=excluded.isrc,duration_ms=excluded.duration_ms,
-      preview_url=excluded.preview_url,raw_json=excluded.raw_json`)
+      preview_url=NULL,bite_count=excluded.bite_count,raw_json=excluded.raw_json`)
     .bind(
       observedAt, stationId, queueId, startTime, num(track?.position),
       num(track?.queue_track_id), num(track?.stationhead_track_id),
       text(track?.spotify_id), null, text(track?.deezer_id),
-      text(track?.isrc), num(track?.duration_ms), text(track?.preview_url),
+      text(track?.isrc), num(track?.duration_ms), null,
       num(track?.bite_count), compactQueueItemRaw(track),
     ));
 }
@@ -325,7 +323,7 @@ function likeWriteStatements(db, observations, observedAt, stationId, queueId, s
 }
 
 export async function saveLeanQueue(db, observedAt, body) {
-  const data = body?.data ?? {};
+  const data = stripAppleMusicFields(body?.data ?? {});
   const payload = queueStructuralPayload(data);
   const hash = await payloadHash(payload);
   const stationId = num(data?.station_id);
@@ -362,41 +360,13 @@ export async function saveLeanQueue(db, observedAt, body) {
     ...queueItemWriteStatements(db, changedTracks, observedAt, stationId, queueId, startTime),
     ...likeWriteStatements(db, observations, observedAt, stationId, queueId, startTime),
   ];
-  if (structureChanged) {
-    statements.unshift(
-      db.prepare(`INSERT INTO sh_queue_snapshots (
-        observed_at,station_id,queue_id,start_time,is_paused,raw_json
-      ) VALUES (?,?,?,?,?,?)`).bind(observedAt, stationId, queueId, startTime, bool(data?.is_paused), rawJson(payload)),
-      db.prepare(`INSERT INTO sh_queue_current(
-        station_id,queue_id,start_time,structural_hash,is_paused,observed_at,updated_at
-      ) VALUES(?,?,?,?,?,?,?) ON CONFLICT(station_id) DO UPDATE SET
-        queue_id=excluded.queue_id,start_time=excluded.start_time,
-        structural_hash=excluded.structural_hash,is_paused=excluded.is_paused,
-        observed_at=excluded.observed_at,updated_at=excluded.updated_at`)
-        .bind(stationId, queueId, startTime, hash, bool(data?.is_paused), observedAt, Date.now()),
-    );
+  if (structureChanged && claim.accepted) {
+    statements.unshift(db.prepare(`INSERT INTO sh_queue_snapshots (
+      observed_at,station_id,queue_id,start_time,is_paused,raw_json
+    ) VALUES (?,?,?,?,?,?)`).bind(
+      observedAt, stationId, queueId, startTime, bool(data?.is_paused), rawJson(payload),
+    ));
   }
   await runBatches(db, statements);
-  return {
-    claim, inspected: true, itemsWritten: changedTracks.length,
-    observationsWritten: observations.length, structureChanged,
-  };
-}
-
-export async function saveLeanHeartbeat(db, observedAt, data) {
-  const result = await db.prepare(`INSERT INTO sh_collector_heartbeats (
-      collector_id,first_seen_at,last_seen_at,hostname,version,metadata_json
-    ) VALUES (?,?,?,?,?,?)
-    ON CONFLICT(collector_id) DO UPDATE SET
-      last_seen_at=excluded.last_seen_at,hostname=excluded.hostname,
-      version=excluded.version,metadata_json=excluded.metadata_json
-    WHERE excluded.last_seen_at-sh_collector_heartbeats.last_seen_at>=600000
-       OR excluded.hostname IS NOT sh_collector_heartbeats.hostname
-       OR excluded.version IS NOT sh_collector_heartbeats.version
-       OR excluded.metadata_json IS NOT sh_collector_heartbeats.metadata_json`)
-    .bind(
-      text(data?.collector_id), observedAt, observedAt,
-      text(data?.hostname), text(data?.version), rawJson(data),
-    ).run();
-  return { accepted: Number(result?.meta?.changes || 0) > 0 };
+  return { claim, inspected: true, itemsWritten: changedTracks.length, observationsWritten: observations.length };
 }
