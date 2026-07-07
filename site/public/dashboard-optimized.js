@@ -58,6 +58,7 @@
       if (lastDashboardObservedAt && lastQueueRevision && hasLocalQueue()) params.set('queue_revision', lastQueueRevision);
       const dashboardUrl = params.size ? `/api/dashboard?${params}` : '/api/dashboard';
       const response = await fetch(dashboardUrl, {
+        cache: 'no-store',
         signal: refreshAbortController.signal,
         headers: { accept: 'application/json' },
       });
