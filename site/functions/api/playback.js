@@ -20,11 +20,8 @@ const PLAYBACK_CORS_HEADERS = Object.freeze({
 export { computePlayback };
 
 function playbackJson(data, status = 200, cache = null) {
-  if (data?.raw_payload_passthrough === true) {
-    const { raw_payload_passthrough: _rawPayloadPassthrough, ...payload } = data;
-    return json(payload, status, cache, PLAYBACK_CORS_HEADERS);
-  }
-  return json(stripAppleMusicFields(data), status, cache, PLAYBACK_CORS_HEADERS);
+  const { raw_payload_passthrough: _rawPayloadPassthrough, ...payload } = data || {};
+  return json(stripAppleMusicFields(payload), status, cache, PLAYBACK_CORS_HEADERS);
 }
 
 export function onRequestOptions() {
