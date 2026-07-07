@@ -64,18 +64,11 @@ const FAIL_STREAM_GOAL_PREDICTION_SQL = `UPDATE sh_stream_goal_prediction_state 
   next_refresh_at=?,last_error=?,updated_at=?
 WHERE id=?`;
 
-function clamp(value, min, max, fallback) {
-  const number = Number(value ?? fallback);
-  return Number.isFinite(number) ? Math.max(min, Math.min(max, Math.trunc(number))) : fallback;
-}
-
 export function streamGoalPredictionIntervalMs(env = {}) {
-  return clamp(
-    env.STREAM_GOAL_PREDICTION_INTERVAL_MS,
-    MIN_PREDICTION_INTERVAL_MS,
-    MAX_PREDICTION_INTERVAL_MS,
-    DEFAULT_PREDICTION_INTERVAL_MS,
-  );
+  const configured = Number(env.STREAM_GOAL_PREDICTION_INTERVAL_MS ?? DEFAULT_PREDICTION_INTERVAL_MS);
+  return Number.isFinite(configured)
+    ? Math.max(MIN_PREDICTION_INTERVAL_MS, Math.min(MAX_PREDICTION_INTERVAL_MS, Math.trunc(configured)))
+    : DEFAULT_PREDICTION_INTERVAL_MS;
 }
 
 export function predictionFromAggregate(row, generatedAt = Date.now()) {
