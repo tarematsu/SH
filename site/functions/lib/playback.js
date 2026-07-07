@@ -65,22 +65,21 @@ export function normalizePlaybackTrack(track, index, playback) {
   const spotifyId = String(track.spotify_id || '').trim() || null;
   const durationMs = Math.max(0, num(track.duration_ms) || 0);
   const isCurrent = index === playback.currentIndex;
-
-  return {
-    observed_at: num(track.observed_at),
-    station_id: num(track.station_id),
-    start_time: num(track.start_time),
-    position: num(track.position),
+  const output = {
     spotify_id: spotifyId,
     duration_ms: durationMs,
-    artist: artist || null,
-    title: title || track.display_title || spotifyId || '曲情報なし',
-    thumbnail_url: track.thumbnail_url || null,
-    spotify_url: track.spotify_url || (spotifyId ? `https://open.spotify.com/track/${spotifyId}` : null),
-    ...(isCurrent ? {
-      bite_count: num(track.bite_count),
-      is_current: true,
-      progress_ms: playback.progressMs,
-    } : {}),
   };
+  if (title && title !== spotifyId) output.title = title;
+  if (artist) output.artist = artist;
+  if (track.thumbnail_url) output.thumbnail_url = track.thumbnail_url;
+  if (track.spotify_url && track.spotify_url !== (spotifyId ? `https://open.spotify.com/track/${spotifyId}` : null)) {
+    output.spotify_url = track.spotify_url;
+  }
+  if (isCurrent) {
+    const biteCount = num(track.bite_count);
+    if (biteCount != null) output.bite_count = biteCount;
+    output.is_current = true;
+    output.progress_ms = playback.progressMs;
+  }
+  return output;
 }
