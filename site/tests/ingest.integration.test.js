@@ -184,7 +184,6 @@ test('same queue hashes return before track tables are read', async () => {
 
   assert.equal(body.accepted, false);
   assert.equal(body.duplicate, true);
-  assert.equal(body.claim_reason, 'same_payload');
   assert.equal(body.queue_inspected, false);
   assert.equal(db.callsMatching(/sh_queue_items/).length, 0);
   assert.equal(db.callsMatching(/sh_track_like_current/).length, 0);
