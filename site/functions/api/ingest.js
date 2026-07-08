@@ -1,5 +1,11 @@
 import { onRequestPost as corePost, onRequestGet } from './ingest-core.js';
-import { authorized, json, num, stripAppleMusicFields } from '../lib/api-utils.js';
+import {
+  authorized,
+  json,
+  observedAtFrom,
+  readJsonBody,
+  stripAppleMusicFields,
+} from '../lib/api-utils.js';
 import { saveCommentCounts } from '../lib/comment-counts.js';
 import { runDataMaintenanceSafely } from '../lib/data-maintenance.js';
 import {
@@ -27,15 +33,11 @@ export async function onRequestPost(context) {
   const { request, env } = context;
   if (!authorized(request, env) || !env.DB) return corePost(context);
 
-  let body;
-  try {
-    body = await request.clone().json();
-  } catch {
-    return corePost(context);
-  }
-  body = spotifyOnlyBody(body);
+  const parsed = await readJsonBody(request, { clone: true });
+  if (!parsed.ok) return corePost(context);
+  const body = spotifyOnlyBody(parsed.body);
 
-  const observedAt = num(body?.observed_at) ?? Date.now();
+  const observedAt = observedAtFrom(body);
   const data = body?.data ?? {};
   try {
     if (body?.type === 'comments') {
