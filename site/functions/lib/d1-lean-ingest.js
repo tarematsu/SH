@@ -1,24 +1,10 @@
-import { claimWrite, payloadHash, sourceIdentity } from './ingest-claim.js';
+import { payloadHash } from './ingest-claim.js';
 import { bool, num, rawJson, text } from './api-utils.js';
 
-const QUERY_CHUNK = 80;
-const BATCH_CHUNK = 80;
 const SNAPSHOT_CHECKPOINT_MS = 5 * 60_000;
 const STREAM_MIN_RISE_LIMIT = 50_000;
 const STREAM_MIN_DROP_LIMIT = 10_000;
 const STREAM_RISE_PER_MINUTE = 10_000;
-
-function chunks(values, size) {
-  const result = [];
-  for (let index = 0; index < values.length; index += size) result.push(values.slice(index, index + size));
-  return result;
-}
-
-async function runBatches(db, statements) {
-  for (const group of chunks(statements, BATCH_CHUNK)) {
-    if (group.length) await db.batch(group);
-  }
-}
 
 function snapshotRawPayload(data) {
   const raw = data?.raw || {};
@@ -223,41 +209,6 @@ export function queueItemsToWriteLean(tracks, existingRows, queueId = null) {
   return changed;
 }
 
-function queueItemLookupStatements(db, stationId, startTime, positions) {
-  return chunks(positions, QUERY_CHUNK).filter((group) => group.length).map((group) => {
-    const placeholders = group.map(() => '?').join(',');
-    return db.prepare(`SELECT position,queue_id,queue_track_id,stationhead_track_id,
-      spotify_id,deezer_id,isrc,duration_ms,preview_url
-      FROM sh_queue_items
-      WHERE station_id IS ? AND start_time IS ? AND position IN (${placeholders})`)
-      .bind(stationId, startTime, ...group);
-  });
-}
-
-function latestLikeLookupStatements(db, stationId, trackKeys) {
-  return chunks(trackKeys, QUERY_CHUNK).filter((group) => group.length).map((group) => {
-    const placeholders = group.map(() => '?').join(',');
-    return db.prepare(`SELECT track_key,observed_at,like_count
-      FROM sh_track_like_current
-      WHERE station_id IS ? AND track_key IN (${placeholders})`)
-      .bind(stationId, ...group);
-  });
-}
-
-async function loadComparisonState(db, stationId, startTime, positions, trackKeys, includeItems) {
-  const itemStatements = includeItems ? queueItemLookupStatements(db, stationId, startTime, positions) : [];
-  const likeStatements = latestLikeLookupStatements(db, stationId, trackKeys);
-  const statements = itemStatements.concat(likeStatements);
-  if (!statements.length) return { existingRows: [], latestRows: [] };
-  const results = typeof db.batch === 'function'
-    ? await db.batch(statements)
-    : await Promise.all(statements.map((statement) => statement.all()));
-  return {
-    existingRows: results.slice(0, itemStatements.length).flatMap((result) => result?.results || []),
-    latestRows: results.slice(itemStatements.length).flatMap((result) => result?.results || []),
-  };
-}
-
 export function planLikeObservations(tracks, latestRows) {
   const latest = new Map((latestRows || []).map((row) => [String(row.track_key), row]));
   const unique = new Map();
@@ -268,135 +219,4 @@ export function planLikeObservations(tracks, latestRows) {
   return [...unique.entries()]
     .filter(([trackKey, track]) => num(latest.get(trackKey)?.like_count) !== num(track.bite_count))
     .map(([trackKey, track]) => ({ trackKey, track }));
-}
-
-function compactQueueItemRaw(track) {
-  return rawJson(structuralItemState(track));
-}
-
-function queueItemWriteStatements(db, tracks, observedAt, stationId, queueId, startTime) {
-  return tracks.map((track) => db.prepare(`INSERT INTO sh_queue_items (
-      observed_at,station_id,queue_id,start_time,position,
-      queue_track_id,stationhead_track_id,spotify_id,apple_music_id,
-      deezer_id,isrc,duration_ms,preview_url,bite_count,raw_json
-    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-    ON CONFLICT(station_id,start_time,position) DO UPDATE SET
-      observed_at=excluded.observed_at,queue_id=excluded.queue_id,
-      queue_track_id=excluded.queue_track_id,stationhead_track_id=excluded.stationhead_track_id,
-      spotify_id=excluded.spotify_id,apple_music_id=NULL,
-      deezer_id=excluded.deezer_id,isrc=excluded.isrc,duration_ms=excluded.duration_ms,
-      preview_url=excluded.preview_url,raw_json=excluded.raw_json`)
-    .bind(
-      observedAt, stationId, queueId, startTime, num(track?.position),
-      num(track?.queue_track_id), num(track?.stationhead_track_id),
-      text(track?.spotify_id), null, text(track?.deezer_id),
-      text(track?.isrc), num(track?.duration_ms), text(track?.preview_url),
-      num(track?.bite_count), compactQueueItemRaw(track),
-    ));
-}
-
-function likeWriteStatements(db, observations, observedAt, stationId, queueId, startTime) {
-  return observations.flatMap(({ trackKey, track }) => [
-    db.prepare(`INSERT INTO sh_track_like_current (
-      station_id,track_key,queue_id,start_time,position,queue_track_id,
-      stationhead_track_id,spotify_id,apple_music_id,isrc,like_count,observed_at
-    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(station_id,track_key) DO UPDATE SET
-      queue_id=excluded.queue_id,start_time=excluded.start_time,position=excluded.position,
-      queue_track_id=excluded.queue_track_id,stationhead_track_id=excluded.stationhead_track_id,
-      spotify_id=excluded.spotify_id,apple_music_id=NULL,isrc=excluded.isrc,
-      like_count=excluded.like_count,observed_at=excluded.observed_at`)
-      .bind(
-        stationId, trackKey, queueId, startTime, num(track?.position),
-        num(track?.queue_track_id), num(track?.stationhead_track_id),
-        text(track?.spotify_id), null, text(track?.isrc),
-        num(track?.bite_count), observedAt,
-      ),
-    db.prepare(`INSERT INTO sh_track_like_observations (
-      observed_at,station_id,queue_id,start_time,position,
-      queue_track_id,stationhead_track_id,spotify_id,apple_music_id,isrc,
-      track_key,like_count,source,raw_json
-    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).bind(
-      observedAt, stationId, queueId, startTime, num(track?.position),
-      num(track?.queue_track_id), num(track?.stationhead_track_id),
-      text(track?.spotify_id), null, text(track?.isrc),
-      trackKey, num(track?.bite_count), 'collector', rawJson({ bite_count: num(track?.bite_count) }),
-    ),
-  ]);
-}
-
-export async function saveLeanQueue(db, observedAt, body) {
-  const data = body?.data ?? {};
-  const payload = queueStructuralPayload(data);
-  const hash = await payloadHash(payload);
-  const stationId = num(data?.station_id);
-  const startTime = num(data?.start_time);
-  const queueId = num(data?.queue_id);
-  const tracks = Array.isArray(data?.tracks) ? data.tracks : [];
-  const current = await db.prepare(`SELECT structural_hash,start_time
-    FROM sh_queue_current WHERE station_id IS ?`).bind(stationId).first();
-  const structureChanged = current?.structural_hash !== hash;
-
-  let claim = { accepted: false, duplicate: true, reason: 'same_queue_current', hash };
-  if (structureChanged) {
-    const source = sourceIdentity(body, {
-      collectorId: body?.collector_id,
-      collectorKind: 'external',
-      sourcePriority: 50,
-    });
-    claim = await claimWrite(db, {
-      dedupeKey: `station:${stationId ?? 0}:queue:${startTime ?? 0}:hash:${hash}`,
-      dataType: 'queue', ...source, observedAt, hash, payload,
-      metadata: { station_id: stationId, start_time: startTime },
-    });
-    if (!claim.accepted) return { claim, inspected: false, itemsWritten: 0, observationsWritten: 0 };
-  }
-
-  const positions = [...new Set(tracks.map((track) => num(track?.position)).filter((value) => value != null))];
-  const trackKeys = [...new Set(tracks.filter((track) => num(track?.bite_count) != null).map(observationTrackKey))];
-  const { existingRows, latestRows } = await loadComparisonState(
-    db, stationId, startTime, positions, trackKeys, structureChanged,
-  );
-  const changedTracks = structureChanged ? queueItemsToWriteLean(tracks, existingRows, queueId) : [];
-  const observations = planLikeObservations(tracks, latestRows);
-  const statements = [
-    ...queueItemWriteStatements(db, changedTracks, observedAt, stationId, queueId, startTime),
-    ...likeWriteStatements(db, observations, observedAt, stationId, queueId, startTime),
-  ];
-  if (structureChanged) {
-    statements.unshift(
-      db.prepare(`INSERT INTO sh_queue_snapshots (
-        observed_at,station_id,queue_id,start_time,is_paused,raw_json
-      ) VALUES (?,?,?,?,?,?)`).bind(observedAt, stationId, queueId, startTime, bool(data?.is_paused), rawJson(payload)),
-      db.prepare(`INSERT INTO sh_queue_current(
-        station_id,queue_id,start_time,structural_hash,is_paused,observed_at,updated_at
-      ) VALUES(?,?,?,?,?,?,?) ON CONFLICT(station_id) DO UPDATE SET
-        queue_id=excluded.queue_id,start_time=excluded.start_time,
-        structural_hash=excluded.structural_hash,is_paused=excluded.is_paused,
-        observed_at=excluded.observed_at,updated_at=excluded.updated_at`)
-        .bind(stationId, queueId, startTime, hash, bool(data?.is_paused), observedAt, Date.now()),
-    );
-  }
-  await runBatches(db, statements);
-  return {
-    claim, inspected: true, itemsWritten: changedTracks.length,
-    observationsWritten: observations.length, structureChanged,
-  };
-}
-
-export async function saveLeanHeartbeat(db, observedAt, data) {
-  const result = await db.prepare(`INSERT INTO sh_collector_heartbeats (
-      collector_id,first_seen_at,last_seen_at,hostname,version,metadata_json
-    ) VALUES (?,?,?,?,?,?)
-    ON CONFLICT(collector_id) DO UPDATE SET
-      last_seen_at=excluded.last_seen_at,hostname=excluded.hostname,
-      version=excluded.version,metadata_json=excluded.metadata_json
-    WHERE excluded.last_seen_at-sh_collector_heartbeats.last_seen_at>=600000
-       OR excluded.hostname IS NOT sh_collector_heartbeats.hostname
-       OR excluded.version IS NOT sh_collector_heartbeats.version
-       OR excluded.metadata_json IS NOT sh_collector_heartbeats.metadata_json`)
-    .bind(
-      text(data?.collector_id), observedAt, observedAt,
-      text(data?.hostname), text(data?.version), rawJson(data),
-    ).run();
-  return { accepted: Number(result?.meta?.changes || 0) > 0 };
 }
