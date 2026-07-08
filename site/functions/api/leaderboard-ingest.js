@@ -1,6 +1,53 @@
 import { claimWrite, payloadHash, sourceIdentity } from '../lib/ingest-claim.js';
 import { json, authorized, num, text, rawJson } from '../lib/api-utils.js';
 
+export const D1_LEADERBOARD_BATCH_VARIABLE_LIMIT = 90;
+
+function prepared(statement, bindCount) {
+  return { statement, bindCount };
+}
+
+function unwrapStatement(entry) {
+  return entry?.statement || entry;
+}
+
+function statementBindCount(entry) {
+  if (Number.isFinite(entry?.bindCount)) return entry.bindCount;
+  if (Array.isArray(entry?.params)) return entry.params.length;
+  if (Array.isArray(entry?.statement?.params)) return entry.statement.params.length;
+  return D1_LEADERBOARD_BATCH_VARIABLE_LIMIT;
+}
+
+function splitD1Batches(statements) {
+  const groups = [];
+  let current = [];
+  let bindCount = 0;
+  for (const statement of Array.isArray(statements) ? statements : []) {
+    const nextBindCount = statementBindCount(statement);
+    if (current.length > 0 && bindCount + nextBindCount > D1_LEADERBOARD_BATCH_VARIABLE_LIMIT) {
+      groups.push(current);
+      current = [];
+      bindCount = 0;
+    }
+    current.push(statement);
+    bindCount += nextBindCount;
+  }
+  if (current.length) groups.push(current);
+  return groups;
+}
+
+async function runPreparedBatches(db, statements) {
+  for (const group of splitD1Batches(statements)) {
+    if (!group.length) continue;
+    const unwrapped = group.map(unwrapStatement);
+    if (typeof db.batch === 'function') {
+      await db.batch(unwrapped);
+    } else {
+      await Promise.all(unwrapped.map((statement) => statement.run()));
+    }
+  }
+}
+
 function validDateKey(value) {
   return /^\d{4}-\d{2}-\d{2}$/.test(String(value || ''));
 }
@@ -84,15 +131,15 @@ export async function onRequestPost({ request, env }) {
   }
 
   const statements = [
-    env.DB.prepare(`
+    prepared(env.DB.prepare(`
       DELETE FROM sh_channel_rankings
       WHERE ranking_date = ? AND ranking_type = ?
-    `).bind(rankingDate, rankingType),
+    `).bind(rankingDate, rankingType), 2),
   ];
 
   for (const account of normalized) {
     statements.push(
-      env.DB.prepare(`
+      prepared(env.DB.prepare(`
         INSERT INTO sh_channel_rankings (
           ranking_date, observed_at, ranking_type, rank,
           channel_name, channel_alias,
@@ -134,12 +181,12 @@ export async function onRequestPost({ request, env }) {
           ranking_date: rankingDate,
         }),
         observedAt,
-      ),
+      ), 11),
     );
   }
 
   statements.push(
-    env.DB.prepare(`
+    prepared(env.DB.prepare(`
       INSERT INTO sh_leaderboard_fetches (
         ranking_date, fetched_at, source, source_hash, row_count, status, raw_json
       ) VALUES (?, ?, ?, ?, ?, 'saved', ?)
@@ -162,11 +209,11 @@ export async function onRequestPost({ request, env }) {
         collector_kind: collector.collectorKind,
         source_priority: collector.sourcePriority,
       }),
-    ),
+    ), 6),
   );
 
   try {
-    await env.DB.batch(statements);
+    await runPreparedBatches(env.DB, statements);
     return json({
       ok: true,
       ranking_date: rankingDate,
