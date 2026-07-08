@@ -47,8 +47,8 @@ test('official announcement window starts ten minutes before the scheduled time'
   assert.equal(workerConfig().vars.OFFICIAL_NEWS_EARLY_WINDOW_MS, 10 * 60_000);
 });
 
-test('official news is refreshed often enough to support the early window', () => {
-  assert.equal(workerConfig().vars.OFFICIAL_NEWS_CHECK_INTERVAL_MS, 5 * 60_000);
+test('official news is refreshed hourly to reduce routine official-site polling', () => {
+  assert.equal(workerConfig().vars.OFFICIAL_NEWS_CHECK_INTERVAL_MS, 60 * 60_000);
 });
 
 test('generic official article rescans stay bounded while Stationhead titles remain eligible', () => {
