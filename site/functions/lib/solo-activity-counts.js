@@ -1,6 +1,52 @@
 import { num } from './api-utils.js';
 
 const MINUTE_MS = 60_000;
+export const D1_SOLO_ACTIVITY_BATCH_VARIABLE_LIMIT = 90;
+
+function prepared(statement, bindCount) {
+  return { statement, bindCount };
+}
+
+function unwrapStatement(entry) {
+  return entry?.statement || entry;
+}
+
+function statementBindCount(entry) {
+  if (Number.isFinite(entry?.bindCount)) return entry.bindCount;
+  if (Array.isArray(entry?.params)) return entry.params.length;
+  if (Array.isArray(entry?.statement?.params)) return entry.statement.params.length;
+  return D1_SOLO_ACTIVITY_BATCH_VARIABLE_LIMIT;
+}
+
+function splitD1Batches(statements) {
+  const groups = [];
+  let current = [];
+  let bindCount = 0;
+  for (const statement of Array.isArray(statements) ? statements : []) {
+    const nextBindCount = statementBindCount(statement);
+    if (current.length > 0 && bindCount + nextBindCount > D1_SOLO_ACTIVITY_BATCH_VARIABLE_LIMIT) {
+      groups.push(current);
+      current = [];
+      bindCount = 0;
+    }
+    current.push(statement);
+    bindCount += nextBindCount;
+  }
+  if (current.length) groups.push(current);
+  return groups;
+}
+
+async function runPreparedBatches(db, statements) {
+  for (const group of splitD1Batches(statements)) {
+    if (!group.length) continue;
+    const unwrapped = group.map(unwrapStatement);
+    if (typeof db.batch === 'function') {
+      await db.batch(unwrapped);
+    } else {
+      await Promise.all(unwrapped.map((statement) => statement.run()));
+    }
+  }
+}
 
 function eventTime(item, fallback) {
   const milliseconds = num(item?.chat_time_ms);
@@ -67,32 +113,32 @@ export async function saveSoloActivityCounts(db, observedAt, data) {
     const latestId = fresh.at(-1)[0];
     const statements = [];
     for (const [minute, count] of minutes) {
-      statements.push(db.prepare(`INSERT INTO sh_solo_activity_minutes(
+      statements.push(prepared(db.prepare(`INSERT INTO sh_solo_activity_minutes(
           session_id,bucket_start,item_count
         ) VALUES(?,?,?) ON CONFLICT(session_id,bucket_start) DO UPDATE SET
           item_count=sh_solo_activity_minutes.item_count+excluded.item_count`)
-        .bind(sessionId, minute, count));
+        .bind(sessionId, minute, count), 3));
     }
     for (const [day, count] of days) {
-      statements.push(db.prepare(`INSERT INTO sh_solo_activity_days(
+      statements.push(prepared(db.prepare(`INSERT INTO sh_solo_activity_days(
           session_id,day_key,item_count
         ) VALUES(?,?,?) ON CONFLICT(session_id,day_key) DO UPDATE SET
           item_count=sh_solo_activity_days.item_count+excluded.item_count`)
-        .bind(sessionId, day, count));
+        .bind(sessionId, day, count), 3));
     }
     statements.push(
-      db.prepare(`INSERT INTO sh_solo_activity_state(
+      prepared(db.prepare(`INSERT INTO sh_solo_activity_state(
           session_id,station_id,last_item_id,total_count,last_observed_at
         ) VALUES(?,?,?,?,?) ON CONFLICT(session_id) DO UPDATE SET
           station_id=COALESCE(excluded.station_id,sh_solo_activity_state.station_id),
           last_item_id=MAX(sh_solo_activity_state.last_item_id,excluded.last_item_id),
           total_count=excluded.total_count,
           last_observed_at=MAX(sh_solo_activity_state.last_observed_at,excluded.last_observed_at)`)
-        .bind(sessionId, stationId, latestId, total, lastObservedAt),
-      db.prepare(`UPDATE sh_host_broadcast_sessions SET comment_count=?
-        WHERE id=? AND COALESCE(comment_count,-1)<>?`).bind(total, sessionId, total),
+        .bind(sessionId, stationId, latestId, total, lastObservedAt), 5),
+      prepared(db.prepare(`UPDATE sh_host_broadcast_sessions SET comment_count=?
+        WHERE id=? AND COALESCE(comment_count,-1)<>?`).bind(total, sessionId, total), 3),
     );
-    await db.batch(statements);
+    await runPreparedBatches(db, statements);
   }
 
   const velocity = await currentVelocity(db, sessionId, observedAt, lastObservedAt);
