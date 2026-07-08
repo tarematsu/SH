@@ -1,45 +1,14 @@
-const DAY_MS = 86_400_000;
-const HOUR_MS = 3_600_000;
-const JST_OFFSET_MS = 9 * HOUR_MS;
+import {
+  HOUR_MS,
+  previousJstDay,
+  utcMonthlyRange,
+  utcWeeklyRange,
+} from './time-buckets.js';
+
 const LEGACY_BACKFILL_BATCH = 1_000;
 const MAINTENANCE_CLAIM_MS = 15 * 60_000;
 const STATE_ID = 'rollup-retention-v1';
 const runtimeState = new WeakMap();
-
-function jstDayKey(timestamp) {
-  return new Date(timestamp + JST_OFFSET_MS).toISOString().slice(0, 10);
-}
-
-function dayStartUtc(dayKey) {
-  return Date.parse(`${dayKey}T00:00:00Z`) - JST_OFFSET_MS;
-}
-
-function previousDay(now) {
-  const today = jstDayKey(now);
-  const end = dayStartUtc(today);
-  const start = end - DAY_MS;
-  return { key: jstDayKey(start), start, end };
-}
-
-function weeklyRange(dayKey) {
-  const date = new Date(`${dayKey}T00:00:00Z`);
-  const offset = (date.getUTCDay() + 6) % 7;
-  date.setUTCDate(date.getUTCDate() - offset);
-  const startKey = date.toISOString().slice(0, 10);
-  date.setUTCDate(date.getUTCDate() + 7);
-  return { key: startKey, startKey, endKey: date.toISOString().slice(0, 10) };
-}
-
-function monthlyRange(dayKey) {
-  const [year, month] = dayKey.split('-').map(Number);
-  const start = new Date(Date.UTC(year, month - 1, 1));
-  const end = new Date(Date.UTC(year, month, 1));
-  return {
-    key: dayKey.slice(0, 7),
-    startKey: start.toISOString().slice(0, 10),
-    endKey: end.toISOString().slice(0, 10),
-  };
-}
 
 function finite(value) {
   if (value == null || value === '') return null;
@@ -242,7 +211,7 @@ export async function runDataMaintenance(db, now = Date.now()) {
     }
     runtimeState.set(db, { nextCheckAt: claimAt + HOUR_MS });
 
-    const period = previousDay(now);
+    const period = previousJstDay(now);
     let lastRollupKey = state?.last_rollup_key || null;
     const lastCleanupAt = Number(state?.last_cleanup_at || 0);
     let legacyBackfillId = Number(state?.legacy_backfill_id || 0);
@@ -252,8 +221,8 @@ export async function runDataMaintenance(db, now = Date.now()) {
     if (lastRollupKey !== period.key) {
       const dailyWritten = await rollupDaily(db, period, now);
       if (dailyWritten) {
-        await rollupFromDaily(db, 'sh_weekly_summary', weeklyRange(period.key), now);
-        await rollupFromDaily(db, 'sh_monthly_summary', monthlyRange(period.key), now);
+        await rollupFromDaily(db, 'sh_weekly_summary', utcWeeklyRange(period.key), now);
+        await rollupFromDaily(db, 'sh_monthly_summary', utcMonthlyRange(period.key), now);
         lastRollupKey = period.key;
         rolledUp = true;
       }
