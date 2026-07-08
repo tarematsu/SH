@@ -19,6 +19,25 @@ export function authorized(request, env) {
   return Boolean(expected) && auth === `${'Bear'}er ${expected}`;
 }
 
+export function ingestAccessError(request, env) {
+  if (!authorized(request, env)) return json({ ok: false, error: 'unauthorized' }, 401);
+  if (!env.DB) return json({ ok: false, error: 'DB binding missing' }, 500);
+  return null;
+}
+
+export async function readJsonBody(request, options = {}) {
+  try {
+    const source = options.clone ? request.clone() : request;
+    return { ok: true, body: await source.json() };
+  } catch (error) {
+    return { ok: false, error };
+  }
+}
+
+export function observedAtFrom(body, fallback = Date.now()) {
+  return num(body?.observed_at) ?? fallback;
+}
+
 export function num(value) {
   if (value === undefined || value === null || value === '') return null;
   const n = Number(value);

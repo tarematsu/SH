@@ -1,5 +1,13 @@
 import { claimWrite, payloadHash, sourceIdentity } from '../lib/ingest-claim.js';
-import { json, authorized, num, text, rawJson } from '../lib/api-utils.js';
+import {
+  ingestAccessError,
+  json,
+  observedAtFrom,
+  rawJson,
+  readJsonBody,
+  text,
+  num,
+} from '../lib/api-utils.js';
 import { prepared, runPreparedD1Batches } from '../lib/d1-batch.js';
 
 export const D1_LEADERBOARD_BATCH_VARIABLE_LIMIT = 90;
@@ -26,21 +34,16 @@ function staleRankingCleanupStatement(db, rankingDate, rankingType, hash) {
 }
 
 export async function onRequestPost({ request, env }) {
-  if (!authorized(request, env)) {
-    return json({ ok: false, error: 'unauthorized' }, 401);
-  }
-  if (!env.DB) {
-    return json({ ok: false, error: 'DB binding missing' }, 500);
-  }
+  const accessError = ingestAccessError(request, env);
+  if (accessError) return accessError;
 
-  let body;
-  try {
-    body = await request.json();
-  } catch {
+  const parsed = await readJsonBody(request);
+  if (!parsed.ok) {
     return json({ ok: false, error: 'invalid JSON' }, 400);
   }
+  const body = parsed.body;
 
-  const observedAt = num(body?.observed_at) ?? Date.now();
+  const observedAt = observedAtFrom(body);
   const rankingDate = text(body?.ranking_date);
   const rankingType = text(body?.ranking_type) || '週間チャンネル順位';
   const source = text(body?.source) || 'stationhead_official';
