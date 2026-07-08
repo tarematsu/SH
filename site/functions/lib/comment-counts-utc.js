@@ -2,6 +2,7 @@ import { num } from './api-utils.js';
 
 const MINUTE_MS = 60_000;
 const VELOCITY_WINDOW_MS = 2 * MINUTE_MS;
+export const D1_COMMENT_BATCH_VARIABLE_LIMIT = 90;
 const runtimeCursors = new WeakMap();
 
 export const COMMENT_VELOCITY_UPDATE_SQL = `UPDATE sh_channel_snapshots
@@ -20,6 +21,52 @@ AND COALESCE(comment_velocity,-1)<>COALESCE((
   FROM sh_comment_minute_counts
   WHERE station_id=? AND bucket_start>=? AND bucket_start<=?
 ),0)`;
+
+function prepared(statement, bindCount) {
+  return { statement, bindCount };
+}
+
+function unwrapStatement(entry) {
+  return entry?.statement || entry;
+}
+
+function statementBindCount(entry) {
+  if (Number.isFinite(entry?.bindCount)) return entry.bindCount;
+  if (Array.isArray(entry?.params)) return entry.params.length;
+  if (Array.isArray(entry?.statement?.params)) return entry.statement.params.length;
+  return D1_COMMENT_BATCH_VARIABLE_LIMIT;
+}
+
+function splitD1Batches(statements) {
+  const groups = [];
+  let current = [];
+  let bindCount = 0;
+  for (const statement of Array.isArray(statements) ? statements : []) {
+    const nextBindCount = statementBindCount(statement);
+    if (current.length > 0 && bindCount + nextBindCount > D1_COMMENT_BATCH_VARIABLE_LIMIT) {
+      groups.push(current);
+      current = [];
+      bindCount = 0;
+    }
+    current.push(statement);
+    bindCount += nextBindCount;
+  }
+  if (current.length) groups.push(current);
+  return groups;
+}
+
+async function runPreparedBatches(db, statements) {
+  const results = [];
+  for (const group of splitD1Batches(statements)) {
+    if (!group.length) continue;
+    const unwrapped = group.map(unwrapStatement);
+    const batchResults = typeof db.batch === 'function'
+      ? await db.batch(unwrapped)
+      : await Promise.all(unwrapped.map((statement) => statement.run()));
+    results.push(...batchResults);
+  }
+  return results;
+}
 
 function timestampOf(comment, fallback) {
   const milliseconds = num(comment?.chat_time_ms);
@@ -54,9 +101,9 @@ function cursorMap(db) {
   return cursors;
 }
 
-function commentVelocityStatement(db, stationId, observedAt) {
+function commentVelocityPreparedStatement(db, stationId, observedAt) {
   const windowStart = observedAt - VELOCITY_WINDOW_MS;
-  return db.prepare(COMMENT_VELOCITY_UPDATE_SQL).bind(
+  return prepared(db.prepare(COMMENT_VELOCITY_UPDATE_SQL).bind(
     stationId,
     windowStart,
     observedAt,
@@ -65,11 +112,11 @@ function commentVelocityStatement(db, stationId, observedAt) {
     stationId,
     windowStart,
     observedAt,
-  );
+  ), 8);
 }
 
 async function refreshCommentVelocity(db, stationId, observedAt) {
-  const result = await commentVelocityStatement(db, stationId, observedAt).run();
+  const result = await unwrapStatement(commentVelocityPreparedStatement(db, stationId, observedAt)).run();
   return Number(result?.meta?.changes || 0) > 0;
 }
 
@@ -162,29 +209,29 @@ export async function saveCommentCounts(db, observedAt, data) {
 
   const statements = [];
   for (const [minute, count] of minutes) {
-    statements.push(db.prepare(`INSERT INTO sh_comment_minute_counts(
+    statements.push(prepared(db.prepare(`INSERT INTO sh_comment_minute_counts(
         station_id,bucket_start,comment_count
       ) VALUES(?,?,?) ON CONFLICT(station_id,bucket_start) DO UPDATE SET
         comment_count=sh_comment_minute_counts.comment_count+excluded.comment_count`)
-      .bind(stationId, minute, count));
+      .bind(stationId, minute, count), 3));
   }
   for (const [day, count] of days) {
-    statements.push(db.prepare(`INSERT INTO sh_comment_daily_counts(
+    statements.push(prepared(db.prepare(`INSERT INTO sh_comment_daily_counts(
         station_id,day_key,comment_count
       ) VALUES(?,?,?) ON CONFLICT(station_id,day_key) DO UPDATE SET
         comment_count=sh_comment_daily_counts.comment_count+excluded.comment_count`)
-      .bind(stationId, day, count));
+      .bind(stationId, day, count), 3));
   }
   const newestAcceptedId = fresh.at(-1)[0];
-  statements.push(db.prepare(`INSERT INTO sh_comment_state(
+  statements.push(prepared(db.prepare(`INSERT INTO sh_comment_state(
       station_id,last_comment_id,total_count,last_observed_at
     ) VALUES(?,?,?,?) ON CONFLICT(station_id) DO UPDATE SET
       last_comment_id=MAX(sh_comment_state.last_comment_id,excluded.last_comment_id),
       total_count=MAX(sh_comment_state.total_count,excluded.total_count),
       last_observed_at=MAX(sh_comment_state.last_observed_at,excluded.last_observed_at)`)
-    .bind(stationId, newestAcceptedId, total, lastObservedAt));
-  statements.push(commentVelocityStatement(db, stationId, observedAt));
-  const results = await db.batch(statements);
+    .bind(stationId, newestAcceptedId, total, lastObservedAt), 4));
+  statements.push(commentVelocityPreparedStatement(db, stationId, observedAt));
+  const results = await runPreparedBatches(db, statements);
   const velocityResult = results.at(-1);
   const velocityUpdated = Number(velocityResult?.meta?.changes || 0) > 0;
   cursors.set(stationId, newestAcceptedId);
