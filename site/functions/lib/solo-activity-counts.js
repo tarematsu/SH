@@ -1,7 +1,7 @@
 import { num } from './api-utils.js';
 import { prepared, runPreparedD1Batches } from './d1-batch.js';
+import { jstDayKey, minuteBucket } from './time-buckets.js';
 
-const MINUTE_MS = 60_000;
 export const D1_SOLO_ACTIVITY_BATCH_VARIABLE_LIMIT = 90;
 
 async function runPreparedBatches(db, statements) {
@@ -15,10 +15,6 @@ function eventTime(item, fallback) {
   if (milliseconds != null) return milliseconds;
   const seconds = num(item?.chat_time);
   return seconds != null ? seconds * 1000 : fallback;
-}
-
-function dayKey(timestamp) {
-  return new Date(timestamp + 9 * 3_600_000).toISOString().slice(0, 10);
 }
 
 async function currentVelocity(db, sessionId, observedAt, lastObservedAt) {
@@ -64,9 +60,9 @@ export async function saveSoloActivityCounts(db, observedAt, data) {
     const days = new Map();
     for (const [, item] of fresh) {
       const timestamp = eventTime(item, observedAt);
-      const minute = Math.floor(timestamp / MINUTE_MS) * MINUTE_MS;
+      const minute = minuteBucket(timestamp);
       minutes.set(minute, (minutes.get(minute) || 0) + 1);
-      const day = dayKey(timestamp);
+      const day = jstDayKey(timestamp);
       days.set(day, (days.get(day) || 0) + 1);
       lastObservedAt = Math.max(lastObservedAt, timestamp);
     }
