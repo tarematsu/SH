@@ -26,10 +26,15 @@ export {
   saveCollectorState,
 } from './collector-state.js';
 
+function shouldLogScheduledResult(result, env = {}) {
+  if (String(env.COLLECTOR_SUCCESS_LOGS || '').toLowerCase() === 'true') return true;
+  return !result?.ok || Boolean(result?.comments_degraded);
+}
+
 export default {
   async scheduled(controller, env) {
     const result = await runCollection(env, `cron:${controller.cron}`);
-    console.log(JSON.stringify(result));
+    if (shouldLogScheduledResult(result, env)) console.log(JSON.stringify(result));
   },
 
   async fetch(request, env) {
