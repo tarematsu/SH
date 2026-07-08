@@ -7,6 +7,7 @@ import {
   queueStructuralPayload,
 } from '../functions/lib/d1-lean-ingest.js';
 import {
+  D1_BATCH_VARIABLE_LIMIT,
   hasCompleteLikeSnapshot,
   queueLikesPayload,
   saveLeanQueue,
@@ -93,4 +94,46 @@ test('structural-only queue changes do not reconcile current likes', async () =>
   assert.equal(result.likesChanged, false);
   assert.equal(batchedSql.some((sql) => sql.includes('DELETE FROM sh_queue_items')), true);
   assert.equal(batchedSql.some((sql) => sql.includes('DELETE FROM sh_track_like_current')), false);
+});
+
+test('queue writes keep D1 batch bind counts under the configured limit', async () => {
+  const data = {
+    station_id: 1,
+    queue_id: 2,
+    start_time: 3,
+    is_paused: false,
+    tracks: Array.from({ length: 20 }, (_, index) => ({
+      position: index,
+      queue_track_id: 1000 + index,
+      stationhead_track_id: 2000 + index,
+      spotify_id: `spotify-${index}`,
+      isrc: `ISRC${String(index).padStart(8, '0')}`,
+      duration_ms: 180000,
+      bite_count: index,
+    })),
+  };
+  const db = new FakeD1Database([
+    {
+      kind: 'first',
+      matcher: 'FROM sh_queue_current',
+      result: { structural_hash: 'previous-structure', likes_hash: 'previous-likes', start_time: 3 },
+    },
+  ]);
+
+  const result = await saveLeanQueue(db, 1_700_000_000_000, {
+    collector_id: 'cloudflare-worker',
+    data,
+  });
+
+  assert.equal(result.structureChanged, true);
+  assert.equal(result.likesChanged, true);
+  assert.ok(db.batches.length > 1);
+
+  for (const batch of db.batches) {
+    const bindCount = batch.reduce((sum, statement) => sum + statement.params.length, 0);
+    assert.ok(
+      bindCount <= D1_BATCH_VARIABLE_LIMIT,
+      `batch bind count ${bindCount} exceeds ${D1_BATCH_VARIABLE_LIMIT}`,
+    );
+  }
 });
