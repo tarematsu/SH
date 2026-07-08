@@ -10,6 +10,7 @@ import { claimWrite, payloadHash, sourceIdentity } from './ingest-claim.js';
 const QUERY_CHUNK = 80;
 export const D1_BATCH_STATEMENT_LIMIT = 40;
 export const D1_BATCH_VARIABLE_LIMIT = 800;
+export const D1_SINGLE_STATEMENT_VARIABLE_LIMIT = 90;
 
 export { saveLeanSnapshot };
 
@@ -19,6 +20,10 @@ function chunks(values, size) {
     result.push(values.slice(index, index + size));
   }
   return result;
+}
+
+function canBindInSingleStatement(baseBindCount, values) {
+  return baseBindCount + (Array.isArray(values) ? values.length : 0) <= D1_SINGLE_STATEMENT_VARIABLE_LIMIT;
 }
 
 function statementBindCount(statement) {
@@ -195,25 +200,27 @@ function queueCurrentStatement(db, values) {
     .bind(...values);
 }
 
-function deleteMissingQueueItemsStatement(db, stationId, startTime, positions) {
+function deleteMissingQueueItemsStatements(db, stationId, startTime, positions) {
   if (!positions.length) {
-    return db.prepare(`DELETE FROM sh_queue_items
-      WHERE station_id IS ? AND start_time IS ?`).bind(stationId, startTime);
+    return [db.prepare(`DELETE FROM sh_queue_items
+      WHERE station_id IS ? AND start_time IS ?`).bind(stationId, startTime)];
   }
+  if (!canBindInSingleStatement(2, positions)) return [];
   const placeholders = positions.map(() => '?').join(',');
-  return db.prepare(`DELETE FROM sh_queue_items
+  return [db.prepare(`DELETE FROM sh_queue_items
     WHERE station_id IS ? AND start_time IS ? AND position NOT IN (${placeholders})`)
-    .bind(stationId, startTime, ...positions);
+    .bind(stationId, startTime, ...positions)];
 }
 
-function deleteMissingCurrentLikesStatement(db, stationId, trackKeys) {
+function deleteMissingCurrentLikesStatements(db, stationId, trackKeys) {
   if (!trackKeys.length) {
-    return db.prepare('DELETE FROM sh_track_like_current WHERE station_id IS ?').bind(stationId);
+    return [db.prepare('DELETE FROM sh_track_like_current WHERE station_id IS ?').bind(stationId)];
   }
+  if (!canBindInSingleStatement(1, trackKeys)) return [];
   const placeholders = trackKeys.map(() => '?').join(',');
-  return db.prepare(`DELETE FROM sh_track_like_current
+  return [db.prepare(`DELETE FROM sh_track_like_current
     WHERE station_id IS ? AND track_key NOT IN (${placeholders})`)
-    .bind(stationId, ...trackKeys);
+    .bind(stationId, ...trackKeys)];
 }
 
 export async function saveLeanQueue(db, observedAt, body) {
@@ -287,10 +294,10 @@ export async function saveLeanQueue(db, observedAt, body) {
 
   const statements = [];
   if (structureChanged) {
-    statements.push(deleteMissingQueueItemsStatement(db, stationId, startTime, positions));
+    statements.push(...deleteMissingQueueItemsStatements(db, stationId, startTime, positions));
   }
   if (likesChanged) {
-    statements.push(deleteMissingCurrentLikesStatement(db, stationId, trackKeys));
+    statements.push(...deleteMissingCurrentLikesStatements(db, stationId, trackKeys));
   }
   statements.push(
     ...queueItemWriteStatements(db, changedTracks, observedAt, stationId, queueId, startTime),
