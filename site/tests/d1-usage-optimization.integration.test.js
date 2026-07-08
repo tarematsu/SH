@@ -96,13 +96,13 @@ test('structural-only queue changes do not reconcile current likes', async () =>
   assert.equal(batchedSql.some((sql) => sql.includes('DELETE FROM sh_track_like_current')), false);
 });
 
-test('queue writes keep D1 batch bind counts under the configured limit', async () => {
+test('queue reads and writes keep D1 batch bind counts under the configured limit', async () => {
   const data = {
     station_id: 1,
     queue_id: 2,
     start_time: 3,
     is_paused: false,
-    tracks: Array.from({ length: 20 }, (_, index) => ({
+    tracks: Array.from({ length: 160 }, (_, index) => ({
       position: index,
       queue_track_id: 1000 + index,
       stationhead_track_id: 2000 + index,

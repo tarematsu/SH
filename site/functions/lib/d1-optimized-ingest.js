@@ -62,10 +62,21 @@ export function splitD1Batches(statements) {
   return groups;
 }
 
-async function runBatches(db, statements) {
+async function runPreparedBatches(db, statements, fallbackMethod = 'run') {
+  const results = [];
   for (const group of splitD1Batches(statements)) {
-    if (group.length) await db.batch(group.map(unwrapStatement));
+    if (!group.length) continue;
+    const unwrapped = group.map(unwrapStatement);
+    const batchResults = typeof db.batch === 'function'
+      ? await db.batch(unwrapped)
+      : await Promise.all(unwrapped.map((statement) => statement[fallbackMethod]()));
+    results.push(...batchResults);
   }
+  return results;
+}
+
+async function runBatches(db, statements) {
+  await runPreparedBatches(db, statements, 'run');
 }
 
 function observationTrackKey(track) {
@@ -136,9 +147,7 @@ async function loadComparisonState(db, stationId, startTime, positions, trackKey
     : [];
   const statements = itemStatements.concat(likeStatements);
   if (!statements.length) return { existingRows: [], latestRows: [] };
-  const results = typeof db.batch === 'function'
-    ? await db.batch(statements.map(unwrapStatement))
-    : await Promise.all(statements.map((statement) => unwrapStatement(statement).all()));
+  const results = await runPreparedBatches(db, statements, 'all');
   return {
     existingRows: results.slice(0, itemStatements.length).flatMap((result) => result?.results || []),
     latestRows: results.slice(itemStatements.length).flatMap((result) => result?.results || []),
