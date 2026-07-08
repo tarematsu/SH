@@ -8,13 +8,16 @@ import {
   writeFileSync,
 } from 'node:fs';
 import path from 'node:path';
-import { spawnSync } from 'node:child_process';
-import { fileURLToPath } from 'node:url';
+import {
+  assertWranglerInstalled,
+  cloudflareBuildContext,
+  cloudflareCredentials,
+  scriptPaths,
+  skipNonProductionD1Step,
+  spawnWrangler,
+  wranglerEnvironment,
+} from './lib/d1-script-common.mjs';
 
-const productionBranch = 'main';
-const currentBranch = process.env.CF_PAGES_BRANCH || process.env.WORKERS_CI_BRANCH || '';
-const cloudflareBuild = process.env.CF_PAGES === '1' || process.env.WORKERS_CI === '1';
-const force = String(process.env.D1_MIGRATION_FORCE || '').toLowerCase() === 'true';
 const migrationName = String(process.env.D1_MIGRATION_NAME || '').trim();
 const target = process.env.D1_MIGRATION_TARGET === 'local' ? 'local' : 'remote';
 const grandfatheredDuplicateGroups = new Set([
@@ -23,25 +26,20 @@ const grandfatheredDuplicateGroups = new Set([
   '019_collector_failure_diagnostics.sql|019_comment_counts.sql',
 ]);
 
-if (!force && currentBranch !== productionBranch) {
-  const source = process.env.CF_PAGES_BRANCH ? 'CF_PAGES_BRANCH'
-    : process.env.WORKERS_CI_BRANCH ? 'WORKERS_CI_BRANCH' : 'branch variable';
-  if (cloudflareBuild && !currentBranch) {
-    console.error('D1 migration failed: Cloudflare build branch variable is missing.');
-    process.exit(1);
-  }
-  console.log(`D1 migrations skipped: ${source}=${currentBranch || '(not set)'}`);
-  process.exit(0);
-}
+const buildContext = cloudflareBuildContext();
+skipNonProductionD1Step({
+  context: buildContext,
+  failurePrefix: 'D1 migration failed',
+  skippedPrefix: 'D1 migrations skipped',
+});
 
-const scriptDirectory = path.dirname(fileURLToPath(import.meta.url));
-const siteDirectory = path.resolve(scriptDirectory, '..');
-const repositoryRoot = path.resolve(siteDirectory, '..');
+const {
+  siteDirectory,
+  repositoryRoot,
+  wranglerConfigPath,
+  wranglerExecutable,
+} = scriptPaths(import.meta.url);
 const migrationsDirectory = path.join(repositoryRoot, 'database', 'migrations');
-const wranglerConfigPath = path.join(siteDirectory, 'wrangler.jsonc');
-const wranglerExecutable = process.platform === 'win32'
-  ? path.join(siteDirectory, 'node_modules', '.bin', 'wrangler.cmd')
-  : path.join(siteDirectory, 'node_modules', '.bin', 'wrangler');
 
 function assertSafeMigrationNumbering() {
   const files = readdirSync(migrationsDirectory)
@@ -66,19 +64,49 @@ function assertSafeMigrationNumbering() {
   }
 }
 
-if (!existsSync(wranglerExecutable)) {
-  console.error('D1 migration failed: Wrangler is not installed in site/node_modules.');
-  process.exit(1);
+function createSingleMigrationConfig(configPath, singleMigrationName) {
+  if (!/^\d+_[A-Za-z0-9._-]+\.sql$/.test(singleMigrationName) || path.basename(singleMigrationName) !== singleMigrationName) {
+    throw new Error(`invalid D1_MIGRATION_NAME=${singleMigrationName}`);
+  }
+  const sourceMigration = path.join(migrationsDirectory, singleMigrationName);
+  if (!existsSync(sourceMigration)) throw new Error(`migration file not found: ${sourceMigration}`);
+
+  const temporaryName = `.single-d1-migration-${process.pid}-${Date.now()}`;
+  const temporaryDirectory = path.join(siteDirectory, temporaryName);
+  const temporaryConfigPath = path.join(siteDirectory, `${temporaryName}.jsonc`);
+  mkdirSync(temporaryDirectory, { recursive: false });
+  copyFileSync(sourceMigration, path.join(temporaryDirectory, singleMigrationName));
+
+  const baseConfig = JSON.parse(readFileSync(wranglerConfigPath, 'utf8'));
+  const temporaryConfig = {
+    ...baseConfig,
+    d1_databases: baseConfig.d1_databases.map((entry) => (
+      entry.database_name === 'stationhead-monitor'
+        ? { ...entry, migrations_dir: temporaryName }
+        : entry
+    )),
+  };
+  writeFileSync(temporaryConfigPath, `${JSON.stringify(temporaryConfig, null, 2)}\n`, 'utf8');
+  return { configPath: temporaryConfigPath, temporaryConfigPath, temporaryDirectory };
 }
 
-const apiToken = process.env.CLOUDFLARE_API_TOKEN
-  || process.env.CLOUDFLARE_BUILDS_API_TOKEN
-  || '';
-const accountId = process.env.CLOUDFLARE_ACCOUNT_ID
-  || process.env.CF_ACCOUNT_ID
-  || '';
+function migrationArgs(configPath) {
+  const args = [
+    'd1', 'migrations', 'apply', 'stationhead-monitor',
+    target === 'local' ? '--local' : '--remote',
+    '--config', configPath,
+  ];
+  if (target === 'local' && process.env.D1_MIGRATION_PERSIST_TO) {
+    args.push('--persist-to', path.resolve(process.env.D1_MIGRATION_PERSIST_TO));
+  }
+  return args;
+}
+
+assertWranglerInstalled(wranglerExecutable, 'D1 migration failed: Wrangler is not installed in site/node_modules.');
+
+const { apiToken, accountId } = cloudflareCredentials();
 if (target === 'remote' && !apiToken) {
-  if (cloudflareBuild && !force) {
+  if (buildContext.cloudflareBuild && !buildContext.force) {
     console.warn('D1 migrations skipped: this Cloudflare build has no API token; runtime schema bootstrap and the manual migration workflow remain available.');
     process.exit(0);
   }
@@ -96,54 +124,22 @@ let temporaryConfigPath = null;
 try {
   assertSafeMigrationNumbering();
   if (migrationName) {
-    if (!/^\d+_[A-Za-z0-9._-]+\.sql$/.test(migrationName) || path.basename(migrationName) !== migrationName) {
-      throw new Error(`invalid D1_MIGRATION_NAME=${migrationName}`);
-    }
-    const sourceMigration = path.join(migrationsDirectory, migrationName);
-    if (!existsSync(sourceMigration)) throw new Error(`migration file not found: ${sourceMigration}`);
-
-    const temporaryName = `.single-d1-migration-${process.pid}-${Date.now()}`;
-    temporaryDirectory = path.join(siteDirectory, temporaryName);
-    temporaryConfigPath = path.join(siteDirectory, `${temporaryName}.jsonc`);
-    mkdirSync(temporaryDirectory, { recursive: false });
-    copyFileSync(sourceMigration, path.join(temporaryDirectory, migrationName));
-
-    const baseConfig = JSON.parse(readFileSync(wranglerConfigPath, 'utf8'));
-    const temporaryConfig = {
-      ...baseConfig,
-      d1_databases: baseConfig.d1_databases.map((entry) => (
-        entry.database_name === 'stationhead-monitor'
-          ? { ...entry, migrations_dir: temporaryName }
-          : entry
-      )),
-    };
-    writeFileSync(temporaryConfigPath, `${JSON.stringify(temporaryConfig, null, 2)}\n`, 'utf8');
-    configPath = temporaryConfigPath;
+    const temporary = createSingleMigrationConfig(configPath, migrationName);
+    configPath = temporary.configPath;
+    temporaryConfigPath = temporary.temporaryConfigPath;
+    temporaryDirectory = temporary.temporaryDirectory;
     console.log(`Applying exactly one D1 migration: ${migrationName} (${target}).`);
   } else {
     console.log(`Applying every pending D1 migration (${target}).`);
   }
 
-  const args = [
-    'd1', 'migrations', 'apply', 'stationhead-monitor',
-    target === 'local' ? '--local' : '--remote',
-    '--config', configPath,
-  ];
-  if (target === 'local' && process.env.D1_MIGRATION_PERSIST_TO) {
-    args.push('--persist-to', path.resolve(process.env.D1_MIGRATION_PERSIST_TO));
-  }
-
-  const result = spawnSync(wranglerExecutable, args, {
+  const result = spawnWrangler({
+    executable: wranglerExecutable,
+    args: migrationArgs(configPath),
     cwd: siteDirectory,
     stdio: 'inherit',
-    env: {
-      ...process.env,
-      CI: 'true',
-      ...(apiToken ? { CLOUDFLARE_API_TOKEN: apiToken } : {}),
-      ...(accountId ? { CLOUDFLARE_ACCOUNT_ID: accountId } : {}),
-    },
+    env: wranglerEnvironment({ apiToken, accountId }),
   });
-  if (result.error) throw result.error;
   process.exitCode = result.status ?? 1;
 } catch (error) {
   console.error(`D1 migration failed: ${error?.message || error}`);
