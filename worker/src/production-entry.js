@@ -54,12 +54,17 @@ export async function runProductionScheduled(controller, env, ctx, dependencies 
   return primaryResult;
 }
 
+function isFaviconRequest(request) {
+  return request.method === 'GET' && new URL(request.url).pathname === '/favicon.ico';
+}
+
 export default {
   async scheduled(controller, env, ctx) {
     return runProductionScheduled(controller, env, ctx);
   },
 
   async fetch(request, env, ctx) {
+    if (isFaviconRequest(request)) return new Response(null, { status: 204 });
     return resilientApp.fetch(request, env, ctx);
   },
 };
