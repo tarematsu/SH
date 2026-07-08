@@ -1,4 +1,5 @@
 import { bool, num, rawJson, stripAppleMusicFields, text } from './api-utils.js';
+import { prepared, runPreparedD1Batches } from './d1-batch.js';
 import {
   planLikeObservations,
   queueItemsToWriteLean,
@@ -13,6 +14,7 @@ export const D1_BATCH_VARIABLE_LIMIT = 90;
 export const D1_SINGLE_STATEMENT_VARIABLE_LIMIT = 90;
 
 export { saveLeanSnapshot };
+export { splitD1Batches } from './d1-batch.js';
 
 function chunks(values, size) {
   const result = [];
@@ -22,57 +24,16 @@ function chunks(values, size) {
   return result;
 }
 
-function prepared(statement, bindCount) {
-  return { statement, bindCount };
-}
-
-function unwrapStatement(entry) {
-  return entry?.statement || entry;
-}
-
 function canBindInSingleStatement(baseBindCount, values) {
   return baseBindCount + (Array.isArray(values) ? values.length : 0) <= D1_SINGLE_STATEMENT_VARIABLE_LIMIT;
 }
 
-function statementBindCount(entry) {
-  if (Number.isFinite(entry?.bindCount)) return entry.bindCount;
-  if (Array.isArray(entry?.params)) return entry.params.length;
-  if (Array.isArray(entry?.statement?.params)) return entry.statement.params.length;
-  return D1_SINGLE_STATEMENT_VARIABLE_LIMIT;
-}
-
-export function splitD1Batches(statements) {
-  const groups = [];
-  let current = [];
-  let bindCount = 0;
-  for (const statement of Array.isArray(statements) ? statements : []) {
-    const nextBindCount = statementBindCount(statement);
-    if (current.length > 0 && (
-      current.length >= D1_BATCH_STATEMENT_LIMIT
-      || bindCount + nextBindCount > D1_BATCH_VARIABLE_LIMIT
-    )) {
-      groups.push(current);
-      current = [];
-      bindCount = 0;
-    }
-    current.push(statement);
-    bindCount += nextBindCount;
-  }
-  if (current.length) groups.push(current);
-  return groups;
-}
-
 async function runPreparedBatches(db, statements, fallbackMethod = 'run') {
-  const results = [];
-  for (const group of splitD1Batches(statements)) {
-    if (!group.length) continue;
-    const unwrapped = group.map(unwrapStatement);
-    const batchResults = typeof db.batch === 'function'
-      ? await db.batch(unwrapped)
-      : await Promise.all(unwrapped.map((statement) => statement[fallbackMethod]()));
-    results.push(...batchResults);
-  }
-  return results;
+  return runPreparedD1Batches(db, statements, {
+    variableLimit: D1_BATCH_VARIABLE_LIMIT,
+    statementLimit: D1_BATCH_STATEMENT_LIMIT,
+    fallbackMethod,
+  });
 }
 
 async function runBatches(db, statements) {
