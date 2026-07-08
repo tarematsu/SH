@@ -51,7 +51,7 @@ test('leaderboard ingest rejects unauthorized, malformed and empty requests', as
   assert.equal(db.calls.length, 0);
 });
 
-test('leaderboard ingest normalizes, sorts and atomically replaces one ranking day', async () => {
+test('leaderboard ingest normalizes, sorts and safely replaces one ranking day', async () => {
   const db = new FakeD1Database();
   const response = await leaderboardPost({
     request: post('https://skrzk.test/api/leaderboard-ingest', {
@@ -75,13 +75,20 @@ test('leaderboard ingest normalizes, sorts and atomically replaces one ranking d
   assert.equal(body.rows, 2);
   assert.equal(db.batches.length, 1);
   const batch = db.batches[0];
-  assert.match(batch[0].sql, /DELETE FROM sh_channel_rankings/);
-  assert.match(batch[1].sql, /INSERT INTO sh_channel_rankings/);
-  assert.equal(batch[1].params[3], 1);
-  assert.equal(batch[1].params[4], 'First');
-  assert.equal(batch[2].params[3], 2);
-  assert.equal(batch[2].params[4], 'Second');
-  assert.match(batch.at(-1).sql, /INSERT INTO sh_leaderboard_fetches/);
+  const deleteIndex = batch.findIndex((statement) => /DELETE FROM sh_channel_rankings/i.test(statement.sql));
+  const insertIndexes = batch
+    .map((statement, index) => (/INSERT INTO sh_channel_rankings/i.test(statement.sql) ? index : -1))
+    .filter((index) => index >= 0);
+  const fetchIndex = batch.findIndex((statement) => /INSERT INTO sh_leaderboard_fetches/i.test(statement.sql));
+
+  assert.deepEqual(insertIndexes, [0, 1]);
+  assert.equal(fetchIndex, 2);
+  assert.equal(deleteIndex, batch.length - 1);
+  assert.equal(batch[insertIndexes[0]].params[3], 1);
+  assert.equal(batch[insertIndexes[0]].params[4], 'First');
+  assert.equal(batch[insertIndexes[1]].params[3], 2);
+  assert.equal(batch[insertIndexes[1]].params[4], 'Second');
+  assert.match(batch[deleteIndex].sql, /json_valid\(quality_flags\)/);
 });
 
 test('queue ingest claims, snapshots and writes changed tracks in one request flow', async () => {
