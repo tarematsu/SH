@@ -81,3 +81,43 @@ test('weekly leaderboard replacement upserts before stale cleanup', async () => 
   assert.match(orderedSql[firstRankingDelete], /json_valid\(quality_flags\)/);
   assert.match(orderedSql[firstRankingDelete], /json_extract\(quality_flags, '\$\.source_hash'\)/);
 });
+
+test('duplicate weekly leaderboard claims still replay idempotent writes', async () => {
+  const db = new FakeD1Database([
+    {
+      kind: 'first',
+      matcher: /FROM sh_ingest_claims WHERE dedupe_key=\?/,
+      result: {
+        collector_id: 'test-source',
+        collector_kind: 'local',
+        source_priority: 70,
+        observed_at: 1_751_500_300_000,
+        payload_hash: 'repeat-hash',
+        first_seen_at: 1_751_500_300_000,
+      },
+    },
+  ]);
+  const response = await onRequestPost({
+    request: post({
+      ranking_date: '2026-07-08',
+      ranking_type: '週間チャンネル順位',
+      source: 'test-source',
+      source_hash: 'repeat-hash',
+      observed_at: 1_751_500_300_000,
+      accounts: [
+        { rank: 1, handle: 'first', raw: { rank: 1, handle: 'first' } },
+      ],
+    }),
+    env: env(db),
+  });
+  const body = await responseJson(response);
+  const writtenSql = db.batches.flat().map((statement) => statement.sql).join('\n');
+
+  assert.equal(response.status, 200);
+  assert.equal(body.ok, true);
+  assert.equal(body.accepted, false);
+  assert.equal(body.duplicate, true);
+  assert.equal(body.saved, true);
+  assert.match(writtenSql, /INSERT INTO sh_channel_rankings/);
+  assert.match(writtenSql, /INSERT INTO sh_leaderboard_fetches/);
+});
