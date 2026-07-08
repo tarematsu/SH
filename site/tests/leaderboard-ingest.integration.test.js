@@ -78,5 +78,6 @@ test('weekly leaderboard replacement upserts before stale cleanup', async () => 
   assert.equal(body.ok, true);
   assert.ok(firstRankingInsert >= 0);
   assert.ok(firstRankingDelete > firstRankingInsert);
+  assert.match(orderedSql[firstRankingDelete], /json_valid\(quality_flags\)/);
   assert.match(orderedSql[firstRankingDelete], /json_extract\(quality_flags, '\$\.source_hash'\)/);
 });
