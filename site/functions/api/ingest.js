@@ -29,6 +29,57 @@ function spotifyOnlyBody(body) {
     : body;
 }
 
+async function handleComments({ env, body, observedAt, data }) {
+  const result = await saveCommentCounts(env.DB, observedAt, data);
+  return json({ ok: true, type: body.type, ...result });
+}
+
+async function maybeRunDataMaintenance(context, body, env) {
+  const shouldMaintain = body?.collector_id === 'cloudflare-worker'
+    && typeof env.DB.exec === 'function';
+  if (!shouldMaintain) return;
+  if (typeof context.waitUntil === 'function') {
+    context.waitUntil(runDataMaintenanceSafely(env.DB));
+    return;
+  }
+  await runDataMaintenanceSafely(env.DB);
+}
+
+async function handleSnapshot({ context, env, body, observedAt, data }) {
+  const result = await saveLeanSnapshot(env.DB, observedAt, data);
+  await maybeRunDataMaintenance(context, body, env);
+  return json({ ok: true, type: body.type, accepted: true, ...result });
+}
+
+async function handleQueue({ env, body, observedAt }) {
+  const result = await saveLeanQueue(env.DB, observedAt, body);
+  return json({
+    ok: true,
+    type: body.type,
+    accepted: result.claim.accepted,
+    duplicate: result.claim.duplicate || false,
+    claim_reason: result.claim.reason || null,
+    queue_inspected: result.inspected,
+    queue_items_written: result.itemsWritten,
+    like_observations_written: result.observationsWritten,
+  });
+}
+
+async function handleCollectorHeartbeat({ env, body, observedAt, data }) {
+  const result = await saveLeanHeartbeat(env.DB, observedAt, {
+    ...data,
+    collector_id: data?.collector_id || body?.collector_id,
+  });
+  return json({ ok: true, type: body.type, accepted: result.accepted });
+}
+
+const INGEST_HANDLERS = {
+  comments: handleComments,
+  snapshot: handleSnapshot,
+  queue: handleQueue,
+  collector_heartbeat: handleCollectorHeartbeat,
+};
+
 export async function onRequestPost(context) {
   const { request, env } = context;
   if (!authorized(request, env) || !env.DB) return corePost(context);
@@ -36,46 +87,13 @@ export async function onRequestPost(context) {
   const parsed = await readJsonBody(request, { clone: true });
   if (!parsed.ok) return corePost(context);
   const body = spotifyOnlyBody(parsed.body);
+  const handler = INGEST_HANDLERS[body?.type];
+  if (!handler) return corePost(context);
 
   const observedAt = observedAtFrom(body);
   const data = body?.data ?? {};
   try {
-    if (body?.type === 'comments') {
-      const result = await saveCommentCounts(env.DB, observedAt, data);
-      return json({ ok: true, type: body.type, ...result });
-    }
-    if (body?.type === 'snapshot') {
-      const result = await saveLeanSnapshot(env.DB, observedAt, data);
-      const shouldMaintain = body?.collector_id === 'cloudflare-worker'
-        && typeof env.DB.exec === 'function';
-      if (shouldMaintain && typeof context.waitUntil === 'function') {
-        context.waitUntil(runDataMaintenanceSafely(env.DB));
-      } else if (shouldMaintain) {
-        await runDataMaintenanceSafely(env.DB);
-      }
-      return json({ ok: true, type: body.type, accepted: true, ...result });
-    }
-    if (body?.type === 'queue') {
-      const result = await saveLeanQueue(env.DB, observedAt, body);
-      return json({
-        ok: true,
-        type: body.type,
-        accepted: result.claim.accepted,
-        duplicate: result.claim.duplicate || false,
-        claim_reason: result.claim.reason || null,
-        queue_inspected: result.inspected,
-        queue_items_written: result.itemsWritten,
-        like_observations_written: result.observationsWritten,
-      });
-    }
-    if (body?.type === 'collector_heartbeat') {
-      const result = await saveLeanHeartbeat(env.DB, observedAt, {
-        ...data,
-        collector_id: data?.collector_id || body?.collector_id,
-      });
-      return json({ ok: true, type: body.type, accepted: result.accepted });
-    }
-    return corePost(context);
+    return await handler({ context, env, body, observedAt, data });
   } catch (error) {
     if (body?.type === 'snapshot' && isPendingStreamSchemaError(error)) {
       console.warn(JSON.stringify({
