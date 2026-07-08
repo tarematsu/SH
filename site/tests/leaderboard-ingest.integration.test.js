@@ -53,3 +53,30 @@ test('weekly leaderboard ingest splits D1 batches by bind count', async () => {
     );
   }
 });
+
+test('weekly leaderboard replacement upserts before stale cleanup', async () => {
+  const db = new FakeD1Database();
+  const response = await onRequestPost({
+    request: post({
+      ranking_date: '2026-07-08',
+      ranking_type: '週間チャンネル順位',
+      source: 'test-source',
+      observed_at: 1_751_500_300_000,
+      accounts: [
+        { rank: 1, handle: 'first', raw: { rank: 1, handle: 'first' } },
+        { rank: 2, handle: 'second', raw: { rank: 2, handle: 'second' } },
+      ],
+    }),
+    env: env(db),
+  });
+  const body = await responseJson(response);
+  const orderedSql = db.batches.flat().map((statement) => statement.sql);
+  const firstRankingDelete = orderedSql.findIndex((sql) => /DELETE FROM sh_channel_rankings/i.test(sql));
+  const firstRankingInsert = orderedSql.findIndex((sql) => /INSERT INTO sh_channel_rankings/i.test(sql));
+
+  assert.equal(response.status, 200);
+  assert.equal(body.ok, true);
+  assert.ok(firstRankingInsert >= 0);
+  assert.ok(firstRankingDelete > firstRankingInsert);
+  assert.match(orderedSql[firstRankingDelete], /json_extract\(quality_flags, '\$\.source_hash'\)/);
+});

@@ -52,6 +52,14 @@ function validDateKey(value) {
   return /^\d{4}-\d{2}-\d{2}$/.test(String(value || ''));
 }
 
+function staleRankingCleanupStatement(db, rankingDate, rankingType, hash) {
+  return prepared(db.prepare(`
+    DELETE FROM sh_channel_rankings
+    WHERE ranking_date = ? AND ranking_type = ?
+      AND COALESCE(json_extract(quality_flags, '$.source_hash'), '') <> ?
+  `).bind(rankingDate, rankingType, hash), 3);
+}
+
 export async function onRequestPost({ request, env }) {
   if (!authorized(request, env)) {
     return json({ ok: false, error: 'unauthorized' }, 401);
@@ -130,12 +138,7 @@ export async function onRequestPost({ request, env }) {
     });
   }
 
-  const statements = [
-    prepared(env.DB.prepare(`
-      DELETE FROM sh_channel_rankings
-      WHERE ranking_date = ? AND ranking_type = ?
-    `).bind(rankingDate, rankingType), 2),
-  ];
+  const statements = [];
 
   for (const account of normalized) {
     statements.push(
@@ -210,6 +213,7 @@ export async function onRequestPost({ request, env }) {
         source_priority: collector.sourcePriority,
       }),
     ), 6),
+    staleRankingCleanupStatement(env.DB, rankingDate, rankingType, hash),
   );
 
   try {
