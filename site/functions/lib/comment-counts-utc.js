@@ -1,4 +1,9 @@
 import { num } from './api-utils.js';
+import {
+  prepared,
+  runPreparedD1Batches,
+  unwrapPreparedStatement,
+} from './d1-batch.js';
 
 const MINUTE_MS = 60_000;
 const VELOCITY_WINDOW_MS = 2 * MINUTE_MS;
@@ -22,50 +27,10 @@ AND COALESCE(comment_velocity,-1)<>COALESCE((
   WHERE station_id=? AND bucket_start>=? AND bucket_start<=?
 ),0)`;
 
-function prepared(statement, bindCount) {
-  return { statement, bindCount };
-}
-
-function unwrapStatement(entry) {
-  return entry?.statement || entry;
-}
-
-function statementBindCount(entry) {
-  if (Number.isFinite(entry?.bindCount)) return entry.bindCount;
-  if (Array.isArray(entry?.params)) return entry.params.length;
-  if (Array.isArray(entry?.statement?.params)) return entry.statement.params.length;
-  return D1_COMMENT_BATCH_VARIABLE_LIMIT;
-}
-
-function splitD1Batches(statements) {
-  const groups = [];
-  let current = [];
-  let bindCount = 0;
-  for (const statement of Array.isArray(statements) ? statements : []) {
-    const nextBindCount = statementBindCount(statement);
-    if (current.length > 0 && bindCount + nextBindCount > D1_COMMENT_BATCH_VARIABLE_LIMIT) {
-      groups.push(current);
-      current = [];
-      bindCount = 0;
-    }
-    current.push(statement);
-    bindCount += nextBindCount;
-  }
-  if (current.length) groups.push(current);
-  return groups;
-}
-
 async function runPreparedBatches(db, statements) {
-  const results = [];
-  for (const group of splitD1Batches(statements)) {
-    if (!group.length) continue;
-    const unwrapped = group.map(unwrapStatement);
-    const batchResults = typeof db.batch === 'function'
-      ? await db.batch(unwrapped)
-      : await Promise.all(unwrapped.map((statement) => statement.run()));
-    results.push(...batchResults);
-  }
-  return results;
+  return runPreparedD1Batches(db, statements, {
+    variableLimit: D1_COMMENT_BATCH_VARIABLE_LIMIT,
+  });
 }
 
 function timestampOf(comment, fallback) {
@@ -116,7 +81,7 @@ function commentVelocityPreparedStatement(db, stationId, observedAt) {
 }
 
 async function refreshCommentVelocity(db, stationId, observedAt) {
-  const result = await unwrapStatement(commentVelocityPreparedStatement(db, stationId, observedAt)).run();
+  const result = await unwrapPreparedStatement(commentVelocityPreparedStatement(db, stationId, observedAt)).run();
   return Number(result?.meta?.changes || 0) > 0;
 }
 
