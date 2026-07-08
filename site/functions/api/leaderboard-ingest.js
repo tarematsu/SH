@@ -56,7 +56,10 @@ function staleRankingCleanupStatement(db, rankingDate, rankingType, hash) {
   return prepared(db.prepare(`
     DELETE FROM sh_channel_rankings
     WHERE ranking_date = ? AND ranking_type = ?
-      AND COALESCE(json_extract(quality_flags, '$.source_hash'), '') <> ?
+      AND CASE
+        WHEN quality_flags IS NULL OR NOT json_valid(quality_flags) THEN ''
+        ELSE COALESCE(json_extract(quality_flags, '$.source_hash'), '')
+      END <> ?
   `).bind(rankingDate, rankingType, hash), 3);
 }
 
