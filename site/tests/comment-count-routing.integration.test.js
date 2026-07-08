@@ -3,6 +3,7 @@ import test from 'node:test';
 
 import { onRequestPost as hostIngestPost } from '../functions/api/host-ingest.js';
 import { onRequestPost as ingestPost } from '../functions/api/ingest.js';
+import { D1_SOLO_ACTIVITY_BATCH_VARIABLE_LIMIT } from '../functions/lib/solo-activity-counts.js';
 import { FakeD1Database, responseJson } from './helpers/fake-d1.js';
 
 function post(body) {
@@ -76,4 +77,38 @@ test('solo comments update aggregate counters without storing host comment bodie
   assert.match(sql, /sh_solo_activity_days/);
   assert.match(sql, /sh_solo_activity_state/);
   assert.equal(db.callsMatching(/INSERT INTO sh_host_comments\b/i).length, 0);
+});
+
+test('solo comment aggregates split D1 batches by bind count', async () => {
+  const db = new FakeD1Database();
+  const observedAt = 1_751_500_300_000;
+  const response = await hostIngestPost({
+    request: post({
+      type: 'solo_comments',
+      observed_at: observedAt,
+      data: {
+        session_id: 9001,
+        station_id: 3328626,
+        comments: Array.from({ length: 50 }, (_, index) => ({
+          comment_id: 10_000 + index,
+          station_id: 3328626,
+          chat_time_ms: observedAt + index * 60_000,
+        })),
+      },
+    }),
+    env: env(db),
+  });
+  const body = await responseJson(response);
+
+  assert.equal(response.status, 200);
+  assert.equal(body.ok, true);
+  assert.equal(body.accepted, 50);
+  assert.ok(db.batches.length > 1);
+  for (const batch of db.batches) {
+    const bindCount = batch.reduce((sum, statement) => sum + statement.params.length, 0);
+    assert.ok(
+      bindCount <= D1_SOLO_ACTIVITY_BATCH_VARIABLE_LIMIT,
+      `batch bind count ${bindCount} exceeds ${D1_SOLO_ACTIVITY_BATCH_VARIABLE_LIMIT}`,
+    );
+  }
 });
