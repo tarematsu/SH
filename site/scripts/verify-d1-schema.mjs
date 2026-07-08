@@ -1,39 +1,31 @@
-import { existsSync } from 'node:fs';
-import path from 'node:path';
-import { spawnSync } from 'node:child_process';
-import { fileURLToPath } from 'node:url';
+import {
+  assertWranglerInstalled,
+  cloudflareBuildContext,
+  cloudflareCredentials,
+  scriptPaths,
+  skipNonProductionD1Step,
+  spawnWrangler,
+  wranglerEnvironment,
+} from './lib/d1-script-common.mjs';
 
-const force = String(process.env.D1_MIGRATION_FORCE || '').toLowerCase() === 'true';
-const currentBranch = process.env.CF_PAGES_BRANCH || process.env.WORKERS_CI_BRANCH || '';
-const cloudflareBuild = process.env.CF_PAGES === '1' || process.env.WORKERS_CI === '1';
-const production = currentBranch === 'main';
-if (!force && !production) {
-  const source = process.env.CF_PAGES_BRANCH ? 'CF_PAGES_BRANCH'
-    : process.env.WORKERS_CI_BRANCH ? 'WORKERS_CI_BRANCH' : 'branch variable';
-  if (cloudflareBuild && !currentBranch) {
-    console.error('D1 schema verification failed: Cloudflare build branch variable is missing.');
-    process.exit(1);
-  }
-  console.log(`D1 schema verification skipped: ${source}=${currentBranch || '(not set)'}`);
-  process.exit(0);
-}
+const buildContext = cloudflareBuildContext();
+skipNonProductionD1Step({
+  context: buildContext,
+  failurePrefix: 'D1 schema verification failed',
+  skippedPrefix: 'D1 schema verification skipped',
+});
 
-const scriptDirectory = path.dirname(fileURLToPath(import.meta.url));
-const siteDirectory = path.resolve(scriptDirectory, '..');
-const wranglerConfigPath = path.join(siteDirectory, 'wrangler.jsonc');
-const wranglerExecutable = process.platform === 'win32'
-  ? path.join(siteDirectory, 'node_modules', '.bin', 'wrangler.cmd')
-  : path.join(siteDirectory, 'node_modules', '.bin', 'wrangler');
+const {
+  siteDirectory,
+  wranglerConfigPath,
+  wranglerExecutable,
+} = scriptPaths(import.meta.url);
 
-if (!existsSync(wranglerExecutable)) {
-  console.error('D1 schema verification failed: Wrangler is not installed.');
-  process.exit(1);
-}
+assertWranglerInstalled(wranglerExecutable, 'D1 schema verification failed: Wrangler is not installed.');
 
-const apiToken = process.env.CLOUDFLARE_API_TOKEN || process.env.CLOUDFLARE_BUILDS_API_TOKEN || '';
-const accountId = process.env.CLOUDFLARE_ACCOUNT_ID || process.env.CF_ACCOUNT_ID || '';
+const { apiToken, accountId } = cloudflareCredentials();
 if (!apiToken) {
-  if (cloudflareBuild && !force) {
+  if (buildContext.cloudflareBuild && !buildContext.force) {
     console.warn('D1 schema verification skipped: this Cloudflare build has no API token; runtime schema bootstrap will verify availability through live use.');
     process.exit(0);
   }
@@ -41,7 +33,7 @@ if (!apiToken) {
   process.exit(1);
 }
 
-const sql = `SELECT
+const schemaVerificationSql = `SELECT
   (SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='sh_snapshot_current') AS snapshot_table,
   (SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='sh_queue_current') AS queue_table,
   (SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='sh_playback_channel_current') AS playback_current_table,
@@ -66,18 +58,44 @@ const sql = `SELECT
   (SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='idx_sh_queue_items_station_start_position') AS redundant_queue_index,
   (SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='idx_sh_track_metadata_spotify_fetched') AS redundant_metadata_index`;
 
-const result = spawnSync(wranglerExecutable, [
-  'd1', 'execute', 'stationhead-monitor', '--remote', '--config', wranglerConfigPath,
-  '--command', sql, '--json',
-], {
+function parseVerificationRow(stdout) {
+  const parsed = JSON.parse(stdout || '[]');
+  const envelopes = Array.isArray(parsed) ? parsed : [parsed];
+  return envelopes.flatMap((entry) => entry?.results || entry?.result?.[0]?.results || [])[0];
+}
+
+function assertSchemaVerification(row) {
+  if (!row) {
+    console.error('D1 schema verification failed: no verification row returned.');
+    process.exit(1);
+  }
+
+  const required = [
+    'snapshot_table', 'queue_table', 'playback_current_table', 'likes_table',
+    'comment_state_table', 'comment_minute_table', 'maintenance_table',
+    'legacy_samples_table', 'legacy_hosts_table', 'legacy_tracks_table',
+    'legacy_broadcasts_table', 'prediction_state_table', 'legacy_history_view',
+    'likes_hash_column', 'validated_stream_column', 'last_stream_count_column',
+    'last_stream_at_column', 'legacy_backfill_column', 'queue_unique_index',
+    'snapshot_index', 'validated_stream_trigger',
+  ];
+  const missing = required.filter((name) => Number(row[name]) < 1);
+  const redundant = ['redundant_queue_index', 'redundant_metadata_index']
+    .filter((name) => Number(row[name]) !== 0);
+  if (missing.length || redundant.length) {
+    console.error(`D1 schema verification failed: missing=${missing.join(',') || 'none'} redundant=${redundant.join(',') || 'none'}`);
+    process.exit(1);
+  }
+}
+
+const result = spawnWrangler({
+  executable: wranglerExecutable,
+  args: [
+    'd1', 'execute', 'stationhead-monitor', '--remote', '--config', wranglerConfigPath,
+    '--command', schemaVerificationSql, '--json',
+  ],
   cwd: siteDirectory,
-  encoding: 'utf8',
-  env: {
-    ...process.env,
-    CI: 'true',
-    CLOUDFLARE_API_TOKEN: apiToken,
-    ...(accountId ? { CLOUDFLARE_ACCOUNT_ID: accountId } : {}),
-  },
+  env: wranglerEnvironment({ apiToken, accountId }),
 });
 
 if (result.status !== 0) {
@@ -85,29 +103,5 @@ if (result.status !== 0) {
   process.exit(result.status ?? 1);
 }
 
-const parsed = JSON.parse(result.stdout || '[]');
-const envelopes = Array.isArray(parsed) ? parsed : [parsed];
-const row = envelopes.flatMap((entry) => entry?.results || entry?.result?.[0]?.results || [])[0];
-if (!row) {
-  console.error('D1 schema verification failed: no verification row returned.');
-  process.exit(1);
-}
-
-const required = [
-  'snapshot_table', 'queue_table', 'playback_current_table', 'likes_table',
-  'comment_state_table', 'comment_minute_table', 'maintenance_table',
-  'legacy_samples_table', 'legacy_hosts_table', 'legacy_tracks_table',
-  'legacy_broadcasts_table', 'prediction_state_table', 'legacy_history_view',
-  'likes_hash_column', 'validated_stream_column', 'last_stream_count_column',
-  'last_stream_at_column', 'legacy_backfill_column', 'queue_unique_index',
-  'snapshot_index', 'validated_stream_trigger',
-];
-const missing = required.filter((name) => Number(row[name]) < 1);
-const redundant = ['redundant_queue_index', 'redundant_metadata_index']
-  .filter((name) => Number(row[name]) !== 0);
-if (missing.length || redundant.length) {
-  console.error(`D1 schema verification failed: missing=${missing.join(',') || 'none'} redundant=${redundant.join(',') || 'none'}`);
-  process.exit(1);
-}
-
+assertSchemaVerification(parseVerificationRow(result.stdout));
 console.log('Remote D1 schema verification completed successfully.');
