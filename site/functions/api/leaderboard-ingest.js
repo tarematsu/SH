@@ -129,14 +129,14 @@ export async function onRequestPost({ request, env }) {
     metadata: { ranking_date: rankingDate, ranking_type: rankingType, row_count: normalized.length },
   });
 
-  if (!claim.accepted) {
+  if (!claim.accepted && !claim.duplicate) {
     return json({
       ok: true,
       ranking_date: rankingDate,
       rows: normalized.length,
       source_hash: hash,
       accepted: false,
-      duplicate: claim.duplicate,
+      duplicate: false,
       claim_reason: claim.reason,
     });
   }
@@ -226,7 +226,10 @@ export async function onRequestPost({ request, env }) {
       ranking_date: rankingDate,
       rows: normalized.length,
       source_hash: hash,
-      accepted: true,
+      accepted: claim.accepted,
+      duplicate: claim.duplicate || false,
+      claim_reason: claim.reason || null,
+      saved: true,
     });
   } catch (error) {
     console.error(error);
