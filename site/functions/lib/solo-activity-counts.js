@@ -1,51 +1,13 @@
 import { num } from './api-utils.js';
+import { prepared, runPreparedD1Batches } from './d1-batch.js';
 
 const MINUTE_MS = 60_000;
 export const D1_SOLO_ACTIVITY_BATCH_VARIABLE_LIMIT = 90;
 
-function prepared(statement, bindCount) {
-  return { statement, bindCount };
-}
-
-function unwrapStatement(entry) {
-  return entry?.statement || entry;
-}
-
-function statementBindCount(entry) {
-  if (Number.isFinite(entry?.bindCount)) return entry.bindCount;
-  if (Array.isArray(entry?.params)) return entry.params.length;
-  if (Array.isArray(entry?.statement?.params)) return entry.statement.params.length;
-  return D1_SOLO_ACTIVITY_BATCH_VARIABLE_LIMIT;
-}
-
-function splitD1Batches(statements) {
-  const groups = [];
-  let current = [];
-  let bindCount = 0;
-  for (const statement of Array.isArray(statements) ? statements : []) {
-    const nextBindCount = statementBindCount(statement);
-    if (current.length > 0 && bindCount + nextBindCount > D1_SOLO_ACTIVITY_BATCH_VARIABLE_LIMIT) {
-      groups.push(current);
-      current = [];
-      bindCount = 0;
-    }
-    current.push(statement);
-    bindCount += nextBindCount;
-  }
-  if (current.length) groups.push(current);
-  return groups;
-}
-
 async function runPreparedBatches(db, statements) {
-  for (const group of splitD1Batches(statements)) {
-    if (!group.length) continue;
-    const unwrapped = group.map(unwrapStatement);
-    if (typeof db.batch === 'function') {
-      await db.batch(unwrapped);
-    } else {
-      await Promise.all(unwrapped.map((statement) => statement.run()));
-    }
-  }
+  await runPreparedD1Batches(db, statements, {
+    variableLimit: D1_SOLO_ACTIVITY_BATCH_VARIABLE_LIMIT,
+  });
 }
 
 function eventTime(item, fallback) {
