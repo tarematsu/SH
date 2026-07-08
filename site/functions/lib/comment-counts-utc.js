@@ -4,8 +4,8 @@ import {
   runPreparedD1Batches,
   unwrapPreparedStatement,
 } from './d1-batch.js';
+import { MINUTE_MS, minuteBucket, utcDayKey } from './time-buckets.js';
 
-const MINUTE_MS = 60_000;
 const VELOCITY_WINDOW_MS = 2 * MINUTE_MS;
 export const D1_COMMENT_BATCH_VARIABLE_LIMIT = 90;
 const runtimeCursors = new WeakMap();
@@ -38,10 +38,6 @@ function timestampOf(comment, fallback) {
   if (milliseconds != null) return milliseconds;
   const seconds = num(comment?.chat_time);
   return seconds != null ? seconds * 1000 : fallback;
-}
-
-function dayKey(timestamp) {
-  return new Date(timestamp).toISOString().slice(0, 10);
 }
 
 function commentId(comment) {
@@ -165,9 +161,9 @@ export async function saveCommentCounts(db, observedAt, data) {
   let lastObservedAt = num(state?.last_observed_at) ?? 0;
   for (const [, comment] of fresh) {
     const timestamp = timestampOf(comment, observedAt);
-    const minute = Math.floor(timestamp / MINUTE_MS) * MINUTE_MS;
+    const minute = minuteBucket(timestamp);
     minutes.set(minute, (minutes.get(minute) || 0) + 1);
-    const day = dayKey(timestamp);
+    const day = utcDayKey(timestamp);
     days.set(day, (days.get(day) || 0) + 1);
     lastObservedAt = Math.max(lastObservedAt, timestamp);
   }
