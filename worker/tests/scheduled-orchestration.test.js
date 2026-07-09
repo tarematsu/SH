@@ -29,8 +29,9 @@ test('concurrent scheduled calls share the active primary collection before watc
   const ctx = { waitUntil: (promise) => waits.push(Promise.resolve(promise)) };
   const controller = { cron: '* * * * *' };
 
-  const first = runPrimaryScheduled(controller, {}, ctx, scheduled, 50);
-  const second = runPrimaryScheduled(controller, {}, ctx, scheduled, 50);
+  const first = runPrimaryScheduled(controller, {}, ctx, scheduled, 1000);
+  const second = runPrimaryScheduled(controller, {}, ctx, scheduled, 1000);
+  await Promise.resolve();
 
   assert.equal(calls, 1);
   active.resolve({ ok: true });
