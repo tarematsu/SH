@@ -82,6 +82,7 @@ function abandonPrimaryFlight(flight, resetCollector) {
     }));
   }
   flight.signalTimeout?.();
+  releasePrimaryFlight(flight);
 }
 
 export function resetPrimaryScheduledFlightForTests() {
