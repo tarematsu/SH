@@ -17,7 +17,7 @@ function deferred() {
   return { promise, resolve, reject };
 }
 
-test('watchdog timeout does not start a second primary collection while the first still runs', async () => {
+test('concurrent scheduled calls share the active primary collection before watchdog timeout', async () => {
   resetPrimaryScheduledFlightForTests();
   const active = deferred();
   const waits = [];
@@ -29,17 +29,38 @@ test('watchdog timeout does not start a second primary collection while the firs
   const ctx = { waitUntil: (promise) => waits.push(Promise.resolve(promise)) };
   const controller = { cron: '* * * * *' };
 
-  await assert.rejects(
-    runPrimaryScheduled(controller, {}, ctx, scheduled, 5),
-    (error) => error instanceof PrimaryCollectionTimeoutError,
-  );
-  await assert.rejects(
-    runPrimaryScheduled(controller, {}, ctx, scheduled, 5),
-    (error) => error instanceof PrimaryCollectionTimeoutError,
-  );
-  assert.equal(calls, 1);
+  const first = runPrimaryScheduled(controller, {}, ctx, scheduled, 50);
+  const second = runPrimaryScheduled(controller, {}, ctx, scheduled, 50);
 
+  assert.equal(calls, 1);
   active.resolve({ ok: true });
+  assert.deepEqual(await first, { ok: true });
+  assert.deepEqual(await second, { ok: true });
+  await Promise.allSettled(waits);
+  resetPrimaryScheduledFlightForTests();
+});
+
+test('watchdog timeout abandons the stale primary flight so the next cron can recover', async () => {
+  resetPrimaryScheduledFlightForTests();
+  const active = [deferred(), deferred()];
+  const waits = [];
+  let calls = 0;
+  const scheduled = () => active[calls++].promise;
+  const ctx = { waitUntil: (promise) => waits.push(Promise.resolve(promise)) };
+  const controller = { cron: '* * * * *' };
+
+  await assert.rejects(
+    runPrimaryScheduled(controller, {}, ctx, scheduled, 5),
+    (error) => error instanceof PrimaryCollectionTimeoutError,
+  );
+  await assert.rejects(
+    runPrimaryScheduled(controller, {}, ctx, scheduled, 5),
+    (error) => error instanceof PrimaryCollectionTimeoutError,
+  );
+  assert.equal(calls, 2);
+
+  active[0].resolve({ ok: true });
+  active[1].resolve({ ok: true });
   await Promise.allSettled(waits);
   resetPrimaryScheduledFlightForTests();
 });
