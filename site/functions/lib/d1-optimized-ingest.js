@@ -1,8 +1,8 @@
 import { bool, num, rawJson, stripAppleMusicFields, text } from './api-utils.js';
 import { prepared, runPreparedD1Batches } from './d1-batch.js';
 import {
+  normalizedTrackIsrc,
   observationTrackKey,
-  observationTrackKeys,
   planLikeCurrentMigrations,
   planLikeObservations,
   queueItemsToWriteLean,
@@ -46,9 +46,10 @@ async function runBatches(db, statements) {
 export function queueLikesPayload(tracks) {
   const unique = new Map();
   for (const track of Array.isArray(tracks) ? tracks : []) {
+    const trackKey = observationTrackKey(track);
     const likeCount = num(track?.bite_count);
-    if (likeCount == null) continue;
-    unique.set(observationTrackKey(track), likeCount);
+    if (!trackKey || likeCount == null) continue;
+    unique.set(trackKey, likeCount);
   }
   return [...unique.entries()]
     .map(([trackKey, likeCount]) => ({ track_key: trackKey, like_count: likeCount }))
@@ -56,8 +57,10 @@ export function queueLikesPayload(tracks) {
 }
 
 export function hasCompleteLikeSnapshot(tracks) {
-  const values = Array.isArray(tracks) ? tracks : [];
-  return values.length === 0 || values.every((track) => num(track?.bite_count) != null);
+  const identifiable = (Array.isArray(tracks) ? tracks : [])
+    .filter((track) => normalizedTrackIsrc(track));
+  return identifiable.length === 0
+    || identifiable.every((track) => num(track?.bite_count) != null);
 }
 
 function compactQueueItemRaw(track, queueId) {
@@ -84,23 +87,23 @@ function queueItemLookupStatements(db, stationId, startTime, positions) {
   });
 }
 
-function latestLikeLookupStatements(db, stationId, trackKeys) {
-  return chunks(trackKeys, QUERY_CHUNK).filter((group) => group.length).map((group) => {
+function latestLikeLookupStatements(db, stationId, isrcs) {
+  return chunks(isrcs, QUERY_CHUNK).filter((group) => group.length).map((group) => {
     const placeholders = group.map(() => '?').join(',');
     return prepared(db.prepare(`SELECT track_key,observed_at,like_count,
       queue_track_id,stationhead_track_id,spotify_id,isrc
       FROM sh_track_like_current
-      WHERE station_id IS ? AND track_key IN (${placeholders})`)
+      WHERE station_id IS ? AND UPPER(isrc) IN (${placeholders})`)
       .bind(stationId, ...group), 1 + group.length);
   });
 }
 
-async function loadComparisonState(db, stationId, startTime, positions, trackKeys, options) {
+async function loadComparisonState(db, stationId, startTime, positions, likeIsrcs, options) {
   const itemStatements = options.includeItems
     ? queueItemLookupStatements(db, stationId, startTime, positions)
     : [];
   const likeStatements = options.includeLikes
-    ? latestLikeLookupStatements(db, stationId, trackKeys)
+    ? latestLikeLookupStatements(db, stationId, likeIsrcs)
     : [];
   const statements = itemStatements.concat(likeStatements);
   if (!statements.length) return { existingRows: [], latestRows: [] };
@@ -179,7 +182,7 @@ function likeCurrentStatement(db, entry, observedAt, stationId, queueId, startTi
     .bind(
       stationId, trackKey, queueId, startTime, num(track?.position),
       num(track?.queue_track_id), num(track?.stationhead_track_id),
-      text(track?.spotify_id), text(track?.isrc), num(track?.bite_count), observedAt,
+      text(track?.spotify_id), normalizedTrackIsrc(track), num(track?.bite_count), observedAt,
       observedAt, stationId,
     ), 13);
 }
@@ -207,7 +210,7 @@ function likeWriteStatements(db, observations, observedAt, stationId, queueId, s
       ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`).bind(
         observedAt, stationId, queueId, startTime, num(track?.position),
         num(track?.queue_track_id), num(track?.stationhead_track_id),
-        text(track?.spotify_id), text(track?.isrc),
+        text(track?.spotify_id), normalizedTrackIsrc(track),
         trackKey, num(track?.bite_count), 'collector', rawJson({ bite_count: num(track?.bite_count) }),
       ), 13),
     ];
@@ -349,17 +352,17 @@ export async function saveLeanQueue(db, observedAt, body) {
     .map((track) => num(track?.position))
     .filter((value) => value != null))];
   const currentTrackKeys = completeLikes
-    ? [...new Set(tracks.map(observationTrackKey))]
+    ? [...new Set(tracks.map(observationTrackKey).filter(Boolean))]
     : [];
-  const lookupTrackKeys = completeLikes
-    ? [...new Set(tracks.flatMap(observationTrackKeys))]
+  const lookupIsrcs = completeLikes
+    ? [...new Set(tracks.map(normalizedTrackIsrc).filter(Boolean))]
     : [];
   const { existingRows, latestRows } = await loadComparisonState(
     db,
     stationId,
     startTime,
     positions,
-    lookupTrackKeys,
+    lookupIsrcs,
     { includeItems: structureChanged, includeLikes: likesChanged },
   );
   const changedTracks = structureChanged
