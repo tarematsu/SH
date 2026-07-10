@@ -29,7 +29,7 @@ export function queueReachabilityStatement(db, observedAt, data) {
       AND NOT EXISTS (
         SELECT 1 FROM sh_queue_snapshots
         WHERE station_id IS ? AND start_time IS ?
-          AND observed_at>=? AND observed_at<=?
+          AND observed_at>? AND observed_at<=?
           AND COALESCE(is_paused,0)=COALESCE(?,0)
       )`).bind(
     observed, stationId, queueId, startTime, paused, checkpointRaw,
