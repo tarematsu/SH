@@ -20,21 +20,23 @@ export function queueReachabilityStatement(db, observedAt, data) {
   const queueId = numberOrNull(data?.queue_id);
   const startTime = numberOrNull(data?.start_time);
   const paused = boolOrNull(data?.is_paused);
+  const observed = numberOrNull(observedAt);
   return db.prepare(`INSERT INTO sh_queue_snapshots (
       observed_at,station_id,queue_id,start_time,is_paused,raw_json
     )
     SELECT ?,?,?,?,?,?
-    WHERE ? IS NOT NULL AND ? IS NOT NULL
+    WHERE ? IS NOT NULL AND ? IS NOT NULL AND ? IS NOT NULL
       AND NOT EXISTS (
         SELECT 1 FROM sh_queue_snapshots
         WHERE station_id IS ? AND start_time IS ?
-          AND observed_at>=?
+          AND observed_at>=? AND observed_at<=?
           AND COALESCE(is_paused,0)=COALESCE(?,0)
       )`).bind(
-    observedAt, stationId, queueId, startTime, paused, checkpointRaw,
+    observed, stationId, queueId, startTime, paused, checkpointRaw,
+    observed, stationId, startTime,
     stationId, startTime,
-    stationId, startTime,
-    observedAt - QUEUE_REACHABILITY_CHECKPOINT_MS,
+    observed == null ? null : observed - QUEUE_REACHABILITY_CHECKPOINT_MS,
+    observed,
     paused,
   );
 }
