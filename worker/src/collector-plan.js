@@ -1,4 +1,4 @@
-const DEFAULT_METADATA_REFRESH_MS = 6 * 60 * 60_000;
+const DEFAULT_METADATA_REFRESH_MS = 15 * 60_000;
 
 function enabled(value) {
   return value !== false && value !== null && value !== undefined;
