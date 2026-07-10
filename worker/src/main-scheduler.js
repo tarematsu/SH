@@ -1,6 +1,7 @@
 import app from './email-recap-index.js';
 import { runCloudHostMonitor } from './cloud-host-monitor.js';
 import { runCloudWeeklyLeaderboard } from './cloud-weekly-leaderboard.js';
+import { runScheduledMaintenance } from './scheduled-maintenance.js';
 
 const DEFAULT_PRIMARY_WATCHDOG_MS = 55_000;
 const MIN_PRIMARY_WATCHDOG_MS = 10_000;
@@ -8,6 +9,7 @@ const MAX_PRIMARY_WATCHDOG_MS = 55_000;
 
 const DEFAULT_AUXILIARY_RUNNERS = Object.freeze({
   weekly: { failureEvent: 'cloud_weekly_leaderboard_failed', run: runCloudWeeklyLeaderboard },
+  maintenance: { failureEvent: 'data_maintenance_failed', run: runScheduledMaintenance },
   host: { failureEvent: 'cloud_host_monitor_failed', run: runCloudHostMonitor, onFailureOnly: true },
 });
 
