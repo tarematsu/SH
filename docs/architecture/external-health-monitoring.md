@@ -21,7 +21,9 @@ The cloud collector does not write a per-minute `cloudflare-worker` heartbeat. `
 
 - Snapshot ingestion does not trigger maintenance.
 - D1 rollup and backfill maintenance runs as hourly scheduled auxiliary work.
-- Track metadata enrichment runs only when queue structure changes.
+- Track metadata enrichment runs after queue structure changes and on a bounded retry scan every 15 minutes by default.
+- Completed metadata remains cached, so periodic scans primarily revisit unresolved or expired entries rather than refetching every track.
+- `METADATA_REFRESH_INTERVAL_MS` can increase the scan interval, with a minimum of 15 minutes.
 - The centralized collection plan determines snapshot, queue, comment, metadata, and heartbeat work.
 - Legacy heartbeat ingestion remains available for external/local collectors during compatibility migration, but Buddy playback health uses `sh_collector_status`.
 
