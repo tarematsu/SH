@@ -52,7 +52,10 @@ function createDatabase() {
     );
     CREATE TABLE sh_channel_snapshots (
       id INTEGER PRIMARY KEY,
-      observed_at INTEGER NOT NULL
+      observed_at INTEGER NOT NULL,
+      station_id INTEGER,
+      is_launched INTEGER,
+      is_broadcasting INTEGER
     );
   `);
   return db;
@@ -101,8 +104,14 @@ function addSnapshot(db, {
   `).run(observed, station, start, paused);
 }
 
-function addChannelSnapshot(db, observed) {
-  db.prepare('INSERT INTO sh_channel_snapshots (observed_at) VALUES (?)').run(observed);
+function addChannelSnapshot(db, observed, {
+  station = 1,
+  launched = 1,
+  broadcasting = 1,
+} = {}) {
+  db.prepare(`INSERT INTO sh_channel_snapshots (
+    observed_at,station_id,is_launched,is_broadcasting
+  ) VALUES (?,?,?,?)`).run(observed, station, launched, broadcasting);
 }
 
 function queryTracks(db, from, to, limit = 100000) {
@@ -110,15 +119,13 @@ function queryTracks(db, from, to, limit = 100000) {
   const toTs = Date.parse(`${to}T00:00:00Z`) + 86400000;
   return db.prepare(TRACK_HISTORY_SQL).all(
     toTs,
-    fromTs - TRACK_HISTORY_GRACE_MS,
+    fromTs - TRACK_HISTORY_GRACE_MS, toTs,
+    fromTs - TRACK_HISTORY_GRACE_MS, toTs,
+    fromTs - TRACK_HISTORY_GRACE_MS, toTs,
     toTs,
-    fromTs - TRACK_HISTORY_GRACE_MS,
-    toTs,
-    fromTs,
-    toTs,
+    fromTs, toTs,
     TRACK_HISTORY_GRACE_MS,
-    fromTs,
-    toTs,
+    fromTs, toTs,
     limit,
   );
 }
@@ -207,16 +214,32 @@ test('stops inferring later playback after an invalid duration', () => {
   assert.deepEqual(rows.map((row) => row.position), [0, 1]);
 });
 
-test('paused snapshots do not advance the playback boundary', () => {
+test('counts playback until a pause begins but does not advance while paused', () => {
   const db = createDatabase();
   const start = Date.parse('2026-06-30T00:00:00Z');
   addTracks(db, { start, count: 200, duration: 120000 });
   addSnapshot(db, { start, observed: start + 10 * 60000 });
   addSnapshot(db, { start, observed: start + 3 * 3600000, paused: 1 });
+  addChannelSnapshot(db, start + 4 * 3600000);
 
   const rows = queryTracks(db, '2026-06-30', '2026-06-30');
 
-  assert.equal(rows.length, 8);
+  assert.equal(rows.length, 93);
+});
+
+test('subtracts a paused interval after playback resumes', () => {
+  const db = createDatabase();
+  const start = Date.parse('2026-06-30T00:00:00Z');
+  addTracks(db, { start, count: 100, duration: 120000 });
+  addSnapshot(db, { start, observed: start + 60_000 });
+  addSnapshot(db, { start, observed: start + 10 * 60_000, paused: 1 });
+  addSnapshot(db, { start, observed: start + 20 * 60_000, paused: 0 });
+  addChannelSnapshot(db, start + 30 * 60_000);
+
+  const rows = queryTracks(db, '2026-06-30', '2026-06-30');
+
+  assert.equal(rows.length, 13);
+  assert.equal(rows.at(-1).position, 12);
 });
 
 test('uses queue item heartbeat evidence for legacy rows without snapshots', () => {
