@@ -5,6 +5,7 @@
   "compatibility_date": "2026-06-24",
   "workers_dev": true,
   "observability": { "enabled": true },
+  "build": { "command": "node scripts/build-sh-refactor-report.mjs" },
   "vars": {
     "CHANNEL_ALIAS": "buddies",
     "CHAT_LIMIT": 50,
