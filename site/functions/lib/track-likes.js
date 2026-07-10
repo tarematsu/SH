@@ -1,6 +1,37 @@
 import { canonical } from './track-history-text.js';
 
-const idValue = (value) => value == null || value === '' ? null : String(value);
+const ID_FIELDS = [
+  ['spotify_id', 'spotify'],
+  ['apple_music_id', 'apple'],
+  ['isrc', 'isrc'],
+  ['stationhead_track_id', 'stationhead'],
+  ['queue_track_id', 'queue'],
+];
+
+function idValue(field, value) {
+  if (value == null || value === '') return null;
+  const id = String(value).trim();
+  if (!id) return null;
+  return field === 'isrc' ? id.toUpperCase() : id;
+}
+
+function identityToken(field, prefix, value) {
+  const id = idValue(field, value);
+  return id ? `${prefix}:${id}` : null;
+}
+
+function namespacedSourceKey(value) {
+  const text = String(value || '').trim();
+  const match = /^(spotify|apple|isrc|stationhead|queue):(.+)$/i.exec(text);
+  if (!match) return null;
+  const prefix = match[1].toLowerCase();
+  const field = prefix === 'apple' ? 'apple_music_id'
+    : prefix === 'stationhead' ? 'stationhead_track_id'
+      : prefix === 'queue' ? 'queue_track_id'
+        : `${prefix}_id`;
+  const id = idValue(field, match[2]);
+  return id ? `${prefix}:${id}` : null;
+}
 
 export const TRACK_LIKE_REALTIME_SQL = `WITH ranked AS (
   SELECT
@@ -13,7 +44,7 @@ export const TRACK_LIKE_REALTIME_SQL = `WITH ranked AS (
         CASE
           WHEN spotify_id IS NOT NULL AND spotify_id<>'' THEN 'spotify:'||spotify_id
           WHEN apple_music_id IS NOT NULL AND apple_music_id<>'' THEN 'apple:'||apple_music_id
-          WHEN isrc IS NOT NULL AND isrc<>'' THEN 'isrc:'||isrc
+          WHEN isrc IS NOT NULL AND isrc<>'' THEN 'isrc:'||UPPER(isrc)
           WHEN stationhead_track_id IS NOT NULL THEN 'stationhead:'||stationhead_track_id
           WHEN queue_track_id IS NOT NULL THEN 'queue:'||queue_track_id
           ELSE 'track:'||COALESCE(track_key,'')
@@ -38,7 +69,7 @@ export const TRACK_LIKE_QUEUE_SQL = `WITH ranked AS (
         CASE
           WHEN q.spotify_id IS NOT NULL AND q.spotify_id<>'' THEN 'spotify:'||q.spotify_id
           WHEN q.apple_music_id IS NOT NULL AND q.apple_music_id<>'' THEN 'apple:'||q.apple_music_id
-          WHEN q.isrc IS NOT NULL AND q.isrc<>'' THEN 'isrc:'||q.isrc
+          WHEN q.isrc IS NOT NULL AND q.isrc<>'' THEN 'isrc:'||UPPER(q.isrc)
           WHEN q.stationhead_track_id IS NOT NULL THEN 'stationhead:'||q.stationhead_track_id
           WHEN q.queue_track_id IS NOT NULL THEN 'queue:'||q.queue_track_id
           ELSE 'position:'||q.position
@@ -81,16 +112,10 @@ async function optionalRows(statement) {
 }
 
 function primaryIdentity(row) {
-  const spotify = idValue(row?.spotify_id);
-  if (spotify) return `spotify:${spotify}`;
-  const apple = idValue(row?.apple_music_id);
-  if (apple) return `apple:${apple}`;
-  const isrc = idValue(row?.isrc);
-  if (isrc) return `isrc:${isrc}`;
-  const stationhead = idValue(row?.stationhead_track_id);
-  if (stationhead) return `stationhead:${stationhead}`;
-  const queue = idValue(row?.queue_track_id);
-  if (queue) return `queue:${queue}`;
+  for (const [field, prefix] of ID_FIELDS) {
+    const token = identityToken(field, prefix, row?.[field]);
+    if (token) return token;
+  }
   if (row?.title) return `name:${canonical(row.title)}|artist:${canonical(row.artist)}`;
   return `unknown:${row?.source || ''}:${row?.observed_at || ''}`;
 }
@@ -106,7 +131,8 @@ export function compactTrackLikeSources(sources) {
       }
     }
   }
-  return [...compact.values()].sort((a, b) => Number(a?.observed_at || 0) - Number(b?.observed_at || 0));
+  return [...compact.values()].sort((left, right) =>
+    Number(left?.observed_at || 0) - Number(right?.observed_at || 0));
 }
 
 export function compactTrackLikeRows(rows) {
@@ -160,12 +186,15 @@ function identityKeys(row) {
     seen.add(key);
     keys.push(key);
   };
-  const addId = (value) => {
-    const id = idValue(value);
-    if (id) add(`id:${id}`);
-  };
-  for (const value of row?.source_ids || []) addId(value);
-  for (const key of ['spotify_id', 'apple_music_id', 'isrc', 'stationhead_track_id', 'queue_track_id']) addId(row?.[key]);
+
+  for (const value of row?.source_keys || []) {
+    const token = namespacedSourceKey(value);
+    if (token) add(`id:${token}`);
+  }
+  for (const [field, prefix] of ID_FIELDS) {
+    const token = identityToken(field, prefix, row?.[field]);
+    if (token) add(`id:${token}`);
+  }
   if (row?.title) {
     add(`name:${canonical(row.title)}|artist:${canonical(row.artist)}`);
     add(`name:${canonical(row.title)}`);
@@ -173,21 +202,33 @@ function identityKeys(row) {
   return keys;
 }
 
+function finiteLikeCount(value) {
+  const number = Number(value);
+  return Number.isFinite(number) && number >= 0 ? number : null;
+}
+
 export function attachCompactTrackLikes(trackRows, compactRows) {
   const likes = new Map();
   for (const row of compactRows || []) {
-    for (const key of identityKeys(row)) likes.set(`${row.play_date}|${key}`, row.like_count);
+    for (const key of identityKeys(row)) {
+      const mapKey = `${row.play_date}|${key}`;
+      const previous = likes.get(mapKey);
+      if (!previous || Number(row?.observed_at || 0) >= Number(previous?.observed_at || 0)) {
+        likes.set(mapKey, row);
+      }
+    }
   }
   return (trackRows || []).map((row) => {
-    let likeCount = null;
+    let likeCount = finiteLikeCount(row?.like_count);
     for (const key of identityKeys(row)) {
-      const value = likes.get(`${row.play_date}|${key}`);
+      const match = likes.get(`${row.play_date}|${key}`);
+      const value = finiteLikeCount(match?.like_count);
       if (value != null) {
-        likeCount = Number(value);
+        likeCount = value;
         break;
       }
     }
-    return { ...row, like_count: Number.isFinite(likeCount) ? likeCount : null };
+    return { ...row, like_count: likeCount };
   });
 }
 
