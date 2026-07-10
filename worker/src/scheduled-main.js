@@ -9,6 +9,7 @@ import { expireLeaseWhenPrimaryFailed as defaultExpireLeaseWhenPrimaryFailed } f
 import { runCloudHostMonitor } from './cloud-host-monitor.js';
 import { runCloudWeeklyLeaderboard } from './cloud-weekly-leaderboard.js';
 import { resetCollectionFlight } from './index.js';
+import { runScheduledMaintenance } from './scheduled-maintenance.js';
 import { runStreamGoalPrediction } from './stream-goal-prediction.js';
 
 export { PrimaryCollectionTimeoutError };
@@ -24,6 +25,7 @@ export {
 const SCHEDULED_AUXILIARY_RUNNERS = Object.freeze({
   weekly: { failureEvent: 'cloud_weekly_leaderboard_failed', run: runCloudWeeklyLeaderboard },
   prediction: { failureEvent: 'stream_goal_prediction_failed', run: runStreamGoalPrediction },
+  maintenance: { failureEvent: 'data_maintenance_failed', run: runScheduledMaintenance },
   host: { failureEvent: 'cloud_host_monitor_failed', run: runCloudHostMonitor, onFailureOnly: true },
 });
 
