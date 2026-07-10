@@ -46,13 +46,18 @@ export function num(value) {
 
 export function bool(value) {
   if (value === undefined || value === null) return null;
+  if (typeof value === 'boolean') return value ? 1 : 0;
   if (typeof value === 'string') {
     const normalized = value.trim().toLowerCase();
     if (['true', '1', 'yes', 'on'].includes(normalized)) return 1;
     if (['false', '0', 'no', 'off', ''].includes(normalized)) return 0;
+    return null;
   }
-  if (typeof value === 'number') return value === 0 || Number.isNaN(value) ? 0 : 1;
-  return value ? 1 : 0;
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value)) return null;
+    return value === 0 ? 0 : 1;
+  }
+  return null;
 }
 
 export function text(value) {
