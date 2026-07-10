@@ -5,7 +5,7 @@ import { DatabaseSync } from 'node:sqlite';
 import {
   TRACK_HISTORY_GRACE_MS,
   TRACK_HISTORY_SQL,
-} from '../site/functions/lib/track-history-restored-handler.js';
+} from '../site/functions/lib/track-history-handler.js';
 
 function createDatabase() {
   const db = new DatabaseSync(':memory:');
@@ -107,9 +107,9 @@ function queryTracks(db, from, to, limit = 100000) {
   const toTs = Date.parse(`${to}T00:00:00Z`) + 86400000;
   return db.prepare(TRACK_HISTORY_SQL).all(
     toTs,
-    toTs, fromTs - TRACK_HISTORY_GRACE_MS,
     fromTs - TRACK_HISTORY_GRACE_MS, toTs,
-    toTs, fromTs - TRACK_HISTORY_GRACE_MS,
+    fromTs - TRACK_HISTORY_GRACE_MS, toTs,
+    fromTs - TRACK_HISTORY_GRACE_MS, toTs,
     toTs,
     fromTs, toTs,
     TRACK_HISTORY_GRACE_MS,
@@ -131,7 +131,7 @@ test('restores sparse historical queue reachability from channel snapshots', () 
   assert.equal(rows.at(-1).position, 11);
 });
 
-test('does not advance historical playback through a paused queue interval', () => {
+test('counts only active time before a queue remains paused', () => {
   const db = createDatabase();
   const start = Date.parse('2026-06-30T00:00:00Z');
   addTracks(db, { start, count: 20 });
@@ -141,7 +141,7 @@ test('does not advance historical playback through a paused queue interval', () 
 
   const rows = queryTracks(db, '2026-06-30', '2026-06-30');
 
-  assert.deepEqual(rows.map((row) => row.position), [0, 1, 2]);
+  assert.deepEqual(rows.map((row) => row.position), [0, 1, 2, 3, 4, 5]);
 });
 
 test('does not use inactive channel observations as playback evidence', () => {
