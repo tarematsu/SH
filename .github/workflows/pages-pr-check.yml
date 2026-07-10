@@ -6,6 +6,7 @@ on:
       - 'site/**'
       - 'database/**'
       - 'worker/**'
+      - 'scripts/check-js-syntax.mjs'
       - '.github/workflows/pages-pr-check.yml'
 
 permissions:
