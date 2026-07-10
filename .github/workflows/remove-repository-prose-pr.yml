@@ -15,7 +15,7 @@ permissions:
 
 jobs:
   cleanup:
-    if: startsWith(github.head_ref, 'agent/remove-repository-prose') && github.actor != 'github-actions[bot]'
+    if: startsWith(github.head_ref, 'agent/remove-repository-prose') && !contains(github.head_ref, '-generated-') && github.actor != 'github-actions[bot]'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
