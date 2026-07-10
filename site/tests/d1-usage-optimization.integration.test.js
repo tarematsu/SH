@@ -37,33 +37,48 @@ test('queue rows are not rewritten for bite-only changes', () => {
   assert.deepEqual(changed, []);
 });
 
-test('like history is written only when the value changes', () => {
-  const tracks = [{ position: 0, spotify_id: 'abc', bite_count: 10 }];
-  assert.equal(planLikeObservations(tracks, [{ track_key: 'abc', like_count: 10 }]).length, 0);
-  assert.equal(planLikeObservations(tracks, [{ track_key: 'abc', like_count: 9 }]).length, 1);
+test('like history is written only when the ISRC value changes', () => {
+  const tracks = [{ position: 0, isrc: 'jpabc1234567', bite_count: 10 }];
+  assert.equal(planLikeObservations(tracks, [
+    { track_key: 'legacy-key', isrc: 'JPABC1234567', like_count: 10 },
+  ]).length, 0);
+  assert.equal(planLikeObservations(tracks, [
+    { track_key: 'legacy-key', isrc: 'JPABC1234567', like_count: 9 },
+  ]).length, 1);
+  assert.equal(planLikeObservations([
+    { position: 0, spotify_id: 'abc', bite_count: 10 },
+  ], []).length, 0);
 });
 
-test('queue like hash payload is stable across track ordering', () => {
+test('queue like hash payload uses only ISRC and is stable across ordering', () => {
   const first = queueLikesPayload([
-    { spotify_id: 'b', bite_count: 2 },
-    { spotify_id: 'a', bite_count: 1 },
+    { spotify_id: 'b', isrc: 'jpbbb0000002', bite_count: 2 },
+    { spotify_id: 'a', isrc: 'jpaaa0000001', bite_count: 1 },
+    { spotify_id: 'ignored', bite_count: 99 },
   ]);
   const second = queueLikesPayload([
-    { spotify_id: 'a', bite_count: 1 },
-    { spotify_id: 'b', bite_count: 2 },
+    { spotify_id: 'ignored-other', bite_count: 500 },
+    { spotify_id: 'a2', isrc: 'JPAAA0000001', bite_count: 1 },
+    { spotify_id: 'b2', isrc: 'JPBBB0000002', bite_count: 2 },
   ]);
+
   assert.deepEqual(first, second);
+  assert.deepEqual(first.map((row) => row.track_key), [
+    'isrc:JPAAA0000001',
+    'isrc:JPBBB0000002',
+  ]);
 });
 
-test('partial like snapshots remain non-authoritative', () => {
+test('only ISRC-bearing tracks determine like snapshot completeness', () => {
   assert.equal(hasCompleteLikeSnapshot([]), true);
   assert.equal(hasCompleteLikeSnapshot([
-    { spotify_id: 'a', bite_count: 1 },
-    { spotify_id: 'b', bite_count: 2 },
+    { isrc: 'JPAAA0000001', bite_count: 1 },
+    { isrc: 'JPBBB0000002', bite_count: 2 },
+    { spotify_id: 'ignored-without-isrc' },
   ]), true);
   assert.equal(hasCompleteLikeSnapshot([
-    { spotify_id: 'a', bite_count: 1 },
-    { spotify_id: 'b' },
+    { isrc: 'JPAAA0000001', bite_count: 1 },
+    { isrc: 'JPBBB0000002' },
   ]), false);
 });
 
@@ -73,7 +88,13 @@ test('structural-only queue changes do not reconcile current likes', async () =>
     queue_id: 2,
     start_time: 3,
     is_paused: false,
-    tracks: [{ position: 0, spotify_id: 'abc', duration_ms: 1000, bite_count: 10 }],
+    tracks: [{
+      position: 0,
+      spotify_id: 'abc',
+      isrc: 'JPABC1234567',
+      duration_ms: 1000,
+      bite_count: 10,
+    }],
   };
   const likesHash = await payloadHash(queueLikesPayload(data.tracks));
   const db = new FakeD1Database([
