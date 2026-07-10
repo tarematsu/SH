@@ -4,6 +4,8 @@ import test from 'node:test';
 import { saveLeanQueue, saveLeanHeartbeat } from '../functions/lib/d1-optimized-ingest.js';
 import {
   observationTrackKey,
+  planLikeCurrentMigrations,
+  planLikeObservations,
   queueStructuralPayload,
   saveLeanSnapshot,
 } from '../functions/lib/d1-lean-ingest.js';
@@ -20,6 +22,17 @@ test('persisted track keys keep ID namespaces distinct', () => {
   );
 });
 
+test('legacy like keys migrate current state without duplicating observation history', () => {
+  const tracks = [{ position: 0, spotify_id: 'abc', bite_count: 10 }];
+  const latestRows = [{ track_key: 'abc', spotify_id: 'abc', like_count: 10, observed_at: 100 }];
+
+  assert.equal(planLikeObservations(tracks, latestRows).length, 0);
+  assert.deepEqual(
+    planLikeCurrentMigrations(tracks, latestRows).map(({ trackKey }) => trackKey),
+    ['spotify:abc'],
+  );
+});
+
 test('delayed queue payloads preserve history without deleting or regressing current rows', async () => {
   const db = new FakeD1Database([
     {
@@ -29,11 +42,12 @@ test('delayed queue payloads preserve history without deleting or regressing cur
         structural_hash: 'newer-structure',
         likes_hash: 'newer-likes',
         start_time: 900,
-        observed_at: 2_000,
+        observed_at: 1_000,
+        latest_reachability_at: 2_000,
       },
     },
   ]);
-  const result = await saveLeanQueue(db, 1_000, {
+  const result = await saveLeanQueue(db, 1_500, {
     collector_id: 'delayed-collector',
     data: {
       station_id: 1,
@@ -54,13 +68,14 @@ test('delayed queue payloads preserve history without deleting or regressing cur
   const statements = db.batches.flat();
   assert.equal(statements.some(({ sql }) => /^DELETE FROM sh_queue_items/i.test(sql.trim())), false);
   assert.equal(statements.some(({ sql }) => /^DELETE FROM sh_track_like_current/i.test(sql.trim())), false);
+  assert.equal(statements.some(({ sql }) => /INSERT INTO sh_queue_current/.test(sql)), false);
 
   const itemUpsert = statements.find(({ sql }) => /INSERT INTO sh_queue_items/.test(sql));
   const likeUpsert = statements.find(({ sql }) => /INSERT INTO sh_track_like_current/.test(sql));
-  const currentUpsert = statements.find(({ sql }) => /INSERT INTO sh_queue_current/.test(sql));
-  assert.match(itemUpsert.sql, /excluded\.observed_at>=sh_queue_items\.observed_at/);
-  assert.match(likeUpsert.sql, /excluded\.observed_at>=sh_track_like_current\.observed_at/);
-  assert.match(currentUpsert.sql, /excluded\.observed_at>=sh_queue_current\.observed_at/);
+  const historyInsert = statements.find(({ sql }) => /INSERT INTO sh_track_like_observations/.test(sql));
+  assert.match(itemUpsert.sql, /MAX\(snapshot\.observed_at\)/);
+  assert.match(likeUpsert.sql, /MAX\(snapshot\.observed_at\)/);
+  assert.ok(historyInsert);
 });
 
 test('likes-only queue updates refresh the queue item fallback count', async () => {
@@ -87,6 +102,7 @@ test('likes-only queue updates refresh the queue item fallback count', async () 
         likes_hash: 'old-like-hash',
         start_time: 900,
         observed_at: 1_000,
+        latest_reachability_at: 1_000,
       },
     },
   ]);
@@ -98,6 +114,7 @@ test('likes-only queue updates refresh the queue item fallback count', async () 
   const likeFallbackUpdate = db.batches.flat().find(({ sql }) => /^UPDATE sh_queue_items/i.test(sql.trim()));
   assert.ok(likeFallbackUpdate);
   assert.deepEqual(likeFallbackUpdate.params.slice(0, 4), [7, 1, 900, 0]);
+  assert.match(likeFallbackUpdate.sql, /MAX\(snapshot\.observed_at\)/);
 });
 
 test('snapshot and heartbeat current tables reject older timestamps', async () => {
