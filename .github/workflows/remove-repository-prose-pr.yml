@@ -10,12 +10,12 @@ permissions:
 
 jobs:
   cleanup:
-    if: github.head_ref == 'agent/remove-repository-prose-20260711' && github.actor != 'github-actions[bot]'
+    if: startsWith(github.head_ref, 'agent/remove-repository-prose') && github.actor != 'github-actions[bot]'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: agent/remove-repository-prose-20260711
+          ref: ${{ github.head_ref }}
           fetch-depth: 0
       - name: Remove documents and comments
         run: python3 .github/scripts/remove-repository-prose.py
@@ -33,4 +33,4 @@ jobs:
           fi
           git commit -m "Remove repository documentation and comments"
       - name: Push generated cleanup
-        run: git push origin HEAD:agent/remove-repository-prose-20260711
+        run: git push origin HEAD:${{ github.head_ref }}
