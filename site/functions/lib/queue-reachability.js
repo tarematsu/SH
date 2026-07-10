@@ -27,16 +27,24 @@ export function queueReachabilityStatement(db, observedAt, data) {
     SELECT ?,?,?,?,?,?
     WHERE ? IS NOT NULL AND ? IS NOT NULL AND ? IS NOT NULL
       AND NOT EXISTS (
-        SELECT 1 FROM sh_queue_snapshots
-        WHERE station_id IS ? AND start_time IS ?
-          AND observed_at>? AND observed_at<=?
-          AND COALESCE(is_paused,0)=COALESCE(?,0)
+        SELECT 1
+        FROM sh_queue_snapshots latest
+        WHERE latest.id=(
+          SELECT prior.id
+          FROM sh_queue_snapshots prior
+          WHERE prior.station_id IS ? AND prior.start_time IS ?
+            AND prior.observed_at<=?
+          ORDER BY prior.observed_at DESC,prior.id DESC
+          LIMIT 1
+        )
+          AND latest.observed_at>?
+          AND COALESCE(latest.is_paused,0)=COALESCE(?,0)
       )`).bind(
     observed, stationId, queueId, startTime, paused, checkpointRaw,
     observed, stationId, startTime,
     stationId, startTime,
-    observed == null ? null : observed - QUEUE_REACHABILITY_CHECKPOINT_MS,
     observed,
+    observed == null ? null : observed - QUEUE_REACHABILITY_CHECKPOINT_MS,
     paused,
   );
 }
