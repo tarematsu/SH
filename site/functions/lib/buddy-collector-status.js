@@ -68,10 +68,11 @@ export async function loadBuddyCollectorStatus(db, alias) {
 
 export function attachBuddyCollectorStatus(payload, collector) {
   const observedAt = num(payload?.latest_observed_at);
+  const collectorUnavailable = collector?.status === 'unknown';
   const failedAfterData = collector?.status === 'error'
     && (num(collector.last_attempt_at) ?? 0) > (observedAt ?? 0);
   const neverCollected = collector?.status === 'never' && observedAt == null;
-  const stale = Boolean(payload?.stale || failedAfterData || neverCollected);
+  const stale = Boolean(payload?.stale || collectorUnavailable || failedAfterData || neverCollected);
   const queue = stale
     ? (payload?.queue || []).map((track) => ({ ...track, is_current: false }))
     : (payload?.queue || []);
