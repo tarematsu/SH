@@ -67,6 +67,11 @@ const STAGE_LABELS = {
   d1_write_track_metadata: 'D1へ楽曲メタデータを書き込み',
   d1_write_collector_state: 'D1へ収集結果状態を書き込み',
   collector_unknown: '収集処理',
+  // Pre-rename stage values that may still be sitting in already-persisted D1 rows.
+  stationhead_auth: 'Stationheadゲスト認証',
+  stationhead_channel_request: 'Stationheadチャンネル情報取得',
+  stationhead_channel_payload: 'Stationheadチャンネル応答検証',
+  stationhead_chat_history: 'Stationheadコメント履歴取得',
 };
 
 function text(value) {
