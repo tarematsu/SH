@@ -5,7 +5,6 @@ import { DatabaseSync } from 'node:sqlite';
 import {
   TRACK_LIKE_REALTIME_SQL,
   TRACK_LIKE_QUEUE_SQL,
-  TRACK_LIKE_HISTORY_SQL,
   compactTrackLikeRows,
   compactTrackLikeSources,
   attachCompactTrackLikes,
@@ -54,54 +53,65 @@ function createDatabase() {
   return db;
 }
 
-test('like queries return only the latest observation for each UTC day and track', () => {
+test('like queries keep the latest observation for each UTC day and ISRC', () => {
   const db = createDatabase();
   db.prepare('INSERT INTO sh_track_like_observations VALUES(?,?,?,?,?,?,?,?,?,?)')
-    .run(1, 1000, 'spotify-1', null, null, null, null, 'spotify-1', 3, 'collector');
+    .run(1, 1000, 'spotify-1', null, 'jpabc1234567', 1, 10, 'legacy-key', 3, 'collector');
   db.prepare('INSERT INTO sh_track_like_observations VALUES(?,?,?,?,?,?,?,?,?,?)')
-    .run(2, 2000, 'spotify-1', null, null, null, null, 'spotify-1', 5, 'collector');
+    .run(2, 2000, 'spotify-2', null, 'JPABC1234567', 2, 20, 'isrc:JPABC1234567', 5, 'collector');
+  db.prepare('INSERT INTO sh_track_like_observations VALUES(?,?,?,?,?,?,?,?,?,?)')
+    .run(3, 3000, 'spotify-no-isrc', null, null, 3, 30, 'spotify:spotify-no-isrc', 99, 'collector');
   db.prepare('INSERT INTO sh_track_metadata VALUES(?,?,?)').run('spotify-1', 'Song', 'Artist');
   db.prepare('INSERT INTO sh_queue_items VALUES(?,?,?,?,?,?,?,?,?,?)')
-    .run(1, 500, 3000, 0, 'spotify-1', null, null, null, 10, 7);
-  db.prepare('INSERT INTO sh_track_like_history VALUES(?,?,?,?)').run(1000, 'Legacy', 'Artist', 2);
-  db.prepare('INSERT INTO sh_track_like_history VALUES(?,?,?,?)').run(4000, 'Legacy', 'Artist', 4);
+    .run(1, 500, 3000, 0, 'spotify-1', null, 'jpabc1234567', 1, 10, 7);
+  db.prepare('INSERT INTO sh_queue_items VALUES(?,?,?,?,?,?,?,?,?,?)')
+    .run(2, 500, 4000, 1, 'spotify-no-isrc', null, null, 2, 20, 88);
 
   const realtime = db.prepare(TRACK_LIKE_REALTIME_SQL).all(0, 86400000);
   const queue = db.prepare(TRACK_LIKE_QUEUE_SQL).all(0, 86400000);
-  const historical = db.prepare(TRACK_LIKE_HISTORY_SQL).all(0, 86400000);
 
   assert.equal(realtime.length, 1);
   assert.equal(realtime[0].like_count, 5);
+  assert.equal(realtime[0].isrc, 'JPABC1234567');
   assert.equal(queue.length, 1);
   assert.equal(queue[0].like_count, 7);
-  assert.equal(historical.length, 1);
-  assert.equal(historical[0].like_count, 4);
 });
 
-test('multiple like sources compact without a concatenated intermediate array', () => {
+test('compaction ignores rows without ISRC', () => {
   const rows = compactTrackLikeSources([
-    [{ play_date: '1970-01-01', spotify_id: 'spotify-1', like_count: 3, observed_at: 1000 }],
-    [{ play_date: '1970-01-01', spotify_id: 'spotify-1', like_count: 5, observed_at: 2000 }],
-    [{ play_date: '1970-01-01', title: 'Legacy', artist: 'Artist', like_count: 4, observed_at: 3000 }],
+    [{ play_date: '1970-01-01', isrc: 'jpabc1234567', like_count: 3, observed_at: 1000 }],
+    [{ play_date: '1970-01-01', isrc: 'JPABC1234567', like_count: 5, observed_at: 2000 }],
+    [{ play_date: '1970-01-01', spotify_id: 'spotify-1', like_count: 99, observed_at: 3000 }],
+    [{ play_date: '1970-01-01', title: 'Legacy', artist: 'Artist', like_count: 88, observed_at: 4000 }],
   ]);
-  assert.equal(rows.length, 2);
-  assert.equal(rows.find((row) => row.spotify_id)?.like_count, 5);
+
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].like_count, 5);
+  assert.equal(rows[0].isrc, 'JPABC1234567');
 });
 
-test('track rows receive already compacted like values without compacting again', () => {
+test('track rows receive external likes only through matching ISRC', () => {
   const compactRows = compactTrackLikeRows([
-    { play_date: '1970-01-01', spotify_id: 'spotify-1', like_count: 5, observed_at: 2000 },
-    { play_date: '1970-01-01', spotify_id: 'spotify-1', like_count: 7, observed_at: 3000 },
-    { play_date: '1970-01-01', title: 'Legacy', artist: 'Artist', like_count: 4, observed_at: 4000 },
+    { play_date: '1970-01-01', isrc: 'jpabc1234567', like_count: 5, observed_at: 2000 },
+    { play_date: '1970-01-01', isrc: 'JPABC1234567', like_count: 7, observed_at: 3000 },
+    { play_date: '1970-01-01', spotify_id: 'spotify-2', like_count: 90, observed_at: 4000 },
   ]);
   const tracks = [
     {
       play_date: '1970-01-01',
       title: 'Song',
       artist: 'Artist',
-      source_keys: ['spotify:spotify-1'],
+      spotify_id: 'spotify-1',
+      isrc: 'JPABC1234567',
+      like_count: 3,
     },
-    { play_date: '1970-01-01', title: 'Legacy', artist: 'Artist', source_keys: [] },
+    {
+      play_date: '1970-01-01',
+      title: 'No ISRC',
+      artist: 'Artist',
+      spotify_id: 'spotify-2',
+      like_count: 4,
+    },
   ];
   const directRows = attachCompactTrackLikes(tracks, compactRows);
   const compatibilityRows = attachTrackLikes(tracks, compactRows);
@@ -111,28 +121,7 @@ test('track rows receive already compacted like values without compacting again'
   assert.deepEqual(directRows, compatibilityRows);
 });
 
-test('identical values from different ID namespaces never share likes', () => {
-  const compactRows = compactTrackLikeRows([
-    {
-      play_date: '2026-07-01',
-      queue_track_id: 123,
-      like_count: 9,
-      observed_at: 1000,
-    },
-  ]);
-  const [track] = attachCompactTrackLikes([
-    {
-      play_date: '2026-07-01',
-      spotify_id: '123',
-      source_keys: ['spotify:123'],
-      like_count: 2,
-    },
-  ], compactRows);
-
-  assert.equal(track.like_count, 2);
-});
-
-test('ISRC matching is case insensitive and external observations override queue fallback', () => {
+test('matching is case insensitive but different ISRC values never share likes', () => {
   const compactRows = compactTrackLikeRows([
     {
       play_date: '2026-07-01',
@@ -141,27 +130,44 @@ test('ISRC matching is case insensitive and external observations override queue
       observed_at: 1000,
     },
   ]);
-  const [track] = attachCompactTrackLikes([
+  const rows = attachCompactTrackLikes([
     {
       play_date: '2026-07-01',
       isrc: 'JPABC1234567',
-      source_keys: ['isrc:JPABC1234567'],
       like_count: 3,
+    },
+    {
+      play_date: '2026-07-01',
+      isrc: 'JPABC7654321',
+      like_count: 6,
     },
   ], compactRows);
 
-  assert.equal(track.like_count, 8);
+  assert.equal(rows[0].like_count, 8);
+  assert.equal(rows[1].like_count, 6);
 });
 
-test('queue fallback like count survives when no matching observation exists', () => {
+test('Spotify, queue and Stationhead IDs are never used as like identities', () => {
+  const compactRows = compactTrackLikeRows([
+    {
+      play_date: '2026-07-01',
+      spotify_id: 'same',
+      queue_track_id: 123,
+      stationhead_track_id: 456,
+      like_count: 9,
+      observed_at: 1000,
+    },
+  ]);
   const [track] = attachCompactTrackLikes([
     {
       play_date: '2026-07-01',
-      spotify_id: 'spotify-1',
-      source_keys: ['spotify:spotify-1'],
-      like_count: 6,
+      spotify_id: 'same',
+      queue_track_id: 123,
+      stationhead_track_id: 456,
+      like_count: 2,
     },
-  ], []);
+  ], compactRows);
 
-  assert.equal(track.like_count, 6);
+  assert.equal(compactRows.length, 0);
+  assert.equal(track.like_count, 2);
 });
