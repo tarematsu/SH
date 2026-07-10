@@ -15,7 +15,7 @@ export async function saveQueueCurrentPauseState(db, observedAt, data, now = Dat
   const stationId = numberOrNull(data?.station_id);
   const observed = numberOrNull(observedAt);
   const paused = boolOrNull(data?.is_paused);
-  if (stationId == null || observed == null) return { updated: false };
+  if (stationId == null || observed == null || paused == null) return { updated: false };
 
   const result = await db.prepare(`UPDATE sh_queue_current
     SET is_paused=?,observed_at=?,updated_at=?
