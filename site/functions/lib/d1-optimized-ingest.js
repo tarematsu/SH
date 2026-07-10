@@ -123,7 +123,11 @@ function queueItemWriteStatements(db, tracks, observedAt, stationId, queueId, st
       spotify_id=excluded.spotify_id,apple_music_id=NULL,
       deezer_id=excluded.deezer_id,isrc=excluded.isrc,duration_ms=excluded.duration_ms,
       preview_url=excluded.preview_url,raw_json=excluded.raw_json
-    WHERE excluded.observed_at>=sh_queue_items.observed_at`)
+    WHERE excluded.observed_at>=COALESCE((
+      SELECT MAX(snapshot.observed_at) FROM sh_queue_snapshots snapshot
+      WHERE snapshot.station_id IS excluded.station_id
+        AND snapshot.start_time IS excluded.start_time
+    ),sh_queue_items.observed_at)`)
     .bind(
       observedAt, stationId, queueId, startTime, num(track?.position),
       num(track?.queue_track_id), num(track?.stationhead_track_id),
@@ -133,19 +137,26 @@ function queueItemWriteStatements(db, tracks, observedAt, stationId, queueId, st
     ), 14));
 }
 
-function queueItemLikeUpdateStatements(db, tracks, stationId, startTime) {
+function queueItemLikeUpdateStatements(db, tracks, observedAt, stationId, startTime) {
   return (Array.isArray(tracks) ? tracks : [])
     .filter((track) => num(track?.position) != null && num(track?.bite_count) != null)
     .map((track) => prepared(db.prepare(`UPDATE sh_queue_items
       SET bite_count=?
       WHERE station_id IS ? AND start_time IS ? AND position IS ?
-        AND bite_count IS NOT ?`).bind(
+        AND bite_count IS NOT ?
+        AND ?>=COALESCE((
+          SELECT MAX(snapshot.observed_at) FROM sh_queue_snapshots snapshot
+          WHERE snapshot.station_id IS ? AND snapshot.start_time IS ?
+        ),0)`).bind(
       num(track?.bite_count),
       stationId,
       startTime,
       num(track?.position),
       num(track?.bite_count),
-    ), 5));
+      observedAt,
+      stationId,
+      startTime,
+    ), 8));
 }
 
 function likeCurrentStatement(db, entry, observedAt, stationId, queueId, startTime) {
@@ -158,7 +169,10 @@ function likeCurrentStatement(db, entry, observedAt, stationId, queueId, startTi
       queue_track_id=excluded.queue_track_id,stationhead_track_id=excluded.stationhead_track_id,
       spotify_id=excluded.spotify_id,apple_music_id=NULL,isrc=excluded.isrc,
       like_count=excluded.like_count,observed_at=excluded.observed_at
-    WHERE excluded.observed_at>=sh_track_like_current.observed_at
+    WHERE excluded.observed_at>=COALESCE((
+      SELECT MAX(snapshot.observed_at) FROM sh_queue_snapshots snapshot
+      WHERE snapshot.station_id IS excluded.station_id
+    ),sh_track_like_current.observed_at)
       AND excluded.like_count IS NOT sh_track_like_current.like_count`)
     .bind(
       stationId, trackKey, queueId, startTime, num(track?.position),
@@ -205,7 +219,10 @@ function queueCurrentStatement(db, values) {
       structural_hash=excluded.structural_hash,likes_hash=excluded.likes_hash,
       is_paused=excluded.is_paused,observed_at=excluded.observed_at,
       updated_at=excluded.updated_at
-    WHERE excluded.observed_at>=sh_queue_current.observed_at
+    WHERE excluded.observed_at>=COALESCE((
+      SELECT MAX(snapshot.observed_at) FROM sh_queue_snapshots snapshot
+      WHERE snapshot.station_id IS excluded.station_id
+    ),sh_queue_current.observed_at)
       AND (
         excluded.structural_hash IS NOT sh_queue_current.structural_hash
         OR excluded.likes_hash IS NOT sh_queue_current.likes_hash
@@ -216,27 +233,44 @@ function queueCurrentStatement(db, values) {
     .bind(...values), values.length);
 }
 
-function deleteMissingQueueItemsStatements(db, stationId, startTime, positions) {
+function deleteMissingQueueItemsStatements(db, stationId, startTime, positions, observedAt) {
   if (!positions.length) {
     return [prepared(db.prepare(`DELETE FROM sh_queue_items
-      WHERE station_id IS ? AND start_time IS ?`).bind(stationId, startTime), 2)];
+      WHERE station_id IS ? AND start_time IS ?
+        AND ?>=COALESCE((
+          SELECT MAX(snapshot.observed_at) FROM sh_queue_snapshots snapshot
+          WHERE snapshot.station_id IS ? AND snapshot.start_time IS ?
+        ),0)`).bind(stationId, startTime, observedAt, stationId, startTime), 5)];
   }
-  if (!canBindInSingleStatement(2, positions)) return [];
+  if (!canBindInSingleStatement(5, positions)) return [];
   const placeholders = positions.map(() => '?').join(',');
   return [prepared(db.prepare(`DELETE FROM sh_queue_items
-    WHERE station_id IS ? AND start_time IS ? AND position NOT IN (${placeholders})`)
-    .bind(stationId, startTime, ...positions), 2 + positions.length)];
+    WHERE station_id IS ? AND start_time IS ? AND position NOT IN (${placeholders})
+      AND ?>=COALESCE((
+        SELECT MAX(snapshot.observed_at) FROM sh_queue_snapshots snapshot
+        WHERE snapshot.station_id IS ? AND snapshot.start_time IS ?
+      ),0)`)
+    .bind(stationId, startTime, ...positions, observedAt, stationId, startTime), 5 + positions.length)];
 }
 
-function deleteMissingCurrentLikesStatements(db, stationId, trackKeys) {
+function deleteMissingCurrentLikesStatements(db, stationId, trackKeys, observedAt) {
   if (!trackKeys.length) {
-    return [prepared(db.prepare('DELETE FROM sh_track_like_current WHERE station_id IS ?').bind(stationId), 1)];
+    return [prepared(db.prepare(`DELETE FROM sh_track_like_current
+      WHERE station_id IS ?
+        AND ?>=COALESCE((
+          SELECT MAX(snapshot.observed_at) FROM sh_queue_snapshots snapshot
+          WHERE snapshot.station_id IS ?
+        ),0)`).bind(stationId, observedAt, stationId), 3)];
   }
-  if (!canBindInSingleStatement(1, trackKeys)) return [];
+  if (!canBindInSingleStatement(3, trackKeys)) return [];
   const placeholders = trackKeys.map(() => '?').join(',');
   return [prepared(db.prepare(`DELETE FROM sh_track_like_current
-    WHERE station_id IS ? AND track_key NOT IN (${placeholders})`)
-    .bind(stationId, ...trackKeys), 1 + trackKeys.length)];
+    WHERE station_id IS ? AND track_key NOT IN (${placeholders})
+      AND ?>=COALESCE((
+        SELECT MAX(snapshot.observed_at) FROM sh_queue_snapshots snapshot
+        WHERE snapshot.station_id IS ?
+      ),0)`)
+    .bind(stationId, ...trackKeys, observedAt, stationId), 3 + trackKeys.length)];
 }
 
 export async function saveLeanQueue(db, observedAt, body) {
@@ -249,10 +283,18 @@ export async function saveLeanQueue(db, observedAt, body) {
   const startTime = num(data?.start_time);
   const queueId = num(data?.queue_id);
 
-  const current = await db.prepare(`SELECT structural_hash,likes_hash,start_time,observed_at
-    FROM sh_queue_current WHERE station_id IS ?`).bind(stationId).first();
-  const currentObservedAt = num(current?.observed_at);
-  const staleCurrent = currentObservedAt != null && observedAt < currentObservedAt;
+  const current = await db.prepare(`SELECT current.structural_hash,current.likes_hash,
+      current.start_time,current.observed_at,
+      COALESCE((
+        SELECT MAX(snapshot.observed_at) FROM sh_queue_snapshots snapshot
+        WHERE snapshot.station_id IS current.station_id
+      ),0) AS latest_reachability_at
+    FROM sh_queue_current current WHERE current.station_id IS ?`).bind(stationId).first();
+  const currentWatermark = Math.max(
+    num(current?.observed_at) ?? 0,
+    num(current?.latest_reachability_at) ?? 0,
+  );
+  const staleCurrent = currentWatermark > 0 && observedAt < currentWatermark;
   const likesHash = completeLikes
     ? await payloadHash(queueLikesPayload(tracks))
     : text(current?.likes_hash);
@@ -327,11 +369,28 @@ export async function saveLeanQueue(db, observedAt, body) {
 
   const statements = [];
   if (structureChanged && !staleCurrent) {
-    statements.push(...deleteMissingQueueItemsStatements(db, stationId, startTime, positions));
+    statements.push(...deleteMissingQueueItemsStatements(
+      db,
+      stationId,
+      startTime,
+      positions,
+      observedAt,
+    ));
   }
   if (likesChanged && !staleCurrent) {
-    statements.push(...deleteMissingCurrentLikesStatements(db, stationId, currentTrackKeys));
-    statements.push(...queueItemLikeUpdateStatements(db, tracks, stationId, startTime));
+    statements.push(...deleteMissingCurrentLikesStatements(
+      db,
+      stationId,
+      currentTrackKeys,
+      observedAt,
+    ));
+    statements.push(...queueItemLikeUpdateStatements(
+      db,
+      tracks,
+      observedAt,
+      stationId,
+      startTime,
+    ));
     statements.push(...likeCurrentMigrationStatements(
       db,
       currentLikeMigrations,
@@ -344,11 +403,13 @@ export async function saveLeanQueue(db, observedAt, body) {
   statements.push(
     ...queueItemWriteStatements(db, changedTracks, observedAt, stationId, queueId, startTime),
     ...likeWriteStatements(db, observations, observedAt, stationId, queueId, startTime),
-    queueCurrentStatement(db, [
+  );
+  if (!staleCurrent) {
+    statements.push(queueCurrentStatement(db, [
       stationId, queueId, startTime, structuralHash, likesHash,
       bool(data?.is_paused), observedAt, Date.now(),
-    ]),
-  );
+    ]));
+  }
   if (structureChanged && claim.accepted) {
     statements.unshift(prepared(db.prepare(`INSERT INTO sh_queue_snapshots (
       observed_at,station_id,queue_id,start_time,is_paused,raw_json
