@@ -269,7 +269,6 @@
     }).observe(guide, { childList: true, subtree: true, characterData: true });
   }
 
-  // /history/history-track-likes.js is statically deferred after this loader.
   const initialLoad = () => load();
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', initialLoad, { once: true });

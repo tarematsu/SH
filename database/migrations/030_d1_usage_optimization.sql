@@ -1,4 +1,3 @@
--- D1 usage optimization and migration of the remaining runtime-created solo tables.
 DROP TRIGGER IF EXISTS trg_sh_channel_comment_velocity;
 
 CREATE TABLE IF NOT EXISTS sh_solo_activity_state (
@@ -71,7 +70,6 @@ SET comment_count=COALESCE((
 ),comment_count,0)
 WHERE (SELECT migrated_at FROM sh_solo_activity_migration WHERE id=1)=0;
 
--- Preserve historical raw comments. New collection writes only aggregates.
 UPDATE sh_solo_activity_migration
 SET migrated_at=CAST(unixepoch('now') AS INTEGER)*1000
 WHERE id=1 AND migrated_at=0;

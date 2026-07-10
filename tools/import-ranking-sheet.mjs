@@ -1,8 +1,6 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
-// One-off migration script: point this at your own Google Sheets via RANKING_IMPORT_SHEETS, e.g.:
-//   RANKING_IMPORT_SHEETS='[{"id":"weekly_leaderboard","kind":"vertical","sheetId":"XXX","gid":"0","priority":1}]'
 const SOURCES = JSON.parse(process.env.RANKING_IMPORT_SHEETS || 'null');
 if (!SOURCES) {
   throw new Error('Set RANKING_IMPORT_SHEETS to a JSON array of {id, kind, sheetId, gid, priority} sources.');

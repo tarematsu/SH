@@ -1,4 +1,3 @@
--- Performance optimizations. Safe to run repeatedly.
 
 CREATE INDEX IF NOT EXISTS idx_sh_channel_snapshots_observed
 ON sh_channel_snapshots(observed_at);

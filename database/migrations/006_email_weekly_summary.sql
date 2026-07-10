@@ -91,6 +91,5 @@ BEGIN
     updated_at=excluded.updated_at;
 END;
 
--- Backfill existing recap rows through the update trigger.
 UPDATE sh_email_stream_snapshots
 SET validation_status=validation_status;

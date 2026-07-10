@@ -32,7 +32,6 @@ page.on("response", async (response) => {
       body: text
     });
   } catch {
-    // 読めないレスポンスは無視する
   }
 });
 

@@ -228,7 +228,6 @@ export async function runDataMaintenance(db, now = Date.now()) {
       }
     }
 
-    // Historical rows are intentionally retained. Maintenance still performs
     // rollups and the bounded legacy backfill, but never issues retention DELETEs.
     const legacyBackfill = await backfillLegacySamples(db, legacyBackfillId);
     legacyBackfillId = legacyBackfill.lastLegacyId;

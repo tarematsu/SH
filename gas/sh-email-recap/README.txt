@@ -1,1 +1,0 @@
-This project reads Stationhead recap emails in the account owner's Gmail and sends only the parsed week, sent time, and stream count to the owner's Cloudflare Worker. The email body is not transmitted or stored.

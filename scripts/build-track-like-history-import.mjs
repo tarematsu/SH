@@ -1,7 +1,5 @@
 import { mkdir, rm, writeFile } from 'node:fs/promises';
 
-// One-off migration script: point this at your own Google Sheets via TRACK_LIKE_HISTORY_SHEETS, e.g.:
-//   TRACK_LIKE_HISTORY_SHEETS='[{"id":"XXX","gid":"0"}]'
 const sheets = JSON.parse(process.env.TRACK_LIKE_HISTORY_SHEETS || 'null');
 if (!sheets) {
   throw new Error('Set TRACK_LIKE_HISTORY_SHEETS to a JSON array of {id, gid} Google Sheets sources.');

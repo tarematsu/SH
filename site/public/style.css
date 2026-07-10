@@ -1,11 +1,9 @@
 @import url('/style-base.css');
 
-/* Existing dashboard compatibility layer */
 .player-actions{display:flex;gap:.5rem;align-items:center;flex-wrap:wrap}
 button.spotify-link{font:inherit;cursor:pointer}
 .spotify-embed{margin-top:1rem;min-height:152px}
 
-/* Queue/goal layout patch */
 .queue-panel { min-width: 0; }
 .queue-slider-wrap { position: relative; }
 .queue-list {
@@ -56,7 +54,6 @@ button.spotify-link{font:inherit;cursor:pointer}
   .queue-list { max-height: 290px; }
 }
 
-/* compact dashboard cleanup */
 .hero-side { flex-wrap: wrap; justify-content: flex-end; }
 .hero-side > .small { width: 100%; text-align: right; }
 .actions { align-items: center; }
@@ -132,7 +129,6 @@ button.spotify-link{font:inherit;cursor:pointer}
   .now-playing .section-head .now-host-inline { padding-left: 10px; gap: 6px; }
 }
 
-/* graph stability/performance */
 .chart-panel { contain: layout paint; }
 .chart-panel canvas { min-height: 250px; max-height: 360px; }
 @media (prefers-reduced-motion: reduce) {
@@ -148,7 +144,6 @@ button.spotify-link{font:inherit;cursor:pointer}
   .metric > span { white-space: normal; line-height: 1.2; min-height: 2.4em; }
 }
 
-/* Header navigation alignment */
 .history-link { align-self: center; white-space: nowrap; }
 @media (min-width: 561px) {
   .hero { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; }

@@ -1,4 +1,3 @@
--- D1 query indexes
 CREATE INDEX IF NOT EXISTS idx_sh_channel_snapshots_channel_time_id ON sh_channel_snapshots(channel_id, observed_at DESC, id DESC);
 CREATE INDEX IF NOT EXISTS idx_sh_comments_station_effective_time ON sh_comments(station_id, COALESCE(chat_time_ms, chat_time * 1000, observed_at));
 CREATE INDEX IF NOT EXISTS idx_sh_track_like_observations_station_track_time ON sh_track_like_observations(station_id, track_key, observed_at DESC, id DESC);
