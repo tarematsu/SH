@@ -55,7 +55,12 @@ export async function loadBuddyCollectorStatus(db, alias) {
     return buddyCollectorStatus(row);
   } catch (error) {
     if (/no such table:\s*sh_collector_status/i.test(String(error?.message || error))) {
-      return buddyCollectorStatus(null);
+      return {
+        ...emptyStatus('unknown'),
+        last_error: 'collector status schema is unavailable',
+        failure_code: 'COLLECTOR_STATUS_SCHEMA_MISSING',
+        failure_stage: 'd1_read_collector_state',
+      };
     }
     return {
       ...emptyStatus('unknown'),
@@ -71,7 +76,7 @@ export function attachBuddyCollectorStatus(payload, collector) {
   const collectorUnavailable = collector?.status === 'unknown';
   const failedAfterData = collector?.status === 'error'
     && (num(collector.last_attempt_at) ?? 0) > (observedAt ?? 0);
-  const neverCollected = collector?.status === 'never' && observedAt == null;
+  const neverCollected = collector?.status === 'never';
   const stale = Boolean(payload?.stale || collectorUnavailable || failedAfterData || neverCollected);
   const queue = stale
     ? (payload?.queue || []).map((track) => ({ ...track, is_current: false }))
