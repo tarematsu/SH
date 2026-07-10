@@ -41,7 +41,10 @@ async function handleSnapshot({ env, body, observedAt, data }) {
 
 async function handleQueue({ env, body, observedAt, data }) {
   const result = await saveLeanQueue(env.DB, observedAt, body);
-  const reachability = await saveQueueReachability(env.DB, observedAt, data);
+  const structuralSnapshotWritten = result.structureChanged === true && result.claim.accepted === true;
+  const reachability = structuralSnapshotWritten
+    ? { inserted: false }
+    : await saveQueueReachability(env.DB, observedAt, data);
   return json({
     ok: true,
     type: body.type,
@@ -55,6 +58,7 @@ async function handleQueue({ env, body, observedAt, data }) {
     queue_items_written: result.itemsWritten,
     like_observations_written: result.observationsWritten,
     reachability_checkpoint_written: reachability.inserted,
+    reachability_recorded: structuralSnapshotWritten || reachability.inserted,
   });
 }
 
