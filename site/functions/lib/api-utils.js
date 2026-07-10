@@ -45,7 +45,14 @@ export function num(value) {
 }
 
 export function bool(value) {
-  return value === undefined || value === null ? null : value ? 1 : 0;
+  if (value === undefined || value === null) return null;
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase();
+    if (['true', '1', 'yes', 'on'].includes(normalized)) return 1;
+    if (['false', '0', 'no', 'off', ''].includes(normalized)) return 0;
+  }
+  if (typeof value === 'number') return value === 0 || Number.isNaN(value) ? 0 : 1;
+  return value ? 1 : 0;
 }
 
 export function text(value) {
