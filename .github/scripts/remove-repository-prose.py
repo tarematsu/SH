@@ -117,11 +117,14 @@ for item in tracked:
     if not item:
         continue
     path = Path(item)
-    if not path.exists() or path.is_dir() or path.as_posix() in helper_paths:
+    posix = path.as_posix()
+    if not path.exists() or path.is_dir() or posix in helper_paths:
         continue
     if is_document(path):
         path.unlink()
         deleted.append(item)
+        continue
+    if posix.startswith('.github/workflows/'):
         continue
     suffix = path.suffix.lower()
     if suffix not in line_prefixes and path.name not in {
