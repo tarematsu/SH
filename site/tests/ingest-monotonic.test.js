@@ -12,24 +12,30 @@ import {
 import { payloadHash } from '../functions/lib/ingest-claim.js';
 import { FakeD1Database } from './helpers/fake-d1.js';
 
-test('persisted track keys keep ID namespaces distinct', () => {
-  assert.equal(observationTrackKey({ queue_track_id: 123, spotify_id: '123' }), 'queue:123');
-  assert.equal(observationTrackKey({ spotify_id: '123' }), 'spotify:123');
-  assert.equal(observationTrackKey({ isrc: 'jpabc1234567' }), 'isrc:JPABC1234567');
-  assert.notEqual(
-    observationTrackKey({ queue_track_id: 123 }),
-    observationTrackKey({ spotify_id: '123' }),
-  );
+test('persisted like keys use ISRC only', () => {
+  assert.equal(observationTrackKey({
+    queue_track_id: 123,
+    spotify_id: 'spotify-id',
+    isrc: 'jpabc1234567',
+  }), 'isrc:JPABC1234567');
+  assert.equal(observationTrackKey({ queue_track_id: 123 }), null);
+  assert.equal(observationTrackKey({ spotify_id: 'spotify-id' }), null);
+  assert.equal(observationTrackKey({ stationhead_track_id: 456 }), null);
 });
 
-test('legacy like keys migrate current state without duplicating observation history', () => {
-  const tracks = [{ position: 0, spotify_id: 'abc', bite_count: 10 }];
-  const latestRows = [{ track_key: 'abc', spotify_id: 'abc', like_count: 10, observed_at: 100 }];
+test('legacy current rows migrate by ISRC without duplicating observation history', () => {
+  const tracks = [{ position: 0, isrc: 'jpabc1234567', bite_count: 10 }];
+  const latestRows = [{
+    track_key: 'old-non-isrc-key',
+    isrc: 'JPABC1234567',
+    like_count: 10,
+    observed_at: 100,
+  }];
 
   assert.equal(planLikeObservations(tracks, latestRows).length, 0);
   assert.deepEqual(
     planLikeCurrentMigrations(tracks, latestRows).map(({ trackKey }) => trackKey),
-    ['spotify:abc'],
+    ['isrc:JPABC1234567'],
   );
 });
 
@@ -58,6 +64,7 @@ test('delayed queue payloads preserve history without deleting or regressing cur
         position: 0,
         queue_track_id: 123,
         spotify_id: 'spotify-old',
+        isrc: 'JPABC1234567',
         duration_ms: 180_000,
         bite_count: 4,
       }],
@@ -76,6 +83,7 @@ test('delayed queue payloads preserve history without deleting or regressing cur
   assert.match(itemUpsert.sql, /MAX\(snapshot\.observed_at\)/);
   assert.match(likeUpsert.sql, /MAX\(snapshot\.observed_at\)/);
   assert.ok(historyInsert);
+  assert.ok(likeUpsert.params.includes('isrc:JPABC1234567'));
 });
 
 test('likes-only queue updates refresh the queue item fallback count', async () => {
@@ -88,6 +96,7 @@ test('likes-only queue updates refresh the queue item fallback count', async () 
       position: 0,
       queue_track_id: 123,
       spotify_id: 'spotify-current',
+      isrc: 'JPABC1234567',
       duration_ms: 180_000,
       bite_count: 7,
     }],
@@ -115,6 +124,41 @@ test('likes-only queue updates refresh the queue item fallback count', async () 
   assert.ok(likeFallbackUpdate);
   assert.deepEqual(likeFallbackUpdate.params.slice(0, 4), [7, 1, 900, 0]);
   assert.match(likeFallbackUpdate.sql, /MAX\(snapshot\.observed_at\)/);
+});
+
+test('tracks without ISRC do not write current or historical like identities', async () => {
+  const data = {
+    station_id: 1,
+    queue_id: 2,
+    start_time: 900,
+    is_paused: false,
+    tracks: [{
+      position: 0,
+      queue_track_id: 123,
+      spotify_id: 'spotify-without-isrc',
+      duration_ms: 180_000,
+      bite_count: 7,
+    }],
+  };
+  const structuralHash = await payloadHash(queueStructuralPayload(data));
+  const db = new FakeD1Database([
+    {
+      kind: 'first',
+      matcher: /FROM sh_queue_current/,
+      result: {
+        structural_hash: structuralHash,
+        likes_hash: 'old-like-hash',
+        start_time: 900,
+        observed_at: 1_000,
+        latest_reachability_at: 1_000,
+      },
+    },
+  ]);
+
+  await saveLeanQueue(db, 2_000, { data });
+  const statements = db.batches.flat();
+  assert.equal(statements.some(({ sql }) => /INSERT INTO sh_track_like_current/.test(sql)), false);
+  assert.equal(statements.some(({ sql }) => /INSERT INTO sh_track_like_observations/.test(sql)), false);
 });
 
 test('snapshot and heartbeat current tables reject older timestamps', async () => {
