@@ -4,6 +4,7 @@ import {
   clearCollectorFailure,
   sanitizeFailureDetail,
 } from './collector-failure.js';
+import { buildCollectionPlan } from './collector-plan.js';
 import { COLLECTOR_VERSION, configFromEnv, stationheadJson } from './collector-config.js';
 import { collectOptionalComments } from './collector-comments.js';
 import { extractIds, extractQueue, normalizeSnapshot, validateChannelPayload } from './collector-payload.js';
@@ -38,30 +39,29 @@ export async function collectOnce(env, source = 'manual') {
     validateChannelPayload(channel, config.channelAlias);
     extractIds(channel, state);
 
-    stage = 'd1_write_collector_heartbeat';
-    await ingest(env, 'collector_heartbeat', {
-      collector_id: config.collectorId,
-      hostname: 'cloudflare-workers',
-      version: COLLECTOR_VERSION,
-      channel_alias: config.channelAlias,
-      websocket_enabled: false,
-      invocation_source: source,
-    }, observedAt);
-
-    stage = 'd1_write_snapshot';
-    await ingest(env, 'snapshot', normalizeSnapshot(channel, state, config), observedAt);
-
     const queue = extractQueue(channel, state.stationId);
-    let queueResult = null;
-    let metadataSaved = 0;
-    if (queue) {
-      stage = 'd1_write_queue';
-      queueResult = await ingest(env, 'queue', queue, observedAt);
-      stage = 'd1_write_track_metadata';
-      metadataSaved = await enrichTracks(env, queue, observedAt, config);
+    const initialPlan = buildCollectionPlan({ state, queue });
+
+    if (initialPlan.snapshot) {
+      stage = 'd1_write_snapshot';
+      await ingest(env, 'snapshot', normalizeSnapshot(channel, state, config), observedAt);
     }
 
-    const commentResult = await collectOptionalComments(env, state, config, observedAt);
+    let queueResult = null;
+    let metadataSaved = 0;
+    if (initialPlan.queue) {
+      stage = 'd1_write_queue';
+      queueResult = await ingest(env, 'queue', queue, observedAt);
+      const completedPlan = buildCollectionPlan({ state, queue, queueResult });
+      if (completedPlan.metadata) {
+        stage = 'd1_write_track_metadata';
+        metadataSaved = await enrichTracks(env, queue, observedAt, config);
+      }
+    }
+
+    const commentResult = initialPlan.comments
+      ? await collectOptionalComments(env, state, config, observedAt)
+      : { commentsSaved: 0, degraded: false, errorStage: null };
 
     stage = 'd1_write_collector_state';
     await saveCollectorState(env, state, {
@@ -89,9 +89,13 @@ export async function collectOnce(env, source = 'manual') {
       comments_error_stage: commentResult.errorStage,
       queue_tracks: queue?.tracks?.length || 0,
       queue_inspected: Boolean(queueResult?.queue_inspected),
+      queue_structure_changed: Boolean(queueResult?.structure_changed),
+      queue_likes_changed: Boolean(queueResult?.likes_changed),
       queue_items_written: Number(queueResult?.queue_items_written || 0),
       like_observations_written: Number(queueResult?.like_observations_written || 0),
       metadata_saved: metadataSaved,
+      metadata_deferred: Boolean(queue && queueResult && queueResult.structure_changed !== true),
+      heartbeat_written: false,
       token_expires_at: state.tokenExpiresAt || null,
     };
   } catch (error) {
