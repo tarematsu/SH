@@ -5,16 +5,16 @@ import { buildCollectionPlan, metadataRefreshDue } from '../src/collector-plan.j
 import { internalHealthMonitoringEnabled } from '../src/cadenced-entry.js';
 import { shouldRunScheduledMaintenance } from '../src/scheduled-maintenance.js';
 
-const SIX_HOURS = 6 * 60 * 60_000;
+const FIFTEEN_MINUTES = 15 * 60_000;
 
 test('collection plan disables heartbeat and metadata for an unchanged queue within one refresh window', () => {
   const plan = buildCollectionPlan({
     state: { stationId: 10 },
     queue: { tracks: [{ spotify_id: 'track-1' }] },
     queueResult: { structure_changed: false, likes_changed: true },
-    previousRunAt: SIX_HOURS + 60_000,
-    observedAt: SIX_HOURS + 120_000,
-    metadataRefreshIntervalMs: SIX_HOURS,
+    previousRunAt: FIFTEEN_MINUTES + 60_000,
+    observedAt: FIFTEEN_MINUTES + 120_000,
+    metadataRefreshIntervalMs: FIFTEEN_MINUTES,
   });
 
   assert.equal(plan.snapshot, true);
@@ -29,24 +29,28 @@ test('collection plan schedules metadata after a structural queue change', () =>
     state: { stationId: 10 },
     queue: { tracks: [{ spotify_id: 'track-1' }] },
     queueResult: { structure_changed: true },
-    previousRunAt: SIX_HOURS + 60_000,
-    observedAt: SIX_HOURS + 120_000,
+    previousRunAt: FIFTEEN_MINUTES + 60_000,
+    observedAt: FIFTEEN_MINUTES + 120_000,
   });
 
   assert.equal(plan.metadata, true);
 });
 
-test('collection plan periodically rechecks metadata without a queue change', () => {
+test('collection plan periodically rechecks metadata after fifteen minutes without a queue change', () => {
   const plan = buildCollectionPlan({
     state: { stationId: 10 },
     queue: { tracks: [{ spotify_id: 'track-1' }] },
     queueResult: { structure_changed: false },
-    previousRunAt: SIX_HOURS - 60_000,
-    observedAt: SIX_HOURS,
-    metadataRefreshIntervalMs: SIX_HOURS,
+    previousRunAt: FIFTEEN_MINUTES - 60_000,
+    observedAt: FIFTEEN_MINUTES,
+    metadataRefreshIntervalMs: FIFTEEN_MINUTES,
   });
 
-  assert.equal(metadataRefreshDue(SIX_HOURS - 60_000, SIX_HOURS, SIX_HOURS), true);
+  assert.equal(metadataRefreshDue(
+    FIFTEEN_MINUTES - 60_000,
+    FIFTEEN_MINUTES,
+    FIFTEEN_MINUTES,
+  ), true);
   assert.equal(plan.metadata, true);
 });
 
@@ -55,8 +59,8 @@ test('collection plan retries metadata after a failed collector cycle', () => {
     state: { stationId: 10 },
     queue: { tracks: [{ spotify_id: 'track-1' }] },
     queueResult: { structure_changed: false },
-    previousRunAt: SIX_HOURS + 60_000,
-    observedAt: SIX_HOURS + 120_000,
+    previousRunAt: FIFTEEN_MINUTES + 60_000,
+    observedAt: FIFTEEN_MINUTES + 120_000,
     metadataRetry: true,
   });
 
