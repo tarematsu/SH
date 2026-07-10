@@ -1,11 +1,41 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { DatabaseSync } from 'node:sqlite';
 
 import {
   QUEUE_REACHABILITY_CHECKPOINT_MS,
   saveQueueReachability,
 } from '../functions/lib/queue-reachability.js';
 import { FakeD1Database } from './helpers/fake-d1.js';
+
+function sqliteD1() {
+  const sqlite = new DatabaseSync(':memory:');
+  sqlite.exec(`CREATE TABLE sh_queue_snapshots (
+    id INTEGER PRIMARY KEY,
+    observed_at INTEGER NOT NULL,
+    station_id INTEGER,
+    queue_id INTEGER,
+    start_time INTEGER,
+    is_paused INTEGER,
+    raw_json TEXT NOT NULL
+  )`);
+  return {
+    sqlite,
+    prepare(sql) {
+      const statement = sqlite.prepare(sql);
+      return {
+        bind(...params) {
+          return {
+            async run() {
+              const result = statement.run(...params);
+              return { meta: { changes: Number(result.changes || 0) } };
+            },
+          };
+        },
+      };
+    },
+  };
+}
 
 test('queue reachability writes a compact checkpoint for unchanged queues', async () => {
   const db = new FakeD1Database();
@@ -23,7 +53,7 @@ test('queue reachability writes a compact checkpoint for unchanged queues', asyn
   assert.equal(call.kind, 'run');
   assert.match(call.sql, /INSERT INTO sh_queue_snapshots/);
   assert.match(call.sql, /NOT EXISTS/);
-  assert.match(call.sql, /observed_at>=\? AND observed_at<=\?/);
+  assert.match(call.sql, /observed_at>\? AND observed_at<=\?/);
   assert.equal(call.params[0], observedAt);
   assert.equal(call.params[11], observedAt - QUEUE_REACHABILITY_CHECKPOINT_MS);
   assert.equal(call.params[12], observedAt);
@@ -44,21 +74,30 @@ test('queue reachability preserves paused state for historical reconstruction', 
   assert.equal(db.calls[0].params[13], 1);
 });
 
-test('queue reachability does not let a future row suppress a delayed state transition', async () => {
-  const db = new FakeD1Database();
-  const observedAt = 1_700_000_120_000;
+test('a future row does not suppress a delayed state transition', async () => {
+  const db = sqliteD1();
+  const future = 1_700_000_120_000;
+  const delayed = future - 30_000;
+  const data = { station_id: 10, queue_id: 20, start_time: 30, is_paused: false };
 
-  await saveQueueReachability(db, observedAt, {
-    station_id: 10,
-    queue_id: 20,
-    start_time: 30,
-    is_paused: false,
-  });
+  assert.equal((await saveQueueReachability(db, future, data)).inserted, true);
+  assert.equal((await saveQueueReachability(db, delayed, data)).inserted, true);
 
-  const [call] = db.calls;
-  assert.equal(call.params[11], observedAt - QUEUE_REACHABILITY_CHECKPOINT_MS);
-  assert.equal(call.params[12], observedAt);
-  assert.match(call.sql, /observed_at<=\?/);
+  const row = db.sqlite.prepare('SELECT COUNT(*) AS count FROM sh_queue_snapshots').get();
+  assert.equal(row.count, 2);
+});
+
+test('the exact two minute boundary writes a new checkpoint', async () => {
+  const db = sqliteD1();
+  const start = 1_700_000_000_000;
+  const data = { station_id: 10, queue_id: 20, start_time: 30, is_paused: false };
+
+  assert.equal((await saveQueueReachability(db, start, data)).inserted, true);
+  assert.equal((await saveQueueReachability(db, start + 60_000, data)).inserted, false);
+  assert.equal((await saveQueueReachability(db, start + QUEUE_REACHABILITY_CHECKPOINT_MS, data)).inserted, true);
+
+  const row = db.sqlite.prepare('SELECT COUNT(*) AS count FROM sh_queue_snapshots').get();
+  assert.equal(row.count, 2);
 });
 
 test('queue reachability skips invalid queue identities inside SQL', async () => {
