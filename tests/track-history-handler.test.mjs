@@ -123,8 +123,8 @@ function queryTracks(db, from, to, limit = 100000) {
     fromTs - TRACK_HISTORY_GRACE_MS, toTs,
     fromTs - TRACK_HISTORY_GRACE_MS, toTs,
     toTs,
-    fromTs, toTs,
     TRACK_HISTORY_GRACE_MS,
+    fromTs, toTs,
     fromTs, toTs,
     limit,
   );
@@ -185,6 +185,22 @@ test('uses UTC day boundaries, which begin at 09:00 in Japan', () => {
   );
 });
 
+test('maps tracks after a pause to their real UTC playback day', () => {
+  const db = createDatabase();
+  const start = Date.parse('2026-06-30T23:50:00Z');
+  addTracks(db, { start, count: 6, duration: 5 * 60_000 });
+  addSnapshot(db, { start, observed: start });
+  addSnapshot(db, { start, observed: Date.parse('2026-06-30T23:55:00Z'), paused: 1 });
+  addSnapshot(db, { start, observed: Date.parse('2026-07-01T00:10:00Z'), paused: 0 });
+  addChannelSnapshot(db, Date.parse('2026-07-01T00:20:00Z'));
+
+  const rows = queryTracks(db, '2026-07-01', '2026-07-01');
+
+  assert.deepEqual(rows.map((row) => row.position), [1, 2, 3, 4]);
+  assert.equal(rows[0].played_at, Date.parse('2026-07-01T00:10:00Z'));
+  assert.ok(rows.every((row) => row.play_date === '2026-07-01'));
+});
+
 test('includes collection coverage for each UTC playback day', () => {
   const db = createDatabase();
   const start = Date.parse('2026-06-30T00:00:00Z');
@@ -214,7 +230,7 @@ test('stops inferring later playback after an invalid duration', () => {
   assert.deepEqual(rows.map((row) => row.position), [0, 1]);
 });
 
-test('counts playback until a pause begins but does not advance while paused', () => {
+test('counts playback until a pause begins but adds no grace while paused', () => {
   const db = createDatabase();
   const start = Date.parse('2026-06-30T00:00:00Z');
   addTracks(db, { start, count: 200, duration: 120000 });
@@ -224,10 +240,11 @@ test('counts playback until a pause begins but does not advance while paused', (
 
   const rows = queryTracks(db, '2026-06-30', '2026-06-30');
 
-  assert.equal(rows.length, 93);
+  assert.equal(rows.length, 90);
+  assert.equal(rows.at(-1).position, 89);
 });
 
-test('subtracts a paused interval after playback resumes', () => {
+test('subtracts a paused interval and maps resumed tracks to wall-clock time', () => {
   const db = createDatabase();
   const start = Date.parse('2026-06-30T00:00:00Z');
   addTracks(db, { start, count: 100, duration: 120000 });
@@ -239,7 +256,10 @@ test('subtracts a paused interval after playback resumes', () => {
   const rows = queryTracks(db, '2026-06-30', '2026-06-30');
 
   assert.equal(rows.length, 13);
+  assert.equal(rows[5].position, 5);
+  assert.equal(rows[5].played_at, start + 20 * 60_000);
   assert.equal(rows.at(-1).position, 12);
+  assert.equal(rows.at(-1).played_at, start + 34 * 60_000);
 });
 
 test('uses queue item heartbeat evidence for legacy rows without snapshots', () => {
