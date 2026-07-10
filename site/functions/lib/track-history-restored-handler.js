@@ -31,17 +31,20 @@ export const TRACK_HISTORY_SQL = `WITH queue_starts AS (
           PARTITION BY station_id ORDER BY start_time
         ) AS next_start_time
       FROM queue_starts
-    ), snapshot_evidence AS (
-      SELECT station_id, start_time, MAX(observed_at) AS queue_last_observed_at
-      FROM sh_queue_snapshots
-      WHERE start_time IS NOT NULL
-        AND start_time < ?
-        AND observed_at >= ?
-        AND COALESCE(is_paused, 0) = 0
-      GROUP BY station_id, start_time
-    ), channel_evidence AS (
+    ), snapshot_raw_evidence AS (
       SELECT queues.station_id,queues.start_time,
-        MAX(snapshots.observed_at) AS queue_last_observed_at
+        MAX(snapshots.observed_at) AS evidence_end
+      FROM queue_instances queues
+      JOIN sh_queue_snapshots snapshots
+        ON snapshots.station_id=queues.station_id
+       AND snapshots.start_time=queues.start_time
+       AND snapshots.observed_at>=?
+       AND snapshots.observed_at<?
+       AND (queues.next_start_time IS NULL OR snapshots.observed_at<queues.next_start_time)
+      GROUP BY queues.station_id,queues.start_time
+    ), channel_raw_evidence AS (
+      SELECT queues.station_id,queues.start_time,
+        MAX(snapshots.observed_at) AS evidence_end
       FROM queue_instances queues
       JOIN sh_channel_snapshots snapshots
         ON snapshots.station_id=queues.station_id
@@ -54,31 +57,76 @@ export const TRACK_HISTORY_SQL = `WITH queue_starts AS (
         OR COALESCE(snapshots.is_broadcasting,0)=1
         OR (snapshots.is_launched IS NULL AND snapshots.is_broadcasting IS NULL)
       )
-        AND COALESCE((
-          SELECT state.is_paused
-          FROM sh_queue_snapshots state
-          WHERE state.station_id=queues.station_id
-            AND state.start_time=queues.start_time
-            AND state.observed_at<=snapshots.observed_at
-          ORDER BY state.observed_at DESC,state.id DESC
-          LIMIT 1
-        ),0)=0
       GROUP BY queues.station_id,queues.start_time
-    ), item_evidence AS (
-      SELECT q.station_id, q.start_time, MAX(q.observed_at) AS queue_last_observed_at
-      FROM sh_queue_items q
-      WHERE q.start_time < ?
-        AND q.observed_at >= ?
-      GROUP BY q.station_id, q.start_time
-    ), evidence_rows AS (
-      SELECT station_id,start_time,queue_last_observed_at FROM snapshot_evidence
+    ), item_raw_evidence AS (
+      SELECT queues.station_id,queues.start_time,
+        MAX(items.observed_at) AS evidence_end
+      FROM queue_instances queues
+      JOIN sh_queue_items items
+        ON items.station_id=queues.station_id
+       AND items.start_time=queues.start_time
+       AND items.observed_at>=?
+       AND items.observed_at<?
+       AND (queues.next_start_time IS NULL OR items.observed_at<queues.next_start_time)
+      GROUP BY queues.station_id,queues.start_time
+    ), raw_evidence_rows AS (
+      SELECT station_id,start_time,evidence_end FROM snapshot_raw_evidence
       UNION ALL
-      SELECT station_id,start_time,queue_last_observed_at FROM channel_evidence
+      SELECT station_id,start_time,evidence_end FROM channel_raw_evidence
       UNION ALL
-      SELECT station_id,start_time,queue_last_observed_at FROM item_evidence
+      SELECT station_id,start_time,evidence_end FROM item_raw_evidence
+    ), raw_evidence AS (
+      SELECT station_id,start_time,MAX(evidence_end) AS evidence_end
+      FROM raw_evidence_rows
+      GROUP BY station_id,start_time
+    ), initial_states AS (
+      SELECT evidence.station_id,evidence.start_time,
+        evidence.start_time AS state_at,
+        0 AS state_id,
+        COALESCE((
+          SELECT snapshot.is_paused
+          FROM sh_queue_snapshots snapshot
+          WHERE snapshot.station_id=evidence.station_id
+            AND snapshot.start_time=evidence.start_time
+            AND snapshot.observed_at<=evidence.evidence_end
+          ORDER BY snapshot.observed_at ASC,snapshot.id ASC
+          LIMIT 1
+        ),0) AS is_paused,
+        evidence.evidence_end
+      FROM raw_evidence evidence
+    ), state_events AS (
+      SELECT station_id,start_time,state_at,state_id,is_paused,evidence_end
+      FROM initial_states
+      UNION ALL
+      SELECT evidence.station_id,evidence.start_time,
+        snapshot.observed_at AS state_at,
+        snapshot.id AS state_id,
+        COALESCE(snapshot.is_paused,0) AS is_paused,
+        evidence.evidence_end
+      FROM raw_evidence evidence
+      JOIN sh_queue_snapshots snapshot
+        ON snapshot.station_id=evidence.station_id
+       AND snapshot.start_time=evidence.start_time
+       AND snapshot.observed_at>evidence.start_time
+       AND snapshot.observed_at<=evidence.evidence_end
+    ), state_spans AS (
+      SELECT station_id,start_time,state_at,is_paused,evidence_end,
+        MIN(
+          COALESCE(LEAD(state_at) OVER (
+            PARTITION BY station_id,start_time ORDER BY state_at,state_id
+          ),evidence_end),
+          evidence_end
+        ) AS next_state_at
+      FROM state_events
     ), queue_evidence AS (
-      SELECT station_id,start_time,MAX(queue_last_observed_at) AS queue_last_observed_at
-      FROM evidence_rows
+      SELECT station_id,start_time,
+        start_time + SUM(
+          CASE WHEN COALESCE(is_paused,0)=0
+            THEN MAX(0,next_state_at-state_at)
+            ELSE 0
+          END
+        ) AS queue_last_observed_at
+      FROM state_spans
       GROUP BY station_id,start_time
     ), normalized AS (
       SELECT q.*, e.queue_last_observed_at,
@@ -200,9 +248,9 @@ export const TRACK_HISTORY_SQL = `WITH queue_starts AS (
 function trackHistoryStatement(db, fromTs, toTs, maxGroupedRows) {
   return db.prepare(TRACK_HISTORY_SQL).bind(
     toTs,
-    toTs, fromTs - TRACK_HISTORY_GRACE_MS,
     fromTs - TRACK_HISTORY_GRACE_MS, toTs,
-    toTs, fromTs - TRACK_HISTORY_GRACE_MS,
+    fromTs - TRACK_HISTORY_GRACE_MS, toTs,
+    fromTs - TRACK_HISTORY_GRACE_MS, toTs,
     toTs,
     fromTs, toTs,
     TRACK_HISTORY_GRACE_MS,
@@ -294,8 +342,8 @@ export async function handleTrackHistory({ request, env, waitUntil }) {
       excluded_play_count_dates: completed.excludedDates,
       excluded_play_count_date_count: completed.excludedDates.length,
       metadata_refresh_scheduled: metadataRefreshScheduled,
-      historical_recovery: 'channel_snapshots_with_queue_pause_state',
-      method: 'queue_checkpoint_and_channel_snapshot_reachability_utc_sql_preaggregate',
+      historical_recovery: 'channel_snapshots_with_pause_duration',
+      method: 'queue_checkpoint_and_active_elapsed_reachability_utc_sql_preaggregate',
     });
   } catch (error) {
     if (/no such table|no such column|malformed JSON/i.test(String(error?.message || ''))) {
