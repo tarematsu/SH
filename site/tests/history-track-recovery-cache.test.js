@@ -14,7 +14,7 @@ async function runScript() {
     URL,
     readCache(key) {
       reads.push(key);
-      return key.includes(':v16:') ? { restored: true } : { stale: true };
+      return key.includes(':v17:') ? { restored: true } : { stale: true };
     },
     writeCache(key, value) {
       writes.push([key, value]);
@@ -34,15 +34,15 @@ async function runScript() {
 test('track recovery cache ignores every older local cache generation', async () => {
   const { context, reads, writes } = await runScript();
 
-  for (const version of [11, 12, 13, 14, 15]) {
+  for (const version of [11, 12, 13, 14, 15, 16]) {
     const key = `track-history:v${version}:2026-06-30:2026-06-30`;
     const value = context.readCache(key);
     context.writeCache(key, { rows: [] });
     assert.deepEqual(value, { restored: true });
   }
 
-  assert.ok(reads.every((key) => key === 'track-history:v16:2026-06-30:2026-06-30'));
-  assert.ok(writes.every(([key]) => key === 'track-history:v16:2026-06-30:2026-06-30'));
+  assert.ok(reads.every((key) => key === 'track-history:v17:2026-06-30:2026-06-30'));
+  assert.ok(writes.every(([key]) => key === 'track-history:v17:2026-06-30:2026-06-30'));
 });
 
 test('track recovery fetch adds a distinct server cache version', async () => {
@@ -52,5 +52,5 @@ test('track recovery fetch adds a distinct server cache version', async () => {
 
   const url = new URL(fetches[0]);
   assert.equal(url.pathname, '/api/track-history');
-  assert.equal(url.searchParams.get('recovery'), '4');
+  assert.equal(url.searchParams.get('recovery'), '5');
 });
