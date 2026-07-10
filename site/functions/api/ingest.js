@@ -7,7 +7,6 @@ import {
   stripAppleMusicFields,
 } from '../lib/api-utils.js';
 import { saveCommentCounts } from '../lib/comment-counts.js';
-import { runDataMaintenanceSafely } from '../lib/data-maintenance.js';
 import {
   saveLeanHeartbeat,
   saveLeanQueue,
@@ -34,20 +33,8 @@ async function handleComments({ env, body, observedAt, data }) {
   return json({ ok: true, type: body.type, ...result });
 }
 
-async function maybeRunDataMaintenance(context, body, env) {
-  const shouldMaintain = body?.collector_id === 'cloudflare-worker'
-    && typeof env.DB.exec === 'function';
-  if (!shouldMaintain) return;
-  if (typeof context.waitUntil === 'function') {
-    context.waitUntil(runDataMaintenanceSafely(env.DB));
-    return;
-  }
-  await runDataMaintenanceSafely(env.DB);
-}
-
-async function handleSnapshot({ context, env, body, observedAt, data }) {
+async function handleSnapshot({ env, body, observedAt, data }) {
   const result = await saveLeanSnapshot(env.DB, observedAt, data);
-  await maybeRunDataMaintenance(context, body, env);
   return json({ ok: true, type: body.type, accepted: true, ...result });
 }
 
@@ -60,6 +47,9 @@ async function handleQueue({ env, body, observedAt }) {
     duplicate: result.claim.duplicate || false,
     claim_reason: result.claim.reason || null,
     queue_inspected: result.inspected,
+    structure_changed: result.structureChanged === true,
+    likes_changed: result.likesChanged === true,
+    complete_likes: result.completeLikes !== false,
     queue_items_written: result.itemsWritten,
     like_observations_written: result.observationsWritten,
   });
