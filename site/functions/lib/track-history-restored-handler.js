@@ -110,7 +110,7 @@ export const TRACK_HISTORY_SQL = `WITH queue_starts AS (
        AND snapshot.observed_at>evidence.start_time
        AND snapshot.observed_at<=evidence.evidence_end
     ), state_spans AS (
-      SELECT station_id,start_time,state_at,is_paused,evidence_end,
+      SELECT station_id,start_time,state_at,state_id,is_paused,evidence_end,
         MIN(
           COALESCE(LEAD(state_at) OVER (
             PARTITION BY station_id,start_time ORDER BY state_at,state_id
@@ -118,37 +118,55 @@ export const TRACK_HISTORY_SQL = `WITH queue_starts AS (
           evidence_end
         ) AS next_state_at
       FROM state_events
-    ), queue_evidence AS (
-      SELECT station_id,start_time,
-        start_time + SUM(
-          CASE WHEN COALESCE(is_paused,0)=0
-            THEN MAX(0,next_state_at-state_at)
-            ELSE 0
-          END
-        ) AS queue_last_observed_at
+    ), active_spans AS (
+      SELECT station_id,start_time,state_at,state_id,next_state_at,evidence_end,
+        MAX(0,next_state_at-state_at) AS active_duration_ms,
+        COALESCE(SUM(MAX(0,next_state_at-state_at)) OVER (
+          PARTITION BY station_id,start_time ORDER BY state_at,state_id
+          ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING
+        ),0) AS active_before_ms
       FROM state_spans
-      GROUP BY station_id,start_time
+      WHERE COALESCE(is_paused,0)=0
     ), normalized AS (
-      SELECT q.*, e.queue_last_observed_at,
+      SELECT q.*,
         CASE
           WHEN q.duration_ms BETWEEN 1000 AND 21600000 THEN q.duration_ms
           ELSE NULL
         END AS normalized_duration_ms
       FROM sh_queue_items q
-      JOIN queue_evidence e
-        ON e.station_id = q.station_id AND e.start_time = q.start_time
+      JOIN raw_evidence evidence
+        ON evidence.station_id=q.station_id AND evidence.start_time=q.start_time
       WHERE q.start_time < ?
-    ), timed AS (
+    ), timed_offsets AS (
       SELECT n.*,
-        n.start_time + COALESCE(SUM(n.normalized_duration_ms) OVER (
-          PARTITION BY n.station_id, n.start_time ORDER BY n.position
+        COALESCE(SUM(n.normalized_duration_ms) OVER (
+          PARTITION BY n.station_id,n.start_time ORDER BY n.position
           ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING
-        ), 0) AS played_at,
+        ),0) AS playback_offset_ms,
         COALESCE(SUM(CASE WHEN n.normalized_duration_ms IS NULL THEN 1 ELSE 0 END) OVER (
-          PARTITION BY n.station_id, n.start_time ORDER BY n.position
+          PARTITION BY n.station_id,n.start_time ORDER BY n.position
           ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING
-        ), 0) AS invalid_durations_before
+        ),0) AS invalid_durations_before
       FROM normalized n
+    ), timed AS (
+      SELECT offsets.*,
+        (
+          SELECT span.state_at+(offsets.playback_offset_ms-span.active_before_ms)
+          FROM active_spans span
+          WHERE span.station_id=offsets.station_id
+            AND span.start_time=offsets.start_time
+            AND offsets.playback_offset_ms>=span.active_before_ms
+            AND (
+              offsets.playback_offset_ms<span.active_before_ms+span.active_duration_ms
+              OR (
+                span.next_state_at=span.evidence_end
+                AND offsets.playback_offset_ms<=span.active_before_ms+span.active_duration_ms+?
+              )
+            )
+          ORDER BY span.active_before_ms DESC,span.state_at DESC,span.state_id DESC
+          LIMIT 1
+        ) AS played_at
+      FROM timed_offsets offsets
     ), plays AS (
       SELECT
         strftime('%Y-%m-%d', p.played_at / 1000, 'unixepoch') AS play_date,
@@ -174,9 +192,9 @@ export const TRACK_HISTORY_SQL = `WITH queue_starts AS (
         ) AS raw_artist
       FROM timed p
       LEFT JOIN sh_track_metadata m ON m.spotify_id = p.spotify_id
-      WHERE p.played_at >= ? AND p.played_at < ?
+      WHERE p.played_at IS NOT NULL
+        AND p.played_at >= ? AND p.played_at < ?
         AND p.invalid_durations_before = 0
-        AND p.played_at <= p.queue_last_observed_at + ?
     ), play_days AS (
       SELECT DISTINCT play_date,
         CAST(strftime('%s', play_date) AS INTEGER) * 1000 AS period_start,
@@ -252,8 +270,8 @@ function trackHistoryStatement(db, fromTs, toTs, maxGroupedRows) {
     fromTs - TRACK_HISTORY_GRACE_MS, toTs,
     fromTs - TRACK_HISTORY_GRACE_MS, toTs,
     toTs,
-    fromTs, toTs,
     TRACK_HISTORY_GRACE_MS,
+    fromTs, toTs,
     fromTs, toTs,
     maxGroupedRows + 1,
   );
@@ -342,8 +360,8 @@ export async function handleTrackHistory({ request, env, waitUntil }) {
       excluded_play_count_dates: completed.excludedDates,
       excluded_play_count_date_count: completed.excludedDates.length,
       metadata_refresh_scheduled: metadataRefreshScheduled,
-      historical_recovery: 'channel_snapshots_with_pause_duration',
-      method: 'queue_checkpoint_and_active_elapsed_reachability_utc_sql_preaggregate',
+      historical_recovery: 'channel_snapshots_with_wall_clock_pause_mapping',
+      method: 'queue_checkpoint_and_wall_clock_active_span_reachability_utc_sql_preaggregate',
     });
   } catch (error) {
     if (/no such table|no such column|malformed JSON/i.test(String(error?.message || ''))) {
