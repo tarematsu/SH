@@ -12,30 +12,44 @@ import {
 import { payloadHash } from '../functions/lib/ingest-claim.js';
 import { FakeD1Database } from './helpers/fake-d1.js';
 
-test('persisted like keys use ISRC only', () => {
+test('persisted like keys prefer ISRC and fall back to Spotify', () => {
   assert.equal(observationTrackKey({
     queue_track_id: 123,
     spotify_id: 'spotify-id',
     isrc: 'jpabc1234567',
   }), 'isrc:JPABC1234567');
+  assert.equal(observationTrackKey({ spotify_id: 'spotify-id' }), 'spotify:spotify-id');
   assert.equal(observationTrackKey({ queue_track_id: 123 }), null);
-  assert.equal(observationTrackKey({ spotify_id: 'spotify-id' }), null);
   assert.equal(observationTrackKey({ stationhead_track_id: 456 }), null);
 });
 
-test('legacy current rows migrate by ISRC without duplicating observation history', () => {
-  const tracks = [{ position: 0, isrc: 'jpabc1234567', bite_count: 10 }];
-  const latestRows = [{
+test('legacy current rows migrate by preferred identity without duplicating history', () => {
+  const isrcTracks = [{ position: 0, spotify_id: 'spotify-a', isrc: 'jpabc1234567', bite_count: 10 }];
+  const isrcRows = [{
     track_key: 'old-non-isrc-key',
+    spotify_id: 'spotify-a',
     isrc: 'JPABC1234567',
     like_count: 10,
     observed_at: 100,
   }];
-
-  assert.equal(planLikeObservations(tracks, latestRows).length, 0);
+  assert.equal(planLikeObservations(isrcTracks, isrcRows).length, 0);
   assert.deepEqual(
-    planLikeCurrentMigrations(tracks, latestRows).map(({ trackKey }) => trackKey),
+    planLikeCurrentMigrations(isrcTracks, isrcRows).map(({ trackKey }) => trackKey),
     ['isrc:JPABC1234567'],
+  );
+
+  const spotifyTracks = [{ position: 0, spotify_id: 'spotify-fallback', bite_count: 7 }];
+  const spotifyRows = [{
+    track_key: 'old-spotify-key',
+    spotify_id: 'spotify-fallback',
+    isrc: null,
+    like_count: 7,
+    observed_at: 100,
+  }];
+  assert.equal(planLikeObservations(spotifyTracks, spotifyRows).length, 0);
+  assert.deepEqual(
+    planLikeCurrentMigrations(spotifyTracks, spotifyRows).map(({ trackKey }) => trackKey),
+    ['spotify:spotify-fallback'],
   );
 });
 
@@ -126,7 +140,7 @@ test('likes-only queue updates refresh the queue item fallback count', async () 
   assert.match(likeFallbackUpdate.sql, /MAX\(snapshot\.observed_at\)/);
 });
 
-test('tracks without ISRC do not write current or historical like identities', async () => {
+test('Spotify fallback writes current and historical likes when ISRC is missing', async () => {
   const data = {
     station_id: 1,
     queue_id: 2,
@@ -135,7 +149,46 @@ test('tracks without ISRC do not write current or historical like identities', a
     tracks: [{
       position: 0,
       queue_track_id: 123,
-      spotify_id: 'spotify-without-isrc',
+      spotify_id: 'spotify-fallback',
+      duration_ms: 180_000,
+      bite_count: 7,
+    }],
+  };
+  const structuralHash = await payloadHash(queueStructuralPayload(data));
+  const db = new FakeD1Database([
+    {
+      kind: 'first',
+      matcher: /FROM sh_queue_current/,
+      result: {
+        structural_hash: structuralHash,
+        likes_hash: 'old-like-hash',
+        start_time: 900,
+        observed_at: 1_000,
+        latest_reachability_at: 1_000,
+      },
+    },
+  ]);
+
+  await saveLeanQueue(db, 2_000, { data });
+  const statements = db.batches.flat();
+  const current = statements.find(({ sql }) => /INSERT INTO sh_track_like_current/.test(sql));
+  const history = statements.find(({ sql }) => /INSERT INTO sh_track_like_observations/.test(sql));
+  assert.ok(current);
+  assert.ok(history);
+  assert.ok(current.params.includes('spotify:spotify-fallback'));
+  assert.ok(history.params.includes('spotify:spotify-fallback'));
+});
+
+test('tracks without ISRC or Spotify do not write like identities', async () => {
+  const data = {
+    station_id: 1,
+    queue_id: 2,
+    start_time: 900,
+    is_paused: false,
+    tracks: [{
+      position: 0,
+      queue_track_id: 123,
+      stationhead_track_id: 456,
       duration_ms: 180_000,
       bite_count: 7,
     }],
