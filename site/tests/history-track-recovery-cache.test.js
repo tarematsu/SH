@@ -20,7 +20,7 @@ async function runScript() {
       writes.push([key, value]);
     },
     window: {
-      location: { href: 'https://example.test/history/' },
+      location: new URL('https://example.test/history/'),
       async fetch(input) {
         fetches.push(String(input));
         return { ok: true };
