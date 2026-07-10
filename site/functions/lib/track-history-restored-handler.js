@@ -24,7 +24,7 @@ export const TRACK_HISTORY_GRACE_MS = 5 * 60 * 1000;
 export const TRACK_HISTORY_SQL = `WITH queue_starts AS (
       SELECT DISTINCT station_id,start_time
       FROM sh_queue_items
-      WHERE start_time IS NOT NULL AND start_time < ?1
+      WHERE start_time IS NOT NULL AND start_time < ?
     ), queue_instances AS (
       SELECT station_id,start_time,
         LEAD(start_time) OVER (
@@ -35,8 +35,8 @@ export const TRACK_HISTORY_SQL = `WITH queue_starts AS (
       SELECT station_id, start_time, MAX(observed_at) AS queue_last_observed_at
       FROM sh_queue_snapshots
       WHERE start_time IS NOT NULL
-        AND start_time < ?1
-        AND observed_at >= ?2
+        AND start_time < ?
+        AND observed_at >= ?
         AND COALESCE(is_paused, 0) = 0
       GROUP BY station_id, start_time
     ), channel_evidence AS (
@@ -45,8 +45,8 @@ export const TRACK_HISTORY_SQL = `WITH queue_starts AS (
       FROM queue_instances queues
       JOIN sh_channel_snapshots snapshots
         ON snapshots.station_id=queues.station_id
-       AND snapshots.observed_at>=?2
-       AND snapshots.observed_at<?1
+       AND snapshots.observed_at>=?
+       AND snapshots.observed_at<?
        AND snapshots.observed_at>=queues.start_time
        AND (queues.next_start_time IS NULL OR snapshots.observed_at<queues.next_start_time)
       WHERE (
@@ -67,8 +67,8 @@ export const TRACK_HISTORY_SQL = `WITH queue_starts AS (
     ), item_evidence AS (
       SELECT q.station_id, q.start_time, MAX(q.observed_at) AS queue_last_observed_at
       FROM sh_queue_items q
-      WHERE q.start_time < ?3
-        AND q.observed_at >= ?4
+      WHERE q.start_time < ?
+        AND q.observed_at >= ?
       GROUP BY q.station_id, q.start_time
     ), evidence_rows AS (
       SELECT station_id,start_time,queue_last_observed_at FROM snapshot_evidence
@@ -89,7 +89,7 @@ export const TRACK_HISTORY_SQL = `WITH queue_starts AS (
       FROM sh_queue_items q
       JOIN queue_evidence e
         ON e.station_id = q.station_id AND e.start_time = q.start_time
-      WHERE q.start_time < ?5
+      WHERE q.start_time < ?
     ), timed AS (
       SELECT n.*,
         n.start_time + COALESCE(SUM(n.normalized_duration_ms) OVER (
@@ -126,16 +126,16 @@ export const TRACK_HISTORY_SQL = `WITH queue_starts AS (
         ) AS raw_artist
       FROM timed p
       LEFT JOIN sh_track_metadata m ON m.spotify_id = p.spotify_id
-      WHERE p.played_at >= ?6 AND p.played_at < ?7
+      WHERE p.played_at >= ? AND p.played_at < ?
         AND p.invalid_durations_before = 0
-        AND p.played_at <= p.queue_last_observed_at + ?8
+        AND p.played_at <= p.queue_last_observed_at + ?
     ), play_days AS (
       SELECT DISTINCT play_date,
         CAST(strftime('%s', play_date) AS INTEGER) * 1000 AS period_start,
         CAST(strftime('%s', play_date) AS INTEGER) * 1000 + 86400000 AS period_end
       FROM plays
     ), coverage_range AS (
-      SELECT ?9 AS range_start,?10 AS range_end
+      SELECT ? AS range_start,? AS range_end
     ), coverage_boundaries AS (
       SELECT play_date,'start' AS boundary_name,period_start AS target_at FROM play_days
       UNION ALL
@@ -195,11 +195,13 @@ export const TRACK_HISTORY_SQL = `WITH queue_starts AS (
         ELSE NULL
       END
     ORDER BY first_played_at ASC
-    LIMIT ?11`;
+    LIMIT ?`;
 
 function trackHistoryStatement(db, fromTs, toTs, maxGroupedRows) {
   return db.prepare(TRACK_HISTORY_SQL).bind(
+    toTs,
     toTs, fromTs - TRACK_HISTORY_GRACE_MS,
+    fromTs - TRACK_HISTORY_GRACE_MS, toTs,
     toTs, fromTs - TRACK_HISTORY_GRACE_MS,
     toTs,
     fromTs, toTs,
