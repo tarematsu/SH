@@ -4,6 +4,7 @@ import test from 'node:test';
 import {
   attachBuddyCollectorStatus,
   buddyCollectorStatus,
+  loadBuddyCollectorStatus,
 } from '../../site/functions/lib/buddy-collector-status.js';
 
 function playbackPayload() {
@@ -34,6 +35,34 @@ test('unknown collector status suppresses potentially stale playback', () => {
   assert.equal(result.queue_status.playing, false);
   assert.equal(result.queue_status.current_index, -1);
   assert.equal(result.queue[0].is_current, false);
+});
+
+test('missing collector history suppresses old playback until the first success', () => {
+  const collector = buddyCollectorStatus(null);
+  const result = attachBuddyCollectorStatus(playbackPayload(), collector);
+
+  assert.equal(collector.status, 'never');
+  assert.equal(result.stale, true);
+  assert.equal(result.playing, false);
+});
+
+test('missing collector status schema is reported as unavailable', async () => {
+  const db = {
+    prepare() {
+      return {
+        bind() { return this; },
+        async first() { throw new Error('no such table: sh_collector_status'); },
+      };
+    },
+  };
+
+  const collector = await loadBuddyCollectorStatus(db, 'buddy46');
+  const result = attachBuddyCollectorStatus(playbackPayload(), collector);
+
+  assert.equal(collector.status, 'unknown');
+  assert.equal(collector.failure_code, 'COLLECTOR_STATUS_SCHEMA_MISSING');
+  assert.equal(result.stale, true);
+  assert.equal(result.playing, false);
 });
 
 test('healthy collector status preserves current playback', () => {
