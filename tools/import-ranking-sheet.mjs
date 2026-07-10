@@ -1,22 +1,12 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
-const SOURCES = [
-  {
-    id: 'weekly_leaderboard_1163473737',
-    kind: 'vertical',
-    sheetId: '188dtzckvsE4xf_lIZTIqq_TJe7MEqr32Nk5qGizw-co',
-    gid: '1163473737',
-    priority: 1,
-  },
-  {
-    id: 'all_channels_matrix_526290422',
-    kind: 'matrix',
-    sheetId: '1vixrPSYGfihWqfkjkmz9FiCjJNZgGlLhel5fJot4KWY',
-    gid: '526290422',
-    priority: 2,
-  },
-];
+// One-off migration script: point this at your own Google Sheets via RANKING_IMPORT_SHEETS, e.g.:
+//   RANKING_IMPORT_SHEETS='[{"id":"weekly_leaderboard","kind":"vertical","sheetId":"XXX","gid":"0","priority":1}]'
+const SOURCES = JSON.parse(process.env.RANKING_IMPORT_SHEETS || 'null');
+if (!SOURCES) {
+  throw new Error('Set RANKING_IMPORT_SHEETS to a JSON array of {id, kind, sheetId, gid, priority} sources.');
+}
 
 const RANKING_TYPE = '週間チャンネル順位';
 const OUT_DIR = path.resolve('database/ranking-import-parts');

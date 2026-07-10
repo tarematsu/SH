@@ -6,7 +6,7 @@
   "sources": {
     "weekly_leaderboard_1163473737": {
       "kind": "vertical",
-      "source_url": "https://docs.google.com/spreadsheets/d/188dtzckvsE4xf_lIZTIqq_TJe7MEqr32Nk5qGizw-co/export?format=csv&gid=1163473737",
+      "source_url": "https://docs.google.com/spreadsheets/d/REDACTED/export?format=csv&gid=1163473737",
       "downloaded_rows": 83,
       "accepted": 35,
       "skipped_no_date": 0,
@@ -19,7 +19,7 @@
     },
     "all_channels_matrix_526290422": {
       "kind": "matrix",
-      "source_url": "https://docs.google.com/spreadsheets/d/1vixrPSYGfihWqfkjkmz9FiCjJNZgGlLhel5fJot4KWY/export?format=csv&gid=526290422",
+      "source_url": "https://docs.google.com/spreadsheets/d/REDACTED/export?format=csv&gid=526290422",
       "downloaded_rows": 485,
       "accepted": 2778,
       "skipped_no_date": 0,

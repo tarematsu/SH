@@ -1,9 +1,11 @@
 import { mkdir, rm, writeFile } from 'node:fs/promises';
 
-const sheets = [
-  { id: '1EYilWL98NNrpJQTlb8aaZlIYWRBGsGNIpAT0RRbaND4', gid: '523702886' },
-  { id: '1Rq66ENqbBd7h7YNa8whpqiG7N4BtGZmAHx8cnKdzDUs', gid: '1648190515' },
-];
+// One-off migration script: point this at your own Google Sheets via TRACK_LIKE_HISTORY_SHEETS, e.g.:
+//   TRACK_LIKE_HISTORY_SHEETS='[{"id":"XXX","gid":"0"}]'
+const sheets = JSON.parse(process.env.TRACK_LIKE_HISTORY_SHEETS || 'null');
+if (!sheets) {
+  throw new Error('Set TRACK_LIKE_HISTORY_SHEETS to a JSON array of {id, gid} Google Sheets sources.');
+}
 const CHUNK_SIZE = 2000;
 const OUTPUT_DIR = 'database/track-like-history-import';
 
