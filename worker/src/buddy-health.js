@@ -21,6 +21,12 @@ export function buddyHealthId(alias = 'buddy46') {
   return `${String(alias || 'buddy46').trim().toLowerCase()}-playback`;
 }
 
+function nullableNumber(value) {
+  if (value === null || value === undefined || value === '') return null;
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+}
+
 function failureStage(error) {
   const detail = String(error?.message || error || '');
   if (/Stationhead buddy playback API\s+\d+|buddy playback API\s+\d+|Not in database/i.test(detail)) {
@@ -99,7 +105,7 @@ export async function recordBuddySuccess(env, alias, result = {}, at = Date.now(
     failureStage: null,
     failureSummary: null,
     failureHint: null,
-    tracks: Number.isFinite(Number(result?.tracks)) ? Number(result.tracks) : null,
+    tracks: nullableNumber(result?.tracks),
     changed: result?.changed === true,
   });
   return true;
@@ -114,13 +120,13 @@ export async function recordBuddyFailure(env, alias, error, at = Date.now()) {
     collectorId,
     status: 'error',
     lastAttemptAt: at,
-    lastSuccessAt: Number(current?.last_success_at) || null,
+    lastSuccessAt: nullableNumber(current?.last_success_at),
     lastError: sanitizeFailureDetail(error?.message || error),
     failureCode: diagnosis.code,
     failureStage: diagnosis.stage,
     failureSummary: diagnosis.summary,
     failureHint: diagnosis.hint,
-    tracks: Number.isFinite(Number(current?.tracks)) ? Number(current.tracks) : null,
+    tracks: nullableNumber(current?.tracks),
     changed: null,
   });
   return true;
