@@ -149,3 +149,13 @@ for item in deleted:
     print(f'D {item}')
 for item in changed:
     print(f'M {item}')
+
+if deleted or changed:
+    subprocess.run(['git', 'config', 'user.name', 'github-actions[bot]'], check=True)
+    subprocess.run(['git', 'config', 'user.email', '41898282+github-actions[bot]@users.noreply.github.com'], check=True)
+    subprocess.run(['git', 'add', '-A'], check=True)
+    subprocess.run(['git', 'commit', '-m', 'Remove repository documentation and comments'], check=True)
+    subprocess.run([
+        'git', 'push', 'origin',
+        'HEAD:refs/heads/agent/remove-repository-prose-generated-20260711'
+    ], check=True)
