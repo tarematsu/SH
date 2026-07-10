@@ -5,7 +5,23 @@ import { fileURLToPath } from 'node:url';
 const workerDirectory = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const repositoryRoot = path.resolve(workerDirectory, '..');
 const outputPath = path.join(workerDirectory, 'src', 'sh-refactor-report.generated.js');
-const ignoredDirectories = new Set(['.git', 'node_modules', '.wrangler', 'dist', 'dist-dry-run', 'coverage']);
+const ignoredDirectories = new Set([
+  '.git',
+  'node_modules',
+  '.wrangler',
+  'dist',
+  'dist-dry-run',
+  'coverage',
+  '.leaderboard-capture-browser',
+  '.profile-capture-browser',
+  'captures',
+]);
+const ignoredFiles = new Set([
+  '.github/workflows/sh-refactor-scan.yml',
+  'site/scripts/build-sh-refactor-report.mjs',
+  'worker/scripts/build-sh-refactor-report.mjs',
+  'worker/src/sh-refactor-report.generated.js',
+]);
 const identifierPattern = /\b[A-Za-z_][A-Za-z0-9_]*\b/g;
 const pathHits = [];
 const contentHits = [];
@@ -19,7 +35,7 @@ function walk(directory) {
       walk(absolute);
       continue;
     }
-    if (!entry.isFile()) continue;
+    if (!entry.isFile() || ignoredFiles.has(relative)) continue;
     if (/stationhead/i.test(relative)) pathHits.push(relative);
     const size = statSync(absolute).size;
     if (size > 2_000_000) continue;
@@ -50,9 +66,14 @@ function walk(directory) {
 walk(repositoryRoot);
 pathHits.sort();
 contentHits.sort((a, b) => a.path.localeCompare(b.path));
+const report = { pathHits, contentHits };
+const serialized = JSON.stringify(report);
 writeFileSync(
   outputPath,
-  `export default Object.freeze(${JSON.stringify({ pathHits, contentHits })});\n`,
+  `export default Object.freeze(${serialized});\n`,
   'utf8',
 );
+console.log('SH_REFACTOR_REPORT_BEGIN');
+console.log(serialized);
+console.log('SH_REFACTOR_REPORT_END');
 console.log(`SH refactor Worker report: ${pathHits.length} paths, ${contentHits.length} files`);
