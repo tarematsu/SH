@@ -139,6 +139,7 @@ export const TRACK_HISTORY_SQL = `WITH queue_starts AS (
       WHERE COALESCE(is_paused,0)=0
     ), normalized AS (
       SELECT q.*,
+        CASE WHEN json_valid(q.raw_json) THEN q.raw_json ELSE '{}' END AS safe_raw_json,
         CASE
           WHEN q.duration_ms BETWEEN 1000 AND 21600000 THEN q.duration_ms
           ELSE NULL
@@ -187,18 +188,18 @@ export const TRACK_HISTORY_SQL = `WITH queue_starts AS (
         NULLIF(m.display_title, '') AS display_title,
         NULLIF(m.spotify_url, '') AS spotify_url,
         COALESCE(
-          NULLIF(json_extract(p.raw_json, '$.track.title'), ''),
-          NULLIF(json_extract(p.raw_json, '$.track.name'), ''),
-          NULLIF(json_extract(p.raw_json, '$.title'), ''),
-          NULLIF(json_extract(p.raw_json, '$.name'), '')
+          NULLIF(json_extract(p.safe_raw_json, '$.track.title'), ''),
+          NULLIF(json_extract(p.safe_raw_json, '$.track.name'), ''),
+          NULLIF(json_extract(p.safe_raw_json, '$.title'), ''),
+          NULLIF(json_extract(p.safe_raw_json, '$.name'), '')
         ) AS raw_title,
         COALESCE(
-          NULLIF(json_extract(p.raw_json, '$.track.artist_name'), ''),
-          NULLIF(json_extract(p.raw_json, '$.track.artist'), ''),
-          NULLIF(json_extract(p.raw_json, '$.track.artists[0].name'), ''),
-          NULLIF(json_extract(p.raw_json, '$.artist_name'), ''),
-          NULLIF(json_extract(p.raw_json, '$.artist'), ''),
-          NULLIF(json_extract(p.raw_json, '$.artists[0].name'), '')
+          NULLIF(json_extract(p.safe_raw_json, '$.track.artist_name'), ''),
+          NULLIF(json_extract(p.safe_raw_json, '$.track.artist'), ''),
+          NULLIF(json_extract(p.safe_raw_json, '$.track.artists[0].name'), ''),
+          NULLIF(json_extract(p.safe_raw_json, '$.artist_name'), ''),
+          NULLIF(json_extract(p.safe_raw_json, '$.artist'), ''),
+          NULLIF(json_extract(p.safe_raw_json, '$.artists[0].name'), '')
         ) AS raw_artist
       FROM timed p
       LEFT JOIN sh_track_metadata m ON m.spotify_id = p.spotify_id
@@ -325,7 +326,10 @@ export async function handleTrackHistory({ request, env, waitUntil }) {
     const to = valid(url.searchParams.get('to')) ? url.searchParams.get('to') : day();
     const fromTs = ts(from);
     const toTs = ts(to) + 86400000;
-    const limit = Math.min(Math.max(+url.searchParams.get('limit') || 10000, 100), 20000);
+    const parsedLimit = Number(url.searchParams.get('limit'));
+    const limit = Number.isFinite(parsedLimit) && parsedLimit > 0
+      ? Math.min(Math.max(Math.trunc(parsedLimit), 100), 20000)
+      : 10000;
     const includeLikes = url.searchParams.get('likes') === '1';
     if (!Number.isFinite(fromTs) || !Number.isFinite(toTs) || toTs <= fromTs) {
       return out({ ok: false, error: 'invalid date range' }, 400);
@@ -374,7 +378,7 @@ export async function handleTrackHistory({ request, env, waitUntil }) {
       method: 'queue_checkpoint_and_compacted_wall_clock_active_span_reachability_utc_sql_preaggregate',
     });
   } catch (error) {
-    if (/no such table|no such column|malformed JSON/i.test(String(error?.message || ''))) {
+    if (/no such table|no such column/i.test(String(error?.message || ''))) {
       return out({ ok: true, mode: 'tracks', rows: [], setup_required: true, timezone: 'UTC' });
     }
     return out({ ok: false, error: error?.message || 'track history error' }, 500);
