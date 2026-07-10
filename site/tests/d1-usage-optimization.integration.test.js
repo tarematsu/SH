@@ -37,48 +37,54 @@ test('queue rows are not rewritten for bite-only changes', () => {
   assert.deepEqual(changed, []);
 });
 
-test('like history is written only when the ISRC value changes', () => {
-  const tracks = [{ position: 0, isrc: 'jpabc1234567', bite_count: 10 }];
-  assert.equal(planLikeObservations(tracks, [
-    { track_key: 'legacy-key', isrc: 'JPABC1234567', like_count: 10 },
+test('like history uses ISRC first and Spotify only when ISRC is missing', () => {
+  const isrcTrack = [{ position: 0, spotify_id: 'spotify-a', isrc: 'jpabc1234567', bite_count: 10 }];
+  assert.equal(planLikeObservations(isrcTrack, [
+    { track_key: 'legacy-key', spotify_id: 'other', isrc: 'JPABC1234567', like_count: 10 },
   ]).length, 0);
-  assert.equal(planLikeObservations(tracks, [
-    { track_key: 'legacy-key', isrc: 'JPABC1234567', like_count: 9 },
+  assert.equal(planLikeObservations(isrcTrack, [
+    { track_key: 'spotify:spotify-a', spotify_id: 'spotify-a', like_count: 10 },
   ]).length, 1);
-  assert.equal(planLikeObservations([
-    { position: 0, spotify_id: 'abc', bite_count: 10 },
-  ], []).length, 0);
+
+  const spotifyTrack = [{ position: 0, spotify_id: 'spotify-fallback', bite_count: 7 }];
+  assert.equal(planLikeObservations(spotifyTrack, [
+    { track_key: 'legacy-key', spotify_id: 'spotify-fallback', like_count: 7 },
+  ]).length, 0);
+  assert.equal(planLikeObservations([{ position: 0, bite_count: 7 }], []).length, 0);
 });
 
-test('queue like hash payload uses only ISRC and is stable across ordering', () => {
+test('queue like hash payload follows ISRC then Spotify priority and stays ordered', () => {
   const first = queueLikesPayload([
-    { spotify_id: 'b', isrc: 'jpbbb0000002', bite_count: 2 },
-    { spotify_id: 'a', isrc: 'jpaaa0000001', bite_count: 1 },
-    { spotify_id: 'ignored', bite_count: 99 },
+    { spotify_id: 'spotify-b', isrc: 'jpbbb0000002', bite_count: 2 },
+    { spotify_id: 'spotify-a', isrc: 'jpaaa0000001', bite_count: 1 },
+    { spotify_id: 'spotify-fallback', bite_count: 3 },
+    { queue_track_id: 99, bite_count: 99 },
   ]);
   const second = queueLikesPayload([
-    { spotify_id: 'ignored-other', bite_count: 500 },
-    { spotify_id: 'a2', isrc: 'JPAAA0000001', bite_count: 1 },
-    { spotify_id: 'b2', isrc: 'JPBBB0000002', bite_count: 2 },
+    { queue_track_id: 100, bite_count: 500 },
+    { spotify_id: 'spotify-fallback', bite_count: 3 },
+    { spotify_id: 'changed-a', isrc: 'JPAAA0000001', bite_count: 1 },
+    { spotify_id: 'changed-b', isrc: 'JPBBB0000002', bite_count: 2 },
   ]);
 
   assert.deepEqual(first, second);
   assert.deepEqual(first.map((row) => row.track_key), [
     'isrc:JPAAA0000001',
     'isrc:JPBBB0000002',
+    'spotify:spotify-fallback',
   ]);
 });
 
-test('only ISRC-bearing tracks determine like snapshot completeness', () => {
+test('ISRC and Spotify fallback tracks determine like snapshot completeness', () => {
   assert.equal(hasCompleteLikeSnapshot([]), true);
   assert.equal(hasCompleteLikeSnapshot([
     { isrc: 'JPAAA0000001', bite_count: 1 },
-    { isrc: 'JPBBB0000002', bite_count: 2 },
-    { spotify_id: 'ignored-without-isrc' },
+    { spotify_id: 'spotify-fallback', bite_count: 2 },
+    { queue_track_id: 123 },
   ]), true);
   assert.equal(hasCompleteLikeSnapshot([
     { isrc: 'JPAAA0000001', bite_count: 1 },
-    { isrc: 'JPBBB0000002' },
+    { spotify_id: 'spotify-fallback' },
   ]), false);
 });
 
@@ -128,7 +134,7 @@ test('queue reads and writes keep D1 batch bind counts under the configured limi
       queue_track_id: 1000 + index,
       stationhead_track_id: 2000 + index,
       spotify_id: `spotify-${index}`,
-      isrc: `ISRC${String(index).padStart(8, '0')}`,
+      isrc: index % 2 === 0 ? `ISRC${String(index).padStart(8, '0')}` : null,
       duration_ms: 180000,
       bite_count: index,
     })),
