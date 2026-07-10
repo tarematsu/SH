@@ -97,6 +97,21 @@ CREATE TABLE IF NOT EXISTS sh_playback_channel_current (
   changed_at INTEGER NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS sh_collector_status (
+  collector_id TEXT PRIMARY KEY,
+  status TEXT NOT NULL,
+  last_attempt_at INTEGER NOT NULL,
+  last_success_at INTEGER,
+  last_error TEXT,
+  failure_code TEXT,
+  failure_stage TEXT,
+  failure_summary TEXT,
+  failure_hint TEXT,
+  tracks INTEGER,
+  changed INTEGER,
+  updated_at INTEGER NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS sh_raw_events (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   observed_at INTEGER NOT NULL,
@@ -137,6 +152,7 @@ CREATE TABLE IF NOT EXISTS sh_track_metadata (
 );
 CREATE INDEX IF NOT EXISTS idx_sh_track_metadata_fetched_at ON sh_track_metadata(fetched_at DESC);
 
+-- Compatibility table for local/external collectors during migration.
 CREATE TABLE IF NOT EXISTS sh_collector_heartbeats (
   collector_id TEXT PRIMARY KEY,
   first_seen_at INTEGER NOT NULL,

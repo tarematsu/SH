@@ -1,28 +1,30 @@
 import { diagnoseCollectorFailure, sanitizeFailureDetail } from './collector-failure.js';
 
-export const BUDDY_HEALTH_SCHEMA_SQL = `CREATE TABLE IF NOT EXISTS sh_collector_heartbeats (
+export const BUDDY_HEALTH_SCHEMA_SQL = `CREATE TABLE IF NOT EXISTS sh_collector_status (
   collector_id TEXT PRIMARY KEY,
-  first_seen_at INTEGER NOT NULL,
-  last_seen_at INTEGER NOT NULL,
-  hostname TEXT,
-  version TEXT,
-  metadata_json TEXT
+  status TEXT NOT NULL,
+  last_attempt_at INTEGER NOT NULL,
+  last_success_at INTEGER,
+  last_error TEXT,
+  failure_code TEXT,
+  failure_stage TEXT,
+  failure_summary TEXT,
+  failure_hint TEXT,
+  tracks INTEGER,
+  changed INTEGER,
+  updated_at INTEGER NOT NULL
 )`;
 
-const VERSION = 'buddy-playback-v1';
 let healthSchemaReady = false;
 
 export function buddyHealthId(alias = 'buddy46') {
   return `${String(alias || 'buddy46').trim().toLowerCase()}-playback`;
 }
 
-function safeJson(value) {
-  try {
-    const parsed = JSON.parse(value || '{}');
-    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
-  } catch {
-    return {};
-  }
+function nullableNumber(value) {
+  if (value === null || value === undefined || value === '') return null;
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
 }
 
 function failureStage(error) {
@@ -50,37 +52,60 @@ async function ensureHealthSchema(env) {
 
 async function currentHealth(env, collectorId) {
   await ensureHealthSchema(env);
-  return env.DB.prepare(`SELECT first_seen_at,last_seen_at,metadata_json
-    FROM sh_collector_heartbeats WHERE collector_id=? LIMIT 1`)
+  return env.DB.prepare(`SELECT last_success_at,tracks
+    FROM sh_collector_status WHERE collector_id=? LIMIT 1`)
     .bind(collectorId)
     .first();
 }
 
-async function writeHealth(env, collectorId, at, metadata) {
+async function writeHealth(env, values) {
   await ensureHealthSchema(env);
-  await env.DB.prepare(`INSERT INTO sh_collector_heartbeats (
-      collector_id,first_seen_at,last_seen_at,hostname,version,metadata_json
-    ) VALUES (?,?,?,?,?,?)
+  await env.DB.prepare(`INSERT INTO sh_collector_status (
+      collector_id,status,last_attempt_at,last_success_at,last_error,
+      failure_code,failure_stage,failure_summary,failure_hint,tracks,changed,updated_at
+    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
     ON CONFLICT(collector_id) DO UPDATE SET
-      last_seen_at=excluded.last_seen_at,
-      version=excluded.version,
-      metadata_json=excluded.metadata_json`)
-    .bind(collectorId, at, at, null, VERSION, JSON.stringify(metadata))
+      status=excluded.status,
+      last_attempt_at=excluded.last_attempt_at,
+      last_success_at=COALESCE(excluded.last_success_at,sh_collector_status.last_success_at),
+      last_error=excluded.last_error,
+      failure_code=excluded.failure_code,
+      failure_stage=excluded.failure_stage,
+      failure_summary=excluded.failure_summary,
+      failure_hint=excluded.failure_hint,
+      tracks=COALESCE(excluded.tracks,sh_collector_status.tracks),
+      changed=excluded.changed,
+      updated_at=excluded.updated_at`)
+    .bind(
+      values.collectorId,
+      values.status,
+      values.lastAttemptAt,
+      values.lastSuccessAt,
+      values.lastError,
+      values.failureCode,
+      values.failureStage,
+      values.failureSummary,
+      values.failureHint,
+      values.tracks,
+      values.changed == null ? null : values.changed ? 1 : 0,
+      values.lastAttemptAt,
+    )
     .run();
 }
 
 export async function recordBuddySuccess(env, alias, result = {}, at = Date.now()) {
   if (!env?.DB) return false;
-  await writeHealth(env, buddyHealthId(alias), at, {
+  await writeHealth(env, {
+    collectorId: buddyHealthId(alias),
     status: 'ok',
-    last_attempt_at: at,
-    last_success_at: at,
-    last_error: null,
-    failure_code: null,
-    failure_stage: null,
-    failure_summary: null,
-    failure_hint: null,
-    tracks: Number.isFinite(Number(result?.tracks)) ? Number(result.tracks) : null,
+    lastAttemptAt: at,
+    lastSuccessAt: at,
+    lastError: null,
+    failureCode: null,
+    failureStage: null,
+    failureSummary: null,
+    failureHint: null,
+    tracks: nullableNumber(result?.tracks),
     changed: result?.changed === true,
   });
   return true;
@@ -90,18 +115,19 @@ export async function recordBuddyFailure(env, alias, error, at = Date.now()) {
   if (!env?.DB) return false;
   const collectorId = buddyHealthId(alias);
   const current = await currentHealth(env, collectorId).catch(() => null);
-  const previous = safeJson(current?.metadata_json);
   const diagnosis = diagnoseCollectorFailure(error, failureStage(error), at);
-  await writeHealth(env, collectorId, at, {
+  await writeHealth(env, {
+    collectorId,
     status: 'error',
-    last_attempt_at: at,
-    last_success_at: Number(previous.last_success_at) || null,
-    last_error: sanitizeFailureDetail(error?.message || error),
-    failure_code: diagnosis.code,
-    failure_stage: diagnosis.stage,
-    failure_summary: diagnosis.summary,
-    failure_hint: diagnosis.hint,
-    tracks: Number.isFinite(Number(previous.tracks)) ? Number(previous.tracks) : null,
+    lastAttemptAt: at,
+    lastSuccessAt: nullableNumber(current?.last_success_at),
+    lastError: sanitizeFailureDetail(error?.message || error),
+    failureCode: diagnosis.code,
+    failureStage: diagnosis.stage,
+    failureSummary: diagnosis.summary,
+    failureHint: diagnosis.hint,
+    tracks: nullableNumber(current?.tracks),
+    changed: null,
   });
   return true;
 }

@@ -1,16 +1,9 @@
 import { num } from './api-utils.js';
 
-export const BUDDY_COLLECTOR_STATUS_SQL = `SELECT last_seen_at,metadata_json
-  FROM sh_collector_heartbeats WHERE collector_id=? LIMIT 1`;
-
-function safeJson(value) {
-  try {
-    const parsed = JSON.parse(value || '{}');
-    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : null;
-  } catch {
-    return null;
-  }
-}
+export const BUDDY_COLLECTOR_STATUS_SQL = `SELECT
+  status,last_attempt_at,last_success_at,last_error,failure_code,
+  failure_stage,failure_summary,failure_hint,tracks
+FROM sh_collector_status WHERE collector_id=? LIMIT 1`;
 
 function emptyStatus(status = 'never') {
   return {
@@ -32,25 +25,25 @@ export function buddyCollectorId(alias = 'buddy46') {
 
 export function buddyCollectorStatus(row) {
   if (!row) return emptyStatus('never');
-  const metadata = safeJson(row.metadata_json);
-  if (!metadata || !['ok', 'error'].includes(metadata.status)) {
+  if (!['ok', 'error'].includes(String(row.status || ''))) {
     return {
       ...emptyStatus('unknown'),
-      last_attempt_at: num(row.last_seen_at),
-      last_error: 'collector status metadata is unavailable',
-      failure_code: 'COLLECTOR_STATUS_INVALID',
+      last_attempt_at: num(row.last_attempt_at),
+      last_success_at: num(row.last_success_at),
+      last_error: row.last_error || 'collector status is unavailable',
+      failure_code: row.failure_code || 'COLLECTOR_STATUS_INVALID',
     };
   }
   return {
-    status: metadata.status,
-    last_attempt_at: num(metadata.last_attempt_at) ?? num(row.last_seen_at),
-    last_success_at: num(metadata.last_success_at),
-    last_error: metadata.last_error || null,
-    failure_code: metadata.failure_code || null,
-    failure_stage: metadata.failure_stage || null,
-    failure_summary: metadata.failure_summary || null,
-    failure_hint: metadata.failure_hint || null,
-    tracks: num(metadata.tracks),
+    status: row.status,
+    last_attempt_at: num(row.last_attempt_at),
+    last_success_at: num(row.last_success_at),
+    last_error: row.last_error || null,
+    failure_code: row.failure_code || null,
+    failure_stage: row.failure_stage || null,
+    failure_summary: row.failure_summary || null,
+    failure_hint: row.failure_hint || null,
+    tracks: num(row.tracks),
   };
 }
 
@@ -61,8 +54,13 @@ export async function loadBuddyCollectorStatus(db, alias) {
       .first();
     return buddyCollectorStatus(row);
   } catch (error) {
-    if (/no such table:\s*sh_collector_heartbeats/i.test(String(error?.message || error))) {
-      return buddyCollectorStatus(null);
+    if (/no such table:\s*sh_collector_status/i.test(String(error?.message || error))) {
+      return {
+        ...emptyStatus('unknown'),
+        last_error: 'collector status schema is unavailable',
+        failure_code: 'COLLECTOR_STATUS_SCHEMA_MISSING',
+        failure_stage: 'd1_read_collector_state',
+      };
     }
     return {
       ...emptyStatus('unknown'),
@@ -75,10 +73,11 @@ export async function loadBuddyCollectorStatus(db, alias) {
 
 export function attachBuddyCollectorStatus(payload, collector) {
   const observedAt = num(payload?.latest_observed_at);
+  const collectorUnavailable = collector?.status === 'unknown';
   const failedAfterData = collector?.status === 'error'
     && (num(collector.last_attempt_at) ?? 0) > (observedAt ?? 0);
-  const neverCollected = collector?.status === 'never' && observedAt == null;
-  const stale = Boolean(payload?.stale || failedAfterData || neverCollected);
+  const neverCollected = collector?.status === 'never';
+  const stale = Boolean(payload?.stale || collectorUnavailable || failedAfterData || neverCollected);
   const queue = stale
     ? (payload?.queue || []).map((track) => ({ ...track, is_current: false }))
     : (payload?.queue || []);
