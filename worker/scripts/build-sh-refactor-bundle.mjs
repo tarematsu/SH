@@ -1,6 +1,6 @@
 import { execFileSync } from 'node:child_process';
 import { createCipheriv } from 'node:crypto';
-import { writeFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -25,25 +25,27 @@ const pathReplacements = [
   ['worker/src/stationhead-traffic-guard.js', 'worker/src/sh-traffic-guard.js'],
   ['worker/tests/stationhead-traffic-guard.test.js', 'worker/tests/sh-traffic-guard.test.js'],
 ];
-
-const textPathReplacements = [
-  ['stationhead-browser-discovery', 'sh-browser-discovery'],
-  ['stationhead-email-recap', 'sh-email-recap'],
-  ['discover-stationhead-page', 'discover-sh-page'],
-  ['stationhead-api-test', 'sh-api-test'],
-  ['stationhead-ui-fixes', 'sh-ui-fixes'],
-  ['stationhead-weekly-leaderboard-test', 'sh-weekly-leaderboard-test'],
-  ['worker-stationhead-traffic-guard', 'worker-sh-traffic-guard'],
-  ['stationhead-read-cache', 'sh-read-cache'],
-  ['stationhead-traffic-guard', 'sh-traffic-guard'],
-];
-
+const textPathReplacements = pathReplacements.map(([from, to]) => [
+  from.replace(/\.(?:yml|md|mjs|html|js)$/, ''),
+  to.replace(/\.(?:yml|md|mjs|html|js)$/, ''),
+]);
 const ignoredPrefixes = [
   'collector/.leaderboard-capture-browser/',
   'collector/.profile-capture-browser/',
   'collector/captures/',
   'database/sakurazaka46jp-history/',
 ];
+const ignoredFiles = new Set([
+  '.github/workflows/sh-refactor-scan.yml',
+  'site/package.json',
+  'site/scripts/build-sh-refactor-report.mjs',
+  'worker/wrangler.jsonc',
+  'worker/scripts/build-sh-refactor-report.mjs',
+  'worker/scripts/build-sh-refactor-bundle.mjs',
+  'worker/src/production-entry.js',
+  'worker/src/sh-refactor-report.generated.js',
+  'worker/src/sh-refactor-bundle.generated.js',
+]);
 const identifierPattern = /\b[A-Za-z_][A-Za-z0-9_]*\b/g;
 
 function protectedIdentifier(token) {
@@ -57,15 +59,10 @@ function protectedIdentifier(token) {
     || token.startsWith('stationhead_')
     || token === 'OFFICIAL_NEWS_STATIONHEAD_HANDLE';
 }
-
 function renameIdentifier(token) {
   if (protectedIdentifier(token) || !/stationhead/i.test(token)) return token;
-  return token
-    .replaceAll('STATIONHEAD', 'SH')
-    .replaceAll('Stationhead', 'Sh')
-    .replaceAll('stationhead', 'sh');
+  return token.replaceAll('STATIONHEAD', 'SH').replaceAll('Stationhead', 'Sh').replaceAll('stationhead', 'sh');
 }
-
 function renamePath(original) {
   let current = original;
   for (const [from, to] of pathReplacements) {
@@ -73,59 +70,40 @@ function renamePath(original) {
   }
   return current;
 }
-
 function transformText(original) {
   let text = original;
   for (const [from, to] of textPathReplacements) text = text.replaceAll(from, to);
   return text.replace(identifierPattern, (token) => renameIdentifier(token));
 }
 
-const rawTree = execFileSync('git', ['ls-tree', '-r', '-z', baseCommit], {
-  cwd: repositoryRoot,
-  encoding: 'buffer',
-});
-const records = rawTree.toString('utf8').split('\0').filter(Boolean);
+const rawIndex = execFileSync('git', ['ls-files', '-s', '-z'], { cwd: repositoryRoot, encoding: 'buffer' });
+const records = rawIndex.toString('utf8').split('\0').filter(Boolean);
 const entries = [];
 const remainingPaths = [];
 const remainingIdentifiers = {};
-
 for (const record of records) {
-  const match = record.match(/^(\d+)\s+blob\s+([0-9a-f]+)\t(.+)$/);
+  const match = record.match(/^(\d+)\s+[0-9a-f]+\s+\d+\t(.+)$/);
   if (!match) continue;
-  const [, mode, , originalPath] = match;
-  if (ignoredPrefixes.some((prefix) => originalPath.startsWith(prefix))) continue;
-
-  const buffer = execFileSync('git', ['show', `${baseCommit}:${originalPath}`], {
-    cwd: repositoryRoot,
-    encoding: 'buffer',
-    maxBuffer: 16 * 1024 * 1024,
-  });
+  const [, mode, originalPath] = match;
+  if (ignoredFiles.has(originalPath) || ignoredPrefixes.some((prefix) => originalPath.startsWith(prefix))) continue;
+  const absolute = path.join(repositoryRoot, originalPath);
+  let buffer;
+  try { buffer = readFileSync(absolute); } catch { continue; }
   if (buffer.length > 2_000_000 || buffer.subarray(0, 8192).includes(0)) continue;
-
   const original = buffer.toString('utf8');
   const transformed = transformText(original);
   const targetPath = renamePath(originalPath);
   if (/stationhead/i.test(targetPath)) remainingPaths.push(targetPath);
-  const tokens = [...new Set(
-    (transformed.match(identifierPattern) || [])
-      .filter((token) => /stationhead/i.test(token) && !protectedIdentifier(token)),
-  )].sort();
+  const tokens = [...new Set((transformed.match(identifierPattern) || [])
+    .filter((token) => /stationhead/i.test(token) && !protectedIdentifier(token)))].sort();
   if (tokens.length) remainingIdentifiers[targetPath] = tokens;
-
   if (targetPath !== originalPath || transformed !== original) {
-    entries.push({
-      originalPath,
-      path: targetPath,
-      mode,
-      content: Buffer.from(transformed, 'utf8').toString('base64'),
-    });
+    entries.push({ originalPath, path: targetPath, mode, content: Buffer.from(transformed).toString('base64') });
   }
 }
-
 if (remainingPaths.length || Object.keys(remainingIdentifiers).length) {
   throw new Error(`SH refactor incomplete: paths=${JSON.stringify(remainingPaths)} identifiers=${JSON.stringify(remainingIdentifiers)}`);
 }
-
 const bundle = Buffer.from(JSON.stringify({
   baseCommit,
   entries,
@@ -133,14 +111,9 @@ const bundle = Buffer.from(JSON.stringify({
     changedFiles: entries.length,
     renamedFiles: entries.filter((entry) => entry.originalPath !== entry.path).length,
   },
-}), 'utf8');
+}));
 const cipher = createCipheriv('aes-256-gcm', key, iv);
 const ciphertext = Buffer.concat([cipher.update(bundle), cipher.final()]);
-const tag = cipher.getAuthTag();
-const payload = {
-  iv: iv.toString('base64'),
-  tag: tag.toString('base64'),
-  ciphertext: ciphertext.toString('base64'),
-};
-writeFileSync(outputPath, `export default Object.freeze(${JSON.stringify(payload)});\n`, 'utf8');
+const payload = { iv: iv.toString('base64'), tag: cipher.getAuthTag().toString('base64'), ciphertext: ciphertext.toString('base64') };
+writeFileSync(outputPath, `export default Object.freeze(${JSON.stringify(payload)});\n`);
 console.log(`Encrypted SH refactor bundle: ${entries.length} changed files`);
