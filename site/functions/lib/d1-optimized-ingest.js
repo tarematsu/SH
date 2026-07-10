@@ -2,6 +2,8 @@ import { bool, num, rawJson, stripAppleMusicFields, text } from './api-utils.js'
 import { prepared, runPreparedD1Batches } from './d1-batch.js';
 import {
   observationTrackKey,
+  observationTrackKeys,
+  planLikeCurrentMigrations,
   planLikeObservations,
   queueItemsToWriteLean,
   queueStructuralPayload,
@@ -85,7 +87,8 @@ function queueItemLookupStatements(db, stationId, startTime, positions) {
 function latestLikeLookupStatements(db, stationId, trackKeys) {
   return chunks(trackKeys, QUERY_CHUNK).filter((group) => group.length).map((group) => {
     const placeholders = group.map(() => '?').join(',');
-    return prepared(db.prepare(`SELECT track_key,observed_at,like_count
+    return prepared(db.prepare(`SELECT track_key,observed_at,like_count,
+      queue_track_id,stationhead_track_id,spotify_id,isrc
       FROM sh_track_like_current
       WHERE station_id IS ? AND track_key IN (${placeholders})`)
       .bind(stationId, ...group), 1 + group.length);
@@ -145,9 +148,9 @@ function queueItemLikeUpdateStatements(db, tracks, stationId, startTime) {
     ), 5));
 }
 
-function likeWriteStatements(db, observations, observedAt, stationId, queueId, startTime) {
-  return observations.flatMap(({ trackKey, track }) => [
-    prepared(db.prepare(`INSERT INTO sh_track_like_current (
+function likeCurrentStatement(db, entry, observedAt, stationId, queueId, startTime) {
+  const { trackKey, track } = entry;
+  return prepared(db.prepare(`INSERT INTO sh_track_like_current (
       station_id,track_key,queue_id,start_time,position,queue_track_id,
       stationhead_track_id,spotify_id,isrc,like_count,observed_at
     ) VALUES (?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(station_id,track_key) DO UPDATE SET
@@ -157,22 +160,41 @@ function likeWriteStatements(db, observations, observedAt, stationId, queueId, s
       like_count=excluded.like_count,observed_at=excluded.observed_at
     WHERE excluded.observed_at>=sh_track_like_current.observed_at
       AND excluded.like_count IS NOT sh_track_like_current.like_count`)
-      .bind(
-        stationId, trackKey, queueId, startTime, num(track?.position),
-        num(track?.queue_track_id), num(track?.stationhead_track_id),
-        text(track?.spotify_id), text(track?.isrc), num(track?.bite_count), observedAt,
-      ), 11),
-    prepared(db.prepare(`INSERT INTO sh_track_like_observations (
-      observed_at,station_id,queue_id,start_time,position,
-      queue_track_id,stationhead_track_id,spotify_id,isrc,
-      track_key,like_count,source,raw_json
-    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`).bind(
-      observedAt, stationId, queueId, startTime, num(track?.position),
+    .bind(
+      stationId, trackKey, queueId, startTime, num(track?.position),
       num(track?.queue_track_id), num(track?.stationhead_track_id),
-      text(track?.spotify_id), text(track?.isrc),
-      trackKey, num(track?.bite_count), 'collector', rawJson({ bite_count: num(track?.bite_count) }),
-    ), 13),
-  ]);
+      text(track?.spotify_id), text(track?.isrc), num(track?.bite_count), observedAt,
+    ), 11);
+}
+
+function likeCurrentMigrationStatements(db, migrations, observedAt, stationId, queueId, startTime) {
+  return migrations.map((entry) => likeCurrentStatement(
+    db,
+    entry,
+    observedAt,
+    stationId,
+    queueId,
+    startTime,
+  ));
+}
+
+function likeWriteStatements(db, observations, observedAt, stationId, queueId, startTime) {
+  return observations.flatMap((entry) => {
+    const { trackKey, track } = entry;
+    return [
+      likeCurrentStatement(db, entry, observedAt, stationId, queueId, startTime),
+      prepared(db.prepare(`INSERT INTO sh_track_like_observations (
+        observed_at,station_id,queue_id,start_time,position,
+        queue_track_id,stationhead_track_id,spotify_id,isrc,
+        track_key,like_count,source,raw_json
+      ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`).bind(
+        observedAt, stationId, queueId, startTime, num(track?.position),
+        num(track?.queue_track_id), num(track?.stationhead_track_id),
+        text(track?.spotify_id), text(track?.isrc),
+        trackKey, num(track?.bite_count), 'collector', rawJson({ bite_count: num(track?.bite_count) }),
+      ), 13),
+    ];
+  });
 }
 
 function queueCurrentStatement(db, values) {
@@ -242,6 +264,7 @@ export async function saveLeanQueue(db, observedAt, body) {
       inspected: false,
       itemsWritten: 0,
       observationsWritten: 0,
+      currentLikeMigrationsWritten: 0,
       structureChanged: false,
       likesChanged: false,
       staleCurrent,
@@ -271,6 +294,7 @@ export async function saveLeanQueue(db, observedAt, body) {
         inspected: false,
         itemsWritten: 0,
         observationsWritten: 0,
+        currentLikeMigrationsWritten: 0,
         staleCurrent,
       };
     }
@@ -279,29 +303,43 @@ export async function saveLeanQueue(db, observedAt, body) {
   const positions = [...new Set(tracks
     .map((track) => num(track?.position))
     .filter((value) => value != null))];
-  const trackKeys = completeLikes
+  const currentTrackKeys = completeLikes
     ? [...new Set(tracks.map(observationTrackKey))]
+    : [];
+  const lookupTrackKeys = completeLikes
+    ? [...new Set(tracks.flatMap(observationTrackKeys))]
     : [];
   const { existingRows, latestRows } = await loadComparisonState(
     db,
     stationId,
     startTime,
     positions,
-    trackKeys,
+    lookupTrackKeys,
     { includeItems: structureChanged, includeLikes: likesChanged },
   );
   const changedTracks = structureChanged
     ? queueItemsToWriteLean(tracks, existingRows, queueId)
     : [];
   const observations = likesChanged ? planLikeObservations(tracks, latestRows) : [];
+  const currentLikeMigrations = likesChanged
+    ? planLikeCurrentMigrations(tracks, latestRows)
+    : [];
 
   const statements = [];
   if (structureChanged && !staleCurrent) {
     statements.push(...deleteMissingQueueItemsStatements(db, stationId, startTime, positions));
   }
   if (likesChanged && !staleCurrent) {
-    statements.push(...deleteMissingCurrentLikesStatements(db, stationId, trackKeys));
+    statements.push(...deleteMissingCurrentLikesStatements(db, stationId, currentTrackKeys));
     statements.push(...queueItemLikeUpdateStatements(db, tracks, stationId, startTime));
+    statements.push(...likeCurrentMigrationStatements(
+      db,
+      currentLikeMigrations,
+      observedAt,
+      stationId,
+      queueId,
+      startTime,
+    ));
   }
   statements.push(
     ...queueItemWriteStatements(db, changedTracks, observedAt, stationId, queueId, startTime),
@@ -325,6 +363,7 @@ export async function saveLeanQueue(db, observedAt, body) {
     inspected: true,
     itemsWritten: changedTracks.length,
     observationsWritten: observations.length,
+    currentLikeMigrationsWritten: staleCurrent ? 0 : currentLikeMigrations.length,
     structureChanged,
     likesChanged,
     staleCurrent,
