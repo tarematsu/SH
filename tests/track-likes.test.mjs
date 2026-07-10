@@ -95,8 +95,13 @@ test('track rows receive already compacted like values without compacting again'
     { play_date: '1970-01-01', title: 'Legacy', artist: 'Artist', like_count: 4, observed_at: 4000 },
   ]);
   const tracks = [
-    { play_date: '1970-01-01', title: 'Song', artist: 'Artist', source_ids: ['spotify-1'] },
-    { play_date: '1970-01-01', title: 'Legacy', artist: 'Artist', source_ids: [] },
+    {
+      play_date: '1970-01-01',
+      title: 'Song',
+      artist: 'Artist',
+      source_keys: ['spotify:spotify-1'],
+    },
+    { play_date: '1970-01-01', title: 'Legacy', artist: 'Artist', source_keys: [] },
   ];
   const directRows = attachCompactTrackLikes(tracks, compactRows);
   const compatibilityRows = attachTrackLikes(tracks, compactRows);
@@ -104,4 +109,59 @@ test('track rows receive already compacted like values without compacting again'
   assert.equal(directRows[0].like_count, 7);
   assert.equal(directRows[1].like_count, 4);
   assert.deepEqual(directRows, compatibilityRows);
+});
+
+test('identical values from different ID namespaces never share likes', () => {
+  const compactRows = compactTrackLikeRows([
+    {
+      play_date: '2026-07-01',
+      queue_track_id: 123,
+      like_count: 9,
+      observed_at: 1000,
+    },
+  ]);
+  const [track] = attachCompactTrackLikes([
+    {
+      play_date: '2026-07-01',
+      spotify_id: '123',
+      source_keys: ['spotify:123'],
+      like_count: 2,
+    },
+  ], compactRows);
+
+  assert.equal(track.like_count, 2);
+});
+
+test('ISRC matching is case insensitive and external observations override queue fallback', () => {
+  const compactRows = compactTrackLikeRows([
+    {
+      play_date: '2026-07-01',
+      isrc: 'jpabc1234567',
+      like_count: 8,
+      observed_at: 1000,
+    },
+  ]);
+  const [track] = attachCompactTrackLikes([
+    {
+      play_date: '2026-07-01',
+      isrc: 'JPABC1234567',
+      source_keys: ['isrc:JPABC1234567'],
+      like_count: 3,
+    },
+  ], compactRows);
+
+  assert.equal(track.like_count, 8);
+});
+
+test('queue fallback like count survives when no matching observation exists', () => {
+  const [track] = attachCompactTrackLikes([
+    {
+      play_date: '2026-07-01',
+      spotify_id: 'spotify-1',
+      source_keys: ['spotify:spotify-1'],
+      like_count: 6,
+    },
+  ], []);
+
+  assert.equal(track.like_count, 6);
 });
