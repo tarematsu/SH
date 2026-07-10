@@ -1,3 +1,5 @@
+import { bool } from './api-utils.js';
+
 const checkpointRaw = JSON.stringify({ checkpoint: true });
 
 export const QUEUE_REACHABILITY_CHECKPOINT_MS = 2 * 60_000;
@@ -8,18 +10,11 @@ function numberOrNull(value) {
   return Number.isFinite(number) ? number : null;
 }
 
-function boolOrNull(value) {
-  if (value == null) return null;
-  if (value === true || value === 1 || value === '1') return 1;
-  if (value === false || value === 0 || value === '0') return 0;
-  return null;
-}
-
 export function queueReachabilityStatement(db, observedAt, data) {
   const stationId = numberOrNull(data?.station_id);
   const queueId = numberOrNull(data?.queue_id);
   const startTime = numberOrNull(data?.start_time);
-  const paused = boolOrNull(data?.is_paused);
+  const paused = bool(data?.is_paused);
   const observed = numberOrNull(observedAt);
   return db.prepare(`INSERT INTO sh_queue_snapshots (
       observed_at,station_id,queue_id,start_time,is_paused,raw_json
