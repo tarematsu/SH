@@ -23,6 +23,7 @@ const ignoredFiles = new Set([
   'worker/src/sh-refactor-report.generated.js',
 ]);
 const identifierPattern = /\b[A-Za-z_][A-Za-z0-9_]*\b/g;
+const fragmentPattern = /[A-Za-z0-9_@.:/\\-]*stationhead[A-Za-z0-9_@.:/\\-]*/gi;
 const pathHits = [];
 const contentHits = [];
 
@@ -52,12 +53,16 @@ function walk(directory) {
       if (!/stationhead/i.test(token)) continue;
       counts.set(token, (counts.get(token) || 0) + 1);
     }
-    if (counts.size) {
+    const fragments = [...new Set(text.match(fragmentPattern) || [])]
+      .filter(Boolean)
+      .sort((a, b) => a.localeCompare(b));
+    if (counts.size || fragments.length) {
       contentHits.push({
         path: relative,
         identifiers: [...counts.entries()]
           .map(([name, count]) => ({ name, count }))
           .sort((a, b) => a.name.localeCompare(b.name)),
+        fragments,
       });
     }
   }
