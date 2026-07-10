@@ -26,9 +26,10 @@ function namespacedSourceKey(value) {
   if (!match) return null;
   const prefix = match[1].toLowerCase();
   const field = prefix === 'apple' ? 'apple_music_id'
-    : prefix === 'stationhead' ? 'stationhead_track_id'
-      : prefix === 'queue' ? 'queue_track_id'
-        : `${prefix}_id`;
+    : prefix === 'isrc' ? 'isrc'
+      : prefix === 'stationhead' ? 'stationhead_track_id'
+        : prefix === 'queue' ? 'queue_track_id'
+          : 'spotify_id';
   const id = idValue(field, match[2]);
   return id ? `${prefix}:${id}` : null;
 }
@@ -142,25 +143,23 @@ export function compactTrackLikeRows(rows) {
 export function trackLikeStatements(db, fromTs, toTs) {
   return [
     db.prepare(TRACK_LIKE_REALTIME_SQL).bind(fromTs, toTs),
-    db.prepare(TRACK_LIKE_QUEUE_SQL).bind(fromTs, toTs),
     db.prepare(TRACK_LIKE_HISTORY_SQL).bind(fromTs, toTs),
   ];
 }
 
 export function compactTrackLikeBatchResults(results) {
-  const [realtime, queue, historical] = results || [];
+  const [realtime, historical] = results || [];
   return compactTrackLikeSources([
     historical?.results || [],
-    queue?.results || [],
     realtime?.results || [],
   ]);
 }
 
 async function loadTrackLikeRowsFallback(db, fromTs, toTs) {
-  const [realtime, queue, historical] = await Promise.all(
+  const [realtime, historical] = await Promise.all(
     trackLikeStatements(db, fromTs, toTs).map(optionalRows),
   );
-  return [historical, queue, realtime];
+  return [historical, realtime];
 }
 
 export async function loadTrackLikeRows(db, fromTs, toTs) {
