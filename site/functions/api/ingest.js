@@ -12,6 +12,7 @@ import {
   saveLeanQueue,
   saveLeanSnapshot,
 } from '../lib/d1-optimized-ingest.js';
+import { saveQueueCurrentPauseState } from '../lib/queue-current-state.js';
 import { saveQueueReachability } from '../lib/queue-reachability.js';
 
 export * from './ingest-core.js';
@@ -41,19 +42,24 @@ async function handleSnapshot({ env, body, observedAt, data }) {
 
 async function handleQueue({ env, body, observedAt, data }) {
   const result = await saveLeanQueue(env.DB, observedAt, body);
+  const currentPause = await saveQueueCurrentPauseState(env.DB, observedAt, data);
   const structuralSnapshotWritten = result.structureChanged === true && result.claim.accepted === true;
   const reachability = structuralSnapshotWritten
     ? { inserted: false }
     : await saveQueueReachability(env.DB, observedAt, data);
+  const pauseChanged = currentPause.updated === true;
   return json({
     ok: true,
     type: body.type,
-    accepted: result.claim.accepted,
-    duplicate: result.claim.duplicate || false,
-    claim_reason: result.claim.reason || null,
-    queue_inspected: result.inspected,
+    accepted: result.claim.accepted || pauseChanged,
+    duplicate: (result.claim.duplicate || false) && !pauseChanged,
+    claim_reason: pauseChanged && !result.claim.accepted
+      ? 'pause_state_changed'
+      : result.claim.reason || null,
+    queue_inspected: result.inspected || pauseChanged,
     structure_changed: result.structureChanged === true,
     likes_changed: result.likesChanged === true,
+    pause_changed: pauseChanged,
     complete_likes: result.completeLikes !== false,
     queue_items_written: result.itemsWritten,
     like_observations_written: result.observationsWritten,
