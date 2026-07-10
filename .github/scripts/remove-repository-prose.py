@@ -140,11 +140,6 @@ for item in tracked:
         path.write_text(updated, encoding='utf-8', newline='')
         changed.append(item)
 
-for helper in helper_paths:
-    path = Path(helper)
-    if path.exists():
-        path.unlink()
-
 print(f'deleted documents: {len(deleted)}')
 print(f'files with comment-only lines removed: {len(changed)}')
 for item in deleted:
