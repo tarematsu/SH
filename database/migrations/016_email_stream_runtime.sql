@@ -1,4 +1,3 @@
--- Reduce repeated week lookups in email recap validation and weekly summary triggers.
 CREATE INDEX IF NOT EXISTS idx_sh_email_stream_snapshots_week
 ON sh_email_stream_snapshots(week_of);
 

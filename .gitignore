@@ -16,7 +16,6 @@ Thumbs.db
 .sh-session.json
 .weekly-leaderboard-state.json
 
-# Generated local tooling state and diagnostic captures
 .wrangler/
 .sh-discovery/
 collector/.leaderboard-capture-browser/

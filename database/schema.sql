@@ -152,7 +152,6 @@ CREATE TABLE IF NOT EXISTS sh_track_metadata (
 );
 CREATE INDEX IF NOT EXISTS idx_sh_track_metadata_fetched_at ON sh_track_metadata(fetched_at DESC);
 
--- Compatibility table for local/external collectors during migration.
 CREATE TABLE IF NOT EXISTS sh_collector_heartbeats (
   collector_id TEXT PRIMARY KEY,
   first_seen_at INTEGER NOT NULL,

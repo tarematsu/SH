@@ -1,5 +1,3 @@
--- Indexes for UTC track-history evidence lookup and queue reachability joins.
--- Safe to run repeatedly.
 
 CREATE INDEX IF NOT EXISTS idx_sh_queue_snapshots_track_history_evidence
 ON sh_queue_snapshots(observed_at, start_time, station_id, is_paused);

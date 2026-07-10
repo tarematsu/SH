@@ -1,5 +1,3 @@
--- Hot-path indexes for dashboard, playback and daily baseline lookups.
--- Safe to run repeatedly.
 
 CREATE INDEX IF NOT EXISTS idx_sh_channel_snapshots_station_observed
 ON sh_channel_snapshots(station_id, observed_at DESC);

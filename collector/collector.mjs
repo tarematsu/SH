@@ -445,7 +445,6 @@ async function fetchSpotifyMetadata(track) {
   if (!spotifyId) return null;
   const spotifyUrl = `https://open.spotify.com/track/${encodeURIComponent(spotifyId)}`;
 
-  // Apple Music ID gives a reliable artistName/trackName without OAuth.
   const apple = await fetchAppleMetadata(track).catch((error) => {
     log('warn', `Apple metadata error id=${track.apple_music_id || '-'} ${error.message}`);
     return null;

@@ -1,5 +1,3 @@
--- Foundation required by 006_email_weekly_summary.sql and 016_email_stream_runtime.sql.
--- Production databases may already contain this table, so keep the migration idempotent.
 CREATE TABLE IF NOT EXISTS sh_weekly_summary (
   period_key TEXT PRIMARY KEY,
   period_start INTEGER NOT NULL,

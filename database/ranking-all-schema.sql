@@ -17,7 +17,6 @@ CREATE TABLE IF NOT EXISTS sh_channel_rankings (
   imported_at INTEGER NOT NULL
 );
 
--- 旧版の一意制約を、日付・種類・チャンネル単位へ変更する。
 DROP INDEX IF EXISTS uq_channel_ranking;
 DROP INDEX IF EXISTS uq_channel_ranking_channel;
 

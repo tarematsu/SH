@@ -1,4 +1,3 @@
--- Compact high-frequency D1 writes into current-state rows and sparse history.
 CREATE TABLE IF NOT EXISTS sh_snapshot_current (
   channel_key TEXT PRIMARY KEY,
   payload_hash TEXT NOT NULL,

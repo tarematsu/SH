@@ -8,9 +8,6 @@ function trackingOfficialTaskContext(ctx, state) {
       if (property === 'waitUntil') {
         return (task) => {
           const pending = Promise.resolve(task);
-          // email-recap-index delegates to official-news-index first. Its monitor
-          // registers the first waitUntil task; later tasks belong to host/profile
-          // monitoring and must not delay schedule reconciliation.
           if (!state.officialTask) state.officialTask = pending;
           return target.waitUntil(pending);
         };

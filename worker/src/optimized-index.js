@@ -39,7 +39,6 @@ function chatFallbackResponse(requestedLimit, reason) {
   });
 }
 
-// コメントAPIだけを局所的に縮小再試行する。収集全体は再実行しない。
 globalThis.fetch = async (input, init = {}) => {
   const rawUrl = typeof input === 'string' ? input : input?.url;
   if (!rawUrl) return nativeFetch(input, init);
@@ -266,7 +265,6 @@ export function authHealth(state) {
     auth_last_attempt_at: state?.lastAttemptAt || null,
     auth_last_success_at: state?.lastSuccessAt || null,
     auth_last_error: state?.lastError || null,
-    // 旧表示との互換性
     browser_binding: false,
     browser_session_ready: Boolean(state?.authToken && state?.deviceUid),
     browser_token_expires_at: state?.tokenExpiresAt || null,

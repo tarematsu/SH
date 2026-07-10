@@ -2,9 +2,6 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import crypto from 'node:crypto';
 
-// One-off migration script: point this at your own Google Sheets export URLs via
-// HISTORY_IMPORT_SHEETS, e.g.:
-//   HISTORY_IMPORT_SHEETS='[{"id":"sheet_a","url":"https://docs.google.com/spreadsheets/d/XXX/export?format=csv&gid=0"}]'
 const SOURCES = JSON.parse(process.env.HISTORY_IMPORT_SHEETS || 'null');
 if (!SOURCES) {
   throw new Error('Set HISTORY_IMPORT_SHEETS to a JSON array of {id, url} Google Sheets CSV export sources.');

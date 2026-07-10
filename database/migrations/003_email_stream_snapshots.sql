@@ -1,5 +1,3 @@
--- Foundation required by 006_email_weekly_summary.sql and 016_email_stream_runtime.sql.
--- This migration is intentionally limited to the missing source table.
 CREATE TABLE IF NOT EXISTS sh_email_stream_snapshots (
   source_key TEXT PRIMARY KEY,
   week_of TEXT NOT NULL,

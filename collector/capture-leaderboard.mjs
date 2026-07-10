@@ -235,7 +235,6 @@ await page.goto(TARGET_URL, {
 
 await page.waitForTimeout(10_000);
 
-// 遅延読み込み対策
 for (let i = 0; i < 8; i += 1) {
   await page.evaluate(() => window.scrollBy(0, Math.max(window.innerHeight * 0.8, 600)));
   await page.waitForTimeout(1_000);
