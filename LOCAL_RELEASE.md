@@ -1,6 +1,6 @@
 # Local Release
 
-`stationhead-monitor` can be deployed from the local Windows machine without waiting for Git-based automation.
+`sh-monitor` can be deployed from the local Windows machine without waiting for Git-based automation.
 
 ## Codex-safe push rule
 
@@ -14,7 +14,7 @@ The repository workflow skips push-triggered checks when that marker is present,
 
 ## Local release command
 
-From `C:\stationhead-monitor`:
+From `C:\sh-monitor`:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\local-release.ps1
@@ -33,7 +33,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\local-release.ps1
 
 - `wrangler` already authenticated
 - Node dependencies installable on the local machine
-- Access to the `stationhead-monitor` D1 database and Pages project
+- Access to the `sh-monitor` D1 database and Pages project
 
 ## Notes
 

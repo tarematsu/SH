@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { onRequestGet } from '../functions/api/stationhead-weekly-leaderboard-test.js';
+import { onRequestGet } from '../functions/api/sh-weekly-leaderboard-test.js';
 
 function sessionDatabase(row) {
   return {

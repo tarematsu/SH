@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
-  createStationheadReadFetch,
+  createShReadFetch,
   enrichTracks,
   fetchTrackMetadata,
   jsonResponse,
@@ -76,7 +76,7 @@ test('duplicate Stationhead station and comment reads share one response per min
       headers: { 'content-type': 'application/json' },
     });
   };
-  const cachedFetch = createStationheadReadFetch(nativeFetch, () => now);
+  const cachedFetch = createShReadFetch(nativeFetch, () => now);
   const headers = { authorization: 'Bearer token', 'sth-device-uid': 'device' };
   const stationUrl = 'https://production1.stationhead.com/station/handle/sakurazaka46jp/guest';
   const commentsUrl = 'https://production1.stationhead.com/station/123/chatHistory?limit=50';
@@ -117,7 +117,7 @@ test('comment normalization ignores duplicate upstream IDs before reporting save
 
 test('failed Stationhead reads are not retained after the in-flight request', async () => {
   let calls = 0;
-  const cachedFetch = createStationheadReadFetch(async () => {
+  const cachedFetch = createShReadFetch(async () => {
     calls += 1;
     return new Response('failed', { status: 503 });
   }, () => 120_000);
@@ -130,7 +130,7 @@ test('failed Stationhead reads are not retained after the in-flight request', as
 
 test('Stationhead cache keys keep full authorization values separate', async () => {
   let calls = 0;
-  const cachedFetch = createStationheadReadFetch(async () => {
+  const cachedFetch = createShReadFetch(async () => {
     calls += 1;
     return new Response(JSON.stringify({ calls }), { status: 200 });
   }, () => 120_000);
@@ -149,7 +149,7 @@ test('Stationhead cache keys keep full authorization values separate', async () 
 
 test('Stationhead guest Request bodies bypass response sharing', async () => {
   let calls = 0;
-  const cachedFetch = createStationheadReadFetch(async () => {
+  const cachedFetch = createShReadFetch(async () => {
     calls += 1;
     return new Response(JSON.stringify({ calls }), { status: 200 });
   }, () => 120_000);

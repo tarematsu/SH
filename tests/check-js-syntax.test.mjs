@@ -17,7 +17,7 @@ function run(command, args, cwd) {
 }
 
 async function createFixture() {
-  const root = await mkdtemp(path.join(tmpdir(), 'stationhead-js-check-'));
+  const root = await mkdtemp(path.join(tmpdir(), 'sh-js-check-'));
   await mkdir(path.join(root, 'scripts'), { recursive: true });
   await mkdir(path.join(root, 'worker', 'src'), { recursive: true });
   await writeFile(path.join(root, 'scripts', 'check-js-syntax.mjs'), checkerSource);

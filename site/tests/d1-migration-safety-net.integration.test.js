@@ -16,7 +16,7 @@ test('D1 recovery remains a manual fallback and cannot race Cloudflare builds', 
   assert.doesNotMatch(workflow, /\bpush:/);
   assert.doesNotMatch(workflow, /\bschedule:/);
   assert.doesNotMatch(workflow, /sleep\s+120/);
-  assert.match(workflow, /group: stationhead-d1-migrations/);
+  assert.match(workflow, /group: sh-d1-migrations/);
   assert.match(workflow, /cancel-in-progress: false/);
   assert.match(workflow, /D1_MIGRATION_FORCE: ['"]true['"]/);
   assert.match(workflow, /D1_MIGRATION_TARGET: remote/);

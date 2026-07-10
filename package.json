@@ -1,5 +1,5 @@
 {
-  "name": "stationhead",
+  "name": "sh",
   "version": "1.4.0",
   "private": true,
   "type": "module",
@@ -7,7 +7,7 @@
     "check": "npm run check:js && npm run test:js && npm run test:sql && npm run check:worker-bundle && npm run test:worker && npm run check:site && npm run test:site",
     "check:js": "node scripts/check-js-syntax.mjs",
     "check:worker-bundle": "npm --prefix worker run check:bundle",
-    "discover:stationhead": "node scripts/discover-stationhead-page.mjs",
+    "discover:sh": "node scripts/discover-sh-page.mjs",
     "test:worker": "npm --prefix worker test",
     "check:site": "npm --prefix site run check",
     "test:site": "npm --prefix site test",

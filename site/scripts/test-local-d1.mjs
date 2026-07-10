@@ -32,7 +32,7 @@ function run(args) {
 function executeFile(filename) {
   console.log(`Applying current D1 schema: ${filename}`);
   run([
-    'd1', 'execute', 'stationhead-monitor',
+    'd1', 'execute', 'sh-monitor',
     '--local', '--persist-to', stateDirectory,
     '--file', path.join(databaseDirectory, filename),
   ]);
@@ -60,7 +60,7 @@ try {
   ];
   for (const table of requiredTables) {
     run([
-      'd1', 'execute', 'stationhead-monitor',
+      'd1', 'execute', 'sh-monitor',
       '--local', '--persist-to', stateDirectory,
       '--command', `SELECT COUNT(*) AS row_count FROM ${table};`,
     ]);

@@ -24,8 +24,8 @@ test('successful Resend requests are reused by idempotency key for one hour', as
   const second = await send();
 
   assert.equal(calls, 1);
-  assert.equal(first.headers.get('x-stationhead-resend-cache'), 'miss');
-  assert.equal(second.headers.get('x-stationhead-resend-cache'), 'hit');
+  assert.equal(first.headers.get('x-sh-resend-cache'), 'miss');
+  assert.equal(second.headers.get('x-sh-resend-cache'), 'hit');
   assert.deepEqual(await second.json(), { id: 'email-1' });
 
   now += 60 * 60_000 + 1;
@@ -54,8 +54,8 @@ test('concurrent Resend requests with the same idempotency key share one request
   const [first, second] = await Promise.all([firstPromise, secondPromise]);
 
   assert.equal(calls, 1);
-  assert.equal(first.headers.get('x-stationhead-resend-cache'), 'miss');
-  assert.equal(second.headers.get('x-stationhead-resend-cache'), 'coalesced');
+  assert.equal(first.headers.get('x-sh-resend-cache'), 'miss');
+  assert.equal(second.headers.get('x-sh-resend-cache'), 'coalesced');
 });
 
 test('failed Resend requests are not cached', async () => {

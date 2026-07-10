@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
 import { shouldProbeSolo } from '../src/cloud-host-monitor.js';
-import { createStationheadTrafficGuard } from '../src/stationhead-traffic-guard.js';
+import { createShTrafficGuard } from '../src/sh-traffic-guard.js';
 
 function statementResult(row, calls) {
   return {
@@ -124,7 +124,7 @@ test('announcement-free idle state skips the solo endpoint', async () => {
 
 test('the official solo guest 404 becomes a cached idle response', async () => {
   let requests = 0;
-  const guarded = createStationheadTrafficGuard(async () => {
+  const guarded = createShTrafficGuard(async () => {
     requests += 1;
     return guest404();
   }, () => 60_000);
@@ -134,7 +134,7 @@ test('the official solo guest 404 becomes a cached idle response', async () => {
   const second = await guarded(url, guestInit);
 
   assert.equal(first.status, 200);
-  assert.equal(first.headers.get('x-stationhead-broadcast-state'), 'idle');
+  assert.equal(first.headers.get('x-sh-broadcast-state'), 'idle');
   assert.deepEqual(await first.json(), {});
   assert.equal(second.status, 200);
   assert.equal(requests, 1);
@@ -142,7 +142,7 @@ test('the official solo guest 404 becomes a cached idle response', async () => {
 
 test('an unknown guest handle keeps its 404 so configuration mistakes remain visible', async () => {
   let requests = 0;
-  const guarded = createStationheadTrafficGuard(async () => {
+  const guarded = createShTrafficGuard(async () => {
     requests += 1;
     return guest404();
   }, () => 60_000);

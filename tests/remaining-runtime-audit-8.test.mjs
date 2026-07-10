@@ -79,7 +79,7 @@ test('history chart interactions reuse prepared models', () => {
 
 test('goal prediction avoids rewriting unchanged DOM text', () => {
   const source = readFileSync(
-    new URL('../site/public/stationhead-ui-fixes.js', import.meta.url),
+    new URL('../site/public/sh-ui-fixes.js', import.meta.url),
     'utf8',
   );
   assert.match(source, /renderPredictionDifferential/);

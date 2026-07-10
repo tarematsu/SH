@@ -1,7 +1,7 @@
 const ORIGIN='https://production1.stationhead.com';
 const PREFIX=`${ORIGIN}/station/`;
 const MAX=32;
-const MARK=Symbol.for('stationhead-monitor.stationhead-read-cache');
+const MARK=Symbol.for('sh-monitor.sh-read-cache');
 
 function cacheable(input,init,now){
   const raw=typeof input==='string'?input:input instanceof URL?input.toString():input?.url;
@@ -22,7 +22,7 @@ function cacheable(input,init,now){
   return {minute:Math.floor(now/60000),key:[method,url.toString(),body,headers.get('sth-device-uid')||'',headers.get('authorization')||''].join('\n')};
 }
 
-export function createStationheadReadFetch(nativeFetch,nowFn=Date.now){
+export function createShReadFetch(nativeFetch,nowFn=Date.now){
   if(typeof nativeFetch!=='function')throw new TypeError('nativeFetch must be a function');
   const cache=new Map();let minute=null;
   const wrapped=async(input,init={})=>{
@@ -37,4 +37,4 @@ export function createStationheadReadFetch(nativeFetch,nowFn=Date.now){
   Object.defineProperty(wrapped,MARK,{value:true});return wrapped;
 }
 
-if(typeof globalThis.fetch==='function'&&!globalThis.fetch[MARK])globalThis.fetch=createStationheadReadFetch(globalThis.fetch.bind(globalThis));
+if(typeof globalThis.fetch==='function'&&!globalThis.fetch[MARK])globalThis.fetch=createShReadFetch(globalThis.fetch.bind(globalThis));

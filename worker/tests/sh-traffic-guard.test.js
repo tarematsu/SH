@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { createStationheadTrafficGuard } from '../src/stationhead-traffic-guard.js';
+import { createShTrafficGuard } from '../src/sh-traffic-guard.js';
 
 const ORIGIN = 'https://production1.stationhead.com';
 
@@ -11,7 +11,7 @@ function okJson() {
 
 test('station handle reads keep a reserved budget after data reads are exhausted', async () => {
   const calls = [];
-  const guarded = createStationheadTrafficGuard(async (input) => {
+  const guarded = createShTrafficGuard(async (input) => {
     calls.push(new URL(String(input)).pathname);
     return okJson();
   }, () => 0);
@@ -33,7 +33,7 @@ test('station handle reads keep a reserved budget after data reads are exhausted
 
 test('station handle reads still have their own per-minute limit', async () => {
   const calls = [];
-  const guarded = createStationheadTrafficGuard(async (input) => {
+  const guarded = createShTrafficGuard(async (input) => {
     calls.push(new URL(String(input)).pathname);
     return okJson();
   }, () => 0);
@@ -47,7 +47,7 @@ test('station handle reads still have their own per-minute limit', async () => {
   });
 
   assert.equal(blocked.status, 429);
-  assert.equal(blocked.headers.get('x-stationhead-traffic-guard'), 'station-minute-budget-exhausted');
+  assert.equal(blocked.headers.get('x-sh-traffic-guard'), 'station-minute-budget-exhausted');
   assert.deepEqual(calls, [
     '/station/handle/buddy46/guest',
     '/station/handle/sakurazaka46jp/guest',

@@ -12,7 +12,7 @@ test('iTunes requests are blocked without contacting upstream', async () => {
 
   const response = await guarded('https://itunes.apple.com/search?term=test');
   assert.equal(response.status, 410);
-  assert.equal(response.headers.get('x-stationhead-fetch-guard'), 'blocked:itunes.apple.com');
+  assert.equal(response.headers.get('x-sh-fetch-guard'), 'blocked:itunes.apple.com');
   assert.equal(calls, 0);
 });
 
@@ -47,7 +47,7 @@ test('failed optional requests enter a five-minute local backoff', async () => {
   assert.equal((await guarded('https://open.spotify.com/oembed?url=track')).status, 429);
   const backedOff = await guarded('https://open.spotify.com/oembed?url=track');
   assert.equal(backedOff.status, 503);
-  assert.match(backedOff.headers.get('x-stationhead-fetch-guard'), /^backoff:/);
+  assert.match(backedOff.headers.get('x-sh-fetch-guard'), /^backoff:/);
   assert.equal(calls, 1);
 
   now += 5 * 60_000 + 1;

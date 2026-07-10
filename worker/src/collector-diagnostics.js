@@ -135,13 +135,13 @@ function validateLatestSnapshot(state, runStartedAt) {
   if (observedAt == null || observedAt < runStartedAt - 5_000) {
     return asCollectorFailure(
       new Error('Stationhead collection reported success but no current channel snapshot was written'),
-      'stationhead_channel_payload',
+      'sh_channel_payload',
     );
   }
   if (finite(state.snapshot_channel_id) == null || !text(state.snapshot_channel_alias)) {
     return asCollectorFailure(
       new Error('Stationhead channel response shape changed: channel_id or channel_alias is missing'),
-      'stationhead_channel_payload',
+      'sh_channel_payload',
     );
   }
   if (state.snapshot_raw_json) {
@@ -153,7 +153,7 @@ function validateLatestSnapshot(state, runStartedAt) {
     } catch (error) {
       return asCollectorFailure(
         new Error(`Stationhead channel response JSON is invalid: ${sanitizeFailureDetail(error?.message || error)}`),
-        'stationhead_channel_payload',
+        'sh_channel_payload',
       );
     }
   }
@@ -166,15 +166,15 @@ function inferStoredFailure(state, runStartedAt) {
   const authAttemptAt = finite(state.auth_last_attempt_at) ?? 0;
 
   if (state.auth_last_error && authAttemptAt >= Math.max(runStartedAt - 5_000, lastSuccessAt)) {
-    return asCollectorFailure(state.auth_last_error, 'stationhead_auth', authAttemptAt);
+    return asCollectorFailure(state.auth_last_error, 'sh_auth', authAttemptAt);
   }
   if (state.last_error && lastRunAt >= runStartedAt - 5_000 && lastSuccessAt < runStartedAt) {
     const detail = text(state.last_error);
     let stage = 'collector_unknown';
     if (/D1 ingest failed|database|SQLITE|no such table|no such column/i.test(detail)) stage = 'd1_write_snapshot';
-    else if (/401|403|session expired|authentication/i.test(detail)) stage = 'stationhead_auth';
-    else if (/chatHistory/i.test(detail)) stage = 'stationhead_chat_history';
-    else if (/Stationhead API|channels\/alias/i.test(detail)) stage = 'stationhead_channel_request';
+    else if (/401|403|session expired|authentication/i.test(detail)) stage = 'sh_auth';
+    else if (/chatHistory/i.test(detail)) stage = 'sh_chat_history';
+    else if (/Stationhead API|channels\/alias/i.test(detail)) stage = 'sh_channel_request';
     return asCollectorFailure(detail, stage, lastRunAt);
   }
   return null;

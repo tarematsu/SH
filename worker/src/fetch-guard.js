@@ -1,4 +1,4 @@
-import { createStationheadTrafficGuard } from './stationhead-traffic-guard.js';
+import { createShTrafficGuard } from './sh-traffic-guard.js';
 
 const BLOCKED_HOSTS = new Set([
   'itunes.apple.com',
@@ -11,7 +11,7 @@ const RESEND_SUCCESS_TTL_MS = 60 * 60_000;
 const OPTIONAL_TIMEOUT_MS = 5_000;
 const OPTIONAL_FAILURE_BACKOFF_MS = 5 * 60_000;
 const MAX_TRACKED_REQUESTS = 64;
-const INSTALL_MARK = Symbol.for('stationhead-monitor.optional-fetch-guard');
+const INSTALL_MARK = Symbol.for('sh-monitor.optional-fetch-guard');
 
 function requestUrl(input) {
   if (typeof input === 'string') return input;
@@ -32,7 +32,7 @@ function blockedResponse(hostname) {
     status: 410,
     headers: {
       'cache-control': 'no-store',
-      'x-stationhead-fetch-guard': `blocked:${hostname}`,
+      'x-sh-fetch-guard': `blocked:${hostname}`,
     },
   });
 }
@@ -42,7 +42,7 @@ function failureResponse(hostname) {
     status: 503,
     headers: {
       'retry-after': String(Math.ceil(OPTIONAL_FAILURE_BACKOFF_MS / 1000)),
-      'x-stationhead-fetch-guard': `backoff:${hostname}`,
+      'x-sh-fetch-guard': `backoff:${hostname}`,
     },
   });
 }
@@ -69,7 +69,7 @@ async function responseSnapshot(response) {
 
 function responseFromSnapshot(snapshot, cacheStatus) {
   const headers = new Headers(snapshot.headers);
-  headers.set('x-stationhead-resend-cache', cacheStatus);
+  headers.set('x-sh-resend-cache', cacheStatus);
   return new Response(snapshot.body.slice(0), {
     status: snapshot.status,
     statusText: snapshot.statusText,
@@ -182,7 +182,7 @@ export function createOptionalFetchGuard(nativeFetch, nowFn = Date.now) {
 
 if (typeof globalThis.fetch === 'function' && !globalThis.fetch[INSTALL_MARK]) {
   const optionalGuard = createOptionalFetchGuard(globalThis.fetch.bind(globalThis));
-  const stationheadGuard = createStationheadTrafficGuard(optionalGuard);
-  Object.defineProperty(stationheadGuard, INSTALL_MARK, { value: true });
-  globalThis.fetch = stationheadGuard;
+  const shGuard = createShTrafficGuard(optionalGuard);
+  Object.defineProperty(shGuard, INSTALL_MARK, { value: true });
+  globalThis.fetch = shGuard;
 }

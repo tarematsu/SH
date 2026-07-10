@@ -7,8 +7,8 @@ export {
   DEFAULT_USER_AGENT,
   configFromEnv,
   firstDefined,
-  stationheadHeaders,
-  stationheadJson,
+  shHeaders,
+  shJson,
 } from './collector-config.js';
 export { collectOptionalComments } from './collector-comments.js';
 export { authorized, handleCollectorRequest, health } from './collector-http.js';

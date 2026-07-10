@@ -1,10 +1,10 @@
 import { jwtExpiryMs, normalizeBearer } from './shared.js';
 
 export function collectorStateFromAuthState(authState, env = {}) {
-  const authToken = normalizeBearer(authState?.authToken || env.STATIONHEAD_AUTH_TOKEN);
-  const deviceUid = String(authState?.deviceUid || env.STATIONHEAD_DEVICE_UID || '').trim();
+  const authToken = normalizeBearer(authState?.authToken || env.STATIONHEAD_AUTH_TOKEN || env.SH_AUTH_TOKEN);
+  const deviceUid = String(authState?.deviceUid || env.STATIONHEAD_DEVICE_UID || env.SH_DEVICE_UID || '').trim();
   if (!authToken || !deviceUid) {
-    throw new Error('Stationhead session is missing. Set STATIONHEAD_AUTH_TOKEN and STATIONHEAD_DEVICE_UID from collector/.stationhead-session.json.');
+    throw new Error('Stationhead session is missing. Set STATIONHEAD_AUTH_TOKEN and STATIONHEAD_DEVICE_UID from collector/.sh-session.json.');
   }
   return {
     authToken,
@@ -19,8 +19,8 @@ export function collectorStateFromAuthState(authState, env = {}) {
 }
 
 export async function loadCollectorState(env) {
-  if (env.__stationheadAuthState) {
-    return collectorStateFromAuthState(env.__stationheadAuthState, env);
+  if (env.__shAuthState) {
+    return collectorStateFromAuthState(env.__shAuthState, env);
   }
 
   const row = await env.DB.prepare(`
@@ -30,11 +30,11 @@ export async function loadCollectorState(env) {
     WHERE id = 'stationhead'
   `).first();
 
-  const authToken = normalizeBearer(row?.auth_token || env.STATIONHEAD_AUTH_TOKEN);
-  const deviceUid = String(row?.device_uid || env.STATIONHEAD_DEVICE_UID || '').trim();
+  const authToken = normalizeBearer(row?.auth_token || env.STATIONHEAD_AUTH_TOKEN || env.SH_AUTH_TOKEN);
+  const deviceUid = String(row?.device_uid || env.STATIONHEAD_DEVICE_UID || env.SH_DEVICE_UID || '').trim();
 
   if (!authToken || !deviceUid) {
-    throw new Error('Stationhead session is missing. Set STATIONHEAD_AUTH_TOKEN and STATIONHEAD_DEVICE_UID from collector/.stationhead-session.json.');
+    throw new Error('Stationhead session is missing. Set STATIONHEAD_AUTH_TOKEN and STATIONHEAD_DEVICE_UID from collector/.sh-session.json.');
   }
 
   return {

@@ -10,7 +10,7 @@ const nativeFetch = globalThis.fetch.bind(globalThis);
 function authConfig(env) {
   return {
     alias: env.CHANNEL_ALIAS || 'buddies',
-    appVersion: env.STATIONHEAD_APP_VERSION || '1.0.0',
+    appVersion: env.STATIONHEAD_APP_VERSION || env.SH_APP_VERSION || '1.0.0',
     requestTimeoutMs: Math.min(positive(env.REQUEST_TIMEOUT_MS, 20_000), 30_000),
     refreshBeforeMs: positive(env.AUTH_REFRESH_BEFORE_MS, 3_600_000),
     cooldownMs: positive(env.AUTH_REFRESH_COOLDOWN_MS, 300_000),
@@ -29,7 +29,7 @@ function isChatHistory(url) {
 
 function chatFallbackResponse(requestedLimit, reason) {
   console.warn(JSON.stringify({
-    event: 'stationhead_chat_history_skipped',
+    event: 'sh_chat_history_skipped',
     requested_limit: requestedLimit,
     reason,
   }));
@@ -69,7 +69,7 @@ globalThis.fetch = async (input, init = {}) => {
       if (response.status < 500) {
         if (limit !== requestedLimit) {
           console.warn(JSON.stringify({
-            event: 'stationhead_chat_history_fallback',
+            event: 'sh_chat_history_fallback',
             requested_limit: requestedLimit,
             successful_limit: limit,
           }));
@@ -92,7 +92,7 @@ globalThis.fetch = async (input, init = {}) => {
 export function withAuthState(env, state) {
   return new Proxy(env, {
     get(target, property, receiver) {
-      if (property === '__stationheadAuthState') return state;
+      if (property === '__shAuthState') return state;
       return Reflect.get(target, property, receiver);
     },
   });
@@ -145,7 +145,7 @@ async function finishAuthAttempt(env, error = null) {
   `).bind(error, now, error, now, STATE_ID).run();
 }
 
-function stationheadHeaders(cfg, deviceUid, authToken = '') {
+function shHeaders(cfg, deviceUid, authToken = '') {
   return {
     accept: 'application/json, text/plain, */*',
     'accept-language': 'ja,en-US;q=0.9,en;q=0.8',
@@ -160,7 +160,7 @@ function stationheadHeaders(cfg, deviceUid, authToken = '') {
   };
 }
 
-async function stationheadFetch(cfg, path, options = {}) {
+async function shFetch(cfg, path, options = {}) {
   return nativeFetch(`${API_ORIGIN}${path}`, {
     ...options,
     signal: AbortSignal.timeout(cfg.requestTimeoutMs),
@@ -169,9 +169,9 @@ async function stationheadFetch(cfg, path, options = {}) {
 
 async function acquireDirectSession(cfg) {
   const deviceUid = crypto.randomUUID();
-  const baseHeaders = stationheadHeaders(cfg, deviceUid);
+  const baseHeaders = shHeaders(cfg, deviceUid);
 
-  const tokenResponse = await stationheadFetch(cfg, '/web/token', {
+  const tokenResponse = await shFetch(cfg, '/web/token', {
     method: 'POST',
     headers: baseHeaders,
     body: '',
@@ -182,8 +182,8 @@ async function acquireDirectSession(cfg) {
     throw new Error(`guest token failed: status=${tokenResponse.status}, authorization=${Boolean(authToken)}${body ? `, body=${body.slice(0, 160)}` : ''}`);
   }
 
-  const authHeaders = stationheadHeaders(cfg, deviceUid, authToken);
-  const loginResponse = await stationheadFetch(cfg, '/web/guest/login', {
+  const authHeaders = shHeaders(cfg, deviceUid, authToken);
+  const loginResponse = await shFetch(cfg, '/web/guest/login', {
     method: 'POST',
     headers: authHeaders,
     body: '',
@@ -193,7 +193,7 @@ async function acquireDirectSession(cfg) {
     throw new Error(`guest login failed: status=${loginResponse.status}${body ? `, body=${body.slice(0, 160)}` : ''}`);
   }
 
-  const verifyResponse = await stationheadFetch(cfg, `/channels/alias/${encodeURIComponent(cfg.alias)}`, {
+  const verifyResponse = await shFetch(cfg, `/channels/alias/${encodeURIComponent(cfg.alias)}`, {
     headers: authHeaders,
   });
   if (!verifyResponse.ok) {
@@ -224,7 +224,7 @@ async function refreshSession(env, reason, force = false) {
     await finishAuthAttempt(env, null);
     const state = await readAuthState(env, STATE_ID);
     console.log(JSON.stringify({
-      event: 'stationhead_auth_refreshed',
+      event: 'sh_auth_refreshed',
       method: 'direct-api',
       reason,
       token_expires_at: state.tokenExpiresAt || null,
@@ -281,7 +281,7 @@ export default {
     try {
       let state = await ensureSession(env);
       if (!state?.authToken || !state?.deviceUid) {
-        console.warn(JSON.stringify({ event: 'stationhead_auth_backoff' }));
+        console.warn(JSON.stringify({ event: 'sh_auth_backoff' }));
         return;
       }
 

@@ -101,7 +101,7 @@ function sessionFromEnv(env) {
   return { token, deviceUid };
 }
 
-function stationheadHeaders(session, config) {
+function shHeaders(session, config) {
   const headers = {
     accept: 'application/json, text/plain, */*',
     'accept-language': 'ja,en-US;q=0.9,en;q=0.8',
@@ -121,7 +121,7 @@ async function fetchRawBuddyPayload(env, config, request = fetch) {
   const session = sessionFromEnv(env);
   const response = await request(`${API_BASE}${buddyHandleStationPath(config.alias)}`, {
     method: 'POST',
-    headers: stationheadHeaders(session, config),
+    headers: shHeaders(session, config),
     body: '',
     signal: AbortSignal.timeout(config.requestTimeoutMs),
   });

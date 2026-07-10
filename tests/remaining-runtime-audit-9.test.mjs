@@ -82,7 +82,7 @@ test('email series context combines all windows in one D1 statement', () => {
 
 test('main chart reuses a prepared model and shares comment velocity values', () => {
   const chart = readFileSync(
-    new URL('../site/public/stationhead-ui-fixes.js', import.meta.url),
+    new URL('../site/public/sh-ui-fixes.js', import.meta.url),
     'utf8',
   );
   const velocity = readFileSync(
@@ -105,7 +105,7 @@ test('main chart reuses a prepared model and shares comment velocity values', ()
 
 test('main chart model skips repeated data preparation for point selection', () => {
   const source = readFileSync(
-    new URL('../site/public/stationhead-ui-fixes.js', import.meta.url),
+    new URL('../site/public/sh-ui-fixes.js', import.meta.url),
     'utf8',
   );
   let downsampleCalls = 0;

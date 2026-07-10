@@ -31,7 +31,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:
-      DISCOVERY_OUT: .stationhead-discovery/actions
+      DISCOVERY_OUT: .sh-discovery/actions
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -58,7 +58,7 @@ jobs:
           if [ "${{ inputs.auto_click }}" = "true" ]; then
             ARGS+=(--auto-click)
           fi
-          npm run discover:stationhead -- "${ARGS[@]}"
+          npm run discover:sh -- "${ARGS[@]}"
 
       - name: Run Stationhead discovery headed
         if: ${{ inputs.headed }}
@@ -72,7 +72,7 @@ jobs:
           if [ "${{ inputs.auto_click }}" = "true" ]; then
             ARGS+=(--auto-click)
           fi
-          xvfb-run --auto-servernum npm run discover:stationhead -- "${ARGS[@]}"
+          xvfb-run --auto-servernum npm run discover:sh -- "${ARGS[@]}"
 
       - name: Print summary
         if: always()
@@ -87,7 +87,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: stationhead-browser-discovery
-          path: .stationhead-discovery/
+          name: sh-browser-discovery
+          path: .sh-discovery/
           if-no-files-found: warn
           retention-days: 7

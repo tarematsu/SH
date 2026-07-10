@@ -1,5 +1,5 @@
 {
-  "name": "stationhead-local-collector",
+  "name": "sh-local-collector",
   "version": "1.3.1",
   "private": true,
   "type": "module",

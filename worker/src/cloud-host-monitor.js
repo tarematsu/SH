@@ -33,7 +33,7 @@ function cfg(env) {
     officialLateWindowMs: positive(env.OFFICIAL_NEWS_LATE_WINDOW_MS, 90 * 60 * 1000),
     metadataLimit: Math.min(positive(env.METADATA_LIMIT, 3), 10),
     requestTimeoutMs: Math.min(positive(env.REQUEST_TIMEOUT_MS, 20000), 30000),
-    appVersion: env.STATIONHEAD_APP_VERSION || '1.0.0',
+    appVersion: env.STATIONHEAD_APP_VERSION || env.SH_APP_VERSION || '1.0.0',
   };
 }
 

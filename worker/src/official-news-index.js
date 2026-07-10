@@ -39,7 +39,7 @@ export {
   NEWS_LIST_URL,
   NEWS_ORIGIN,
   OFFICIAL_NEWS_STATE_ID,
-  STATIONHEAD_ORIGIN,
+  SH_ORIGIN,
   finite,
   officialNewsConfig,
   timedFetch,

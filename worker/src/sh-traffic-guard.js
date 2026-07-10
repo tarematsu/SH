@@ -57,7 +57,7 @@ function policy(url, method, body) {
 }
 
 function localResponse(status, reason, retryAfter = 0) {
-  const headers = { 'cache-control': 'no-store', 'x-stationhead-traffic-guard': reason };
+  const headers = { 'cache-control': 'no-store', 'x-sh-traffic-guard': reason };
   if (retryAfter > 0) headers['retry-after'] = String(Math.max(1, Math.ceil(retryAfter / 1000)));
   return new Response('', { status, headers });
 }
@@ -89,7 +89,7 @@ async function normalizeIdleGuestResponse(response, rule) {
   const headers = new Headers(response.headers);
   headers.set('content-type', 'application/json; charset=utf-8');
   headers.set('cache-control', 'no-store');
-  headers.set('x-stationhead-broadcast-state', 'idle');
+  headers.set('x-sh-broadcast-state', 'idle');
   return new Response('{}', { status: 200, headers });
 }
 
@@ -105,7 +105,7 @@ function budgetReason(rule) {
   return 'minute-budget-exhausted';
 }
 
-export function createStationheadTrafficGuard(nextFetch, nowFn = Date.now) {
+export function createShTrafficGuard(nextFetch, nowFn = Date.now) {
   if (typeof nextFetch !== 'function') throw new TypeError('nextFetch must be a function');
 
   const reads = new Map();
@@ -115,7 +115,7 @@ export function createStationheadTrafficGuard(nextFetch, nowFn = Date.now) {
   let stationRequestCount = 0;
   let authRequestCount = 0;
 
-  return async function stationheadTrafficGuard(input, init = {}) {
+  return async function shTrafficGuard(input, init = {}) {
     let url;
     try {
       const raw = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input?.url;
@@ -129,7 +129,7 @@ export function createStationheadTrafficGuard(nextFetch, nowFn = Date.now) {
     const body = bodyOf(input, init);
     const rule = policy(url, method, body);
     if (!rule) {
-      console.warn(JSON.stringify({ event: 'stationhead_route_rejected', method, path: url.pathname }));
+      console.warn(JSON.stringify({ event: 'sh_route_rejected', method, path: url.pathname }));
       return localResponse(405, 'route-not-allowed');
     }
 
@@ -165,7 +165,7 @@ export function createStationheadTrafficGuard(nextFetch, nowFn = Date.now) {
       const wait = 60_000 - (now % 60_000);
       const reason = budgetReason(rule);
       console.warn(JSON.stringify({
-        event: 'stationhead_request_budget_exhausted',
+        event: 'sh_request_budget_exhausted',
         budget: rule.budget,
         limit: requestLimit,
         route: rule.name,

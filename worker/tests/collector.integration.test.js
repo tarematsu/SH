@@ -79,7 +79,7 @@ test('health status is degraded only when the base response was otherwise health
 
 test('active failure cancels only an actually deleted pending recovery delivery', async () => {
   const prepared = {
-    diagnosis: { code: 'STATIONHEAD_TIMEOUT', stage: 'stationhead_channel_request' },
+    diagnosis: { code: 'STATIONHEAD_TIMEOUT', stage: 'sh_channel_request' },
     incidentOpen: true,
     pending: 'recovery',
   };
@@ -92,7 +92,7 @@ test('active failure cancels only an actually deleted pending recovery delivery'
   assert.match(db.calls[0].sql, /event_kind='recovery'/);
 
   const stalePrepared = {
-    diagnosis: { code: 'STATIONHEAD_TIMEOUT', stage: 'stationhead_channel_request' },
+    diagnosis: { code: 'STATIONHEAD_TIMEOUT', stage: 'sh_channel_request' },
     incidentOpen: true,
     pending: 'recovery',
   };
@@ -107,12 +107,12 @@ test('active failure cancels only an actually deleted pending recovery delivery'
 test('collector diagnostics classify realistic upstream, auth, schema and network failures', () => {
   const scenarios = [
     ['no such table: sh_worker_collector_state', 'd1_read_collector_state', 'D1_SCHEMA_ERROR'],
-    ['HTTP 401 authentication failed', 'stationhead_channel_request', 'STATIONHEAD_AUTH_ERROR'],
-    ['Stationhead API status=429', 'stationhead_channel_request', 'STATIONHEAD_RATE_LIMIT'],
-    ['Stationhead API 503', 'stationhead_channel_request', 'STATIONHEAD_UPSTREAM_ERROR'],
-    ['AbortError: request timed out', 'stationhead_channel_request', 'STATIONHEAD_TIMEOUT'],
-    ['fetch failed: DNS lookup error', 'stationhead_channel_request', 'NETWORK_ERROR'],
-    ['missing required channel field', 'stationhead_channel_payload', 'STATIONHEAD_API_CHANGED'],
+    ['HTTP 401 authentication failed', 'sh_channel_request', 'STATIONHEAD_AUTH_ERROR'],
+    ['Stationhead API status=429', 'sh_channel_request', 'STATIONHEAD_RATE_LIMIT'],
+    ['Stationhead API 503', 'sh_channel_request', 'STATIONHEAD_UPSTREAM_ERROR'],
+    ['AbortError: request timed out', 'sh_channel_request', 'STATIONHEAD_TIMEOUT'],
+    ['fetch failed: DNS lookup error', 'sh_channel_request', 'NETWORK_ERROR'],
+    ['missing required channel field', 'sh_channel_payload', 'STATIONHEAD_API_CHANGED'],
     ['D1 ingest failed while writing', 'd1_write_snapshot', 'D1_WRITE_ERROR'],
   ];
 
@@ -146,7 +146,7 @@ test('recordCollectorFailure produces an idempotent upsert with normalized diagn
   const result = await recordCollectorFailure(
     { DB: db },
     new Error('HTTP 429 from Stationhead'),
-    'stationhead_channel_request',
+    'sh_channel_request',
     'integration-test',
     at,
   );
@@ -161,7 +161,7 @@ test('recordCollectorFailure produces an idempotent upsert with normalized diagn
   assert.equal(call.params[1], at);
   assert.equal(call.params[2], at);
   assert.equal(call.params[3], 'STATIONHEAD_RATE_LIMIT');
-  assert.equal(call.params[4], 'stationhead_channel_request');
+  assert.equal(call.params[4], 'sh_channel_request');
   assert.equal(call.params[8], 'integration-test');
   assert.equal(call.params[9], at);
 });
@@ -173,7 +173,7 @@ test('recordCollectorFailure reports missing and failing D1 without throwing awa
   assert.equal(missing.diagnosis.code, 'NETWORK_ERROR');
 
   const db = new RecordingDb({ runError: new Error('D1_ERROR authorization=hidden-secret') });
-  const failed = await recordCollectorFailure({ DB: db }, new Error('timeout'), 'stationhead_auth');
+  const failed = await recordCollectorFailure({ DB: db }, new Error('timeout'), 'sh_auth');
   assert.equal(failed.recorded, false);
   assert.equal(failed.diagnosis.code, 'STATIONHEAD_AUTH_ERROR');
   assert.equal(failed.recordError.includes('hidden-secret'), false);
@@ -207,7 +207,7 @@ test('diagnosisFromState preserves active incidents and ignores stale recovered 
     failure_last_at: 2_000,
     failure_first_at: 1_500,
     failure_code: 'STATIONHEAD_TIMEOUT',
-    failure_stage: 'stationhead_channel_request',
+    failure_stage: 'sh_channel_request',
     failure_detail: 'request timed out',
     failure_count: 4,
     failure_source: 'cloudflare',

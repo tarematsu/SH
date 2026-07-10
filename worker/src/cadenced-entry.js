@@ -20,7 +20,7 @@ export function diagnosticIntervalMinutes(env = {}) {
 }
 
 export function internalHealthMonitoringEnabled(env = {}) {
-  const value = String(env.STATIONHEAD_INTERNAL_MONITOR_ENABLED || '').trim().toLowerCase();
+  const value = String(env.STATIONHEAD_INTERNAL_MONITOR_ENABLED || env.SH_INTERNAL_MONITOR_ENABLED || '').trim().toLowerCase();
   return ['1', 'true', 'yes', 'on'].includes(value);
 }
 

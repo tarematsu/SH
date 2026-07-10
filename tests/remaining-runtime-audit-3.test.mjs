@@ -59,7 +59,7 @@ test('collector converts the already-read auth state without another DB query', 
   });
 
   const env = withAuthState({ DB: { marker: true }, RUN_SECRET: 'secret' }, authState);
-  assert.strictEqual(env.__stationheadAuthState, authState);
+  assert.strictEqual(env.__shAuthState, authState);
   assert.equal(env.RUN_SECRET, 'secret');
   assert.equal(env.DB.marker, true);
   assert.equal(authHealth(authState).auth_session_ready, true);

@@ -112,7 +112,7 @@ test('buddy health preserves the last success when a later collection fails', as
   assert.equal(db.row.last_success_at, 1000);
   assert.equal(db.row.tracks, 3);
   assert.equal(db.row.failure_code, 'STATIONHEAD_API_CHANGED');
-  assert.equal(db.row.failure_stage, 'stationhead_channel_payload');
+  assert.equal(db.row.failure_stage, 'sh_channel_payload');
   assert.match(db.row.last_error, /missing queue tracks/);
 });
 
@@ -142,6 +142,6 @@ test('buddy health classifies Stationhead not-found responses as upstream API fa
 
   assert.equal(db.row.status, 'error');
   assert.equal(db.row.failure_code, 'STATIONHEAD_API_CHANGED');
-  assert.equal(db.row.failure_stage, 'stationhead_channel_request');
+  assert.equal(db.row.failure_stage, 'sh_channel_request');
   assert.match(db.row.last_error, /Not in database/);
 });

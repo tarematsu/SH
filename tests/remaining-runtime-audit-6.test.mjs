@@ -144,7 +144,7 @@ test('host summary cache coalesces concurrent D1 batches per binding', async () 
 
 test('main chart uses shared formatters, single-pass preparation and differential DOM updates', () => {
   const source = readFileSync(
-    new URL('../site/public/stationhead-ui-fixes.js', import.meta.url),
+    new URL('../site/public/sh-ui-fixes.js', import.meta.url),
     'utf8',
   );
   assert.match(source, /const integerFormatter = new Intl\.NumberFormat/);

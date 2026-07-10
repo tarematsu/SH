@@ -434,7 +434,7 @@ export async function onRequestPost({ request, env }) {
 export async function onRequestGet() {
   return json({
     ok: true,
-    endpoint: 'Stationhead host monitoring ingest',
+    endpoint: 'SH host monitoring ingest',
     accepted_types: [
       'host_profile_snapshot','solo_session_open','solo_session_confirm','solo_station_snapshot',
       'solo_queue','solo_comments','solo_ws_event','solo_session_close',

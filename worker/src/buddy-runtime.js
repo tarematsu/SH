@@ -87,7 +87,7 @@ function headers(cfg, deviceUid, authToken = '') {
   };
 }
 
-async function stationheadFetch(cfg, path, init = {}, request = fetch) {
+async function shFetch(cfg, path, init = {}, request = fetch) {
   return request(`${API_ORIGIN}${path}`, {
     ...init,
     signal: AbortSignal.timeout(cfg.timeoutMs),
@@ -97,7 +97,7 @@ async function stationheadFetch(cfg, path, init = {}, request = fetch) {
 async function acquireDirectSession(env, request = fetch) {
   const cfg = config(env);
   const deviceUid = crypto.randomUUID();
-  const tokenResponse = await stationheadFetch(cfg, '/web/token', {
+  const tokenResponse = await shFetch(cfg, '/web/token', {
     method: 'POST',
     headers: headers(cfg, deviceUid),
     body: '',
@@ -109,7 +109,7 @@ async function acquireDirectSession(env, request = fetch) {
   }
 
   const authHeaders = headers(cfg, deviceUid, authToken);
-  const loginResponse = await stationheadFetch(cfg, '/web/guest/login', {
+  const loginResponse = await shFetch(cfg, '/web/guest/login', {
     method: 'POST',
     headers: authHeaders,
     body: '',
@@ -119,7 +119,7 @@ async function acquireDirectSession(env, request = fetch) {
     throw new Error(`buddy46 guest login failed: status=${loginResponse.status}${body ? `, body=${body.slice(0, 160)}` : ''}`);
   }
 
-  const verifyResponse = await stationheadFetch(
+  const verifyResponse = await shFetch(
     cfg,
     buddyHandleStationPath(cfg.alias),
     { method: 'POST', headers: authHeaders, body: '' },

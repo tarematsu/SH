@@ -1,6 +1,6 @@
-import { normalizeComments as normalizeStationheadComments } from './shared.js';
+import { normalizeComments as normalizeShComments } from './shared.js';
 import {
-  STATIONHEAD_ORIGIN,
+  SH_ORIGIN,
   finite,
   timedFetch,
 } from './official-news-utils.js';
@@ -33,7 +33,7 @@ export async function loadOfficialProbeContext(env) {
 }
 
 async function stationRequest(path, cfg, session, options = {}) {
-  const response = await timedFetch(`${STATIONHEAD_ORIGIN}${path}`, {
+  const response = await timedFetch(`${SH_ORIGIN}${path}`, {
     ...options,
     headers: { ...stationHeaders(cfg, session), ...(options.headers || {}) },
   }, cfg.requestTimeoutMs);
@@ -56,7 +56,7 @@ function stationIdentity(station) {
 }
 
 function normalizeOfficialComments(payload) {
-  return normalizeStationheadComments(payload, null, { finite }).map((comment) => ({
+  return normalizeShComments(payload, null, { finite }).map((comment) => ({
     commentId: finite(comment.comment_id ?? comment.id),
     accountId: comment.account_id,
     handle: comment.handle,

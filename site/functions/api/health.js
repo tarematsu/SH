@@ -136,7 +136,7 @@ export async function onRequestGet(context) {
     const health = publicCollectorHealth(state, now, staleAfterMs);
     return Response.json({
       ok: health.healthy,
-      service: 'stationhead-monitor',
+      service: 'sh-monitor',
       snapshotCount,
       time: new Date(now).toISOString(),
       collector_last_run_at: health.lastRunAt,
@@ -165,7 +165,7 @@ export async function onRequestGet(context) {
     }));
     return Response.json({
       ok: false,
-      service: 'stationhead-monitor',
+      service: 'sh-monitor',
       error: 'health_check_failed',
       checked_at: now,
     }, {

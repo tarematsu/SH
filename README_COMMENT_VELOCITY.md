@@ -5,8 +5,8 @@
 ## D1更新
 
 ```powershell
-cd C:\stationhead-monitor\site
-npx wrangler d1 execute stationhead-db --remote --file=..\database\comment-velocity-2min.sql
+cd C:\sh-monitor\site
+npx wrangler d1 execute sh-db --remote --file=..\database\comment-velocity-2min.sql
 ```
 
 その後、Pagesを再デプロイし、collectorを再起動してください。

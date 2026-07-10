@@ -13,13 +13,13 @@ https://www.stationhead.com/on/leaderboard
 `capture-leaderboard.mjs`を次へコピーします。
 
 ```text
-C:\stationhead-monitor\collector\capture-leaderboard.mjs
+C:\sh-monitor\collector\capture-leaderboard.mjs
 ```
 
 ## 実行
 
 ```powershell
-cd C:\stationhead-monitor\collector
+cd C:\sh-monitor\collector
 node capture-leaderboard.mjs
 ```
 
@@ -29,7 +29,7 @@ node capture-leaderboard.mjs
 ## 出力場所
 
 ```text
-C:\stationhead-monitor\collector\captures\weekly-leaderboard\
+C:\sh-monitor\collector\captures\weekly-leaderboard\
 ```
 
 分析に必要なファイル:

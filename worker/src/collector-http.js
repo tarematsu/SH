@@ -8,7 +8,7 @@ export function authorized(request, env) {
 
 export async function health(env) {
   if (!env.DB) return { ok: false, error: 'DB binding is missing' };
-  const cached = env.__stationheadAuthState;
+  const cached = env.__shAuthState;
   const row = cached ? {
     token_expires_at: cached.tokenExpiresAt || null,
     last_run_at: cached.collectorLastRunAt || null,
@@ -26,7 +26,7 @@ export async function health(env) {
   return {
     ok: true,
     configured: Boolean(cached?.authToken && cached?.deviceUid)
-      || Boolean(row || (env.STATIONHEAD_AUTH_TOKEN && env.STATIONHEAD_DEVICE_UID)),
+      || Boolean(row || ((env.STATIONHEAD_AUTH_TOKEN || env.SH_AUTH_TOKEN) && (env.STATIONHEAD_DEVICE_UID || env.SH_DEVICE_UID))),
     token_expires_at: row?.token_expires_at || null,
     last_run_at: row?.last_run_at || null,
     last_success_at: row?.last_success_at || null,

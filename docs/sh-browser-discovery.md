@@ -20,7 +20,7 @@ After this workflow exists on the default branch, run it from GitHub:
 4. Click **Run workflow**.
 5. Keep the default URL, or enter another Stationhead page.
 6. Use `auto_click=true` if queue traffic only starts after a play/listen/join button.
-7. Download the `stationhead-browser-discovery` artifact after the run finishes.
+7. Download the `sh-browser-discovery` artifact after the run finishes.
 
 The artifact contains `summary.md`, `candidate-responses.json`, saved candidate JSON files, `page.html`, `page-state.json`, `network.json`, console logs, errors, and a screenshot.
 
@@ -41,19 +41,19 @@ npx playwright install chromium
 ## Run locally
 
 ```bash
-npm run discover:stationhead -- --url=https://www.stationhead.com/buddy46 --duration-ms=45000
+npm run discover:sh -- --url=https://www.stationhead.com/buddy46 --duration-ms=45000
 ```
 
 For an interactive browser window:
 
 ```bash
-npm run discover:stationhead -- --url=https://www.stationhead.com/buddy46 --duration-ms=45000 --headed
+npm run discover:sh -- --url=https://www.stationhead.com/buddy46 --duration-ms=45000 --headed
 ```
 
 If the page requires a play/listen/join button before loading the queue traffic, run:
 
 ```bash
-npm run discover:stationhead -- --url=https://www.stationhead.com/buddy46 --duration-ms=45000 --auto-click
+npm run discover:sh -- --url=https://www.stationhead.com/buddy46 --duration-ms=45000 --auto-click
 ```
 
 ## Output
@@ -61,7 +61,7 @@ npm run discover:stationhead -- --url=https://www.stationhead.com/buddy46 --dura
 The script writes captures under:
 
 ```text
-.stationhead-discovery/<page>-<timestamp>/
+.sh-discovery/<page>-<timestamp>/
 ```
 
 Important files:

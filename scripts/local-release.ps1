@@ -64,7 +64,7 @@ Invoke-Step "Apply D1 migrations" {
   $migrationFiles = Get-ChildItem -Path $migrationRoot -File -Filter "*.sql" | Sort-Object Name
   foreach ($migrationFile in $migrationFiles) {
     Invoke-External -FilePath "npx" -Arguments @(
-      "wrangler", "d1", "execute", "stationhead-monitor",
+      "wrangler", "d1", "execute", "sh-monitor",
       "--remote",
       "--file", ("..\database\migrations\" + $migrationFile.Name)
     ) -WorkingDirectory $workerRoot
@@ -89,7 +89,7 @@ Invoke-Step "Deploy Pages site" {
 }
 
 Invoke-Step "Verify Worker health" {
-  $response = Invoke-RestMethod "https://stationhead-monitor-collector.tarematsu.workers.dev/health"
+  $response = Invoke-RestMethod "https://sh-monitor-collector.tarematsu.workers.dev/health"
   $isHealthy = $false
   if ($response.PSObject.Properties.Name -contains "healthy") {
     $isHealthy = [bool]$response.healthy
@@ -103,4 +103,4 @@ Invoke-Step "Verify Worker health" {
   }
 }
 
-Write-Host "Local deploy complete for stationhead-monitor"
+Write-Host "Local deploy complete for sh-monitor"

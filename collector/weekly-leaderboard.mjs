@@ -126,10 +126,10 @@ async function fetchLeaderboard() {
     headers: {
       accept: 'application/json',
       'user-agent': 'stationhead-monitor/weekly-leaderboard',
-      ...(process.env.STATIONHEAD_AUTH_TOKEN ? { authorization: `Bearer ${process.env.STATIONHEAD_AUTH_TOKEN}` } : {}),
-      ...(process.env.STATIONHEAD_DEVICE_UID ? { 'sth-device-uid': process.env.STATIONHEAD_DEVICE_UID } : {}),
+      ...((process.env.STATIONHEAD_AUTH_TOKEN || process.env.SH_AUTH_TOKEN) ? { authorization: `Bearer ${process.env.STATIONHEAD_AUTH_TOKEN || process.env.SH_AUTH_TOKEN}` } : {}),
+      ...((process.env.STATIONHEAD_DEVICE_UID || process.env.SH_DEVICE_UID) ? { 'sth-device-uid': process.env.STATIONHEAD_DEVICE_UID || process.env.SH_DEVICE_UID } : {}),
       'app-platform': 'web',
-      'app-version': process.env.STATIONHEAD_APP_VERSION || '1.0.0',
+      'app-version': process.env.STATIONHEAD_APP_VERSION || process.env.SH_APP_VERSION || '1.0.0',
       origin: 'https://www.stationhead.com',
       referer: 'https://www.stationhead.com/',
     },

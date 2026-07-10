@@ -442,7 +442,7 @@ export async function onRequestGet({ request, env }) {
 
   return json({
     ok: true,
-    endpoint: 'stationhead ingest',
+    endpoint: 'sh ingest',
     acceptedTypes: ['snapshot', 'comments', 'queue', 'track_metadata', 'ws_event', 'collector_heartbeat'],
   });
 }

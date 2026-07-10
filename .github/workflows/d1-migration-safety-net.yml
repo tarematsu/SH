@@ -7,7 +7,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: stationhead-d1-migrations
+  group: sh-d1-migrations
   cancel-in-progress: false
 
 jobs:

@@ -30,16 +30,16 @@ function nullableNumber(value) {
 function failureStage(error) {
   const detail = String(error?.message || error || '');
   if (/Stationhead buddy playback API\s+\d+|buddy playback API\s+\d+|Not in database/i.test(detail)) {
-    return 'stationhead_channel_request';
+    return 'sh_channel_request';
   }
   if (/401|403|auth|token|session|guest login|guest verification/i.test(detail)) {
-    return 'stationhead_auth';
+    return 'sh_auth';
   }
   if (/D1|SQLITE|database|no such table|no such column/i.test(detail)) {
     return 'd1_write_queue';
   }
   if (/queue|payload|response|alias|current_station/i.test(detail)) {
-    return 'stationhead_channel_payload';
+    return 'sh_channel_payload';
   }
   return 'collector_unknown';
 }

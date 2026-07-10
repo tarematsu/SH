@@ -29,7 +29,7 @@ function blockedAppleResponse() {
     status: 200,
     headers: {
       'content-type': 'application/json; charset=utf-8',
-      'x-stationhead-apple-blocked': '1',
+      'x-sh-apple-blocked': '1',
     },
   });
 }
@@ -120,10 +120,10 @@ export function createTrackLookupCachedFetch(nativeFetch, options = {}) {
   return cachedFetch;
 }
 
-if (!globalThis.__stationheadTrackLookupCacheInstalled && typeof globalThis.fetch === 'function') {
+if (!globalThis.__shTrackLookupCacheInstalled && typeof globalThis.fetch === 'function') {
   globalThis.fetch = createTrackLookupCachedFetch(globalThis.fetch.bind(globalThis), {
     ttlMs: positive(process.env.TRACK_LOOKUP_CACHE_MS, DEFAULT_TTL_MS),
     maxEntries: positive(process.env.TRACK_LOOKUP_CACHE_MAX, DEFAULT_MAX_ENTRIES),
   });
-  globalThis.__stationheadTrackLookupCacheInstalled = true;
+  globalThis.__shTrackLookupCacheInstalled = true;
 }

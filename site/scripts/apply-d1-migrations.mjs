@@ -112,7 +112,7 @@ try {
     const temporaryConfig = {
       ...baseConfig,
       d1_databases: baseConfig.d1_databases.map((entry) => (
-        entry.database_name === 'stationhead-monitor'
+        entry.database_name === 'sh-monitor'
           ? { ...entry, migrations_dir: temporaryName }
           : entry
       )),
@@ -125,7 +125,7 @@ try {
   }
 
   const args = [
-    'd1', 'migrations', 'apply', 'stationhead-monitor',
+    'd1', 'migrations', 'apply', 'sh-monitor',
     target === 'local' ? '--local' : '--remote',
     '--config', configPath,
   ];

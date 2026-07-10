@@ -12,7 +12,7 @@ const API_BASE = 'https://production1.stationhead.com';
 const PUSHER_KEY = '982c86a21530b654bfb2';
 const PUSHER_URL = `wss://realtime-production.stationhead.com/app/${PUSHER_KEY}?protocol=7&client=js&version=7.4.0&flash=false`;
 
-const SESSION_FILE = path.resolve(process.cwd(), '.stationhead-session.json');
+const SESSION_FILE = path.resolve(process.cwd(), '.sh-session.json');
 
 const cookieJar = new CookieJar();
 const sessionFetch = fetchCookie(fetch, cookieJar);
@@ -25,10 +25,10 @@ const config = {
   chatLimit: numberEnv('CHAT_LIMIT', 50),
   enableWebSocket: String(process.env.ENABLE_WEBSOCKET ?? 'true').toLowerCase() === 'true',
   logLevel: process.env.LOG_LEVEL || 'info',
-  stationheadCookie: process.env.STATIONHEAD_COOKIE || '',
+  shCookie: process.env.STATIONHEAD_COOKIE || process.env.SH_COOKIE || '',
   chromePath: process.env.CHROME_PATH || '',
   authBrowserTimeoutMs: numberEnv('AUTH_BROWSER_TIMEOUT_MS', 45_000),
-  stationheadAppVersion: process.env.STATIONHEAD_APP_VERSION || '1.0.0',
+  shAppVersion: process.env.STATIONHEAD_APP_VERSION || process.env.SH_APP_VERSION || '1.0.0',
   collectorId: process.env.COLLECTOR_ID || os.hostname(),
   collectorVersion: '1.2.0',
 };
@@ -120,23 +120,23 @@ async function captureAuthorization(response) {
   }
 }
 
-function stationheadApiHeaders(extra = {}, includeAuth = true) {
+function shApiHeaders(extra = {}, includeAuth = true) {
   return {
     ...BROWSER_HEADERS,
     'app-platform': 'web',
-    'app-version': config.stationheadAppVersion,
+    'app-version': config.shAppVersion,
     'content-type': 'application/json',
     ...(runtime.deviceUid ? { 'sth-device-uid': runtime.deviceUid } : {}),
     ...(includeAuth && runtime.authToken ? { authorization: `Bearer ${runtime.authToken}` } : {}),
-    ...(config.stationheadCookie ? { cookie: config.stationheadCookie } : {}),
+    ...(config.shCookie ? { cookie: config.shCookie } : {}),
     ...extra,
   };
 }
 
-async function requestStationhead(url, options = {}, includeAuth = true) {
+async function requestSh(url, options = {}, includeAuth = true) {
   const response = await sessionFetch(url, {
     ...options,
-    headers: stationheadApiHeaders(options.headers || {}, includeAuth),
+    headers: shApiHeaders(options.headers || {}, includeAuth),
     signal: AbortSignal.timeout(20_000),
   });
   await captureAuthorization(response);
@@ -244,16 +244,16 @@ async function refreshGuestAuth(force = false) {
 
 async function warmUpSession() {
   await loadSavedSession();
-  if (config.stationheadCookie) await cookieJar.setCookie(config.stationheadCookie, API_BASE);
+  if (config.shCookie) await cookieJar.setCookie(config.shCookie, API_BASE);
   await refreshGuestAuth(true);
 }
 
 async function fetchJson(url, options = {}, allowRetry = true) {
-  let response = await requestStationhead(url, options, true);
+  let response = await requestSh(url, options, true);
   if (response.status === 401 && allowRetry) {
     await response.arrayBuffer().catch(() => {});
     await refreshGuestAuth(true);
-    response = await requestStationhead(url, options, true);
+    response = await requestSh(url, options, true);
   }
   if (!response.ok) {
     const body = await response.text().catch(() => '');
@@ -637,7 +637,7 @@ function connectWebSocket() {
 async function main() {
   const once = process.argv.includes('--once');
   await warmUpSession();
-  log('info', `Stationhead session ready token=${runtime.authToken.length}chars device=${runtime.deviceUid.slice(0, 8)}... appVersion=${config.stationheadAppVersion} collector=${config.collectorId}`);
+  log('info', `Stationhead session ready token=${runtime.authToken.length}chars device=${runtime.deviceUid.slice(0, 8)}... appVersion=${config.shAppVersion} collector=${config.collectorId}`);
   await pollOnce();
 
   const hostMonitoring = createHostMonitoring({

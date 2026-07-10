@@ -56,13 +56,13 @@ const STAGE_LABELS = {
   d1_read_auth_state: 'D1から認証状態を読み込み',
   d1_write_auth_state: 'D1へ認証状態を書き込み',
   d1_read_collector_state: 'D1から収集状態を読み込み',
-  stationhead_auth: 'Stationheadゲスト認証',
-  stationhead_channel_request: 'Stationheadチャンネル情報取得',
-  stationhead_channel_payload: 'Stationheadチャンネル応答検証',
+  sh_auth: 'Stationheadゲスト認証',
+  sh_channel_request: 'Stationheadチャンネル情報取得',
+  sh_channel_payload: 'Stationheadチャンネル応答検証',
   d1_write_collector_heartbeat: 'D1へ収集ハートビートを書き込み',
   d1_write_snapshot: 'D1へチャンネルスナップショットを書き込み',
   d1_write_queue: 'D1へ再生キューを書き込み',
-  stationhead_chat_history: 'Stationheadコメント履歴取得',
+  sh_chat_history: 'Stationheadコメント履歴取得',
   d1_write_comments: 'D1へコメントを書き込み',
   d1_write_track_metadata: 'D1へ楽曲メタデータを書き込み',
   d1_write_collector_state: 'D1へ収集結果状態を書き込み',
@@ -127,7 +127,7 @@ export function diagnoseCollectorFailure(error, stage = 'collector_unknown', at 
   } else if (/D1_ERROR|database error|SQLITE_BUSY|SQLITE_FULL|SQLITE_IOERR|D1 ingest failed/i.test(detail)) {
     code = /select|read|first\(|\.all\(|prepare.*select/i.test(lower) ? 'D1_READ_ERROR' : 'D1_WRITE_ERROR';
   } else if (
-    stage === 'stationhead_auth'
+    stage === 'sh_auth'
     || hasStatus(detail, 401)
     || hasStatus(detail, 403)
     || /authentication failed|session expired|guest token failed|guest login failed|guest verification failed|authentication backoff/i.test(detail)
@@ -136,7 +136,7 @@ export function diagnoseCollectorFailure(error, stage = 'collector_unknown', at 
   } else if (hasStatus(detail, 429)) {
     code = 'STATIONHEAD_RATE_LIMIT';
   } else if (
-    stage === 'stationhead_channel_payload'
+    stage === 'sh_channel_payload'
     || hasStatus(detail, 404)
     || hasStatus(detail, 410)
     || /invalid json|unexpected token|response shape|payload shape|missing required|仕様変更|schema changed/i.test(detail)
@@ -257,7 +257,7 @@ export function diagnosisFromState(state = {}) {
   const authAttemptAt = finite(state.auth_last_attempt_at);
   if (state.auth_last_error && occurredAfterSuccess(authAttemptAt, lastSuccessAt)) {
     return {
-      ...diagnoseCollectorFailure(state.auth_last_error, 'stationhead_auth', authAttemptAt || Date.now()),
+      ...diagnoseCollectorFailure(state.auth_last_error, 'sh_auth', authAttemptAt || Date.now()),
       count: null,
       source: 'auth-control',
     };

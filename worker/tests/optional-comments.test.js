@@ -17,7 +17,7 @@ test('comment API failures degrade only optional comment collection', async () =
   assert.deepEqual(result, {
     commentsSaved: 0,
     degraded: true,
-    errorStage: 'stationhead_chat_history',
+    errorStage: 'sh_chat_history',
   });
   assert.equal(writes, 0);
 });

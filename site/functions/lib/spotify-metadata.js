@@ -13,7 +13,7 @@ export function parseSpotifyTitle(value) {
 }
 
 function cacheRequest(spotifyId) {
-  return new Request(`https://stationhead-meta-cache.invalid/spotify/${encodeURIComponent(spotifyId)}`);
+  return new Request(`https://sh-meta-cache.invalid/spotify/${encodeURIComponent(spotifyId)}`);
 }
 
 async function readCache(request) {

@@ -87,7 +87,7 @@ async function fetchLeaderboard(env, now, context) {
     accept: 'application/json',
     'user-agent': 'stationhead-monitor/cloud-weekly-leaderboard',
     'app-platform': 'web',
-    'app-version': env.STATIONHEAD_APP_VERSION || '1.0.0',
+    'app-version': env.STATIONHEAD_APP_VERSION || env.SH_APP_VERSION || '1.0.0',
     origin: 'https://www.stationhead.com',
     referer: 'https://www.stationhead.com/',
   };

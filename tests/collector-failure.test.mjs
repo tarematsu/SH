@@ -47,23 +47,23 @@ test('classifies D1 reads and writes separately', () => {
 
 test('classifies Stationhead authentication, API changes, rate limits and timeouts', () => {
   assert.equal(
-    diagnoseCollectorFailure(new Error('guest login failed: status=401'), 'stationhead_auth').code,
+    diagnoseCollectorFailure(new Error('guest login failed: status=401'), 'sh_auth').code,
     'STATIONHEAD_AUTH_ERROR',
   );
   assert.equal(
-    diagnoseCollectorFailure(new Error('Stationhead API 404: channel lookup'), 'stationhead_channel_request').code,
+    diagnoseCollectorFailure(new Error('Stationhead API 404: channel lookup'), 'sh_channel_request').code,
     'STATIONHEAD_API_CHANGED',
   );
   assert.equal(
-    diagnoseCollectorFailure(new Error('Stationhead API 429'), 'stationhead_channel_request').code,
+    diagnoseCollectorFailure(new Error('Stationhead API 429'), 'sh_channel_request').code,
     'STATIONHEAD_RATE_LIMIT',
   );
   assert.equal(
-    diagnoseCollectorFailure(new Error('The operation was aborted due to timeout'), 'stationhead_channel_request').code,
+    diagnoseCollectorFailure(new Error('The operation was aborted due to timeout'), 'sh_channel_request').code,
     'STATIONHEAD_TIMEOUT',
   );
   assert.equal(
-    diagnoseCollectorFailure(new Error('Stationhead channel response shape changed'), 'stationhead_channel_payload').code,
+    diagnoseCollectorFailure(new Error('Stationhead channel response shape changed'), 'sh_channel_payload').code,
     'STATIONHEAD_API_CHANGED',
   );
 });
@@ -94,7 +94,7 @@ test('structured failure state takes priority and produces useful email lines', 
     failure_first_at: 1500,
     failure_last_at: 2500,
     failure_code: 'STATIONHEAD_API_CHANGED',
-    failure_stage: 'stationhead_channel_payload',
+    failure_stage: 'sh_channel_payload',
     failure_summary: 'Stationhead APIのレスポンス形式が変わった可能性があります',
     failure_detail: 'channel_id is missing',
     failure_hint: 'JSON構造を確認してください',
@@ -118,7 +118,7 @@ test('authentication control error is used when the collector never starts', () 
     auth_last_error: 'Stationhead authentication failed: guest token failed: status=403',
   });
   assert.equal(diagnosis.code, 'STATIONHEAD_AUTH_ERROR');
-  assert.equal(diagnosis.stage, 'stationhead_auth');
+  assert.equal(diagnosis.stage, 'sh_auth');
 });
 
 test('stale untimestamped fallback errors are ignored after success', () => {
@@ -137,7 +137,7 @@ test('collector success at the same millisecond suppresses stale failure evidenc
     failure_first_at: 1000,
     failure_last_at: 2000,
     failure_code: 'STATIONHEAD_TIMEOUT',
-    failure_stage: 'stationhead_channel_request',
+    failure_stage: 'sh_channel_request',
     auth_last_attempt_at: 2000,
     auth_last_error: 'guest token failed: status=403',
     last_run_at: 2000,
@@ -148,7 +148,7 @@ test('collector success at the same millisecond suppresses stale failure evidenc
     last_success_at: 2000,
     failure_last_at: 2001,
     failure_code: 'STATIONHEAD_TIMEOUT',
-    failure_stage: 'stationhead_channel_request',
+    failure_stage: 'sh_channel_request',
   }).code, 'STATIONHEAD_TIMEOUT');
 });
 

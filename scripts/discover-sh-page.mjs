@@ -127,7 +127,7 @@ async function main() {
   const headless = !flag('--headed');
   const shouldClick = flag('--auto-click');
   const now = new Date();
-  const outDir = path.resolve(option('--out', path.join('.stationhead-discovery', `${safeName(targetUrl)}-${now.toISOString().replace(/[:.]/g, '-')}`)));
+  const outDir = path.resolve(option('--out', path.join('.sh-discovery', `${safeName(targetUrl)}-${now.toISOString().replace(/[:.]/g, '-')}`)));
   await mkdir(outDir, { recursive: true });
 
   const { chromium } = await loadPlaywright();

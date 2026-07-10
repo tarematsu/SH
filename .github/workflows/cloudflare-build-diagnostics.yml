@@ -25,7 +25,7 @@ jobs:
     env:
       CLOUDFLARE_ACCOUNT_ID: "0500f25c2f74e7e76c94a8bcb6c7008b"
       CLOUDFLARE_BUILDS_API_TOKEN: ${{ secrets.CLOUDFLARE_BUILDS_API_TOKEN }}
-      CLOUDFLARE_WORKER_NAME: stationhead-monitor-collector
+      CLOUDFLARE_WORKER_NAME: sh-monitor-collector
       TARGET_SHA: ${{ github.sha }}
       TARGET_BRANCH: ${{ github.ref_name }}
       GH_TOKEN: ${{ github.token }}

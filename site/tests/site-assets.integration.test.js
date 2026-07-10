@@ -89,16 +89,16 @@ test('dashboard fetch cache preserves a compatible last goal prediction on delta
 });
 
 test('standalone Stationhead API test has no rewrite that can create a canonical redirect loop', async () => {
-  const directoryHtml = await text('public/stationhead-api-test/index.html');
-  const rootHtml = await text('public/stationhead-api-test.html');
+  const directoryHtml = await text('public/sh-api-test/index.html');
+  const rootHtml = await text('public/sh-api-test.html');
   const redirects = await text('public/_redirects');
 
   for (const html of [directoryHtml, rootHtml]) {
     assert.match(html, /Stationhead Weekly Leaderboard API 通信テスト/);
-    assert.match(html, /\/api\/stationhead-weekly-leaderboard-test/);
+    assert.match(html, /\/api\/sh-weekly-leaderboard-test/);
     assert.match(html, /noindex,nofollow,noarchive/);
   }
-  assert.doesNotMatch(redirects, /^\/stationhead-api-test\/?\s+/m);
+  assert.doesNotMatch(redirects, /^\/sh-api-test\/?\s+/m);
 });
 
 test('Pages configuration binds the expected D1 database and output directory', async () => {
@@ -106,6 +106,6 @@ test('Pages configuration binds the expected D1 database and output directory', 
   assert.equal(config.name, 'skrzk');
   assert.equal(config.pages_build_output_dir, './public');
   assert.equal(config.d1_databases?.[0]?.binding, 'DB');
-  assert.equal(config.d1_databases?.[0]?.database_name, 'stationhead-monitor');
+  assert.equal(config.d1_databases?.[0]?.database_name, 'sh-monitor');
   assert.equal(config.d1_databases?.[0]?.migrations_dir, '../database/migrations');
 });

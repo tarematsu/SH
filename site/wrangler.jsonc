@@ -9,7 +9,7 @@
   "d1_databases": [
     {
       "binding": "DB",
-      "database_name": "stationhead-monitor",
+      "database_name": "sh-monitor",
       "database_id": "5d5f0d47-7951-4900-821a-e1907c7e890b",
       "migrations_dir": "../database/migrations"
     }

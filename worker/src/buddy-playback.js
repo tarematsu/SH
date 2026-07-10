@@ -156,7 +156,7 @@ async function loadSession(env) {
   return { authToken, deviceUid };
 }
 
-function stationheadHeaders(session, config) {
+function shHeaders(session, config) {
   return {
     accept: 'application/json, text/plain, */*',
     'accept-language': 'ja,en-US;q=0.9,en;q=0.8',
@@ -218,7 +218,7 @@ async function fetchChannel(env, session, config, request = fetch) {
     `${API_BASE}${buddyHandleStationPath(config.alias)}`,
     {
       method: 'POST',
-      headers: stationheadHeaders(session, config),
+      headers: shHeaders(session, config),
       body: '',
       signal: AbortSignal.timeout(config.requestTimeoutMs),
     },

@@ -5,7 +5,7 @@ import {
   sanitizeFailureDetail,
 } from './collector-failure.js';
 import { buildCollectionPlan } from './collector-plan.js';
-import { COLLECTOR_VERSION, configFromEnv, stationheadJson } from './collector-config.js';
+import { COLLECTOR_VERSION, configFromEnv, shJson } from './collector-config.js';
 import { collectOptionalComments } from './collector-comments.js';
 import { extractIds, extractQueue, normalizeSnapshot, validateChannelPayload } from './collector-payload.js';
 import { ingest } from './collector-ingest.js';
@@ -27,17 +27,17 @@ export async function collectOnce(env, source = 'manual') {
     if (!env.DB) throw new Error('DB binding is missing');
     const config = configFromEnv(env);
 
-    stage = env.__stationheadAuthState ? 'stationhead_auth' : 'd1_read_collector_state';
+    stage = env.__shAuthState ? 'sh_auth' : 'd1_read_collector_state';
     state = await loadCollectorState(env);
     const previousRunAt = Number(state.lastRunAt || 0);
     const metadataRetry = Boolean(state.lastError);
     state.lastRunAt = observedAt;
     state.lastError = null;
 
-    stage = 'stationhead_channel_request';
-    const channel = await stationheadJson(state, config, `/channels/alias/${encodeURIComponent(config.channelAlias)}`);
+    stage = 'sh_channel_request';
+    const channel = await shJson(state, config, `/channels/alias/${encodeURIComponent(config.channelAlias)}`);
 
-    stage = 'stationhead_channel_payload';
+    stage = 'sh_channel_payload';
     validateChannelPayload(channel, config.channelAlias);
     extractIds(channel, state);
 

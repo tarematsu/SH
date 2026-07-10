@@ -718,7 +718,7 @@ $('#csv').onclick = () => {
   const blob = new Blob([`\ufeff${lines.join('\n')}`], { type: 'text/csv;charset=utf-8' });
   const link = document.createElement('a');
   link.href = URL.createObjectURL(blob);
-  link.download = `stationhead-${currentMode}-${todayJst()}.csv`;
+  link.download = `sh-${currentMode}-${todayJst()}.csv`;
   link.click();
   URL.revokeObjectURL(link.href);
 };
