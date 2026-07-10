@@ -52,11 +52,10 @@ test('queue reachability writes a compact checkpoint for unchanged queues', asyn
   const [call] = db.calls;
   assert.equal(call.kind, 'run');
   assert.match(call.sql, /INSERT INTO sh_queue_snapshots/);
-  assert.match(call.sql, /NOT EXISTS/);
-  assert.match(call.sql, /observed_at>\? AND observed_at<=\?/);
+  assert.match(call.sql, /ORDER BY prior\.observed_at DESC,prior\.id DESC/);
   assert.equal(call.params[0], observedAt);
-  assert.equal(call.params[11], observedAt - QUEUE_REACHABILITY_CHECKPOINT_MS);
-  assert.equal(call.params[12], observedAt);
+  assert.equal(call.params[11], observedAt);
+  assert.equal(call.params[12], observedAt - QUEUE_REACHABILITY_CHECKPOINT_MS);
   assert.equal(call.params[13], 0);
   assert.equal(call.params[5], '{"checkpoint":true}');
 });
@@ -85,6 +84,20 @@ test('a future row does not suppress a delayed state transition', async () => {
 
   const row = db.sqlite.prepare('SELECT COUNT(*) AS count FROM sh_queue_snapshots').get();
   assert.equal(row.count, 2);
+});
+
+test('rapid pause and resume transitions are never throttled away', async () => {
+  const db = sqliteD1();
+  const start = 1_700_000_000_000;
+  const base = { station_id: 10, queue_id: 20, start_time: 30 };
+
+  assert.equal((await saveQueueReachability(db, start, { ...base, is_paused: false })).inserted, true);
+  assert.equal((await saveQueueReachability(db, start + 60_000, { ...base, is_paused: true })).inserted, true);
+  assert.equal((await saveQueueReachability(db, start + 90_000, { ...base, is_paused: false })).inserted, true);
+
+  const rows = db.sqlite.prepare(`SELECT is_paused FROM sh_queue_snapshots
+    ORDER BY observed_at,id`).all();
+  assert.deepEqual(rows.map((row) => row.is_paused), [0, 1, 0]);
 });
 
 test('the exact two minute boundary writes a new checkpoint', async () => {
