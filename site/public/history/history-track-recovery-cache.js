@@ -1,8 +1,6 @@
 (() => {
   const cacheKey = (key) => String(key || '')
-    .replace(/^track-history:v11:/, 'track-history:v15:')
-    .replace(/^track-history:v12:/, 'track-history:v15:')
-    .replace(/^track-history:v13:/, 'track-history:v15:');
+    .replace(/^track-history:v(?:11|12|13|14|15):/, 'track-history:v16:');
 
   if (typeof readCache === 'function' && typeof writeCache === 'function') {
     const previousReadCache = readCache;
@@ -20,7 +18,7 @@
       if (url.origin === window.location.origin
           && url.pathname === '/api/track-history'
           && url.searchParams.get('latest') !== '1') {
-        url.searchParams.set('recovery', '3');
+        url.searchParams.set('recovery', '4');
         return previousFetch(url.toString(), init);
       }
     } catch {}
