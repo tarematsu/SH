@@ -17,7 +17,12 @@ const H = {
 };
 const out = (value, status = 200) => new Response(JSON.stringify(value), { status, headers: H });
 const day = () => new Date().toISOString().slice(0, 10);
-const valid = (value) => /^\d{4}-\d{2}-\d{2}$/.test(value || '');
+const valid = (value) => {
+  const text = String(value || '');
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(text)) return false;
+  const valueTs = Date.parse(`${text}T00:00:00Z`);
+  return Number.isFinite(valueTs) && new Date(valueTs).toISOString().slice(0, 10) === text;
+};
 const ts = (value) => Date.parse(`${value}T00:00:00Z`);
 
 export const TRACK_HISTORY_GRACE_MS = 5 * 60 * 1000;
@@ -119,17 +124,19 @@ export const TRACK_HISTORY_SQL = `WITH queue_starts AS (
       SELECT station_id,start_time,state_at,state_id,is_paused,evidence_end
       FROM ordered_state_events
       WHERE previous_is_paused IS NULL OR is_paused IS NOT previous_is_paused
+    ), ordered_state_changes AS (
+      SELECT state_changes.*,
+        LEAD(state_at) OVER (
+          PARTITION BY station_id,start_time ORDER BY state_at,state_id
+        ) AS following_state_at
+      FROM state_changes
     ), state_spans AS (
       SELECT station_id,start_time,state_at,state_id,is_paused,evidence_end,
-        MIN(
-          COALESCE(LEAD(state_at) OVER (
-            PARTITION BY station_id,start_time ORDER BY state_at,state_id
-          ),evidence_end),
-          evidence_end
-        ) AS next_state_at
-      FROM state_changes
+        MIN(COALESCE(following_state_at,evidence_end),evidence_end) AS next_state_at,
+        CASE WHEN following_state_at IS NULL THEN 1 ELSE 0 END AS is_terminal
+      FROM ordered_state_changes
     ), active_spans AS (
-      SELECT station_id,start_time,state_at,state_id,next_state_at,evidence_end,
+      SELECT station_id,start_time,state_at,state_id,next_state_at,evidence_end,is_terminal,
         MAX(0,next_state_at-state_at) AS active_duration_ms,
         COALESCE(SUM(MAX(0,next_state_at-state_at)) OVER (
           PARTITION BY station_id,start_time ORDER BY state_at,state_id
@@ -170,7 +177,7 @@ export const TRACK_HISTORY_SQL = `WITH queue_starts AS (
             AND (
               offsets.playback_offset_ms<span.active_before_ms+span.active_duration_ms
               OR (
-                span.next_state_at=span.evidence_end
+                span.is_terminal=1
                 AND offsets.playback_offset_ms<=span.active_before_ms+span.active_duration_ms+?
               )
             )
@@ -182,7 +189,7 @@ export const TRACK_HISTORY_SQL = `WITH queue_starts AS (
       SELECT
         strftime('%Y-%m-%d', p.played_at / 1000, 'unixepoch') AS play_date,
         p.played_at,p.position,p.queue_track_id,p.stationhead_track_id,
-        p.spotify_id,p.apple_music_id,p.isrc,
+        p.spotify_id,p.apple_music_id,p.isrc,p.bite_count AS queue_like_count,
         NULLIF(m.title, '') AS title,
         NULLIF(m.artist, '') AS artist,
         NULLIF(m.display_title, '') AS display_title,
@@ -249,6 +256,7 @@ export const TRACK_HISTORY_SQL = `WITH queue_starts AS (
       MIN(plays.played_at) AS first_played_at,
       MAX(plays.played_at) AS last_played_at,
       COUNT(*) AS play_count,
+      MAX(plays.queue_like_count) AS like_count,
       MIN(plays.position) AS position,
       MIN(plays.queue_track_id) AS queue_track_id,
       plays.stationhead_track_id,plays.spotify_id,plays.apple_music_id,plays.isrc,
@@ -322,8 +330,13 @@ export async function handleTrackHistory({ request, env, waitUntil }) {
       return out({ ok: true, latest_date: latest?.play_date || null, timezone: 'UTC' });
     }
 
-    const from = valid(url.searchParams.get('from')) ? url.searchParams.get('from') : '2024-05-01';
-    const to = valid(url.searchParams.get('to')) ? url.searchParams.get('to') : day();
+    const fromParam = url.searchParams.get('from');
+    const toParam = url.searchParams.get('to');
+    if ((fromParam !== null && !valid(fromParam)) || (toParam !== null && !valid(toParam))) {
+      return out({ ok: false, error: 'invalid date range' }, 400);
+    }
+    const from = fromParam || '2024-05-01';
+    const to = toParam || day();
     const fromTs = ts(from);
     const toTs = ts(to) + 86400000;
     const parsedLimit = Number(url.searchParams.get('limit'));
@@ -375,7 +388,7 @@ export async function handleTrackHistory({ request, env, waitUntil }) {
       excluded_play_count_date_count: completed.excludedDates.length,
       metadata_refresh_scheduled: metadataRefreshScheduled,
       historical_recovery: 'channel_snapshots_with_wall_clock_pause_mapping',
-      method: 'queue_checkpoint_and_compacted_wall_clock_active_span_reachability_utc_sql_preaggregate',
+      method: 'queue_checkpoint_terminal_active_span_and_namespaced_like_reachability_utc_sql_preaggregate',
     });
   } catch (error) {
     if (/no such table|no such column/i.test(String(error?.message || ''))) {
