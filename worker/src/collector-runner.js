@@ -29,6 +29,8 @@ export async function collectOnce(env, source = 'manual') {
 
     stage = env.__stationheadAuthState ? 'stationhead_auth' : 'd1_read_collector_state';
     state = await loadCollectorState(env);
+    const previousRunAt = Number(state.lastRunAt || 0);
+    const metadataRetry = Boolean(state.lastError);
     state.lastRunAt = observedAt;
     state.lastError = null;
 
@@ -40,7 +42,15 @@ export async function collectOnce(env, source = 'manual') {
     extractIds(channel, state);
 
     const queue = extractQueue(channel, state.stationId);
-    const initialPlan = buildCollectionPlan({ state, queue });
+    const planInput = {
+      state,
+      queue,
+      previousRunAt,
+      observedAt,
+      metadataRefreshIntervalMs: config.metadataRefreshIntervalMs,
+      metadataRetry,
+    };
+    const initialPlan = buildCollectionPlan(planInput);
 
     if (initialPlan.snapshot) {
       stage = 'd1_write_snapshot';
@@ -49,11 +59,13 @@ export async function collectOnce(env, source = 'manual') {
 
     let queueResult = null;
     let metadataSaved = 0;
+    let metadataPlanned = false;
     if (initialPlan.queue) {
       stage = 'd1_write_queue';
       queueResult = await ingest(env, 'queue', queue, observedAt);
-      const completedPlan = buildCollectionPlan({ state, queue, queueResult });
-      if (completedPlan.metadata) {
+      const completedPlan = buildCollectionPlan({ ...planInput, queueResult });
+      metadataPlanned = completedPlan.metadata;
+      if (metadataPlanned) {
         stage = 'd1_write_track_metadata';
         metadataSaved = await enrichTracks(env, queue, observedAt, config);
       }
@@ -94,7 +106,7 @@ export async function collectOnce(env, source = 'manual') {
       queue_items_written: Number(queueResult?.queue_items_written || 0),
       like_observations_written: Number(queueResult?.like_observations_written || 0),
       metadata_saved: metadataSaved,
-      metadata_deferred: Boolean(queue && queueResult && queueResult.structure_changed !== true),
+      metadata_deferred: Boolean(queue && !metadataPlanned),
       heartbeat_written: false,
       token_expires_at: state.tokenExpiresAt || null,
     };
