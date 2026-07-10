@@ -88,8 +88,8 @@ export const TRACK_HISTORY_SQL = `WITH queue_starts AS (
           FROM sh_queue_snapshots snapshot
           WHERE snapshot.station_id=evidence.station_id
             AND snapshot.start_time=evidence.start_time
-            AND snapshot.observed_at<=evidence.evidence_end
-          ORDER BY snapshot.observed_at ASC,snapshot.id ASC
+            AND snapshot.observed_at<=evidence.start_time
+          ORDER BY snapshot.observed_at DESC,snapshot.id DESC
           LIMIT 1
         ),0) AS is_paused,
         evidence.evidence_end
