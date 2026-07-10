@@ -19,6 +19,11 @@ export function diagnosticIntervalMinutes(env = {}) {
   return Math.max(1, Math.min(60, Math.trunc(configured)));
 }
 
+export function internalHealthMonitoringEnabled(env = {}) {
+  const value = String(env.STATIONHEAD_INTERNAL_MONITOR_ENABLED || '').trim().toLowerCase();
+  return ['1', 'true', 'yes', 'on'].includes(value);
+}
+
 export function shouldRunFullDiagnostics(now = Date.now(), env = {}) {
   return now < forceDiagnosticsUntil
     || Math.floor(now / 60_000) % diagnosticIntervalMinutes(env) === 0;
@@ -105,7 +110,8 @@ export default {
   async scheduled(controller, env, ctx) {
     const scheduledAt = scheduledTimestamp(controller);
     if (!shouldDeferBuddyPlayback(env)) scheduleBuddyPlayback(env, ctx, scheduledAt);
-    if (shouldRunFullDiagnostics(scheduledAt, env)) {
+
+    if (internalHealthMonitoringEnabled(env) && shouldRunFullDiagnostics(scheduledAt, env)) {
       try {
         return await diagnosticApp.scheduled(controller, env, ctx);
       } catch (error) {
@@ -113,12 +119,8 @@ export default {
         throw error;
       }
     }
-    try {
-      return await coreApp.scheduled(controller, env, ctx);
-    } catch (error) {
-      markDiagnosticFailure(scheduledAt);
-      throw error;
-    }
+
+    return coreApp.scheduled(controller, env, ctx);
   },
 
   async fetch(request, env, ctx) {
