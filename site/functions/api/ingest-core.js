@@ -145,7 +145,7 @@ export function queueItemsToWrite(tracks, existingRows, _observedAt, queueId = n
       continue;
     }
     const current = queueItemState(track, queueId);
-    if (Object.entries(current).some(([key, value]) => !sameValue(previous[key], value))) {
+    if (Object.entries(current).some(([key, value]) => key !== 'raw_json' && !sameValue(previous[key], value))) {
       changed.push(track);
     }
   }

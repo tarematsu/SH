@@ -122,10 +122,16 @@ test('host summary loads three result sets in one D1 batch', async () => {
 
 test('dashboard delta layer reuses formatters and avoids legacy mutation helpers', () => {
   const source = readFileSync(new URL('../site/public/dashboard-optimized.js', import.meta.url), 'utf8');
-  assert.match(source, /const integerFormatter = new Intl\.NumberFormat/);
-  assert.match(source, /const dateTimeFormatter = new Intl\.DateTimeFormat/);
-  assert.match(source, /function setImageIfChanged/);
-  assert.match(source, /function renderDailyDeltaIfChanged/);
+  // The formatters/mutation helpers now live in the shared DashboardDom module
+  // (dashboard-dom-utils.js) and dashboard-optimized.js calls them via `dom.*`
+  // instead of redefining them locally.
+  const domUtils = readFileSync(new URL('../site/public/dashboard-dom-utils.js', import.meta.url), 'utf8');
+  assert.match(domUtils, /const integerFormatter = new Intl\.NumberFormat/);
+  assert.match(domUtils, /const dateTimeFormatter = new Intl\.DateTimeFormat/);
+  assert.match(domUtils, /function setImageIfChanged/);
+  assert.match(domUtils, /function renderDailyDeltaIfChanged/);
+  assert.match(source, /dom\.setImageIfChanged/);
+  assert.match(source, /dom\.renderDailyDeltaIfChanged/);
   const refreshBody = source.slice(source.indexOf('refresh = async function refreshDashboardDelta'));
   assert.doesNotMatch(refreshBody, /\bsetImage\(/);
   assert.doesNotMatch(refreshBody, /\brenderDailyDelta\(/);

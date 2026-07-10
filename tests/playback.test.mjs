@@ -40,9 +40,10 @@ test('playback feed obtains the latest channel and its queue in one query', () =
       id INTEGER PRIMARY KEY,observed_at INTEGER,station_id INTEGER,is_broadcasting INTEGER,
       host_account_id INTEGER,host_handle TEXT,broadcast_start_time INTEGER
     );
-    CREATE TABLE sh_queue_snapshots (
-      id INTEGER PRIMARY KEY,observed_at INTEGER,station_id INTEGER,queue_id INTEGER,
-      start_time INTEGER,is_paused INTEGER
+    CREATE TABLE sh_queue_current (
+      station_id INTEGER PRIMARY KEY,queue_id INTEGER,start_time INTEGER,
+      structural_hash TEXT NOT NULL,likes_hash TEXT,is_paused INTEGER,
+      observed_at INTEGER NOT NULL,updated_at INTEGER NOT NULL
     );
     CREATE TABLE sh_queue_items (
       id INTEGER PRIMARY KEY,observed_at INTEGER,station_id INTEGER,queue_id INTEGER,
@@ -56,8 +57,10 @@ test('playback feed obtains the latest channel and its queue in one query', () =
     );
     INSERT INTO sh_channel_snapshots VALUES (1,1000,10,1,1,'old',500);
     INSERT INTO sh_channel_snapshots VALUES (2,2000,20,1,2,'current',1500);
-    INSERT INTO sh_queue_snapshots VALUES (1,3000,10,101,10000,0);
-    INSERT INTO sh_queue_snapshots VALUES (2,2500,20,202,20000,0);
+    INSERT INTO sh_queue_current (station_id,queue_id,start_time,structural_hash,is_paused,observed_at,updated_at)
+      VALUES (10,101,10000,'hash-10',0,3000,3000);
+    INSERT INTO sh_queue_current (station_id,queue_id,start_time,structural_hash,is_paused,observed_at,updated_at)
+      VALUES (20,202,20000,'hash-20',0,2500,2500);
     INSERT INTO sh_queue_items (
       id,observed_at,station_id,queue_id,start_time,position,queue_track_id,
       spotify_id,duration_ms

@@ -24,9 +24,10 @@ test('dashboard context SQL returns latest snapshot and queue revision state in 
       stream_goal INTEGER,current_stream_count INTEGER,host_account_id INTEGER,
       host_handle TEXT,broadcast_start_time INTEGER,comment_velocity INTEGER,raw_json TEXT
     );
-    CREATE TABLE sh_queue_snapshots (
-      id INTEGER PRIMARY KEY,observed_at INTEGER,station_id INTEGER,queue_id INTEGER,
-      start_time INTEGER,is_paused INTEGER
+    CREATE TABLE sh_queue_current (
+      station_id INTEGER PRIMARY KEY,queue_id INTEGER,start_time INTEGER,
+      structural_hash TEXT NOT NULL,likes_hash TEXT,is_paused INTEGER,
+      observed_at INTEGER NOT NULL,updated_at INTEGER NOT NULL
     );
     CREATE TABLE sh_queue_items (
       id INTEGER PRIMARY KEY,observed_at INTEGER,station_id INTEGER,start_time INTEGER,
@@ -42,7 +43,7 @@ test('dashboard context SQL returns latest snapshot and queue revision state in 
   db.prepare(`INSERT INTO sh_channel_snapshots VALUES(
     2,2000,10,'buddies','Latest',21,1,1,'live',20,21,22,23,24,25,26,27,'latest',28,2,'{}'
   )`).run();
-  db.prepare('INSERT INTO sh_queue_snapshots VALUES(1,2100,21,31,3000,0)').run();
+  db.prepare("INSERT INTO sh_queue_current VALUES(21,31,3000,'hash',NULL,0,2100,2100)").run();
   db.prepare("INSERT INTO sh_queue_items VALUES(1,2200,21,3000,0,'a')").run();
   db.prepare("INSERT INTO sh_queue_items VALUES(2,2300,21,3000,1,'b')").run();
   db.prepare("INSERT INTO sh_track_metadata VALUES('a',2400)").run();
@@ -89,7 +90,7 @@ test('dashboard latest row and unchanged queue share one context query', async (
     },
   };
   const context = {
-    requestedRevision: '21:31:3000:0:2300:2500:2:id:27',
+    requestedRevision: '21:31:3000:0:::2300:2500:2:id:27',
     revision: '',
     state: null,
     hostIdentity: '',

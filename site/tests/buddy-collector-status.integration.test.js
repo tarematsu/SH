@@ -15,8 +15,8 @@ test('missing buddy collector heartbeat is reported as never collected', () => {
   assert.equal(status.last_success_at, null);
 });
 
-test('malformed buddy collector metadata is reported as unknown', () => {
-  const status = buddyCollectorStatus({ last_seen_at: 1234, metadata_json: '{broken' });
+test('unrecognized buddy collector status value is reported as unknown', () => {
+  const status = buddyCollectorStatus({ last_attempt_at: 1234, status: 'broken' });
   assert.equal(status.status, 'unknown');
   assert.equal(status.last_attempt_at, 1234);
   assert.equal(status.failure_code, 'COLLECTOR_STATUS_INVALID');
@@ -67,16 +67,13 @@ test('an older collector error does not invalidate newer playback data', () => {
 
 test('secondary playback endpoint exposes collector failure when no queue row exists', async () => {
   const db = new FakeD1Database()
-    .route('first', 'sh_collector_heartbeats', {
-      last_seen_at: 2000,
-      metadata_json: JSON.stringify({
-        status: 'error',
-        last_attempt_at: 2000,
-        last_success_at: null,
-        last_error: 'authentication failed',
-        failure_code: 'STATIONHEAD_AUTH_ERROR',
-        failure_stage: 'stationhead_auth',
-      }),
+    .route('first', 'sh_collector_status', {
+      status: 'error',
+      last_attempt_at: 2000,
+      last_success_at: null,
+      last_error: 'authentication failed',
+      failure_code: 'STATIONHEAD_AUTH_ERROR',
+      failure_stage: 'sh_auth',
     })
     .route('first', 'sh_playback_channel_current', null);
 
@@ -96,7 +93,7 @@ test('secondary playback endpoint exposes collector failure when no queue row ex
 
 test('collector health read failure does not take down the playback endpoint', async () => {
   const db = new FakeD1Database()
-    .route('first', 'sh_collector_heartbeats', () => {
+    .route('first', 'sh_collector_status', () => {
       throw new Error('D1 temporary read failure');
     })
     .route('first', 'sh_playback_channel_current', null);

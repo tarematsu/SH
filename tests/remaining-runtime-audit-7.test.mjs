@@ -83,23 +83,26 @@ test('comment velocity is counted and written by one SQL statement', () => {
 test('broadcast summary reports empty range and setup state in one query', () => {
   const db = new DatabaseSync(':memory:');
   db.exec(`CREATE TABLE sh_legacy_snapshots (
-    id INTEGER PRIMARY KEY,
-    observed_at INTEGER,
-    observed_jst TEXT,
-    listener_count INTEGER,
-    likes INTEGER,
-    track_title TEXT,
-    host_handle TEXT,
-    source_note TEXT
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    canonical_key TEXT NOT NULL UNIQUE, source_id TEXT NOT NULL, source_row INTEGER NOT NULL,
+    observed_at INTEGER NOT NULL, observed_jst TEXT, listener_count INTEGER,
+    total_stream_count INTEGER, track_title TEXT, artist_name TEXT, likes INTEGER,
+    comment_velocity REAL, host_handle TEXT, total_member_count INTEGER, source_note TEXT,
+    quality_score REAL NOT NULL, quality_flags TEXT NOT NULL, raw_json TEXT NOT NULL,
+    imported_at INTEGER NOT NULL
   )`);
+  db.exec(readFileSync(
+    new URL('../database/migrations/101_add_lightweight_legacy_history.sql', import.meta.url),
+    'utf8',
+  ));
 
   const empty = parseBroadcastSummaryRows(db.prepare(BROADCAST_SUMMARY_SQL).all(0, 100));
   assert.deepEqual(empty.rows, []);
   assert.equal(empty.setupRequired, true);
 
   db.prepare(`INSERT INTO sh_legacy_snapshots
-    (id,observed_at,observed_jst,listener_count,likes,track_title,host_handle,source_note)
-    VALUES (1,1000,'2026-07-01 00:00:01',25,3,'Song','sakurazaka46jp','Event A')`).run();
+    (id,canonical_key,source_id,source_row,observed_at,observed_jst,listener_count,likes,track_title,host_handle,source_note,quality_score,quality_flags,raw_json,imported_at)
+    VALUES (1,'k1','s',1,1000,'2026-07-01 00:00:01',25,3,'Song','sakurazaka46jp','Event A',1,'[]','{}',0)`).run();
 
   const outside = parseBroadcastSummaryRows(db.prepare(BROADCAST_SUMMARY_SQL).all(0, 100));
   assert.deepEqual(outside.rows, []);

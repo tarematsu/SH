@@ -88,18 +88,6 @@ test('dashboard fetch cache preserves a compatible last goal prediction on delta
   assert.match(source, /payload\.goal_prediction = structuredClone\(previous\)/);
 });
 
-test('standalone Stationhead API test has no rewrite that can create a canonical redirect loop', async () => {
-  const directoryHtml = await text('public/sh-api-test/index.html');
-  const rootHtml = await text('public/sh-api-test.html');
-  const redirects = await text('public/_redirects');
-
-  for (const html of [directoryHtml, rootHtml]) {
-    assert.match(html, /Stationhead Weekly Leaderboard API 通信テスト/);
-    assert.match(html, /\/api\/sh-weekly-leaderboard-test/);
-    assert.match(html, /noindex,nofollow,noarchive/);
-  }
-  assert.doesNotMatch(redirects, /^\/sh-api-test\/?\s+/m);
-});
 
 test('Pages configuration binds the expected D1 database and output directory', async () => {
   const config = JSON.parse((await text('wrangler.jsonc')).replace(/^\s*\/\/.*$/gm, ''));

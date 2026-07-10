@@ -13,7 +13,7 @@ import {
 } from '../functions/lib/time-buckets.js';
 
 test('minuteBucket floors timestamps to the minute', () => {
-  assert.equal(minuteBucket(1_751_500_300_123), 1_751_500_280_000);
+  assert.equal(minuteBucket(1_751_500_300_123), 1_751_500_260_000);
 });
 
 test('UTC and JST day keys keep timezone intent explicit', () => {

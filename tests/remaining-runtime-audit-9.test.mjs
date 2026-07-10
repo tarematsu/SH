@@ -81,12 +81,12 @@ test('email series context combines all windows in one D1 statement', () => {
 });
 
 test('main chart reuses a prepared model and shares comment velocity values', () => {
+  // comment-velocity-chart.js was merged into sh-ui-fixes.js (see "Remove separate
+  // comment velocity chart wrapper"); comment velocity is now computed once inside
+  // prepareMainChartModel and passed through, rather than re-derived from a shared
+  // mainChartState in a separate rendering module.
   const chart = readFileSync(
     new URL('../site/public/sh-ui-fixes.js', import.meta.url),
-    'utf8',
-  );
-  const velocity = readFileSync(
-    new URL('../site/public/comment-velocity-chart.js', import.meta.url),
     'utf8',
   );
 
@@ -95,10 +95,7 @@ test('main chart reuses a prepared model and shares comment velocity values', ()
   assert.match(chart, /commentVelocityValues/);
   assert.match(chart, /commentVelocityMax/);
   assert.match(chart, /drawOnlineChartCachedModel/);
-  assert.match(velocity, /mainChartState\?\.commentVelocityValues/);
-  assert.match(velocity, /mainChartState\?\.commentVelocityMax/);
-  assert.doesNotMatch(velocity, /sampled\.map\(/);
-  assert.doesNotMatch(velocity, /finiteValues/);
+  assert.doesNotMatch(chart, /finiteValues/);
 });
 
 

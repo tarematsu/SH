@@ -15,13 +15,30 @@ function database() {
       observed_at INTEGER NOT NULL,
       station_id INTEGER
     );
-    CREATE TABLE sh_queue_snapshots (
-      id INTEGER PRIMARY KEY,
-      observed_at INTEGER NOT NULL,
-      station_id INTEGER,
+    CREATE TABLE sh_queue_current (
+      station_id INTEGER PRIMARY KEY,
       queue_id INTEGER,
       start_time INTEGER,
-      is_paused INTEGER
+      structural_hash TEXT NOT NULL,
+      likes_hash TEXT,
+      is_paused INTEGER,
+      observed_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
+    CREATE TABLE sh_track_like_current (
+      station_id INTEGER NOT NULL,
+      track_key TEXT NOT NULL,
+      queue_id INTEGER,
+      start_time INTEGER,
+      position INTEGER,
+      queue_track_id INTEGER,
+      stationhead_track_id INTEGER,
+      spotify_id TEXT,
+      apple_music_id TEXT,
+      isrc TEXT,
+      like_count INTEGER,
+      observed_at INTEGER NOT NULL,
+      PRIMARY KEY(station_id,track_key)
     );
     CREATE TABLE sh_queue_items (
       id INTEGER PRIMARY KEY,
@@ -60,8 +77,10 @@ test('latest queue is scoped to the station in the latest channel snapshot', () 
     INSERT INTO sh_channel_snapshots VALUES (1, 1000, 10);
     INSERT INTO sh_channel_snapshots VALUES (2, 2000, 20);
 
-    INSERT INTO sh_queue_snapshots VALUES (1, 5000, 10, 101, 10000, 0);
-    INSERT INTO sh_queue_snapshots VALUES (2, 3000, 20, 202, 20000, 0);
+    INSERT INTO sh_queue_current (station_id,queue_id,start_time,structural_hash,is_paused,observed_at,updated_at)
+      VALUES (10, 101, 10000, 'hash-10', 0, 5000, 5000);
+    INSERT INTO sh_queue_current (station_id,queue_id,start_time,structural_hash,is_paused,observed_at,updated_at)
+      VALUES (20, 202, 20000, 'hash-20', 0, 3000, 3000);
 
     INSERT INTO sh_queue_items (
       id,observed_at,station_id,queue_id,start_time,position,queue_track_id,spotify_id,duration_ms
