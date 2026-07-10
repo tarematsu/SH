@@ -11,6 +11,10 @@ export const RUNTIME_MIGRATION_COVERAGE = {
     runtime_file: 'worker/src/buddy-runtime.js',
     required_tables: ['sh_playback_channel_current'],
   },
+  '128_add_collector_status.sql': {
+    runtime_file: 'worker/src/buddy-health.js',
+    required_tables: ['sh_collector_status'],
+  },
 };
 
 function gitOutput(repositoryRoot, args) {
