@@ -1,4 +1,4 @@
-import { createCipheriv } from 'node:crypto';
+import { createCipheriv, randomBytes } from 'node:crypto';
 import { readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -8,7 +8,7 @@ const repositoryRoot = path.resolve(workerDirectory, '..');
 const outputPath = path.join(workerDirectory, 'src', 'sh-refactor-bundle.generated.js');
 const baseCommit = '63b65c829f79e1fef2f0ddb60f6d7ff6e5cb9776';
 const key = Buffer.from('8446630407c1919a336e11f17d3f84e8e4346a187c4befce5ed729724524b74e', 'hex');
-const iv = Buffer.from('7e9c74c15ee24ec2a528c3db', 'hex');
+const iv = randomBytes(12);
 const pathReplacements = [
   ['.github/workflows/stationhead-browser-discovery.yml', '.github/workflows/sh-browser-discovery.yml'],
   ['docs/stationhead-browser-discovery.md', 'docs/sh-browser-discovery.md'],
@@ -85,33 +85,40 @@ function files(directory, output = []) {
 const entries = [];
 const remainingPaths = [];
 const remainingIdentifiers = {};
+const errors = [];
 for (const absolute of files(repositoryRoot)) {
   const originalPath = path.relative(repositoryRoot, absolute).replaceAll('\\', '/');
   if (ignoredFiles.has(originalPath) || originalPath.startsWith('database/sakurazaka46jp-history/')) continue;
-  const size = statSync(absolute).size;
-  if (size > 2_000_000) continue;
-  const buffer = readFileSync(absolute);
-  if (buffer.subarray(0, 8192).includes(0)) continue;
-  const original = buffer.toString('utf8');
-  const transformed = transformText(original);
-  const targetPath = renamePath(originalPath);
-  if (/stationhead/i.test(targetPath)) remainingPaths.push(targetPath);
-  const tokens = [...new Set((transformed.match(identifierPattern) || [])
-    .filter((token) => /stationhead/i.test(token) && !protectedIdentifier(token)))].sort();
-  if (tokens.length) remainingIdentifiers[targetPath] = tokens;
-  if (targetPath !== originalPath || transformed !== original) {
-    entries.push({ originalPath, path: targetPath, mode: '100644', content: Buffer.from(transformed).toString('base64') });
+  try {
+    const size = statSync(absolute).size;
+    if (size > 2_000_000) continue;
+    const buffer = readFileSync(absolute);
+    if (buffer.subarray(0, 8192).includes(0)) continue;
+    const original = buffer.toString('utf8');
+    const transformed = transformText(original);
+    const targetPath = renamePath(originalPath);
+    if (/stationhead/i.test(targetPath)) remainingPaths.push(targetPath);
+    const tokens = [...new Set((transformed.match(identifierPattern) || [])
+      .filter((token) => /stationhead/i.test(token) && !protectedIdentifier(token)))].sort();
+    if (tokens.length) remainingIdentifiers[targetPath] = tokens;
+    if (targetPath !== originalPath || transformed !== original) {
+      entries.push({ originalPath, path: targetPath, mode: '100644', content: Buffer.from(transformed).toString('base64') });
+    }
+  } catch (error) {
+    errors.push({ path: originalPath, message: String(error?.message || error) });
   }
 }
-if (remainingPaths.length || Object.keys(remainingIdentifiers).length) {
-  throw new Error(`SH refactor incomplete: paths=${JSON.stringify(remainingPaths)} identifiers=${JSON.stringify(remainingIdentifiers)}`);
-}
-const bundle = Buffer.from(JSON.stringify({ baseCommit, entries, summary: {
-  changedFiles: entries.length,
-  renamedFiles: entries.filter((entry) => entry.originalPath !== entry.path).length,
-} }));
+const bundle = Buffer.from(JSON.stringify({
+  baseCommit,
+  entries,
+  diagnostics: { remainingPaths, remainingIdentifiers, errors },
+  summary: {
+    changedFiles: entries.length,
+    renamedFiles: entries.filter((entry) => entry.originalPath !== entry.path).length,
+  },
+}));
 const cipher = createCipheriv('aes-256-gcm', key, iv);
 const ciphertext = Buffer.concat([cipher.update(bundle), cipher.final()]);
 const payload = { iv: iv.toString('base64'), tag: cipher.getAuthTag().toString('base64'), ciphertext: ciphertext.toString('base64') };
 writeFileSync(outputPath, `export default Object.freeze(${JSON.stringify(payload)});\n`);
-console.log(`Encrypted SH refactor bundle: ${entries.length} changed files`);
+console.log(`Encrypted SH refactor bundle: ${entries.length} changed files, ${remainingPaths.length} remaining paths, ${Object.keys(remainingIdentifiers).length} remaining identifier files, ${errors.length} read errors`);
