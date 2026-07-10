@@ -1,6 +1,7 @@
 import { bool, num, rawJson, stripAppleMusicFields, text } from './api-utils.js';
 import { prepared, runPreparedD1Batches } from './d1-batch.js';
 import {
+  observationTrackKey,
   planLikeObservations,
   queueItemsToWriteLean,
   queueStructuralPayload,
@@ -40,14 +41,6 @@ async function runBatches(db, statements) {
   await runPreparedBatches(db, statements, 'run');
 }
 
-function observationTrackKey(track) {
-  return text(track?.queue_track_id)
-    || text(track?.stationhead_track_id)
-    || text(track?.spotify_id)
-    || text(track?.isrc)
-    || `position:${num(track?.position) ?? -1}`;
-}
-
 export function queueLikesPayload(tracks) {
   const unique = new Map();
   for (const track of Array.isArray(tracks) ? tracks : []) {
@@ -82,7 +75,7 @@ function queueItemLookupStatements(db, stationId, startTime, positions) {
   return chunks(positions, QUERY_CHUNK).filter((group) => group.length).map((group) => {
     const placeholders = group.map(() => '?').join(',');
     return prepared(db.prepare(`SELECT position,queue_id,queue_track_id,stationhead_track_id,
-      spotify_id,deezer_id,isrc,duration_ms,preview_url
+      spotify_id,deezer_id,isrc,duration_ms,preview_url,observed_at
       FROM sh_queue_items
       WHERE station_id IS ? AND start_time IS ? AND position IN (${placeholders})`)
       .bind(stationId, startTime, ...group), 2 + group.length);
@@ -126,7 +119,8 @@ function queueItemWriteStatements(db, tracks, observedAt, stationId, queueId, st
       queue_track_id=excluded.queue_track_id,stationhead_track_id=excluded.stationhead_track_id,
       spotify_id=excluded.spotify_id,apple_music_id=NULL,
       deezer_id=excluded.deezer_id,isrc=excluded.isrc,duration_ms=excluded.duration_ms,
-      preview_url=excluded.preview_url,raw_json=excluded.raw_json`)
+      preview_url=excluded.preview_url,raw_json=excluded.raw_json
+    WHERE excluded.observed_at>=sh_queue_items.observed_at`)
     .bind(
       observedAt, stationId, queueId, startTime, num(track?.position),
       num(track?.queue_track_id), num(track?.stationhead_track_id),
@@ -134,6 +128,21 @@ function queueItemWriteStatements(db, tracks, observedAt, stationId, queueId, st
       num(track?.duration_ms), text(track?.preview_url),
       num(track?.bite_count), compactQueueItemRaw(track, queueId),
     ), 14));
+}
+
+function queueItemLikeUpdateStatements(db, tracks, stationId, startTime) {
+  return (Array.isArray(tracks) ? tracks : [])
+    .filter((track) => num(track?.position) != null && num(track?.bite_count) != null)
+    .map((track) => prepared(db.prepare(`UPDATE sh_queue_items
+      SET bite_count=?
+      WHERE station_id IS ? AND start_time IS ? AND position IS ?
+        AND bite_count IS NOT ?`).bind(
+      num(track?.bite_count),
+      stationId,
+      startTime,
+      num(track?.position),
+      num(track?.bite_count),
+    ), 5));
 }
 
 function likeWriteStatements(db, observations, observedAt, stationId, queueId, startTime) {
@@ -146,7 +155,8 @@ function likeWriteStatements(db, observations, observedAt, stationId, queueId, s
       queue_track_id=excluded.queue_track_id,stationhead_track_id=excluded.stationhead_track_id,
       spotify_id=excluded.spotify_id,apple_music_id=NULL,isrc=excluded.isrc,
       like_count=excluded.like_count,observed_at=excluded.observed_at
-    WHERE excluded.like_count IS NOT sh_track_like_current.like_count`)
+    WHERE excluded.observed_at>=sh_track_like_current.observed_at
+      AND excluded.like_count IS NOT sh_track_like_current.like_count`)
       .bind(
         stationId, trackKey, queueId, startTime, num(track?.position),
         num(track?.queue_track_id), num(track?.stationhead_track_id),
@@ -173,11 +183,14 @@ function queueCurrentStatement(db, values) {
       structural_hash=excluded.structural_hash,likes_hash=excluded.likes_hash,
       is_paused=excluded.is_paused,observed_at=excluded.observed_at,
       updated_at=excluded.updated_at
-    WHERE excluded.structural_hash IS NOT sh_queue_current.structural_hash
-       OR excluded.likes_hash IS NOT sh_queue_current.likes_hash
-       OR excluded.queue_id IS NOT sh_queue_current.queue_id
-       OR excluded.start_time IS NOT sh_queue_current.start_time
-       OR excluded.is_paused IS NOT sh_queue_current.is_paused`)
+    WHERE excluded.observed_at>=sh_queue_current.observed_at
+      AND (
+        excluded.structural_hash IS NOT sh_queue_current.structural_hash
+        OR excluded.likes_hash IS NOT sh_queue_current.likes_hash
+        OR excluded.queue_id IS NOT sh_queue_current.queue_id
+        OR excluded.start_time IS NOT sh_queue_current.start_time
+        OR excluded.is_paused IS NOT sh_queue_current.is_paused
+      )`)
     .bind(...values), values.length);
 }
 
@@ -214,8 +227,10 @@ export async function saveLeanQueue(db, observedAt, body) {
   const startTime = num(data?.start_time);
   const queueId = num(data?.queue_id);
 
-  const current = await db.prepare(`SELECT structural_hash,likes_hash,start_time
+  const current = await db.prepare(`SELECT structural_hash,likes_hash,start_time,observed_at
     FROM sh_queue_current WHERE station_id IS ?`).bind(stationId).first();
+  const currentObservedAt = num(current?.observed_at);
+  const staleCurrent = currentObservedAt != null && observedAt < currentObservedAt;
   const likesHash = completeLikes
     ? await payloadHash(queueLikesPayload(tracks))
     : text(current?.likes_hash);
@@ -229,6 +244,7 @@ export async function saveLeanQueue(db, observedAt, body) {
       observationsWritten: 0,
       structureChanged: false,
       likesChanged: false,
+      staleCurrent,
       completeLikes,
     };
   }
@@ -250,7 +266,13 @@ export async function saveLeanQueue(db, observedAt, body) {
       metadata: { station_id: stationId, start_time: startTime },
     });
     if (!claim.accepted && !claim.duplicate) {
-      return { claim, inspected: false, itemsWritten: 0, observationsWritten: 0 };
+      return {
+        claim,
+        inspected: false,
+        itemsWritten: 0,
+        observationsWritten: 0,
+        staleCurrent,
+      };
     }
   }
 
@@ -274,11 +296,12 @@ export async function saveLeanQueue(db, observedAt, body) {
   const observations = likesChanged ? planLikeObservations(tracks, latestRows) : [];
 
   const statements = [];
-  if (structureChanged) {
+  if (structureChanged && !staleCurrent) {
     statements.push(...deleteMissingQueueItemsStatements(db, stationId, startTime, positions));
   }
-  if (likesChanged) {
+  if (likesChanged && !staleCurrent) {
     statements.push(...deleteMissingCurrentLikesStatements(db, stationId, trackKeys));
+    statements.push(...queueItemLikeUpdateStatements(db, tracks, stationId, startTime));
   }
   statements.push(
     ...queueItemWriteStatements(db, changedTracks, observedAt, stationId, queueId, startTime),
@@ -304,6 +327,7 @@ export async function saveLeanQueue(db, observedAt, body) {
     observationsWritten: observations.length,
     structureChanged,
     likesChanged,
+    staleCurrent,
     completeLikes,
   };
 }
@@ -324,10 +348,13 @@ export async function saveLeanHeartbeat(db, observedAt, data) {
     ON CONFLICT(collector_id) DO UPDATE SET
       last_seen_at=excluded.last_seen_at,hostname=excluded.hostname,
       version=excluded.version,metadata_json=excluded.metadata_json
-    WHERE excluded.last_seen_at-sh_collector_heartbeats.last_seen_at>=600000
-       OR excluded.hostname IS NOT sh_collector_heartbeats.hostname
-       OR excluded.version IS NOT sh_collector_heartbeats.version
-       OR excluded.metadata_json IS NOT sh_collector_heartbeats.metadata_json`)
+    WHERE excluded.last_seen_at>=sh_collector_heartbeats.last_seen_at
+      AND (
+        excluded.last_seen_at-sh_collector_heartbeats.last_seen_at>=600000
+        OR excluded.hostname IS NOT sh_collector_heartbeats.hostname
+        OR excluded.version IS NOT sh_collector_heartbeats.version
+        OR excluded.metadata_json IS NOT sh_collector_heartbeats.metadata_json
+      )`)
     .bind(
       text(data?.collector_id), observedAt, observedAt,
       text(data?.hostname), text(data?.version), rawJson(stableHeartbeatMetadata(data)),
