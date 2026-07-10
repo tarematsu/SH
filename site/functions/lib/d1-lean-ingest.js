@@ -132,7 +132,8 @@ export async function saveLeanSnapshot(db, observedAt, data) {
       last_stream_count=COALESCE(excluded.last_stream_count,sh_snapshot_current.last_stream_count),
       last_stream_at=CASE WHEN excluded.last_stream_count IS NOT NULL
         THEN excluded.last_stream_at ELSE sh_snapshot_current.last_stream_at END,
-      updated_at=excluded.updated_at`)
+      updated_at=excluded.updated_at
+      WHERE excluded.last_snapshot_at>=COALESCE(sh_snapshot_current.last_snapshot_at,0)`)
       .bind(
         channelKey,
         hash,
@@ -164,12 +165,16 @@ export function queueStructuralPayload(data) {
   };
 }
 
-function observationTrackKey(track) {
-  return text(track?.queue_track_id)
-    || text(track?.stationhead_track_id)
-    || text(track?.spotify_id)
-    || text(track?.isrc)
-    || `position:${num(track?.position) ?? -1}`;
+export function observationTrackKey(track) {
+  const queueTrackId = num(track?.queue_track_id);
+  if (queueTrackId != null) return `queue:${queueTrackId}`;
+  const stationheadTrackId = num(track?.stationhead_track_id);
+  if (stationheadTrackId != null) return `stationhead:${stationheadTrackId}`;
+  const spotifyId = text(track?.spotify_id)?.trim();
+  if (spotifyId) return `spotify:${spotifyId}`;
+  const isrc = text(track?.isrc)?.trim();
+  if (isrc) return `isrc:${isrc.toUpperCase()}`;
+  return `position:${num(track?.position) ?? -1}`;
 }
 
 function structuralItemState(track, queueId = null) {
