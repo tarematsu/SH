@@ -5,7 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "wrangler pages dev public",
-    "build": "npm test && npm run db:guard && npm run db:migrate && npm run db:verify",
+    "build": "npm run sh:scan && npm test && npm run db:guard && npm run db:migrate && npm run db:verify",
+    "sh:scan": "node scripts/build-sh-refactor-report.mjs",
     "db:guard": "node scripts/check-tokenless-d1-coverage.mjs",
     "db:migrate": "node scripts/apply-d1-migrations.mjs",
     "db:verify": "node scripts/verify-d1-schema.mjs",
