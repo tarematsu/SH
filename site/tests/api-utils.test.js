@@ -45,7 +45,7 @@ test('observedAtFrom uses numeric observed_at or a fallback', () => {
   assert.equal(observedAtFrom({}, 999), 999);
 });
 
-test('bool parses common string and numeric boolean representations', () => {
+test('bool parses known representations and rejects unknown encodings', () => {
   assert.equal(bool(true), 1);
   assert.equal(bool(false), 0);
   assert.equal(bool('true'), 1);
@@ -54,6 +54,10 @@ test('bool parses common string and numeric boolean representations', () => {
   assert.equal(bool('0'), 0);
   assert.equal(bool('yes'), 1);
   assert.equal(bool('off'), 0);
+  assert.equal(bool('unknown'), null);
+  assert.equal(bool('null'), null);
+  assert.equal(bool(Number.NaN), null);
+  assert.equal(bool({}), null);
   assert.equal(bool(null), null);
 });
 
