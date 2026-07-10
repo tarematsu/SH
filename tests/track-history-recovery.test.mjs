@@ -111,8 +111,8 @@ function queryTracks(db, from, to, limit = 100000) {
     fromTs - TRACK_HISTORY_GRACE_MS, toTs,
     fromTs - TRACK_HISTORY_GRACE_MS, toTs,
     toTs,
-    fromTs, toTs,
     TRACK_HISTORY_GRACE_MS,
+    fromTs, toTs,
     fromTs, toTs,
     limit,
   );
@@ -141,7 +141,7 @@ test('counts only active time before a queue remains paused', () => {
 
   const rows = queryTracks(db, '2026-06-30', '2026-06-30');
 
-  assert.deepEqual(rows.map((row) => row.position), [0, 1, 2, 3, 4, 5]);
+  assert.deepEqual(rows.map((row) => row.position), [0, 1, 2, 3]);
 });
 
 test('does not use inactive channel observations as playback evidence', () => {
