@@ -1,0 +1,153 @@
+from pathlib import Path
+import subprocess
+
+tracked = subprocess.check_output(['git', 'ls-files', '-z']).decode().split('\0')
+protected = {
+    'LICENSE', 'LICENSE.md', 'LICENSE.txt', 'COPYING', 'COPYING.md',
+    'NOTICE', 'NOTICE.md', 'THIRD_PARTY_NOTICES', 'THIRD_PARTY_NOTICES.md'
+}
+document_names = {
+    'README', 'CHANGELOG', 'CHANGES', 'CONTRIBUTING', 'SECURITY',
+    'SUPPORT', 'CODE_OF_CONDUCT', 'AUTHORS', 'MAINTAINERS',
+    'ROADMAP', 'ARCHITECTURE', 'DEVELOPMENT', 'DEPLOYMENT'
+}
+document_suffixes = {'.md', '.mdx', '.rst', '.adoc', '.asciidoc'}
+directive_terms = (
+    'eslint', 'prettier', '@ts-', 'typescript', 'istanbul', 'c8 ignore',
+    'coverage', 'sourcemappingurl', 'webpack', 'vite', 'rollup',
+    'shellcheck', 'noinspection', '# syntax=', '# escape='
+)
+helper_paths = {
+    '.github/workflows/remove-repository-prose.yml',
+    '.github/workflows/remove-repository-prose-pr.yml',
+    '.github/scripts/remove-repository-prose.py'
+}
+
+
+def is_document(path: Path) -> bool:
+    posix = path.as_posix()
+    upper_name = path.name.upper()
+    upper_stem = path.stem.upper()
+    if path.name in protected or posix in helper_paths:
+        return False
+    if path.parts and path.parts[0].lower() in {'docs', 'doc', 'documentation'}:
+        return True
+    if posix.startswith('.github/ISSUE_TEMPLATE/'):
+        return True
+    if posix.startswith('.github/PULL_REQUEST_TEMPLATE'):
+        return True
+    if path.suffix.lower() in document_suffixes:
+        return True
+    if upper_name in document_names or upper_stem in document_names:
+        return True
+    if path.name in {'.deploy-trigger', '.cleanup-trigger'}:
+        return True
+    return False
+
+
+line_prefixes = {
+    '.js': ('//',), '.mjs': ('//',), '.cjs': ('//',),
+    '.ts': ('//',), '.tsx': ('//',), '.jsx': ('//',),
+    '.jsonc': ('//',), '.sql': ('--',),
+    '.py': ('#',), '.ps1': ('#',), '.sh': ('#',), '.bash': ('#',),
+    '.zsh': ('#',), '.yml': ('#',), '.yaml': ('#',), '.toml': ('#',),
+    '.ini': ('#', ';'), '.conf': ('#', ';'), '.properties': ('#', '!'),
+    '.env': ('#',), '.css': (), '.scss': (), '.less': (),
+    '.html': (), '.htm': (), '.xml': (), '.bat': ('REM ', '::'),
+    '.cmd': ('REM ', '::')
+}
+
+
+def is_directive(text: str) -> bool:
+    low = text.lower()
+    return any(term in low for term in directive_terms)
+
+
+def strip_blocks(lines, start, end):
+    out = []
+    i = 0
+    while i < len(lines):
+        stripped = lines[i].lstrip()
+        if stripped.startswith(start):
+            block = [lines[i]]
+            while end not in block[-1] and i + 1 < len(lines):
+                i += 1
+                block.append(lines[i])
+            if any(is_directive(line) for line in block):
+                out.extend(block)
+        else:
+            out.append(lines[i])
+        i += 1
+    return out
+
+
+def strip_comment_lines(path: Path, text: str) -> str:
+    suffix = path.suffix.lower()
+    name = path.name
+    lines = text.splitlines(keepends=True)
+    if suffix in {'.js', '.mjs', '.cjs', '.ts', '.tsx', '.jsx', '.jsonc', '.css', '.scss', '.less'}:
+        lines = strip_blocks(lines, '/*', '*/')
+    if suffix in {'.html', '.htm', '.xml'}:
+        lines = strip_blocks(lines, '<!--', '-->')
+    if suffix == '.ps1':
+        lines = strip_blocks(lines, '<#', '#>')
+    prefixes = line_prefixes.get(suffix, ())
+    if name in {'Dockerfile', 'Containerfile', '.gitignore', '.gitattributes', '.editorconfig'}:
+        prefixes = ('#',)
+    result = []
+    for index, line in enumerate(lines):
+        stripped = line.lstrip()
+        if index == 0 and stripped.startswith('#!'):
+            result.append(line)
+            continue
+        if name in {'Dockerfile', 'Containerfile'} and stripped.lower().startswith(('# syntax=', '# escape=')):
+            result.append(line)
+            continue
+        if prefixes and any(stripped.startswith(prefix) for prefix in prefixes):
+            if is_directive(stripped):
+                result.append(line)
+            continue
+        result.append(line)
+    return ''.join(result)
+
+
+deleted = []
+changed = []
+for item in tracked:
+    if not item:
+        continue
+    path = Path(item)
+    if not path.exists() or path.is_dir() or path.as_posix() in helper_paths:
+        continue
+    if is_document(path):
+        path.unlink()
+        deleted.append(item)
+        continue
+    suffix = path.suffix.lower()
+    if suffix not in line_prefixes and path.name not in {
+        'Dockerfile', 'Containerfile', '.gitignore', '.gitattributes', '.editorconfig'
+    }:
+        continue
+    data = path.read_bytes()
+    if b'\0' in data:
+        continue
+    try:
+        text = data.decode('utf-8')
+    except UnicodeDecodeError:
+        continue
+    updated = strip_comment_lines(path, text)
+    if updated != text:
+        path.write_text(updated, encoding='utf-8', newline='')
+        changed.append(item)
+
+for helper in helper_paths:
+    path = Path(helper)
+    if path.exists():
+        path.unlink()
+
+print(f'deleted documents: {len(deleted)}')
+print(f'files with comment-only lines removed: {len(changed)}')
+for item in deleted:
+    print(f'D {item}')
+for item in changed:
+    print(f'M {item}')
