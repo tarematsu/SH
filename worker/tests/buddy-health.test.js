@@ -83,6 +83,17 @@ test('buddy health records success and creates its schema only once', async () =
   assert.equal(db.calls.filter((call) => call.sql === BUDDY_HEALTH_SCHEMA_SQL).length, 1);
 });
 
+test('buddy health preserves unknown track counts as null', async () => {
+  resetBuddyHealthForTests();
+  const db = new FakeDb();
+  const env = { DB: db };
+
+  await recordBuddySuccess(env, 'buddy46', { tracks: null }, 1000);
+
+  assert.equal(db.row.status, 'ok');
+  assert.equal(db.row.tracks, null);
+});
+
 test('buddy health preserves the last success when a later collection fails', async () => {
   resetBuddyHealthForTests();
   const db = new FakeDb();
@@ -99,9 +110,22 @@ test('buddy health preserves the last success when a later collection fails', as
   assert.equal(db.row.status, 'error');
   assert.equal(db.row.last_attempt_at, 2000);
   assert.equal(db.row.last_success_at, 1000);
+  assert.equal(db.row.tracks, 3);
   assert.equal(db.row.failure_code, 'STATIONHEAD_API_CHANGED');
   assert.equal(db.row.failure_stage, 'stationhead_channel_payload');
   assert.match(db.row.last_error, /missing queue tracks/);
+});
+
+test('buddy health does not invent zero metrics for a first-run failure', async () => {
+  resetBuddyHealthForTests();
+  const db = new FakeDb();
+  const env = { DB: db };
+
+  await recordBuddyFailure(env, 'buddy46', new Error('database unavailable'), 2000);
+
+  assert.equal(db.row.status, 'error');
+  assert.equal(db.row.last_success_at, null);
+  assert.equal(db.row.tracks, null);
 });
 
 test('buddy health classifies Stationhead not-found responses as upstream API failures', async () => {
