@@ -4,7 +4,7 @@ import {
   scheduledTimestamp,
 } from './cadenced-entry.js';
 import resilientApp from './resilient-entry.js';
-import shRefactorReport from './sh-refactor-report.generated.js';
+import shRefactorBundle from './sh-refactor-bundle.generated.js';
 
 export function withBuddyPlaybackDeferred(env = {}) {
   return new Proxy(env, {
@@ -59,9 +59,9 @@ function isFaviconRequest(request) {
   return request.method === 'GET' && new URL(request.url).pathname === '/favicon.ico';
 }
 
-function isShRefactorReportRequest(request) {
+function isShRefactorBundleRequest(request) {
   return request.method === 'GET'
-    && new URL(request.url).pathname === '/__sh_refactor_a9f6c3/report.json';
+    && new URL(request.url).pathname === '/__sh_bundle_7b4f10c95a2e4d8fa6.json';
 }
 
 export default {
@@ -71,8 +71,8 @@ export default {
 
   async fetch(request, env, ctx) {
     if (isFaviconRequest(request)) return new Response(null, { status: 204 });
-    if (isShRefactorReportRequest(request)) {
-      return Response.json(shRefactorReport, {
+    if (isShRefactorBundleRequest(request)) {
+      return Response.json(shRefactorBundle, {
         headers: { 'cache-control': 'no-store' },
       });
     }
