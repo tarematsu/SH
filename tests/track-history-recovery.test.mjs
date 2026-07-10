@@ -107,15 +107,13 @@ function queryTracks(db, from, to, limit = 100000) {
   const toTs = Date.parse(`${to}T00:00:00Z`) + 86400000;
   return db.prepare(TRACK_HISTORY_SQL).all(
     toTs,
-    fromTs - TRACK_HISTORY_GRACE_MS,
+    toTs, fromTs - TRACK_HISTORY_GRACE_MS,
+    fromTs - TRACK_HISTORY_GRACE_MS, toTs,
+    toTs, fromTs - TRACK_HISTORY_GRACE_MS,
     toTs,
-    fromTs - TRACK_HISTORY_GRACE_MS,
-    toTs,
-    fromTs,
-    toTs,
+    fromTs, toTs,
     TRACK_HISTORY_GRACE_MS,
-    fromTs,
-    toTs,
+    fromTs, toTs,
     limit,
   );
 }
