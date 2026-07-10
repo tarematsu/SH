@@ -14,6 +14,14 @@ if (repo.status !== 0) {
 }
 
 const repoRoot = repo.stdout.trim();
+const missingRoots = requestedRoots.filter((root) => !existsSync(resolve(repoRoot, root)));
+if (missingRoots.length) {
+  for (const root of missingRoots) {
+    process.stderr.write(`JavaScript syntax check root not found: ${root}\n`);
+  }
+  process.exit(1);
+}
+
 const listed = spawnSync('git', ['ls-files', '--', ...roots], {
   cwd: repoRoot,
   encoding: 'utf8',
@@ -30,6 +38,11 @@ const files = listed.stdout
   .filter((file) => existsSync(resolve(repoRoot, file)))
   .filter((file) => !file.includes('/node_modules/'))
   .sort();
+
+if (requestedRoots.length && files.length === 0) {
+  process.stderr.write(`No tracked JavaScript files found under: ${requestedRoots.join(', ')}\n`);
+  process.exit(1);
+}
 
 const failures = [];
 let cursor = 0;
