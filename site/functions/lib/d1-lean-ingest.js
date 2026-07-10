@@ -170,13 +170,20 @@ export function normalizedTrackIsrc(track) {
   return isrc || null;
 }
 
+export function normalizedTrackSpotifyId(track) {
+  const spotifyId = text(track?.spotify_id)?.trim();
+  return spotifyId || null;
+}
+
 export function legacyObservationTrackKey(track) {
-  return normalizedTrackIsrc(track);
+  return normalizedTrackIsrc(track) || normalizedTrackSpotifyId(track);
 }
 
 export function observationTrackKey(track) {
   const isrc = normalizedTrackIsrc(track);
-  return isrc ? `isrc:${isrc}` : null;
+  if (isrc) return `isrc:${isrc}`;
+  const spotifyId = normalizedTrackSpotifyId(track);
+  return spotifyId ? `spotify:${spotifyId}` : null;
 }
 
 export function observationTrackKeys(track) {
@@ -184,14 +191,14 @@ export function observationTrackKeys(track) {
   return key ? [key] : [];
 }
 
-function latestRowsByIsrc(latestRows) {
+function latestRowsByIdentity(latestRows) {
   const rows = new Map();
   for (const row of latestRows || []) {
-    const isrc = normalizedTrackIsrc(row);
-    if (!isrc) continue;
-    const previous = rows.get(isrc);
+    const identity = observationTrackKey(row);
+    if (!identity) continue;
+    const previous = rows.get(identity);
     if (!previous || Number(row?.observed_at || 0) >= Number(previous?.observed_at || 0)) {
-      rows.set(isrc, row);
+      rows.set(identity, row);
     }
   }
   return rows;
@@ -235,29 +242,28 @@ export function queueItemsToWriteLean(tracks, existingRows, queueId = null) {
 }
 
 export function planLikeObservations(tracks, latestRows) {
-  const latest = latestRowsByIsrc(latestRows);
+  const latest = latestRowsByIdentity(latestRows);
   const unique = new Map();
   for (const track of Array.isArray(tracks) ? tracks : []) {
-    const isrc = normalizedTrackIsrc(track);
-    if (!isrc || num(track?.bite_count) == null) continue;
-    unique.set(isrc, track);
+    const identity = observationTrackKey(track);
+    if (!identity || num(track?.bite_count) == null) continue;
+    unique.set(identity, track);
   }
   return [...unique.entries()]
-    .filter(([isrc, track]) => num(latest.get(isrc)?.like_count) !== num(track.bite_count))
-    .map(([, track]) => ({ trackKey: observationTrackKey(track), track }));
+    .filter(([identity, track]) => num(latest.get(identity)?.like_count) !== num(track.bite_count))
+    .map(([trackKey, track]) => ({ trackKey, track }));
 }
 
 export function planLikeCurrentMigrations(tracks, latestRows) {
-  const latest = latestRowsByIsrc(latestRows);
+  const latest = latestRowsByIdentity(latestRows);
   const migrations = [];
   const seen = new Set();
   for (const track of Array.isArray(tracks) ? tracks : []) {
-    const isrc = normalizedTrackIsrc(track);
-    const likeCount = num(track?.bite_count);
-    if (!isrc || likeCount == null || seen.has(isrc)) continue;
-    seen.add(isrc);
-    const row = latest.get(isrc);
     const canonical = observationTrackKey(track);
+    const likeCount = num(track?.bite_count);
+    if (!canonical || likeCount == null || seen.has(canonical)) continue;
+    seen.add(canonical);
+    const row = latest.get(canonical);
     if (row && String(row.track_key || '') !== canonical
         && num(row.like_count) === likeCount) {
       migrations.push({ trackKey: canonical, track });
