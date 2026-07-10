@@ -16,6 +16,10 @@ export function configFromEnv(env) {
     appVersion: env.STATIONHEAD_APP_VERSION || '1.0.0',
     collectorId: env.COLLECTOR_ID || 'cloudflare-worker',
     metadataLimit: Math.min(numberValue(env.METADATA_LIMIT, 3), 10),
+    metadataRefreshIntervalMs: Math.max(
+      15 * 60_000,
+      Math.min(numberValue(env.METADATA_REFRESH_INTERVAL_MS, 6 * 60 * 60_000), 7 * 24 * 60 * 60_000),
+    ),
     requestTimeoutMs: Math.min(numberValue(env.REQUEST_TIMEOUT_MS, 15_000), 30_000),
   };
 }
