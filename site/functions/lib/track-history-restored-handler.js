@@ -109,6 +109,16 @@ export const TRACK_HISTORY_SQL = `WITH queue_starts AS (
        AND snapshot.start_time=evidence.start_time
        AND snapshot.observed_at>evidence.start_time
        AND snapshot.observed_at<=evidence.evidence_end
+    ), ordered_state_events AS (
+      SELECT state_events.*,
+        LAG(is_paused) OVER (
+          PARTITION BY station_id,start_time ORDER BY state_at,state_id
+        ) AS previous_is_paused
+      FROM state_events
+    ), state_changes AS (
+      SELECT station_id,start_time,state_at,state_id,is_paused,evidence_end
+      FROM ordered_state_events
+      WHERE previous_is_paused IS NULL OR is_paused IS NOT previous_is_paused
     ), state_spans AS (
       SELECT station_id,start_time,state_at,state_id,is_paused,evidence_end,
         MIN(
@@ -117,7 +127,7 @@ export const TRACK_HISTORY_SQL = `WITH queue_starts AS (
           ),evidence_end),
           evidence_end
         ) AS next_state_at
-      FROM state_events
+      FROM state_changes
     ), active_spans AS (
       SELECT station_id,start_time,state_at,state_id,next_state_at,evidence_end,
         MAX(0,next_state_at-state_at) AS active_duration_ms,
@@ -361,7 +371,7 @@ export async function handleTrackHistory({ request, env, waitUntil }) {
       excluded_play_count_date_count: completed.excludedDates.length,
       metadata_refresh_scheduled: metadataRefreshScheduled,
       historical_recovery: 'channel_snapshots_with_wall_clock_pause_mapping',
-      method: 'queue_checkpoint_and_wall_clock_active_span_reachability_utc_sql_preaggregate',
+      method: 'queue_checkpoint_and_compacted_wall_clock_active_span_reachability_utc_sql_preaggregate',
     });
   } catch (error) {
     if (/no such table|no such column|malformed JSON/i.test(String(error?.message || ''))) {
