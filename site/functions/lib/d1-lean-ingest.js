@@ -165,58 +165,36 @@ export function queueStructuralPayload(data) {
   };
 }
 
+export function normalizedTrackIsrc(track) {
+  const isrc = text(track?.isrc)?.trim().toUpperCase();
+  return isrc || null;
+}
+
 export function legacyObservationTrackKey(track) {
-  return text(track?.queue_track_id)
-    || text(track?.stationhead_track_id)
-    || text(track?.spotify_id)
-    || text(track?.isrc)
-    || `position:${num(track?.position) ?? -1}`;
+  return normalizedTrackIsrc(track);
 }
 
 export function observationTrackKey(track) {
-  const queueTrackId = num(track?.queue_track_id);
-  if (queueTrackId != null) return `queue:${queueTrackId}`;
-  const stationheadTrackId = num(track?.stationhead_track_id);
-  if (stationheadTrackId != null) return `stationhead:${stationheadTrackId}`;
-  const spotifyId = text(track?.spotify_id)?.trim();
-  if (spotifyId) return `spotify:${spotifyId}`;
-  const isrc = text(track?.isrc)?.trim();
-  if (isrc) return `isrc:${isrc.toUpperCase()}`;
-  return `position:${num(track?.position) ?? -1}`;
+  const isrc = normalizedTrackIsrc(track);
+  return isrc ? `isrc:${isrc}` : null;
 }
 
 export function observationTrackKeys(track) {
-  const canonical = observationTrackKey(track);
-  const legacy = legacyObservationTrackKey(track);
-  return legacy && legacy !== canonical ? [canonical, legacy] : [canonical];
+  const key = observationTrackKey(track);
+  return key ? [key] : [];
 }
 
-function normalizedIdentityValue(field, value) {
-  if (field === 'queue_track_id' || field === 'stationhead_track_id') return num(value);
-  const string = text(value)?.trim();
-  if (!string) return null;
-  return field === 'isrc' ? string.toUpperCase() : string;
-}
-
-function latestRowMatchesTrack(row, track) {
-  let comparable = false;
-  for (const field of ['queue_track_id', 'stationhead_track_id', 'spotify_id', 'isrc']) {
-    const left = normalizedIdentityValue(field, row?.[field]);
-    const right = normalizedIdentityValue(field, track?.[field]);
-    if (left == null || right == null) continue;
-    comparable = true;
-    if (left === right) return true;
+function latestRowsByIsrc(latestRows) {
+  const rows = new Map();
+  for (const row of latestRows || []) {
+    const isrc = normalizedTrackIsrc(row);
+    if (!isrc) continue;
+    const previous = rows.get(isrc);
+    if (!previous || Number(row?.observed_at || 0) >= Number(previous?.observed_at || 0)) {
+      rows.set(isrc, row);
+    }
   }
-  return !comparable;
-}
-
-function latestRowsForTrack(track, latestByKey) {
-  const matches = [];
-  for (const key of observationTrackKeys(track)) {
-    const row = latestByKey.get(key);
-    if (row && latestRowMatchesTrack(row, track)) matches.push(row);
-  }
-  return matches;
+  return rows;
 }
 
 function structuralItemState(track, queueId = null) {
@@ -257,34 +235,31 @@ export function queueItemsToWriteLean(tracks, existingRows, queueId = null) {
 }
 
 export function planLikeObservations(tracks, latestRows) {
-  const latest = new Map((latestRows || []).map((row) => [String(row.track_key), row]));
+  const latest = latestRowsByIsrc(latestRows);
   const unique = new Map();
   for (const track of Array.isArray(tracks) ? tracks : []) {
-    if (num(track?.bite_count) == null) continue;
-    unique.set(observationTrackKey(track), track);
+    const isrc = normalizedTrackIsrc(track);
+    if (!isrc || num(track?.bite_count) == null) continue;
+    unique.set(isrc, track);
   }
   return [...unique.entries()]
-    .filter(([, track]) => !latestRowsForTrack(track, latest)
-      .some((row) => num(row?.like_count) === num(track.bite_count)))
-    .map(([trackKey, track]) => ({ trackKey, track }));
+    .filter(([isrc, track]) => num(latest.get(isrc)?.like_count) !== num(track.bite_count))
+    .map(([, track]) => ({ trackKey: observationTrackKey(track), track }));
 }
 
 export function planLikeCurrentMigrations(tracks, latestRows) {
-  const latest = new Map((latestRows || []).map((row) => [String(row.track_key), row]));
+  const latest = latestRowsByIsrc(latestRows);
   const migrations = [];
   const seen = new Set();
   for (const track of Array.isArray(tracks) ? tracks : []) {
+    const isrc = normalizedTrackIsrc(track);
     const likeCount = num(track?.bite_count);
-    if (likeCount == null) continue;
+    if (!isrc || likeCount == null || seen.has(isrc)) continue;
+    seen.add(isrc);
+    const row = latest.get(isrc);
     const canonical = observationTrackKey(track);
-    if (seen.has(canonical)) continue;
-    seen.add(canonical);
-    const canonicalRow = latest.get(canonical);
-    if (canonicalRow && latestRowMatchesTrack(canonicalRow, track)) continue;
-    const legacy = legacyObservationTrackKey(track);
-    const legacyRow = legacy === canonical ? null : latest.get(legacy);
-    if (legacyRow && latestRowMatchesTrack(legacyRow, track)
-        && num(legacyRow.like_count) === likeCount) {
+    if (row && String(row.track_key || '') !== canonical
+        && num(row.like_count) === likeCount) {
       migrations.push({ trackKey: canonical, track });
     }
   }
