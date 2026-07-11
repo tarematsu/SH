@@ -14,8 +14,6 @@ import { loadMinuteCommentFacts } from './minute-facts-source.js';
 import { saveLiveMinuteFact } from './minute-facts-store.js';
 import { enrichTracks as sharedEnrichTracks } from './shared.js';
 
-let collectionFlight = null;
-
 async function enrichTracks(env, queue, observedAt, config) {
   return sharedEnrichTracks(env, ingest, queue, observedAt, config);
 }
@@ -146,13 +144,10 @@ export async function collectOnce(env, source = 'manual') {
 }
 
 export function runCollection(env, source = 'manual', collector = collectOnce) {
-  if (collectionFlight) return collectionFlight;
-  collectionFlight = Promise.resolve()
-    .then(() => collector(env, source))
-    .finally(() => { collectionFlight = null; });
-  return collectionFlight;
+  return Promise.resolve().then(() => collector(env, source));
 }
 
 export function resetCollectionFlight() {
-  collectionFlight = null;
+  // Kept as a compatibility no-op for callers and tests. Collection promises are
+  // request-scoped and must never be shared across Cloudflare request contexts.
 }
