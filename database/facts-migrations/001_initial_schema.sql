@@ -248,3 +248,10 @@ SET validated_stream_count=NULL
 WHERE source='live_collector'
   AND validated_stream_count IS NOT NULL
   AND (stream_count_rejected=1 OR reported_current_stream_count IS NULL);
+
+-- Do not retain derived stream validation values.
+UPDATE sh_minute_facts
+SET validated_stream_count=NULL,
+    stream_count_rejected=0,
+    quality_score=MIN(1,quality_score+CASE WHEN (quality_flags & 64)<>0 THEN 0.1 ELSE 0 END),
+    quality_flags=quality_flags & ~64;

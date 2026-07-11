@@ -12,7 +12,6 @@
     [8, '曲不明'],
     [16, '曲推定'],
     [32, 'コメント劣化'],
-    [64, '再生数棄却'],
     [128, '遅延payload'],
     [256, '配信外'],
     [512, '一時停止'],
@@ -76,7 +75,7 @@
       const tr = document.createElement('tr');
       tr.className = 'empty-row';
       const td = cell('該当する毎分データはありません。');
-      td.colSpan = 17;
+      td.colSpan = 16;
       tr.append(td);
       tbody.append(tr);
       return;
@@ -89,15 +88,13 @@
       const sourceDetail = `${row.source || ''}${row.source_record_id ? ` / record ${row.source_record_id}` : ''}`;
       const detection = row.track_detection_method || 'unknown';
       const confidence = row.track_confidence == null ? '' : ` ${(Number(row.track_confidence) * 100).toFixed(0)}%`;
-      const streamWarning = row.stream_count_rejected ? 'Stationheadの報告再生数は連続性検証で棄却されました' : '';
       tr.append(
         cell(formatTimestamp(row.minute_at || row.observed_at)),
         cell(source, sourceDetail, `source-${row.source || 'unknown'}`),
         statusCell(row),
         cell(formatNumber(row.listener_count)),
         cell(formatNumber(row.cumulative_listener_count), 'これまで訪れた累計リスナー数'),
-        cell(formatNumber(row.reported_stream_count), streamWarning),
-        cell(formatNumber(row.validated_stream_count), streamWarning),
+        cell(formatNumber(row.total_stream_count), 'Stationheadが報告した総再生数'),
         cell(row.track_title, row.isrc || row.spotify_id || '', 'text-cell'),
         cell(row.artist_name, row.artist_name, 'text-cell'),
         cell(formatNumber(row.track_bite_count)),
@@ -194,7 +191,7 @@
     const headers = [
       '日時JST','minute_at','observed_at','received_at','source','source_priority','source_record_id',
       'channel_id','station_id','配信中','一時停止','listener_count','cumulative_listener_count',
-      'reported_stream_count','validated_stream_count','stream_count_rejected',
+      'total_stream_count',
       '曲名','アーティスト','ISRC','spotify_id','track_bite_count','ホスト','online_member_count','total_member_count','guest_count',
       'comment_count','comment_total','comments_degraded','queue_id','queue_revision_id','queue_position','queue_track_count',
       'track_detection_method','track_confidence','schedule_valid','quality_score','quality_flags','fact_id',
@@ -203,7 +200,7 @@
       formatTimestamp(row.minute_at || row.observed_at), row.minute_at, row.observed_at, row.received_at,
       row.source, row.source_priority, row.source_record_id, row.channel_id, row.station_id,
       row.is_broadcasting, row.is_paused, row.listener_count, row.cumulative_listener_count,
-      row.reported_stream_count, row.validated_stream_count, row.stream_count_rejected,
+      row.total_stream_count,
       row.track_title, row.artist_name, row.isrc, row.spotify_id, row.track_bite_count, row.host_handle,
       row.online_member_count, row.total_member_count, row.guest_count, row.comment_count, row.comment_total, row.comments_degraded,
       row.queue_id, row.queue_revision_id, row.queue_position, row.queue_track_count, row.track_detection_method,

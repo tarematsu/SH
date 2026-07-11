@@ -6,7 +6,6 @@ import {
   minuteBucket,
   qualityScore,
   queueStructuralHash,
-  validatedStreamCountFromSnapshotResult,
   queueStructurePayload,
   timestampMs,
 } from '../src/minute-facts-store.js';
@@ -60,9 +59,3 @@ test('quality score reflects missing or degraded evidence', () => {
   assert.equal(qualityScore(0), 1);
 });
 
-test('minute facts never carry a previous validated stream into a missing snapshot result', () => {
-  assert.equal(validatedStreamCountFromSnapshotResult({ validated_stream_count: 123 }), 123);
-  assert.equal(validatedStreamCountFromSnapshotResult({ validatedStreamCount: 456 }), 456);
-  assert.equal(validatedStreamCountFromSnapshotResult({ validated_stream_count: null }), null);
-  assert.equal(validatedStreamCountFromSnapshotResult(null), null);
-});

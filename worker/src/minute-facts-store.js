@@ -437,11 +437,6 @@ export function qualityScore(flags) {
   return Math.max(0, Number(score.toFixed(2)));
 }
 
-export function validatedStreamCountFromSnapshotResult(snapshotResult) {
-  return integer(snapshotResult?.validated_stream_count
-    ?? snapshotResult?.validatedStreamCount);
-}
-
 const FACT_COLUMNS = [
   'channel_id','station_id','minute_at','observed_at','received_at','source','source_priority',
   'source_record_id','collector_id','broadcast_session_id','host_id','is_broadcasting',
@@ -543,13 +538,9 @@ export async function saveLiveMinuteFact(env, input) {
   if (broadcasting !== 0 && queue && trackId == null) flags |= FACT_QUALITY_FLAGS.TRACK_UNKNOWN;
   if (trackId != null) flags |= FACT_QUALITY_FLAGS.TRACK_INFERRED;
   if (input.comments?.degraded) flags |= FACT_QUALITY_FLAGS.COMMENTS_DEGRADED;
-  if (input.snapshotResult?.stream_rejected || input.snapshotResult?.streamRejected) {
-    flags |= FACT_QUALITY_FLAGS.STREAM_REJECTED;
-  }
   if (playback?.delayed) flags |= FACT_QUALITY_FLAGS.DELAYED_PAYLOAD;
   if (bool(queue?.is_paused) === 1) flags |= FACT_QUALITY_FLAGS.PAUSED;
 
-  const validatedStreamCount = validatedStreamCountFromSnapshotResult(input.snapshotResult);
 
   const fact = {
     channel_id: channelId,
@@ -571,8 +562,8 @@ export async function saveLiveMinuteFact(env, input) {
     guest_count: integer(snapshot.guest_count),
     reported_total_listens: integer(snapshot.total_listens),
     reported_current_stream_count: integer(snapshot.current_stream_count),
-    validated_stream_count: validatedStreamCount,
-    stream_count_rejected: flags & FACT_QUALITY_FLAGS.STREAM_REJECTED ? 1 : 0,
+    validated_stream_count: null,
+    stream_count_rejected: 0,
     queue_revision_id: revisionId,
     queue_id: integer(queue?.queue_id),
     queue_start_time: timestampMs(queue?.start_time),
