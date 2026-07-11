@@ -5,7 +5,7 @@ import {
   sanitizeFailureDetail,
 } from './collector-failure.js';
 import { buildCollectionPlan } from './collector-plan.js';
-import { COLLECTOR_VERSION, configFromEnv, shJson } from './collector-config.js';
+import { configFromEnv, shJson } from './collector-config.js';
 import { collectOptionalComments } from './collector-comments.js';
 import { extractIds, extractQueue, normalizeSnapshot, validateChannelPayload } from './collector-payload.js';
 import { ingest } from './collector-ingest.js';
@@ -76,18 +76,11 @@ export async function collectOnce(env, source = 'manual') {
 
     const commentResult = initialPlan.comments
       ? await collectOptionalComments(env, state, config, observedAt)
-      : {
-        commentsSaved: 0,
-        commentCount: 0,
-        commentTotal: null,
-        degraded: false,
-        errorStage: null,
-      };
+      : { commentsSaved: 0, degraded: false, errorStage: null };
 
-    let minuteFactResult = { skipped: true, reason: 'not-attempted' };
     try {
       stage = 'd1_write_minute_fact';
-      minuteFactResult = await saveLiveMinuteFact(env, {
+      await saveLiveMinuteFact(env, {
         observedAt,
         snapshot,
         snapshotResult,
@@ -96,14 +89,9 @@ export async function collectOnce(env, source = 'manual') {
         comments: commentResult,
       });
     } catch (error) {
-      minuteFactResult = {
-        skipped: true,
-        reason: 'minute-fact-write-failed',
-        error: sanitizeFailureDetail(error?.message || error),
-      };
       console.warn(JSON.stringify({
         event: 'minute_fact_write_failed',
-        error: minuteFactResult.error,
+        error: sanitizeFailureDetail(error?.message || error),
       }));
     }
 
@@ -139,11 +127,7 @@ export async function collectOnce(env, source = 'manual') {
       like_observations_written: Number(queueResult?.like_observations_written || 0),
       metadata_saved: metadataSaved,
       metadata_deferred: Boolean(queue && !metadataPlanned),
-      minute_fact_written: minuteFactResult?.skipped === false,
-      minute_fact_skip_reason: minuteFactResult?.skipped ? minuteFactResult.reason : null,
-      minute_fact_revision_id: minuteFactResult?.revisionId ?? null,
       heartbeat_written: false,
-      collector_version: COLLECTOR_VERSION,
       token_expires_at: state.tokenExpiresAt || null,
     };
   } catch (error) {
