@@ -59,3 +59,7 @@ test('quality score reflects missing or degraded evidence', () => {
   assert.equal(qualityScore(0), 1);
 });
 
+test('legacy stream rejection quality remains readable during cleanup', () => {
+  assert.equal(FACT_QUALITY_FLAGS.STREAM_REJECTED, 64);
+  assert.equal(qualityScore(FACT_QUALITY_FLAGS.STREAM_REJECTED), 0.9);
+});
