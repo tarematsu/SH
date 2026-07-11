@@ -39,6 +39,7 @@ function snapshotHashPayload(data, validatedStreamCount, compactRaw) {
     online_member_count: num(data?.online_member_count),
     total_member_count: num(data?.total_member_count),
     guest_count: num(data?.guest_count),
+    cumulative_listener_count: num(data?.total_listens),
     validated_stream_count: validatedStreamCount,
     stream_goal: num(data?.stream_goal),
     host_account_id: num(data?.host_account_id),
@@ -49,10 +50,8 @@ function snapshotHashPayload(data, validatedStreamCount, compactRaw) {
 }
 
 function streamCandidates(data) {
-  return [...new Set([
-    num(data?.current_stream_count),
-    num(data?.total_listens),
-  ].filter((value) => value != null && value >= 0))];
+  const value = num(data?.current_stream_count);
+  return value != null && value >= 0 ? [value] : [];
 }
 
 export function validatedStreamCount(data, current, observedAt) {
@@ -60,13 +59,7 @@ export function validatedStreamCount(data, current, observedAt) {
   if (!candidates.length) return null;
 
   const previous = num(current?.last_stream_count);
-  if (previous == null) {
-    if (candidates.length === 1) return candidates[0];
-    const smallest = Math.min(...candidates);
-    const largest = Math.max(...candidates);
-    if (largest - smallest > Math.max(10_000, smallest * 10)) return largest;
-    return candidates[0];
-  }
+  if (previous == null) return candidates[0];
 
   const lastAcceptedAt = Number(
     current?.last_stream_at
@@ -101,7 +94,13 @@ export async function saveLeanSnapshot(db, observedAt, data) {
   const hash = await payloadHash(snapshotHashPayload(data, streamCount, compactPayload));
   if (current?.payload_hash === hash
       && observedAt - Number(current.last_snapshot_at || 0) < SNAPSHOT_CHECKPOINT_MS) {
-    return { inserted: false, skipped: true, streamRejected };
+    return {
+      inserted: false,
+      skipped: true,
+      streamRejected,
+      validatedStreamCount: streamCount,
+      validated_stream_count: streamCount,
+    };
   }
 
   const common = [
@@ -143,7 +142,13 @@ export async function saveLeanSnapshot(db, observedAt, data) {
         Date.now(),
       ),
   ]);
-  return { inserted: true, skipped: false, streamRejected };
+  return {
+    inserted: true,
+    skipped: false,
+    streamRejected,
+    validatedStreamCount: streamCount,
+    validated_stream_count: streamCount,
+  };
 }
 
 export function queueStructuralPayload(data) {
