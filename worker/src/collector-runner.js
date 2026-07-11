@@ -12,30 +12,172 @@ import { ingest } from './collector-ingest.js';
 import { loadCollectorState, saveCollectorState } from './collector-state.js';
 import { loadMinuteCommentFacts } from './minute-facts-source.js';
 import { saveLiveMinuteFact } from './minute-facts-store.js';
+import { combinedAbortSignal } from './request-signal.js';
 import { enrichTracks as sharedEnrichTracks } from './shared.js';
+
+const DEFAULT_MINUTE_FACT_TIMEOUT_MS = 12_000;
+const MIN_MINUTE_FACT_TIMEOUT_MS = 1_000;
+const MAX_MINUTE_FACT_TIMEOUT_MS = 20_000;
+const SLOW_STAGE_THRESHOLD_MS = 1_000;
+const RAW_D1_STATEMENT = Symbol('collector-raw-d1-statement');
 
 async function enrichTracks(env, queue, observedAt, config) {
   return sharedEnrichTracks(env, ingest, queue, observedAt, config);
+}
+
+function signalFrom(value) {
+  if (value && typeof value.aborted === 'boolean') return value;
+  return value?.__COLLECTION_ABORT_SIGNAL || null;
+}
+
+function collectionAbortError(signal, stage) {
+  if (signal?.reason instanceof Error) return signal.reason;
+  const error = new Error(`Collection aborted during ${stage}`);
+  error.name = 'AbortError';
+  error.code = 'COLLECTION_ABORTED';
+  return error;
+}
+
+export function throwIfCollectionAborted(value, stage = 'collection') {
+  const signal = signalFrom(value);
+  if (signal?.aborted) throw collectionAbortError(signal, stage);
+}
+
+function wrapD1Statement(statement, signal, stage) {
+  return new Proxy(statement, {
+    get(target, property) {
+      if (property === RAW_D1_STATEMENT) return target;
+      if (property === 'bind') {
+        return (...args) => wrapD1Statement(target.bind(...args), signal, stage);
+      }
+      const value = Reflect.get(target, property, target);
+      if (typeof value !== 'function') return value;
+      if (!['first', 'run', 'all', 'raw'].includes(String(property))) return value.bind(target);
+      return async (...args) => {
+        throwIfCollectionAborted(signal, stage);
+        const result = await value.apply(target, args);
+        throwIfCollectionAborted(signal, stage);
+        return result;
+      };
+    },
+  });
+}
+
+export function withAbortableD1(db, signal, stage = 'd1') {
+  if (!db || !signal) return db;
+  return new Proxy(db, {
+    get(target, property) {
+      if (property === 'prepare') {
+        return (sql) => {
+          throwIfCollectionAborted(signal, stage);
+          return wrapD1Statement(target.prepare(sql), signal, stage);
+        };
+      }
+      if (property === 'batch') {
+        return async (statements) => {
+          throwIfCollectionAborted(signal, stage);
+          const result = await target.batch(
+            (statements || []).map((statement) => statement?.[RAW_D1_STATEMENT] || statement),
+          );
+          throwIfCollectionAborted(signal, stage);
+          return result;
+        };
+      }
+      const value = Reflect.get(target, property, target);
+      return typeof value === 'function' ? value.bind(target) : value;
+    },
+  });
+}
+
+function withCollectionSignal(env, signal) {
+  const db = withAbortableD1(env?.DB, signal, 'stationhead-monitor');
+  const factsDb = withAbortableD1(env?.FACTS_DB, signal, 'Stationhead-DB');
+  return new Proxy(env || {}, {
+    get(target, property, receiver) {
+      if (property === '__COLLECTION_ABORT_SIGNAL') return signal;
+      if (property === 'DB') return db;
+      if (property === 'FACTS_DB') return factsDb;
+      return Reflect.get(target, property, receiver);
+    },
+    has(target, property) {
+      return property === '__COLLECTION_ABORT_SIGNAL'
+        || property === 'DB'
+        || property === 'FACTS_DB'
+        || Reflect.has(target, property);
+    },
+  });
+}
+
+function minuteFactTimeoutMs(env = {}) {
+  const configured = Number(env.MINUTE_FACT_TIMEOUT_MS ?? DEFAULT_MINUTE_FACT_TIMEOUT_MS);
+  if (!Number.isFinite(configured)) return DEFAULT_MINUTE_FACT_TIMEOUT_MS;
+  return Math.max(MIN_MINUTE_FACT_TIMEOUT_MS, Math.min(MAX_MINUTE_FACT_TIMEOUT_MS, configured));
+}
+
+function rejectWhenAborted(signal, stage) {
+  return new Promise((_, reject) => {
+    if (signal.aborted) {
+      reject(collectionAbortError(signal, stage));
+      return;
+    }
+    signal.addEventListener('abort', () => reject(collectionAbortError(signal, stage)), { once: true });
+  });
+}
+
+export async function saveLiveMinuteFactWithinBudget(env, input, writer = saveLiveMinuteFact) {
+  const signal = combinedAbortSignal(signalFrom(env), minuteFactTimeoutMs(env));
+  const boundedEnv = withCollectionSignal(env, signal);
+  return Promise.race([
+    Promise.resolve().then(() => writer(boundedEnv, input)),
+    rejectWhenAborted(signal, 'd1_write_minute_fact'),
+  ]);
+}
+
+async function timedStage(stage, operation, thresholdMs = SLOW_STAGE_THRESHOLD_MS) {
+  const startedAt = Date.now();
+  let outcome = 'success';
+  try {
+    return await operation();
+  } catch (error) {
+    outcome = 'error';
+    throw error;
+  } finally {
+    const durationMs = Date.now() - startedAt;
+    if (outcome === 'error' || durationMs >= thresholdMs) {
+      console.log(JSON.stringify({
+        event: 'collector_stage_timing',
+        stage,
+        outcome,
+        duration_ms: durationMs,
+      }));
+    }
+  }
 }
 
 export async function collectOnce(env, source = 'manual') {
   const observedAt = Date.now();
   let stage = 'collector_start';
   let state = null;
+  const activeEnv = withCollectionSignal(env, signalFrom(env));
 
   try {
-    if (!env.DB) throw new Error('DB binding is missing');
-    const config = configFromEnv(env);
+    if (!activeEnv.DB) throw new Error('DB binding is missing');
+    const config = configFromEnv(activeEnv);
+    throwIfCollectionAborted(activeEnv, stage);
 
-    stage = env.__shAuthState ? 'sh_auth' : 'd1_read_collector_state';
-    state = await loadCollectorState(env);
+    stage = activeEnv.__shAuthState ? 'sh_auth' : 'd1_read_collector_state';
+    state = await timedStage(stage, () => loadCollectorState(activeEnv));
     const previousRunAt = Number(state.lastRunAt || 0);
     const metadataRetry = Boolean(state.lastError);
     state.lastRunAt = observedAt;
     state.lastError = null;
 
     stage = 'sh_channel_request';
-    const channel = await shJson(state, config, `/channels/alias/${encodeURIComponent(config.channelAlias)}`);
+    const channel = await timedStage(stage, () => shJson(
+      state,
+      config,
+      `/channels/alias/${encodeURIComponent(config.channelAlias)}`,
+    ));
 
     stage = 'sh_channel_payload';
     validateChannelPayload(channel, config.channelAlias);
@@ -56,7 +198,13 @@ export async function collectOnce(env, source = 'manual') {
     let snapshotResult = null;
     if (initialPlan.snapshot) {
       stage = 'd1_write_snapshot';
-      snapshotResult = await ingest(env, 'snapshot', snapshot, observedAt, { returnDetails: true });
+      snapshotResult = await timedStage(stage, () => ingest(
+        activeEnv,
+        'snapshot',
+        snapshot,
+        observedAt,
+        { returnDetails: true },
+      ));
     }
 
     let queueResult = null;
@@ -64,30 +212,35 @@ export async function collectOnce(env, source = 'manual') {
     let metadataPlanned = false;
     if (initialPlan.queue) {
       stage = 'd1_write_queue';
-      queueResult = await ingest(env, 'queue', queue, observedAt);
+      queueResult = await timedStage(stage, () => ingest(activeEnv, 'queue', queue, observedAt));
       const completedPlan = buildCollectionPlan({ ...planInput, queueResult });
       metadataPlanned = completedPlan.metadata;
       if (metadataPlanned) {
         stage = 'd1_write_track_metadata';
-        metadataSaved = await enrichTracks(env, queue, observedAt, config);
+        metadataSaved = await timedStage(stage, () => enrichTracks(activeEnv, queue, observedAt, config));
       }
     }
 
+    stage = 'sh_chat_history';
     const commentResult = initialPlan.comments
-      ? await collectOptionalComments(env, state, config, observedAt)
+      ? await timedStage(stage, () => collectOptionalComments(activeEnv, state, config, observedAt))
       : { commentsSaved: 0, degraded: false, errorStage: null };
-    const minuteComments = await loadMinuteCommentFacts(env.DB, state.stationId, observedAt);
+    stage = 'd1_read_minute_comments';
+    const minuteComments = await timedStage(
+      stage,
+      () => loadMinuteCommentFacts(activeEnv.DB, state.stationId, observedAt),
+    );
 
     try {
       stage = 'd1_write_minute_fact';
-      await saveLiveMinuteFact(env, {
+      await timedStage(stage, () => saveLiveMinuteFactWithinBudget(activeEnv, {
         observedAt,
         snapshot,
         snapshotResult,
         queue,
         queueResult,
         comments: { ...commentResult, ...minuteComments },
-      });
+      }));
     } catch (error) {
       console.warn(JSON.stringify({
         event: 'minute_fact_write_failed',
@@ -95,14 +248,15 @@ export async function collectOnce(env, source = 'manual') {
       }));
     }
 
+    throwIfCollectionAborted(activeEnv, 'd1_write_collector_state');
     stage = 'd1_write_collector_state';
-    await saveCollectorState(env, state, {
+    await timedStage(stage, () => saveCollectorState(activeEnv, state, {
       lastRunAt: observedAt,
       lastSuccessAt: Date.now(),
       lastError: null,
       tokenExpiresAt: jwtExpiryMs(state.authToken) || state.tokenExpiresAt,
-    });
-    await clearCollectorFailure(env).catch((error) => {
+    }));
+    await clearCollectorFailure(activeEnv).catch((error) => {
       console.warn(JSON.stringify({
         event: 'collector_failure_clear_failed',
         error: sanitizeFailureDetail(error?.message || error),
@@ -133,7 +287,7 @@ export async function collectOnce(env, source = 'manual') {
   } catch (error) {
     const failure = asCollectorFailure(error, stage, Date.now());
     if (state) {
-      await saveCollectorState(env, state, {
+      await saveCollectorState(activeEnv, state, {
         lastRunAt: observedAt,
         lastError: failure.message.slice(0, 2000),
         tokenExpiresAt: jwtExpiryMs(state.authToken) || state.tokenExpiresAt,

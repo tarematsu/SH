@@ -63,11 +63,19 @@ async function responseSnapshot(response) {
     status: response.status,
     statusText: response.statusText,
     headers: [...response.headers.entries()],
-    body: await response.clone().arrayBuffer(),
+    body: await response.arrayBuffer(),
   };
 }
 
-function responseFromSnapshot(snapshot, cacheStatus) {
+function responseFromSnapshot(snapshot) {
+  return new Response(snapshot.body.slice(0), {
+    status: snapshot.status,
+    statusText: snapshot.statusText,
+    headers: snapshot.headers,
+  });
+}
+
+function resendResponseFromSnapshot(snapshot, cacheStatus) {
   const headers = new Headers(snapshot.headers);
   headers.set('x-sh-resend-cache', cacheStatus);
   return new Response(snapshot.body.slice(0), {
@@ -77,9 +85,15 @@ function responseFromSnapshot(snapshot, cacheStatus) {
   });
 }
 
+function responseOk(snapshot) {
+  return snapshot.status >= 200 && snapshot.status < 300;
+}
+
 export function createOptionalFetchGuard(nativeFetch, nowFn = Date.now) {
   if (typeof nativeFetch !== 'function') throw new TypeError('nativeFetch must be a function');
 
+  // Shared promises resolve only to detached status/header/body bytes. No
+  // Response, Request or stream is retained in module scope.
   const flights = new Map();
   const failures = new Map();
   const resendFlights = new Map();
@@ -106,19 +120,18 @@ export function createOptionalFetchGuard(nativeFetch, nowFn = Date.now) {
       const successKey = `${url.toString()}\n${idempotencyKey}`;
       const cached = resendSuccesses.get(successKey);
       if (cached && cached.expiresAt > now) {
-        return responseFromSnapshot(cached.snapshot, 'hit');
+        return resendResponseFromSnapshot(cached.snapshot, 'hit');
       }
       if (cached) resendSuccesses.delete(successKey);
 
-      if (resendFlights.has(successKey)) {
-        return responseFromSnapshot(await resendFlights.get(successKey), 'coalesced');
-      }
+      const existing = resendFlights.get(successKey);
+      if (existing) return resendResponseFromSnapshot(await existing, 'coalesced');
 
       const pending = Promise.resolve()
         .then(() => nativeFetch(input, init))
         .then(async (response) => {
           const snapshot = await responseSnapshot(response);
-          if (response.ok) {
+          if (responseOk(snapshot)) {
             resendSuccesses.set(successKey, {
               snapshot,
               expiresAt: (Number(nowFn()) || Date.now()) + RESEND_SUCCESS_TTL_MS,
@@ -132,7 +145,7 @@ export function createOptionalFetchGuard(nativeFetch, nowFn = Date.now) {
         });
       resendFlights.set(successKey, pending);
       trimMap(resendFlights);
-      return responseFromSnapshot(await pending, 'miss');
+      return resendResponseFromSnapshot(await pending, 'miss');
     }
 
     if (!OPTIONAL_HOSTS.has(url.hostname)) return nativeFetch(input, init);
@@ -144,7 +157,8 @@ export function createOptionalFetchGuard(nativeFetch, nowFn = Date.now) {
     if (retryAt > now) return failureResponse(url.hostname);
     if (retryAt) failures.delete(key);
 
-    if (dedupe && flights.has(key)) return (await flights.get(key)).clone();
+    const existing = dedupe ? flights.get(key) : null;
+    if (existing) return responseFromSnapshot(await existing);
 
     const requestInit = {
       ...init,
@@ -152,13 +166,14 @@ export function createOptionalFetchGuard(nativeFetch, nowFn = Date.now) {
     };
     const pending = Promise.resolve()
       .then(() => nativeFetch(input, requestInit))
-      .then((response) => {
-        if (response?.ok) failures.delete(key);
+      .then(async (response) => {
+        const snapshot = await responseSnapshot(response);
+        if (responseOk(snapshot)) failures.delete(key);
         else {
           failures.set(key, (Number(nowFn()) || Date.now()) + OPTIONAL_FAILURE_BACKOFF_MS);
           trimMap(failures);
         }
-        return response;
+        return snapshot;
       })
       .catch((error) => {
         failures.set(key, (Number(nowFn()) || Date.now()) + OPTIONAL_FAILURE_BACKOFF_MS);
@@ -173,7 +188,7 @@ export function createOptionalFetchGuard(nativeFetch, nowFn = Date.now) {
       flights.set(key, pending);
       trimMap(flights);
     }
-    return (await pending).clone();
+    return responseFromSnapshot(await pending);
   };
 
   Object.defineProperty(guardedFetch, INSTALL_MARK, { value: true });

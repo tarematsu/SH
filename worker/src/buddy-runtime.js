@@ -25,7 +25,6 @@ export const BUDDY_PLAYBACK_SCHEMA_SQL = `CREATE TABLE IF NOT EXISTS sh_playback
 )`;
 
 let schemaReady = false;
-let refreshFlight = null;
 
 function positive(value, fallback, maximum = Number.MAX_SAFE_INTEGER) {
   const number = Math.trunc(Number(value));
@@ -177,38 +176,32 @@ async function waitForRefresh(env, stateId, previousSuccessAt, nowFn = Date.now)
 }
 
 async function refreshSession(env, dependencies = {}, options = {}) {
-  if (refreshFlight) return refreshFlight;
-  refreshFlight = Promise.resolve().then(async () => {
-    const cfg = config(env);
-    const stateId = cfg.authStateId;
-    const nowFn = dependencies.now || Date.now;
-    const now = nowFn();
-    const initial = await readAuthState(env, stateId);
-    if (!options.force && usableSession(initial, now)) return initial;
+  const cfg = config(env);
+  const stateId = cfg.authStateId;
+  const nowFn = dependencies.now || Date.now;
+  const now = nowFn();
+  const initial = await readAuthState(env, stateId);
+  if (!options.force && usableSession(initial, now)) return initial;
 
-    if (!await claimRefresh(env, stateId, now)) {
-      const waited = await waitForRefresh(env, stateId, initial.lastSuccessAt, nowFn);
-      if (waited) return waited;
-      throw new Error('buddy46 authentication refresh lock timed out');
-    }
+  if (!await claimRefresh(env, stateId, now)) {
+    const waited = await waitForRefresh(env, stateId, initial.lastSuccessAt, nowFn);
+    if (waited) return waited;
+    throw new Error('buddy46 authentication refresh lock timed out');
+  }
 
-    try {
-      const acquired = await (dependencies.acquireSession || acquireDirectSession)(
-        env,
-        dependencies.fetch,
-      );
-      await saveSession(env, stateId, acquired, nowFn());
-      await finishRefresh(env, stateId, null, nowFn());
-      return readAuthState(env, stateId);
-    } catch (error) {
-      const message = String(error?.message || error).slice(0, 800);
-      await finishRefresh(env, stateId, message, nowFn()).catch(() => {});
-      throw error;
-    }
-  }).finally(() => {
-    refreshFlight = null;
-  });
-  return refreshFlight;
+  try {
+    const acquired = await (dependencies.acquireSession || acquireDirectSession)(
+      env,
+      dependencies.fetch,
+    );
+    await saveSession(env, stateId, acquired, nowFn());
+    await finishRefresh(env, stateId, null, nowFn());
+    return readAuthState(env, stateId);
+  } catch (error) {
+    const message = String(error?.message || error).slice(0, 800);
+    await finishRefresh(env, stateId, message, nowFn()).catch(() => {});
+    throw error;
+  }
 }
 
 export async function ensureBuddyPlaybackSchema(env) {
@@ -240,5 +233,4 @@ export async function collectBuddyPlaybackReady(env, observedAt = Date.now(), de
 
 export function resetBuddyRuntimeForTests() {
   schemaReady = false;
-  refreshFlight = null;
 }

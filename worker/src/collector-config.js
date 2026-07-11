@@ -1,5 +1,6 @@
 import { jwtExpiryMs, normalizeBearer, positiveNumber as numberValue } from './shared.js';
 import { sanitizeFailureDetail } from './collector-failure.js';
+import { combinedAbortSignal } from './request-signal.js';
 
 export const API_BASE = 'https://production1.stationhead.com';
 export const COLLECTOR_VERSION = '1.0.0-worker';
@@ -21,6 +22,7 @@ export function configFromEnv(env) {
       Math.min(numberValue(env.METADATA_REFRESH_INTERVAL_MS, 15 * 60_000), 7 * 24 * 60 * 60_000),
     ),
     requestTimeoutMs: Math.min(numberValue(env.REQUEST_TIMEOUT_MS, 15_000), 30_000),
+    collectionSignal: env.__COLLECTION_ABORT_SIGNAL || null,
   };
 }
 
@@ -42,7 +44,7 @@ export function shHeaders(state, config) {
 export async function shJson(state, config, path) {
   const response = await fetch(`${API_BASE}${path}`, {
     headers: shHeaders(state, config),
-    signal: AbortSignal.timeout(config.requestTimeoutMs),
+    signal: combinedAbortSignal(config.collectionSignal, config.requestTimeoutMs),
   });
 
   const refreshed = normalizeBearer(response.headers.get('authorization'));

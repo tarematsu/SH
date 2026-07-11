@@ -11,6 +11,7 @@ const executable = process.platform === 'win32'
   ? path.resolve(workerRoot, 'node_modules/.bin/wrangler.cmd')
   : path.resolve(workerRoot, 'node_modules/.bin/wrangler');
 const schemaPath = path.resolve(repositoryRoot, 'database/facts-migrations/001_initial_schema.sql');
+const factsBinding = 'FACTS_DB';
 
 function run(args) {
   const result = spawnSync(executable, args, {
@@ -27,7 +28,7 @@ test('minute facts D1 schema applies and exposes required tables', { timeout: 60
   rmSync(stateDirectory, { recursive: true, force: true });
   try {
     run([
-      'd1', 'execute', 'sh-monitor',
+      'd1', 'execute', factsBinding,
       '--local', '--persist-to', stateDirectory,
       '--file', schemaPath,
     ]);
@@ -47,7 +48,7 @@ test('minute facts D1 schema applies and exposes required tables', { timeout: 60
     ];
     for (const table of requiredTables) {
       run([
-        'd1', 'execute', 'sh-monitor',
+        'd1', 'execute', factsBinding,
         '--local', '--persist-to', stateDirectory,
         '--command', `SELECT COUNT(*) AS row_count FROM ${table};`,
       ]);

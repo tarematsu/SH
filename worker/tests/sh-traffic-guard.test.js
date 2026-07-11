@@ -53,3 +53,27 @@ test('station handle reads still have their own per-minute limit', async () => {
     '/station/handle/sakurazaka46jp/guest',
   ]);
 });
+
+test('cached Stationhead reads are rebuilt from detached bytes instead of cloning the source response', async () => {
+  let calls = 0;
+  const guarded = createShTrafficGuard(async () => {
+    calls += 1;
+    const response = new Response('{"ok":true}', {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    });
+    Object.defineProperty(response, 'clone', {
+      value() {
+        throw new Error('source Response must not be retained or cloned');
+      },
+    });
+    return response;
+  }, () => 60_001);
+
+  const first = await guarded(`${ORIGIN}/channels/alias/buddies`);
+  const second = await guarded(`${ORIGIN}/channels/alias/buddies`);
+
+  assert.deepEqual(await first.json(), { ok: true });
+  assert.deepEqual(await second.json(), { ok: true });
+  assert.equal(calls, 1);
+});
