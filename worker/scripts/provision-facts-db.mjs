@@ -30,15 +30,40 @@ function parseJsonOutput(output) {
   return JSON.parse(trimmed.slice(start));
 }
 
+function readConfig() {
+  return JSON.parse(readFileSync(configPath, 'utf8'));
+}
+
+function bindingFrom(config) {
+  return (Array.isArray(config.d1_databases) ? config.d1_databases : [])
+    .find((entry) => entry.binding === 'FACTS_DB');
+}
+
 const databases = parseJsonOutput(wrangler(['d1', 'list', '--json']));
 let database = databases.find((item) => item.name === databaseName);
-if (!database) database = parseJsonOutput(wrangler(['d1', 'create', databaseName, '--json']));
+let config = readConfig();
+
+if (!database) {
+  wrangler([
+    'd1', 'create', databaseName,
+    '--binding', 'FACTS_DB',
+    '--update-config',
+    '--config', configPath,
+  ]);
+  config = readConfig();
+  const generated = bindingFrom(config);
+  if (!generated?.database_id) {
+    throw new Error(`Wrangler created ${databaseName} but did not write the FACTS_DB binding`);
+  }
+  database = {
+    name: databaseName,
+    uuid: generated.database_id,
+  };
+}
+
 const databaseId = database.uuid || database.id || database.database_id;
 if (!databaseId) throw new Error(`Could not determine database id for ${databaseName}`);
 
-wrangler(['d1', 'execute', databaseName, '--remote', `--file=${schemaPath}`]);
-
-const config = JSON.parse(readFileSync(configPath, 'utf8'));
 const bindings = Array.isArray(config.d1_databases) ? config.d1_databases : [];
 const nextBinding = {
   binding: 'FACTS_DB',
@@ -50,6 +75,13 @@ if (index >= 0) bindings[index] = nextBinding;
 else bindings.push(nextBinding);
 config.d1_databases = bindings;
 writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`);
+
+wrangler([
+  'd1', 'execute', databaseName,
+  '--remote', '--yes',
+  '--file', schemaPath,
+]);
+
 writeFileSync(metadataPath, `${JSON.stringify({
   binding: 'FACTS_DB',
   database_name: databaseName,
