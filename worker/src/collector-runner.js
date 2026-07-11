@@ -7,7 +7,14 @@ import {
 import { buildCollectionPlan } from './collector-plan.js';
 import { configFromEnv, shJson } from './collector-config.js';
 import { collectOptionalComments } from './collector-comments.js';
-import { extractIds, extractQueue, normalizeSnapshot, validateChannelPayload } from './collector-payload.js';
+import {
+  extractIds,
+  extractQueue,
+  minuteFactQueue,
+  minuteFactSnapshot,
+  normalizeSnapshot,
+  validateChannelPayload,
+} from './collector-payload.js';
 import { ingest } from './collector-ingest.js';
 import { loadCollectorState, saveCollectorState } from './collector-state.js';
 import { loadMinuteCommentFacts } from './minute-facts-source.js';
@@ -235,8 +242,8 @@ export async function collectOnce(env, source = 'manual') {
     stage = 'd1_enqueue_minute_fact';
     const minuteFactJob = await timedStage(stage, () => enqueueMinuteFactJob(activeEnv, {
       observedAt,
-      snapshot,
-      queue,
+      snapshot: minuteFactSnapshot(snapshot),
+      queue: minuteFactQueue(queue),
       comments: { ...commentResult, ...minuteComments },
     }));
 

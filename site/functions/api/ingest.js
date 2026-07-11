@@ -4,7 +4,6 @@ import {
   json,
   observedAtFrom,
   readJsonBody,
-  stripAppleMusicFields,
 } from '../lib/api-utils.js';
 import { saveCommentCounts } from '../lib/comment-counts.js';
 import {
@@ -21,12 +20,6 @@ export function isPendingStreamSchemaError(error) {
   const message = String(error?.message || error || '');
   return /no such column:\s*(?:last_stream_count|last_stream_at|validated_stream_count)\b/i.test(message)
     || /table\s+sh_channel_snapshots\s+has no column named\s+validated_stream_count/i.test(message);
-}
-
-function spotifyOnlyBody(body) {
-  return body?.type === 'queue'
-    ? { ...body, data: stripAppleMusicFields(body?.data ?? {}) }
-    : body;
 }
 
 async function handleComments({ env, body, observedAt, data }) {
@@ -81,9 +74,8 @@ export function supportsOptimizedIngestType(type) {
   return Object.hasOwn(INGEST_HANDLERS, String(type || ''));
 }
 
-export async function ingestOptimizedBody(env, inputBody) {
+export async function ingestOptimizedBody(env, body) {
   if (!env?.DB) return null;
-  const body = spotifyOnlyBody(inputBody);
   const handler = INGEST_HANDLERS[body?.type];
   if (!handler) return null;
   const observedAt = observedAtFrom(body);

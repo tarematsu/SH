@@ -55,6 +55,26 @@ export function normalizeSnapshot(channel, state, config) {
   };
 }
 
+// The minute-fact job pipeline (worker/src/minute-facts-*.js) never reads
+// `raw` - it embeds the full upstream API response and, for queue tracks,
+// duplicates it a second time (queue.raw plus per-track raw). Stripping it
+// before the payload is JSON.stringify'd into sh_minute_fact_jobs avoids
+// serializing/deserializing several times more data than the job needs.
+export function minuteFactSnapshot(snapshot) {
+  if (!snapshot) return snapshot;
+  const { raw, ...rest } = snapshot;
+  return rest;
+}
+
+export function minuteFactQueue(queue) {
+  if (!queue) return queue;
+  const { raw, tracks, ...rest } = queue;
+  return {
+    ...rest,
+    tracks: (tracks || []).map(({ raw: trackRaw, ...track }) => track),
+  };
+}
+
 export function extractQueue(channel, stationId) {
   const station = channel?.current_station || {};
   const queue = station?.queue || channel?.queue || null;
