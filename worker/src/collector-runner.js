@@ -10,6 +10,7 @@ import { collectOptionalComments } from './collector-comments.js';
 import { extractIds, extractQueue, normalizeSnapshot, validateChannelPayload } from './collector-payload.js';
 import { ingest } from './collector-ingest.js';
 import { loadCollectorState, saveCollectorState } from './collector-state.js';
+import { saveLiveMinuteFact } from './minute-facts-store.js';
 import { enrichTracks as sharedEnrichTracks } from './shared.js';
 
 let collectionFlight = null;
@@ -41,6 +42,7 @@ export async function collectOnce(env, source = 'manual') {
     validateChannelPayload(channel, config.channelAlias);
     extractIds(channel, state);
 
+    const snapshot = normalizeSnapshot(channel, state, config);
     const queue = extractQueue(channel, state.stationId);
     const planInput = {
       state,
@@ -52,9 +54,10 @@ export async function collectOnce(env, source = 'manual') {
     };
     const initialPlan = buildCollectionPlan(planInput);
 
+    let snapshotResult = null;
     if (initialPlan.snapshot) {
       stage = 'd1_write_snapshot';
-      await ingest(env, 'snapshot', normalizeSnapshot(channel, state, config), observedAt);
+      snapshotResult = await ingest(env, 'snapshot', snapshot, observedAt);
     }
 
     let queueResult = null;
@@ -73,7 +76,36 @@ export async function collectOnce(env, source = 'manual') {
 
     const commentResult = initialPlan.comments
       ? await collectOptionalComments(env, state, config, observedAt)
-      : { commentsSaved: 0, degraded: false, errorStage: null };
+      : {
+        commentsSaved: 0,
+        commentCount: 0,
+        commentTotal: null,
+        degraded: false,
+        errorStage: null,
+      };
+
+    let minuteFactResult = { skipped: true, reason: 'not-attempted' };
+    try {
+      stage = 'd1_write_minute_fact';
+      minuteFactResult = await saveLiveMinuteFact(env, {
+        observedAt,
+        snapshot,
+        snapshotResult,
+        queue,
+        queueResult,
+        comments: commentResult,
+      });
+    } catch (error) {
+      minuteFactResult = {
+        skipped: true,
+        reason: 'minute-fact-write-failed',
+        error: sanitizeFailureDetail(error?.message || error),
+      };
+      console.warn(JSON.stringify({
+        event: 'minute_fact_write_failed',
+        error: minuteFactResult.error,
+      }));
+    }
 
     stage = 'd1_write_collector_state';
     await saveCollectorState(env, state, {
@@ -107,7 +139,11 @@ export async function collectOnce(env, source = 'manual') {
       like_observations_written: Number(queueResult?.like_observations_written || 0),
       metadata_saved: metadataSaved,
       metadata_deferred: Boolean(queue && !metadataPlanned),
+      minute_fact_written: minuteFactResult?.skipped === false,
+      minute_fact_skip_reason: minuteFactResult?.skipped ? minuteFactResult.reason : null,
+      minute_fact_revision_id: minuteFactResult?.revisionId ?? null,
       heartbeat_written: false,
+      collector_version: COLLECTOR_VERSION,
       token_expires_at: state.tokenExpiresAt || null,
     };
   } catch (error) {
