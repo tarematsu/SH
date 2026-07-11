@@ -1,0 +1,21 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "sh-monitor-other",
+  "main": "src/other-entry.js",
+  "compatibility_date": "2026-06-24",
+  "workers_dev": true,
+  "observability": { "enabled": true },
+  "vars": {
+    "BUDDY_PLAYBACK_ENABLED": true,
+    "BUDDY_PLAYBACK_ALIAS": "buddy46",
+    "BUDDY_PLAYBACK_AUTH_STATE_ID": "buddy46",
+    "BUDDY_PLAYBACK_INTERVAL_MS": 10800000,
+    "HOST_PROFILE_HANDLE": "sakuramankai",
+    "SOLO_BROADCAST_HANDLE": "sakurazaka46jp",
+    "REQUEST_TIMEOUT_MS": 8000,
+    "WEEKLY_LEADERBOARD_ENABLED": true,
+    "DATA_MAINTENANCE_ENABLED": false
+  },
+  "triggers": { "crons": ["* * * * *"] },
+  "d1_databases": [{ "binding": "DB", "database_name": "stationhead-monitor", "database_id": "5d5f0d47-7951-4900-821a-e1907c7e890b" }]
+}

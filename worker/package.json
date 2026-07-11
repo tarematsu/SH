@@ -6,6 +6,8 @@
   "scripts": {
     "dev": "wrangler dev --test-scheduled",
     "deploy": "wrangler deploy",
+    "deploy:buddies": "wrangler deploy --config wrangler.jsonc",
+    "deploy:other": "wrangler deploy --config wrangler.other.jsonc",
     "deploy:minute": "wrangler deploy --config wrangler.minute.jsonc",
     "tail": "wrangler tail",
     "check": "npm run check:syntax && npm run check:bundle",
