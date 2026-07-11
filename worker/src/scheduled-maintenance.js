@@ -1,9 +1,8 @@
-import { runDataMaintenanceSafely } from '../../site/functions/lib/data-maintenance.js';
-import { runMinuteFactsBackfill } from './minute-facts-backfill.js';
 import { runRollupMaintenanceSafely } from './rollup-maintenance.js';
 
 const DEFAULT_INTERVAL_MS = 60 * 60_000;
 const MIN_INTERVAL_MS = 15 * 60_000;
+export const LEGACY_MIGRATION_DISABLED_REASON = 'legacy-migration-disabled';
 
 function intervalMs(env = {}) {
   const configured = Number(env.DATA_MAINTENANCE_INTERVAL_MS ?? DEFAULT_INTERVAL_MS);
@@ -22,27 +21,25 @@ export function minuteFactsCutoverEnabled(env = {}) {
   return Boolean(env?.DB && env?.FACTS_DB);
 }
 
+export function legacyMigrationEnabled() {
+  return false;
+}
+
 export async function runScheduledMaintenance(env, now = Date.now()) {
   if (!env?.DB) return { skipped: true, reason: 'db-binding-missing' };
   if (!shouldRunScheduledMaintenance(now, env)) {
     return { skipped: true, reason: 'not-due' };
   }
-  if (!minuteFactsCutoverEnabled(env)) {
-    return runDataMaintenanceSafely(env.DB, now);
-  }
 
-  const [rollup, minuteFactsBackfill] = await Promise.all([
-    runRollupMaintenanceSafely(env.DB, now),
-    runMinuteFactsBackfill(env).catch((error) => ({
-      skipped: true,
-      reason: 'minute-facts-backfill-error',
-      error: error?.message || String(error),
-    })),
-  ]);
+  const rollup = await runRollupMaintenanceSafely(env.DB, now);
+  const migrationDisabled = {
+    skipped: true,
+    reason: LEGACY_MIGRATION_DISABLED_REASON,
+  };
   return {
     skipped: false,
     rollup,
-    legacyBackfill: { skipped: true, reason: 'replaced-by-minute-facts-migration' },
-    minuteFactsBackfill,
+    legacyBackfill: migrationDisabled,
+    minuteFactsBackfill: migrationDisabled,
   };
 }
