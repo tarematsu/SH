@@ -13,6 +13,8 @@ const DEFAULT_AUXILIARY_RUNNERS = Object.freeze({
   host: { failureEvent: 'cloud_host_monitor_failed', run: runCloudHostMonitor, onFailureOnly: true },
 });
 
+let primaryFlightsByContext = new WeakMap();
+
 function primaryWatchdogMs(env = {}) {
   const configured = Number(env.PRIMARY_COLLECTION_WATCHDOG_MS ?? DEFAULT_PRIMARY_WATCHDOG_MS);
   return Number.isFinite(configured)
@@ -47,9 +49,35 @@ function startAuxiliaryOnce(flight, env, includeFailureOnly, runners = DEFAULT_A
   });
 }
 
+function requestContextKey(ctx) {
+  return ctx && (typeof ctx === 'object' || typeof ctx === 'function') ? ctx : null;
+}
+
+function releaseRequestFlight(ctx, flight) {
+  const key = requestContextKey(ctx);
+  if (key && primaryFlightsByContext.get(key) === flight) primaryFlightsByContext.delete(key);
+}
+
+function primaryFlightForRequest(controller, env, ctx, scheduled) {
+  const key = requestContextKey(ctx);
+  if (key) {
+    const existing = primaryFlightsByContext.get(key);
+    if (existing) return existing;
+  }
+
+  const flight = {
+    primary: Promise.resolve().then(() => scheduled(controller, env, ctx)),
+  };
+  if (key) primaryFlightsByContext.set(key, flight);
+  flight.primary.then(
+    () => releaseRequestFlight(ctx, flight),
+    () => releaseRequestFlight(ctx, flight),
+  );
+  return flight;
+}
+
 export function resetPrimaryScheduledFlightForTests() {
-  // Compatibility no-op. Scheduled promises are request-scoped and must never
-  // be retained for reuse by a later Cloudflare request context.
+  primaryFlightsByContext = new WeakMap();
 }
 
 export async function runPrimaryScheduled(
@@ -61,9 +89,7 @@ export async function runPrimaryScheduled(
   options = {},
 ) {
   const timeoutMs = timeoutOverride ?? primaryWatchdogMs(env);
-  const flight = {
-    primary: Promise.resolve().then(() => scheduled(controller, env, ctx)),
-  };
+  const flight = primaryFlightForRequest(controller, env, ctx, scheduled);
   let timeoutId = null;
 
   try {
@@ -71,6 +97,7 @@ export async function runPrimaryScheduled(
       flight.primary,
       new Promise((_, reject) => {
         timeoutId = setTimeout(() => {
+          releaseRequestFlight(ctx, flight);
           try {
             options.resetCollectionFlight?.();
           } catch (error) {
