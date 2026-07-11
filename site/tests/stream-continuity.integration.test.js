@@ -3,20 +3,20 @@ import test from 'node:test';
 
 import { validatedStreamCount } from '../functions/lib/d1-lean-ingest.js';
 
-test('selects the continuous cumulative value when fields disagree', () => {
+test('uses current_stream_count even when total_listens disagrees', () => {
   const current = {
     last_stream_count: 1000000,
     last_stream_at: 1000000,
     last_snapshot_at: 1000000,
   };
   const value = validatedStreamCount({
-    current_stream_count: 340,
-    total_listens: 1000120,
+    current_stream_count: 1000120,
+    total_listens: 340,
   }, current, 1060000);
   assert.equal(value, 1000120);
 });
 
-test('rejects extreme listener-like values', () => {
+test('rejects an extreme current_stream_count without consulting total_listens', () => {
   const current = {
     last_stream_count: 1000000,
     last_stream_at: 1000000,
@@ -24,17 +24,22 @@ test('rejects extreme listener-like values', () => {
   };
   const value = validatedStreamCount({
     current_stream_count: 280,
-    total_listens: 315,
+    total_listens: 1000120,
   }, current, 1060000);
   assert.equal(value, null);
 });
 
-test('prefers the cumulative-looking value when no baseline exists', () => {
+test('uses current_stream_count when no baseline exists', () => {
   const value = validatedStreamCount({
     current_stream_count: 320,
     total_listens: 950000,
   }, {}, 1060000);
-  assert.equal(value, 950000);
+  assert.equal(value, 320);
+});
+
+test('does not treat total_listens alone as a stream count', () => {
+  const value = validatedStreamCount({ total_listens: 950000 }, {}, 1060000);
+  assert.equal(value, null);
 });
 
 test('uses the last accepted stream time after rejected snapshots', () => {
