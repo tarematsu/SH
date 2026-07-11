@@ -11,6 +11,7 @@ import { extractIds, extractQueue, normalizeSnapshot, validateChannelPayload } f
 import { ingest } from './collector-ingest.js';
 import { loadCollectorState, saveCollectorState } from './collector-state.js';
 import { loadMinuteCommentFacts } from './minute-facts-source.js';
+import { enqueueMinuteFactJob } from './minute-facts-inbox.js';
 import { saveLiveMinuteFact } from './minute-facts-store.js';
 import { combinedAbortSignal } from './request-signal.js';
 import { enrichTracks as sharedEnrichTracks } from './shared.js';
@@ -231,22 +232,13 @@ export async function collectOnce(env, source = 'manual') {
       () => loadMinuteCommentFacts(activeEnv.DB, state.stationId, observedAt),
     );
 
-    try {
-      stage = 'd1_write_minute_fact';
-      await timedStage(stage, () => saveLiveMinuteFactWithinBudget(activeEnv, {
-        observedAt,
-        snapshot,
-        snapshotResult,
-        queue,
-        queueResult,
-        comments: { ...commentResult, ...minuteComments },
-      }));
-    } catch (error) {
-      console.warn(JSON.stringify({
-        event: 'minute_fact_write_failed',
-        error: sanitizeFailureDetail(error?.message || error),
-      }));
-    }
+    stage = 'd1_enqueue_minute_fact';
+    const minuteFactJob = await timedStage(stage, () => enqueueMinuteFactJob(activeEnv, {
+      observedAt,
+      snapshot,
+      queue,
+      comments: { ...commentResult, ...minuteComments },
+    }));
 
     throwIfCollectionAborted(activeEnv, 'd1_write_collector_state');
     stage = 'd1_write_collector_state';
@@ -281,6 +273,8 @@ export async function collectOnce(env, source = 'manual') {
       like_observations_written: Number(queueResult?.like_observations_written || 0),
       metadata_saved: metadataSaved,
       metadata_deferred: Boolean(queue && !metadataPlanned),
+      minute_fact_job_enqueued: Boolean(minuteFactJob?.enqueued),
+      minute_fact_job_minute_at: minuteFactJob?.minute_at ?? null,
       heartbeat_written: false,
       token_expires_at: state.tokenExpiresAt || null,
     };
