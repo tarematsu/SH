@@ -8,6 +8,8 @@ export const MINUTE_FACT_INBOX_SCHEMA_SQL = `CREATE TABLE IF NOT EXISTS sh_minut
   observed_at INTEGER NOT NULL,
   payload_version INTEGER NOT NULL DEFAULT 1,
   payload_json TEXT NOT NULL,
+  job_kind TEXT NOT NULL DEFAULT 'live',
+  job_priority INTEGER NOT NULL DEFAULT 100,
   status TEXT NOT NULL DEFAULT 'pending',
   attempts INTEGER NOT NULL DEFAULT 0,
   next_attempt_at INTEGER NOT NULL DEFAULT 0,
@@ -20,7 +22,7 @@ export const MINUTE_FACT_INBOX_SCHEMA_SQL = `CREATE TABLE IF NOT EXISTS sh_minut
 )`;
 
 export const MINUTE_FACT_INBOX_INDEX_SQL = `CREATE INDEX IF NOT EXISTS idx_sh_minute_fact_jobs_pending
-  ON sh_minute_fact_jobs(status, next_attempt_at, minute_at)`;
+  ON sh_minute_fact_jobs(status, job_priority DESC, next_attempt_at, minute_at)`;
 
 let schemaReady = false;
 
@@ -35,6 +37,11 @@ function positiveInteger(value, fallback, maximum = Number.MAX_SAFE_INTEGER) {
   return Math.min(parsed, maximum);
 }
 
+function text(value, fallback = null) {
+  const parsed = String(value ?? '').trim();
+  return parsed || fallback;
+}
+
 export function minuteFactJobPayload(input = {}) {
   return {
     payload_version: 1,
@@ -42,19 +49,33 @@ export function minuteFactJobPayload(input = {}) {
     snapshot: input.snapshot || {},
     queue: input.queue || null,
     comments: input.comments || {},
+    rebuild: input.rebuild || null,
   };
+}
+
+async function ensureInboxColumns(db) {
+  const result = await db.prepare('PRAGMA table_info(sh_minute_fact_jobs)').all();
+  const columns = new Set((result.results || []).map((row) => String(row.name)));
+  if (!columns.has('job_kind')) {
+    await db.prepare("ALTER TABLE sh_minute_fact_jobs ADD COLUMN job_kind TEXT NOT NULL DEFAULT 'live'").run();
+  }
+  if (!columns.has('job_priority')) {
+    await db.prepare('ALTER TABLE sh_minute_fact_jobs ADD COLUMN job_priority INTEGER NOT NULL DEFAULT 100').run();
+  }
 }
 
 export async function ensureMinuteFactInboxSchema(env) {
   if (!env?.DB) throw new Error('minute fact inbox DB binding is missing');
   if (schemaReady) return false;
   await env.DB.prepare(MINUTE_FACT_INBOX_SCHEMA_SQL).run();
+  await ensureInboxColumns(env.DB);
+  await env.DB.prepare('DROP INDEX IF EXISTS idx_sh_minute_fact_jobs_pending').run();
   await env.DB.prepare(MINUTE_FACT_INBOX_INDEX_SQL).run();
   schemaReady = true;
   return true;
 }
 
-export async function enqueueMinuteFactJob(env, input = {}) {
+export async function enqueueMinuteFactJob(env, input = {}, options = {}) {
   await ensureMinuteFactInboxSchema(env);
   const payload = minuteFactJobPayload(input);
   const channelId = integer(payload.snapshot?.channel_id);
@@ -62,24 +83,38 @@ export async function enqueueMinuteFactJob(env, input = {}) {
   const observedAt = integer(payload.observedAt) ?? Date.now();
   const minuteAt = minuteBucket(observedAt);
   const now = Date.now();
-  const result = await env.DB.prepare(`INSERT OR IGNORE INTO sh_minute_fact_jobs(
-      channel_id,minute_at,observed_at,payload_version,payload_json,status,attempts,
-      next_attempt_at,lease_until,processed_at,last_error,created_at,updated_at
-    ) VALUES(?,?,?,?,?,'pending',0,0,NULL,NULL,NULL,?,?)`)
+  const jobKind = text(options.jobKind, payload.rebuild ? 'rebuild' : 'live');
+  const jobPriority = positiveInteger(options.jobPriority, payload.rebuild ? 20 : 100, 1000);
+  const requeueCompleted = options.requeueCompleted === true ? 1 : 0;
+  const result = await env.DB.prepare(`INSERT INTO sh_minute_fact_jobs(
+      channel_id,minute_at,observed_at,payload_version,payload_json,job_kind,job_priority,
+      status,attempts,next_attempt_at,lease_until,processed_at,last_error,created_at,updated_at
+    ) VALUES(?,?,?,?,?,?,?,'pending',0,0,NULL,NULL,NULL,?,?)
+    ON CONFLICT(channel_id,minute_at) DO UPDATE SET
+      observed_at=excluded.observed_at,payload_version=excluded.payload_version,
+      payload_json=excluded.payload_json,job_kind=excluded.job_kind,
+      job_priority=excluded.job_priority,status='pending',attempts=0,next_attempt_at=0,
+      lease_until=NULL,processed_at=NULL,last_error=NULL,updated_at=excluded.updated_at
+    WHERE ?=1 AND sh_minute_fact_jobs.status IN ('done','dead')`)
     .bind(
       channelId,
       minuteAt,
       observedAt,
       payload.payload_version,
       JSON.stringify(payload),
+      jobKind,
+      jobPriority,
       now,
       now,
+      requeueCompleted,
     )
     .run();
   return {
     enqueued: Number(result?.meta?.changes || 0) > 0,
     channel_id: channelId,
     minute_at: minuteAt,
+    job_kind: jobKind,
+    job_priority: jobPriority,
   };
 }
 
@@ -100,7 +135,7 @@ export async function claimMinuteFactJobs(env, options = {}) {
 
   const candidates = await env.DB.prepare(`SELECT id FROM sh_minute_fact_jobs
     WHERE status='pending' AND next_attempt_at<=?
-    ORDER BY minute_at ASC,id ASC LIMIT ?`)
+    ORDER BY job_priority DESC,minute_at ASC,id ASC LIMIT ?`)
     .bind(now, limit)
     .all();
 
@@ -157,12 +192,16 @@ export async function minuteFactInboxStats(env) {
       SUM(CASE WHEN status='pending' THEN 1 ELSE 0 END) AS pending_count,
       SUM(CASE WHEN status='processing' THEN 1 ELSE 0 END) AS processing_count,
       SUM(CASE WHEN status='dead' THEN 1 ELSE 0 END) AS dead_count,
+      SUM(CASE WHEN status='pending' AND job_kind='rebuild' THEN 1 ELSE 0 END) AS rebuild_pending_count,
+      SUM(CASE WHEN status='pending' AND job_kind='live' THEN 1 ELSE 0 END) AS live_pending_count,
       MIN(CASE WHEN status='pending' THEN minute_at ELSE NULL END) AS oldest_pending_minute
     FROM sh_minute_fact_jobs`).first();
   return {
     pending_count: Number(row?.pending_count || 0),
     processing_count: Number(row?.processing_count || 0),
     dead_count: Number(row?.dead_count || 0),
+    rebuild_pending_count: Number(row?.rebuild_pending_count || 0),
+    live_pending_count: Number(row?.live_pending_count || 0),
     oldest_pending_minute: row?.oldest_pending_minute == null ? null : Number(row.oldest_pending_minute),
   };
 }
