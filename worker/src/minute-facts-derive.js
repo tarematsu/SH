@@ -10,7 +10,7 @@ import {
 
 export const MINUTE_FACT_DERIVE_CRON = '*/2 * * * *';
 
-const DEFAULT_MAX_JOBS = 3;
+const DEFAULT_MAX_JOBS = 8;
 const DEFAULT_JOB_TIMEOUT_MS = 18_000;
 const DEFAULT_LEASE_MS = 60_000;
 const DEFAULT_MAX_ATTEMPTS = 8;

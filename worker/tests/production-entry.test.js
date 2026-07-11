@@ -10,6 +10,7 @@ import {
 } from '../src/production-entry.js';
 
 const DERIVE_CRON = '*/2 * * * *';
+const REBUILD_CRON = '7,17,27,37,47,57 * * * *';
 
 test('production cron runs primary before buddy46 collection', async () => {
   const calls = [];
@@ -142,8 +143,8 @@ test('production primary env defers inner buddy playback without mutating the or
   assert.equal(env.__DEFER_BUDDY_PLAYBACK, undefined);
 });
 
-test('Wrangler deploys capture and derive crons through the production wrapper', () => {
+test('Wrangler deploys capture, derive, and rebuild crons through the production wrapper', () => {
   const config = JSON.parse(readFileSync(new URL('../wrangler.jsonc', import.meta.url), 'utf8'));
   assert.equal(config.main, 'src/production-entry.js');
-  assert.deepEqual(config.triggers?.crons, ['* * * * *', DERIVE_CRON]);
+  assert.deepEqual(config.triggers?.crons, ['* * * * *', DERIVE_CRON, REBUILD_CRON]);
 });
