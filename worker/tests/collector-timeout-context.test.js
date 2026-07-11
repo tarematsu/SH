@@ -81,6 +81,6 @@ test('chat fallback preserves the caller abort signal', async () => {
 
 test('chat fallback still has its own timeout without a caller signal', async () => {
   const signal = combinedAbortSignal(null, 5);
-  await new Promise((resolve) => signal.addEventListener('abort', resolve, { once: true }));
+  await new Promise((resolve) => setTimeout(resolve, 20));
   assert.equal(signal.aborted, true);
 });
