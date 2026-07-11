@@ -59,7 +59,12 @@ export function minuteFactsRowsSql(options = {}) {
     f.source,f.source_priority,f.source_record_id,f.collector_id,
     f.broadcast_session_id,f.is_broadcasting,f.broadcast_start_time,
     f.listener_count,f.online_member_count,f.total_member_count,f.guest_count,
-    f.reported_total_listens,f.reported_current_stream_count,f.validated_stream_count,
+    CASE WHEN f.source='live_collector' THEN f.reported_total_listens ELSE NULL END
+      AS cumulative_listener_count,
+    CASE WHEN f.source='live_collector' THEN f.reported_current_stream_count
+      ELSE COALESCE(f.reported_current_stream_count,f.reported_total_listens) END
+      AS reported_stream_count,
+    f.validated_stream_count,
     f.stream_count_rejected,f.queue_revision_id,f.queue_id,f.queue_start_time,
     f.is_paused,f.queue_track_count,f.queue_available,f.queue_position,
     f.track_detection_method,f.track_confidence,f.schedule_valid,
