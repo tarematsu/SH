@@ -4,6 +4,9 @@ on:
   push:
     branches:
       - agent/fix-cross-request-io-timeouts
+  pull_request:
+    branches:
+      - main
 
 permissions:
   contents: read
