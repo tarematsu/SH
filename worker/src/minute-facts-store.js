@@ -288,7 +288,7 @@ async function createRevision(db, oldDb, input) {
   if (sameRevision) return { revisionId: Number(current.revision_id), created: false, current };
 
   const tracks = payload.tracks;
-  await db.prepare(`INSERT INTO sh_queue_revisions(
+  await db.prepare(`INSERT OR IGNORE INTO sh_queue_revisions(
       session_id,channel_id,station_id,queue_id,queue_start_time,effective_at,received_at,
       structural_hash,item_count,status,source,source_priority
     ) VALUES(?,?,?,?,?,?,?,?,?,'pending','live_collector',100)`)
@@ -296,7 +296,7 @@ async function createRevision(db, oldDb, input) {
       sessionId, channelId, stationId, integer(queue?.queue_id), queueStart,
       observedAt, receivedAt, structuralHash, tracks.length,
     ).run();
-  const revision = await db.prepare(`SELECT id FROM sh_queue_revisions
+  const revision = await db.prepare(`SELECT id,status FROM sh_queue_revisions
     WHERE channel_id=? AND effective_at=? AND structural_hash=?`)
     .bind(channelId, observedAt, structuralHash).first();
   const revisionId = Number(revision?.id);
@@ -320,15 +320,28 @@ async function createRevision(db, oldDb, input) {
   const statements = resolved.map((track) => db.prepare(`INSERT INTO sh_queue_revision_items(
       revision_id,position,track_id,queue_track_id,stationhead_track_id,isrc,spotify_id,
       deezer_id,duration_ms,playback_offset_ms,schedule_valid,bite_count
-    ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`).bind(
+    ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
+    ON CONFLICT(revision_id,position) DO UPDATE SET
+      track_id=excluded.track_id,queue_track_id=excluded.queue_track_id,
+      stationhead_track_id=excluded.stationhead_track_id,isrc=excluded.isrc,
+      spotify_id=excluded.spotify_id,deezer_id=excluded.deezer_id,
+      duration_ms=excluded.duration_ms,playback_offset_ms=excluded.playback_offset_ms,
+      schedule_valid=excluded.schedule_valid,bite_count=excluded.bite_count`).bind(
       revisionId, track.position, track.trackId, track.queue_track_id, track.stationhead_track_id,
       track.isrc, track.spotify_id, track.deezer_id, track.duration_ms,
       track.playbackOffset, track.scheduleValid ? 1 : 0,
       integer(byPosition.get(track.position)?.bite_count),
     ));
   await batchRun(db, statements);
+  const count = await db.prepare('SELECT COUNT(*) AS item_count FROM sh_queue_revision_items WHERE revision_id=?')
+    .bind(revisionId).first();
+  if (Number(count?.item_count || 0) !== tracks.length) {
+    await db.prepare("UPDATE sh_queue_revisions SET status='invalid' WHERE id=?")
+      .bind(revisionId).run();
+    throw new Error(`queue revision ${revisionId} item count mismatch`);
+  }
   await db.prepare("UPDATE sh_queue_revisions SET status='complete' WHERE id=?").bind(revisionId).run();
-  return { revisionId, created: true, current: null };
+  return { revisionId, created: revision?.status !== 'complete', current: null };
 }
 
 async function updatePlaybackState(db, input) {
@@ -399,11 +412,16 @@ async function writeCurrentBite(db, input) {
     WHERE revision_id=? AND position=?`).bind(revisionId, position).first();
   const trackId = integer(item?.track_id);
   if (trackId == null) return biteCount;
-  await db.prepare(`INSERT OR IGNORE INTO sh_track_bite_observations(
-      observed_at,channel_id,station_id,revision_id,track_id,queue_position,bite_count,source
-    ) VALUES(?,?,?,?,?,?,?,'live_collector')`).bind(
+  const latest = await db.prepare(`SELECT bite_count FROM sh_track_bite_observations
+    WHERE channel_id=? AND track_id=? ORDER BY observed_at DESC,id DESC LIMIT 1`)
+    .bind(channelId, trackId).first();
+  if (integer(latest?.bite_count) !== biteCount) {
+    await db.prepare(`INSERT OR IGNORE INTO sh_track_bite_observations(
+        observed_at,channel_id,station_id,revision_id,track_id,queue_position,bite_count,source
+      ) VALUES(?,?,?,?,?,?,?,'live_collector')`).bind(
       observedAt, channelId, stationId, revisionId, trackId, position, biteCount,
     ).run();
+  }
   await db.prepare(`UPDATE sh_queue_revision_items SET bite_count=?
     WHERE revision_id=? AND position=?`).bind(biteCount, revisionId, position).run();
   return biteCount;
