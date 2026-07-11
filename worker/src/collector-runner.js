@@ -58,7 +58,7 @@ export async function collectOnce(env, source = 'manual') {
     let snapshotResult = null;
     if (initialPlan.snapshot) {
       stage = 'd1_write_snapshot';
-      snapshotResult = await ingest(env, 'snapshot', snapshot, observedAt);
+      snapshotResult = await ingest(env, 'snapshot', snapshot, observedAt, { returnDetails: true });
     }
 
     let queueResult = null;
