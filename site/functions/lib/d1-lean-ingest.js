@@ -75,7 +75,7 @@ export async function saveLeanSnapshot(db, observedAt, data) {
     bool(data?.is_launched), bool(data?.is_broadcasting), text(data?.chat_status),
     num(data?.listener_count), num(data?.online_member_count), num(data?.total_member_count),
     num(data?.guest_count), num(data?.total_listens), num(data?.stream_goal),
-    num(data?.current_stream_count), null, num(data?.host_account_id), text(data?.host_handle),
+    streamCount, null, num(data?.host_account_id), text(data?.host_handle),
     num(data?.broadcast_start_time),
   ];
   const velocityBinds = [stationId, observedAt - 120_000, observedAt];

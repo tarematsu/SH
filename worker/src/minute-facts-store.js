@@ -24,6 +24,11 @@ function integer(value) {
   return parsed == null ? null : Math.trunc(parsed);
 }
 
+export function reportedStreamCount(value) {
+  const parsed = integer(value);
+  return parsed != null && parsed >= 0 ? parsed : null;
+}
+
 function text(value) {
   if (value === null || value === undefined) return null;
   const parsed = String(value).trim();
@@ -561,7 +566,7 @@ export async function saveLiveMinuteFact(env, input) {
     total_member_count: integer(snapshot.total_member_count),
     guest_count: integer(snapshot.guest_count),
     reported_total_listens: integer(snapshot.total_listens),
-    reported_current_stream_count: integer(snapshot.current_stream_count),
+    reported_current_stream_count: reportedStreamCount(snapshot.current_stream_count),
     validated_stream_count: null,
     stream_count_rejected: 0,
     queue_revision_id: revisionId,

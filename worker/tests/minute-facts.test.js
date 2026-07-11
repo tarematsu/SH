@@ -6,6 +6,7 @@ import {
   minuteBucket,
   qualityScore,
   queueStructuralHash,
+  reportedStreamCount,
   queueStructurePayload,
   timestampMs,
 } from '../src/minute-facts-store.js';
@@ -62,4 +63,11 @@ test('quality score reflects missing or degraded evidence', () => {
 test('legacy stream rejection quality remains readable during cleanup', () => {
   assert.equal(FACT_QUALITY_FLAGS.STREAM_REJECTED, 64);
   assert.equal(qualityScore(FACT_QUALITY_FLAGS.STREAM_REJECTED), 0.9);
+});
+
+test('reported stream count preserves Stationhead values without continuity validation', () => {
+  assert.equal(reportedStreamCount(1_234_567), 1_234_567);
+  assert.equal(reportedStreamCount('456'), 456);
+  assert.equal(reportedStreamCount(-1), null);
+  assert.equal(reportedStreamCount('not-a-number'), null);
 });
