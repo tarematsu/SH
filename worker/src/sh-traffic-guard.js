@@ -93,6 +93,23 @@ async function normalizeIdleGuestResponse(response, rule) {
   return new Response('{}', { status: 200, headers });
 }
 
+async function responseSnapshot(response) {
+  return {
+    status: Number(response?.status || 0),
+    statusText: String(response?.statusText || ''),
+    headers: [...new Headers(response?.headers || undefined).entries()],
+    body: await response.arrayBuffer(),
+  };
+}
+
+function responseFromSnapshot(snapshot) {
+  return new Response(snapshot.body.slice(0), {
+    status: snapshot.status,
+    statusText: snapshot.statusText,
+    headers: snapshot.headers,
+  });
+}
+
 function requestBudget(rule) {
   if (rule.budget === 'auth') return MAX_AUTH_REQUESTS_PER_MINUTE;
   if (rule.budget === 'station') return MAX_STATION_REQUESTS_PER_MINUTE;
@@ -108,6 +125,9 @@ function budgetReason(rule) {
 export function createShTrafficGuard(nextFetch, nowFn = Date.now) {
   if (typeof nextFetch !== 'function') throw new TypeError('nextFetch must be a function');
 
+  // Only detached byte snapshots are cached. Response, Request, streams and
+  // in-flight fetch promises are scoped to one Cloudflare request context and
+  // must never survive into a later cron execution.
   const reads = new Map();
   const retryAtByKey = new Map();
   let activeMinute = -1;
@@ -155,7 +175,8 @@ export function createShTrafficGuard(nextFetch, nowFn = Date.now) {
     if (retryAt > now) return localResponse(503, 'temporary-backoff', retryAt - now);
     if (retryAt) retryAtByKey.delete(key);
 
-    if (rule.cache && reads.has(key)) return (await reads.get(key)).clone();
+    const cached = rule.cache ? reads.get(key) : null;
+    if (cached) return responseFromSnapshot(cached);
 
     const requestLimit = requestBudget(rule);
     const requestCount = rule.budget === 'auth'
@@ -177,32 +198,29 @@ export function createShTrafficGuard(nextFetch, nowFn = Date.now) {
     else dataRequestCount += 1;
 
     const requestInput = input instanceof Request ? new Request(url.toString(), input) : url.toString();
-    const pending = Promise.resolve()
-      .then(() => nextFetch(requestInput, { ...init, signal: signalWithTimeout(init?.signal) }))
-      .then((response) => normalizeIdleGuestResponse(response, rule))
-      .then((response) => {
-        if (retryable(response?.status)) {
-          retryAtByKey.set(key, (Number(nowFn()) || Date.now()) + FAILURE_BACKOFF_MS);
-          trim(retryAtByKey);
-          reads.delete(key);
-        } else if (!response?.ok) {
-          reads.delete(key);
-        } else {
-          retryAtByKey.delete(key);
-        }
-        return response;
-      })
-      .catch((error) => {
+    try {
+      const response = await nextFetch(requestInput, { ...init, signal: signalWithTimeout(init?.signal) });
+      const normalized = await normalizeIdleGuestResponse(response, rule);
+      const snapshot = await responseSnapshot(normalized);
+      if (retryable(snapshot.status)) {
         retryAtByKey.set(key, (Number(nowFn()) || Date.now()) + FAILURE_BACKOFF_MS);
         trim(retryAtByKey);
         reads.delete(key);
-        throw error;
-      });
-
-    if (rule.cache) {
-      reads.set(key, pending);
-      trim(reads);
+      } else if (snapshot.status < 200 || snapshot.status >= 300) {
+        reads.delete(key);
+      } else {
+        retryAtByKey.delete(key);
+        if (rule.cache) {
+          reads.set(key, snapshot);
+          trim(reads);
+        }
+      }
+      return responseFromSnapshot(snapshot);
+    } catch (error) {
+      retryAtByKey.set(key, (Number(nowFn()) || Date.now()) + FAILURE_BACKOFF_MS);
+      trim(retryAtByKey);
+      reads.delete(key);
+      throw error;
     }
-    return (await pending).clone();
   };
 }
