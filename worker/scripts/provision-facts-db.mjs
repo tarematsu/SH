@@ -9,8 +9,11 @@ const schemaPath = resolve(repositoryRoot, 'database/facts-migrations/001_initia
 const metadataPath = resolve(repositoryRoot, 'database/facts-db.json');
 const databaseName = process.env.FACTS_DATABASE_NAME || 'sh-monitor-facts';
 
-if (!process.env.CLOUDFLARE_API_TOKEN || !process.env.CLOUDFLARE_ACCOUNT_ID) {
-  throw new Error('CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID are required');
+if (!process.env.CLOUDFLARE_API_TOKEN) {
+  throw new Error('CLOUDFLARE_API_TOKEN is required');
+}
+if (!process.env.CLOUDFLARE_ACCOUNT_ID) {
+  console.warn('CLOUDFLARE_ACCOUNT_ID is not set; Wrangler will infer the account from the API token.');
 }
 
 function wrangler(args) {
