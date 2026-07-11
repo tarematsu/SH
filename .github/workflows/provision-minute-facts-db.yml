@@ -63,7 +63,7 @@ jobs:
             echo "result=provision-command-failed" >> "${GITHUB_OUTPUT}"
             exit 1
           fi
-      - name: Deploy collector with FACTS_DB
+      - name: Attempt direct Worker deploy
         id: deploy
         if: steps.provision.outcome == 'success'
         continue-on-error: true
@@ -116,7 +116,7 @@ jobs:
           exit "$status"
       - name: Verify live minute facts
         id: verify
-        if: steps.provision.outcome == 'success' && steps.deploy.outcome == 'success'
+        if: steps.provision.outcome == 'success'
         continue-on-error: true
         working-directory: worker
         env:
@@ -144,9 +144,9 @@ jobs:
             database_name: 'Stationhead-DB',
             provision_result: process.env.PROVISION_RESULT,
             provision_outcome: process.env.PROVISION_OUTCOME,
-            deploy_outcome: process.env.DEPLOY_OUTCOME,
-            deploy_token_source: process.env.DEPLOY_TOKEN_SOURCE,
-            verify_outcome: process.env.VERIFY_OUTCOME,
+            direct_deploy_outcome: process.env.DEPLOY_OUTCOME,
+            direct_deploy_token_source: process.env.DEPLOY_TOKEN_SOURCE,
+            live_verify_outcome: process.env.VERIFY_OUTCOME,
             event_name: process.env.EVENT_NAME,
             source_sha: process.env.SOURCE_SHA,
             recorded_at: new Date().toISOString(),
@@ -171,8 +171,8 @@ jobs:
         run: |
           echo "Stationhead-DB provisioning failed: ${{ steps.provision.outputs.result || 'unknown-failure' }}"
           exit 1
-      - name: Fail unsuccessful deployment or verification
-        if: steps.deploy.outcome != 'success' || steps.verify.outcome != 'success'
+      - name: Fail missing live data
+        if: steps.verify.outcome != 'success'
         run: |
-          echo "Stationhead-DB deploy=${{ steps.deploy.outcome }} verify=${{ steps.verify.outcome }}"
+          echo "Stationhead-DB live verification=${{ steps.verify.outcome }}"
           exit 1
