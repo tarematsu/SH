@@ -7,9 +7,6 @@
   "observability": {
     "enabled": true
   },
-  "limits": {
-    "cpu_ms": 50
-  },
   "vars": {
     "CHANNEL_ALIAS": "buddies",
     "CHAT_LIMIT": 50,
