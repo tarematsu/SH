@@ -1,0 +1,39 @@
+name: Debug worker tests
+
+on:
+  push:
+    branches:
+      - agent/fix-cross-request-io-timeouts
+
+permissions:
+  contents: read
+
+jobs:
+  capture-worker-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: worker/package-lock.json
+      - name: Install dependencies
+        working-directory: worker
+        run: npm ci
+      - name: Capture Worker test output
+        working-directory: worker
+        shell: bash
+        run: |
+          set +e
+          npm test > worker-test.log 2>&1
+          status=$?
+          echo "$status" > worker-test.status
+          exit 0
+      - uses: actions/upload-artifact@v4
+        with:
+          name: worker-test-diagnostics
+          path: |
+            worker/worker-test.log
+            worker/worker-test.status
+          if-no-files-found: error
