@@ -1,4 +1,4 @@
-import { saveLiveMinuteFactWithinBudget } from './collector-runner.js';
+import { saveMinuteFactWithinBudget } from './minute-facts-write-budget.js';
 import {
   missingRevisionPositions,
   resolveTracksBulk,
@@ -261,5 +261,5 @@ export async function saveReconstructedMinuteFact(env, input) {
 }
 
 export function saveReconstructedMinuteFactWithinBudget(env, input) {
-  return saveLiveMinuteFactWithinBudget(env, input, saveReconstructedMinuteFact);
+  return saveMinuteFactWithinBudget(env, input, saveReconstructedMinuteFact);
 }

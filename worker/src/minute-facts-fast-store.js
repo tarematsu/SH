@@ -1,4 +1,4 @@
-import { saveLiveMinuteFactWithinBudget } from './collector-runner.js';
+import { saveMinuteFactWithinBudget } from './minute-facts-write-budget.js';
 import {
   FACT_QUALITY_FLAGS,
   minuteBucket,
@@ -666,5 +666,5 @@ export async function saveOptimizedLiveMinuteFact(env, input) {
 }
 
 export function saveOptimizedMinuteFactWithinBudget(env, input) {
-  return saveLiveMinuteFactWithinBudget(env, input, saveOptimizedLiveMinuteFact);
+  return saveMinuteFactWithinBudget(env, input, saveOptimizedLiveMinuteFact);
 }
