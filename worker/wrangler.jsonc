@@ -13,7 +13,11 @@
     "SH_APP_VERSION": "1.0.0",
     "COLLECTOR_ID": "cloudflare-worker",
     "METADATA_LIMIT": 1,
-    "MINUTE_FACT_TIMEOUT_MS": 12000,
+    "DERIVE_MAX_JOBS": 3,
+    "DERIVE_JOB_TIMEOUT_MS": 18000,
+    "DERIVE_LEASE_MS": 60000,
+    "DERIVE_MAX_ATTEMPTS": 8,
+    "DERIVE_RUN_BUDGET_MS": 50000,
     "BUDDY_PLAYBACK_ENABLED": true,
     "BUDDY_PLAYBACK_ALIAS": "buddy46",
     "BUDDY_PLAYBACK_AUTH_STATE_ID": "buddy46",
@@ -48,7 +52,8 @@
   },
   "triggers": {
     "crons": [
-      "* * * * *"
+      "* * * * *",
+      "*/2 * * * *"
     ]
   },
   "d1_databases": [
