@@ -58,6 +58,7 @@ CREATE TABLE IF NOT EXISTS sh_queue_snapshots (
 );
 CREATE INDEX IF NOT EXISTS idx_sh_sh_queue_snapshots_time ON sh_queue_snapshots(observed_at DESC);
 CREATE INDEX IF NOT EXISTS idx_sh_queue_snapshots_station_observed ON sh_queue_snapshots(station_id, observed_at DESC);
+CREATE INDEX IF NOT EXISTS idx_sh_queue_snapshots_station_start_observed ON sh_queue_snapshots(station_id, start_time, observed_at DESC);
 
 CREATE TABLE IF NOT EXISTS sh_queue_items (
   id INTEGER PRIMARY KEY AUTOINCREMENT,

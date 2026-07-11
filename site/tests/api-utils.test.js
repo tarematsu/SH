@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+  bool,
   ingestAccessError,
   observedAtFrom,
   readJsonBody,
@@ -42,6 +43,22 @@ test('observedAtFrom uses numeric observed_at or a fallback', () => {
   assert.equal(observedAtFrom({ observed_at: '1234' }, 999), 1234);
   assert.equal(observedAtFrom({ observed_at: 'not-a-number' }, 999), 999);
   assert.equal(observedAtFrom({}, 999), 999);
+});
+
+test('bool parses known representations and rejects unknown encodings', () => {
+  assert.equal(bool(true), 1);
+  assert.equal(bool(false), 0);
+  assert.equal(bool('true'), 1);
+  assert.equal(bool('FALSE'), 0);
+  assert.equal(bool('1'), 1);
+  assert.equal(bool('0'), 0);
+  assert.equal(bool('yes'), 1);
+  assert.equal(bool('off'), 0);
+  assert.equal(bool('unknown'), null);
+  assert.equal(bool('null'), null);
+  assert.equal(bool(Number.NaN), null);
+  assert.equal(bool({}), null);
+  assert.equal(bool(null), null);
 });
 
 test('ingestAccessError distinguishes auth and DB failures', async () => {

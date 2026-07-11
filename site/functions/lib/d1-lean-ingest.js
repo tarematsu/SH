@@ -132,7 +132,8 @@ export async function saveLeanSnapshot(db, observedAt, data) {
       last_stream_count=COALESCE(excluded.last_stream_count,sh_snapshot_current.last_stream_count),
       last_stream_at=CASE WHEN excluded.last_stream_count IS NOT NULL
         THEN excluded.last_stream_at ELSE sh_snapshot_current.last_stream_at END,
-      updated_at=excluded.updated_at`)
+      updated_at=excluded.updated_at
+      WHERE excluded.last_snapshot_at>=COALESCE(sh_snapshot_current.last_snapshot_at,0)`)
       .bind(
         channelKey,
         hash,
@@ -164,12 +165,43 @@ export function queueStructuralPayload(data) {
   };
 }
 
-function observationTrackKey(track) {
-  return text(track?.queue_track_id)
-    || text(track?.stationhead_track_id)
-    || text(track?.spotify_id)
-    || text(track?.isrc)
-    || `position:${num(track?.position) ?? -1}`;
+export function normalizedTrackIsrc(track) {
+  const isrc = text(track?.isrc)?.trim().toUpperCase();
+  return isrc || null;
+}
+
+export function normalizedTrackSpotifyId(track) {
+  const spotifyId = text(track?.spotify_id)?.trim();
+  return spotifyId || null;
+}
+
+export function legacyObservationTrackKey(track) {
+  return normalizedTrackIsrc(track) || normalizedTrackSpotifyId(track);
+}
+
+export function observationTrackKey(track) {
+  const isrc = normalizedTrackIsrc(track);
+  if (isrc) return `isrc:${isrc}`;
+  const spotifyId = normalizedTrackSpotifyId(track);
+  return spotifyId ? `spotify:${spotifyId}` : null;
+}
+
+export function observationTrackKeys(track) {
+  const key = observationTrackKey(track);
+  return key ? [key] : [];
+}
+
+function latestRowsByIdentity(latestRows) {
+  const rows = new Map();
+  for (const row of latestRows || []) {
+    const identity = observationTrackKey(row);
+    if (!identity) continue;
+    const previous = rows.get(identity);
+    if (!previous || Number(row?.observed_at || 0) >= Number(previous?.observed_at || 0)) {
+      rows.set(identity, row);
+    }
+  }
+  return rows;
 }
 
 function structuralItemState(track, queueId = null) {
@@ -210,13 +242,32 @@ export function queueItemsToWriteLean(tracks, existingRows, queueId = null) {
 }
 
 export function planLikeObservations(tracks, latestRows) {
-  const latest = new Map((latestRows || []).map((row) => [String(row.track_key), row]));
+  const latest = latestRowsByIdentity(latestRows);
   const unique = new Map();
   for (const track of Array.isArray(tracks) ? tracks : []) {
-    if (num(track?.bite_count) == null) continue;
-    unique.set(observationTrackKey(track), track);
+    const identity = observationTrackKey(track);
+    if (!identity || num(track?.bite_count) == null) continue;
+    unique.set(identity, track);
   }
   return [...unique.entries()]
-    .filter(([trackKey, track]) => num(latest.get(trackKey)?.like_count) !== num(track.bite_count))
+    .filter(([identity, track]) => num(latest.get(identity)?.like_count) !== num(track.bite_count))
     .map(([trackKey, track]) => ({ trackKey, track }));
+}
+
+export function planLikeCurrentMigrations(tracks, latestRows) {
+  const latest = latestRowsByIdentity(latestRows);
+  const migrations = [];
+  const seen = new Set();
+  for (const track of Array.isArray(tracks) ? tracks : []) {
+    const canonical = observationTrackKey(track);
+    const likeCount = num(track?.bite_count);
+    if (!canonical || likeCount == null || seen.has(canonical)) continue;
+    seen.add(canonical);
+    const row = latest.get(canonical);
+    if (row && String(row.track_key || '') !== canonical
+        && num(row.like_count) === likeCount) {
+      migrations.push({ trackKey: canonical, track });
+    }
+  }
+  return migrations;
 }

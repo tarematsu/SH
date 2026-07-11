@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="robots" content="noindex,nofollow,noarchive">
+  <title>Buddies 移行済みデータ</title>
+  <link rel="stylesheet" href="/history/history.css">
+  <link rel="stylesheet" href="/history/migrated.css">
+  <link rel="stylesheet" href="/design-system.css">
+</head>
+<body>
+<main class="wrap migrated-wrap">
+  <header class="hero">
+    <div><p class="eyebrow">NORMALIZED LEGACY DATA</p><h1>移行済みデータ</h1><span>正規化済みの毎分観測だけを表示</span></div>
+    <div class="hero-actions"><a class="back secondary-back" href="/history/index.html">過去データへ</a><a class="back" href="/">現在の状況へ</a></div>
+  </header>
+
+  <section class="guide"><strong>表示対象</strong><span><code>sh_legacy_samples</code>を直接参照します。未移行の元行は混ぜません。</span></section>
+
+  <section class="controls migrated-controls">
+    <div class="range-presets" aria-label="期間プリセット"><button data-days="30">30日</button><button data-days="90">3か月</button><button data-days="365">1年</button><button data-days="all" class="active">全期間</button></div>
+    <label>開始<input id="from" type="date" value="2024-06-01"></label>
+    <label>終了<input id="to" type="date"></label>
+    <label>ホスト<input id="host" type="search" placeholder="handle"></label>
+    <label>曲・アーティスト<input id="track" type="search" placeholder="曲名またはアーティスト"></label>
+    <button id="load" class="primary">表示を更新</button>
+  </section>
+
+  <section id="notice" class="notice" aria-live="polite">読み込み中…</section>
+
+  <section class="cards migrated-cards">
+    <article><span>移行済み行</span><strong id="migratedRows">-</strong></article>
+    <article><span>未移行行</span><strong id="remainingRows">-</strong></article>
+    <article><span>移行率</span><strong id="progressRate">-</strong></article>
+    <article><span>辞書</span><strong id="dictionaryRows">-<small>曲 / ホスト / 放送</small></strong></article>
+  </section>
+
+  <section class="panel progress-panel">
+    <div class="head"><div><p class="section-kicker">MIGRATION STATUS</p><h2>正規化状況</h2></div><span id="periodText" class="muted-text">-</span></div>
+    <div class="migration-progress" aria-label="移行進捗"><i id="progressBar"></i></div>
+    <div class="progress-meta"><span id="firstObserved">最初: -</span><span id="lastObserved">最後: -</span><span id="cursorValue">cursor: -</span></div>
+  </section>
+
+  <section class="panel">
+    <div class="head"><div><p class="section-kicker">MINUTE FACTS</p><h2>毎分データ</h2></div><button id="csv" class="secondary">CSV</button></div>
+    <p class="panel-note">曲名・アーティスト・ホスト・放送名は辞書テーブルから復元しています。表示行は正規化済みsampleのみです。</p>
+    <div class="table migrated-table"><table><thead><tr><th>日時 JST</th><th>リスナー</th><th>総再生数</th><th>曲名</th><th>アーティスト</th><th>いいね</th><th>コメント勢い</th><th>ホスト</th><th>メンバー</th><th>放送名</th><th>品質</th><th>ID</th></tr></thead><tbody id="tbody"></tbody></table></div>
+    <div class="more"><button id="more" class="secondary" hidden>次の200件</button></div>
+  </section>
+</main>
+<script src="/history/migrated.js" defer></script>
+</body>
+</html>
