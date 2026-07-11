@@ -3,7 +3,10 @@ import test from 'node:test';
 
 import { buildCollectionPlan, metadataRefreshDue } from '../src/collector-plan.js';
 import { internalHealthMonitoringEnabled } from '../src/cadenced-entry.js';
-import { shouldRunScheduledMaintenance } from '../src/scheduled-maintenance.js';
+import {
+  minuteFactsCutoverEnabled,
+  shouldRunScheduledMaintenance,
+} from '../src/scheduled-maintenance.js';
 
 const FIFTEEN_MINUTES = 15 * 60_000;
 
@@ -71,6 +74,12 @@ test('scheduled maintenance is due only on its configured interval boundary', ()
   assert.equal(shouldRunScheduledMaintenance(3_600_000, {}), true);
   assert.equal(shouldRunScheduledMaintenance(3_660_000, {}), false);
   assert.equal(shouldRunScheduledMaintenance(15 * 60_000, { DATA_MAINTENANCE_INTERVAL_MS: 15 * 60_000 }), true);
+});
+
+test('legacy backfill remains active until both D1 bindings exist', () => {
+  assert.equal(minuteFactsCutoverEnabled({ DB: {} }), false);
+  assert.equal(minuteFactsCutoverEnabled({ FACTS_DB: {} }), false);
+  assert.equal(minuteFactsCutoverEnabled({ DB: {}, FACTS_DB: {} }), true);
 });
 
 test('in-process monitoring is opt-in after external monitor migration', () => {
