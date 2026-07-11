@@ -6,6 +6,10 @@ import {
   scheduleBuddyPlayback,
 } from '../src/cadenced-entry.js';
 
+function requestContext() {
+  return { waitUntil() {} };
+}
+
 test('buddy playback uses the cron slot for cadence and wall clock for observed_at', async () => {
   resetBuddyPlaybackFlightForTests();
   let pending = null;
@@ -44,7 +48,7 @@ test('buddy playback does not run outside the scheduled five-minute bucket', asy
   assert.equal(called, false);
 });
 
-test('overlapping buddy playback calls share one in-flight collection', async () => {
+test('overlapping buddy playback calls in one request share one in-flight collection', async () => {
   resetBuddyPlaybackFlightForTests();
   let calls = 0;
   let release;
@@ -52,13 +56,33 @@ test('overlapping buddy playback calls share one in-flight collection', async ()
     calls += 1;
     return new Promise((resolve) => { release = resolve; });
   };
-  const first = scheduleBuddyPlayback({}, null, 300_000, runner, () => 360_000);
-  const second = scheduleBuddyPlayback({}, null, 300_000, runner, () => 361_000);
+  const ctx = requestContext();
+  const first = scheduleBuddyPlayback({}, ctx, 300_000, runner, () => 360_000);
+  const second = scheduleBuddyPlayback({}, ctx, 300_000, runner, () => 361_000);
 
   assert.equal(first, second);
   await Promise.resolve();
   assert.equal(calls, 1);
   release({ skipped: false });
   assert.deepEqual(await first, { skipped: false });
+  resetBuddyPlaybackFlightForTests();
+});
+
+test('different request contexts never share buddy playback I/O', async () => {
+  resetBuddyPlaybackFlightForTests();
+  let calls = 0;
+  const runner = async () => {
+    calls += 1;
+    return { skipped: false, call: calls };
+  };
+
+  const first = scheduleBuddyPlayback({}, requestContext(), 300_000, runner, () => 360_000);
+  const second = scheduleBuddyPlayback({}, requestContext(), 300_000, runner, () => 361_000);
+
+  assert.notEqual(first, second);
+  assert.deepEqual(await Promise.all([first, second]), [
+    { skipped: false, call: 1 },
+    { skipped: false, call: 2 },
+  ]);
   resetBuddyPlaybackFlightForTests();
 });
