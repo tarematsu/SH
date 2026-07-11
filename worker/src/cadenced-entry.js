@@ -11,7 +11,7 @@ import diagnosticApp from './health-alert-index.js';
 export const DEFER_BUDDY_PLAYBACK_FLAG = '__DEFER_BUDDY_PLAYBACK';
 const DEFAULT_DIAGNOSTIC_INTERVAL_MINUTES = 30;
 let forceDiagnosticsUntil = 0;
-let buddyPlaybackFlight = null;
+let buddyPlaybackFlightsByContext = new WeakMap();
 
 export function diagnosticIntervalMinutes(env = {}) {
   const configured = Number(env.DIAGNOSTIC_INTERVAL_MINUTES ?? DEFAULT_DIAGNOSTIC_INTERVAL_MINUTES);
@@ -38,7 +38,7 @@ export function resetDiagnosticFailureWindow() {
 }
 
 export function resetBuddyPlaybackFlightForTests() {
-  buddyPlaybackFlight = null;
+  buddyPlaybackFlightsByContext = new WeakMap();
 }
 
 export function scheduledTimestamp(controller, fallback = Date.now()) {
@@ -62,6 +62,17 @@ function healthWriteError(event, error) {
   }));
 }
 
+function requestContextKey(ctx) {
+  return ctx && (typeof ctx === 'object' || typeof ctx === 'function') ? ctx : null;
+}
+
+function releaseBuddyFlight(ctx, flight) {
+  const key = requestContextKey(ctx);
+  if (key && buddyPlaybackFlightsByContext.get(key) === flight) {
+    buddyPlaybackFlightsByContext.delete(key);
+  }
+}
+
 export function scheduleBuddyPlayback(
   env,
   ctx,
@@ -74,9 +85,12 @@ export function scheduleBuddyPlayback(
   if (!shouldRunBuddyPlayback(scheduledAt, config.intervalMs)) {
     return Promise.resolve({ skipped: true, reason: 'not-due' });
   }
-  if (buddyPlaybackFlight) {
-    if (ctx && typeof ctx.waitUntil === 'function') ctx.waitUntil(buddyPlaybackFlight);
-    return buddyPlaybackFlight;
+
+  const key = requestContextKey(ctx);
+  const existing = key ? buddyPlaybackFlightsByContext.get(key) : null;
+  if (existing) {
+    if (typeof ctx?.waitUntil === 'function') ctx.waitUntil(existing);
+    return existing;
   }
 
   const observedAt = safeNow(now);
@@ -96,13 +110,9 @@ export function scheduleBuddyPlayback(
       return { skipped: true, reason: 'collection-failed' };
     }
   });
-  buddyPlaybackFlight = task.finally(() => {
-    if (buddyPlaybackFlight === task || buddyPlaybackFlight === wrappedTask) {
-      buddyPlaybackFlight = null;
-    }
-  });
-  const wrappedTask = buddyPlaybackFlight;
-  if (ctx && typeof ctx.waitUntil === 'function') ctx.waitUntil(wrappedTask);
+  const wrappedTask = task.finally(() => releaseBuddyFlight(ctx, wrappedTask));
+  if (key) buddyPlaybackFlightsByContext.set(key, wrappedTask);
+  if (typeof ctx?.waitUntil === 'function') ctx.waitUntil(wrappedTask);
   return wrappedTask;
 }
 
