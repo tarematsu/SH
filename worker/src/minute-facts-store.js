@@ -272,10 +272,47 @@ async function loadTrackMetadata(oldDb, tracks) {
   }
 }
 
-async function batchRun(db, statements, chunkSize = 35) {
+export async function batchRun(db, statements, chunkSize = 35) {
   for (let index = 0; index < statements.length; index += chunkSize) {
     await db.batch(statements.slice(index, index + chunkSize));
   }
+}
+
+export function scheduleQueueTracks(tracks) {
+  let offset = 0;
+  let scheduleValid = true;
+  return tracks.map((track) => {
+    const duration = integer(track.duration_ms);
+    const validItem = scheduleValid && duration != null && duration > 0;
+    const scheduled = { ...track, playbackOffset: scheduleValid ? offset : null, scheduleValid: validItem };
+    if (validItem) offset += duration;
+    else scheduleValid = false;
+    return scheduled;
+  });
+}
+
+export function queueRevisionItemStatement(db, revisionId, track, biteCount) {
+  return db.prepare(`INSERT INTO sh_queue_revision_items(
+      revision_id,position,track_id,queue_track_id,stationhead_track_id,isrc,spotify_id,
+      deezer_id,duration_ms,playback_offset_ms,schedule_valid,bite_count
+    ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
+    ON CONFLICT(revision_id,position) DO UPDATE SET
+      track_id=excluded.track_id,queue_track_id=excluded.queue_track_id,
+      stationhead_track_id=excluded.stationhead_track_id,isrc=excluded.isrc,
+      spotify_id=excluded.spotify_id,deezer_id=excluded.deezer_id,
+      duration_ms=excluded.duration_ms,playback_offset_ms=excluded.playback_offset_ms,
+      schedule_valid=excluded.schedule_valid,bite_count=excluded.bite_count`).bind(
+    revisionId, track.position, track.trackId, track.queue_track_id, track.stationhead_track_id,
+    track.isrc, track.spotify_id, track.deezer_id, track.duration_ms,
+    track.playbackOffset, track.scheduleValid ? 1 : 0, biteCount,
+  );
+}
+
+export function findScheduledPosition(items, elapsedMs) {
+  const match = (items || []).find((item) => Number(item.schedule_valid) === 1
+    && elapsedMs >= Number(item.playback_offset_ms)
+    && elapsedMs < Number(item.playback_offset_ms) + Number(item.duration_ms));
+  return match?.position == null ? null : Number(match.position);
 }
 
 async function createRevision(db, oldDb, input) {
@@ -308,35 +345,18 @@ async function createRevision(db, oldDb, input) {
   if (!Number.isFinite(revisionId)) throw new Error('failed to create queue revision');
 
   const metadata = await loadTrackMetadata(oldDb, tracks);
-  const resolved = [];
-  let offset = 0;
-  let scheduleValid = true;
+  const withTrackIds = [];
   for (const track of tracks) {
     const details = metadata.get(String(track.spotify_id || '')) || {};
     const trackId = await resolveTrack(db, { ...track, title: details.title, artist: details.artist }, observedAt);
-    const duration = integer(track.duration_ms);
-    const validItem = scheduleValid && duration != null && duration > 0;
-    resolved.push({ ...track, trackId, playbackOffset: scheduleValid ? offset : null, scheduleValid: validItem });
-    if (validItem) offset += duration;
-    else scheduleValid = false;
+    withTrackIds.push({ ...track, trackId });
   }
+  const resolved = scheduleQueueTracks(withTrackIds);
 
   const byPosition = new Map((queue?.tracks || []).map((track, index) => [integer(track?.position) ?? index, track]));
-  const statements = resolved.map((track) => db.prepare(`INSERT INTO sh_queue_revision_items(
-      revision_id,position,track_id,queue_track_id,stationhead_track_id,isrc,spotify_id,
-      deezer_id,duration_ms,playback_offset_ms,schedule_valid,bite_count
-    ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
-    ON CONFLICT(revision_id,position) DO UPDATE SET
-      track_id=excluded.track_id,queue_track_id=excluded.queue_track_id,
-      stationhead_track_id=excluded.stationhead_track_id,isrc=excluded.isrc,
-      spotify_id=excluded.spotify_id,deezer_id=excluded.deezer_id,
-      duration_ms=excluded.duration_ms,playback_offset_ms=excluded.playback_offset_ms,
-      schedule_valid=excluded.schedule_valid,bite_count=excluded.bite_count`).bind(
-      revisionId, track.position, track.trackId, track.queue_track_id, track.stationhead_track_id,
-      track.isrc, track.spotify_id, track.deezer_id, track.duration_ms,
-      track.playbackOffset, track.scheduleValid ? 1 : 0,
-      integer(byPosition.get(track.position)?.bite_count),
-    ));
+  const statements = resolved.map((track) => queueRevisionItemStatement(
+    db, revisionId, track, integer(byPosition.get(track.position)?.bite_count),
+  ));
   await batchRun(db, statements);
   const count = await db.prepare('SELECT COUNT(*) AS item_count FROM sh_queue_revision_items WHERE revision_id=?')
     .bind(revisionId).first();
@@ -381,10 +401,7 @@ async function updatePlaybackState(db, input) {
   if (elapsed != null) {
     const items = await db.prepare(`SELECT position,duration_ms,playback_offset_ms,schedule_valid
       FROM sh_queue_revision_items WHERE revision_id=? ORDER BY position ASC`).bind(revisionId).all();
-    const match = (items.results || []).find((item) => Number(item.schedule_valid) === 1
-      && elapsed >= Number(item.playback_offset_ms)
-      && elapsed < Number(item.playback_offset_ms) + Number(item.duration_ms));
-    currentPosition = match?.position == null ? null : Number(match.position);
+    currentPosition = findScheduledPosition(items.results || [], elapsed);
   }
 
   await db.prepare(`INSERT INTO sh_playback_current(

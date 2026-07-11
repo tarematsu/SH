@@ -4,18 +4,20 @@ import {
   resolveTracksBulk,
 } from './minute-facts-fast-store.js';
 import {
+  batchRun,
   FACT_QUALITY_FLAGS,
+  findScheduledPosition,
   minuteBucket,
   qualityScore,
+  queueRevisionItemStatement,
   queueStructuralHash,
   queueStructurePayload,
   reportedStreamCount,
   resolveHost,
+  scheduleQueueTracks,
   timestampMs,
   upsertMinuteFact,
 } from './minute-facts-store.js';
-
-const BATCH_SIZE = 35;
 
 function num(value) {
   if (value === null || value === undefined || value === '') return null;
@@ -42,12 +44,6 @@ function bool(value) {
   if (['true', '1', 'yes', 'on'].includes(normalized)) return 1;
   if (['false', '0', 'no', 'off', ''].includes(normalized)) return 0;
   return null;
-}
-
-async function batchRun(db, statements) {
-  for (let index = 0; index < statements.length; index += BATCH_SIZE) {
-    await db.batch(statements.slice(index, index + BATCH_SIZE));
-  }
 }
 
 async function findHistoricalSession(db, input) {
@@ -118,46 +114,13 @@ async function createRebuildRevision(db, sourceDb, input) {
     revisionId,
   });
 
-  let offset = 0;
-  let validSchedule = true;
-  const scheduled = resolved.map((track) => {
-    const duration = integer(track.duration_ms);
-    const valid = validSchedule && duration != null && duration > 0;
-    const result = {
-      ...track,
-      playbackOffset: validSchedule ? offset : null,
-      scheduleValid: valid,
-    };
-    if (valid) offset += duration;
-    else validSchedule = false;
-    return result;
-  });
+  const scheduled = scheduleQueueTracks(resolved);
   const missing = missingRevisionPositions(scheduled, existingResult.results || []);
   const byPosition = new Map((input.queue?.tracks || []).map(
     (track, index) => [integer(track?.position) ?? index, track],
   ));
-  const statements = missing.map((track) => db.prepare(`INSERT INTO sh_queue_revision_items(
-      revision_id,position,track_id,queue_track_id,stationhead_track_id,isrc,spotify_id,
-      deezer_id,duration_ms,playback_offset_ms,schedule_valid,bite_count
-    ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
-    ON CONFLICT(revision_id,position) DO UPDATE SET
-      track_id=excluded.track_id,queue_track_id=excluded.queue_track_id,
-      stationhead_track_id=excluded.stationhead_track_id,isrc=excluded.isrc,
-      spotify_id=excluded.spotify_id,deezer_id=excluded.deezer_id,
-      duration_ms=excluded.duration_ms,playback_offset_ms=excluded.playback_offset_ms,
-      schedule_valid=excluded.schedule_valid,bite_count=excluded.bite_count`).bind(
-    revisionId,
-    track.position,
-    track.trackId,
-    track.queue_track_id,
-    track.stationhead_track_id,
-    track.isrc,
-    track.spotify_id,
-    track.deezer_id,
-    track.duration_ms,
-    track.playbackOffset,
-    track.scheduleValid ? 1 : 0,
-    integer(byPosition.get(track.position)?.bite_count),
+  const statements = missing.map((track) => queueRevisionItemStatement(
+    db, revisionId, track, integer(byPosition.get(track.position)?.bite_count),
   ));
   await batchRun(db, statements);
 
@@ -182,11 +145,8 @@ async function inferHistoricalPlayback(db, input) {
     FROM sh_queue_revision_items WHERE revision_id=? ORDER BY position ASC`)
     .bind(input.revisionId)
     .all();
-  const item = (result.results || []).find((row) => Number(row.schedule_valid) === 1
-    && elapsed >= Number(row.playback_offset_ms)
-    && elapsed < Number(row.playback_offset_ms) + Number(row.duration_ms));
   return {
-    current_position: item?.position == null ? null : Number(item.position),
+    current_position: findScheduledPosition(result.results || [], elapsed),
     delayed: false,
   };
 }

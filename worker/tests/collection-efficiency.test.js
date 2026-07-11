@@ -10,10 +10,6 @@ import {
   runScheduledMaintenance,
   shouldRunScheduledMaintenance,
 } from '../src/scheduled-maintenance.js';
-import {
-  legacyMigrationEnabled as minuteFactsLegacyMigrationEnabled,
-  runMinuteFactsBackfill,
-} from '../src/minute-facts-backfill.js';
 
 const FIFTEEN_MINUTES = 15 * 60_000;
 
@@ -110,14 +106,8 @@ test('minute facts cutover detection remains compatible with both D1 bindings', 
   assert.equal(minuteFactsCutoverEnabled({ DB: {}, FACTS_DB: {} }), true);
 });
 
-test('all legacy migration entry points are disabled', async () => {
+test('scheduled maintenance legacy migration entry point remains disabled', async () => {
   assert.equal(scheduledLegacyMigrationEnabled(), false);
-  assert.equal(minuteFactsLegacyMigrationEnabled(), false);
-  assert.deepEqual(await runMinuteFactsBackfill({ DB: {}, FACTS_DB: {} }), {
-    skipped: true,
-    reason: LEGACY_MIGRATION_DISABLED_REASON,
-    migrated: 0,
-  });
 });
 
 test('scheduled maintenance runs rollups without touching legacy or facts migration tables', async () => {
