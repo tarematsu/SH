@@ -68,6 +68,8 @@ test('legacy stream rejection quality remains readable during cleanup', () => {
 test('reported stream count preserves Stationhead values without continuity validation', () => {
   assert.equal(reportedStreamCount(1_234_567), 1_234_567);
   assert.equal(reportedStreamCount('456'), 456);
+  assert.equal(reportedStreamCount(456.9), 456);
+  assert.equal(reportedStreamCount(null), null);
   assert.equal(reportedStreamCount(-1), null);
   assert.equal(reportedStreamCount('not-a-number'), null);
 });
