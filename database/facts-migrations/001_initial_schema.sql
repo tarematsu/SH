@@ -241,3 +241,10 @@ WHERE source='live_collector'
   AND reported_total_listens IS NOT NULL
   AND validated_stream_count=reported_total_listens
   AND reported_current_stream_count<>reported_total_listens;
+
+-- Remove validated stream values that were carried forward from an earlier minute.
+UPDATE sh_minute_facts
+SET validated_stream_count=NULL
+WHERE source='live_collector'
+  AND validated_stream_count IS NOT NULL
+  AND (stream_count_rejected=1 OR reported_current_stream_count IS NULL);

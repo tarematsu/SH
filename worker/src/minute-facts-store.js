@@ -437,6 +437,11 @@ export function qualityScore(flags) {
   return Math.max(0, Number(score.toFixed(2)));
 }
 
+export function validatedStreamCountFromSnapshotResult(snapshotResult) {
+  return integer(snapshotResult?.validated_stream_count
+    ?? snapshotResult?.validatedStreamCount);
+}
+
 const FACT_COLUMNS = [
   'channel_id','station_id','minute_at','observed_at','received_at','source','source_priority',
   'source_record_id','collector_id','broadcast_session_id','host_id','is_broadcasting',
@@ -544,17 +549,7 @@ export async function saveLiveMinuteFact(env, input) {
   if (playback?.delayed) flags |= FACT_QUALITY_FLAGS.DELAYED_PAYLOAD;
   if (bool(queue?.is_paused) === 1) flags |= FACT_QUALITY_FLAGS.PAUSED;
 
-  let validatedStreamCount = integer(input.snapshotResult?.validated_stream_count
-    ?? input.snapshotResult?.validatedStreamCount);
-  if (validatedStreamCount == null && env.DB) {
-    try {
-      const streamState = await env.DB.prepare(`SELECT last_stream_count FROM sh_snapshot_current
-        WHERE channel_key=?`).bind(String(channelId)).first();
-      validatedStreamCount = integer(streamState?.last_stream_count);
-    } catch {
-      // The legacy DB remains an optional validation source during rollout.
-    }
-  }
+  const validatedStreamCount = validatedStreamCountFromSnapshotResult(input.snapshotResult);
 
   const fact = {
     channel_id: channelId,
