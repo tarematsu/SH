@@ -16,7 +16,7 @@ test('uses current_stream_count even when total_listens disagrees', () => {
   assert.equal(value, 1000120);
 });
 
-test('rejects an extreme current_stream_count without consulting total_listens', () => {
+test('rejects an extreme current_stream_count when total_listens does not match the baseline', () => {
   const current = {
     last_stream_count: 1000000,
     last_stream_at: 1000000,
@@ -24,9 +24,22 @@ test('rejects an extreme current_stream_count without consulting total_listens',
   };
   const value = validatedStreamCount({
     current_stream_count: 280,
-    total_listens: 1000120,
+    total_listens: 315,
   }, current, 1060000);
   assert.equal(value, null);
+});
+
+test('reseeds stream validation when the old baseline was total_listens', () => {
+  const current = {
+    last_stream_count: 1000000,
+    last_stream_at: 1000000,
+    last_snapshot_at: 1000000,
+  };
+  const value = validatedStreamCount({
+    current_stream_count: 340,
+    total_listens: 1000120,
+  }, current, 1060000);
+  assert.equal(value, 340);
 });
 
 test('uses current_stream_count when no baseline exists', () => {

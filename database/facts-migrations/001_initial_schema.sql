@@ -229,3 +229,15 @@ CREATE TABLE IF NOT EXISTS sh_system_settings (
   value TEXT,
   updated_at INTEGER NOT NULL
 );
+
+-- Repair live rows whose validated stream value came from total_listens.
+UPDATE sh_minute_facts
+SET validated_stream_count=NULL,
+    stream_count_rejected=1,
+    quality_flags=quality_flags | 64,
+    quality_score=MAX(0,quality_score-CASE WHEN (quality_flags & 64)=0 THEN 0.1 ELSE 0 END)
+WHERE source='live_collector'
+  AND reported_current_stream_count IS NOT NULL
+  AND reported_total_listens IS NOT NULL
+  AND validated_stream_count=reported_total_listens
+  AND reported_current_stream_count<>reported_total_listens;

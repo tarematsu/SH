@@ -195,7 +195,7 @@
       '日時JST','minute_at','observed_at','received_at','source','source_priority','source_record_id',
       'channel_id','station_id','配信中','一時停止','listener_count','cumulative_listener_count',
       'reported_stream_count','validated_stream_count','stream_count_rejected',
-      '曲名','アーティスト','ISRC','spotify_id','track_bite_count','ホスト','online_member_count','total_member_count',
+      '曲名','アーティスト','ISRC','spotify_id','track_bite_count','ホスト','online_member_count','total_member_count','guest_count',
       'comment_count','comment_total','comments_degraded','queue_id','queue_revision_id','queue_position','queue_track_count',
       'track_detection_method','track_confidence','schedule_valid','quality_score','quality_flags','fact_id',
     ];
@@ -205,7 +205,7 @@
       row.is_broadcasting, row.is_paused, row.listener_count, row.cumulative_listener_count,
       row.reported_stream_count, row.validated_stream_count, row.stream_count_rejected,
       row.track_title, row.artist_name, row.isrc, row.spotify_id, row.track_bite_count, row.host_handle,
-      row.online_member_count, row.total_member_count, row.comment_count, row.comment_total, row.comments_degraded,
+      row.online_member_count, row.total_member_count, row.guest_count, row.comment_count, row.comment_total, row.comments_degraded,
       row.queue_id, row.queue_revision_id, row.queue_position, row.queue_track_count, row.track_detection_method,
       row.track_confidence, row.schedule_valid, row.quality_score, row.quality_flags, row.id,
     ]);

@@ -73,6 +73,16 @@ export function validatedStreamCount(data, current, observedAt) {
     elapsedMinutes * STREAM_RISE_PER_MINUTE,
   );
   const dropLimit = Math.max(STREAM_MIN_DROP_LIMIT, Math.abs(previous) * 0.1);
+  const rawStreamCount = candidates[0];
+  const cumulativeListeners = num(data?.total_listens);
+  const listenerDelta = cumulativeListeners == null ? null : cumulativeListeners - previous;
+  const previousTracksListeners = listenerDelta != null
+    && listenerDelta <= riseLimit
+    && listenerDelta >= -dropLimit;
+  const streamDelta = rawStreamCount - previous;
+  const streamBreaksContinuity = streamDelta > riseLimit || streamDelta < -dropLimit;
+  if (previousTracksListeners && streamBreaksContinuity) return rawStreamCount;
+
   const continuous = candidates.filter((value) => {
     const delta = value - previous;
     return delta <= riseLimit && delta >= -dropLimit;
