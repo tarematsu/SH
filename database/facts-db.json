@@ -1,0 +1,6 @@
+{
+  "binding": "FACTS_DB",
+  "database_name": "sh-monitor-facts",
+  "database_id": "bf2f4650-1fd6-4743-881d-22bf1ca12f5b",
+  "schema": "database/facts-migrations/001_initial_schema.sql"
+}

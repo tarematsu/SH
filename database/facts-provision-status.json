@@ -1,6 +1,6 @@
 {
-  "result": "missing-cloudflare-account-id",
-  "outcome": "failure",
-  "source_sha": "db6b951ed88ff44c94097b24c7a01f3cb71e0d8c",
-  "recorded_at": "2026-07-11T02:23:00.496Z"
+  "result": "success",
+  "outcome": "success",
+  "source_sha": "3531534670d22ce56b9af4862953411e023e76e0",
+  "recorded_at": "2026-07-11T02:23:31.730Z"
 }
