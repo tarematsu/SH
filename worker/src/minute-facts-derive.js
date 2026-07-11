@@ -1,5 +1,6 @@
 import { sanitizeFailureDetail } from './collector-failure.js';
 import { saveOptimizedMinuteFactWithinBudget } from './minute-facts-fast-store.js';
+import { saveReconstructedMinuteFactWithinBudget } from './minute-facts-rebuild-store.js';
 import {
   claimMinuteFactJobs,
   completeMinuteFactJob,
@@ -70,13 +71,19 @@ export async function runMinuteFactDeriveCron(env, dependencies = {}) {
   const claim = dependencies.claim || claimMinuteFactJobs;
   const complete = dependencies.complete || completeMinuteFactJob;
   const fail = dependencies.fail || failMinuteFactJob;
-  const write = dependencies.write || saveOptimizedMinuteFactWithinBudget;
+  const liveWrite = dependencies.liveWrite || saveOptimizedMinuteFactWithinBudget;
+  const rebuildWrite = dependencies.rebuildWrite || saveReconstructedMinuteFactWithinBudget;
+  const write = dependencies.write || ((activeEnv, payload) => (
+    payload?.rebuild ? rebuildWrite(activeEnv, payload) : liveWrite(activeEnv, payload)
+  ));
   const stats = dependencies.stats || minuteFactInboxStats;
   const startedAt = nowFn();
   const deadlineAt = startedAt + config.runBudgetMs;
   const summary = {
     event: 'minute_fact_derive_summary',
     processed: 0,
+    processed_live: 0,
+    processed_rebuild: 0,
     failed: 0,
     dead: 0,
     skipped_budget: 0,
@@ -101,6 +108,8 @@ export async function runMinuteFactDeriveCron(env, dependencies = {}) {
       await write(withDeriveTimeout(env, config.jobTimeoutMs), payload);
       await complete(env, job.id, nowFn());
       summary.processed += 1;
+      if (payload.rebuild) summary.processed_rebuild += 1;
+      else summary.processed_live += 1;
     } catch (error) {
       const result = await fail(env, job, error, {
         now: nowFn(),
@@ -112,6 +121,7 @@ export async function runMinuteFactDeriveCron(env, dependencies = {}) {
       console.warn(JSON.stringify({
         event: 'minute_fact_job_failed',
         job_id: Number(job.id),
+        job_kind: job.job_kind || 'live',
         attempts: Number(job.attempts || 0),
         terminal: Boolean(result?.terminal),
         error: sanitizeFailureDetail(error?.message || error),
