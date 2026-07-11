@@ -10,6 +10,13 @@ function intervalMs(env = {}) {
   return Math.max(MIN_INTERVAL_MS, Math.trunc(configured));
 }
 
+export function dataMaintenanceEnabled(env = {}) {
+  const configured = env.DATA_MAINTENANCE_ENABLED;
+  if (configured == null || configured === '') return true;
+  const normalized = String(configured).trim().toLowerCase();
+  return !['0', 'false', 'no', 'off'].includes(normalized);
+}
+
 export function shouldRunScheduledMaintenance(now = Date.now(), env = {}) {
   const interval = intervalMs(env);
   const minute = Math.floor(now / 60_000);
@@ -27,6 +34,9 @@ export function legacyMigrationEnabled() {
 
 export async function runScheduledMaintenance(env, now = Date.now()) {
   if (!env?.DB) return { skipped: true, reason: 'db-binding-missing' };
+  if (!dataMaintenanceEnabled(env)) {
+    return { skipped: true, reason: 'disabled' };
+  }
   if (!shouldRunScheduledMaintenance(now, env)) {
     return { skipped: true, reason: 'not-due' };
   }
