@@ -1,0 +1,105 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
+
+import {
+  deriveConfig,
+  minuteFactRetryDelayMs,
+  runMinuteFactDeriveCron,
+} from '../src/minute-facts-derive.js';
+
+function job(id, attempts = 1) {
+  return {
+    id,
+    attempts,
+    payload_version: 1,
+    payload_json: JSON.stringify({
+      payload_version: 1,
+      observedAt: 120_000 + id,
+      snapshot: { channel_id: 10 },
+      queue: null,
+      comments: {},
+    }),
+  };
+}
+
+test('derive config applies bounded defaults', () => {
+  assert.deepEqual(deriveConfig({}), {
+    maxJobs: 3,
+    jobTimeoutMs: 18_000,
+    leaseMs: 60_000,
+    maxAttempts: 8,
+    runBudgetMs: 50_000,
+  });
+  assert.equal(deriveConfig({ DERIVE_MAX_JOBS: 999 }).maxJobs, 20);
+  assert.equal(deriveConfig({ DERIVE_JOB_TIMEOUT_MS: 99_999 }).jobTimeoutMs, 20_000);
+});
+
+test('retry delay grows exponentially and is capped at one hour', () => {
+  assert.equal(minuteFactRetryDelayMs(1), 60_000);
+  assert.equal(minuteFactRetryDelayMs(2), 120_000);
+  assert.equal(minuteFactRetryDelayMs(4), 480_000);
+  assert.equal(minuteFactRetryDelayMs(99), 3_600_000);
+});
+
+test('derive cron claims, writes, and completes pending jobs', async () => {
+  const pending = [job(1), job(2)];
+  const calls = [];
+  const result = await runMinuteFactDeriveCron(
+    { DB: {}, FACTS_DB: {} },
+    {
+      now: () => 1_000,
+      claim: async (_env, options) => {
+        calls.push(['claim', options.limit, options.leaseMs]);
+        return pending.length ? [pending.shift()] : [];
+      },
+      write: async (env, payload) => {
+        calls.push(['write', env.MINUTE_FACT_TIMEOUT_MS, payload.observedAt]);
+      },
+      complete: async (_env, id) => {
+        calls.push(['complete', id]);
+      },
+      fail: async () => {
+        throw new Error('unexpected fail');
+      },
+      stats: async () => ({ pending_count: 0, processing_count: 0, dead_count: 0 }),
+    },
+  );
+
+  assert.equal(result.processed, 2);
+  assert.equal(result.failed, 0);
+  assert.deepEqual(calls, [
+    ['claim', 1, 60_000],
+    ['write', 18_000, 120_001],
+    ['complete', 1],
+    ['claim', 1, 60_000],
+    ['write', 18_000, 120_002],
+    ['complete', 2],
+    ['claim', 1, 60_000],
+  ]);
+});
+
+test('derive cron reschedules failed jobs without failing the cron event', async () => {
+  const pending = [job(9, 3)];
+  const failures = [];
+  const result = await runMinuteFactDeriveCron(
+    { DB: {}, FACTS_DB: {}, DERIVE_MAX_JOBS: 1 },
+    {
+      now: () => 5_000,
+      claim: async () => pending.length ? [pending.shift()] : [],
+      write: async () => { throw new Error('D1 busy'); },
+      complete: async () => { throw new Error('unexpected complete'); },
+      fail: async (_env, receivedJob, error, options) => {
+        failures.push({ receivedJob, error, options });
+        return { terminal: false };
+      },
+      stats: async () => ({ pending_count: 1, processing_count: 0, dead_count: 0 }),
+    },
+  );
+
+  assert.equal(result.processed, 0);
+  assert.equal(result.failed, 1);
+  assert.equal(result.dead, 0);
+  assert.equal(failures[0].receivedJob.id, 9);
+  assert.match(failures[0].error.message, /D1 busy/);
+  assert.equal(failures[0].options.retryDelayMs, 240_000);
+});
