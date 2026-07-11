@@ -1,4 +1,4 @@
-# Creates the dedicated minute-facts D1 before deploying the collector.
+# Creates the dedicated minute-facts D1 and verifies the Cloudflare Git deployment.
 name: Provision Stationhead-DB
 
 on:
@@ -63,60 +63,9 @@ jobs:
             echo "result=provision-command-failed" >> "${GITHUB_OUTPUT}"
             exit 1
           fi
-      - name: Attempt direct Worker deploy
-        id: deploy
-        if: steps.provision.outcome == 'success'
-        continue-on-error: true
-        working-directory: worker
-        env:
-          TOKEN_BUILDS: ${{ secrets.CLOUDFLARE_BUILDS_API_TOKEN }}
-          TOKEN_CF: ${{ secrets.CF_API_TOKEN }}
-          TOKEN_PRIMARY: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID || secrets.CF_ACCOUNT_ID }}
-        run: |
-          set +e
-          output=../database/facts-deploy-output.txt
-          : > "$output"
-
-          try_token() {
-            name="$1"
-            token="$2"
-            if [ -z "$token" ]; then
-              echo "=== $name: not configured ===" >> "$output"
-              return 1
-            fi
-            echo "=== trying $name ===" >> "$output"
-            CLOUDFLARE_API_TOKEN="$token" npm run deploy >> "$output" 2>&1
-            status=$?
-            if [ "$status" -eq 0 ]; then
-              echo "token_source=$name" >> "$GITHUB_OUTPUT"
-              return 0
-            fi
-            echo "=== $name failed with status $status ===" >> "$output"
-            return 1
-          }
-
-          if try_token CLOUDFLARE_BUILDS_API_TOKEN "$TOKEN_BUILDS" \
-            || try_token CF_API_TOKEN "$TOKEN_CF" \
-            || try_token CLOUDFLARE_API_TOKEN "$TOKEN_PRIMARY"; then
-            status=0
-          else
-            status=1
-          fi
-
-          python - <<'PY'
-          from pathlib import Path
-          import re
-          path = Path('../database/facts-deploy-output.txt')
-          text = path.read_text(errors='replace') if path.exists() else ''
-          text = re.sub(r'\x1b\[[0-9;]*[A-Za-z]', '', text)
-          path.write_text(text[-16000:])
-          PY
-          cat "$output"
-          exit "$status"
-      - name: Verify live minute facts
+      - name: Verify Cloudflare Git deployment
         id: verify
-        if: steps.provision.outcome == 'success'
+        if: steps.provision.outcome == 'success' && github.event_name != 'pull_request'
         continue-on-error: true
         working-directory: worker
         env:
@@ -126,14 +75,12 @@ jobs:
           FACTS_VERIFY_ATTEMPTS: 5
           FACTS_VERIFY_DELAY_MS: 20000
         run: node scripts/verify-facts-live.mjs
-      - name: Record provisioning and deployment status
+      - name: Record provisioning status
         if: always()
         env:
           PROVISION_RESULT: ${{ steps.provision.outputs.result || 'unknown-failure' }}
           PROVISION_OUTCOME: ${{ steps.provision.outcome }}
-          DEPLOY_OUTCOME: ${{ steps.deploy.outcome || 'skipped' }}
-          DEPLOY_TOKEN_SOURCE: ${{ steps.deploy.outputs.token_source || 'none' }}
-          VERIFY_OUTCOME: ${{ steps.verify.outcome || 'skipped' }}
+          VERIFY_OUTCOME: ${{ steps.verify.outcome || 'not-run-on-pull-request' }}
           EVENT_NAME: ${{ github.event_name }}
           SOURCE_SHA: ${{ github.sha }}
         run: |
@@ -142,10 +89,9 @@ jobs:
           mkdirSync('database', { recursive: true });
           writeFileSync('database/facts-provision-status.json', `${JSON.stringify({
             database_name: 'Stationhead-DB',
+            deployment_path: 'cloudflare_git',
             provision_result: process.env.PROVISION_RESULT,
             provision_outcome: process.env.PROVISION_OUTCOME,
-            direct_deploy_outcome: process.env.DEPLOY_OUTCOME,
-            direct_deploy_token_source: process.env.DEPLOY_TOKEN_SOURCE,
             live_verify_outcome: process.env.VERIFY_OUTCOME,
             event_name: process.env.EVENT_NAME,
             source_sha: process.env.SOURCE_SHA,
@@ -172,7 +118,7 @@ jobs:
           echo "Stationhead-DB provisioning failed: ${{ steps.provision.outputs.result || 'unknown-failure' }}"
           exit 1
       - name: Fail missing live data
-        if: steps.verify.outcome != 'success'
+        if: github.event_name != 'pull_request' && steps.verify.outcome != 'success'
         run: |
           echo "Stationhead-DB live verification=${{ steps.verify.outcome }}"
           exit 1
