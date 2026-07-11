@@ -1,3 +1,4 @@
+import { runDataMaintenanceSafely } from '../../site/functions/lib/data-maintenance.js';
 import { runMinuteFactsBackfill } from './minute-facts-backfill.js';
 import { runRollupMaintenanceSafely } from './rollup-maintenance.js';
 
@@ -17,11 +18,19 @@ export function shouldRunScheduledMaintenance(now = Date.now(), env = {}) {
   return minute % intervalMinutes === 0;
 }
 
+export function minuteFactsCutoverEnabled(env = {}) {
+  return Boolean(env?.DB && env?.FACTS_DB);
+}
+
 export async function runScheduledMaintenance(env, now = Date.now()) {
   if (!env?.DB) return { skipped: true, reason: 'db-binding-missing' };
   if (!shouldRunScheduledMaintenance(now, env)) {
     return { skipped: true, reason: 'not-due' };
   }
+  if (!minuteFactsCutoverEnabled(env)) {
+    return runDataMaintenanceSafely(env.DB, now);
+  }
+
   const [rollup, minuteFactsBackfill] = await Promise.all([
     runRollupMaintenanceSafely(env.DB, now),
     runMinuteFactsBackfill(env).catch((error) => ({
