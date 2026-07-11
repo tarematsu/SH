@@ -185,7 +185,7 @@ function legacyFact({ row, channelId, hostId, trackId, sessionId, source, source
     guest_count: null,
     reported_total_listens: integer(row.total_stream_count),
     reported_current_stream_count: null,
-    validated_stream_count: integer(row.total_stream_count),
+    validated_stream_count: null,
     stream_count_rejected: 0,
     queue_revision_id: null,
     queue_id: null,

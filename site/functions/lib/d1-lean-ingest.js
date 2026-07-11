@@ -2,9 +2,6 @@ import { payloadHash } from './ingest-claim.js';
 import { bool, num, rawJson, text } from './api-utils.js';
 
 const SNAPSHOT_CHECKPOINT_MS = 5 * 60_000;
-const STREAM_MIN_RISE_LIMIT = 50_000;
-const STREAM_MIN_DROP_LIMIT = 10_000;
-const STREAM_RISE_PER_MINUTE = 10_000;
 
 function snapshotRawPayload(data) {
   const raw = data?.raw || {};
@@ -28,7 +25,7 @@ function snapshotRawPayload(data) {
   };
 }
 
-function snapshotHashPayload(data, validatedStreamCount, compactRaw) {
+function snapshotHashPayload(data, reportedStreamCount, compactRaw) {
   return {
     channel_id: num(data?.channel_id),
     station_id: num(data?.station_id),
@@ -40,7 +37,7 @@ function snapshotHashPayload(data, validatedStreamCount, compactRaw) {
     total_member_count: num(data?.total_member_count),
     guest_count: num(data?.guest_count),
     cumulative_listener_count: num(data?.total_listens),
-    validated_stream_count: validatedStreamCount,
+    reported_stream_count: reportedStreamCount,
     stream_goal: num(data?.stream_goal),
     host_account_id: num(data?.host_account_id),
     host_handle: text(data?.host_handle),
@@ -49,57 +46,18 @@ function snapshotHashPayload(data, validatedStreamCount, compactRaw) {
   };
 }
 
-function streamCandidates(data) {
+export function reportedStreamCount(data) {
   const value = num(data?.current_stream_count);
-  return value != null && value >= 0 ? [value] : [];
-}
-
-export function validatedStreamCount(data, current, observedAt) {
-  const candidates = streamCandidates(data);
-  if (!candidates.length) return null;
-
-  const previous = num(current?.last_stream_count);
-  if (previous == null) return candidates[0];
-
-  const lastAcceptedAt = Number(
-    current?.last_stream_at
-    ?? current?.last_snapshot_at
-    ?? observedAt,
-  );
-  const elapsedMinutes = Math.max(1, (observedAt - lastAcceptedAt) / 60_000);
-  const riseLimit = Math.max(
-    STREAM_MIN_RISE_LIMIT,
-    Math.abs(previous) * 0.5,
-    elapsedMinutes * STREAM_RISE_PER_MINUTE,
-  );
-  const dropLimit = Math.max(STREAM_MIN_DROP_LIMIT, Math.abs(previous) * 0.1);
-  const rawStreamCount = candidates[0];
-  const cumulativeListeners = num(data?.total_listens);
-  const listenerDelta = cumulativeListeners == null ? null : cumulativeListeners - previous;
-  const previousTracksListeners = listenerDelta != null
-    && listenerDelta <= riseLimit
-    && listenerDelta >= -dropLimit;
-  const streamDelta = rawStreamCount - previous;
-  const streamBreaksContinuity = streamDelta > riseLimit || streamDelta < -dropLimit;
-  if (previousTracksListeners && streamBreaksContinuity) return rawStreamCount;
-
-  const continuous = candidates.filter((value) => {
-    const delta = value - previous;
-    return delta <= riseLimit && delta >= -dropLimit;
-  });
-  if (!continuous.length) return null;
-  continuous.sort((left, right) => Math.abs(left - previous) - Math.abs(right - previous));
-  return continuous[0];
+  return value != null && value >= 0 ? value : null;
 }
 
 export async function saveLeanSnapshot(db, observedAt, data) {
   const channelId = num(data?.channel_id);
   const stationId = num(data?.station_id);
   const channelKey = String(channelId ?? `station:${stationId ?? 0}`);
-  const current = await db.prepare(`SELECT payload_hash,last_snapshot_at,last_stream_count,last_stream_at
+  const current = await db.prepare(`SELECT payload_hash,last_snapshot_at
     FROM sh_snapshot_current WHERE channel_key=?`).bind(channelKey).first();
-  const streamCount = validatedStreamCount(data, current, observedAt);
-  const streamRejected = streamCount == null && streamCandidates(data).length > 0;
+  const streamCount = reportedStreamCount(data);
   const compactPayload = snapshotRawPayload(data);
   const hash = await payloadHash(snapshotHashPayload(data, streamCount, compactPayload));
   if (current?.payload_hash === hash
@@ -107,9 +65,8 @@ export async function saveLeanSnapshot(db, observedAt, data) {
     return {
       inserted: false,
       skipped: true,
-      streamRejected,
-      validatedStreamCount: streamCount,
-      validated_stream_count: streamCount,
+      reportedStreamCount: streamCount,
+      reported_stream_count: streamCount,
     };
   }
 
@@ -118,7 +75,7 @@ export async function saveLeanSnapshot(db, observedAt, data) {
     bool(data?.is_launched), bool(data?.is_broadcasting), text(data?.chat_status),
     num(data?.listener_count), num(data?.online_member_count), num(data?.total_member_count),
     num(data?.guest_count), num(data?.total_listens), num(data?.stream_goal),
-    num(data?.current_stream_count), streamCount, num(data?.host_account_id), text(data?.host_handle),
+    streamCount, null, num(data?.host_account_id), text(data?.host_handle),
     num(data?.broadcast_start_time),
   ];
   const velocityBinds = [stationId, observedAt - 120_000, observedAt];
@@ -138,26 +95,23 @@ export async function saveLeanSnapshot(db, observedAt, data) {
         channel_key,payload_hash,last_snapshot_at,last_stream_count,last_stream_at,updated_at
       ) VALUES(?,?,?,?,?,?) ON CONFLICT(channel_key) DO UPDATE SET
       payload_hash=excluded.payload_hash,last_snapshot_at=excluded.last_snapshot_at,
-      last_stream_count=COALESCE(excluded.last_stream_count,sh_snapshot_current.last_stream_count),
-      last_stream_at=CASE WHEN excluded.last_stream_count IS NOT NULL
-        THEN excluded.last_stream_at ELSE sh_snapshot_current.last_stream_at END,
+      last_stream_count=NULL,last_stream_at=NULL,
       updated_at=excluded.updated_at
       WHERE excluded.last_snapshot_at>=COALESCE(sh_snapshot_current.last_snapshot_at,0)`)
       .bind(
         channelKey,
         hash,
         observedAt,
-        streamCount,
-        streamCount != null ? observedAt : null,
+        null,
+        null,
         Date.now(),
       ),
   ]);
   return {
     inserted: true,
     skipped: false,
-    streamRejected,
-    validatedStreamCount: streamCount,
-    validated_stream_count: streamCount,
+    reportedStreamCount: streamCount,
+    reported_stream_count: streamCount,
   };
 }
 

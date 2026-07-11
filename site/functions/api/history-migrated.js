@@ -63,9 +63,7 @@ export function minuteFactsRowsSql(options = {}) {
       AS cumulative_listener_count,
     CASE WHEN f.source='live_collector' THEN f.reported_current_stream_count
       ELSE COALESCE(f.reported_current_stream_count,f.reported_total_listens) END
-      AS reported_stream_count,
-    f.validated_stream_count,
-    f.stream_count_rejected,f.queue_revision_id,f.queue_id,f.queue_start_time,
+      AS total_stream_count,f.queue_revision_id,f.queue_id,f.queue_start_time,
     f.is_paused,f.queue_track_count,f.queue_available,f.queue_position,
     f.track_detection_method,f.track_confidence,f.schedule_valid,
     f.track_bite_count,f.comment_count,f.comment_total,f.comments_degraded,

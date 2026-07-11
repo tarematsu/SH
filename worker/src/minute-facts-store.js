@@ -24,6 +24,11 @@ function integer(value) {
   return parsed == null ? null : Math.trunc(parsed);
 }
 
+export function reportedStreamCount(value) {
+  const parsed = integer(value);
+  return parsed != null && parsed >= 0 ? parsed : null;
+}
+
 function text(value) {
   if (value === null || value === undefined) return null;
   const parsed = String(value).trim();
@@ -538,23 +543,9 @@ export async function saveLiveMinuteFact(env, input) {
   if (broadcasting !== 0 && queue && trackId == null) flags |= FACT_QUALITY_FLAGS.TRACK_UNKNOWN;
   if (trackId != null) flags |= FACT_QUALITY_FLAGS.TRACK_INFERRED;
   if (input.comments?.degraded) flags |= FACT_QUALITY_FLAGS.COMMENTS_DEGRADED;
-  if (input.snapshotResult?.stream_rejected || input.snapshotResult?.streamRejected) {
-    flags |= FACT_QUALITY_FLAGS.STREAM_REJECTED;
-  }
   if (playback?.delayed) flags |= FACT_QUALITY_FLAGS.DELAYED_PAYLOAD;
   if (bool(queue?.is_paused) === 1) flags |= FACT_QUALITY_FLAGS.PAUSED;
 
-  let validatedStreamCount = integer(input.snapshotResult?.validated_stream_count
-    ?? input.snapshotResult?.validatedStreamCount);
-  if (validatedStreamCount == null && env.DB) {
-    try {
-      const streamState = await env.DB.prepare(`SELECT last_stream_count FROM sh_snapshot_current
-        WHERE channel_key=?`).bind(String(channelId)).first();
-      validatedStreamCount = integer(streamState?.last_stream_count);
-    } catch {
-      // The legacy DB remains an optional validation source during rollout.
-    }
-  }
 
   const fact = {
     channel_id: channelId,
@@ -575,9 +566,9 @@ export async function saveLiveMinuteFact(env, input) {
     total_member_count: integer(snapshot.total_member_count),
     guest_count: integer(snapshot.guest_count),
     reported_total_listens: integer(snapshot.total_listens),
-    reported_current_stream_count: integer(snapshot.current_stream_count),
-    validated_stream_count: validatedStreamCount,
-    stream_count_rejected: flags & FACT_QUALITY_FLAGS.STREAM_REJECTED ? 1 : 0,
+    reported_current_stream_count: reportedStreamCount(snapshot.current_stream_count),
+    validated_stream_count: null,
+    stream_count_rejected: 0,
     queue_revision_id: revisionId,
     queue_id: integer(queue?.queue_id),
     queue_start_time: timestampMs(queue?.start_time),
