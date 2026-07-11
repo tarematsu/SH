@@ -7,6 +7,9 @@ const DEFAULT_PRIMARY_WATCHDOG_MS = 55_000;
 const MIN_PRIMARY_WATCHDOG_MS = 10_000;
 const MAX_PRIMARY_WATCHDOG_MS = 55_000;
 
+export const COLLECTION_ABORT_SIGNAL = '__COLLECTION_ABORT_SIGNAL';
+export const COLLECTION_DEADLINE_AT = '__COLLECTION_DEADLINE_AT';
+
 const DEFAULT_AUXILIARY_RUNNERS = Object.freeze({
   weekly: { failureEvent: 'cloud_weekly_leaderboard_failed', run: runCloudWeeklyLeaderboard },
   maintenance: { failureEvent: 'data_maintenance_failed', run: runScheduledMaintenance },
@@ -29,6 +32,21 @@ export class PrimaryCollectionTimeoutError extends Error {
     this.code = 'PRIMARY_COLLECTION_TIMEOUT';
     this.timeoutMs = timeoutMs;
   }
+}
+
+export function withCollectionRuntime(env = {}, signal = null, deadlineAt = null) {
+  return new Proxy(env, {
+    get(target, property, receiver) {
+      if (property === COLLECTION_ABORT_SIGNAL) return signal;
+      if (property === COLLECTION_DEADLINE_AT) return deadlineAt;
+      return Reflect.get(target, property, receiver);
+    },
+    has(target, property) {
+      return property === COLLECTION_ABORT_SIGNAL
+        || property === COLLECTION_DEADLINE_AT
+        || Reflect.has(target, property);
+    },
+  });
 }
 
 function startAuxiliaryOnce(flight, env, includeFailureOnly, runners = DEFAULT_AUXILIARY_RUNNERS) {
@@ -58,15 +76,19 @@ function releaseRequestFlight(ctx, flight) {
   if (key && primaryFlightsByContext.get(key) === flight) primaryFlightsByContext.delete(key);
 }
 
-function primaryFlightForRequest(controller, env, ctx, scheduled) {
+function primaryFlightForRequest(controller, env, ctx, scheduled, timeoutMs) {
   const key = requestContextKey(ctx);
   if (key) {
     const existing = primaryFlightsByContext.get(key);
     if (existing) return existing;
   }
 
+  const abortController = new AbortController();
+  const deadlineAt = Date.now() + timeoutMs;
+  const runtimeEnv = withCollectionRuntime(env, abortController.signal, deadlineAt);
   const flight = {
-    primary: Promise.resolve().then(() => scheduled(controller, env, ctx)),
+    abortController,
+    primary: Promise.resolve().then(() => scheduled(controller, runtimeEnv, ctx)),
   };
   if (key) primaryFlightsByContext.set(key, flight);
   flight.primary.then(
@@ -89,7 +111,7 @@ export async function runPrimaryScheduled(
   options = {},
 ) {
   const timeoutMs = timeoutOverride ?? primaryWatchdogMs(env);
-  const flight = primaryFlightForRequest(controller, env, ctx, scheduled);
+  const flight = primaryFlightForRequest(controller, env, ctx, scheduled, timeoutMs);
   let timeoutId = null;
 
   try {
@@ -98,6 +120,15 @@ export async function runPrimaryScheduled(
       new Promise((_, reject) => {
         timeoutId = setTimeout(() => {
           releaseRequestFlight(ctx, flight);
+          const timeoutError = new PrimaryCollectionTimeoutError(timeoutMs, controller?.cron);
+          try {
+            flight.abortController.abort(timeoutError);
+          } catch (error) {
+            console.error(JSON.stringify({
+              event: 'collector_abort_failed',
+              error: String(error?.message || error),
+            }));
+          }
           try {
             options.resetCollectionFlight?.();
           } catch (error) {
@@ -106,7 +137,7 @@ export async function runPrimaryScheduled(
               error: String(error?.message || error),
             }));
           }
-          reject(new PrimaryCollectionTimeoutError(timeoutMs, controller?.cron));
+          reject(timeoutError);
         }, timeoutMs);
       }),
     ]);
