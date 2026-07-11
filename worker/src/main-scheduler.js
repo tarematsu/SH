@@ -13,82 +13,8 @@ const DEFAULT_AUXILIARY_RUNNERS = Object.freeze({
   host: { failureEvent: 'cloud_host_monitor_failed', run: runCloudHostMonitor, onFailureOnly: true },
 });
 
-let primaryScheduledFlight = null;
-
-function primaryWatchdogMs(env = {}) {
-  const configured = Number(env.PRIMARY_COLLECTION_WATCHDOG_MS ?? DEFAULT_PRIMARY_WATCHDOG_MS);
-  return Number.isFinite(configured)
-    ? Math.max(MIN_PRIMARY_WATCHDOG_MS, Math.min(MAX_PRIMARY_WATCHDOG_MS, configured))
-    : DEFAULT_PRIMARY_WATCHDOG_MS;
-}
-
-export class PrimaryCollectionTimeoutError extends Error {
-  constructor(timeoutMs, cron) {
-    super(`Primary Stationhead collection timed out after ${timeoutMs}ms (${cron || 'scheduled'})`);
-    this.name = 'PrimaryCollectionTimeoutError';
-    this.code = 'PRIMARY_COLLECTION_TIMEOUT';
-    this.timeoutMs = timeoutMs;
-  }
-}
-
-function startAuxiliaryOnce(flight, env, includeFailureOnly, runners = DEFAULT_AUXILIARY_RUNNERS) {
-  const tasks = Object.entries(runners).flatMap(([name, task]) => {
-    if (task.onFailureOnly && !includeFailureOnly) return [];
-    if (!flight[name]) flight[name] = Promise.resolve().then(() => task.run(env));
-    return [{ failureEvent: task.failureEvent || 'scheduled_auxiliary_failed', promise: flight[name] }];
-  });
-  return Promise.allSettled(tasks.map((task) => task.promise)).then((results) => {
-    for (const [index, result] of results.entries()) {
-      if (result.status !== 'rejected') continue;
-      console.error(JSON.stringify({
-        event: tasks[index]?.failureEvent || 'scheduled_auxiliary_failed',
-        error: String(result.reason?.message || result.reason),
-      }));
-    }
-    return results;
-  });
-}
-
-function releasePrimaryFlight(flight) {
-  if (primaryScheduledFlight === flight) primaryScheduledFlight = null;
-}
-
-function ensurePrimaryScheduledFlight(controller, env, ctx, scheduled, runners) {
-  if (primaryScheduledFlight) return primaryScheduledFlight;
-
-  let signalTimeout;
-  const timeoutOutcome = new Promise((resolve) => { signalTimeout = () => resolve({ failed: true }); });
-  const flight = {
-    primary: Promise.resolve().then(() => scheduled(controller, env, ctx)),
-    signalTimeout,
-  };
-  primaryScheduledFlight = flight;
-
-  const primaryOutcome = flight.primary.then(
-    () => ({ failed: false }),
-    () => ({ failed: true }),
-  ).finally(() => releasePrimaryFlight(flight));
-  const lifecycle = Promise.race([primaryOutcome, timeoutOutcome])
-    .then(({ failed }) => startAuxiliaryOnce(flight, env, failed, runners));
-  ctx?.waitUntil?.(lifecycle);
-  return flight;
-}
-
-function abandonPrimaryFlight(flight, resetCollector) {
-  try {
-    resetCollector?.();
-  } catch (error) {
-    console.error(JSON.stringify({
-      event: 'collector_flight_reset_failed',
-      error: String(error?.message || error),
-    }));
-  }
-  flight.signalTimeout?.();
-  releasePrimaryFlight(flight);
-}
-
 export function resetPrimaryScheduledFlightForTests() {
-  primaryScheduledFlight = null;
+  // Compatibility no-op. Scheduled promises are request-scoped.
 }
 
 export async function runPrimaryScheduled(
@@ -100,25 +26,34 @@ export async function runPrimaryScheduled(
   options = {},
 ) {
   const timeoutMs = timeoutOverride ?? primaryWatchdogMs(env);
-  const flight = ensurePrimaryScheduledFlight(
-    controller,
-    env,
-    ctx,
-    scheduled,
-    options.auxiliaryRunners || DEFAULT_AUXILIARY_RUNNERS,
-  );
+  const flight = {
+    primary: Promise.resolve().then(() => scheduled(controller, env, ctx)),
+  };
   let timeoutId = null;
 
   try {
-    return await Promise.race([
+    const result = await Promise.race([
       flight.primary,
       new Promise((_, reject) => {
         timeoutId = setTimeout(() => {
-          abandonPrimaryFlight(flight, options.resetCollectionFlight);
+          options.resetCollectionFlight?.();
           reject(new PrimaryCollectionTimeoutError(timeoutMs, controller?.cron));
         }, timeoutMs);
       }),
     ]);
+    const auxiliary = startAuxiliaryOnce(
+      flight, env, false, options.auxiliaryRunners || DEFAULT_AUXILIARY_RUNNERS,
+    );
+    if (typeof ctx?.waitUntil === 'function') ctx.waitUntil(auxiliary);
+    else await auxiliary;
+    return result;
+  } catch (error) {
+    const auxiliary = startAuxiliaryOnce(
+      flight, env, true, options.auxiliaryRunners || DEFAULT_AUXILIARY_RUNNERS,
+    );
+    if (typeof ctx?.waitUntil === 'function') ctx.waitUntil(auxiliary);
+    else await auxiliary;
+    throw error;
   } finally {
     if (timeoutId != null) clearTimeout(timeoutId);
   }

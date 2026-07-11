@@ -1,6 +1,7 @@
 import collector from './index.js';
 import { jsonResponse as json, normalizeBearer, jwtExpiryMs, positiveNumber as positive } from './shared.js';
 import { ensureAuthControlRow, readAuthState } from './auth-state.js';
+import { combinedAbortSignal } from './request-signal.js';
 
 const API_ORIGIN = 'https://production1.stationhead.com';
 const STATE_ID = 'stationhead';
@@ -62,7 +63,7 @@ globalThis.fetch = async (input, init = {}) => {
       const response = await nativeFetch(retryUrl.toString(), {
         ...init,
         headers: init.headers ? new Headers(init.headers) : undefined,
-        signal: AbortSignal.timeout(15_000),
+        signal: combinedAbortSignal(init.signal, 15_000),
       });
 
       if (response.status < 500) {
