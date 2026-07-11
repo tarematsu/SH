@@ -1,5 +1,6 @@
 import {
   FACT_QUALITY_FLAGS,
+  MINUTE_FACT_SOURCE_CODES,
   minuteBucket,
   minuteFactStatement,
   resolveHost,
@@ -162,7 +163,7 @@ async function closeActiveSession(db, state) {
   state.active_last_observed_at = null;
 }
 
-function legacyFact({ row, channelId, hostId, trackId, sessionId, source, sourcePriority }) {
+export function legacyFact({ row, channelId, hostId, trackId, sessionId, source, sourcePriority }) {
   const observedAt = integer(row.observed_at);
   const score = Math.max(0, Math.min(1, num(row.quality_score) ?? 1));
   return {
@@ -171,7 +172,7 @@ function legacyFact({ row, channelId, hostId, trackId, sessionId, source, source
     minute_at: minuteBucket(observedAt),
     observed_at: observedAt,
     received_at: Date.now(),
-    source,
+    source_code: MINUTE_FACT_SOURCE_CODES[source],
     source_priority: sourcePriority,
     source_record_id: String(row.source_id),
     collector_id: 'legacy-migration',
@@ -195,7 +196,9 @@ function legacyFact({ row, channelId, hostId, trackId, sessionId, source, source
     queue_available: 0,
     track_id: trackId,
     queue_position: null,
-    track_detection_method: trackId == null ? 'unknown' : 'legacy_observed',
+    // Legacy observations have no queue evidence, so they cannot use either
+    // queue-derived detection code even when a catalog track was resolved.
+    track_detection_code: 0,
     track_confidence: trackId == null ? 0 : 1,
     schedule_valid: trackId == null ? 0 : 1,
     track_bite_count: integer(row.likes),

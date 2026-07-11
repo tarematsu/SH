@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import { MINUTE_FACT_DERIVE_CRON, MINUTE_FACT_LEGACY_CRON, MINUTE_FACT_REBUILD_CRON, runMinuteScheduled } from '../src/minute-entry.js';
-import { runMinuteFactsLegacyBackfill } from '../src/minute-facts-legacy-backfill.js';
+import { legacyFact, runMinuteFactsLegacyBackfill } from '../src/minute-facts-legacy-backfill.js';
 
 test('minute worker routes every creation path without running the collector', async () => {
   const calls = [];
@@ -28,4 +28,20 @@ test('minute worker has dedicated name, bindings and crons', () => {
 test('legacy fact creation is enabled in the dedicated worker', async () => {
   const result = await runMinuteFactsLegacyBackfill({}, {});
   assert.deepEqual(result, { skipped: true, reason: 'legacy-db-binding-missing' });
+});
+
+test('legacy facts use the current numeric source and track-detection columns', () => {
+  const fact = legacyFact({
+    row: { source_id: 1, observed_at: 120_000 },
+    channelId: 10,
+    hostId: null,
+    trackId: 7,
+    sessionId: 3,
+    source: 'legacy_normalized',
+    sourcePriority: 80,
+  });
+  assert.equal(fact.source_code, 3);
+  assert.equal(fact.track_detection_code, 0);
+  assert.equal('source' in fact, false);
+  assert.equal('track_detection_method' in fact, false);
 });
