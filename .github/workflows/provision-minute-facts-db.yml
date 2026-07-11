@@ -73,17 +73,17 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID || secrets.CF_ACCOUNT_ID }}
         run: |
           set +e
-          npm run deploy > ../database/facts-deploy.log 2>&1
+          npm run deploy > ../database/facts-deploy-output.txt 2>&1
           status=$?
           python - <<'PY'
           from pathlib import Path
           import re
-          path = Path('../database/facts-deploy.log')
+          path = Path('../database/facts-deploy-output.txt')
           text = path.read_text(errors='replace') if path.exists() else ''
           text = re.sub(r'\x1b\[[0-9;]*[A-Za-z]', '', text)
           path.write_text(text[-12000:])
           PY
-          cat ../database/facts-deploy.log
+          cat ../database/facts-deploy-output.txt
           exit "$status"
       - name: Verify live minute facts
         id: verify
