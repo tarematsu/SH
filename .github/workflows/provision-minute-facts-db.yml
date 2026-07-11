@@ -37,29 +37,68 @@ jobs:
         working-directory: worker
         run: npm ci
       - name: Create database and apply schema
+        id: provision
+        continue-on-error: true
         working-directory: worker
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN || secrets.CLOUDFLARE_BUILDS_API_TOKEN || secrets.CF_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID || secrets.CF_ACCOUNT_ID }}
           FACTS_DATABASE_NAME: sh-monitor-facts
-        run: node scripts/provision-facts-db.mjs
-      - name: Commit generated D1 binding
+        run: |
+          if [ -z "${CLOUDFLARE_API_TOKEN}" ]; then
+            echo "result=missing-cloudflare-api-token" >> "${GITHUB_OUTPUT}"
+            exit 1
+          fi
+          if [ -z "${CLOUDFLARE_ACCOUNT_ID}" ]; then
+            echo "result=missing-cloudflare-account-id" >> "${GITHUB_OUTPUT}"
+            exit 1
+          fi
+          if node scripts/provision-facts-db.mjs; then
+            echo "result=success" >> "${GITHUB_OUTPUT}"
+          else
+            echo "result=provision-command-failed" >> "${GITHUB_OUTPUT}"
+            exit 1
+          fi
+      - name: Record provisioning status
+        if: always()
+        env:
+          PROVISION_RESULT: ${{ steps.provision.outputs.result || 'unknown-failure' }}
+          PROVISION_OUTCOME: ${{ steps.provision.outcome }}
+          SOURCE_SHA: ${{ github.sha }}
+        run: |
+          node --input-type=module <<'NODE'
+          import { mkdirSync, writeFileSync } from 'node:fs';
+          mkdirSync('database', { recursive: true });
+          writeFileSync('database/facts-provision-status.json', `${JSON.stringify({
+            result: process.env.PROVISION_RESULT,
+            outcome: process.env.PROVISION_OUTCOME,
+            source_sha: process.env.SOURCE_SHA,
+            recorded_at: new Date().toISOString(),
+          }, null, 2)}\n`);
+          NODE
+      - name: Commit generated D1 binding and status
+        if: always()
         env:
           TARGET_BRANCH: ${{ github.ref_name }}
         run: |
-          if git diff --quiet -- worker/wrangler.jsonc database/facts-db.json; then
-            echo "D1 binding already current"
+          if git diff --quiet -- worker/wrangler.jsonc database/facts-db.json database/facts-provision-status.json; then
+            echo "D1 binding and status already current"
             exit 0
           fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add worker/wrangler.jsonc database/facts-db.json
-          git commit -m "Configure minute facts D1 binding"
+          git add worker/wrangler.jsonc database/facts-db.json database/facts-provision-status.json
+          git commit -m "Record minute facts D1 provisioning"
           git push origin "HEAD:${TARGET_BRANCH}"
       - name: Deploy collector with FACTS_DB
-        if: github.ref_name == 'main'
+        if: steps.provision.outcome == 'success' && github.ref_name == 'main'
         working-directory: worker
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN || secrets.CLOUDFLARE_BUILDS_API_TOKEN || secrets.CF_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID || secrets.CF_ACCOUNT_ID }}
         run: npm run deploy
+      - name: Fail unsuccessful provisioning
+        if: steps.provision.outcome != 'success'
+        run: |
+          echo "Minute facts D1 provisioning failed: ${{ steps.provision.outputs.result || 'unknown-failure' }}"
+          exit 1
