@@ -2,10 +2,10 @@
   "database_name": "Stationhead-DB",
   "provision_result": "success",
   "provision_outcome": "success",
-  "deploy_outcome": "failure",
-  "deploy_token_source": "none",
-  "verify_outcome": "skipped",
+  "direct_deploy_outcome": "failure",
+  "direct_deploy_token_source": "none",
+  "live_verify_outcome": "success",
   "event_name": "pull_request",
-  "source_sha": "fe54611802aceb2ac4078e2fac076a656f502bf1",
-  "recorded_at": "2026-07-11T02:41:02.819Z"
+  "source_sha": "4c575042af0294f4661e7dd94f039c5334488339",
+  "recorded_at": "2026-07-11T02:43:45.729Z"
 }

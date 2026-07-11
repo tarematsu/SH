@@ -69,7 +69,7 @@ Getting User settings...
 └──────────────┴──────────────────────────────────┘
 🔓 To see token permissions visit https://dash.cloudflare.com/profile/api-tokens
 🎢 Unable to get membership roles. Make sure you have permissions to read the account. Are you missing the `User->Memberships->Read` permission?
-🪵  Logs were written to "/home/runner/.config/.wrangler/logs/wrangler-2026-07-11_02-41-00_728.log"
+🪵  Logs were written to "/home/runner/.config/.wrangler/logs/wrangler-2026-07-11_02-43-41_445.log"
 === CLOUDFLARE_BUILDS_API_TOKEN failed with status 1 ===
 === CF_API_TOKEN: not configured ===
 === CLOUDFLARE_API_TOKEN: not configured ===
