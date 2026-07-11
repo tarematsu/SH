@@ -1,4 +1,5 @@
 # Creates the dedicated minute-facts D1 before deploying the collector.
+# Provisioning request: initialize sh-monitor-facts and persist its FACTS_DB binding.
 name: Provision minute facts D1
 
 on:
