@@ -63,7 +63,7 @@ async function responseSnapshot(response) {
     status: response.status,
     statusText: response.statusText,
     headers: [...response.headers.entries()],
-    body: await response.clone().arrayBuffer(),
+    body: await response.arrayBuffer(),
   };
 }
 
@@ -80,9 +80,10 @@ function responseFromSnapshot(snapshot, cacheStatus) {
 export function createOptionalFetchGuard(nativeFetch, nowFn = Date.now) {
   if (typeof nativeFetch !== 'function') throw new TypeError('nativeFetch must be a function');
 
-  const flights = new Map();
+  // Completed Resend responses are stored only as detached bytes. In-flight
+  // fetch promises are deliberately not shared because Cloudflare I/O objects
+  // belong to the request context that created them.
   const failures = new Map();
-  const resendFlights = new Map();
   const resendSuccesses = new Map();
 
   const guardedFetch = async (input, init = {}) => {
@@ -110,70 +111,44 @@ export function createOptionalFetchGuard(nativeFetch, nowFn = Date.now) {
       }
       if (cached) resendSuccesses.delete(successKey);
 
-      if (resendFlights.has(successKey)) {
-        return responseFromSnapshot(await resendFlights.get(successKey), 'coalesced');
-      }
-
-      const pending = Promise.resolve()
-        .then(() => nativeFetch(input, init))
-        .then(async (response) => {
-          const snapshot = await responseSnapshot(response);
-          if (response.ok) {
-            resendSuccesses.set(successKey, {
-              snapshot,
-              expiresAt: (Number(nowFn()) || Date.now()) + RESEND_SUCCESS_TTL_MS,
-            });
-            trimMap(resendSuccesses);
-          }
-          return snapshot;
-        })
-        .finally(() => {
-          if (resendFlights.get(successKey) === pending) resendFlights.delete(successKey);
+      const response = await nativeFetch(input, init);
+      const snapshot = await responseSnapshot(response);
+      if (response.ok) {
+        resendSuccesses.set(successKey, {
+          snapshot,
+          expiresAt: (Number(nowFn()) || Date.now()) + RESEND_SUCCESS_TTL_MS,
         });
-      resendFlights.set(successKey, pending);
-      trimMap(resendFlights);
-      return responseFromSnapshot(await pending, 'miss');
+        trimMap(resendSuccesses);
+      }
+      return responseFromSnapshot(snapshot, 'miss');
     }
 
     if (!OPTIONAL_HOSTS.has(url.hostname)) return nativeFetch(input, init);
 
-    const dedupe = method === 'GET' || method === 'HEAD';
     const key = `${method}\n${url.toString()}`;
     const retryAt = Number(failures.get(key) || 0);
 
     if (retryAt > now) return failureResponse(url.hostname);
     if (retryAt) failures.delete(key);
 
-    if (dedupe && flights.has(key)) return (await flights.get(key)).clone();
-
     const requestInit = {
       ...init,
       signal: combinedSignal(init?.signal, OPTIONAL_TIMEOUT_MS),
     };
-    const pending = Promise.resolve()
-      .then(() => nativeFetch(input, requestInit))
-      .then((response) => {
-        if (response?.ok) failures.delete(key);
-        else {
-          failures.set(key, (Number(nowFn()) || Date.now()) + OPTIONAL_FAILURE_BACKOFF_MS);
-          trimMap(failures);
-        }
-        return response;
-      })
-      .catch((error) => {
+
+    try {
+      const response = await nativeFetch(input, requestInit);
+      if (response?.ok) failures.delete(key);
+      else {
         failures.set(key, (Number(nowFn()) || Date.now()) + OPTIONAL_FAILURE_BACKOFF_MS);
         trimMap(failures);
-        throw error;
-      })
-      .finally(() => {
-        if (flights.get(key) === pending) flights.delete(key);
-      });
-
-    if (dedupe) {
-      flights.set(key, pending);
-      trimMap(flights);
+      }
+      return response;
+    } catch (error) {
+      failures.set(key, (Number(nowFn()) || Date.now()) + OPTIONAL_FAILURE_BACKOFF_MS);
+      trimMap(failures);
+      throw error;
     }
-    return (await pending).clone();
   };
 
   Object.defineProperty(guardedFetch, INSTALL_MARK, { value: true });
