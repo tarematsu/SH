@@ -5,7 +5,7 @@ import { resolve } from 'node:path';
 const workerRoot = resolve(import.meta.dirname, '..');
 const repositoryRoot = resolve(workerRoot, '..');
 const outputPath = resolve(repositoryRoot, 'database/facts-live-verification.json');
-const databaseName = process.env.FACTS_DATABASE_NAME || 'sh-monitor-facts';
+const databaseName = process.env.FACTS_DATABASE_NAME || 'Stationhead-DB';
 const attempts = Math.max(1, Math.min(10, Number(process.env.FACTS_VERIFY_ATTEMPTS || 5)));
 const delayMs = Math.max(5_000, Number(process.env.FACTS_VERIFY_DELAY_MS || 20_000));
 const freshnessMs = Math.max(120_000, Number(process.env.FACTS_VERIFY_FRESHNESS_MS || 15 * 60_000));
@@ -61,6 +61,7 @@ for (let attempt = 1; attempt <= attempts; attempt += 1) {
     const now = Date.now();
     last = {
       result: 'pending',
+      database_name: databaseName,
       attempt,
       fact_count: Number(row.fact_count || 0),
       live_fact_count: Number(row.live_fact_count || 0),
@@ -78,6 +79,7 @@ for (let attempt = 1; attempt <= attempts; attempt += 1) {
   } catch (error) {
     last = {
       result: 'query-failed',
+      database_name: databaseName,
       attempt,
       error: String(error?.message || error).slice(0, 1000),
       checked_at: new Date().toISOString(),
