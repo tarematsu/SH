@@ -1,0 +1,200 @@
+  ---
+  duration_ms: 0.616296
+  type: 'test'
+  ...
+# Subtest: production primary env defers inner buddy playback without mutating the original env
+ok 127 - production primary env defers inner buddy playback without mutating the original env
+  ---
+  duration_ms: 0.201029
+  type: 'test'
+  ...
+# Subtest: Wrangler deploys the production cron wrapper
+ok 128 - Wrangler deploys the production cron wrapper
+  ---
+  duration_ms: 0.99562
+  type: 'test'
+  ...
+# Subtest: sanitizePublicHealth removes internal errors and identifiers
+ok 129 - sanitizePublicHealth removes internal errors and identifiers
+  ---
+  duration_ms: 1.393731
+  type: 'test'
+  ...
+# Subtest: repeated health requests share one upstream read
+ok 130 - repeated health requests share one upstream read
+  ---
+  duration_ms: 29.907684
+  type: 'test'
+  ...
+# Subtest: successful mutation and scheduled run invalidate health cache
+ok 131 - successful mutation and scheduled run invalidate health cache
+  ---
+  duration_ms: 2.712621
+  type: 'test'
+  ...
+# Subtest: isRealIsoDate rejects impossible calendar dates
+ok 132 - isRealIsoDate rejects impossible calendar dates
+  ---
+  duration_ms: 1.303607
+  type: 'test'
+  ...
+# Subtest: weekly recap keys must be real Mondays
+ok 133 - weekly recap keys must be real Mondays
+  ---
+  duration_ms: 0.338253
+  type: 'test'
+  ...
+# Subtest: invalid email recap date is rejected before D1 work
+ok 134 - invalid email recap date is rejected before D1 work
+  ---
+  duration_ms: 28.093287
+  type: 'test'
+  ...
+# Subtest: non-Monday email recap date is rejected before D1 work
+ok 135 - non-Monday email recap date is rejected before D1 work
+  ---
+  duration_ms: 0.870293
+  type: 'test'
+  ...
+# Subtest: successful identical email recap retries reuse stored response
+ok 136 - successful identical email recap retries reuse stored response
+  ---
+  duration_ms: 4.046172
+  type: 'test'
+  ...
+# Subtest: coordination lease details require an internal bearer token
+ok 137 - coordination lease details require an internal bearer token
+  ---
+  duration_ms: 0.636526
+  type: 'test'
+  ...
+# Subtest: POST run hides upstream failure details
+ok 138 - POST run hides upstream failure details
+  ---
+  duration_ms: 0.730095
+  type: 'test'
+  ...
+# Subtest: successful Resend requests are reused by idempotency key for one hour
+ok 139 - successful Resend requests are reused by idempotency key for one hour
+  ---
+  duration_ms: 27.589969
+  type: 'test'
+  ...
+# Subtest: concurrent Resend requests with the same idempotency key share one request
+ok 140 - concurrent Resend requests with the same idempotency key share one request
+  ---
+  duration_ms: 1.10363
+  type: 'test'
+  ...
+# Subtest: failed Resend requests are not cached
+ok 141 - failed Resend requests are not cached
+  ---
+  duration_ms: 1.52093
+  type: 'test'
+  ...
+# Subtest: concurrent scheduled calls share the active primary collection before watchdog timeout
+not ok 142 - concurrent scheduled calls share the active primary collection before watchdog timeout
+  ---
+  duration_ms: 1.834146
+  type: 'test'
+  location: '/home/runner/work/SH/SH/worker/tests/scheduled-orchestration.test.js:20:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly equal:
+    
+    2 !== 1
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: 1
+  actual: 2
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (file:///home/runner/work/SH/SH/worker/tests/scheduled-orchestration.test.js:36:10)
+    async Test.run (node:internal/test_runner/test:1054:7)
+    async startSubtestAfterBootstrap (node:internal/test_runner/harness:296:3)
+  ...
+# Subtest: watchdog timeout abandons the stale primary flight so the next cron can recover
+ok 143 - watchdog timeout abandons the stale primary flight so the next cron can recover
+  ---
+  duration_ms: 9.89176
+  type: 'test'
+  ...
+# Error: Test "concurrent scheduled calls share the active primary collection before watchdog timeout" at tests/scheduled-orchestration.test.js:20:1 generated asynchronous activity after the test ended. This activity created the error "PrimaryCollectionTimeoutError: Primary Stationhead collection timed out after 1000ms (* * * * *)" and would have caused the test to fail, but instead triggered an unhandledRejection event.
+# Error: Test "concurrent scheduled calls share the active primary collection before watchdog timeout" at tests/scheduled-orchestration.test.js:20:1 generated asynchronous activity after the test ended. This activity created the error "PrimaryCollectionTimeoutError: Primary Stationhead collection timed out after 1000ms (* * * * *)" and would have caused the test to fail, but instead triggered an unhandledRejection event.
+# {"event":"sh_request_budget_exhausted","budget":"station","limit":2,"route":"station"}
+# Subtest: station handle reads keep a reserved budget after data reads are exhausted
+ok 144 - station handle reads keep a reserved budget after data reads are exhausted
+  ---
+  duration_ms: 37.09261
+  type: 'test'
+  ...
+# Subtest: station handle reads still have their own per-minute limit
+ok 145 - station handle reads still have their own per-minute limit
+  ---
+  duration_ms: 1.963287
+  type: 'test'
+  ...
+# Subtest: complete metadata never needs a refresh
+ok 146 - complete metadata never needs a refresh
+  ---
+  duration_ms: 1.169898
+  type: 'test'
+  ...
+# Subtest: recent incomplete metadata is not fetched every minute
+ok 147 - recent incomplete metadata is not fetched every minute
+  ---
+  duration_ms: 0.200248
+  type: 'test'
+  ...
+# Subtest: incomplete metadata is retried after one day
+ok 148 - incomplete metadata is retried after one day
+  ---
+  duration_ms: 0.138647
+  type: 'test'
+  ...
+# Subtest: metadata without a successful fetch timestamp is eligible immediately
+ok 149 - metadata without a successful fetch timestamp is eligible immediately
+  ---
+  duration_ms: 0.119688
+  type: 'test'
+  ...
+# Subtest: ISRC peer metadata becomes a complete D1 repair row
+ok 150 - ISRC peer metadata becomes a complete D1 repair row
+  ---
+  duration_ms: 0.880318
+  type: 'test'
+  ...
+# Subtest: ISRC repair uses current queue values instead of scanning candidate history
+ok 151 - ISRC repair uses current queue values instead of scanning candidate history
+  ---
+  duration_ms: 0.294948
+  type: 'test'
+  ...
+# Subtest: repair updates only incomplete D1 metadata rows
+ok 152 - repair updates only incomplete D1 metadata rows
+  ---
+  duration_ms: 0.139237
+  type: 'test'
+  ...
+# Subtest: Spotify failures receive a retry cooldown
+ok 153 - Spotify failures receive a retry cooldown
+  ---
+  duration_ms: 0.153418
+  type: 'test'
+  ...
+# Subtest: weekly leaderboard uses the authenticated production API
+ok 154 - weekly leaderboard uses the authenticated production API
+  ---
+  duration_ms: 0.736717
+  type: 'test'
+  ...
+1..154
+# tests 154
+# suites 0
+# pass 152
+# fail 1
+# cancelled 1
+# skipped 0
+# todo 0
+# duration_ms 16706.488476
