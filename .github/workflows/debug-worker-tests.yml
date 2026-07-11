@@ -19,11 +19,9 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: npm
-          cache-dependency-path: worker/package-lock.json
       - name: Install dependencies
         working-directory: worker
-        run: npm ci
+        run: npm install
       - name: Capture Worker test output
         working-directory: worker
         shell: bash
