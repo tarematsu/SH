@@ -1,14 +1,18 @@
 import { DEFER_BUDDY_PLAYBACK_FLAG } from './cadenced-entry.js';
+import { DEFER_AUXILIARY_RUNNERS_FLAG } from './scheduled-main.js';
 import resilientApp from './resilient-entry.js';
 
 export function withBuddyPlaybackDeferred(env = {}) {
   return new Proxy(env, {
     get(target, property, receiver) {
       if (property === DEFER_BUDDY_PLAYBACK_FLAG) return true;
+      if (property === DEFER_AUXILIARY_RUNNERS_FLAG) return true;
       return Reflect.get(target, property, receiver);
     },
     has(target, property) {
-      return property === DEFER_BUDDY_PLAYBACK_FLAG || Reflect.has(target, property);
+      return property === DEFER_BUDDY_PLAYBACK_FLAG
+        || property === DEFER_AUXILIARY_RUNNERS_FLAG
+        || Reflect.has(target, property);
     },
   });
 }

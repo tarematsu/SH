@@ -28,6 +28,17 @@ const SCHEDULED_AUXILIARY_RUNNERS = Object.freeze({
   maintenance: { failureEvent: 'data_maintenance_failed', run: runScheduledMaintenance },
   host: { failureEvent: 'cloud_host_monitor_failed', run: runCloudHostMonitor, onFailureOnly: true },
 });
+const NO_AUXILIARY_RUNNERS = Object.freeze({});
+
+// Set on env by production-entry.js's withBuddyPlaybackDeferred proxy so the
+// buddies worker never duplicates the weekly leaderboard, stream goal
+// prediction, scheduled maintenance, and cloud host monitor work that the
+// dedicated "other" worker already runs on its own cron.
+export const DEFER_AUXILIARY_RUNNERS_FLAG = '__DEFER_AUXILIARY_RUNNERS';
+
+export function shouldDeferAuxiliaryRunners(env = {}) {
+  return Boolean(env?.[DEFER_AUXILIARY_RUNNERS_FLAG]);
+}
 
 export function resetPrimaryScheduledFlightForTests() {
   resetSharedPrimaryScheduledFlightForTests();
@@ -42,9 +53,11 @@ export function runPrimaryScheduled(
   timeoutOverride = null,
   options = {},
 ) {
+  const auxiliaryRunners = options.auxiliaryRunners
+    || (shouldDeferAuxiliaryRunners(env) ? NO_AUXILIARY_RUNNERS : SCHEDULED_AUXILIARY_RUNNERS);
   return runSharedPrimaryScheduled(controller, env, ctx, scheduled, timeoutOverride, {
     ...options,
-    auxiliaryRunners: options.auxiliaryRunners || SCHEDULED_AUXILIARY_RUNNERS,
+    auxiliaryRunners,
     resetCollectionFlight: options.resetCollectionFlight || resetCollectionFlight,
   });
 }

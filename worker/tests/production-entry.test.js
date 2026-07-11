@@ -115,6 +115,14 @@ test('production primary env defers inner buddy playback without mutating the or
   assert.equal(env.__DEFER_BUDDY_PLAYBACK, undefined);
 });
 
+test('production primary env also defers weekly/prediction/maintenance/host auxiliaries to the other worker', () => {
+  const env = { marker: true };
+  const deferred = withBuddyPlaybackDeferred(env);
+  assert.equal(deferred.__DEFER_AUXILIARY_RUNNERS, true);
+  assert.equal('__DEFER_AUXILIARY_RUNNERS' in deferred, true);
+  assert.equal(env.__DEFER_AUXILIARY_RUNNERS, undefined);
+});
+
 test('collector Wrangler configuration only deploys the capture cron', () => {
   const config = JSON.parse(readFileSync(new URL('../wrangler.jsonc', import.meta.url), 'utf8'));
   assert.equal(config.main, 'src/production-entry.js');

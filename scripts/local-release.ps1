@@ -89,7 +89,7 @@ Invoke-Step "Deploy Pages site" {
 }
 
 Invoke-Step "Verify Worker health" {
-  $response = Invoke-RestMethod "https://sh-monitor-collector.tarematsu.workers.dev/health"
+  $response = Invoke-RestMethod "https://sh-monitor-buddies.tarematsu.workers.dev/health"
   $isHealthy = $false
   if ($response.PSObject.Properties.Name -contains "healthy") {
     $isHealthy = [bool]$response.healthy
