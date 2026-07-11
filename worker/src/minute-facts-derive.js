@@ -1,5 +1,5 @@
 import { sanitizeFailureDetail } from './collector-failure.js';
-import { saveLiveMinuteFactWithinBudget } from './collector-runner.js';
+import { saveOptimizedMinuteFactWithinBudget } from './minute-facts-fast-store.js';
 import {
   claimMinuteFactJobs,
   completeMinuteFactJob,
@@ -70,7 +70,7 @@ export async function runMinuteFactDeriveCron(env, dependencies = {}) {
   const claim = dependencies.claim || claimMinuteFactJobs;
   const complete = dependencies.complete || completeMinuteFactJob;
   const fail = dependencies.fail || failMinuteFactJob;
-  const write = dependencies.write || saveLiveMinuteFactWithinBudget;
+  const write = dependencies.write || saveOptimizedMinuteFactWithinBudget;
   const stats = dependencies.stats || minuteFactInboxStats;
   const startedAt = nowFn();
   const deadlineAt = startedAt + config.runBudgetMs;
