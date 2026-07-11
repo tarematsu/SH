@@ -31,7 +31,7 @@ test('single minute-worker cron preserves derive, rebuild, and legacy cadence', 
 });
 
 test('minute worker retries a bounded set of dead jobs in its recovery slot', async () => {
-  const result = await runMinuteScheduled({ cron: MINUTE_FACT_WORKER_CRON, scheduledTime: MINUTE_FACT_RECOVERY_MINUTE * 60_000 }, {}, {
+  const result = await runMinuteScheduled({ cron: MINUTE_FACT_WORKER_CRON, scheduledTime: MINUTE_FACT_RECOVERY_MINUTE * 60_000 }, { MINUTE_FACT_AUTO_REQUEUE_DEAD: true }, {
     requeueDead: async (_env, options) => ({ requeued: options.limit }),
   });
   assert.deepEqual(result, { requeued: undefined });

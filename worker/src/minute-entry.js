@@ -16,6 +16,10 @@ function scheduledMinute(controller = {}) {
   return new Date(timestamp).getUTCMinutes();
 }
 
+function enabled(value) {
+  return ['1', 'true', 'yes', 'on'].includes(String(value ?? '').trim().toLowerCase());
+}
+
 async function runTracked(env, task, action) {
   const startedAt = Date.now();
   try {
@@ -36,7 +40,10 @@ export async function runMinuteScheduled(controller = {}, env, dependencies = {}
   if (cron === MINUTE_FACT_WORKER_CRON) {
     const minute = scheduledMinute(controller);
     if (minute == null) return { skipped: true, reason: 'scheduled-time-missing' };
-    if (minute % 10 === MINUTE_FACT_RECOVERY_MINUTE) return runTracked(env, 'recovery', () => (dependencies.requeueDead || requeueDeadMinuteFactJobs)(env, { limit: env.MINUTE_FACT_DEAD_REQUEUE_LIMIT }));
+    if (minute % 10 === MINUTE_FACT_RECOVERY_MINUTE) {
+      if (!enabled(env.MINUTE_FACT_AUTO_REQUEUE_DEAD)) return { skipped: true, reason: 'dead-job-auto-requeue-disabled' };
+      return runTracked(env, 'recovery', () => (dependencies.requeueDead || requeueDeadMinuteFactJobs)(env, { limit: env.MINUTE_FACT_DEAD_REQUEUE_LIMIT }));
+    }
     if (minute % 2 === 0) return runTracked(env, 'derive', () => (dependencies.runDerive || runMinuteFactDeriveCron)(env, dependencies.derive || {}));
     if (minute % 10 === 7) return runTracked(env, 'rebuild', () => (dependencies.runRebuild || runMinuteFactsBackfill)(env, dependencies.rebuild || {}));
     if (minute % 10 === 9) return runTracked(env, 'legacy', () => (dependencies.runLegacy || runMinuteFactsLegacyBackfill)(env, dependencies.legacy || {}));

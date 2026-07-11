@@ -269,6 +269,24 @@ async function loadHistoricalComments(env, candidate) {
   };
 }
 
+async function loadHistoricalCommentsBatch(env, candidates) {
+  const byKey = new Map();
+  const pairs = [...new Map((candidates || [])
+    .filter((candidate) => candidate.snapshot?.station_id != null)
+    .map((candidate) => [`${candidate.snapshot.station_id}:${candidate.minuteAt}`, candidate]))
+    .values()];
+  if (!pairs.length) return byKey;
+  const stationIds = [...new Set(pairs.map((candidate) => integer(candidate.snapshot.station_id)))];
+  const minutes = [...new Set(pairs.map((candidate) => candidate.minuteAt))];
+  const stationSql = stationIds.map(() => '?').join(',');
+  const minuteSql = minutes.map(() => '?').join(',');
+  const result = await env.DB.prepare(`SELECT station_id,bucket_start,comment_count FROM sh_comment_minute_counts
+    WHERE station_id IN (${stationSql}) AND bucket_start IN (${minuteSql})`)
+    .bind(...stationIds, ...minutes).all();
+  for (const row of result.results || []) byKey.set(`${row.station_id}:${row.bucket_start}`, Number(row.comment_count));
+  return byKey;
+}
+
 function configFromEnv(env = {}) {
   return {
     sourceRows: positiveInteger(env.REBUILD_SOURCE_ROWS, DEFAULT_SOURCE_ROWS, 100),
@@ -317,6 +335,7 @@ export async function runMinuteFactsBackfill(env, dependencies = {}) {
     }
 
     const existing = await existingFactKeys(env, pending);
+    const commentsByKey = await loadHistoricalCommentsBatch(env, pending);
     let enqueued = 0;
     let skippedExisting = 0;
     const remaining = [];
@@ -329,10 +348,12 @@ export async function runMinuteFactsBackfill(env, dependencies = {}) {
         remaining.push(candidate);
         continue;
       }
-      const [queue, comments] = await Promise.all([
-        loadHistoricalQueue(env, candidate),
-        loadHistoricalComments(env, candidate),
-      ]);
+      const queue = await loadHistoricalQueue(env, candidate);
+      const commentKey = `${candidate.snapshot?.station_id}:${candidate.minuteAt}`;
+      const commentCount = commentsByKey.get(commentKey);
+      const comments = candidate.snapshot?.station_id == null
+        ? { commentCount: null, commentTotal: null, degraded: true }
+        : { commentCount: commentCount ?? null, commentTotal: null, degraded: commentCount == null };
       const mode = candidate.rebuild.mode;
       const result = await enqueueMinuteFactJob(env, {
         observedAt: candidate.observedAt,
