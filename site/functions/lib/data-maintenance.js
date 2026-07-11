@@ -5,9 +5,9 @@ import {
   utcWeeklyRange,
 } from './time-buckets.js';
 
-const LEGACY_BACKFILL_BATCH = 1_000;
 const MAINTENANCE_CLAIM_MS = 15 * 60_000;
 const STATE_ID = 'rollup-retention-v1';
+const LEGACY_MIGRATION_DISABLED_REASON = 'legacy-migration-disabled';
 const runtimeState = new WeakMap();
 
 function finite(value) {
@@ -47,7 +47,8 @@ async function upsertSummary(db, table, key, aggregate, first, last, primaryHost
     Number(aggregate.sample_count || 0),
     Number(aggregate.reliable_sample_count ?? aggregate.sample_count ?? 0),
     finite(aggregate.listener_avg), finite(aggregate.listener_min), finite(aggregate.listener_max),
-    streamStart, streamEnd, streamStart != null && streamEnd != null && streamEnd >= streamStart ? streamEnd - streamStart : null,
+    streamStart, streamEnd,
+    streamStart != null && streamEnd != null && streamEnd >= streamStart ? streamEnd - streamStart : null,
     memberStart, memberEnd, memberStart != null && memberEnd != null ? memberEnd - memberStart : null,
     finite(aggregate.likes_max), finite(aggregate.distinct_tracks), primaryHost || null,
     finite(aggregate.quality_score) ?? 1, '["live_rollup"]', updatedAt,
@@ -128,51 +129,8 @@ async function rollupFromDaily(db, table, range, now) {
   return upsertSummary(db, table, range.key, aggregate, first, last, host?.primary_host, now);
 }
 
-async function backfillLegacySamples(db, lastLegacyId) {
-  const boundary = await db.prepare(`SELECT MAX(id) AS batch_end,COUNT(*) AS batch_count FROM (
-      SELECT id FROM sh_legacy_snapshots WHERE id>? ORDER BY id ASC LIMIT ?
-    )`).bind(lastLegacyId, LEGACY_BACKFILL_BATCH).first();
-  const batchEnd = Number(boundary?.batch_end || 0);
-  const batchCount = Number(boundary?.batch_count || 0);
-  if (!batchEnd || batchEnd <= lastLegacyId) {
-    return { lastLegacyId, migrated: 0, complete: true };
-  }
-
-  const hostKey = `lower(trim(host_handle))`;
-  const trackKey = `lower(trim(COALESCE(track_title,''))) || char(31) || lower(trim(COALESCE(artist_name,'')))`;
-  const broadcastKey = `lower(trim(source_note)) || char(31) || lower(trim(COALESCE(host_handle,'')))`;
-
-  await db.batch([
-    db.prepare(`INSERT OR IGNORE INTO sh_legacy_hosts(host_key,handle)
-      SELECT ${hostKey},MIN(host_handle) FROM sh_legacy_snapshots
-      WHERE id>? AND id<=? AND host_handle IS NOT NULL AND trim(host_handle)<>''
-      GROUP BY ${hostKey}`).bind(lastLegacyId, batchEnd),
-    db.prepare(`INSERT OR IGNORE INTO sh_legacy_tracks(track_key,title,artist_name)
-      SELECT ${trackKey},MIN(track_title),MIN(artist_name) FROM sh_legacy_snapshots
-      WHERE id>? AND id<=? AND (trim(COALESCE(track_title,''))<>'' OR trim(COALESCE(artist_name,''))<>'')
-      GROUP BY ${trackKey}`).bind(lastLegacyId, batchEnd),
-    db.prepare(`INSERT OR IGNORE INTO sh_legacy_broadcasts(broadcast_key,event_name,host_id)
-      SELECT ${broadcastKey},MIN(l.source_note),MIN(h.id)
-      FROM sh_legacy_snapshots l
-      LEFT JOIN sh_legacy_hosts h ON h.host_key=lower(trim(l.host_handle))
-      WHERE l.id>? AND l.id<=? AND l.source_note IS NOT NULL AND trim(l.source_note)<>''
-      GROUP BY ${broadcastKey}`).bind(lastLegacyId, batchEnd),
-    db.prepare(`INSERT OR IGNORE INTO sh_legacy_samples(
-        legacy_id,observed_at,observed_jst,listener_count,total_stream_count,
-        track_id,likes,comment_velocity,host_id,total_member_count,broadcast_id,
-        quality_score,quality_flags
-      )
-      SELECT l.id,l.observed_at,l.observed_jst,l.listener_count,l.total_stream_count,
-        t.id,l.likes,l.comment_velocity,h.id,l.total_member_count,b.id,
-        COALESCE(l.quality_score,1),COALESCE(l.quality_flags,'[]')
-      FROM sh_legacy_snapshots l
-      LEFT JOIN sh_legacy_hosts h ON h.host_key=lower(trim(l.host_handle))
-      LEFT JOIN sh_legacy_tracks t ON t.track_key=(lower(trim(COALESCE(l.track_title,''))) || char(31) || lower(trim(COALESCE(l.artist_name,''))))
-      LEFT JOIN sh_legacy_broadcasts b ON b.broadcast_key=(lower(trim(l.source_note)) || char(31) || lower(trim(COALESCE(l.host_handle,''))))
-      WHERE l.id>? AND l.id<=?`).bind(lastLegacyId, batchEnd),
-  ]);
-
-  return { lastLegacyId: batchEnd, migrated: batchCount, complete: false };
+export function legacyMigrationEnabled() {
+  return false;
 }
 
 export async function runDataMaintenance(db, now = Date.now()) {
@@ -214,7 +172,7 @@ export async function runDataMaintenance(db, now = Date.now()) {
     const period = previousJstDay(now);
     let lastRollupKey = state?.last_rollup_key || null;
     const lastCleanupAt = Number(state?.last_cleanup_at || 0);
-    let legacyBackfillId = Number(state?.legacy_backfill_id || 0);
+    const legacyBackfillId = Number(state?.legacy_backfill_id || 0);
     let rolledUp = false;
     const cleaned = false;
 
@@ -227,10 +185,6 @@ export async function runDataMaintenance(db, now = Date.now()) {
         rolledUp = true;
       }
     }
-
-    // rollups and the bounded legacy backfill, but never issues retention DELETEs.
-    const legacyBackfill = await backfillLegacySamples(db, legacyBackfillId);
-    legacyBackfillId = legacyBackfill.lastLegacyId;
 
     await db.prepare(`INSERT INTO sh_data_maintenance_state(
         id,last_rollup_key,last_cleanup_at,legacy_backfill_id,updated_at
@@ -251,7 +205,10 @@ export async function runDataMaintenance(db, now = Date.now()) {
       rolledUp,
       cleaned,
       periodKey: period.key,
-      legacyBackfill,
+      legacyBackfill: {
+        skipped: true,
+        reason: LEGACY_MIGRATION_DISABLED_REASON,
+      },
     };
   } catch (error) {
     if (claimAt == null) runtimeState.delete(db);
