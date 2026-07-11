@@ -1,55 +1,54 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  decodeMigratedCursor,
-  migratedRowsSql,
-  migrationProgress,
-  migrationStatsSql,
+  decodeMinuteFactsCursor,
+  minuteFactsRowsSql,
+  minuteFactsStatsSql,
+  migrationStateSql,
 } from '../functions/api/history-migrated.js';
 
-test('migrated history reads normalized legacy tables directly', () => {
-  const sql = migratedRowsSql();
-  assert.match(sql, /FROM sh_legacy_samples s/);
-  assert.match(sql, /LEFT JOIN sh_legacy_tracks/);
-  assert.match(sql, /LEFT JOIN sh_legacy_hosts/);
-  assert.match(sql, /LEFT JOIN sh_legacy_broadcasts/);
-  assert.doesNotMatch(sql, /sh_legacy_history_rows/);
+test('history confirmation reads Stationhead-DB minute facts and normalized catalogs', () => {
+  const sql = minuteFactsRowsSql();
+  assert.match(sql, /FROM sh_minute_facts f/);
+  assert.match(sql, /LEFT JOIN sh_tracks/);
+  assert.match(sql, /LEFT JOIN sh_hosts/);
+  assert.match(sql, /LEFT JOIN sh_broadcast_sessions/);
+  assert.match(sql, /LEFT JOIN sh_queue_revisions/);
+  assert.doesNotMatch(sql, /sh_legacy_samples/);
   assert.doesNotMatch(sql, /sh_legacy_snapshots/);
 });
 
-test('migrated history adds bounded filters and cursor ordering', () => {
-  const sql = migratedRowsSql({ host: true, track: true, cursor: true });
-  assert.match(sql, /lower\(COALESCE\(h\.handle,''\)\) LIKE \?/);
+test('minute facts history adds source, host, track and cursor filters', () => {
+  const sql = minuteFactsRowsSql({ source: true, host: true, track: true, cursor: true });
+  assert.match(sql, /f\.source=\?/);
+  assert.match(sql, /lower\(COALESCE\(h\.current_handle,''\)\) LIKE \?/);
   assert.match(sql, /lower\(COALESCE\(t\.title,''\)\) LIKE \?/);
-  assert.match(sql, /s\.observed_at>\? OR \(s\.observed_at=\? AND s\.legacy_id>\?\)/);
-  assert.match(sql, /ORDER BY s\.observed_at ASC,s\.legacy_id ASC LIMIT \?$/);
+  assert.match(sql, /lower\(COALESCE\(t\.isrc,''\)\) LIKE \?/);
+  assert.match(sql, /f\.minute_at>\? OR \(f\.minute_at=\? AND f\.id>\?\)/);
+  assert.match(sql, /ORDER BY f\.minute_at ASC,f\.id ASC LIMIT \?$/);
 });
 
-test('migration stats compare normalized and source rows', () => {
-  const sql = migrationStatsSql();
-  assert.match(sql, /COUNT\(\*\) FROM sh_legacy_samples/);
-  assert.match(sql, /COUNT\(\*\) FROM sh_legacy_snapshots/);
-  assert.match(sql, /legacy_backfill_id/);
+test('minute facts stats report live and both legacy sources', () => {
+  const sql = minuteFactsStatsSql();
+  assert.match(sql, /source='live_collector'/);
+  assert.match(sql, /source='legacy_normalized'/);
+  assert.match(sql, /source='legacy_raw'/);
+  assert.match(sql, /COUNT\(\*\) FROM sh_tracks/);
+  assert.match(sql, /COUNT\(\*\) FROM sh_broadcast_sessions/);
+  assert.match(sql, /sh_queue_revisions WHERE status='complete'/);
 });
 
-test('migration progress never reports negative remaining rows', () => {
-  assert.deepEqual(migrationProgress({ migrated_rows: 80, source_rows: 100 }), {
-    migrated: 80,
-    source: 100,
-    remaining: 20,
-    percent: 80,
-  });
-  assert.deepEqual(migrationProgress({ migrated_rows: 120, source_rows: 100 }), {
-    migrated: 120,
-    source: 100,
-    remaining: 0,
-    percent: 100,
-  });
+test('migration status uses the minute facts migration state', () => {
+  const sql = migrationStateSql();
+  assert.match(sql, /FROM sh_migration_state/);
+  assert.match(sql, /legacy-minute-facts-v1/);
+  assert.match(sql, /cursor_observed_at/);
+  assert.match(sql, /error_rows/);
 });
 
-test('migrated cursor rejects malformed values', () => {
-  assert.deepEqual(decodeMigratedCursor(Buffer.from('123:45').toString('base64')), { timestamp: 123, id: 45 });
-  assert.equal(decodeMigratedCursor('not-base64***'), null);
-  assert.equal(decodeMigratedCursor(Buffer.from('-1:45').toString('base64')), null);
-  assert.equal(decodeMigratedCursor(Buffer.from('123').toString('base64')), null);
+test('minute facts cursor rejects malformed values', () => {
+  assert.deepEqual(decodeMinuteFactsCursor(Buffer.from('123:45').toString('base64')), { timestamp: 123, id: 45 });
+  assert.equal(decodeMinuteFactsCursor('not-base64***'), null);
+  assert.equal(decodeMinuteFactsCursor(Buffer.from('-1:45').toString('base64')), null);
+  assert.equal(decodeMinuteFactsCursor(Buffer.from('123').toString('base64')), null);
 });
