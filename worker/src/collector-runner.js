@@ -10,6 +10,7 @@ import { collectOptionalComments } from './collector-comments.js';
 import { extractIds, extractQueue, normalizeSnapshot, validateChannelPayload } from './collector-payload.js';
 import { ingest } from './collector-ingest.js';
 import { loadCollectorState, saveCollectorState } from './collector-state.js';
+import { loadMinuteCommentFacts } from './minute-facts-source.js';
 import { saveLiveMinuteFact } from './minute-facts-store.js';
 import { enrichTracks as sharedEnrichTracks } from './shared.js';
 
@@ -77,6 +78,7 @@ export async function collectOnce(env, source = 'manual') {
     const commentResult = initialPlan.comments
       ? await collectOptionalComments(env, state, config, observedAt)
       : { commentsSaved: 0, degraded: false, errorStage: null };
+    const minuteComments = await loadMinuteCommentFacts(env.DB, state.stationId, observedAt);
 
     try {
       stage = 'd1_write_minute_fact';
@@ -86,7 +88,7 @@ export async function collectOnce(env, source = 'manual') {
         snapshotResult,
         queue,
         queueResult,
-        comments: commentResult,
+        comments: { ...commentResult, ...minuteComments },
       });
     } catch (error) {
       console.warn(JSON.stringify({
