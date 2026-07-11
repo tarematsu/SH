@@ -1,10 +1,10 @@
 {
   "database_name": "Stationhead-DB",
+  "deployment_path": "cloudflare_git",
   "provision_result": "success",
   "provision_outcome": "success",
-  "deploy_outcome": "failure",
-  "verify_outcome": "skipped",
-  "event_name": "push",
-  "source_sha": "71f429518c9d86d163d58f634eedcbb35d8e627d",
-  "recorded_at": "2026-07-11T02:34:18.187Z"
+  "live_verify_outcome": "skipped",
+  "event_name": "pull_request",
+  "source_sha": "004c5c7b757f31e0246b1c9845fc2dfaa8e04d35",
+  "recorded_at": "2026-07-11T02:46:16.594Z"
 }

@@ -1,4 +1,4 @@
-# Creates the dedicated minute-facts D1 before deploying the collector.
+# Creates the dedicated minute-facts D1 and verifies the Cloudflare Git deployment.
 name: Provision Stationhead-DB
 
 on:
@@ -63,18 +63,9 @@ jobs:
             echo "result=provision-command-failed" >> "${GITHUB_OUTPUT}"
             exit 1
           fi
-      - name: Deploy collector with FACTS_DB
-        id: deploy
-        if: steps.provision.outcome == 'success' && github.event_name == 'push' && github.ref_name == 'main'
-        continue-on-error: true
-        working-directory: worker
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN || secrets.CLOUDFLARE_BUILDS_API_TOKEN || secrets.CF_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID || secrets.CF_ACCOUNT_ID }}
-        run: npm run deploy
-      - name: Verify live minute facts
+      - name: Verify Cloudflare Git deployment
         id: verify
-        if: steps.provision.outcome == 'success' && steps.deploy.outcome == 'success' && github.event_name == 'push' && github.ref_name == 'main'
+        if: steps.provision.outcome == 'success' && github.event_name != 'pull_request'
         continue-on-error: true
         working-directory: worker
         env:
@@ -84,13 +75,12 @@ jobs:
           FACTS_VERIFY_ATTEMPTS: 5
           FACTS_VERIFY_DELAY_MS: 20000
         run: node scripts/verify-facts-live.mjs
-      - name: Record provisioning and deployment status
+      - name: Record provisioning status
         if: always()
         env:
           PROVISION_RESULT: ${{ steps.provision.outputs.result || 'unknown-failure' }}
           PROVISION_OUTCOME: ${{ steps.provision.outcome }}
-          DEPLOY_OUTCOME: ${{ steps.deploy.outcome || 'skipped' }}
-          VERIFY_OUTCOME: ${{ steps.verify.outcome || 'skipped' }}
+          VERIFY_OUTCOME: ${{ steps.verify.outcome || 'not-run-on-pull-request' }}
           EVENT_NAME: ${{ github.event_name }}
           SOURCE_SHA: ${{ github.sha }}
         run: |
@@ -99,10 +89,10 @@ jobs:
           mkdirSync('database', { recursive: true });
           writeFileSync('database/facts-provision-status.json', `${JSON.stringify({
             database_name: 'Stationhead-DB',
+            deployment_path: 'cloudflare_git',
             provision_result: process.env.PROVISION_RESULT,
             provision_outcome: process.env.PROVISION_OUTCOME,
-            deploy_outcome: process.env.DEPLOY_OUTCOME,
-            verify_outcome: process.env.VERIFY_OUTCOME,
+            live_verify_outcome: process.env.VERIFY_OUTCOME,
             event_name: process.env.EVENT_NAME,
             source_sha: process.env.SOURCE_SHA,
             recorded_at: new Date().toISOString(),
@@ -127,8 +117,8 @@ jobs:
         run: |
           echo "Stationhead-DB provisioning failed: ${{ steps.provision.outputs.result || 'unknown-failure' }}"
           exit 1
-      - name: Fail unsuccessful deployment or verification
-        if: github.event_name == 'push' && github.ref_name == 'main' && (steps.deploy.outcome != 'success' || steps.verify.outcome != 'success')
+      - name: Fail missing live data
+        if: github.event_name != 'pull_request' && steps.verify.outcome != 'success'
         run: |
-          echo "Stationhead-DB deploy=${{ steps.deploy.outcome }} verify=${{ steps.verify.outcome }}"
+          echo "Stationhead-DB live verification=${{ steps.verify.outcome }}"
           exit 1
