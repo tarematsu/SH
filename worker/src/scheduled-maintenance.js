@@ -1,4 +1,6 @@
 import { runDataMaintenanceSafely } from '../../site/functions/lib/data-maintenance.js';
+import { runMinuteFactsBackfill } from './minute-facts-backfill.js';
+import { runRollupMaintenanceSafely } from './rollup-maintenance.js';
 
 const DEFAULT_INTERVAL_MS = 60 * 60_000;
 const MIN_INTERVAL_MS = 15 * 60_000;
@@ -16,10 +18,31 @@ export function shouldRunScheduledMaintenance(now = Date.now(), env = {}) {
   return minute % intervalMinutes === 0;
 }
 
+export function minuteFactsCutoverEnabled(env = {}) {
+  return Boolean(env?.DB && env?.FACTS_DB);
+}
+
 export async function runScheduledMaintenance(env, now = Date.now()) {
   if (!env?.DB) return { skipped: true, reason: 'db-binding-missing' };
   if (!shouldRunScheduledMaintenance(now, env)) {
     return { skipped: true, reason: 'not-due' };
   }
-  return runDataMaintenanceSafely(env.DB, now);
+  if (!minuteFactsCutoverEnabled(env)) {
+    return runDataMaintenanceSafely(env.DB, now);
+  }
+
+  const [rollup, minuteFactsBackfill] = await Promise.all([
+    runRollupMaintenanceSafely(env.DB, now),
+    runMinuteFactsBackfill(env).catch((error) => ({
+      skipped: true,
+      reason: 'minute-facts-backfill-error',
+      error: error?.message || String(error),
+    })),
+  ]);
+  return {
+    skipped: false,
+    rollup,
+    legacyBackfill: { skipped: true, reason: 'replaced-by-minute-facts-migration' },
+    minuteFactsBackfill,
+  };
 }

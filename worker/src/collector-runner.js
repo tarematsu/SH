@@ -5,11 +5,13 @@ import {
   sanitizeFailureDetail,
 } from './collector-failure.js';
 import { buildCollectionPlan } from './collector-plan.js';
-import { COLLECTOR_VERSION, configFromEnv, shJson } from './collector-config.js';
+import { configFromEnv, shJson } from './collector-config.js';
 import { collectOptionalComments } from './collector-comments.js';
 import { extractIds, extractQueue, normalizeSnapshot, validateChannelPayload } from './collector-payload.js';
 import { ingest } from './collector-ingest.js';
 import { loadCollectorState, saveCollectorState } from './collector-state.js';
+import { loadMinuteCommentFacts } from './minute-facts-source.js';
+import { saveLiveMinuteFact } from './minute-facts-store.js';
 import { enrichTracks as sharedEnrichTracks } from './shared.js';
 
 let collectionFlight = null;
@@ -41,6 +43,7 @@ export async function collectOnce(env, source = 'manual') {
     validateChannelPayload(channel, config.channelAlias);
     extractIds(channel, state);
 
+    const snapshot = normalizeSnapshot(channel, state, config);
     const queue = extractQueue(channel, state.stationId);
     const planInput = {
       state,
@@ -52,9 +55,10 @@ export async function collectOnce(env, source = 'manual') {
     };
     const initialPlan = buildCollectionPlan(planInput);
 
+    let snapshotResult = null;
     if (initialPlan.snapshot) {
       stage = 'd1_write_snapshot';
-      await ingest(env, 'snapshot', normalizeSnapshot(channel, state, config), observedAt);
+      snapshotResult = await ingest(env, 'snapshot', snapshot, observedAt, { returnDetails: true });
     }
 
     let queueResult = null;
@@ -74,6 +78,24 @@ export async function collectOnce(env, source = 'manual') {
     const commentResult = initialPlan.comments
       ? await collectOptionalComments(env, state, config, observedAt)
       : { commentsSaved: 0, degraded: false, errorStage: null };
+    const minuteComments = await loadMinuteCommentFacts(env.DB, state.stationId, observedAt);
+
+    try {
+      stage = 'd1_write_minute_fact';
+      await saveLiveMinuteFact(env, {
+        observedAt,
+        snapshot,
+        snapshotResult,
+        queue,
+        queueResult,
+        comments: { ...commentResult, ...minuteComments },
+      });
+    } catch (error) {
+      console.warn(JSON.stringify({
+        event: 'minute_fact_write_failed',
+        error: sanitizeFailureDetail(error?.message || error),
+      }));
+    }
 
     stage = 'd1_write_collector_state';
     await saveCollectorState(env, state, {

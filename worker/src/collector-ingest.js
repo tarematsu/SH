@@ -1,6 +1,6 @@
 import { onRequestPost as saveIngest } from '../../site/functions/api/ingest.js';
 
-export async function ingest(env, type, data, observedAt) {
+export async function ingest(env, type, data, observedAt, options = {}) {
   const internalSecret = env.INGEST_SECRET || 'worker-internal-ingest';
   const request = new Request('https://worker.internal/api/ingest', {
     method: 'POST',
@@ -23,5 +23,6 @@ export async function ingest(env, type, data, observedAt) {
     const body = await response.text().catch(() => '');
     throw new Error(`D1 ingest failed (${type}) ${response.status}: ${body.slice(0, 500)}`);
   }
-  return type === 'queue' ? response.json().catch(() => ({})) : null;
+  const returnDetails = type === 'queue' || options.returnDetails === true;
+  return returnDetails ? response.json().catch(() => ({})) : null;
 }
