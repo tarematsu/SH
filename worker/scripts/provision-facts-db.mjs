@@ -6,6 +6,10 @@ const workerRoot = resolve(import.meta.dirname, '..');
 const repositoryRoot = resolve(workerRoot, '..');
 const configPath = resolve(workerRoot, 'wrangler.jsonc');
 const schemaPath = resolve(repositoryRoot, 'database/facts-migrations/001_initial_schema.sql');
+const enumMigrationPath = resolve(
+  repositoryRoot,
+  'database/facts-migrations/002_normalize_minute_fact_enums.sql',
+);
 const metadataPath = resolve(repositoryRoot, 'database/facts-db.json');
 const databaseName = process.env.FACTS_DATABASE_NAME || 'Stationhead-DB';
 
@@ -37,6 +41,18 @@ function listDatabases() {
   return parseJsonOutput(wrangler(['d1', 'list', '--json']));
 }
 
+function tableColumnNames(databaseName, table) {
+  const output = wrangler([
+    'd1', 'execute', databaseName,
+    '--remote', '--yes', '--json',
+    '--command', `SELECT name FROM pragma_table_info('${table}')`,
+  ]);
+  const parsed = parseJsonOutput(output);
+  const containers = Array.isArray(parsed) ? parsed : [parsed];
+  const rows = containers.flatMap((container) => container?.results || []);
+  return new Set(rows.map((row) => String(row.name)));
+}
+
 let database = listDatabases().find((item) => item.name === databaseName);
 if (!database) {
   wrangler(['d1', 'create', databaseName]);
@@ -59,6 +75,18 @@ if (index >= 0) bindings[index] = nextBinding;
 else bindings.push(nextBinding);
 config.d1_databases = bindings;
 writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`);
+
+const factsColumns = tableColumnNames(databaseName, 'sh_minute_facts');
+const factsTableExists = factsColumns.size > 0;
+const factsAlreadyNormalized = factsColumns.has('source_code');
+if (factsTableExists && !factsAlreadyNormalized) {
+  console.log('Migrating sh_minute_facts.source/track_detection_method to integer codes...');
+  wrangler([
+    'd1', 'execute', databaseName,
+    '--remote', '--yes',
+    '--file', enumMigrationPath,
+  ]);
+}
 
 wrangler([
   'd1', 'execute', databaseName,

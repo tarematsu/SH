@@ -13,6 +13,37 @@ export const FACT_QUALITY_FLAGS = Object.freeze({
   LEGACY_QUALITY_REDUCED: 1024,
 });
 
+export const MINUTE_FACT_SOURCES = Object.freeze({
+  1: 'live_collector',
+  2: 'live_reconstructed',
+  3: 'legacy_normalized',
+  4: 'legacy_raw',
+});
+export const MINUTE_FACT_SOURCE_CODES = Object.freeze(
+  Object.fromEntries(Object.entries(MINUTE_FACT_SOURCES).map(([code, name]) => [name, Number(code)])),
+);
+export function minuteFactSourceCode(name) {
+  return MINUTE_FACT_SOURCE_CODES[name] ?? null;
+}
+export function minuteFactSourceName(code) {
+  return MINUTE_FACT_SOURCES[Number(code)] ?? null;
+}
+
+export const TRACK_DETECTION_METHODS = Object.freeze({
+  0: 'unknown',
+  1: 'queue_inferred',
+  2: 'queue_reconstructed',
+});
+export const TRACK_DETECTION_METHOD_CODES = Object.freeze(
+  Object.fromEntries(Object.entries(TRACK_DETECTION_METHODS).map(([code, name]) => [name, Number(code)])),
+);
+export function trackDetectionMethodCode(name) {
+  return TRACK_DETECTION_METHOD_CODES[name] ?? TRACK_DETECTION_METHOD_CODES.unknown;
+}
+export function trackDetectionMethodName(code) {
+  return TRACK_DETECTION_METHODS[Number(code)] ?? TRACK_DETECTION_METHODS[0];
+}
+
 function num(value) {
   if (value === null || value === undefined || value === '') return null;
   const parsed = Number(value);
@@ -460,12 +491,12 @@ export function qualityScore(flags) {
 }
 
 const FACT_COLUMNS = [
-  'channel_id','station_id','minute_at','observed_at','received_at','source','source_priority',
+  'channel_id','station_id','minute_at','observed_at','received_at','source_code','source_priority',
   'source_record_id','collector_id','broadcast_session_id','host_id','is_broadcasting',
   'broadcast_start_time','listener_count','online_member_count','total_member_count','guest_count',
   'reported_total_listens','reported_current_stream_count','validated_stream_count',
   'stream_count_rejected','queue_revision_id','queue_id','queue_start_time','is_paused',
-  'queue_track_count','queue_available','track_id','queue_position','track_detection_method',
+  'queue_track_count','queue_available','track_id','queue_position','track_detection_code',
   'track_confidence','schedule_valid','track_bite_count','comment_count','comment_total',
   'comments_degraded','quality_score','quality_flags',
 ];
@@ -473,13 +504,13 @@ const FACT_COLUMNS = [
 export function minuteFactStatement(db, fact) {
   const values = [
     fact.channel_id, fact.station_id, fact.minute_at, fact.observed_at, fact.received_at,
-    fact.source, fact.source_priority, fact.source_record_id, fact.collector_id,
+    fact.source_code, fact.source_priority, fact.source_record_id, fact.collector_id,
     fact.broadcast_session_id, fact.host_id, fact.is_broadcasting, fact.broadcast_start_time,
     fact.listener_count, fact.online_member_count, fact.total_member_count, fact.guest_count,
     fact.reported_total_listens, fact.reported_current_stream_count, fact.validated_stream_count,
     fact.stream_count_rejected, fact.queue_revision_id, fact.queue_id, fact.queue_start_time,
     fact.is_paused, fact.queue_track_count, fact.queue_available, fact.track_id,
-    fact.queue_position, fact.track_detection_method, fact.track_confidence,
+    fact.queue_position, fact.track_detection_code, fact.track_confidence,
     fact.schedule_valid, fact.track_bite_count, fact.comment_count, fact.comment_total,
     fact.comments_degraded, fact.quality_score, fact.quality_flags,
   ];
@@ -570,7 +601,7 @@ export async function saveLiveMinuteFact(env, input) {
     minute_at: minuteBucket(observedAt),
     observed_at: observedAt,
     received_at: receivedAt,
-    source: 'live_collector',
+    source_code: MINUTE_FACT_SOURCE_CODES.live_collector,
     source_priority: 100,
     source_record_id: null,
     collector_id: text(env.COLLECTOR_ID) || 'cloudflare-worker',
@@ -594,7 +625,9 @@ export async function saveLiveMinuteFact(env, input) {
     queue_available: queue ? 1 : 0,
     track_id: trackId,
     queue_position: position,
-    track_detection_method: trackId == null ? 'unknown' : 'queue_inferred',
+    track_detection_code: trackId == null
+      ? TRACK_DETECTION_METHOD_CODES.unknown
+      : TRACK_DETECTION_METHOD_CODES.queue_inferred,
     track_confidence: trackId == null ? 0 : (playback?.delayed ? 0.6 : 0.9),
     schedule_valid: Number(item?.schedule_valid || 0),
     track_bite_count: biteCount,

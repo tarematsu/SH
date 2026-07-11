@@ -8,6 +8,7 @@ import {
   FACT_QUALITY_FLAGS,
   findScheduledPosition,
   minuteBucket,
+  MINUTE_FACT_SOURCE_CODES,
   qualityScore,
   queueRevisionItemStatement,
   queueStructuralHash,
@@ -16,6 +17,7 @@ import {
   resolveHost,
   scheduleQueueTracks,
   timestampMs,
+  TRACK_DETECTION_METHOD_CODES,
   upsertMinuteFact,
 } from './minute-facts-store.js';
 
@@ -218,7 +220,7 @@ export async function saveReconstructedMinuteFact(env, input) {
     minute_at: minuteAt,
     observed_at: observedAt,
     received_at: receivedAt,
-    source: 'live_reconstructed',
+    source_code: MINUTE_FACT_SOURCE_CODES.live_reconstructed,
     source_priority: sourcePriority,
     source_record_id: `snapshot:${rebuild.source_snapshot_id ?? 0}:minute:${minuteAt}:${mode}`,
     collector_id: `${text(env.COLLECTOR_ID) || 'cloudflare-worker'}:rebuild`,
@@ -242,7 +244,9 @@ export async function saveReconstructedMinuteFact(env, input) {
     queue_available: queue ? 1 : 0,
     track_id: trackId,
     queue_position: position,
-    track_detection_method: trackId == null ? 'unknown' : 'queue_reconstructed',
+    track_detection_code: trackId == null
+      ? TRACK_DETECTION_METHOD_CODES.unknown
+      : TRACK_DETECTION_METHOD_CODES.queue_reconstructed,
     track_confidence: trackId == null ? 0 : (mode === 'exact' ? 0.75 : 0.6),
     schedule_valid: Number(item?.schedule_valid || 0),
     track_bite_count: integer(item?.bite_count),

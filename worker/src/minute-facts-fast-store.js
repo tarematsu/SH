@@ -2,6 +2,7 @@ import { saveLiveMinuteFactWithinBudget } from './collector-runner.js';
 import {
   FACT_QUALITY_FLAGS,
   minuteBucket,
+  MINUTE_FACT_SOURCE_CODES,
   queueStructuralHash,
   queueStructurePayload,
   qualityScore,
@@ -9,6 +10,7 @@ import {
   resolveHost,
   resolveLiveSession,
   timestampMs,
+  TRACK_DETECTION_METHOD_CODES,
   upsertMinuteFact,
 } from './minute-facts-store.js';
 
@@ -623,7 +625,7 @@ export async function saveOptimizedLiveMinuteFact(env, input) {
     minute_at: minuteBucket(observedAt),
     observed_at: observedAt,
     received_at: receivedAt,
-    source: 'live_collector',
+    source_code: MINUTE_FACT_SOURCE_CODES.live_collector,
     source_priority: 100,
     source_record_id: null,
     collector_id: text(env.COLLECTOR_ID) || 'cloudflare-worker',
@@ -647,7 +649,9 @@ export async function saveOptimizedLiveMinuteFact(env, input) {
     queue_available: queue ? 1 : 0,
     track_id: trackId,
     queue_position: position,
-    track_detection_method: trackId == null ? 'unknown' : 'queue_inferred',
+    track_detection_code: trackId == null
+      ? TRACK_DETECTION_METHOD_CODES.unknown
+      : TRACK_DETECTION_METHOD_CODES.queue_inferred,
     track_confidence: trackId == null ? 0 : (playback?.delayed ? 0.6 : 0.9),
     schedule_valid: Number(item?.schedule_valid || 0),
     track_bite_count: biteCount,

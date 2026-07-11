@@ -54,7 +54,7 @@ for (let attempt = 1; attempt <= attempts; attempt += 1) {
         COUNT(*) AS fact_count,
         MAX(observed_at) AS last_observed_at,
         MAX(minute_at) AS last_minute_at,
-        SUM(CASE WHEN source='live_collector' THEN 1 ELSE 0 END) AS live_fact_count
+        SUM(CASE WHEN source_code=1 THEN 1 ELSE 0 END) AS live_fact_count
       FROM sh_minute_facts`,
     ]));
     const row = firstResult(payload) || {};
