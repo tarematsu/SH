@@ -3,6 +3,10 @@ import {
   scheduleBuddyPlayback,
   scheduledTimestamp,
 } from './cadenced-entry.js';
+import {
+  MINUTE_FACT_DERIVE_CRON,
+  runMinuteFactDeriveCron,
+} from './minute-facts-derive.js';
 import resilientApp from './resilient-entry.js';
 
 export function withBuddyPlaybackDeferred(env = {}) {
@@ -54,13 +58,25 @@ export async function runProductionScheduled(controller, env, ctx, dependencies 
   return primaryResult;
 }
 
+export function isMinuteFactDeriveCron(controller = {}) {
+  return String(controller?.cron || '') === MINUTE_FACT_DERIVE_CRON;
+}
+
+export async function runProductionCron(controller, env, ctx, dependencies = {}) {
+  if (isMinuteFactDeriveCron(controller)) {
+    const derive = dependencies.runMinuteFactDeriveCron || runMinuteFactDeriveCron;
+    return derive(env, dependencies.deriveDependencies || {});
+  }
+  return runProductionScheduled(controller, env, ctx, dependencies);
+}
+
 function isFaviconRequest(request) {
   return request.method === 'GET' && new URL(request.url).pathname === '/favicon.ico';
 }
 
 export default {
   async scheduled(controller, env, ctx) {
-    return runProductionScheduled(controller, env, ctx);
+    return runProductionCron(controller, env, ctx);
   },
 
   async fetch(request, env, ctx) {
