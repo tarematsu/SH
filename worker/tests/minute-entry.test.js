@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
-import { MINUTE_FACT_DERIVE_CRON, MINUTE_FACT_LEGACY_CRON, MINUTE_FACT_REBUILD_CRON, MINUTE_FACT_WORKER_CRON, runMinuteScheduled } from '../src/minute-entry.js';
+import { MINUTE_FACT_DERIVE_CRON, MINUTE_FACT_LEGACY_CRON, MINUTE_FACT_REBUILD_CRON, MINUTE_FACT_RECOVERY_MINUTE, MINUTE_FACT_WORKER_CRON, runMinuteScheduled } from '../src/minute-entry.js';
 import { legacyFact, runMinuteFactsLegacyBackfill } from '../src/minute-facts-legacy-backfill.js';
 
 test('minute worker routes every creation path without running the collector', async () => {
@@ -28,6 +28,13 @@ test('single minute-worker cron preserves derive, rebuild, and legacy cadence', 
   assert.equal(await run(7), 'rebuild');
   assert.equal(await run(9), 'legacy');
   assert.deepEqual(calls, ['derive', 'rebuild', 'legacy']);
+});
+
+test('minute worker retries a bounded set of dead jobs in its recovery slot', async () => {
+  const result = await runMinuteScheduled({ cron: MINUTE_FACT_WORKER_CRON, scheduledTime: MINUTE_FACT_RECOVERY_MINUTE * 60_000 }, {}, {
+    requeueDead: async (_env, options) => ({ requeued: options.limit }),
+  });
+  assert.deepEqual(result, { requeued: undefined });
 });
 
 test('minute worker has dedicated name, bindings and crons', () => {

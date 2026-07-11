@@ -1,12 +1,14 @@
 import { runMinuteFactsBackfill } from './minute-facts-backfill.js';
 import { runMinuteFactDeriveCron } from './minute-facts-derive.js';
 import { runMinuteFactsLegacyBackfill } from './minute-facts-legacy-backfill.js';
+import { requeueDeadMinuteFactJobs } from './minute-facts-inbox.js';
 import { minuteFactRuntimeSignals, readMinuteFactRuntimeState, recordMinuteFactRuntimeState } from './minute-facts-runtime-state.js';
 
 export const MINUTE_FACT_DERIVE_CRON = '*/2 * * * *';
 export const MINUTE_FACT_REBUILD_CRON = '7,17,27,37,47,57 * * * *';
 export const MINUTE_FACT_LEGACY_CRON = '9,19,29,39,49,59 * * * *';
 export const MINUTE_FACT_WORKER_CRON = '* * * * *';
+export const MINUTE_FACT_RECOVERY_MINUTE = 5;
 
 function scheduledMinute(controller = {}) {
   const timestamp = Number(controller.scheduledTime);
@@ -34,6 +36,7 @@ export async function runMinuteScheduled(controller = {}, env, dependencies = {}
   if (cron === MINUTE_FACT_WORKER_CRON) {
     const minute = scheduledMinute(controller);
     if (minute == null) return { skipped: true, reason: 'scheduled-time-missing' };
+    if (minute % 10 === MINUTE_FACT_RECOVERY_MINUTE) return runTracked(env, 'recovery', () => (dependencies.requeueDead || requeueDeadMinuteFactJobs)(env, { limit: env.MINUTE_FACT_DEAD_REQUEUE_LIMIT }));
     if (minute % 2 === 0) return runTracked(env, 'derive', () => (dependencies.runDerive || runMinuteFactDeriveCron)(env, dependencies.derive || {}));
     if (minute % 10 === 7) return runTracked(env, 'rebuild', () => (dependencies.runRebuild || runMinuteFactsBackfill)(env, dependencies.rebuild || {}));
     if (minute % 10 === 9) return runTracked(env, 'legacy', () => (dependencies.runLegacy || runMinuteFactsLegacyBackfill)(env, dependencies.legacy || {}));

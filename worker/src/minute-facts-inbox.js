@@ -186,6 +186,21 @@ export async function failMinuteFactJob(env, job, error, options = {}) {
   return { terminal, attempts };
 }
 
+export async function requeueDeadMinuteFactJobs(env, options = {}) {
+  await ensureMinuteFactInboxSchema(env);
+  const limit = positiveInteger(options.limit, 20, 100);
+  const now = integer(options.now) ?? Date.now();
+  const candidates = await env.DB.prepare(`SELECT id FROM sh_minute_fact_jobs
+    WHERE status='dead' ORDER BY updated_at ASC,id ASC LIMIT ?`).bind(limit).all();
+  const ids = (candidates.results || []).map((row) => integer(row.id)).filter((id) => id != null);
+  if (!ids.length) return { requeued: 0 };
+  const placeholders = ids.map(() => '?').join(',');
+  const result = await env.DB.prepare(`UPDATE sh_minute_fact_jobs SET
+      status='pending',attempts=0,next_attempt_at=0,lease_until=NULL,last_error=NULL,updated_at=?
+    WHERE status='dead' AND id IN (${placeholders})`).bind(now, ...ids).run();
+  return { requeued: Number(result?.meta?.changes || 0) };
+}
+
 export async function minuteFactInboxStats(env) {
   await ensureMinuteFactInboxSchema(env);
   const row = await env.DB.prepare(`SELECT
