@@ -160,7 +160,7 @@ CREATE TABLE IF NOT EXISTS sh_minute_facts (
   minute_at INTEGER NOT NULL,
   observed_at INTEGER NOT NULL,
   received_at INTEGER NOT NULL,
-  source TEXT NOT NULL,
+  source_code INTEGER NOT NULL,
   source_priority INTEGER NOT NULL,
   source_record_id TEXT,
   collector_id TEXT,
@@ -184,7 +184,7 @@ CREATE TABLE IF NOT EXISTS sh_minute_facts (
   queue_available INTEGER NOT NULL DEFAULT 0,
   track_id INTEGER,
   queue_position INTEGER,
-  track_detection_method TEXT NOT NULL,
+  track_detection_code INTEGER NOT NULL,
   track_confidence REAL,
   schedule_valid INTEGER NOT NULL DEFAULT 0,
   track_bite_count INTEGER,
@@ -200,7 +200,7 @@ CREATE TABLE IF NOT EXISTS sh_minute_facts (
   UNIQUE(channel_id, minute_at)
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_sh_minute_facts_source_record
-  ON sh_minute_facts(source, source_record_id)
+  ON sh_minute_facts(source_code, source_record_id)
   WHERE source_record_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_sh_minute_facts_time ON sh_minute_facts(minute_at DESC);
 CREATE INDEX IF NOT EXISTS idx_sh_minute_facts_track_time ON sh_minute_facts(track_id, minute_at DESC);
@@ -236,7 +236,7 @@ SET validated_stream_count=NULL,
     stream_count_rejected=1,
     quality_flags=quality_flags | 64,
     quality_score=MAX(0,quality_score-CASE WHEN (quality_flags & 64)=0 THEN 0.1 ELSE 0 END)
-WHERE source='live_collector'
+WHERE source_code=1
   AND reported_current_stream_count IS NOT NULL
   AND reported_total_listens IS NOT NULL
   AND validated_stream_count=reported_total_listens
@@ -245,7 +245,7 @@ WHERE source='live_collector'
 -- Remove validated stream values that were carried forward from an earlier minute.
 UPDATE sh_minute_facts
 SET validated_stream_count=NULL
-WHERE source='live_collector'
+WHERE source_code=1
   AND validated_stream_count IS NOT NULL
   AND (stream_count_rejected=1 OR reported_current_stream_count IS NULL);
 

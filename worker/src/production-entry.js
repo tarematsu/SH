@@ -4,6 +4,10 @@ import {
   scheduledTimestamp,
 } from './cadenced-entry.js';
 import {
+  MINUTE_FACT_REBUILD_CRON,
+  runMinuteFactsBackfill,
+} from './minute-facts-backfill.js';
+import {
   MINUTE_FACT_DERIVE_CRON,
   runMinuteFactDeriveCron,
 } from './minute-facts-derive.js';
@@ -62,7 +66,15 @@ export function isMinuteFactDeriveCron(controller = {}) {
   return String(controller?.cron || '') === MINUTE_FACT_DERIVE_CRON;
 }
 
+export function isMinuteFactRebuildCron(controller = {}) {
+  return String(controller?.cron || '') === MINUTE_FACT_REBUILD_CRON;
+}
+
 export async function runProductionCron(controller, env, ctx, dependencies = {}) {
+  if (isMinuteFactRebuildCron(controller)) {
+    const rebuild = dependencies.runMinuteFactsBackfill || runMinuteFactsBackfill;
+    return rebuild(env, dependencies.rebuildDependencies || {});
+  }
   if (isMinuteFactDeriveCron(controller)) {
     const derive = dependencies.runMinuteFactDeriveCron || runMinuteFactDeriveCron;
     return derive(env, dependencies.deriveDependencies || {});

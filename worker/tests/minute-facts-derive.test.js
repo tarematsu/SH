@@ -24,7 +24,7 @@ function job(id, attempts = 1) {
 
 test('derive config applies bounded defaults', () => {
   assert.deepEqual(deriveConfig({}), {
-    maxJobs: 3,
+    maxJobs: 8,
     jobTimeoutMs: 18_000,
     leaseMs: 60_000,
     maxAttempts: 8,

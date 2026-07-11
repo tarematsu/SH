@@ -5,6 +5,22 @@ const JSON_HEADERS = {
 };
 const JST_OFFSET_MS = 9 * 3_600_000;
 const ALLOWED_SOURCES = new Set(['live_collector', 'legacy_normalized', 'legacy_raw']);
+// sh_minute_facts.source/track_detection_method are stored as dictionary-coded
+// integers; these mirror the codes defined in worker/src/minute-facts-store.js.
+const SOURCE_CODES = Object.freeze({
+  live_collector: 1,
+  live_reconstructed: 2,
+  legacy_normalized: 3,
+  legacy_raw: 4,
+});
+const SOURCE_NAMES = Object.freeze(
+  Object.fromEntries(Object.entries(SOURCE_CODES).map(([name, code]) => [code, name])),
+);
+const TRACK_DETECTION_NAMES = Object.freeze({
+  0: 'unknown',
+  1: 'queue_inferred',
+  2: 'queue_reconstructed',
+});
 const json = (data, status = 200) => new Response(JSON.stringify(data), {
   status,
   headers: status >= 400 ? { ...JSON_HEADERS, 'cache-control': 'no-store' } : JSON_HEADERS,
@@ -37,6 +53,15 @@ function encodeCursor(row) {
   return row ? btoa(`${row.minute_at}:${row.id}`) : null;
 }
 
+export function decodeFactRow(row) {
+  const { source_code, track_detection_code, ...rest } = row;
+  return {
+    ...rest,
+    source: SOURCE_NAMES[Number(source_code)] || null,
+    track_detection_method: TRACK_DETECTION_NAMES[Number(track_detection_code)] || 'unknown',
+  };
+}
+
 export function decodeMinuteFactsCursor(value) {
   if (!value) return null;
   try {
@@ -56,16 +81,16 @@ export const decodeMigratedCursor = decodeMinuteFactsCursor;
 export function minuteFactsRowsSql(options = {}) {
   let sql = `SELECT
     f.id,f.channel_id,f.station_id,f.minute_at,f.observed_at,f.received_at,
-    f.source,f.source_priority,f.source_record_id,f.collector_id,
+    f.source_code,f.source_priority,f.source_record_id,f.collector_id,
     f.broadcast_session_id,f.is_broadcasting,f.broadcast_start_time,
     f.listener_count,f.online_member_count,f.total_member_count,f.guest_count,
-    CASE WHEN f.source='live_collector' THEN f.reported_total_listens ELSE NULL END
+    CASE WHEN f.source_code=1 THEN f.reported_total_listens ELSE NULL END
       AS cumulative_listener_count,
-    CASE WHEN f.source='live_collector' THEN f.reported_current_stream_count
+    CASE WHEN f.source_code=1 THEN f.reported_current_stream_count
       ELSE COALESCE(f.reported_current_stream_count,f.reported_total_listens) END
       AS total_stream_count,f.queue_revision_id,f.queue_id,f.queue_start_time,
     f.is_paused,f.queue_track_count,f.queue_available,f.queue_position,
-    f.track_detection_method,f.track_confidence,f.schedule_valid,
+    f.track_detection_code,f.track_confidence,f.schedule_valid,
     f.track_bite_count,f.comment_count,f.comment_total,f.comments_degraded,
     f.quality_score,f.quality_flags,
     t.title AS track_title,t.artist AS artist_name,t.isrc,t.spotify_id,
@@ -78,7 +103,7 @@ export function minuteFactsRowsSql(options = {}) {
   LEFT JOIN sh_broadcast_sessions s ON s.id=f.broadcast_session_id
   LEFT JOIN sh_queue_revisions r ON r.id=f.queue_revision_id
   WHERE f.minute_at>=? AND f.minute_at<?`;
-  if (options.source) sql += ' AND f.source=?';
+  if (options.source) sql += ' AND f.source_code=?';
   if (options.host) sql += ` AND lower(COALESCE(h.current_handle,'')) LIKE ? ESCAPE '\\'`;
   if (options.track) {
     sql += ` AND (lower(COALESCE(t.title,'')) LIKE ? ESCAPE '\\'
@@ -94,9 +119,9 @@ export const migratedRowsSql = minuteFactsRowsSql;
 export function minuteFactsStatsSql() {
   return `SELECT
     COUNT(*) AS total_rows,
-    SUM(CASE WHEN source='live_collector' THEN 1 ELSE 0 END) AS live_rows,
-    SUM(CASE WHEN source='legacy_normalized' THEN 1 ELSE 0 END) AS normalized_rows,
-    SUM(CASE WHEN source='legacy_raw' THEN 1 ELSE 0 END) AS raw_rows,
+    SUM(CASE WHEN source_code=1 THEN 1 ELSE 0 END) AS live_rows,
+    SUM(CASE WHEN source_code=3 THEN 1 ELSE 0 END) AS normalized_rows,
+    SUM(CASE WHEN source_code=4 THEN 1 ELSE 0 END) AS raw_rows,
     MIN(minute_at) AS first_minute_at,
     MAX(minute_at) AS last_minute_at,
     (SELECT COUNT(*) FROM sh_tracks) AS track_rows,
@@ -158,7 +183,7 @@ export async function onRequestGet({ request, env }) {
   }
 
   const binds = [fromTs, toTs];
-  if (source) binds.push(source);
+  if (source) binds.push(SOURCE_CODES[source]);
   if (host) binds.push(`%${escapeLike(host)}%`);
   if (track) {
     const pattern = `%${escapeLike(track)}%`;
@@ -180,7 +205,7 @@ export async function onRequestGet({ request, env }) {
     ]);
     const allRows = rowsResult.results || [];
     const hasMore = allRows.length > limit;
-    const rows = hasMore ? allRows.slice(0, limit) : allRows;
+    const rows = (hasMore ? allRows.slice(0, limit) : allRows).map(decodeFactRow);
     return json({
       ok: true,
       mode: 'minute-facts',

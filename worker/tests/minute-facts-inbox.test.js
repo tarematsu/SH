@@ -22,11 +22,12 @@ test('minute fact inbox payload preserves raw capture input', () => {
     snapshot: input.snapshot,
     queue: input.queue,
     comments: input.comments,
+    rebuild: null,
   });
 });
 
 test('minute fact inbox schema is unique per channel minute and indexed for pending work', () => {
   assert.match(MINUTE_FACT_INBOX_SCHEMA_SQL, /UNIQUE\(channel_id, minute_at\)/);
   assert.match(MINUTE_FACT_INBOX_SCHEMA_SQL, /payload_json TEXT NOT NULL/);
-  assert.match(MINUTE_FACT_INBOX_INDEX_SQL, /status, next_attempt_at, minute_at/);
+  assert.match(MINUTE_FACT_INBOX_INDEX_SQL, /status, job_priority DESC, next_attempt_at, minute_at/);
 });

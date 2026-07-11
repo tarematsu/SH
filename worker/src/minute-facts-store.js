@@ -13,6 +13,37 @@ export const FACT_QUALITY_FLAGS = Object.freeze({
   LEGACY_QUALITY_REDUCED: 1024,
 });
 
+export const MINUTE_FACT_SOURCES = Object.freeze({
+  1: 'live_collector',
+  2: 'live_reconstructed',
+  3: 'legacy_normalized',
+  4: 'legacy_raw',
+});
+export const MINUTE_FACT_SOURCE_CODES = Object.freeze(
+  Object.fromEntries(Object.entries(MINUTE_FACT_SOURCES).map(([code, name]) => [name, Number(code)])),
+);
+export function minuteFactSourceCode(name) {
+  return MINUTE_FACT_SOURCE_CODES[name] ?? null;
+}
+export function minuteFactSourceName(code) {
+  return MINUTE_FACT_SOURCES[Number(code)] ?? null;
+}
+
+export const TRACK_DETECTION_METHODS = Object.freeze({
+  0: 'unknown',
+  1: 'queue_inferred',
+  2: 'queue_reconstructed',
+});
+export const TRACK_DETECTION_METHOD_CODES = Object.freeze(
+  Object.fromEntries(Object.entries(TRACK_DETECTION_METHODS).map(([code, name]) => [name, Number(code)])),
+);
+export function trackDetectionMethodCode(name) {
+  return TRACK_DETECTION_METHOD_CODES[name] ?? TRACK_DETECTION_METHOD_CODES.unknown;
+}
+export function trackDetectionMethodName(code) {
+  return TRACK_DETECTION_METHODS[Number(code)] ?? TRACK_DETECTION_METHODS[0];
+}
+
 function num(value) {
   if (value === null || value === undefined || value === '') return null;
   const parsed = Number(value);
@@ -272,10 +303,47 @@ async function loadTrackMetadata(oldDb, tracks) {
   }
 }
 
-async function batchRun(db, statements, chunkSize = 35) {
+export async function batchRun(db, statements, chunkSize = 35) {
   for (let index = 0; index < statements.length; index += chunkSize) {
     await db.batch(statements.slice(index, index + chunkSize));
   }
+}
+
+export function scheduleQueueTracks(tracks) {
+  let offset = 0;
+  let scheduleValid = true;
+  return tracks.map((track) => {
+    const duration = integer(track.duration_ms);
+    const validItem = scheduleValid && duration != null && duration > 0;
+    const scheduled = { ...track, playbackOffset: scheduleValid ? offset : null, scheduleValid: validItem };
+    if (validItem) offset += duration;
+    else scheduleValid = false;
+    return scheduled;
+  });
+}
+
+export function queueRevisionItemStatement(db, revisionId, track, biteCount) {
+  return db.prepare(`INSERT INTO sh_queue_revision_items(
+      revision_id,position,track_id,queue_track_id,stationhead_track_id,isrc,spotify_id,
+      deezer_id,duration_ms,playback_offset_ms,schedule_valid,bite_count
+    ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
+    ON CONFLICT(revision_id,position) DO UPDATE SET
+      track_id=excluded.track_id,queue_track_id=excluded.queue_track_id,
+      stationhead_track_id=excluded.stationhead_track_id,isrc=excluded.isrc,
+      spotify_id=excluded.spotify_id,deezer_id=excluded.deezer_id,
+      duration_ms=excluded.duration_ms,playback_offset_ms=excluded.playback_offset_ms,
+      schedule_valid=excluded.schedule_valid,bite_count=excluded.bite_count`).bind(
+    revisionId, track.position, track.trackId, track.queue_track_id, track.stationhead_track_id,
+    track.isrc, track.spotify_id, track.deezer_id, track.duration_ms,
+    track.playbackOffset, track.scheduleValid ? 1 : 0, biteCount,
+  );
+}
+
+export function findScheduledPosition(items, elapsedMs) {
+  const match = (items || []).find((item) => Number(item.schedule_valid) === 1
+    && elapsedMs >= Number(item.playback_offset_ms)
+    && elapsedMs < Number(item.playback_offset_ms) + Number(item.duration_ms));
+  return match?.position == null ? null : Number(match.position);
 }
 
 async function createRevision(db, oldDb, input) {
@@ -308,35 +376,18 @@ async function createRevision(db, oldDb, input) {
   if (!Number.isFinite(revisionId)) throw new Error('failed to create queue revision');
 
   const metadata = await loadTrackMetadata(oldDb, tracks);
-  const resolved = [];
-  let offset = 0;
-  let scheduleValid = true;
+  const withTrackIds = [];
   for (const track of tracks) {
     const details = metadata.get(String(track.spotify_id || '')) || {};
     const trackId = await resolveTrack(db, { ...track, title: details.title, artist: details.artist }, observedAt);
-    const duration = integer(track.duration_ms);
-    const validItem = scheduleValid && duration != null && duration > 0;
-    resolved.push({ ...track, trackId, playbackOffset: scheduleValid ? offset : null, scheduleValid: validItem });
-    if (validItem) offset += duration;
-    else scheduleValid = false;
+    withTrackIds.push({ ...track, trackId });
   }
+  const resolved = scheduleQueueTracks(withTrackIds);
 
   const byPosition = new Map((queue?.tracks || []).map((track, index) => [integer(track?.position) ?? index, track]));
-  const statements = resolved.map((track) => db.prepare(`INSERT INTO sh_queue_revision_items(
-      revision_id,position,track_id,queue_track_id,stationhead_track_id,isrc,spotify_id,
-      deezer_id,duration_ms,playback_offset_ms,schedule_valid,bite_count
-    ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
-    ON CONFLICT(revision_id,position) DO UPDATE SET
-      track_id=excluded.track_id,queue_track_id=excluded.queue_track_id,
-      stationhead_track_id=excluded.stationhead_track_id,isrc=excluded.isrc,
-      spotify_id=excluded.spotify_id,deezer_id=excluded.deezer_id,
-      duration_ms=excluded.duration_ms,playback_offset_ms=excluded.playback_offset_ms,
-      schedule_valid=excluded.schedule_valid,bite_count=excluded.bite_count`).bind(
-      revisionId, track.position, track.trackId, track.queue_track_id, track.stationhead_track_id,
-      track.isrc, track.spotify_id, track.deezer_id, track.duration_ms,
-      track.playbackOffset, track.scheduleValid ? 1 : 0,
-      integer(byPosition.get(track.position)?.bite_count),
-    ));
+  const statements = resolved.map((track) => queueRevisionItemStatement(
+    db, revisionId, track, integer(byPosition.get(track.position)?.bite_count),
+  ));
   await batchRun(db, statements);
   const count = await db.prepare('SELECT COUNT(*) AS item_count FROM sh_queue_revision_items WHERE revision_id=?')
     .bind(revisionId).first();
@@ -381,10 +432,7 @@ async function updatePlaybackState(db, input) {
   if (elapsed != null) {
     const items = await db.prepare(`SELECT position,duration_ms,playback_offset_ms,schedule_valid
       FROM sh_queue_revision_items WHERE revision_id=? ORDER BY position ASC`).bind(revisionId).all();
-    const match = (items.results || []).find((item) => Number(item.schedule_valid) === 1
-      && elapsed >= Number(item.playback_offset_ms)
-      && elapsed < Number(item.playback_offset_ms) + Number(item.duration_ms));
-    currentPosition = match?.position == null ? null : Number(match.position);
+    currentPosition = findScheduledPosition(items.results || [], elapsed);
   }
 
   await db.prepare(`INSERT INTO sh_playback_current(
@@ -443,12 +491,12 @@ export function qualityScore(flags) {
 }
 
 const FACT_COLUMNS = [
-  'channel_id','station_id','minute_at','observed_at','received_at','source','source_priority',
+  'channel_id','station_id','minute_at','observed_at','received_at','source_code','source_priority',
   'source_record_id','collector_id','broadcast_session_id','host_id','is_broadcasting',
   'broadcast_start_time','listener_count','online_member_count','total_member_count','guest_count',
   'reported_total_listens','reported_current_stream_count','validated_stream_count',
   'stream_count_rejected','queue_revision_id','queue_id','queue_start_time','is_paused',
-  'queue_track_count','queue_available','track_id','queue_position','track_detection_method',
+  'queue_track_count','queue_available','track_id','queue_position','track_detection_code',
   'track_confidence','schedule_valid','track_bite_count','comment_count','comment_total',
   'comments_degraded','quality_score','quality_flags',
 ];
@@ -456,13 +504,13 @@ const FACT_COLUMNS = [
 export function minuteFactStatement(db, fact) {
   const values = [
     fact.channel_id, fact.station_id, fact.minute_at, fact.observed_at, fact.received_at,
-    fact.source, fact.source_priority, fact.source_record_id, fact.collector_id,
+    fact.source_code, fact.source_priority, fact.source_record_id, fact.collector_id,
     fact.broadcast_session_id, fact.host_id, fact.is_broadcasting, fact.broadcast_start_time,
     fact.listener_count, fact.online_member_count, fact.total_member_count, fact.guest_count,
     fact.reported_total_listens, fact.reported_current_stream_count, fact.validated_stream_count,
     fact.stream_count_rejected, fact.queue_revision_id, fact.queue_id, fact.queue_start_time,
     fact.is_paused, fact.queue_track_count, fact.queue_available, fact.track_id,
-    fact.queue_position, fact.track_detection_method, fact.track_confidence,
+    fact.queue_position, fact.track_detection_code, fact.track_confidence,
     fact.schedule_valid, fact.track_bite_count, fact.comment_count, fact.comment_total,
     fact.comments_degraded, fact.quality_score, fact.quality_flags,
   ];
@@ -553,7 +601,7 @@ export async function saveLiveMinuteFact(env, input) {
     minute_at: minuteBucket(observedAt),
     observed_at: observedAt,
     received_at: receivedAt,
-    source: 'live_collector',
+    source_code: MINUTE_FACT_SOURCE_CODES.live_collector,
     source_priority: 100,
     source_record_id: null,
     collector_id: text(env.COLLECTOR_ID) || 'cloudflare-worker',
@@ -577,7 +625,9 @@ export async function saveLiveMinuteFact(env, input) {
     queue_available: queue ? 1 : 0,
     track_id: trackId,
     queue_position: position,
-    track_detection_method: trackId == null ? 'unknown' : 'queue_inferred',
+    track_detection_code: trackId == null
+      ? TRACK_DETECTION_METHOD_CODES.unknown
+      : TRACK_DETECTION_METHOD_CODES.queue_inferred,
     track_confidence: trackId == null ? 0 : (playback?.delayed ? 0.6 : 0.9),
     schedule_valid: Number(item?.schedule_valid || 0),
     track_bite_count: biteCount,
