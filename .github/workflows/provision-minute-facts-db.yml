@@ -1,3 +1,4 @@
+# Creates the dedicated minute-facts D1 before deploying the collector.
 name: Provision minute facts D1
 
 on:
