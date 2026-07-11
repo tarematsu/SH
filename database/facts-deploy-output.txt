@@ -1,0 +1,71 @@
+
+> sh-worker@1.3.0 deploy
+> wrangler deploy
+
+
+ ⛅️ wrangler 4.110.0
+────────────────────
+
+Cloudflare collects anonymous telemetry about your usage of Wrangler. Learn more at https://github.com/cloudflare/workers-sdk/tree/main/packages/wrangler/telemetry.md
+Total Upload: 520.97 KiB / gzip: 108.79 KiB
+Your Worker has access to the following bindings:
+Binding                                                              Resource                  
+env.DB (sh-monitor)                                                  D1 Database               
+env.FACTS_DB (Stationhead-DB)                                        D1 Database               
+env.CHANNEL_ALIAS ("buddies")                                        Environment Variable      
+env.CHAT_LIMIT (50)                                                  Environment Variable      
+env.SH_APP_VERSION ("1.0.0")                                         Environment Variable      
+env.COLLECTOR_ID ("cloudflare-worker")                               Environment Variable      
+env.METADATA_LIMIT (1)                                               Environment Variable      
+env.BUDDY_PLAYBACK_ENABLED (true)                                    Environment Variable      
+env.BUDDY_PLAYBACK_ALIAS ("buddy46")                                 Environment Variable      
+env.BUDDY_PLAYBACK_AUTH_STATE_ID ("buddy46")                         Environment Variable      
+env.BUDDY_PLAYBACK_INTERVAL_MS (10800000)                            Environment Variable      
+env.BUDDY_PLAYBACK_MAX_TRACKS (80)                                   Environment Variable      
+env.BUDDY_PLAYBACK_METADATA_LIMIT (5)                                Environment Variable      
+env.REQUEST_TIMEOUT_MS (8000)                                        Environment Variable      
+env.AUTH_REFRESH_BEFORE_MS (3600000)                                 Environment Variable      
+env.AUTH_REFRESH_COOLDOWN_MS (300000)                                Environment Variable      
+env.AUTH_FAILURE_BACKOFF_MS (900000)                                 Environment Variable      
+env.AUTH_LOCK_MS (60000)                                             Environment Variable      
+env.HEALTH_ALERT_STALE_MS (3600000)                                  Environment Variable      
+env.HEALTH_ALERT_RESEND_TIMEOUT_MS (10000)                           Environment Variable      
+env.HEALTH_ALERT_MIN_CONSECUTIVE_FAILURES (2)                        Environment Variable      
+env.DIAGNOSTIC_INTERVAL_MINUTES (30)                                 Environment Variable      
+env.HOST_PROFILE_HANDLE ("sakuramankai")                             Environment Variable      
+env.HOST_PROFILE_ACCOUNT_ID (3334889)                                Environment Variable      
+env.HOST_PROFILE_INTERVAL_MS (3600000)                               Environment Variable      
+env.SOLO_BROADCAST_HANDLE ("sakurazaka46jp")                         Environment Variable      
+env.SOLO_CONFIRM_POLLS (2)                                           Environment Variable      
+env.SOLO_END_CONFIRM_POLLS (3)                                       Environment Variable      
+env.SOLO_CHAT_LIMIT (50)                                             Environment Variable      
+env.SOLO_PROFILE_INTERVAL_MS (3600000)                               Environment Variable      
+env.OFFICIAL_NEWS_CHECK_INTERVAL_MS (3600000)                        Environment Variable      
+env.OFFICIAL_NEWS_EARLY_WINDOW_MS (600000)                           Environment Variable      
+env.OFFICIAL_NEWS_BODY_SCAN_COUNT (1)                                Environment Variable      
+env.WEEKLY_LEADERBOARD_ENABLED (true)                                Environment Variable      
+env.WEEKLY_LEADERBOARD_CHECK_MINUTES (15)                            Environment Variable      
+env.WEEKLY_LEADERBOARD_START_HOUR_JST (18)                           Environment Variable      
+env.WEEKLY_LEADERBOARD_END_HOUR_JST (2)                              Environment Variable      
+env.WEEKLY_LEADERBOARD_MIN_ACCOUNTS (20)                             Environment Variable      
+
+
+✘ [ERROR] A request to the Cloudflare API (/accounts/0500f25c2f74e7e76c94a8bcb6c7008b/workers/scripts/sh-monitor-collector/versions) failed.
+
+  Authentication error [code: 10000]
+
+
+📎 It looks like you are authenticating Wrangler via a custom API token set in an environment variable.
+Please ensure it has the correct permissions for this operation.
+
+Getting User settings...
+👋 You are logged in with an User API Token. Unable to retrieve email for this user. Are you missing the `User->User Details->Read` permission?
+ℹ️  The API Token is read from the CLOUDFLARE_API_TOKEN environment variable.
+┌──────────────┬──────────────────────────────────┐
+│ Account Name │ Account ID                       │
+├──────────────┼──────────────────────────────────┤
+│ tarematsu    │ 0500f25c2f74e7e76c94a8bcb6c7008b │
+└──────────────┴──────────────────────────────────┘
+🔓 To see token permissions visit https://dash.cloudflare.com/profile/api-tokens
+🎢 Unable to get membership roles. Make sure you have permissions to read the account. Are you missing the `User->Memberships->Read` permission?
+🪵  Logs were written to "/home/runner/.config/.wrangler/logs/wrangler-2026-07-11_02-39-09_095.log"
