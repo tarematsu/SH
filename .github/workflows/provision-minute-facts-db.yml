@@ -56,10 +56,6 @@ jobs:
             echo "result=missing-cloudflare-api-token" >> "${GITHUB_OUTPUT}"
             exit 1
           fi
-          if [ -z "${CLOUDFLARE_ACCOUNT_ID}" ]; then
-            echo "result=missing-cloudflare-account-id" >> "${GITHUB_OUTPUT}"
-            exit 1
-          fi
           if node scripts/provision-facts-db.mjs; then
             echo "result=success" >> "${GITHUB_OUTPUT}"
           else
