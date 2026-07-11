@@ -1,10 +1,10 @@
 {
-  "result": "live-fact-not-observed",
+  "result": "success",
   "database_name": "Stationhead-DB",
   "attempt": 5,
-  "fact_count": 1218,
-  "live_fact_count": 245,
-  "last_observed_at": 1783774795211,
-  "last_minute_at": 1783774740000,
-  "checked_at": "2026-07-11T17:23:02.682Z"
+  "fact_count": 1298,
+  "live_fact_count": 325,
+  "last_observed_at": 1783798735195,
+  "last_minute_at": 1783798680000,
+  "checked_at": "2026-07-11T19:39:08.320Z"
 }

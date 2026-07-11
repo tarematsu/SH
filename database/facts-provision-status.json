@@ -3,8 +3,8 @@
   "deployment_path": "cloudflare_git",
   "provision_result": "success",
   "provision_outcome": "success",
-  "live_verify_outcome": "failure",
+  "live_verify_outcome": "success",
   "event_name": "push",
-  "source_sha": "c4b6be4107f4e2a6145327a796d230929b362f4e",
-  "recorded_at": "2026-07-11T17:23:02.729Z"
+  "source_sha": "6a285484a169702104d9b01f108a6bddf6c39beb",
+  "recorded_at": "2026-07-11T19:39:08.363Z"
 }
