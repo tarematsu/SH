@@ -1,0 +1,31 @@
+name: Deploy minute facts worker
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - worker/src/minute-*.js
+      - worker/wrangler.minute.jsonc
+      - worker/package.json
+      - .github/workflows/deploy-minute-worker.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci --no-audit --no-fund
+        working-directory: worker
+      - run: npm run deploy:minute
+        working-directory: worker
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}

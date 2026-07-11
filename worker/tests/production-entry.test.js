@@ -3,14 +3,11 @@ import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
 import {
-  isMinuteFactDeriveCron,
   runProductionCron,
   runProductionScheduled,
   withBuddyPlaybackDeferred,
 } from '../src/production-entry.js';
 
-const DERIVE_CRON = '*/2 * * * *';
-const REBUILD_CRON = '7,17,27,37,47,57 * * * *';
 
 test('production cron runs primary before buddy46 collection', async () => {
   const calls = [];
@@ -108,31 +105,6 @@ test('production cron still schedules buddy46 after a primary failure', async ()
   assert.equal(await waitUntilTasks[0], 'buddy-done');
 });
 
-test('derive cron bypasses primary collection and buddy playback', async () => {
-  const calls = [];
-  const controller = { scheduledTime: 360_000, cron: DERIVE_CRON };
-  const env = { marker: true };
-  const result = await runProductionCron(controller, env, {}, {
-    async runMinuteFactDeriveCron(receivedEnv) {
-      calls.push(['derive', receivedEnv]);
-      return { processed: 2 };
-    },
-    app: {
-      async scheduled() {
-        calls.push(['primary']);
-      },
-    },
-    async scheduleBuddyPlayback() {
-      calls.push(['buddy']);
-    },
-  });
-
-  assert.deepEqual(result, { processed: 2 });
-  assert.deepEqual(calls, [['derive', env]]);
-  assert.equal(isMinuteFactDeriveCron(controller), true);
-  assert.equal(isMinuteFactDeriveCron({ cron: '* * * * *' }), false);
-});
-
 test('production primary env defers inner buddy playback without mutating the original env', () => {
   const env = { marker: true };
   const deferred = withBuddyPlaybackDeferred(env);
@@ -143,8 +115,8 @@ test('production primary env defers inner buddy playback without mutating the or
   assert.equal(env.__DEFER_BUDDY_PLAYBACK, undefined);
 });
 
-test('Wrangler deploys capture, derive, and rebuild crons through the production wrapper', () => {
+test('collector Wrangler configuration only deploys the capture cron', () => {
   const config = JSON.parse(readFileSync(new URL('../wrangler.jsonc', import.meta.url), 'utf8'));
   assert.equal(config.main, 'src/production-entry.js');
-  assert.deepEqual(config.triggers?.crons, ['* * * * *', DERIVE_CRON, REBUILD_CRON]);
+  assert.deepEqual(config.triggers?.crons, ['* * * * *']);
 });
