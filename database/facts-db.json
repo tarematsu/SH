@@ -1,6 +1,6 @@
 {
   "binding": "FACTS_DB",
-  "database_name": "sh-monitor-facts",
-  "database_id": "bf2f4650-1fd6-4743-881d-22bf1ca12f5b",
+  "database_name": "Stationhead-DB",
+  "database_id": "c2661253-5e1b-4060-a7b4-acf6dc2a8988",
   "schema": "database/facts-migrations/001_initial_schema.sql"
 }

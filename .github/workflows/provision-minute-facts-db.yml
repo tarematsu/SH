@@ -1,6 +1,5 @@
 # Creates the dedicated minute-facts D1 before deploying the collector.
-# Provisioning request: initialize sh-monitor-facts and persist its FACTS_DB binding.
-name: Provision minute facts D1
+name: Provision Stationhead-DB
 
 on:
   push:
@@ -12,12 +11,14 @@ on:
       - database/facts-db.json
       - worker/wrangler.jsonc
       - worker/scripts/provision-facts-db.mjs
+      - worker/scripts/verify-facts-live.mjs
       - .github/workflows/provision-minute-facts-db.yml
   pull_request:
     types: [opened, synchronize, reopened]
     paths:
       - database/facts-migrations/**
       - worker/scripts/provision-facts-db.mjs
+      - worker/scripts/verify-facts-live.mjs
       - .github/workflows/provision-minute-facts-db.yml
   workflow_dispatch:
 
@@ -25,7 +26,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: minute-facts-d1-${{ github.event.pull_request.head.ref || github.ref }}
+  group: stationhead-db-${{ github.event.pull_request.head.ref || github.ref }}
   cancel-in-progress: false
 
 jobs:
@@ -50,7 +51,7 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN || secrets.CLOUDFLARE_BUILDS_API_TOKEN || secrets.CF_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID || secrets.CF_ACCOUNT_ID }}
-          FACTS_DATABASE_NAME: sh-monitor-facts
+          FACTS_DATABASE_NAME: Stationhead-DB
         run: |
           if [ -z "${CLOUDFLARE_API_TOKEN}" ]; then
             echo "result=missing-cloudflare-api-token" >> "${GITHUB_OUTPUT}"
@@ -62,24 +63,52 @@ jobs:
             echo "result=provision-command-failed" >> "${GITHUB_OUTPUT}"
             exit 1
           fi
-      - name: Record provisioning status
+      - name: Deploy collector with FACTS_DB
+        id: deploy
+        if: steps.provision.outcome == 'success' && github.event_name == 'push' && github.ref_name == 'main'
+        continue-on-error: true
+        working-directory: worker
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN || secrets.CLOUDFLARE_BUILDS_API_TOKEN || secrets.CF_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID || secrets.CF_ACCOUNT_ID }}
+        run: npm run deploy
+      - name: Verify live minute facts
+        id: verify
+        if: steps.provision.outcome == 'success' && steps.deploy.outcome == 'success' && github.event_name == 'push' && github.ref_name == 'main'
+        continue-on-error: true
+        working-directory: worker
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN || secrets.CLOUDFLARE_BUILDS_API_TOKEN || secrets.CF_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID || secrets.CF_ACCOUNT_ID }}
+          FACTS_DATABASE_NAME: Stationhead-DB
+          FACTS_VERIFY_ATTEMPTS: 5
+          FACTS_VERIFY_DELAY_MS: 20000
+        run: node scripts/verify-facts-live.mjs
+      - name: Record provisioning and deployment status
         if: always()
         env:
           PROVISION_RESULT: ${{ steps.provision.outputs.result || 'unknown-failure' }}
           PROVISION_OUTCOME: ${{ steps.provision.outcome }}
+          DEPLOY_OUTCOME: ${{ steps.deploy.outcome || 'skipped' }}
+          VERIFY_OUTCOME: ${{ steps.verify.outcome || 'skipped' }}
+          EVENT_NAME: ${{ github.event_name }}
           SOURCE_SHA: ${{ github.sha }}
         run: |
           node --input-type=module <<'NODE'
           import { mkdirSync, writeFileSync } from 'node:fs';
           mkdirSync('database', { recursive: true });
           writeFileSync('database/facts-provision-status.json', `${JSON.stringify({
-            result: process.env.PROVISION_RESULT,
-            outcome: process.env.PROVISION_OUTCOME,
+            database_name: 'Stationhead-DB',
+            provision_result: process.env.PROVISION_RESULT,
+            provision_outcome: process.env.PROVISION_OUTCOME,
+            deploy_outcome: process.env.DEPLOY_OUTCOME,
+            verify_outcome: process.env.VERIFY_OUTCOME,
+            event_name: process.env.EVENT_NAME,
             source_sha: process.env.SOURCE_SHA,
             recorded_at: new Date().toISOString(),
           }, null, 2)}\n`);
           NODE
-      - name: Commit generated D1 binding and status
+      - name: Commit generated binding and verification evidence
         if: always()
         env:
           TARGET_BRANCH: ${{ github.event.pull_request.head.ref || github.ref_name }}
@@ -88,20 +117,18 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -A worker/wrangler.jsonc database
           if git diff --cached --quiet; then
-            echo "D1 binding and status already current"
+            echo "D1 evidence already current"
             exit 0
           fi
-          git commit -m "Record minute facts D1 provisioning"
+          git commit -m "Record Stationhead-DB deployment"
           git push origin "HEAD:${TARGET_BRANCH}"
-      - name: Deploy collector with FACTS_DB
-        if: steps.provision.outcome == 'success' && github.event_name == 'push' && github.ref_name == 'main'
-        working-directory: worker
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN || secrets.CLOUDFLARE_BUILDS_API_TOKEN || secrets.CF_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID || secrets.CF_ACCOUNT_ID }}
-        run: npm run deploy
       - name: Fail unsuccessful provisioning
         if: steps.provision.outcome != 'success'
         run: |
-          echo "Minute facts D1 provisioning failed: ${{ steps.provision.outputs.result || 'unknown-failure' }}"
+          echo "Stationhead-DB provisioning failed: ${{ steps.provision.outputs.result || 'unknown-failure' }}"
+          exit 1
+      - name: Fail unsuccessful deployment or verification
+        if: github.event_name == 'push' && github.ref_name == 'main' && (steps.deploy.outcome != 'success' || steps.verify.outcome != 'success')
+        run: |
+          echo "Stationhead-DB deploy=${{ steps.deploy.outcome }} verify=${{ steps.verify.outcome }}"
           exit 1

@@ -7,7 +7,7 @@ const repositoryRoot = resolve(workerRoot, '..');
 const configPath = resolve(workerRoot, 'wrangler.jsonc');
 const schemaPath = resolve(repositoryRoot, 'database/facts-migrations/001_initial_schema.sql');
 const metadataPath = resolve(repositoryRoot, 'database/facts-db.json');
-const databaseName = process.env.FACTS_DATABASE_NAME || 'sh-monitor-facts';
+const databaseName = process.env.FACTS_DATABASE_NAME || 'Stationhead-DB';
 
 if (!process.env.CLOUDFLARE_API_TOKEN) {
   throw new Error('CLOUDFLARE_API_TOKEN is required');
@@ -33,40 +33,21 @@ function parseJsonOutput(output) {
   return JSON.parse(trimmed.slice(start));
 }
 
-function readConfig() {
-  return JSON.parse(readFileSync(configPath, 'utf8'));
+function listDatabases() {
+  return parseJsonOutput(wrangler(['d1', 'list', '--json']));
 }
 
-function bindingFrom(config) {
-  return (Array.isArray(config.d1_databases) ? config.d1_databases : [])
-    .find((entry) => entry.binding === 'FACTS_DB');
-}
-
-const databases = parseJsonOutput(wrangler(['d1', 'list', '--json']));
-let database = databases.find((item) => item.name === databaseName);
-let config = readConfig();
-
+let database = listDatabases().find((item) => item.name === databaseName);
 if (!database) {
-  wrangler([
-    'd1', 'create', databaseName,
-    '--binding', 'FACTS_DB',
-    '--update-config',
-    '--config', configPath,
-  ]);
-  config = readConfig();
-  const generated = bindingFrom(config);
-  if (!generated?.database_id) {
-    throw new Error(`Wrangler created ${databaseName} but did not write the FACTS_DB binding`);
-  }
-  database = {
-    name: databaseName,
-    uuid: generated.database_id,
-  };
+  wrangler(['d1', 'create', databaseName]);
+  database = listDatabases().find((item) => item.name === databaseName);
 }
+if (!database) throw new Error(`Wrangler did not create or list ${databaseName}`);
 
 const databaseId = database.uuid || database.id || database.database_id;
 if (!databaseId) throw new Error(`Could not determine database id for ${databaseName}`);
 
+const config = JSON.parse(readFileSync(configPath, 'utf8'));
 const bindings = Array.isArray(config.d1_databases) ? config.d1_databases : [];
 const nextBinding = {
   binding: 'FACTS_DB',
