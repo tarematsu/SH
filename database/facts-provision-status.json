@@ -3,8 +3,9 @@
   "provision_result": "success",
   "provision_outcome": "success",
   "deploy_outcome": "failure",
+  "deploy_token_source": "none",
   "verify_outcome": "skipped",
   "event_name": "pull_request",
-  "source_sha": "ea96fd1d38b374fe1c40573b8e6eddc654cc2034",
-  "recorded_at": "2026-07-11T02:39:11.273Z"
+  "source_sha": "fe54611802aceb2ac4078e2fac076a656f502bf1",
+  "recorded_at": "2026-07-11T02:41:02.819Z"
 }
