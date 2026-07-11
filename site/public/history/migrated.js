@@ -2,6 +2,22 @@
   const $ = (id) => document.getElementById(id);
   const state = { rows: [], cursor: null, loading: false };
   const number = new Intl.NumberFormat('ja-JP');
+  const sourceLabels = {
+    live_collector: 'ライブ',
+    legacy_normalized: '軽量化済み',
+    legacy_raw: '直接移行',
+  };
+  const qualityFlags = [
+    [2, 'queue欠落'],
+    [8, '曲不明'],
+    [16, '曲推定'],
+    [32, 'コメント劣化'],
+    [64, '再生数棄却'],
+    [128, '遅延payload'],
+    [256, '配信外'],
+    [512, '一時停止'],
+    [1024, 'レガシー品質低下'],
+  ];
 
   function todayJst() {
     return new Date(Date.now() + 9 * 3_600_000).toISOString().slice(0, 10);
@@ -20,11 +36,37 @@
     return new Date(Number(value)).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo', hour12: false });
   }
 
-  function cell(value, title = '') {
+  function formatRatio(current, total) {
+    if (current == null && total == null) return '—';
+    return `${formatNumber(current)} / ${formatNumber(total)}`;
+  }
+
+  function formatQueue(row) {
+    if (!row.queue_available) return '取得なし';
+    const position = row.queue_position == null ? '—' : Number(row.queue_position) + 1;
+    const total = row.queue_track_count == null ? row.revision_item_count : row.queue_track_count;
+    return `${position} / ${formatNumber(total)}`;
+  }
+
+  function qualityText(row) {
+    const score = row.quality_score == null ? '—' : Number(row.quality_score).toFixed(2);
+    const flags = Number(row.quality_flags || 0);
+    const labels = qualityFlags.filter(([bit]) => (flags & bit) !== 0).map(([, label]) => label);
+    return { score, detail: labels.length ? labels.join('、') : '問題なし' };
+  }
+
+  function cell(value, title = '', className = '') {
     const td = document.createElement('td');
     td.textContent = value == null || value === '' ? '—' : String(value);
     if (title) td.title = title;
+    if (className) td.className = className;
     return td;
+  }
+
+  function statusCell(row) {
+    const broadcasting = row.is_broadcasting == null ? '不明' : (Number(row.is_broadcasting) === 1 ? '配信中' : '配信外');
+    const paused = Number(row.is_paused || 0) === 1 ? ' / 停止' : '';
+    return cell(`${broadcasting}${paused}`, '', Number(row.is_broadcasting) === 1 ? 'status-on' : 'status-off');
   }
 
   function renderRows() {
@@ -33,8 +75,8 @@
     if (!state.rows.length) {
       const tr = document.createElement('tr');
       tr.className = 'empty-row';
-      const td = cell('該当する移行済みデータはありません。');
-      td.colSpan = 12;
+      const td = cell('該当する毎分データはありません。');
+      td.colSpan = 16;
       tr.append(td);
       tbody.append(tr);
       return;
@@ -42,19 +84,27 @@
     const fragment = document.createDocumentFragment();
     for (const row of state.rows) {
       const tr = document.createElement('tr');
-      const quality = row.quality_score == null ? '—' : Number(row.quality_score).toFixed(2);
+      const quality = qualityText(row);
+      const source = sourceLabels[row.source] || row.source || '—';
+      const sourceDetail = `${row.source || ''}${row.source_record_id ? ` / record ${row.source_record_id}` : ''}`;
+      const detection = row.track_detection_method || 'unknown';
+      const confidence = row.track_confidence == null ? '' : ` ${(Number(row.track_confidence) * 100).toFixed(0)}%`;
       tr.append(
-        cell(row.observed_jst || formatTimestamp(row.observed_at)),
+        cell(formatTimestamp(row.minute_at || row.observed_at)),
+        cell(source, sourceDetail, `source-${row.source || 'unknown'}`),
+        statusCell(row),
         cell(formatNumber(row.listener_count)),
-        cell(formatNumber(row.total_stream_count)),
-        cell(row.track_title, row.track_title),
-        cell(row.artist_name, row.artist_name),
-        cell(formatNumber(row.likes)),
-        cell(row.comment_velocity == null ? '—' : Number(row.comment_velocity).toFixed(2)),
-        cell(row.host_handle, row.host_handle),
-        cell(formatNumber(row.total_member_count)),
-        cell(row.source_note, row.source_note),
-        cell(quality, row.quality_flags || ''),
+        cell(formatNumber(row.reported_total_listens), row.stream_count_rejected ? 'この値は検証で棄却されました' : ''),
+        cell(formatNumber(row.validated_stream_count)),
+        cell(row.track_title, row.isrc || row.spotify_id || '', 'text-cell'),
+        cell(row.artist_name, row.artist_name, 'text-cell'),
+        cell(formatNumber(row.track_bite_count)),
+        cell(row.host_handle, row.host_handle, 'text-cell'),
+        cell(formatRatio(row.online_member_count, row.total_member_count)),
+        cell(formatRatio(row.comment_count, row.comment_total), row.comments_degraded ? 'コメント取得が劣化しています' : ''),
+        cell(formatQueue(row), `revision ${row.queue_revision_id || '—'} / ${row.revision_status || '—'}`),
+        cell(`${detection}${confidence}`, `schedule_valid=${row.schedule_valid}`),
+        cell(quality.score, quality.detail),
         cell(row.id),
       );
       fragment.append(tr);
@@ -63,17 +113,24 @@
   }
 
   function renderStats(payload) {
-    const progress = payload.progress || {};
-    $('migratedRows').textContent = formatNumber(progress.migrated);
-    $('remainingRows').textContent = formatNumber(progress.remaining);
-    $('progressRate').textContent = `${Number(progress.percent || 0).toFixed(2)}%`;
-    const dictionaries = payload.dictionaries || {};
-    $('dictionaryRows').innerHTML = `${formatNumber(dictionaries.tracks)}<small>${formatNumber(dictionaries.hosts)} / ${formatNumber(dictionaries.broadcasts)}</small>`;
-    $('progressBar').style.width = `${Math.max(0, Math.min(100, Number(progress.percent || 0)))}%`;
+    const summary = payload.summary || {};
+    const catalog = payload.catalog || {};
+    const migration = payload.migration || {};
+    $('totalRows').textContent = formatNumber(summary.total);
+    $('liveRows').textContent = formatNumber(summary.live);
+    $('legacyRows').innerHTML = `${formatNumber(summary.legacy)}<small>${formatNumber(summary.legacy_normalized)} / ${formatNumber(summary.legacy_raw)}</small>`;
+    $('catalogRows').innerHTML = `${formatNumber(catalog.tracks)}<small>${formatNumber(catalog.hosts)} / ${formatNumber(catalog.sessions)}</small>`;
     $('firstObserved').textContent = `最初: ${formatTimestamp(payload.first_observed_at)}`;
     $('lastObserved').textContent = `最後: ${formatTimestamp(payload.last_observed_at)}`;
-    $('cursorValue').textContent = `cursor: ${formatNumber(payload.backfill_cursor)}`;
+    $('migrationPhase').textContent = `移行: ${migration.phase || '未開始'}`;
+    $('migrationRows').textContent = `移行行: ${formatNumber(migration.migrated_rows)} / error ${formatNumber(migration.error_rows)}`;
+    $('migrationCursor').textContent = `cursor: ${formatTimestamp(migration.cursor_observed_at)} / ID ${formatNumber(migration.cursor_source_id)}`;
+    $('revisionRows').textContent = `revision: ${formatNumber(catalog.revisions)}`;
     $('periodText').textContent = `${payload.from} ～ ${payload.to}`;
+    const error = $('migrationError');
+    error.hidden = !migration.last_error;
+    error.textContent = migration.last_error ? `移行エラー: ${migration.last_error}` : '';
+    error.classList.toggle('error-text', Boolean(migration.last_error));
   }
 
   function buildUrl(cursor = null) {
@@ -82,8 +139,10 @@
       to: $('to').value,
       limit: '200',
     });
+    const source = $('source').value;
     const host = $('host').value.trim();
     const track = $('track').value.trim();
+    if (source) params.set('source', source);
     if (host) params.set('host', host);
     if (track) params.set('track', track);
     if (cursor) params.set('cursor', cursor);
@@ -96,7 +155,7 @@
     $('load').disabled = true;
     $('more').disabled = true;
     $('notice').classList.remove('error-text');
-    $('notice').textContent = append ? '続きを読み込み中…' : '移行済みデータを読み込み中…';
+    $('notice').textContent = append ? '続きを読み込み中…' : 'Stationhead-DBを読み込み中…';
     try {
       const response = await fetch(buildUrl(append ? state.cursor : null), { cache: 'no-store' });
       const payload = await response.json();
@@ -130,16 +189,28 @@
 
   function downloadCsv() {
     if (!state.rows.length) return;
-    const headers = ['日時JST','リスナー','総再生数','曲名','アーティスト','いいね','コメント勢い','ホスト','メンバー','放送名','品質','品質フラグ','legacy_id'];
+    const headers = [
+      '日時JST','minute_at','observed_at','received_at','source','source_priority','source_record_id',
+      'channel_id','station_id','配信中','一時停止','listener_count','online_member_count','total_member_count','guest_count',
+      'reported_total_listens','reported_current_stream_count','validated_stream_count','stream_count_rejected',
+      '曲名','アーティスト','ISRC','spotify_id','track_bite_count','ホスト','comment_count','comment_total','comments_degraded',
+      'queue_id','queue_revision_id','queue_position','queue_track_count','track_detection_method','track_confidence','schedule_valid',
+      'quality_score','quality_flags','fact_id',
+    ];
     const rows = state.rows.map((row) => [
-      row.observed_jst || formatTimestamp(row.observed_at), row.listener_count, row.total_stream_count,
-      row.track_title, row.artist_name, row.likes, row.comment_velocity, row.host_handle,
-      row.total_member_count, row.source_note, row.quality_score, row.quality_flags, row.id,
+      formatTimestamp(row.minute_at || row.observed_at), row.minute_at, row.observed_at, row.received_at,
+      row.source, row.source_priority, row.source_record_id, row.channel_id, row.station_id,
+      row.is_broadcasting, row.is_paused, row.listener_count, row.online_member_count, row.total_member_count, row.guest_count,
+      row.reported_total_listens, row.reported_current_stream_count, row.validated_stream_count, row.stream_count_rejected,
+      row.track_title, row.artist_name, row.isrc, row.spotify_id, row.track_bite_count, row.host_handle,
+      row.comment_count, row.comment_total, row.comments_degraded, row.queue_id, row.queue_revision_id,
+      row.queue_position, row.queue_track_count, row.track_detection_method, row.track_confidence, row.schedule_valid,
+      row.quality_score, row.quality_flags, row.id,
     ]);
     const csv = [headers, ...rows].map((row) => row.map(csvEscape).join(',')).join('\r\n');
     const link = document.createElement('a');
     link.href = URL.createObjectURL(new Blob([`\uFEFF${csv}`], { type: 'text/csv;charset=utf-8' }));
-    link.download = `migrated-legacy-${$('from').value}-${$('to').value}.csv`;
+    link.download = `stationhead-db-minute-facts-${$('from').value}-${$('to').value}.csv`;
     link.click();
     URL.revokeObjectURL(link.href);
   }
@@ -153,6 +224,7 @@
   }
 
   $('to').value = todayJst();
+  $('from').value = dateDaysAgo(29);
   $('load').addEventListener('click', () => load());
   $('more').addEventListener('click', () => load({ append: true }));
   $('csv').addEventListener('click', downloadCsv);
@@ -162,5 +234,6 @@
       if (event.key === 'Enter') load();
     });
   }
+  $('source').addEventListener('change', () => load());
   load();
 })();
