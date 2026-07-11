@@ -31,12 +31,12 @@ function spotifyOnlyBody(body) {
 
 async function handleComments({ env, body, observedAt, data }) {
   const result = await saveCommentCounts(env.DB, observedAt, data);
-  return json({ ok: true, type: body.type, ...result });
+  return { ok: true, type: body.type, ...result };
 }
 
 async function handleSnapshot({ env, body, observedAt, data }) {
   const result = await saveLeanSnapshot(env.DB, observedAt, data);
-  return json({ ok: true, type: body.type, accepted: true, ...result });
+  return { ok: true, type: body.type, accepted: true, ...result };
 }
 
 async function handleQueue({ env, body, observedAt, data }) {
@@ -45,7 +45,7 @@ async function handleQueue({ env, body, observedAt, data }) {
   const reachability = structuralSnapshotWritten
     ? { inserted: false }
     : await saveQueueReachability(env.DB, observedAt, data);
-  return json({
+  return {
     ok: true,
     type: body.type,
     accepted: result.claim.accepted,
@@ -59,7 +59,7 @@ async function handleQueue({ env, body, observedAt, data }) {
     like_observations_written: result.observationsWritten,
     reachability_checkpoint_written: reachability.inserted,
     reachability_recorded: structuralSnapshotWritten || reachability.inserted,
-  });
+  };
 }
 
 async function handleCollectorHeartbeat({ env, body, observedAt, data }) {
@@ -67,7 +67,7 @@ async function handleCollectorHeartbeat({ env, body, observedAt, data }) {
     ...data,
     collector_id: data?.collector_id || body?.collector_id,
   });
-  return json({ ok: true, type: body.type, accepted: result.accepted });
+  return { ok: true, type: body.type, accepted: result.accepted };
 }
 
 const INGEST_HANDLERS = {
@@ -77,22 +77,32 @@ const INGEST_HANDLERS = {
   collector_heartbeat: handleCollectorHeartbeat,
 };
 
+export function supportsOptimizedIngestType(type) {
+  return Object.hasOwn(INGEST_HANDLERS, String(type || ''));
+}
+
+export async function ingestOptimizedBody(env, inputBody) {
+  if (!env?.DB) return null;
+  const body = spotifyOnlyBody(inputBody);
+  const handler = INGEST_HANDLERS[body?.type];
+  if (!handler) return null;
+  const observedAt = observedAtFrom(body);
+  const data = body?.data ?? {};
+  return handler({ env, body, observedAt, data });
+}
+
 export async function onRequestPost(context) {
   const { request, env } = context;
   if (!authorized(request, env) || !env.DB) return corePost(context);
 
   const parsed = await readJsonBody(request, { clone: true });
-  if (!parsed.ok) return corePost(context);
-  const body = spotifyOnlyBody(parsed.body);
-  const handler = INGEST_HANDLERS[body?.type];
-  if (!handler) return corePost(context);
+  if (!parsed.ok || !supportsOptimizedIngestType(parsed.body?.type)) return corePost(context);
 
-  const observedAt = observedAtFrom(body);
-  const data = body?.data ?? {};
   try {
-    return await handler({ context, env, body, observedAt, data });
+    const result = await ingestOptimizedBody(env, parsed.body);
+    return json(result);
   } catch (error) {
-    if (body?.type === 'snapshot' && isPendingStreamSchemaError(error)) {
+    if (parsed.body?.type === 'snapshot' && isPendingStreamSchemaError(error)) {
       console.warn(JSON.stringify({
         event: 'snapshot_schema_fallback',
         reason: String(error?.message || error),
