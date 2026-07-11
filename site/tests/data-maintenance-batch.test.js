@@ -7,9 +7,12 @@ const source = readFileSync(
   'utf8'
 );
 
-test('hourly legacy backfill remains limited to 1000 rows', () => {
-  assert.match(source, /const LEGACY_BACKFILL_BATCH = 1_000;/);
-  assert.match(source, /\.bind\(lastLegacyId, LEGACY_BACKFILL_BATCH\)\.first\(\)/);
+test('legacy backfill is fully disabled', () => {
+  assert.doesNotMatch(source, /LEGACY_BACKFILL_BATCH/);
+  assert.doesNotMatch(source, /sh_legacy_snapshots/);
+  assert.doesNotMatch(source, /sh_legacy_samples/);
+  assert.match(source, /export function legacyMigrationEnabled\(\) \{\s+return false;/);
+  assert.match(source, /legacy-migration-disabled/);
 });
 
 test('retention cleanup no longer issues DELETE statements', () => {

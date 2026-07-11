@@ -4,11 +4,39 @@ import test from 'node:test';
 import { buildCollectionPlan, metadataRefreshDue } from '../src/collector-plan.js';
 import { internalHealthMonitoringEnabled } from '../src/cadenced-entry.js';
 import {
+  LEGACY_MIGRATION_DISABLED_REASON,
+  legacyMigrationEnabled as scheduledLegacyMigrationEnabled,
   minuteFactsCutoverEnabled,
+  runScheduledMaintenance,
   shouldRunScheduledMaintenance,
 } from '../src/scheduled-maintenance.js';
+import {
+  legacyMigrationEnabled as minuteFactsLegacyMigrationEnabled,
+  runMinuteFactsBackfill,
+} from '../src/minute-facts-backfill.js';
 
 const FIFTEEN_MINUTES = 15 * 60_000;
+
+function noSourceDataDb(sqls = []) {
+  return {
+    prepare(sql) {
+      sqls.push(sql);
+      return {
+        bind() {
+          return this;
+        },
+        async first() {
+          if (sql.includes('SELECT last_rollup_key')) return { last_rollup_key: null };
+          if (sql.includes('COUNT(*) AS sample_count')) return { sample_count: 0 };
+          return null;
+        },
+        async run() {
+          return { meta: { changes: 1 } };
+        },
+      };
+    },
+  };
+}
 
 test('collection plan disables heartbeat and metadata for an unchanged queue within one refresh window', () => {
   const plan = buildCollectionPlan({
@@ -76,10 +104,37 @@ test('scheduled maintenance is due only on its configured interval boundary', ()
   assert.equal(shouldRunScheduledMaintenance(15 * 60_000, { DATA_MAINTENANCE_INTERVAL_MS: 15 * 60_000 }), true);
 });
 
-test('legacy backfill remains active until both D1 bindings exist', () => {
+test('minute facts cutover detection remains compatible with both D1 bindings', () => {
   assert.equal(minuteFactsCutoverEnabled({ DB: {} }), false);
   assert.equal(minuteFactsCutoverEnabled({ FACTS_DB: {} }), false);
   assert.equal(minuteFactsCutoverEnabled({ DB: {}, FACTS_DB: {} }), true);
+});
+
+test('all legacy migration entry points are disabled', async () => {
+  assert.equal(scheduledLegacyMigrationEnabled(), false);
+  assert.equal(minuteFactsLegacyMigrationEnabled(), false);
+  assert.deepEqual(await runMinuteFactsBackfill({ DB: {}, FACTS_DB: {} }), {
+    skipped: true,
+    reason: LEGACY_MIGRATION_DISABLED_REASON,
+    migrated: 0,
+  });
+});
+
+test('scheduled maintenance runs rollups without touching legacy or facts migration tables', async () => {
+  const sqls = [];
+  const result = await runScheduledMaintenance({
+    DB: noSourceDataDb(sqls),
+    FACTS_DB: new Proxy({}, {
+      get() {
+        throw new Error('FACTS_DB must not be touched by scheduled maintenance');
+      },
+    }),
+  }, 3_600_000);
+
+  assert.equal(result.skipped, false);
+  assert.equal(result.legacyBackfill.reason, LEGACY_MIGRATION_DISABLED_REASON);
+  assert.equal(result.minuteFactsBackfill.reason, LEGACY_MIGRATION_DISABLED_REASON);
+  assert.equal(sqls.some((sql) => sql.includes('sh_legacy_')), false);
 });
 
 test('in-process monitoring is opt-in after external monitor migration', () => {

@@ -136,7 +136,7 @@ export async function runRollupMaintenance(db, now = Date.now()) {
     skipped: false,
     rolledUp: true,
     periodKey: period.key,
-    legacyBackfill: { skipped: true, reason: 'replaced-by-minute-facts-migration' },
+    legacyBackfill: { skipped: true, reason: 'legacy-migration-disabled' },
   };
 }
 

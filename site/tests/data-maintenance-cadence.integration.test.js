@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+  legacyMigrationEnabled,
   resetDataMaintenanceRuntimeState,
   runDataMaintenance,
   runDataMaintenanceSafely,
@@ -97,7 +98,7 @@ test('only one isolate can acquire the durable maintenance claim', async () => {
   ]);
 });
 
-test('backfill state cannot regress when an older maintenance run finishes late', async () => {
+test('legacy migration remains disabled and preserves the existing cursor', async () => {
   const now = Date.parse('2026-07-05T03:00:00Z');
   const db = new FakeD1Database()
     .route('first', STATE_SELECT, {
@@ -105,52 +106,35 @@ test('backfill state cannot regress when an older maintenance run finishes late'
       last_cleanup_at: now,
       legacy_backfill_id: 5_000,
       updated_at: now - HOUR_MS,
-    })
-    .route('first', /SELECT MAX\(id\) AS batch_end,COUNT\(\*\) AS batch_count/, {
-      batch_end: 5_002,
-      batch_count: 2,
     });
   resetDataMaintenanceRuntimeState(db);
 
   const result = await runDataMaintenance(db, now);
 
+  assert.equal(legacyMigrationEnabled(), false);
   assert.equal(result.skipped, false);
   assert.deepEqual(result.legacyBackfill, {
-    lastLegacyId: 5_002,
-    migrated: 2,
-    complete: false,
+    skipped: true,
+    reason: 'legacy-migration-disabled',
   });
-  assert.equal(db.batches.length, 1);
-  const sampleInsert = db.batches[0][3].sql;
-  assert.match(sampleInsert, /COALESCE\(l\.quality_score,1\)/);
-  assert.match(sampleInsert, /COALESCE\(l\.quality_flags,'\[\]'\)/);
-
-  const claim = db.calls.find((call) => call.kind === 'run' && CLAIM_SQL.test(call.sql));
-  assert.ok(claim);
-  assert.deepEqual(claim.params, [
-    'rollup-retention-v1',
-    now - HOUR_MS + CLAIM_MS,
-    now - HOUR_MS,
-  ]);
+  assert.equal(db.batches.length, 0);
+  assert.equal(db.calls.some((call) => call.sql.includes('sh_legacy_')), false);
 
   const stateWrite = db.calls.find((call) => (
     call.kind === 'run'
     && call.sql.includes('legacy_backfill_id=MAX(sh_data_maintenance_state.legacy_backfill_id,excluded.legacy_backfill_id)')
   ));
   assert.ok(stateWrite);
-  assert.match(stateWrite.sql, /last_cleanup_at=MAX\(sh_data_maintenance_state\.last_cleanup_at,excluded\.last_cleanup_at\)/);
-  assert.match(stateWrite.sql, /updated_at=MAX\(sh_data_maintenance_state\.updated_at,excluded\.updated_at\)/);
-  assert.match(stateWrite.sql, /WHEN excluded\.last_rollup_key>sh_data_maintenance_state\.last_rollup_key/);
   assert.deepEqual(stateWrite.params, [
     'rollup-retention-v1',
     '2026-07-04',
     now,
-    5_002,
+    5_000,
     now,
   ]);
 });
 
-test('a failed claimed run waits only for the bounded claim lease', async () => {
+test('a claimed run performs no legacy table reads or writes', async () => {
   const now = Date.parse('2026-07-05T03:00:00Z');
   const db = new FakeD1Database()
     .route('first', STATE_SELECT, {
@@ -158,23 +142,15 @@ test('a failed claimed run waits only for the bounded claim lease', async () => 
       last_cleanup_at: now,
       legacy_backfill_id: 5_000,
       updated_at: now - HOUR_MS,
-    })
-    .route('first', /SELECT MAX\(id\) AS batch_end,COUNT\(\*\) AS batch_count/, () => {
-      throw new Error('temporary backfill failure');
     });
   resetDataMaintenanceRuntimeState(db);
 
-  const originalError = console.error;
-  console.error = () => {};
-  try {
-    const failed = await runDataMaintenanceSafely(db, now);
-    const immediateRetry = await runDataMaintenanceSafely(db, now + 1);
-    const afterLease = await runDataMaintenanceSafely(db, now + CLAIM_MS);
+  const result = await runDataMaintenanceSafely(db, now);
+  const immediateRetry = await runDataMaintenanceSafely(db, now + 1);
 
-    assert.equal(failed.reason, 'maintenance-error');
-    assert.equal(immediateRetry.reason, 'memory-cadence');
-    assert.equal(afterLease.reason, 'maintenance-error');
-  } finally {
-    console.error = originalError;
-  }
+  assert.equal(result.skipped, false);
+  assert.equal(result.legacyBackfill.reason, 'legacy-migration-disabled');
+  assert.equal(immediateRetry.reason, 'memory-cadence');
+  assert.equal(db.calls.some((call) => call.sql.includes('sh_legacy_')), false);
+  assert.equal(db.batches.length, 0);
 });
