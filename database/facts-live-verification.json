@@ -2,9 +2,9 @@
   "result": "success",
   "database_name": "Stationhead-DB",
   "attempt": 1,
-  "fact_count": 8,
-  "live_fact_count": 8,
-  "last_observed_at": 1783737773461,
-  "last_minute_at": 1783737720000,
-  "checked_at": "2026-07-11T02:43:45.681Z"
+  "fact_count": 12,
+  "live_fact_count": 12,
+  "last_observed_at": 1783738013459,
+  "last_minute_at": 1783737960000,
+  "checked_at": "2026-07-11T02:47:49.347Z"
 }
