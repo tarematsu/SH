@@ -35,20 +35,7 @@ jobs:
       - name: Check Pages syntax
         run: npm run check
       - name: Run integration tests
-        shell: bash
-        run: |
-          set +e
-          npm run test:integration > integration-test.log 2>&1
-          status=$?
-          cat integration-test.log
-          exit "$status"
-      - name: Upload integration failure log
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: site-integration-failure
-          path: site/integration-test.log
-          if-no-files-found: error
+        run: npm run test:integration
       - name: Run email foundation migration test
         run: npm run test:d1:email-foundation
       - name: Run full local D1 migration test
