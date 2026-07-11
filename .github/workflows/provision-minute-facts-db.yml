@@ -1,4 +1,5 @@
 # Creates the dedicated minute-facts D1 before deploying the collector.
+# Provisioning request: initialize sh-monitor-facts and persist its FACTS_DB binding.
 name: Provision minute facts D1
 
 on:
@@ -39,11 +40,9 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: npm
-          cache-dependency-path: worker/package-lock.json
       - name: Install worker dependencies
         working-directory: worker
-        run: npm ci
+        run: npm install --no-audit --no-fund
       - name: Create database and apply schema
         id: provision
         continue-on-error: true
@@ -55,10 +54,6 @@ jobs:
         run: |
           if [ -z "${CLOUDFLARE_API_TOKEN}" ]; then
             echo "result=missing-cloudflare-api-token" >> "${GITHUB_OUTPUT}"
-            exit 1
-          fi
-          if [ -z "${CLOUDFLARE_ACCOUNT_ID}" ]; then
-            echo "result=missing-cloudflare-account-id" >> "${GITHUB_OUTPUT}"
             exit 1
           fi
           if node scripts/provision-facts-db.mjs; then
@@ -89,13 +84,13 @@ jobs:
         env:
           TARGET_BRANCH: ${{ github.event.pull_request.head.ref || github.ref_name }}
         run: |
-          if git diff --quiet -- worker/wrangler.jsonc database/facts-db.json database/facts-provision-status.json; then
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A worker/wrangler.jsonc database
+          if git diff --cached --quiet; then
             echo "D1 binding and status already current"
             exit 0
           fi
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add worker/wrangler.jsonc database/facts-db.json database/facts-provision-status.json
           git commit -m "Record minute facts D1 provisioning"
           git push origin "HEAD:${TARGET_BRANCH}"
       - name: Deploy collector with FACTS_DB

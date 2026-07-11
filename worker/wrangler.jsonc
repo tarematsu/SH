@@ -4,7 +4,9 @@
   "main": "src/production-entry.js",
   "compatibility_date": "2026-06-24",
   "workers_dev": true,
-  "observability": { "enabled": true },
+  "observability": {
+    "enabled": true
+  },
   "vars": {
     "CHANNEL_ALIAS": "buddies",
     "CHAT_LIMIT": 50,
@@ -43,12 +45,21 @@
     "WEEKLY_LEADERBOARD_END_HOUR_JST": 2,
     "WEEKLY_LEADERBOARD_MIN_ACCOUNTS": 20
   },
-  "triggers": { "crons": ["* * * * *"] },
+  "triggers": {
+    "crons": [
+      "* * * * *"
+    ]
+  },
   "d1_databases": [
     {
       "binding": "DB",
       "database_name": "sh-monitor",
       "database_id": "5d5f0d47-7951-4900-821a-e1907c7e890b"
+    },
+    {
+      "binding": "FACTS_DB",
+      "database_name": "sh-monitor-facts",
+      "database_id": "bf2f4650-1fd6-4743-881d-22bf1ca12f5b"
     }
   ]
 }
