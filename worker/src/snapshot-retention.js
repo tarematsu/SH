@@ -1,10 +1,17 @@
+import { isPrimaryRunLockActive } from './primary-run-lock.js';
+
 const DEFAULT_RETENTION_MS = 30 * 24 * 60 * 60_000;
 const MIN_RETENTION_MS = 24 * 60 * 60_000;
 const DEFAULT_INTERVAL_MS = 60 * 60_000;
 const MIN_INTERVAL_MS = 15 * 60_000;
 const DEFAULT_BATCH_SIZE = 1000;
 const MAX_BATCH_SIZE = 5000;
-const DEFAULT_MAX_BATCHES = 20;
+// Kept small on purpose: this worker shares a D1 database with sh-monitor-buddies,
+// which writes into these same two tables every minute. A shorter worst-case
+// burst (5 batches instead of a larger number) means less time this task can
+// hold up buddies' own writes if it does run while buddies is mid-collection;
+// a large initial backlog just drains over more hourly runs instead of one.
+const DEFAULT_MAX_BATCHES = 5;
 const MAX_MAX_BATCHES = 100;
 const STATE_ID = 'snapshot-retention-v1';
 const TABLES = ['sh_channel_snapshots', 'sh_queue_snapshots'];
@@ -72,6 +79,14 @@ export async function pruneOldSnapshots(env, now = Date.now()) {
     });
   if (!shouldRunSnapshotRetention(state?.last_cleanup_at, now, env)) {
     return { skipped: true, reason: 'not-due' };
+  }
+
+  // sh-monitor-buddies writes into sh_channel_snapshots/sh_queue_snapshots
+  // every minute; back off this run (without consuming the hourly interval,
+  // so it's retried next minute) rather than let a multi-statement DELETE
+  // burst compete with buddies' own writes on the same tables/database.
+  if (await isPrimaryRunLockActive(env, now)) {
+    return { skipped: true, reason: 'buddies-active' };
   }
 
   const cutoff = now - retentionMs(env);
