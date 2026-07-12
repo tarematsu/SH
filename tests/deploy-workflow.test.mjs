@@ -6,14 +6,29 @@ const deployWorkflow = readFileSync(
   new URL('../.github/workflows/deploy.yml', import.meta.url),
   'utf8',
 );
+const diagnosticsWorkflow = readFileSync(
+  new URL('../.github/workflows/cloudflare-build-diagnostics.yml', import.meta.url),
+  'utf8',
+);
 
-test('all Cloudflare deploy targets prefer the builds API token', () => {
+test('manual deploy keeps all Cloudflare targets available', () => {
   const fallback = 'secrets.CLOUDFLARE_BUILDS_API_TOKEN || secrets.CLOUDFLARE_API_TOKEN || secrets.CF_API_TOKEN';
   const occurrences = deployWorkflow.split(fallback).length - 1;
 
+  assert.match(deployWorkflow, /^\s{2}workflow_dispatch:/m);
+  assert.doesNotMatch(deployWorkflow, /^\s{2}push:/m);
   assert.match(deployWorkflow, /wrangler pages deploy/);
   assert.match(deployWorkflow, /npm run deploy:buddies/);
   assert.match(deployWorkflow, /npm run deploy:other/);
   assert.match(deployWorkflow, /npm run deploy:minute/);
   assert.equal(occurrences, 4);
+});
+
+test('Cloudflare Git diagnostics run automatically for all Worker builds', () => {
+  assert.match(diagnosticsWorkflow, /^\s{2}push:/m);
+  assert.match(diagnosticsWorkflow, /branches: \[main\]/);
+  assert.match(diagnosticsWorkflow, /sh-monitor-buddies/);
+  assert.match(diagnosticsWorkflow, /sh-monitor-other/);
+  assert.match(diagnosticsWorkflow, /sh-monitor-minute/);
+  assert.match(diagnosticsWorkflow, /cloudflare-build-diagnostics\.mjs/);
 });
