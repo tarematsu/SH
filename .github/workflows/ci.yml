@@ -37,7 +37,24 @@ jobs:
       - run: npm ci --no-audit --no-fund
         working-directory: site
       - run: npm run check:js
-      - run: npm run test:js
+      - name: Run JavaScript tests
+        shell: bash
+        run: |
+          set +e
+          npm run test:js > .github-js-tests.log 2>&1
+          status=$?
+          if [ "$status" -ne 0 ]; then
+            tail -n 160 .github-js-tests.log
+          fi
+          exit "$status"
+      - name: Upload JavaScript test failure log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: javascript-test-failure
+          path: .github-js-tests.log
+          if-no-files-found: ignore
+          retention-days: 7
       - run: npm run test:sql
 
   pages:
