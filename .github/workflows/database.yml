@@ -1,6 +1,13 @@
 name: Database operations
 
 on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'database/facts-migrations/**'
+      - 'worker/scripts/provision-facts-db.mjs'
+      - 'worker/scripts/verify-facts-live.mjs'
   workflow_dispatch:
     inputs:
       operation:
@@ -47,7 +54,7 @@ jobs:
 
   facts-db:
     name: Provision or update Stationhead-DB
-    if: inputs.operation == 'facts-db'
+    if: github.event_name == 'push' || inputs.operation == 'facts-db'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     defaults:
