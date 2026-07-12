@@ -1,0 +1,116 @@
+name: CI
+
+on:
+  pull_request:
+    paths:
+      - 'site/**'
+      - 'database/**'
+      - 'worker/**'
+      - 'scripts/**'
+      - 'tests/**'
+      - 'package.json'
+      - '.github/workflows/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  repository:
+    name: Full repository checks
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: npm ci --no-audit --no-fund
+        working-directory: worker
+      - run: npm ci --no-audit --no-fund
+        working-directory: site
+      - run: npm run check:js
+      - name: Run JavaScript tests
+        shell: bash
+        run: |
+          set +e
+          npm run test:js > github-js-tests.log 2>&1
+          status=$?
+          if [ "$status" -ne 0 ]; then
+            tail -n 160 github-js-tests.log
+          fi
+          exit "$status"
+      - name: Upload JavaScript test failure log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: javascript-test-failure
+          path: github-js-tests.log
+          if-no-files-found: ignore
+          retention-days: 7
+      - run: npm run test:sql
+
+  pages:
+    name: Pages checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: site
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: site/package-lock.json
+      - run: npm ci --no-audit --no-fund
+      - run: npm run check
+      - run: npm test
+      - name: Verify production migration command is skipped in CI
+        run: npm run db:migrate
+
+  worker:
+    name: Worker checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: worker
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: worker/package-lock.json
+      - run: npm ci --no-audit --no-fund
+      - run: npm run check
+      - run: npm test
+
+  audit:
+    name: Dependency audit
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm ci --no-audit --no-fund
+        working-directory: site
+      - run: npm audit --audit-level=high
+        working-directory: site
+      - run: npm ci --no-audit --no-fund
+        working-directory: worker
+      - run: npm audit --audit-level=high
+        working-directory: worker
