@@ -26,10 +26,10 @@ async function runTracked(env, task, action) {
   const startedAt = Date.now();
   try {
     const result = await action();
-    if (env?.DB) await recordMinuteFactRuntimeState(env, task, result, { startedAt });
+    if (env?.FACTS_DB) await recordMinuteFactRuntimeState(env, task, result, { startedAt });
     return result;
   } catch (error) {
-    if (env?.DB) await recordMinuteFactRuntimeState(env, task, { error }, { startedAt, success: false }).catch(() => {});
+    if (env?.FACTS_DB) await recordMinuteFactRuntimeState(env, task, { error }, { startedAt, success: false }).catch(() => {});
     throw error;
   }
 }

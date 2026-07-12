@@ -53,7 +53,7 @@ test('legacy fact creation is enabled in the dedicated worker', async () => {
 test('minute worker /health responses are cached across repeated requests', async () => {
   let reads = 0;
   const env = {
-    DB: {
+    FACTS_DB: {
       prepare(sql) {
         return {
           bind() {

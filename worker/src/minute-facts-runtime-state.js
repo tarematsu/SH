@@ -57,9 +57,9 @@ export function minuteFactRuntimeSnapshot(outcome = {}) {
 }
 
 export async function ensureMinuteFactRuntimeStateSchema(env) {
-  if (!env?.DB) throw new Error('minute fact runtime state DB binding is missing');
+  if (!env?.FACTS_DB) throw new Error('minute fact runtime state DB binding is missing');
   if (schemaReady) return false;
-  await env.DB.prepare(MINUTE_FACT_RUNTIME_STATE_SCHEMA_SQL).run();
+  await env.FACTS_DB.prepare(MINUTE_FACT_RUNTIME_STATE_SCHEMA_SQL).run();
   schemaReady = true;
   return true;
 }
@@ -73,7 +73,7 @@ export async function recordMinuteFactRuntimeState(env, task, outcome = {}, opti
   const error = success ? null : sanitizeFailureDetail(outcome?.error?.message || outcome?.error || outcome?.last_error || 'unknown failure').slice(0, 800);
   const name = taskName(task);
 
-  await env.DB.prepare(`INSERT INTO sh_minute_fact_runtime_state(
+  await env.FACTS_DB.prepare(`INSERT INTO sh_minute_fact_runtime_state(
       task_name,last_started_at,last_success_at,last_failure_at,last_duration_ms,last_error,
       runs_total,succeeded_total,failed_total,processed_total,job_failures_total,
       last_processed_count,last_failed_count,pending_count,processing_count,dead_count,
@@ -108,10 +108,10 @@ export async function recordMinuteFactRuntimeState(env, task, outcome = {}, opti
 export async function readMinuteFactRuntimeState(env, task = null) {
   await ensureMinuteFactRuntimeStateSchema(env);
   if (task == null) {
-    const result = await env.DB.prepare('SELECT * FROM sh_minute_fact_runtime_state ORDER BY task_name').all();
+    const result = await env.FACTS_DB.prepare('SELECT * FROM sh_minute_fact_runtime_state ORDER BY task_name').all();
     return result.results || [];
   }
-  return env.DB.prepare('SELECT * FROM sh_minute_fact_runtime_state WHERE task_name=?').bind(taskName(task)).first();
+  return env.FACTS_DB.prepare('SELECT * FROM sh_minute_fact_runtime_state WHERE task_name=?').bind(taskName(task)).first();
 }
 
 export function minuteFactRuntimeSignals(state, options = {}) {
