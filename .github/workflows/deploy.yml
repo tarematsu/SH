@@ -1,12 +1,6 @@
-name: Deploy
+name: Deploy (manual)
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - 'site/**'
-      - 'worker/**'
-      - '.github/workflows/deploy.yml'
   workflow_dispatch:
     inputs:
       target:
@@ -24,73 +18,13 @@ permissions:
   contents: read
 
 concurrency:
-  group: deploy-${{ github.ref }}
+  group: deploy-manual-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
-  changes:
-    name: Select targets
-    runs-on: ubuntu-latest
-    outputs:
-      pages: ${{ steps.filter.outputs.pages || steps.manual.outputs.pages }}
-      monitor: ${{ steps.filter.outputs.monitor || steps.manual.outputs.monitor }}
-      minute: ${{ steps.filter.outputs.minute || steps.manual.outputs.minute }}
-    steps:
-      - uses: actions/checkout@v4
-        if: github.event_name == 'push'
-        with:
-          fetch-depth: 0
-      - name: Select changed targets
-        id: filter
-        if: github.event_name == 'push'
-        shell: bash
-        run: |
-          files="$(git diff --name-only '${{ github.event.before }}' '${{ github.sha }}')"
-          printf '%s\n' "$files"
-
-          pages=false
-          monitor=false
-          minute=false
-
-          if grep -Eq '^site/|^\.github/workflows/deploy\.yml$' <<<"$files"; then
-            pages=true
-          fi
-          if grep -Eq '^worker/|^\.github/workflows/deploy\.yml$' <<<"$files"; then
-            monitor=true
-          fi
-          if grep -Eq '^worker/src/|^worker/(wrangler\.minute\.jsonc|package\.json|package-lock\.json)$|^\.github/workflows/deploy\.yml$' <<<"$files"; then
-            minute=true
-          fi
-
-          echo "pages=$pages" >> "$GITHUB_OUTPUT"
-          echo "monitor=$monitor" >> "$GITHUB_OUTPUT"
-          echo "minute=$minute" >> "$GITHUB_OUTPUT"
-      - name: Select manual targets
-        id: manual
-        if: github.event_name == 'workflow_dispatch'
-        shell: bash
-        run: |
-          target='${{ inputs.target }}'
-          if [[ "$target" == 'all' || "$target" == 'pages' ]]; then
-            echo 'pages=true' >> "$GITHUB_OUTPUT"
-          else
-            echo 'pages=false' >> "$GITHUB_OUTPUT"
-          fi
-          if [[ "$target" == 'all' || "$target" == 'monitor-workers' ]]; then
-            echo 'monitor=true' >> "$GITHUB_OUTPUT"
-          else
-            echo 'monitor=false' >> "$GITHUB_OUTPUT"
-          fi
-          if [[ "$target" == 'all' || "$target" == 'minute-worker' ]]; then
-            echo 'minute=true' >> "$GITHUB_OUTPUT"
-          else
-            echo 'minute=false' >> "$GITHUB_OUTPUT"
-          fi
-
   pages:
     name: Pages
-    needs: changes
-    if: needs.changes.outputs.pages == 'true'
+    if: ${{ inputs.target == 'all' || inputs.target == 'pages' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -110,8 +44,7 @@ jobs:
 
   monitor:
     name: Monitor workers
-    needs: changes
-    if: needs.changes.outputs.monitor == 'true'
+    if: ${{ inputs.target == 'all' || inputs.target == 'monitor-workers' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -136,8 +69,7 @@ jobs:
 
   minute:
     name: Minute facts worker
-    needs: changes
-    if: needs.changes.outputs.minute == 'true'
+    if: ${{ inputs.target == 'all' || inputs.target == 'minute-worker' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
