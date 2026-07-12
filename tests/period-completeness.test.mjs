@@ -16,6 +16,18 @@ import {
 
 const AFTER_JULY = Date.parse('2026-07-02T12:00:00Z');
 
+function summaryRow(mode, periodKey, overrides = {}) {
+  const bounds = expectedPeriodBounds(mode, periodKey);
+  return {
+    period_key: periodKey,
+    period_start: bounds.start,
+    period_end: bounds.end,
+    stream_growth: 100,
+    quality_flags: '[]',
+    ...overrides,
+  };
+}
+
 test('daily period uses UTC boundaries corresponding to 09:00 Japan', () => {
   const bounds = expectedPeriodBounds('daily', '2026-07-01');
   assert.equal(bounds.start, Date.parse('2026-07-01T00:00:00Z'));
@@ -79,14 +91,11 @@ test('weekly and monthly reject evidence beyond their tolerance', () => {
 
 test('completed daily period keeps stream growth', () => {
   const bounds = expectedPeriodBounds('daily', '2026-06-30');
-  const result = applySummaryCompleteness([{
-    period_key: '2026-06-30',
+  const result = applySummaryCompleteness([summaryRow('daily', '2026-06-30', {
     period_start: bounds.start + 5 * 60000,
     period_end: bounds.end - 5 * 60000,
     stream_growth: 1234,
-    quality_flags: '[]',
-  }], 'daily', AFTER_JULY);
-
+  })], 'daily', AFTER_JULY);
   assert.equal(result.excludedCount, 0);
   assert.equal(result.rows[0].stream_growth, 1234);
   assert.equal(result.rows[0].period_complete, true);
@@ -94,14 +103,11 @@ test('completed daily period keeps stream growth', () => {
 
 test('missing entrance or exit excludes stream growth', () => {
   const bounds = expectedPeriodBounds('daily', '2026-06-30');
-  const result = applySummaryCompleteness([{
-    period_key: '2026-06-30',
+  const result = applySummaryCompleteness([summaryRow('daily', '2026-06-30', {
     period_start: bounds.start + 60 * 60000,
     period_end: bounds.end - 60 * 60000,
     stream_growth: 999,
-    quality_flags: '[]',
-  }], 'daily', AFTER_JULY);
-
+  })], 'daily', AFTER_JULY);
   assert.equal(result.excludedCount, 1);
   assert.equal(result.rows[0].stream_growth, null);
   assert.deepEqual(result.rows[0].exclusion_reasons, ['missing_period_start', 'missing_period_end']);
@@ -110,34 +116,23 @@ test('missing entrance or exit excludes stream growth', () => {
 });
 
 test('April 30 daily growth is excluded as a known collection gap', () => {
-  const bounds = expectedPeriodBounds('daily', '2026-04-30');
-  const result = applySummaryCompleteness([{
-    period_key: '2026-04-30',
-    period_start: bounds.start,
-    period_end: bounds.end,
-    stream_growth: 5000,
-    quality_flags: '[]',
-  }], 'daily', AFTER_JULY);
-
+  const result = applySummaryCompleteness([
+    summaryRow('daily', '2026-04-30', { stream_growth: 5000 }),
+  ], 'daily', AFTER_JULY);
   assert.equal(result.rows[0].stream_growth, null);
   assert.deepEqual(result.rows[0].exclusion_reasons, ['known_collection_gap']);
 });
 
 test('current day, week, and month are excluded', () => {
-  const cases = [
+  for (const [mode, periodKey] of [
     ['daily', '2026-07-02'],
     ['weekly', '2026-06-29'],
     ['monthly', '2026-07'],
-  ];
-  for (const [mode, periodKey] of cases) {
-    const bounds = expectedPeriodBounds(mode, periodKey);
-    const result = applySummaryCompleteness([{
-      period_key: periodKey,
-      period_start: bounds.start,
+  ]) {
+    const result = applySummaryCompleteness([summaryRow(mode, periodKey, {
       period_end: AFTER_JULY,
-      stream_growth: 100,
       quality_flags: mode === 'weekly' ? '["stationhead_email_recap"]' : '[]',
-    }], mode, AFTER_JULY);
+    })], mode, AFTER_JULY);
     assert.equal(result.rows[0].stream_growth, null, `${mode} should be excluded`);
     assert.ok(result.rows[0].exclusion_reasons.includes('current_period'));
   }
@@ -154,7 +149,6 @@ test('completed January through June email weekly records remain trusted', () =>
     stream_growth: 410074,
     quality_flags: '["stationhead_email_recap"]',
   }], 'weekly', AFTER_JULY);
-
   assert.equal(result.excludedCount, 0);
   assert.equal(result.rows[0].stream_growth, 410074);
   assert.equal(result.rows[0].period_complete, true);
@@ -190,7 +184,6 @@ test('track rows retain details but incomplete dates are marked for total exclus
       period_last_observed_at: AFTER_JULY,
     },
   ], AFTER_JULY);
-
   assert.equal(result.rows.length, 2);
   assert.equal(result.rows[0].play_count, 3);
   assert.equal(result.rows[0].play_count_excluded, false);
@@ -199,11 +192,12 @@ test('track rows retain details but incomplete dates are marked for total exclus
   assert.deepEqual(result.excludedDates, ['2026-07-02']);
 });
 
-test('history page trusts server completeness and installs final runtime optimizations', () => {
+test('history page trusts server completeness and installs final runtime optimizations in order', () => {
   const html = readFileSync(new URL('../site/public/history/index.html', import.meta.url), 'utf8');
   const filterIndex = html.indexOf('/history/history-period-completeness.js');
-  const loaderIndex = html.indexOf('/history/history-copy-fixes.js');
-  assert.ok(filterIndex >= 0 && filterIndex < loaderIndex);
+  const copyFixIndex = html.indexOf('/history/history-copy-fixes.js');
+  const likesIndex = html.indexOf('/history/history-track-likes.js');
+  assert.ok(filterIndex >= 0 && filterIndex < copyFixIndex && copyFixIndex < likesIndex);
 
   const filterSource = readFileSync(
     new URL('../site/public/history/history-period-completeness.js', import.meta.url),
@@ -213,12 +207,6 @@ test('history page trusts server completeness and installs final runtime optimiz
   assert.match(filterSource, /track-history:v13:/);
   assert.match(filterSource, /history:v11:/);
   assert.doesNotMatch(filterSource, /mondayJstKey|expectedStart|expectedEnd/);
-
-  const loaderSource = readFileSync(
-    new URL('../site/public/history/history-copy-fixes.js', import.meta.url),
-    'utf8',
-  );
-  assert.match(loaderSource, /history-track-likes\.js/);
 
   const runtimeSource = readFileSync(
     new URL('../site/public/history/history-track-likes.js', import.meta.url),
