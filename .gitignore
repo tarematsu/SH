@@ -14,11 +14,9 @@ state/
 .DS_Store
 Thumbs.db
 .sh-session.json
-.weekly-leaderboard-state.json
 
 .wrangler/
 .sh-discovery/
-collector/.leaderboard-capture-browser/
 collector/.profile-capture-browser/
 collector/captures/
 collector/*.before-*

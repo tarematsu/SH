@@ -7,17 +7,17 @@ import test from 'node:test';
 const workerRoot = path.resolve(import.meta.dirname, '..');
 const repositoryRoot = path.resolve(workerRoot, '..');
 const stateDirectory = path.resolve(workerRoot, '.wrangler-minute-facts-test-state');
-const executable = process.platform === 'win32'
-  ? path.resolve(workerRoot, 'node_modules/.bin/wrangler.cmd')
-  : path.resolve(workerRoot, 'node_modules/.bin/wrangler');
+const executable = process.execPath;
+const wranglerScript = path.resolve(workerRoot, 'node_modules/wrangler/bin/wrangler.js');
 const schemaPath = path.resolve(repositoryRoot, 'database/facts-migrations/001_initial_schema.sql');
 const factsBinding = 'FACTS_DB';
 
 function run(args) {
-  const result = spawnSync(executable, args, {
+  const result = spawnSync(executable, [wranglerScript, ...args], {
     cwd: workerRoot,
     env: { ...process.env, CI: 'true' },
     encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
   });
   if (result.error) throw result.error;
   assert.equal(result.status, 0, [result.stdout, result.stderr].filter(Boolean).join('\n'));

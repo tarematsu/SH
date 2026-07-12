@@ -6,7 +6,7 @@ function cachePolicy(url) {
   if (url.pathname === '/api/history') {
     const mode = url.searchParams.get('mode') || 'weekly';
     if (mode === 'raw' || url.searchParams.has('cursor')) return null;
-    if (mode === 'broadcasts' || mode === 'ranking') return { ttl: 900, browser: 120 };
+    if (mode === 'broadcasts') return { ttl: 900, browser: 120 };
     return { ttl: 300, browser: 60 };
   }
   return null;

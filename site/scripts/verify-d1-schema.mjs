@@ -21,11 +21,9 @@ if (!force && !production) {
 const scriptDirectory = path.dirname(fileURLToPath(import.meta.url));
 const siteDirectory = path.resolve(scriptDirectory, '..');
 const wranglerConfigPath = path.join(siteDirectory, 'wrangler.jsonc');
-const wranglerExecutable = process.platform === 'win32'
-  ? path.join(siteDirectory, 'node_modules', '.bin', 'wrangler.cmd')
-  : path.join(siteDirectory, 'node_modules', '.bin', 'wrangler');
+const wranglerScript = path.join(siteDirectory, 'node_modules', 'wrangler', 'bin', 'wrangler.js');
 
-if (!existsSync(wranglerExecutable)) {
+if (!existsSync(wranglerScript)) {
   console.error('D1 schema verification failed: Wrangler is not installed.');
   process.exit(1);
 }
@@ -67,10 +65,10 @@ const sql = `SELECT
   (SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='idx_sh_queue_items_station_start_position') AS redundant_queue_index,
   (SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='idx_sh_track_metadata_spotify_fetched') AS redundant_metadata_index`;
 
-const result = spawnSync(wranglerExecutable, [
+const result = spawnSync(process.execPath, [wranglerScript, ...[
   'd1', 'execute', 'sh-monitor', '--remote', '--config', wranglerConfigPath,
   '--command', sql, '--json',
-], {
+]], {
   cwd: siteDirectory,
   encoding: 'utf8',
   env: {

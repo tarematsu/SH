@@ -107,7 +107,7 @@ test('complete weekly and monthly summaries skip redundant boundary scans', () =
   assert.equal(summaryRowNeedsBoundaryEvidence(monthlyRow, 'monthly'), false);
 });
 
-test('history runtime uses server completeness and single-pass ranking indexes', () => {
+test('history runtime uses server completeness and single-pass summary updates', () => {
   const filter = readFileSync(
     new URL('../site/public/history/history-period-completeness.js', import.meta.url),
     'utf8',
@@ -121,7 +121,5 @@ test('history runtime uses server completeness and single-pass ranking indexes',
     'utf8',
   );
   assert.match(runtime, /updateSummaryRuntimeSinglePass/);
-  assert.match(runtime, /drawRankingSingleIndex/);
-  assert.match(runtime, /const byHost = new Map\(\)/);
   assert.doesNotMatch(runtime, /rows\.filter\(\(row\).*host_name/s);
 });

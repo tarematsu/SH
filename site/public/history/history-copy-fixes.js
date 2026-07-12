@@ -3,7 +3,6 @@
     monthly: ['月次集計', '月ごとの平均同接、再生数増加、メンバー増加を表示します。'],
     tracks: ['再生曲', 'UTC日付（日本時間9:00〜翌8:59）または月曜日始まりの週で再生曲を表示します。'],
     broadcasts: ['公式ステへ', '同接推移を重ねて表示します。'],
-    ranking: ['リーダーボード', 'Stationheadで放送している櫻坂ホストの週次順位です。'],
   };
   Object.entries(descriptions).forEach(([mode, value]) => { MODE_HELP[mode] = value; });
 
@@ -107,13 +106,9 @@
         $('#from').value = input.value;
         $('#to').value = input.value;
       }
-    } else if (mode === 'ranking' || mode === 'broadcasts') {
+    } else if (mode === 'broadcasts') {
       $('#from').value = '2024-05-01';
       $('#to').value = todayJst();
-      if (mode === 'ranking') {
-        $('#rankingScope').value = 'featured';
-        $('#host').value = '';
-      }
     }
     return true;
   };
@@ -129,36 +124,23 @@
     });
     $('#more').hidden = true;
     $('#chartPanel').hidden = true;
-    $('#rankingWeeklyPanel').hidden = true;
     const timezone = data.timezone || 'UTC';
     $('#notice').textContent = data.setup_required
       ? '再生曲データの保存テーブルがまだありません。'
       : `${formatDate(from)}〜${formatDate(to)}：${fmt(current.length)}件を表示（${timezone} / 日本時間9:00〜翌8:59）${data.truncated ? '（表示上限）' : ''}`;
   };
 
-  const renderHistoryData = (data, mode, append, scope, host) => {
+  const renderHistoryData = (data, mode, append) => {
     if (append) current.push(...(data.rows || []));
     else current = data.rows || [];
     nextCursor = data.next_cursor || null;
     updateSummary(current, mode);
     renderTable(data.rows || [], mode, append);
     $('#more').hidden = mode !== 'raw' || !data.has_more;
-    if (mode === 'ranking') {
-      renderWeeklyMetrics(data.weekly_metrics || []);
-      $('#rankingWeeklyPanel').hidden = false;
-      $('#chartPanel').hidden = false;
-      drawRanking(current);
-    } else {
-      $('#rankingWeeklyPanel').hidden = true;
-      $('#chartPanel').hidden = mode === 'raw';
-      if (mode !== 'raw' && mode !== 'broadcasts') draw(current, $('#metric').value);
-    }
+    $('#chartPanel').hidden = mode === 'raw';
+    if (mode !== 'raw' && mode !== 'broadcasts') draw(current, $('#metric').value);
     $('#chartDetail').innerHTML = '<span>グラフをタッチまたはクリックすると、その時点の詳細を表示します。</span>';
-    if (mode === 'ranking' && data.setup_required) {
-      $('#notice').textContent = '週間リーダーボードのデータがまだありません。ランキングSQLを投入してください。';
-    } else if (mode === 'ranking') {
-      $('#notice').textContent = `櫻坂を表示：${fmt(current.length)}行（圏外週を含む）${data.truncated ? '（最大5000件）' : ''}`;
-    } else if (mode === 'broadcasts' && data.setup_required) {
+    if (mode === 'broadcasts' && data.setup_required) {
       $('#notice').textContent = '公式ステヘのD1データが未登録です。';
     } else if (mode === 'broadcasts') {
       $('#notice').textContent = `${fmt(current.length)}件の公式ステヘを表示`;
@@ -216,9 +198,7 @@
         return;
       }
 
-      const scope = mode === 'ranking' ? $('#rankingScope').value : '';
-      const host = mode === 'ranking' ? $('#host').value.trim() : '';
-      const key = cacheKey(mode, from, to, `${scope}:${host}`);
+      const key = cacheKey(mode, from, to);
       let data = !append && mode !== 'raw' ? readCache(key) : null;
       if (!data) {
         const params = new URLSearchParams({ mode, from, to, v: '10' });
@@ -226,18 +206,13 @@
           params.set('limit', '200');
           if (append && nextCursor) params.set('cursor', nextCursor);
         }
-        if (mode === 'ranking') {
-          params.set('limit', '5000');
-          params.set('scope', scope);
-          if (host) params.set('host', host);
-        }
         const response = await fetch(`/api/history?${params}`, { signal: controller.signal, cache: 'no-store' });
         data = await response.json();
         if (!response.ok || !data.ok) throw new Error(data.error || `API ${response.status}`);
         if (!append && mode !== 'raw') writeCache(key, data);
       }
       if (!isCurrent(version, mode)) return;
-      renderHistoryData(data, mode, append, scope, host);
+      renderHistoryData(data, mode, append);
     } catch (error) {
       if (error?.name !== 'AbortError' && isCurrent(version, mode)) $('#notice').textContent = `API error: ${error.message}`;
     } finally {

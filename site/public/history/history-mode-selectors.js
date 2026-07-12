@@ -10,7 +10,6 @@
   const trackControls = $('#trackControls');
   const trackDate = $('#trackDate');
   const trackWeekMode = $('#trackWeekMode');
-  const rankingScopeTabs = $('#rankingScopeTabs');
   const loadButton = $('#load');
   const todayUtc = () => new Date().toISOString().slice(0, 10);
 
@@ -45,29 +44,15 @@
     }
   }
 
-  function syncRankingScope() {
-    const select = $('#rankingScope');
-    if (select) select.value = 'featured';
-    const host = $('#host');
-    if (host) host.value = '';
-  }
-
-  shouldShowRankingChart = () => true;
-
   setMode = function (mode) {
     baseSetMode(mode);
     const tracks = mode === 'tracks';
-    const ranking = mode === 'ranking';
     const broadcasts = mode === 'broadcasts';
-    controls.hidden = ranking || broadcasts;
+    controls.hidden = broadcasts;
     controls.classList.toggle('track-mode', tracks);
-    setStandardControlsVisible(!(tracks || ranking || broadcasts));
+    setStandardControlsVisible(!(tracks || broadcasts));
     trackControls.hidden = !tracks;
-    if (rankingScopeTabs) rankingScopeTabs.hidden = true;
-    loadButton.hidden = tracks || ranking || broadcasts;
-    $('#rankingScopeWrap').hidden = true;
-    $('#hostWrap').hidden = true;
-    if (ranking) syncRankingScope();
+    loadButton.hidden = tracks || broadcasts;
   };
 
   load = async function (options = {}) {
@@ -80,10 +65,6 @@
         $('#from').value = trackDate.value;
         $('#to').value = trackDate.value;
       }
-    } else if (currentMode === 'ranking') {
-      $('#from').value = '2024-05-01';
-      $('#to').value = todayUtc();
-      syncRankingScope();
     } else if (currentMode === 'broadcasts') {
       $('#from').value = '2024-05-01';
       $('#to').value = todayUtc();

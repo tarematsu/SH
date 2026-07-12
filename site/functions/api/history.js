@@ -1,4 +1,3 @@
-import { onRequestGet as rankingHistory } from './history-ranking.js';
 import { onRequestGet as rawHistory } from './history-raw.js';
 import {
   SUMMARY_TABLES,
@@ -213,16 +212,6 @@ async function loadBroadcasts(env, from, to) {
   });
 }
 
-function rankingCacheKey(url) {
-  const from = url.searchParams.get('from') || '2024-06-01';
-  const to = url.searchParams.get('to') || todayJstString();
-  const scope = url.searchParams.get('scope') === 'all' ? 'all' : 'featured';
-  const host = String(url.searchParams.get('host') || '').trim().slice(0, 100).toLowerCase();
-  const limit = Math.min(Math.max(Number(url.searchParams.get('limit')) || 5000, 20), 10000);
-  const version = String(url.searchParams.get('v') || '');
-  return `ranking:v3:${from}:${to}:${scope}:${host}:${limit}:${version}`;
-}
-
 export async function onRequestGet(context) {
   const { request, env } = context;
   if (!env.DB) return json({ ok: false, error: 'DB binding missing' }, 500, { 'cache-control': 'no-store' });
@@ -242,9 +231,6 @@ export async function onRequestGet(context) {
       });
     }
     if (mode === 'broadcasts') return loadBroadcasts(env, from, to);
-    if (mode === 'ranking') {
-      return cachedLegacyHistoryResponse(rankingCacheKey(url), 60000, () => rankingHistory(context));
-    }
     if (mode === 'raw') return rawHistory(context);
     return json({ ok: false, error: `unsupported history mode: ${mode}` }, 400, { 'cache-control': 'no-store' });
   } catch (error) {

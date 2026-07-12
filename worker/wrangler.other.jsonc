@@ -13,7 +13,6 @@
     "HOST_PROFILE_HANDLE": "sakuramankai",
     "SOLO_BROADCAST_HANDLE": "sakurazaka46jp",
     "REQUEST_TIMEOUT_MS": 8000,
-    "WEEKLY_LEADERBOARD_ENABLED": true,
     "DATA_MAINTENANCE_ENABLED": false
   },
   "triggers": { "crons": ["* * * * *"] },

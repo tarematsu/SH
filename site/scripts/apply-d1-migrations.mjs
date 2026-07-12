@@ -39,9 +39,7 @@ const siteDirectory = path.resolve(scriptDirectory, '..');
 const repositoryRoot = path.resolve(siteDirectory, '..');
 const migrationsDirectory = path.join(repositoryRoot, 'database', 'migrations');
 const wranglerConfigPath = path.join(siteDirectory, 'wrangler.jsonc');
-const wranglerExecutable = process.platform === 'win32'
-  ? path.join(siteDirectory, 'node_modules', '.bin', 'wrangler.cmd')
-  : path.join(siteDirectory, 'node_modules', '.bin', 'wrangler');
+const wranglerScript = path.join(siteDirectory, 'node_modules', 'wrangler', 'bin', 'wrangler.js');
 
 function assertSafeMigrationNumbering() {
   const files = readdirSync(migrationsDirectory)
@@ -66,7 +64,7 @@ function assertSafeMigrationNumbering() {
   }
 }
 
-if (!existsSync(wranglerExecutable)) {
+if (!existsSync(wranglerScript)) {
   console.error('D1 migration failed: Wrangler is not installed in site/node_modules.');
   process.exit(1);
 }
@@ -133,7 +131,7 @@ try {
     args.push('--persist-to', path.resolve(process.env.D1_MIGRATION_PERSIST_TO));
   }
 
-  const result = spawnSync(wranglerExecutable, args, {
+  const result = spawnSync(process.execPath, [wranglerScript, ...args], {
     cwd: siteDirectory,
     stdio: 'inherit',
     env: {

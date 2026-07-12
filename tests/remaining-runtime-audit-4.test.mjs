@@ -4,10 +4,6 @@ import { readFileSync } from 'node:fs';
 
 import { loadTrackHistoryData } from '../site/functions/lib/track-history-handler.js';
 import { loadBroadcastSeriesRows } from '../site/functions/api/broadcast-series.js';
-import {
-  LEADERBOARD_CONTEXT_SQL,
-  loadLeaderboardContext,
-} from '../worker/src/cloud-weekly-leaderboard.js';
 
 test('track history and compact realtime likes share one D1 batch', async () => {
   let batchCalls = 0;
@@ -72,40 +68,6 @@ test('broadcast legacy and fail-safe series share one D1 batch', async () => {
   assert.equal(loaded.legacy[0].samples[0].listener, 10);
   assert.equal(loaded.failSafe[0].source, 'official_news_fail_safe');
   assert.equal(loaded.failSafe[0].samples[0].sourceSamples, 2);
-});
-
-test('weekly leaderboard loads fetch state and auth session in one query', async () => {
-  let prepares = 0;
-  let firstCalls = 0;
-  let bound = null;
-  const env = {
-    DB: {
-      prepare(sql) {
-        prepares += 1;
-        assert.equal(sql, LEADERBOARD_CONTEXT_SQL);
-        return {
-          bind(...values) { bound = values; return this; },
-          async first() {
-            firstCalls += 1;
-            return {
-              fetched_at: 100,
-              status: 'saved',
-              source_hash: 'hash',
-              auth_token: 'token',
-              device_uid: 'device',
-            };
-          },
-        };
-      },
-    },
-  };
-
-  const context = await loadLeaderboardContext(env, '2026-06-29');
-  assert.equal(prepares, 1);
-  assert.equal(firstCalls, 1);
-  assert.deepEqual(bound, ['2026-06-29', 'stationhead_official_cloud']);
-  assert.equal(context.auth_token, 'token');
-  assert.equal(context.source_hash, 'hash');
 });
 
 test('history chart consolidates date and metric scans and reuses formatters', () => {

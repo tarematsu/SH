@@ -26,7 +26,6 @@ function trackingDb() {
 function baseEnv(extra = {}) {
   return {
     DB: trackingDb(),
-    WEEKLY_LEADERBOARD_ENABLED: 'false',
     DATA_MAINTENANCE_ENABLED: 'false',
     ...extra,
   };
@@ -37,7 +36,7 @@ test('shouldDeferAuxiliaryRunners reads the buddies-worker defer flag', () => {
   assert.equal(shouldDeferAuxiliaryRunners({ [DEFER_AUXILIARY_RUNNERS_FLAG]: true }), true);
 });
 
-test('primary schedule runs the weekly/prediction/maintenance auxiliaries when not deferred', async () => {
+test('primary schedule runs the prediction/maintenance auxiliaries when not deferred', async () => {
   resetPrimaryScheduledFlightForTests();
   const env = baseEnv();
   const waitUntilTasks = [];
@@ -55,7 +54,7 @@ test('primary schedule runs the weekly/prediction/maintenance auxiliaries when n
   resetPrimaryScheduledFlightForTests();
 });
 
-test('buddies worker defers the weekly/prediction/maintenance auxiliaries to the other worker', async () => {
+test('buddies worker defers the prediction/maintenance auxiliaries to the other worker', async () => {
   resetPrimaryScheduledFlightForTests();
   const env = baseEnv({ [DEFER_AUXILIARY_RUNNERS_FLAG]: true });
   const waitUntilTasks = [];

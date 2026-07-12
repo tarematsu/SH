@@ -25,7 +25,6 @@
     $('#metric').disabled = true;
     $('#chartPanel').hidden = true;
     $('#tableTitle').textContent = '再生曲';
-    $('#rankingWeeklyPanel').hidden = true;
   };
 
   visibleKeys = (mode) => mode === 'tracks' ? Object.keys(TRACK_LABELS) : baseVisibleKeys(mode);

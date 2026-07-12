@@ -1,6 +1,5 @@
 import { scheduleBuddyPlayback, scheduledTimestamp } from './cadenced-entry.js';
 import { runCloudHostMonitor } from './cloud-host-monitor.js';
-import { runCloudWeeklyLeaderboard } from './cloud-weekly-leaderboard.js';
 import { runScheduledMaintenance } from './scheduled-maintenance.js';
 import { runStreamGoalPrediction } from './stream-goal-prediction.js';
 
@@ -9,7 +8,6 @@ export async function runOtherScheduled(controller, env, ctx, dependencies = {})
   const tasks = [
     (dependencies.buddy || scheduleBuddyPlayback)(env, ctx, now),
     (dependencies.host || runCloudHostMonitor)(env),
-    (dependencies.weekly || runCloudWeeklyLeaderboard)(env),
     (dependencies.prediction || runStreamGoalPrediction)(env, now),
     (dependencies.maintenance || runScheduledMaintenance)(env, now),
   ];

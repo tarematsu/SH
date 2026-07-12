@@ -16,6 +16,9 @@
     "check:minute-bundle": "wrangler deploy --config wrangler.minute.jsonc --dry-run --outdir=dist-minute-dry-run",
     "test": "node --test tests/*.test.js"
   },
+  "dependencies": {
+    "sh-shared": "file:../packages/sh-shared"
+  },
   "devDependencies": {
     "wrangler": "^4.104.0"
   }

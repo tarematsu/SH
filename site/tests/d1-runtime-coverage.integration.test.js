@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 
 import {
   assertRuntimeMigrationCoverage,
+  changedMigrationNames,
   uncoveredRuntimeMigrations,
 } from '../scripts/d1-runtime-coverage.mjs';
 
@@ -21,6 +22,15 @@ test('known runtime-bootstrapped migration is accepted', () => {
     assertRuntimeMigrationCoverage(repositoryRoot, ['127_add_secondary_playback_current.sql']),
     true,
   );
+});
+
+test('runtime coverage tracks newly added bootstrap migrations without flagging old edits', () => {
+  const names = changedMigrationNames(repositoryRoot);
+  assert.ok(names.includes('008_buddy_auth_control.sql'));
+  assert.ok(names.includes('128_add_collector_status.sql'));
+  assert.ok(names.includes('129_add_queue_reachability_index.sql'));
+  assert.ok(!names.includes('003_email_stream_snapshots.sql'));
+  assert.equal(assertRuntimeMigrationCoverage(repositoryRoot, names), true);
 });
 
 test('new migration without runtime coverage is rejected', () => {

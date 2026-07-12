@@ -1,7 +1,6 @@
 import { finiteNumber, jsonNoStoreResponse } from './shared.js';
 
 export const EMAIL_RECAP_PATH = '/ingest/email-recap';
-export const EMAIL_RECAP_LEASE_PATH = '/coordination/lease';
 export const DEFAULT_EMAIL_RECAP_OFFSET_MINUTES = 57;
 export const json = jsonNoStoreResponse;
 export const finite = finiteNumber;

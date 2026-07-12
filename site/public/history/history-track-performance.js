@@ -173,10 +173,6 @@
   };
 
   displayCell = function displayCellWithSharedFormatters(key, row, mode) {
-    if (mode === 'ranking') {
-      const special = rankingCellValue(key, row);
-      if (special != null) return special;
-    }
     if (mode === 'tracks') {
       if (key === 'play_date') return formatDate(row[key]);
       if (key === 'first_played_at' || key === 'last_played_at') {
@@ -201,11 +197,8 @@
 
   updateSummary = function updateSummarySinglePass(rows, mode) {
     const values = Array.isArray(rows) ? rows : [];
-    const rankingHosts = mode === 'ranking' ? new Set() : null;
-    const rankingWeeks = mode === 'ranking' ? new Set() : null;
     const trackDays = mode === 'tracks' ? new Set() : null;
     const trackKeys = mode === 'tracks' ? new Set() : null;
-    let rankingBest = null;
     let listenerMax = null;
     let listenerMin = null;
     let listenerAverageTotal = 0;
@@ -222,13 +215,6 @@
     let trackPlayMax = 0;
 
     for (const row of values) {
-      if (mode === 'ranking') {
-        const rank = finiteNumber(row.rank);
-        if (rank != null) rankingBest = rankingBest == null ? rank : Math.min(rankingBest, rank);
-        if (row.host_name) rankingHosts.add(row.host_name);
-        if (row.ranking_date) rankingWeeks.add(row.ranking_date);
-        continue;
-      }
       if (mode === 'tracks') {
         if (row.period_complete === false || row.play_count_excluded === true) continue;
         if (row.play_date) trackDays.add(row.play_date);
@@ -269,18 +255,6 @@
           durationCount += 1;
         }
       }
-    }
-
-    if (mode === 'ranking') {
-      setText('#periodLabel', '期間数');
-      setText('#maxLabel', '最高順位');
-      setText('#streamLabel', '掲載ホスト');
-      setText('#memberLabel', '掲載週');
-      setText('#periods', numberText(values.length));
-      setText('#maxListener', rankingBest == null ? '—' : `${numberFormatter.format(rankingBest)}位`);
-      setText('#streamGrowth', numberText(rankingHosts.size));
-      setText('#memberGrowth', numberText(rankingWeeks.size));
-      return;
     }
 
     if (mode === 'tracks') {

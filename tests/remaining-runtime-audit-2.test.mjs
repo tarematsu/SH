@@ -166,7 +166,6 @@ test('history performance layer keeps summary values while using shared formatte
       const number = Number(value);
       return Number.isFinite(number) ? number : null;
     },
-    rankingCellValue() { return null; },
     $: node,
     formatDate() {},
     displayCell() {},
@@ -182,14 +181,5 @@ test('history performance layer keeps summary values while using shared formatte
   assert.equal(node('#maxListener').textContent, '15');
   assert.equal(node('#streamGrowth').textContent, '30');
   assert.equal(node('#memberGrowth').textContent, '3');
-
-  context.updateSummary([
-    { ranking_date: '2026-01-01', host_name: 'a', rank: 5 },
-    { ranking_date: '2026-01-08', host_name: 'a', rank: 3 },
-    { ranking_date: '2026-01-08', host_name: 'b', rank: null },
-  ], 'ranking');
-  assert.equal(node('#maxListener').textContent, '3位');
-  assert.equal(node('#streamGrowth').textContent, '2');
-  assert.equal(node('#memberGrowth').textContent, '2');
   assert.equal(context.formatDate('2026-07-02'), '2026/07/02');
 });

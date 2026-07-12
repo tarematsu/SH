@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import { queueStructuralPayload } from '../functions/lib/d1-lean-ingest.js';
-import { normalizePlaybackTrack } from '../functions/lib/playback.js';
+import { inferArtistFromDisplayTitle, normalizePlaybackTrack } from '../functions/lib/playback.js';
 
 test('queue structural payload keeps Spotify fields and ignores non-Spotify IDs', () => {
   const payload = queueStructuralPayload({
@@ -43,4 +43,8 @@ test('playback track output omits non-Spotify IDs even when present in old rows'
 
   assert.equal(track.spotify_id, 'sp1');
   assert.equal('apple_music_id' in track, false);
+});
+
+test('playback derives artist from UTF-8 dash-separated display titles', () => {
+  assert.equal(inferArtistFromDisplayTitle('Song \u2014 Artist', 'Song'), 'Artist');
 });

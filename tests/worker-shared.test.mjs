@@ -3,12 +3,14 @@ import assert from 'node:assert/strict';
 
 import {
   createShReadFetch,
+  cleanSpotifyTitle,
   enrichTracks,
   fetchTrackMetadata,
   jsonResponse,
   normalizeComments,
   resetTrackMetadataQueueCache,
 } from '../worker/src/shared.js';
+import { cleanSpotifyTitle as sharedCleanSpotifyTitle } from '../worker/src/shared-utils.js';
 
 async function withFetch(fetchImpl, callback) {
   const originalFetch = globalThis.fetch;
@@ -38,6 +40,15 @@ test('track metadata uses Spotify only even when an Apple Music ID is present', 
     assert.deepEqual(Object.keys(value.raw), ['spotify']);
     assert.deepEqual(hosts, ['open.spotify.com']);
   });
+});
+
+test('shared title normalization preserves dash-separated artists', () => {
+  for (const parse of [cleanSpotifyTitle, sharedCleanSpotifyTitle]) {
+    const value = parse('Song - song and lyrics by Artist | Spotify');
+    assert.equal(value.title, 'Song');
+    assert.equal(value.artist, 'Artist');
+    assert.equal(value.display_title, 'Song \u2014 Artist');
+  }
 });
 
 test('completed queue metadata skips repeated D1 lookups', async () => {

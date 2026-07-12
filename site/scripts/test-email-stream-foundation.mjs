@@ -4,9 +4,7 @@ import { spawnSync } from 'node:child_process';
 
 const stateDirectory = path.resolve('.wrangler-email-foundation-test-state');
 const migrationRunner = path.resolve('scripts/apply-d1-migrations.mjs');
-const wranglerExecutable = process.platform === 'win32'
-  ? path.resolve('node_modules/.bin/wrangler.cmd')
-  : path.resolve('node_modules/.bin/wrangler');
+const wranglerScript = path.resolve('node_modules/wrangler/bin/wrangler.js');
 
 function run(command, args, env = process.env) {
   const result = spawnSync(command, args, {
@@ -32,7 +30,7 @@ try {
     D1_MIGRATION_PERSIST_TO: stateDirectory,
   });
 
-  run(wranglerExecutable, [
+  run(process.execPath, [wranglerScript, ...[
     'd1', 'execute', 'sh-monitor',
     '--local', '--persist-to', stateDirectory,
     '--command', `INSERT INTO sh_email_stream_snapshots (
@@ -48,7 +46,7 @@ try {
     SELECT source_key,week_of,stream_count,validation_status
     FROM sh_email_stream_snapshots
     WHERE source_key='stationhead-email:2026-06-29';`,
-  ]);
+  ]]);
 } finally {
   rmSync(stateDirectory, { recursive: true, force: true });
 }

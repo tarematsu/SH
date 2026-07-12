@@ -10,13 +10,14 @@
     "start:standby": "set COLLECTOR_MODE=standby&& node run-failover.mjs",
     "start:direct": "node --import=./fetch-cache.mjs collector.mjs",
     "once": "node --import=./fetch-cache.mjs collector.mjs --once",
-    "check": "node --check collector.mjs && node --check host-monitor.mjs && node --check run-failover.mjs && node --check weekly-leaderboard.mjs && node --check fetch-cache.mjs"
+    "check": "node --check collector.mjs && node --check collector-payload.mjs && node --check collector-track-metadata.mjs && node --check host-monitor.mjs && node --check host-monitor-normalize.mjs && node --check run-failover.mjs && node --check fetch-cache.mjs"
   },
   "dependencies": {
     "dotenv": "^16.4.7",
     "ws": "^8.18.0",
     "fetch-cookie": "^3.1.0",
     "tough-cookie": "^5.1.2",
-    "playwright-core": "^1.53.0"
+    "playwright-core": "^1.53.0",
+    "sh-shared": "file:../packages/sh-shared"
   }
 }

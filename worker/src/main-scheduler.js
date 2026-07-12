@@ -1,6 +1,5 @@
 import app from './email-recap-index.js';
 import { runCloudHostMonitor } from './cloud-host-monitor.js';
-import { runCloudWeeklyLeaderboard } from './cloud-weekly-leaderboard.js';
 import { runScheduledMaintenance } from './scheduled-maintenance.js';
 
 const DEFAULT_PRIMARY_WATCHDOG_MS = 55_000;
@@ -11,7 +10,6 @@ export const COLLECTION_ABORT_SIGNAL = '__COLLECTION_ABORT_SIGNAL';
 export const COLLECTION_DEADLINE_AT = '__COLLECTION_DEADLINE_AT';
 
 const DEFAULT_AUXILIARY_RUNNERS = Object.freeze({
-  weekly: { failureEvent: 'cloud_weekly_leaderboard_failed', run: runCloudWeeklyLeaderboard },
   maintenance: { failureEvent: 'data_maintenance_failed', run: runScheduledMaintenance },
   host: { failureEvent: 'cloud_host_monitor_failed', run: runCloudHostMonitor, onFailureOnly: true },
 });
@@ -51,9 +49,11 @@ export function withCollectionRuntime(env = {}, signal = null, deadlineAt = null
 
 function startAuxiliaryOnce(flight, env, includeFailureOnly, runners = DEFAULT_AUXILIARY_RUNNERS) {
   const tasks = Object.entries(runners).flatMap(([name, task]) => {
-    if (task.onFailureOnly && !includeFailureOnly) return [];
-    if (!flight[name]) flight[name] = Promise.resolve().then(() => task.run(env));
-    return [{ failureEvent: task.failureEvent || 'scheduled_auxiliary_failed', promise: flight[name] }];
+    const definition = typeof task === 'function' ? {} : (task || {});
+    const runner = typeof task === 'function' ? task : task?.run;
+    if (definition.onFailureOnly && !includeFailureOnly) return [];
+    if (!flight[name]) flight[name] = Promise.resolve().then(() => runner(env));
+    return [{ failureEvent: definition.failureEvent || 'scheduled_auxiliary_failed', promise: flight[name] }];
   });
   return Promise.allSettled(tasks.map((task) => task.promise)).then((results) => {
     for (const [index, result] of results.entries()) {

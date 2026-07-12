@@ -213,6 +213,5 @@ test('history page trusts server completeness and installs final runtime optimiz
     'utf8',
   );
   assert.match(runtimeSource, /updateSummaryRuntimeSinglePass/);
-  assert.match(runtimeSource, /drawRankingSingleIndex/);
   assert.doesNotMatch(runtimeSource, /rows\.filter\(\(row\).*host_name/s);
 });

@@ -18,7 +18,6 @@ import {
 import { completeMetadataCount } from '../site/functions/api/track-metadata-refresh.js';
 import { cachedSnapshotCount, resetSnapshotCountCache } from '../site/functions/api/health.js';
 import { compactProbePayload, officialCommentsToWrite } from '../worker/src/official-news-index.js';
-import { leaderboardCheckDue } from '../worker/src/cloud-weekly-leaderboard.js';
 
 test('unchanged queue items only write when their stored state changes', () => {
   const observedAt = 10_000_000;
@@ -121,12 +120,4 @@ test('official probe payload excludes full station and queue bodies', () => {
   assert.ok(compact.queueJson.length < 200);
   assert.equal(JSON.parse(compact.queueJson).track_count, 100);
   assert.equal(JSON.parse(compact.rawJson).huge_unused_field, undefined);
-});
-
-test('weekly leaderboard reuses one fetch-state row and skips missing schema', () => {
-  const now = 1_000_000;
-  assert.equal(leaderboardCheckDue(null, now, 900_000), true);
-  assert.equal(leaderboardCheckDue({ unavailable: true }, now, 900_000), false);
-  assert.equal(leaderboardCheckDue({ fetched_at: now - 1000 }, now, 900_000), false);
-  assert.equal(leaderboardCheckDue({ fetched_at: now - 900_000 }, now, 900_000), true);
 });

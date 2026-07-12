@@ -9,7 +9,7 @@ export function inferArtistFromDisplayTitle(displayTitle, title) {
   const display = String(displayTitle || '').trim();
   const knownTitle = String(title || '').trim();
   if (!display) return null;
-  for (const separator of [' 窶・', ' 窶・', ' - ', ' ﾂｷ ', ' 窶｢ ']) {
+  for (const separator of [' \u2014 ', ' \u2013 ', ' - ', ' \u30fb ', ' \u2022 ']) {
     const index = display.lastIndexOf(separator);
     if (index <= 0) continue;
     const left = display.slice(0, index).trim();

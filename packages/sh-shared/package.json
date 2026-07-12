@@ -1,0 +1,8 @@
+{
+  "name": "sh-shared",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "main": "index.mjs",
+  "description": "Shared normalization helpers used by both the collector (Node.js) and worker (Cloudflare Workers) packages."
+}

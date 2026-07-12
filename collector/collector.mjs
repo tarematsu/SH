@@ -7,6 +7,13 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { createHostMonitoring } from './host-monitor.mjs';
+import {
+  extractIds as extractIdsFromChannel,
+  extractQueue as extractQueueFromChannel,
+  normalizeComments as normalizeCommentsPayload,
+  normalizeSnapshot as normalizeChannelSnapshot,
+} from './collector-payload.mjs';
+import { createTrackMetadataEnricher } from './collector-track-metadata.mjs';
 
 const API_BASE = 'https://production1.stationhead.com';
 const PUSHER_KEY = '982c86a21530b654bfb2';
@@ -279,246 +286,28 @@ async function ingest(type, data, observedAt = Date.now()) {
   return response.json().catch(() => ({}));
 }
 
-function firstDefined(...values) {
-  return values.find((v) => v !== undefined && v !== null);
-}
-
 function extractIds(channel) {
-  const station = channel?.current_station || null;
-  const party = station?.streaming_party || channel?.streaming_party || null;
-  runtime.channelId = firstDefined(channel?.id, runtime.channelId);
-  runtime.stationId = firstDefined(channel?.current_station_id, station?.id, runtime.stationId);
-  runtime.streamingPartyId = firstDefined(party?.id, channel?.streaming_party_id, runtime.streamingPartyId);
+  extractIdsFromChannel(channel, runtime);
 }
 
 function normalizeSnapshot(channel) {
-  const station = channel?.current_station || {};
-  const party = station?.streaming_party || channel?.streaming_party || {};
-  const host = station?.broadcast?.broadcasters?.find((b) => b?.is_host) || station?.broadcast?.broadcasters?.[0] || null;
-  return {
-    channel_id: firstDefined(channel?.id, runtime.channelId),
-    channel_alias: channel?.alias || config.channelAlias,
-    channel_name: channel?.channel_name ?? null,
-    station_id: firstDefined(channel?.current_station_id, station?.id, runtime.stationId),
-    is_launched: station?.is_launched ?? null,
-    is_broadcasting: station?.is_broadcasting ?? null,
-    chat_status: station?.chat_status ?? null,
-    listener_count: firstDefined(station?.listener_count, channel?.listener_count),
-    online_member_count: channel?.online_member_count ?? null,
-    total_member_count: channel?.total_member_count ?? null,
-    guest_count: firstDefined(station?.guest_count, channel?.guest_count),
-    total_listens: station?.total_listens ?? null,
-    stream_goal: party?.stream_goal ?? null,
-    current_stream_count: firstDefined(party?.current_stream_count, party?.current_stream_),
-    host_account_id: firstDefined(host?.account_id, host?.account?.id),
-    host_handle: host?.account?.handle ?? null,
-    broadcast_start_time: station?.broadcast?.start_time ?? null,
-    raw: channel,
-  };
+  return normalizeChannelSnapshot(channel, runtime, config);
 }
 
 function normalizeComments(payload) {
-  const candidates = [
-    payload,
-    payload?.items,
-    payload?.data?.items,
-    payload?.chats?.items,
-    payload?.chats,
-  ];
-  const items = candidates.find(Array.isArray) || [];
-  return items.map((chat) => ({
-    id: chat?.id,
-    station_id: chat?.station_id ?? runtime.stationId,
-    account_id: chat?.account_id ?? chat?.account?.id ?? null,
-    handle: chat?.account?.handle ?? null,
-    text: chat?.text ?? null,
-    text_with_xml: chat?.text_with_xml ?? null,
-    chat_time: chat?.chat_time ?? null,
-    chat_time_ms: chat?.chat_time_ms ?? null,
-    all_access_chat: chat?.all_access_chat ?? null,
-    boost_chat: chat?.boost_chat ?? null,
-    active_stream_days: chat?.active_stream_days ?? null,
-    followers: chat?.account?.followers ?? null,
-    following: chat?.account?.following ?? null,
-    emoji: chat?.account?.emoji ?? null,
-    raw: chat,
-  })).filter((x) => x.id != null);
+  return normalizeCommentsPayload(payload, runtime.stationId);
 }
 
 function extractQueue(channel) {
-  const station = channel?.current_station || {};
-  const queue = station?.queue || channel?.queue || null;
-  if (!queue) return null;
-  const queueTracks = queue?.queue_tracks || queue?.tracks || [];
-  return {
-    station_id: firstDefined(queue?.station_id, station?.id, runtime.stationId),
-    queue_id: queue?.id ?? null,
-    start_time: queue?.start_time ?? null,
-    is_paused: queue?.is_paused ?? null,
-    tracks: queueTracks.map((item, index) => {
-      const track = item?.track || item;
-      return {
-        position: index,
-        queue_track_id: item?.id ?? null,
-        stationhead_track_id: track?.id ?? null,
-        spotify_id: track?.spotify_id ?? null,
-        apple_music_id: track?.apple_music_id ?? null,
-        deezer_id: track?.deezer_id ?? null,
-        isrc: track?.isrc ?? null,
-        duration_ms: track?.duration ?? null,
-        preview_url: track?.preview ?? null,
-        bite_count: track?.bite_count ?? null,
-        raw: item,
-      };
-    }),
-    raw: queue,
-  };
+  return extractQueueFromChannel(channel, runtime);
 }
 
-
-function cleanSpotifyTitle(rawTitle) {
-  const cleaned = String(rawTitle || '')
-    .replace(/\s*\|\s*Spotify\s*$/i, '')
-    .replace(/\s*-\s*song and lyrics by\s*/i, ' — ')
-    .trim();
-  const [title, ...artistParts] = cleaned.split(/\s+—\s+/);
-  return {
-    title: title || rawTitle || null,
-    artist: artistParts.join(' — ') || null,
-    display_title: cleaned || rawTitle || null,
-  };
-}
-
-async function lookupStoredTrackMetadata(ids) {
-  if (!ids.length) return new Map();
-  const url = new URL(config.ingestUrl);
-  url.searchParams.set('type', 'track_lookup');
-  url.searchParams.set('ids', ids.join(','));
-  const response = await fetch(url, {
-    headers: { authorization: `Bearer ${config.ingestSecret}` },
-    signal: AbortSignal.timeout(20_000),
-  });
-  if (!response.ok) {
-    const body = await response.text().catch(() => '');
-    throw new Error(`track lookup failed ${response.status}: ${body.slice(0, 300)}`);
-  }
-  const data = await response.json();
-  return new Map((data.tracks || []).map((t) => [t.spotify_id, t]));
-}
-
-function highResolutionArtwork(url) {
-  if (!url) return null;
-  return String(url)
-    .replace(/\/\d+x\d+bb\./, '/600x600bb.')
-    .replace(/\/\d+x\d+-\d+\./, '/600x600-75.');
-}
-
-async function fetchAppleMetadata(track) {
-  if (!track?.apple_music_id) return null;
-  const storefronts = ['JP', 'US', null];
-  for (const country of storefronts) {
-    const params = new URLSearchParams({ id: String(track.apple_music_id), entity: 'song' });
-    if (country) params.set('country', country);
-    const response = await fetch(`https://itunes.apple.com/lookup?${params}`, {
-      headers: { accept: 'application/json' },
-      signal: AbortSignal.timeout(20_000),
-    });
-    if (!response.ok) continue;
-    const raw = await response.json();
-    const item = (raw.results || []).find((v) => v.kind === 'song' && v.trackName && v.artistName)
-      || (raw.results || []).find((v) => v.trackName && v.artistName);
-    if (!item) continue;
-    return {
-      title: item.trackName,
-      artist: item.artistName,
-      display_title: `${item.trackName} — ${item.artistName}`,
-      thumbnail_url: highResolutionArtwork(item.artworkUrl100 || item.artworkUrl60),
-      source: `apple_itunes_lookup_${country || 'default'}`,
-      raw,
-    };
-  }
-  return null;
-}
-
-async function fetchSpotifyMetadata(track) {
-  const spotifyId = track?.spotify_id;
-  if (!spotifyId) return null;
-  const spotifyUrl = `https://open.spotify.com/track/${encodeURIComponent(spotifyId)}`;
-
-  const apple = await fetchAppleMetadata(track).catch((error) => {
-    log('warn', `Apple metadata error id=${track.apple_music_id || '-'} ${error.message}`);
-    return null;
-  });
-
-  let spotifyRaw = null;
-  try {
-    const url = `https://open.spotify.com/oembed?url=${encodeURIComponent(spotifyUrl)}`;
-    const response = await fetch(url, {
-      headers: { accept: 'application/json' },
-      signal: AbortSignal.timeout(20_000),
-    });
-    if (response.ok) spotifyRaw = await response.json();
-  } catch (error) {
-    log('warn', `Spotify oEmbed error id=${spotifyId} ${error.message}`);
-  }
-
-  if (!apple && !spotifyRaw?.title) {
-    log('warn', `Track metadata unavailable spotify=${spotifyId} apple=${track.apple_music_id || '-'}`);
-    return null;
-  }
-
-  const parsed = cleanSpotifyTitle(spotifyRaw?.title);
-  const spotifyArtist = String(spotifyRaw?.author_name || spotifyRaw?.author || '').trim() || null;
-  const resolvedArtist = apple?.artist || spotifyArtist || parsed.artist || null;
-  const resolvedTitle = apple?.title || parsed.title;
-  return {
-    spotify_id: spotifyId,
-    spotify_url: spotifyUrl,
-    title: resolvedTitle,
-    artist: resolvedArtist,
-    display_title: apple?.display_title || (resolvedTitle && resolvedArtist ? `${resolvedTitle} — ${resolvedArtist}` : parsed.display_title),
-    thumbnail_url: apple?.thumbnail_url || spotifyRaw?.thumbnail_url || null,
-    source: apple ? 'apple_itunes_lookup+spotify_oembed' : 'spotify_oembed',
-    fetched_at: Date.now(),
-    raw: { apple: apple?.raw || null, spotify: spotifyRaw },
-  };
-}
-
-async function enrichNewTracks(queue, observedAt) {
-  const sourceTracks = [...new Map(
-    (queue?.tracks || [])
-      .filter((t) => t.spotify_id)
-      .map((t) => [t.spotify_id, t])
-  ).values()];
-  if (!sourceTracks.length) return;
-
-  const stored = await lookupStoredTrackMetadata(sourceTracks.map((t) => t.spotify_id));
-  const incomplete = (value) => {
-    if (!value) return true;
-    const artist = String(value.artist || '').trim();
-    return !value.title || !artist || /^JP[A-Z0-9]{8,}$/i.test(artist);
-  };
-  const missing = sourceTracks.filter((track) => incomplete(stored.get(track.spotify_id)));
-  if (!missing.length) {
-    log('debug', `track metadata cache hit ${sourceTracks.length}/${sourceTracks.length}`);
-    return;
-  }
-
-  const tracks = [];
-  for (let i = 0; i < missing.length; i += 3) {
-    const chunk = missing.slice(i, i + 3);
-    const results = await Promise.all(chunk.map((track) => fetchSpotifyMetadata(track).catch((error) => {
-      log('warn', `Track metadata error id=${track.spotify_id}`, error.message);
-      return null;
-    })));
-    tracks.push(...results.filter(Boolean));
-  }
-
-  if (tracks.length) {
-    await ingest('track_metadata', { tracks }, observedAt);
-    log('info', `track metadata saved refreshed=${tracks.length} cached=${stored.size}`);
-  }
-}
+const { enrichNewTracks } = createTrackMetadataEnricher({
+  ingestUrl: config.ingestUrl,
+  ingestSecret: config.ingestSecret,
+  ingest,
+  log,
+});
 
 async function pollOnce() {
   const observedAt = Date.now();

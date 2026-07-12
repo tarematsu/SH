@@ -3,21 +3,18 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 
 const stateDirectory = path.resolve('.wrangler-pages-test-state');
-const executable = process.platform === 'win32'
-  ? path.resolve('node_modules/.bin/wrangler.cmd')
-  : path.resolve('node_modules/.bin/wrangler');
+const wranglerScript = path.resolve('node_modules/wrangler/bin/wrangler.js');
 const databaseDirectory = path.resolve('..', 'database');
 const schemaFiles = [
   'schema.sql',
   'history-schema.sql',
   'host-monitoring.sql',
   'track-like-observations.sql',
-  'ranking-all-schema.sql',
   'migrations/004_collector_coordination.sql',
 ];
 
 function run(args) {
-  const result = spawnSync(executable, args, {
+  const result = spawnSync(process.execPath, [wranglerScript, ...args], {
     cwd: process.cwd(),
     env: { ...process.env, CI: 'true' },
     encoding: 'utf8',
@@ -53,7 +50,6 @@ try {
     'sh_host_broadcast_sessions',
     'sh_host_station_snapshots',
     'sh_host_raw_events',
-    'sh_channel_rankings',
     'sh_legacy_snapshots',
     'sh_track_like_observations',
     'sh_weekly_summary',

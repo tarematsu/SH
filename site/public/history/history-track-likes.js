@@ -4,9 +4,6 @@
   const baseDisplayCell = displayCell;
   const likeFormatter = new Intl.NumberFormat('ja-JP');
   const numberFormatter = new Intl.NumberFormat('ja-JP', { maximumFractionDigits: 1 });
-  const rankingPalette = ['#f6c7d9', '#9c7bf4', '#7ee787', '#ffb86b', '#7ad7ff'];
-  let rankingModelSource = null;
-  let rankingModel = null;
 
   visibleKeys = (mode) => mode === 'tracks'
     ? [...baseVisibleKeys(mode), 'like_count']
@@ -38,11 +35,8 @@
 
   updateSummary = function updateSummaryRuntimeSinglePass(rows, mode) {
     const values = Array.isArray(rows) ? rows : [];
-    const rankingHosts = mode === 'ranking' ? new Set() : null;
-    const rankingWeeks = mode === 'ranking' ? new Set() : null;
     const trackDays = mode === 'tracks' ? new Set() : null;
     const trackKeys = mode === 'tracks' ? new Set() : null;
-    let rankingBest = null;
     let listenerMax = null;
     let listenerMin = null;
     let listenerAverageTotal = 0;
@@ -59,13 +53,6 @@
     let trackPlayMax = 0;
 
     for (const row of values) {
-      if (mode === 'ranking') {
-        const rank = finiteNumber(row.rank);
-        if (rank != null) rankingBest = rankingBest == null ? rank : Math.min(rankingBest, rank);
-        if (row.host_name) rankingHosts.add(row.host_name);
-        if (row.ranking_date) rankingWeeks.add(row.ranking_date);
-        continue;
-      }
       if (mode === 'tracks') {
         if (row.period_complete === false || row.play_count_excluded === true) continue;
         if (row.play_date) trackDays.add(row.play_date);
@@ -106,18 +93,6 @@
           durationCount += 1;
         }
       }
-    }
-
-    if (mode === 'ranking') {
-      setTextIfChanged('#periodLabel', '期間数');
-      setTextIfChanged('#maxLabel', '最高順位');
-      setTextIfChanged('#streamLabel', '掲載ホスト');
-      setTextIfChanged('#memberLabel', '掲載週');
-      setTextIfChanged('#periods', numberText(values.length));
-      setTextIfChanged('#maxListener', rankingBest == null ? '—' : `${numberFormatter.format(rankingBest)}位`);
-      setTextIfChanged('#streamGrowth', numberText(rankingHosts.size));
-      setTextIfChanged('#memberGrowth', numberText(rankingWeeks.size));
-      return;
     }
 
     if (mode === 'tracks') {
@@ -171,132 +146,5 @@
     setTextIfChanged('#maxListener', numberText(listenerMax));
     setTextIfChanged('#streamGrowth', '—');
     setTextIfChanged('#memberGrowth', '—');
-  };
-
-  function buildRankingModel(values) {
-    const hostNames = new Map();
-    const byHost = new Map();
-    const weekSet = new Set();
-    let maxRank = 10;
-
-    for (const row of values) {
-      const rank = rankNumber(row);
-      if (rank != null) maxRank = Math.max(maxRank, rank);
-      const host = String(row.host_name || row.host_alias || '').trim();
-      const week = String(row.ranking_date || '');
-      if (week) weekSet.add(week);
-      if (!host || !week) continue;
-      const hostKey = host.toLowerCase();
-      if (!hostNames.has(hostKey)) hostNames.set(hostKey, host);
-      let weeks = byHost.get(hostKey);
-      if (!weeks) {
-        weeks = new Map();
-        byHost.set(hostKey, weeks);
-      }
-      weeks.set(week, row);
-    }
-
-    const hosts = [...hostNames.entries()].sort(([aKey, a], [bKey, b]) => {
-      const ai = FEATURED_HOSTS.indexOf(aKey);
-      const bi = FEATURED_HOSTS.indexOf(bKey);
-      if (ai >= 0 || bi >= 0) return (ai < 0 ? 999 : ai) - (bi < 0 ? 999 : bi);
-      return a.localeCompare(b);
-    });
-    const weeks = [...weekSet].sort();
-    const series = new Array(hosts.length);
-    for (let hostIndex = 0; hostIndex < hosts.length; hostIndex += 1) {
-      const [hostKey, host] = hosts[hostIndex];
-      const rowsByWeek = byHost.get(hostKey) || new Map();
-      const hostRows = new Array(weeks.length);
-      const ranks = new Array(weeks.length);
-      for (let index = 0; index < weeks.length; index += 1) {
-        const row = rowsByWeek.get(weeks[index]) || null;
-        hostRows[index] = row;
-        ranks[index] = row ? rankNumber(row) : null;
-      }
-      series[hostIndex] = {
-        host,
-        values: hostRows,
-        ranks,
-        color: rankingPalette[hostIndex % rankingPalette.length],
-      };
-    }
-    return {
-      weeks,
-      series,
-      maxRank,
-      ticks: [...new Set([
-        1,
-        Math.ceil(maxRank / 4),
-        Math.ceil(maxRank / 2),
-        Math.ceil(maxRank * 3 / 4),
-        maxRank,
-      ])].sort((a, b) => a - b),
-    };
-  }
-
-  function rankingModelFor(values) {
-    if (rankingModelSource === values && rankingModel) return { model: rankingModel, rebuilt: false };
-    rankingModelSource = values;
-    rankingModel = buildRankingModel(values);
-    return { model: rankingModel, rebuilt: true };
-  }
-
-  drawRanking = function drawRankingSingleIndex(rows, selected = null) {
-    const values = Array.isArray(rows) ? rows : [];
-    const { model, rebuilt } = rankingModelFor(values);
-    const { weeks, series, maxRank, ticks } = model;
-    const { ctx, width, height } = prepareCanvas();
-    if (!weeks.length || !series.length) {
-      drawEmpty(ctx, width, height, 'ランキングデータがありません');
-      return;
-    }
-
-    const area = { left: 58, right: 18, top: 18, bottom: 42 };
-    area.width = Math.max(1, width - area.left - area.right);
-    area.height = Math.max(1, height - area.top - area.bottom);
-    drawGrid(ctx, width, height, area);
-    const xPositions = makeXPositions(weeks, area);
-    const yFor = (rank) => area.top + (Math.max(1, rank) - 1) / Math.max(1, maxRank - 1) * area.height;
-    ctx.font = '10.5px system-ui';
-    ctx.fillStyle = '#aaa3b5';
-    ctx.textAlign = 'right';
-    ctx.textBaseline = 'middle';
-    for (const rank of ticks) ctx.fillText(`${rank}位`, area.left - 8, yFor(rank));
-    drawDateAxis(ctx, weeks, xPositions, width, height, area);
-
-    for (const item of series) {
-      ctx.strokeStyle = item.color;
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      let open = false;
-      for (let index = 0; index < item.ranks.length; index += 1) {
-        const rank = item.ranks[index];
-        if (rank == null) {
-          open = false;
-          continue;
-        }
-        const x = xPositions[index];
-        const y = yFor(rank);
-        if (!open) ctx.moveTo(x, y);
-        else ctx.lineTo(x, y);
-        open = true;
-      }
-      ctx.stroke();
-      ctx.fillStyle = item.color;
-      for (let index = 0; index < item.ranks.length; index += 1) {
-        const rank = item.ranks[index];
-        if (rank == null) continue;
-        ctx.beginPath();
-        ctx.arc(xPositions[index], yFor(rank), 3, 0, Math.PI * 2);
-        ctx.fill();
-      }
-    }
-
-    const selectedWeekIndex = Number.isInteger(selected) ? selected : null;
-    if (selectedWeekIndex != null && weeks[selectedWeekIndex]) drawSelection(ctx, xPositions[selectedWeekIndex], area);
-    chartState = { type: 'ranking', weeks, xPositions, series, selectedIndex: selectedWeekIndex };
-    if (rebuilt) setChartRange(weeks);
-    if (selectedWeekIndex != null) renderRankingDetail(selectedWeekIndex);
   };
 })();

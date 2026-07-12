@@ -2,7 +2,6 @@ const $ = (selector) => document.querySelector(selector);
 const $$ = (selector) => [...document.querySelectorAll(selector)];
 const CACHE_MS = 60 * 1000;
 const MAX_CHART_POINTS = 240;
-const FEATURED_HOSTS = ['sakuramankai', 'sakurazaka46jp'];
 
 let current = [];
 let currentMode = 'weekly';
@@ -18,7 +17,6 @@ const MODE_HELP = {
   monthly: ['月次集計', '月ごとの長期推移を少ない読み取り量で表示します。'],
   broadcasts: ['公式ステヘ', '過去の公式Stationhead放送を放送単位で表示します。'],
   raw: ['詳細データ', '元の記録を200件ずつ表示します。検索範囲は最大31日です。'],
-  ranking: ['週間リーダーボード', 'Stationheadで放送しているホストの週次順位です。掲載がない週は「圏外」として表示します。'],
 };
 
 const SUMMARY_LABELS = {
@@ -39,16 +37,6 @@ const RAW_LABELS = {
   observed_jst: '取得日時', source_note: '放送名', listener_count: '同接', total_stream_count: '総再生数',
   track_title: '曲名', artist_name: 'アーティスト', likes: 'いいね', comment_velocity: 'コメント勢い', host_handle: 'ホスト',
   total_member_count: 'メンバー', quality_score: '品質',
-};
-
-const RANKING_LABELS = {
-  ranking_date: '週', host_name: 'ホスト', rank: '順位', previous_rank: '前週順位',
-  rank_change: '前週比', source_sheet: '順位データ出典', quality_score: '品質',
-};
-
-const WEEKLY_METRIC_LABELS = {
-  ranking_date: '週', stream_growth: '週間再生数', member_growth: '週間メンバー増加',
-  listener_avg: '平均同接', listener_min: '最小同接', listener_max: '最大同接',
 };
 
 function finiteNumber(value) {
@@ -97,7 +85,7 @@ function shortDate(value, showYear = false) {
 }
 
 function rowDate(row) {
-  return row?.ranking_date || row?.period_key || row?.started_jst || row?.observed_jst || row?.observed_at || '';
+  return row?.period_key || row?.started_jst || row?.observed_jst || row?.observed_at || '';
 }
 
 const todayJst = () => new Intl.DateTimeFormat('sv-SE', { timeZone: 'Asia/Tokyo', year:'numeric', month:'2-digit', day:'2-digit' }).format(new Date());
@@ -110,20 +98,14 @@ function setMode(mode) {
   $$('.mode-tabs button').forEach((button) => button.classList.toggle('active', button.dataset.mode === mode));
   const [title, description] = MODE_HELP[mode];
   $('#guide').innerHTML = `<strong>${title}</strong><span>${description}</span>`;
-  const ranking = mode === 'ranking';
-  $('#rankingScopeWrap').hidden = !ranking;
-  $('#hostWrap').hidden = !ranking;
-  $('#rankingWeeklyPanel').hidden = !ranking;
-  $('#metric').hidden = ranking || mode === 'broadcasts';
+  $('#metric').hidden = mode === 'broadcasts';
   $('#metric').disabled = mode === 'raw' || mode === 'broadcasts';
   $('#chartPanel').hidden = mode === 'raw';
-  $('#chartTitle').textContent = ranking ? '櫻坂ホストの順位推移' : mode === 'broadcasts' ? '公式ステヘ 最大同接推移' : '推移グラフ';
-  $('#chartFoot').textContent = ranking
-    ? '順位は1位が上です。掲載されなかった週は線をつながず、空白として表示します。'
-    : mode === 'broadcasts'
-      ? '各公式ステヘの最大同接を開始日時順に表示します。'
-      : '記録がない期間は線をつながず、空白として表示します。';
-  $('#tableTitle').textContent = ranking ? '週間リーダーボード' : mode === 'broadcasts' ? '公式ステヘ一覧' : mode === 'raw' ? '詳細データ一覧' : '集計データ一覧';
+  $('#chartTitle').textContent = mode === 'broadcasts' ? '公式ステヘ 最大同接推移' : '推移グラフ';
+  $('#chartFoot').textContent = mode === 'broadcasts'
+    ? '各公式ステヘの最大同接を開始日時順に表示します。'
+    : '記録がない期間は線をつながず、空白として表示します。';
+  $('#tableTitle').textContent = mode === 'broadcasts' ? '公式ステヘ一覧' : mode === 'raw' ? '詳細データ一覧' : '集計データ一覧';
   resetChartInfo();
 }
 
@@ -340,106 +322,10 @@ function draw(rows, metric, selectedIndex = null) {
   if (selected != null) renderSeriesDetail(points[selected], metric);
 }
 
-function rankNumber(row) {
-  const rank = finiteNumber(row.rank);
-  return rank == null ? null : rank;
-}
-
-function rankingHosts(rows) {
-  const seen = new Set();
-  const hosts = [];
-  for (const row of rows) {
-    const host = String(row.host_name || row.host_alias || '').trim();
-    if (!host) continue;
-    const key = host.toLowerCase();
-    if (!seen.has(key)) {
-      seen.add(key);
-      hosts.push(host);
-    }
-  }
-  return hosts.sort((a, b) => {
-    const ai = FEATURED_HOSTS.indexOf(a.toLowerCase());
-    const bi = FEATURED_HOSTS.indexOf(b.toLowerCase());
-    if (ai >= 0 || bi >= 0) return (ai < 0 ? 999 : ai) - (bi < 0 ? 999 : bi);
-    return a.localeCompare(b);
-  });
-}
-
-function drawRanking(rows, selected = null) {
-  const { ctx, width, height } = prepareCanvas();
-  const hosts = rankingHosts(rows);
-  const weeks = [...new Set(rows.map((row) => row.ranking_date).filter(Boolean))].sort();
-  if (!weeks.length || !hosts.length) {
-    drawEmpty(ctx, width, height, 'ランキングデータがありません');
-    return;
-  }
-  const area = { left: 58, right: 18, top: 18, bottom: 42 };
-  area.width = Math.max(1, width - area.left - area.right);
-  area.height = Math.max(1, height - area.top - area.bottom);
-  drawGrid(ctx, width, height, area);
-  const ranked = rows.map(rankNumber).filter((rank) => rank != null);
-  const maxRank = Math.max(10, ...(ranked.length ? ranked : [10]));
-  const xPositions = makeXPositions(weeks, area);
-  const yFor = (rank) => area.top + (Math.max(1, rank) - 1) / Math.max(1, maxRank - 1) * area.height;
-  ctx.font = '10.5px system-ui';
-  ctx.fillStyle = '#aaa3b5';
-  ctx.textAlign = 'right';
-  ctx.textBaseline = 'middle';
-  const ticks = [...new Set([1, Math.ceil(maxRank / 4), Math.ceil(maxRank / 2), Math.ceil(maxRank * 3 / 4), maxRank])].sort((a,b)=>a-b);
-  ticks.forEach((rank) => ctx.fillText(`${rank}位`, area.left - 8, yFor(rank)));
-  drawDateAxis(ctx, weeks, xPositions, width, height, area);
-  const palette = ['#f6c7d9', '#9c7bf4', '#7ee787', '#ffb86b', '#7ad7ff'];
-  const series = hosts.map((host, hostIndex) => {
-    const byWeek = new Map(rows.filter((row) => String(row.host_name || '').toLowerCase() === host.toLowerCase()).map((row) => [row.ranking_date, row]));
-    const values = weeks.map((week) => byWeek.get(week) || null);
-    ctx.strokeStyle = palette[hostIndex % palette.length];
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    let open = false;
-    values.forEach((row, index) => {
-      const rank = row ? rankNumber(row) : null;
-      if (rank == null) {
-        open = false;
-        return;
-      }
-      const x = xPositions[index];
-      const y = yFor(rank);
-      if (!open) ctx.moveTo(x, y);
-      else ctx.lineTo(x, y);
-      open = true;
-    });
-    ctx.stroke();
-    values.forEach((row, index) => {
-      const rank = row ? rankNumber(row) : null;
-      if (rank == null) return;
-      ctx.fillStyle = palette[hostIndex % palette.length];
-      ctx.beginPath();
-      ctx.arc(xPositions[index], yFor(rank), 3, 0, Math.PI * 2);
-      ctx.fill();
-    });
-    return { host, values, color: palette[hostIndex % palette.length] };
-  });
-  const selectedWeekIndex = Number.isInteger(selected) ? selected : null;
-  if (selectedWeekIndex != null && weeks[selectedWeekIndex]) drawSelection(ctx, xPositions[selectedWeekIndex], area);
-  chartState = { type: 'ranking', weeks, xPositions, series, selectedIndex: selectedWeekIndex };
-  setChartRange(weeks);
-  if (selectedWeekIndex != null) renderRankingDetail(selectedWeekIndex);
-}
-
 function renderSeriesDetail(point, metric) {
   if (!point) return;
   const label = currentMode === 'broadcasts' ? point.row.event_name || '公式ステヘ' : SUMMARY_LABELS[metric] || metric;
   $('#chartDetail').innerHTML = `<time>${escapeHtml(formatDate(point.date, currentMode === 'broadcasts'))}</time><div class="chart-detail-values"><div><strong>${escapeHtml(label)}</strong><span>${fmt(point.value)}</span></div></div>`;
-}
-
-function renderRankingDetail(index) {
-  if (!chartState || chartState.type !== 'ranking') return;
-  const week = chartState.weeks[index];
-  const values = chartState.series.map(({ host, values }) => ({ host, row: values[index] }));
-  $('#chartDetail').innerHTML = `<time>${escapeHtml(formatDate(week))}</time><div class="chart-detail-values">${values.map(({ host, row }) => {
-    const rank = row ? rankNumber(row) : null;
-    return `<div><strong>${escapeHtml(host)}</strong><span>${rank == null ? '圏外' : `${fmt(rank)}位`}</span></div>`;
-  }).join('')}</div>`;
 }
 
 function nearestIndex(xs, x) {
@@ -464,54 +350,25 @@ function handleChartPointer(event) {
   const index = nearestIndex(chartState.xPositions, clientX - rect.left);
   if (index == null) return;
   selectedChartIndex = index;
-  if (chartState.type === 'ranking') drawRanking(current, index);
-  else draw(current, chartState.metric, index);
+  draw(current, chartState.metric, index);
 }
 
 $('#chart').addEventListener('click', handleChartPointer);
 $('#chart').addEventListener('touchstart', handleChartPointer, { passive: true });
 
-function rankingCellValue(key, row) {
-  if (key === 'rank') return row.is_out_of_rank ? '圏外' : `${fmt(row.rank)}位`;
-  if (key === 'previous_rank') return row.previous_rank == null ? (row.previous_out_of_rank ? '圏外' : '—') : `${fmt(row.previous_rank)}位`;
-  if (key === 'rank_change') {
-    const value = finiteNumber(row.rank_change);
-    if (value == null) return '—';
-    if (value > 0) return `↑ ${fmt(value)}`;
-    if (value < 0) return `↓ ${fmt(Math.abs(value))}`;
-    return '→ 0';
-  }
-  return null;
-}
-
-function rankingCellClass(key, row) {
-  if (key === 'rank') return row.is_out_of_rank ? 'rank-out' : 'rank-cell';
-  if (key === 'rank_change') {
-    const value = finiteNumber(row.rank_change);
-    return value > 0 ? 'rank-up' : value < 0 ? 'rank-down' : 'rank-same';
-  }
-  return '';
-}
-
 function visibleKeys(mode) {
   if (mode === 'broadcasts') return Object.keys(BROADCAST_LABELS);
   if (mode === 'raw') return Object.keys(RAW_LABELS);
-  if (mode === 'ranking') return Object.keys(RANKING_LABELS);
   return Object.keys(SUMMARY_LABELS);
 }
 
 function labelsFor(mode) {
   if (mode === 'broadcasts') return BROADCAST_LABELS;
   if (mode === 'raw') return RAW_LABELS;
-  if (mode === 'ranking') return RANKING_LABELS;
   return SUMMARY_LABELS;
 }
 
 function displayCell(key, row, mode) {
-  if (mode === 'ranking') {
-    const special = rankingCellValue(key, row);
-    if (special != null) return special;
-  }
   const value = row[key];
   if (key.includes('date') || key.includes('jst') || key === 'period_key') return formatDate(value, key.includes('jst'));
   if (typeof value === 'number') return fmt(value);
@@ -525,32 +382,18 @@ function renderTable(rows, mode, append = false) {
     $('#thead').innerHTML = `<tr>${keys.map((key) => `<th>${escapeHtml(labels[key] || key)}</th>`).join('')}</tr>`;
     $('#tbody').innerHTML = '';
   }
-  const html = rows.map((row) => `<tr${mode === 'ranking' && row.is_out_of_rank ? ' class="out-of-rank-row"' : ''}>${keys.map((key) => {
-    const cls = mode === 'ranking' ? rankingCellClass(key, row) : '';
-    return `<td${cls ? ` class="${cls}"` : ''}>${escapeHtml(displayCell(key, row, mode))}</td>`;
+  const html = rows.map((row) => `<tr>${keys.map((key) => {
+    return `<td>${escapeHtml(displayCell(key, row, mode))}</td>`;
   }).join('')}</tr>`).join('');
   $('#tbody').insertAdjacentHTML('beforeend', html);
 }
 
-function renderWeeklyMetrics(rows) {
-  const keys = Object.keys(WEEKLY_METRIC_LABELS);
-  $('#weeklyThead').innerHTML = `<tr>${keys.map((key) => `<th>${escapeHtml(WEEKLY_METRIC_LABELS[key])}</th>`).join('')}</tr>`;
-  $('#weeklyTbody').innerHTML = rows.map((row) => `<tr>${keys.map((key) => `<td>${escapeHtml(key === 'ranking_date' ? formatDate(row[key]) : fmt(row[key]))}</td>`).join('')}</tr>`).join('');
-}
-
 function updateSummary(rows, mode) {
   $('#periodLabel').textContent = mode === 'broadcasts' ? '放送数' : mode === 'raw' ? '表示件数' : '期間数';
-  $('#maxLabel').textContent = mode === 'ranking' ? '最高順位' : '最大同接';
-  $('#streamLabel').textContent = mode === 'ranking' ? '掲載ホスト' : '再生数増加';
-  $('#memberLabel').textContent = mode === 'ranking' ? '掲載週' : 'メンバー増加';
+  $('#maxLabel').textContent = '最大同接';
+  $('#streamLabel').textContent = '再生数増加';
+  $('#memberLabel').textContent = 'メンバー増加';
   $('#periods').textContent = fmt(rows.length);
-  if (mode === 'ranking') {
-    const ranks = rows.map((row) => finiteNumber(row.rank)).filter((value) => value != null);
-    $('#maxListener').textContent = ranks.length ? `${Math.min(...ranks)}位` : '—';
-    $('#streamGrowth').textContent = fmt(new Set(rows.map((row) => row.host_name).filter(Boolean)).size);
-    $('#memberGrowth').textContent = fmt(new Set(rows.map((row) => row.ranking_date).filter(Boolean)).size);
-    return;
-  }
   const listeners = rows.map((row) => finiteNumber(row.listener_max ?? row.listener_count)).filter((value) => value != null);
   const streamGrowth = rows.reduce((sum, row) => sum + (finiteNumber(row.stream_growth) || 0), 0);
   const memberGrowth = rows.reduce((sum, row) => sum + (finiteNumber(row.member_growth) || 0), 0);
@@ -606,13 +449,6 @@ function writeCache(key, data) {
   try { sessionStorage.setItem(key, JSON.stringify({ at: Date.now(), data })); } catch {}
 }
 
-function shouldShowRankingChart(rows) {
-  const scope = $('#rankingScope').value;
-  const search = $('#host').value.trim();
-  const hostCount = new Set(rows.map((row) => row.host_name).filter(Boolean)).size;
-  return scope === 'featured' || Boolean(search) || hostCount <= 5;
-}
-
 async function load({ append = false } = {}) {
   if (loading) return;
   loading = true;
@@ -620,10 +456,7 @@ async function load({ append = false } = {}) {
   const mode = currentMode;
   const from = $('#from').value;
   const to = $('#to').value;
-  const scope = mode === 'ranking' ? $('#rankingScope').value : '';
-  const host = mode === 'ranking' ? $('#host').value.trim() : '';
-  const extra = `${scope}:${host}`;
-  const key = cacheKey(mode, from, to, extra);
+  const key = cacheKey(mode, from, to);
   $('#notice').textContent = append ? '続きを読み込み中…' : '読み込み中…';
   try {
     let data = !append && mode !== 'raw' ? readCache(key) : null;
@@ -632,11 +465,6 @@ async function load({ append = false } = {}) {
       if (mode === 'raw') {
         params.set('limit', '200');
         if (append && nextCursor) params.set('cursor', nextCursor);
-      }
-      if (mode === 'ranking') {
-        params.set('limit', '5000');
-        params.set('scope', scope);
-        if (host) params.set('host', host);
       }
       const response = await fetch(`/api/history?${params}`, { cache: 'no-store' });
       data = await response.json();
@@ -649,26 +477,11 @@ async function load({ append = false } = {}) {
     updateSummary(current, mode);
     renderTable(data.rows || [], mode, append);
     $('#more').hidden = mode !== 'raw' || !data.has_more;
-    if (mode === 'ranking') {
-      renderWeeklyMetrics(data.weekly_metrics || []);
-      $('#rankingWeeklyPanel').hidden = false;
-      const showChart = shouldShowRankingChart(current);
-      $('#chartPanel').hidden = !showChart;
-      if (showChart) drawRanking(current);
-    } else {
-      $('#rankingWeeklyPanel').hidden = true;
-      $('#chartPanel').hidden = mode === 'raw';
-      if (mode !== 'raw') draw(current, mode === 'broadcasts' ? 'listener_max' : $('#metric').value);
-    }
+    $('#chartPanel').hidden = mode === 'raw';
+    if (mode !== 'raw') draw(current, mode === 'broadcasts' ? 'listener_max' : $('#metric').value);
     $('#chartDetail').innerHTML = '<span>グラフをタッチまたはクリックすると、その時点の詳細を表示します。</span>';
-    if (mode === 'ranking' && data.setup_required) {
-      $('#notice').textContent = '週間リーダーボードのデータがまだありません。ランキングSQLを投入してください。';
-    } else if (mode === 'ranking') {
-      const selected = host ? `「${host}」を検索` : scope === 'featured' ? '櫻坂を表示' : '全ホストを表示';
-      const suffix = data.truncated ? '（最大5000件）' : '';
-      $('#notice').textContent = `${selected}：${fmt(current.length)}行（圏外週を含む）${suffix}`;
-    } else if (mode === 'broadcasts' && data.setup_required) {
-      $('#notice').textContent = '公式ステヘのD1データが未登録です。database/sakurazaka46jp-history/import.sql をリモートD1へ投入してください。';
+    if (mode === 'broadcasts' && data.setup_required) {
+      $('#notice').textContent = '公式ステヘのD1データが未登録です。';
     } else if (mode === 'broadcasts') {
       const importedRows = data.diagnostic?.imported_rows;
       const suffix = importedRows != null ? `（D1登録 ${fmt(importedRows)}行）` : '';
@@ -704,18 +517,14 @@ $$('.range-presets button').forEach((button) => {
 $('#load').onclick = () => { nextCursor = null; load(); };
 $('#more').onclick = () => load({ append: true });
 $('#metric').onchange = () => {
-  if (currentMode !== 'ranking') draw(current, currentMode === 'broadcasts' ? 'listener_max' : $('#metric').value, selectedChartIndex);
+  draw(current, currentMode === 'broadcasts' ? 'listener_max' : $('#metric').value, selectedChartIndex);
 };
-$('#rankingScope').onchange = () => { nextCursor = null; load(); };
-$('#host').addEventListener('keydown', (event) => {
-  if (event.key === 'Enter') { event.preventDefault(); nextCursor = null; load(); }
-});
 $('#csv').onclick = () => {
   const keys = visibleKeys(currentMode);
   const labels = labelsFor(currentMode);
   const lines = [keys.map((key) => labels[key] || key), ...current.map((row) => keys.map((key) => row[key] ?? ''))]
     .map((line) => line.map((value) => `"${String(value).replaceAll('"', '""')}"`).join(','));
-  const blob = new Blob([`\ufeff${lines.join('\n')}`], { type: 'text/csv;charset=utf-8' });
+  const blob = new Blob([`﻿${lines.join('\n')}`], { type: 'text/csv;charset=utf-8' });
   const link = document.createElement('a');
   link.href = URL.createObjectURL(blob);
   link.download = `sh-${currentMode}-${todayJst()}.csv`;
@@ -725,9 +534,7 @@ $('#csv').onclick = () => {
 window.addEventListener('resize', () => {
   clearTimeout(resizeTimer);
   resizeTimer = setTimeout(() => {
-    if (currentMode === 'ranking') {
-      if (!$('#chartPanel').hidden) drawRanking(current, selectedChartIndex);
-    } else if (currentMode !== 'raw') draw(current, currentMode === 'broadcasts' ? 'listener_max' : $('#metric').value, selectedChartIndex);
+    if (currentMode !== 'raw') draw(current, currentMode === 'broadcasts' ? 'listener_max' : $('#metric').value, selectedChartIndex);
   }, 160);
 });
 setMode('weekly');

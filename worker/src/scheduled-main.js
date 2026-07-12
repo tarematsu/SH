@@ -7,7 +7,6 @@ import {
 } from './main-scheduler.js';
 import { expireLeaseWhenPrimaryFailed as defaultExpireLeaseWhenPrimaryFailed } from './main-lease.js';
 import { runCloudHostMonitor } from './cloud-host-monitor.js';
-import { runCloudWeeklyLeaderboard } from './cloud-weekly-leaderboard.js';
 import { resetCollectionFlight } from './index.js';
 import { runScheduledMaintenance } from './scheduled-maintenance.js';
 import { runStreamGoalPrediction } from './stream-goal-prediction.js';
@@ -23,7 +22,6 @@ export {
 } from './stream-goal-prediction.js';
 
 const SCHEDULED_AUXILIARY_RUNNERS = Object.freeze({
-  weekly: { failureEvent: 'cloud_weekly_leaderboard_failed', run: runCloudWeeklyLeaderboard },
   prediction: { failureEvent: 'stream_goal_prediction_failed', run: runStreamGoalPrediction },
   maintenance: { failureEvent: 'data_maintenance_failed', run: runScheduledMaintenance },
   host: { failureEvent: 'cloud_host_monitor_failed', run: runCloudHostMonitor, onFailureOnly: true },
@@ -31,9 +29,9 @@ const SCHEDULED_AUXILIARY_RUNNERS = Object.freeze({
 const NO_AUXILIARY_RUNNERS = Object.freeze({});
 
 // Set on env by production-entry.js's withBuddyPlaybackDeferred proxy so the
-// buddies worker never duplicates the weekly leaderboard, stream goal
-// prediction, scheduled maintenance, and cloud host monitor work that the
-// dedicated "other" worker already runs on its own cron.
+// buddies worker never duplicates the stream goal prediction, scheduled
+// maintenance, and cloud host monitor work that the dedicated "other" worker
+// already runs on its own cron.
 export const DEFER_AUXILIARY_RUNNERS_FLAG = '__DEFER_AUXILIARY_RUNNERS';
 
 export function shouldDeferAuxiliaryRunners(env = {}) {

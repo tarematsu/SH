@@ -1,9 +1,14 @@
 import { normalizeBuddyQueuePayload } from './buddy-fetch-guard.js';
+import { normalizeBearer } from './shared.js';
 import {
-  fetchTrackMetadata,
-  metadataNeedsRefresh,
-  normalizeBearer,
-} from './shared.js';
+  extractBuddyPlayback,
+  validateBuddyChannelPayload,
+} from './buddy-playback-queue.js';
+import {
+  attachBuddyMetadata,
+  enrichQueueMetadata,
+  resetMetadataFailureCache,
+} from './buddy-playback-metadata.js';
 
 const API_BASE = 'https://production1.stationhead.com';
 const DEFAULT_ALIAS = 'buddy46';
@@ -12,9 +17,9 @@ const DEFAULT_INTERVAL_MS = 5 * 60_000;
 const DEFAULT_MAX_TRACKS = 80;
 const DEFAULT_METADATA_LIMIT = 1;
 const DEFAULT_REQUEST_TIMEOUT_MS = 8_000;
-const METADATA_FAILURE_RETRY_MS = 15 * 60_000;
-const METADATA_FAILURE_CACHE_MAX = 256;
 const USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36';
+
+export { extractBuddyPlayback, validateBuddyChannelPayload, attachBuddyMetadata };
 
 export const BUDDY_PLAYBACK_SELECT_SQL = `SELECT station_id,queue_id,start_time,is_paused,
   is_broadcasting,host_account_id,host_handle,state_hash,queue_json,checked_at,changed_at
@@ -41,7 +46,6 @@ ON CONFLICT(channel_alias) DO UPDATE SET
   changed_at=excluded.changed_at`;
 
 let buddyPlaybackFlight = null;
-const metadataFailureUntil = new Map();
 
 function finiteNumber(value, fallback = null) {
   if (value === undefined || value === null || value === '') return fallback;
@@ -88,24 +92,6 @@ function buddyScopedCredentials(env = {}) {
 
 export function buddyHandleStationPath(alias = DEFAULT_ALIAS) {
   return `/station/handle/${encodeURIComponent(String(alias || DEFAULT_ALIAS).trim().toLowerCase() || DEFAULT_ALIAS)}/guest`;
-}
-
-function trimMetadataFailures() {
-  while (metadataFailureUntil.size > METADATA_FAILURE_CACHE_MAX) {
-    metadataFailureUntil.delete(metadataFailureUntil.keys().next().value);
-  }
-}
-
-function metadataRetryBlocked(spotifyId, now) {
-  const retryAt = Number(metadataFailureUntil.get(spotifyId) || 0);
-  if (retryAt > now) return true;
-  if (retryAt) metadataFailureUntil.delete(spotifyId);
-  return false;
-}
-
-function markMetadataFailure(spotifyId, now) {
-  metadataFailureUntil.set(spotifyId, now + METADATA_FAILURE_RETRY_MS);
-  trimMetadataFailures();
 }
 
 export function buddyPlaybackConfig(env = {}) {
@@ -171,48 +157,6 @@ function shHeaders(session, config) {
   };
 }
 
-function handleMatches(value, expectedAlias) {
-  return String(value || '').trim().toLowerCase() === String(expectedAlias || '').trim().toLowerCase();
-}
-
-function channelMatchesExpectedHandle(channel, expectedAlias) {
-  if (!channel || typeof channel !== 'object' || Array.isArray(channel)) return false;
-  if (handleMatches(channel.account?.handle, expectedAlias)) return true;
-  if (handleMatches(channel.host?.handle, expectedAlias)) return true;
-  if (handleMatches(channel.host?.account?.handle, expectedAlias)) return true;
-  const broadcasters = [
-    ...(Array.isArray(channel.broadcast?.broadcasters) ? channel.broadcast.broadcasters : []),
-    ...(Array.isArray(channel.current_station?.broadcast?.broadcasters)
-      ? channel.current_station.broadcast.broadcasters : []),
-  ];
-  return broadcasters.some((item) => handleMatches(
-    item?.account?.handle || item?.handle,
-    expectedAlias,
-  ));
-}
-
-export function validateBuddyChannelPayload(channel, expectedAlias = DEFAULT_ALIAS) {
-  if (!channel || typeof channel !== 'object' || Array.isArray(channel)) {
-    throw new Error('Stationhead buddy playback response is not an object');
-  }
-  const expected = String(expectedAlias).trim().toLowerCase();
-  const actualAlias = String(channel.alias || channel.channel_alias || '').trim().toLowerCase();
-  if (!actualAlias) throw new Error('Stationhead buddy playback response is missing channel alias');
-  if (actualAlias !== expected && !channelMatchesExpectedHandle(channel, expected)) {
-    throw new Error(`Stationhead alias mismatch: expected ${expectedAlias}, received ${actualAlias}`);
-  }
-  const queue = channel?.current_station?.queue || channel?.queue || null;
-  const stationId = queue?.station_id
-    ?? channel?.current_station?.id
-    ?? channel?.current_station_id
-    ?? channel?.id
-    ?? channel?.broadcast?.station_id;
-  if (stationId == null && !queue) {
-    throw new Error('Stationhead buddy playback response is missing station fields');
-  }
-  return channel;
-}
-
 async function fetchChannel(env, session, config, request = fetch) {
   const response = await request(
     `${API_BASE}${buddyHandleStationPath(config.alias)}`,
@@ -229,170 +173,6 @@ async function fetchChannel(env, session, config, request = fetch) {
   }
   const payload = normalizeBuddyQueuePayload(await response.json(), config.alias);
   return validateBuddyChannelPayload(payload, config.alias);
-}
-
-function trackThumbnail(item, track) {
-  const candidates = [
-    track?.thumbnail_url,
-    track?.image_url,
-    track?.album_art_url,
-    track?.artwork_url,
-    track?.album?.thumbnail_url,
-    track?.album?.image_url,
-    track?.album?.images?.[0]?.url,
-    item?.thumbnail_url,
-    item?.image_url,
-    item?.album_art_url,
-    item?.artwork_url,
-  ];
-  return String(candidates.find((value) => String(value || '').trim()) || '').trim() || null;
-}
-
-export function extractBuddyPlayback(channel, alias = DEFAULT_ALIAS, maxTracks = DEFAULT_MAX_TRACKS) {
-  const station = channel?.current_station || {};
-  const queue = station?.queue || channel?.queue || null;
-  const broadcast = station?.broadcast || channel?.broadcast || null;
-  const host = broadcast?.broadcasters?.find((item) => item?.is_host)
-    || broadcast?.broadcasters?.[0]
-    || null;
-  const rawTracks = queue?.queue_tracks ?? queue?.tracks ?? [];
-  if (!Array.isArray(rawTracks)) {
-    throw new Error('Stationhead buddy playback queue tracks are not an array');
-  }
-  const tracks = rawTracks.slice(0, maxTracks).map((item, index) => {
-    const track = item?.track || item || {};
-    return {
-      position: finiteNumber(item?.position, index),
-      queue_track_id: finiteNumber(item?.id),
-      stationhead_track_id: finiteNumber(track?.id),
-      spotify_id: String(track?.spotify_id || '').trim() || null,
-      deezer_id: String(track?.deezer_id || '').trim() || null,
-      isrc: String(track?.isrc || '').trim() || null,
-      duration_ms: Math.max(0, finiteNumber(track?.duration, 0)),
-      preview_url: track?.preview || null,
-      thumbnail_url: trackThumbnail(item, track),
-    };
-  });
-  return {
-    channel_alias: alias,
-    station_id: finiteNumber(queue?.station_id ?? station?.id ?? channel?.current_station_id ?? channel?.id ?? broadcast?.station_id),
-    queue_id: finiteNumber(queue?.id),
-    start_time: finiteNumber(queue?.start_time),
-    is_paused: booleanValue(queue?.is_paused),
-    is_broadcasting: booleanValue(station?.is_broadcasting ?? channel?.is_broadcasting),
-    host_account_id: finiteNumber(host?.account_id ?? host?.account?.id),
-    host_handle: String(host?.account?.handle || '').trim() || null,
-    tracks,
-  };
-}
-
-function currentIndex(queue, now) {
-  if (!queue.tracks.length) return -1;
-  if (!queue.start_time) return 0;
-  const elapsed = Math.max(0, now - queue.start_time);
-  let cursor = 0;
-  for (let index = 0; index < queue.tracks.length; index += 1) {
-    const duration = Math.max(0, finiteNumber(queue.tracks[index]?.duration_ms, 0));
-    if (elapsed < cursor + duration || index === queue.tracks.length - 1) return index;
-    cursor += duration;
-  }
-  return queue.tracks.length - 1;
-}
-
-async function loadTrackMetadata(db, spotifyIds) {
-  if (!spotifyIds.length) return new Map();
-  const placeholders = spotifyIds.map(() => '?').join(',');
-  const result = await db.prepare(`SELECT spotify_id,title,artist,display_title,
-      thumbnail_url,spotify_url,fetched_at
-    FROM sh_track_metadata WHERE spotify_id IN (${placeholders})`)
-    .bind(...spotifyIds).all();
-  return new Map((result.results || []).map((row) => [String(row.spotify_id), row]));
-}
-
-async function saveTrackMetadata(db, rows) {
-  if (!rows.length) return;
-  await db.batch(rows.map((row) => db.prepare(`INSERT INTO sh_track_metadata (
-      spotify_id,title,artist,display_title,thumbnail_url,spotify_url,source,fetched_at,raw_json
-    ) VALUES (?,?,?,?,?,?,?,?,?) ON CONFLICT(spotify_id) DO UPDATE SET
-      title=excluded.title,artist=excluded.artist,display_title=excluded.display_title,
-      thumbnail_url=COALESCE(excluded.thumbnail_url,sh_track_metadata.thumbnail_url),
-      spotify_url=excluded.spotify_url,source=excluded.source,
-      fetched_at=excluded.fetched_at,raw_json=excluded.raw_json`)
-    .bind(
-      row.spotify_id,
-      row.title,
-      row.artist,
-      row.display_title,
-      row.thumbnail_url,
-      row.spotify_url,
-      row.source,
-      row.fetched_at,
-      JSON.stringify(row.raw || {}),
-    )));
-}
-
-function buddyMetadataNeedsRefresh(row, track, now) {
-  const spotifyId = String(track?.spotify_id || '').trim();
-  if (!spotifyId) return false;
-  if (metadataNeedsRefresh(row, spotifyId, now)) return true;
-  return !row?.thumbnail_url && !track?.thumbnail_url;
-}
-
-async function enrichQueueMetadata(env, queue, now, config, fetchMetadata = fetchTrackMetadata) {
-  const spotifyIds = [...new Set(queue.tracks.map((track) => track.spotify_id).filter(Boolean))];
-  const metadata = await loadTrackMetadata(env.DB, spotifyIds);
-  if (!spotifyIds.length || config.metadataLimit <= 0) return metadata;
-
-  const index = currentIndex(queue, now);
-  const ordered = [
-    ...queue.tracks.slice(Math.max(0, index)),
-    ...queue.tracks.slice(0, Math.max(0, index)),
-  ];
-  const missing = [];
-  const seen = new Set();
-  for (const track of ordered) {
-    const spotifyId = track.spotify_id;
-    if (!spotifyId || seen.has(spotifyId) || metadataRetryBlocked(spotifyId, now)) continue;
-    seen.add(spotifyId);
-    if (buddyMetadataNeedsRefresh(metadata.get(spotifyId), track, now)) missing.push(track);
-    if (missing.length >= config.metadataLimit) break;
-  }
-
-  const fetched = [];
-  for (const track of missing) {
-    let row = null;
-    try {
-      row = await fetchMetadata(track, config);
-    } catch {
-      row = null;
-    }
-    if (!row) {
-      markMetadataFailure(track.spotify_id, now);
-      continue;
-    }
-    metadataFailureUntil.delete(track.spotify_id);
-    fetched.push(row);
-    metadata.set(String(row.spotify_id), row);
-  }
-  await saveTrackMetadata(env.DB, fetched);
-  return metadata;
-}
-
-export function attachBuddyMetadata(queue, metadata) {
-  return queue.tracks.map((track) => {
-    const row = track.spotify_id ? metadata.get(String(track.spotify_id)) : null;
-    const title = String(row?.title || '').trim() || null;
-    const artist = String(row?.artist || '').trim() || null;
-    return {
-      ...track,
-      title,
-      artist,
-      display_title: row?.display_title || (title && artist ? `${title} — ${artist}` : title),
-      thumbnail_url: row?.thumbnail_url || track.thumbnail_url || null,
-      spotify_url: row?.spotify_url
-        || (track.spotify_id ? `https://open.spotify.com/track/${track.spotify_id}` : null),
-    };
-  });
 }
 
 async function stateHash(value) {
@@ -498,5 +278,5 @@ export function runBuddyPlayback(env, now = Date.now(), dependencies = {}) {
 
 export function resetBuddyPlaybackFlight() {
   buddyPlaybackFlight = null;
-  metadataFailureUntil.clear();
+  resetMetadataFailureCache();
 }
