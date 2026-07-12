@@ -203,8 +203,6 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_sh_minute_facts_source_record
   ON sh_minute_facts(source_code, source_record_id)
   WHERE source_record_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_sh_minute_facts_time ON sh_minute_facts(minute_at DESC);
-CREATE INDEX IF NOT EXISTS idx_sh_minute_facts_track_time ON sh_minute_facts(track_id, minute_at DESC);
-CREATE INDEX IF NOT EXISTS idx_sh_minute_facts_host_time ON sh_minute_facts(host_id, minute_at DESC);
 CREATE INDEX IF NOT EXISTS idx_sh_minute_facts_session_time ON sh_minute_facts(broadcast_session_id, minute_at);
 
 CREATE TABLE IF NOT EXISTS sh_migration_state (
