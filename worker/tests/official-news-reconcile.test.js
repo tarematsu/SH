@@ -5,7 +5,6 @@ import {
   RECONCILE_SUPERSEDED_ANNOUNCEMENTS_SQL,
   reconcileSupersededAnnouncements
 } from '../src/official-news-reconcile.js';
-import { runScheduledWithOfficialReconciliation } from '../src/official-news-reconcile-entry.js';
 
 test('reconciliation only supersedes older pending schedules for the same article', async () => {
   const calls = [];
@@ -61,103 +60,4 @@ test('missing optional announcement tables skip reconciliation', async () => {
     await reconcileSupersededAnnouncements(env),
     { changes: 0, skipped: true }
   );
-});
-
-test('scheduled reconciliation waits for official news but not unrelated background work', async () => {
-  const order = [];
-  const held = [];
-  let releaseNews;
-  let releaseUnrelated;
-  const newsTask = new Promise((resolve) => {
-    releaseNews = () => {
-      order.push('news-finished');
-      resolve();
-    };
-  });
-  const unrelatedTask = new Promise((resolve) => {
-    releaseUnrelated = () => {
-      order.push('unrelated-finished');
-      resolve();
-    };
-  });
-  const ctx = {
-    waitUntil(task) {
-      held.push(Promise.resolve(task));
-    }
-  };
-  const scheduled = async (_controller, _env, wrappedCtx) => {
-    wrappedCtx.waitUntil(newsTask);
-    wrappedCtx.waitUntil(unrelatedTask);
-    order.push('scheduled-returned');
-    return 'primary-complete';
-  };
-  const reconcile = async (_env, runStartedAt) => {
-    assert.ok(Number.isFinite(runStartedAt));
-    order.push('reconciled');
-    return { changes: 1, skipped: false };
-  };
-
-  const result = await runScheduledWithOfficialReconciliation(
-    { cron: '* * * * *' },
-    {},
-    ctx,
-    scheduled,
-    reconcile
-  );
-  assert.equal(result, 'primary-complete');
-  assert.deepEqual(order, ['scheduled-returned']);
-  assert.equal(held.length, 3);
-
-  releaseNews();
-  await held[2];
-  assert.deepEqual(order, ['scheduled-returned', 'news-finished', 'reconciled']);
-
-  releaseUnrelated();
-  await held[1];
-  assert.deepEqual(order, [
-    'scheduled-returned',
-    'news-finished',
-    'reconciled',
-    'unrelated-finished'
-  ]);
-});
-
-test('rejected official news tasks do not reconcile schedules', async () => {
-  const held = [];
-  let reconciliations = 0;
-  const ctx = {
-    waitUntil(task) {
-      held.push(Promise.resolve(task).catch(() => {}));
-    }
-  };
-  const result = await runScheduledWithOfficialReconciliation(
-    { cron: '* * * * *' },
-    {},
-    ctx,
-    async (_controller, _env, wrappedCtx) => {
-      wrappedCtx.waitUntil(Promise.reject(new Error('news failed unexpectedly')));
-      return 'primary-complete';
-    },
-    async () => {
-      reconciliations += 1;
-    }
-  );
-  assert.equal(result, 'primary-complete');
-  await Promise.all(held);
-  assert.equal(reconciliations, 0);
-});
-
-test('missing official news tasks avoid an unnecessary D1 reconciliation', async () => {
-  let reconciliations = 0;
-  const result = await runScheduledWithOfficialReconciliation(
-    { cron: '* * * * *' },
-    {},
-    { waitUntil() {} },
-    async () => 'primary-complete',
-    async () => {
-      reconciliations += 1;
-    }
-  );
-  assert.equal(result, 'primary-complete');
-  assert.equal(reconciliations, 0);
 });

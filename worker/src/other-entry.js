@@ -1,7 +1,25 @@
 import { scheduleBuddyPlayback, scheduledTimestamp } from './cadenced-entry.js';
 import { runCloudHostMonitor } from './cloud-host-monitor.js';
+import { withScheduledD1Optimizations } from './d1-scheduled-optimizer.js';
+import { reconcileOfficialAnnouncements } from './official-news-reconcile.js';
+import { runOfficialNewsMonitor } from './official-news-probe.js';
+import { officialNewsConfig } from './official-news-utils.js';
 import { runScheduledMaintenance } from './scheduled-maintenance.js';
 import { runStreamGoalPrediction } from './stream-goal-prediction.js';
+
+// Reconciliation only makes sense once the probe has actually run, so a
+// failed probe intentionally skips it (matching the buddies worker's prior
+// runScheduledWithOfficialReconciliation behavior).
+export async function runOfficialNewsWithReconcile(
+  env,
+  now,
+  probe = runOfficialNewsMonitor,
+  reconcile = reconcileOfficialAnnouncements,
+) {
+  const result = await probe(withScheduledD1Optimizations(env), officialNewsConfig(env), now);
+  await reconcile(env, now);
+  return result;
+}
 
 export async function runOtherScheduled(controller, env, ctx, dependencies = {}) {
   const now = scheduledTimestamp(controller);
@@ -10,6 +28,7 @@ export async function runOtherScheduled(controller, env, ctx, dependencies = {})
     (dependencies.host || runCloudHostMonitor)(env),
     (dependencies.prediction || runStreamGoalPrediction)(env, now),
     (dependencies.maintenance || runScheduledMaintenance)(env, now),
+    (dependencies.officialNews || runOfficialNewsWithReconcile)(env, now),
   ];
   const results = await Promise.allSettled(tasks);
   const failures = results.filter((result) => result.status === 'rejected');
