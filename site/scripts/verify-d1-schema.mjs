@@ -99,13 +99,14 @@ const required = [
   'legacy_broadcasts_table', 'prediction_state_table', 'legacy_history_view',
   'likes_hash_column', 'validated_stream_column', 'last_stream_count_column',
   'last_stream_at_column', 'legacy_backfill_column', 'queue_unique_index',
-  'snapshot_index', 'validated_stream_trigger',
+  'snapshot_index',
 ];
 const missing = required.filter((name) => Number(row[name]) < 1);
 const redundant = ['redundant_queue_index', 'redundant_metadata_index']
   .filter((name) => Number(row[name]) !== 0);
-if (missing.length || redundant.length) {
-  console.error(`D1 schema verification failed: missing=${missing.join(',') || 'none'} redundant=${redundant.join(',') || 'none'}`);
+const obsolete = Number(row.validated_stream_trigger) > 0 ? ['validated_stream_trigger'] : [];
+if (missing.length || redundant.length || obsolete.length) {
+  console.error(`D1 schema verification failed: missing=${missing.join(',') || 'none'} redundant=${redundant.join(',') || 'none'} obsolete=${obsolete.join(',') || 'none'}`);
   process.exit(1);
 }
 

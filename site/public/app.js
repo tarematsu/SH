@@ -57,14 +57,15 @@ async function refresh() {
     renderDailyDelta('listensDelta', data.daily_change?.total_listens);
     el('updated').textContent = `最終取得 ${dateTime(latest.observed_at)}`;
 
-    const count = Number(latest.current_stream_count) || 0;
+    const countValue = Number(latest.current_stream_count);
+    const count = Number.isFinite(countValue) ? countValue : null;
     const goal = Number(latest.stream_goal) || 0;
-    const pct = goal ? Math.min(100, count / goal * 100) : 0;
+    const pct = goal && count != null ? Math.min(100, count / goal * 100) : 0;
     el('streamCount').textContent = number(count);
     el('streamGoal').textContent = number(goal);
     el('goalBar').style.width = `${pct}%`;
     el('goalPercent').textContent = `${pct.toFixed(2)}%`;
-    el('goalRemaining').textContent = goal ? `残り ${number(Math.max(0, goal - count))}` : '-';
+    el('goalRemaining').textContent = goal && count != null ? `残り ${number(Math.max(0, goal - count))}` : '-';
     renderPrediction(data.goal_prediction, count, goal);
 
     const queue = Array.isArray(data.queue) ? data.queue : [];

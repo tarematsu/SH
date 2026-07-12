@@ -4,6 +4,7 @@ import { spawnSync } from 'node:child_process';
 
 export const TOKENLESS_SCHEMA_BASELINE = 'a835cdf3619970af7e3e82fa8d77187376dafd11';
 export const DATA_ONLY_MIGRATIONS = new Set([
+  '106_drop_stale_validated_stream_trigger.sql',
   '105_backfill_comment_velocity_history.sql',
   '129_add_queue_reachability_index.sql',
 ]);

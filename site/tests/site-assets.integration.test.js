@@ -55,6 +55,8 @@ test('browser application remains wired to the dashboard API and resilient refre
   assert.match(app, /\/api\/dashboard-history/);
   assert.match(app, /AbortController/);
   assert.match(app, /refreshInFlight/);
+  assert.match(app, /Number\.isFinite\(countValue\)/);
+  assert.match(app, /goal && count != null/);
   assert.match(appState, /escapeText/);
   assert.match(appPlayback, /renderNowDisplay/);
   assert.match(app, /if \(!document\.hidden\) refresh\(\)/);
