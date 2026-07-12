@@ -7,8 +7,8 @@ const deployWorkflow = readFileSync(
   'utf8',
 );
 
-test('all Cloudflare deploy targets accept the builds API token fallback', () => {
-  const fallback = 'secrets.CLOUDFLARE_API_TOKEN || secrets.CLOUDFLARE_BUILDS_API_TOKEN || secrets.CF_API_TOKEN';
+test('all Cloudflare deploy targets prefer the builds API token', () => {
+  const fallback = 'secrets.CLOUDFLARE_BUILDS_API_TOKEN || secrets.CLOUDFLARE_API_TOKEN || secrets.CF_API_TOKEN';
   const occurrences = deployWorkflow.split(fallback).length - 1;
 
   assert.match(deployWorkflow, /wrangler pages deploy/);
