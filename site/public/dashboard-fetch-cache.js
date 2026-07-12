@@ -54,6 +54,13 @@
     if (previous) payload.goal_prediction = structuredClone(previous);
   }
 
+  function mergeGoalPredictions(payload) {
+    if (Array.isArray(payload?.goal_predictions) && payload.goal_predictions.length) return;
+    if (!sameGoal(payload)) return;
+    const previous = state.lastPayload?.goal_predictions;
+    if (Array.isArray(previous) && previous.length) payload.goal_predictions = structuredClone(previous);
+  }
+
   function mergePayload(payload) {
     if (!payload?.ok) return payload;
     if (payload.delta) {
@@ -68,12 +75,14 @@
         state.queueStatus = payload.queue_status || null;
       }
       mergeGoalPrediction(payload);
+      mergeGoalPredictions(payload);
       payload.delta = false;
     } else {
       state.history = mergeHistory([], payload.history);
       state.queue = Array.isArray(payload.queue) ? payload.queue : [];
       state.queueStatus = payload.queue_status || null;
       mergeGoalPrediction(payload);
+      mergeGoalPredictions(payload);
     }
 
     state.latestObservedAt = Math.max(

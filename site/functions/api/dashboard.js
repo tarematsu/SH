@@ -3,8 +3,11 @@ import {
   hostScopeFromSnapshot,
   linearRegressionPrediction,
   linearRegressionPredictionFromAggregate,
+  dashboardGoalTargets,
+  dashboardGoalPredictions,
   cachedHostMetric,
   resetHostMetricCache,
+  commentVelocityExpression,
   HISTORY_24H_SQL,
   PREDICTION_24H_SQL,
 } from './dashboard-legacy.mjs';
@@ -20,6 +23,8 @@ export {
   hostScopeFromSnapshot,
   linearRegressionPrediction,
   linearRegressionPredictionFromAggregate,
+  dashboardGoalTargets,
+  dashboardGoalPredictions,
   cachedHostMetric,
   resetHostMetricCache,
   HISTORY_24H_SQL,
@@ -70,6 +75,7 @@ export function predictionFromPersistedState(row, currentGoal) {
   if (currentGoal != null && goal != null && currentGoal !== goal) return null;
   if (eta == null || ratePerHour == null || ratePerHour <= 0 || remaining == null) return null;
   return {
+    goal,
     eta,
     rate_per_hour: ratePerHour,
     remaining,
@@ -84,6 +90,20 @@ export function selectGoalPrediction(persistedRow, calculatedPrediction, current
   return predictionFromPersistedState(persistedRow, currentGoal)
     || calculatedPrediction
     || null;
+}
+
+export function mergeGoalPredictions(calculatedPredictions, selectedPrediction, currentGoal) {
+  const predictions = Array.isArray(calculatedPredictions)
+    ? calculatedPredictions.map((prediction) => ({ ...prediction }))
+    : [];
+  const goal = finite(currentGoal);
+  if (!selectedPrediction || goal == null) return predictions;
+
+  const selected = { ...selectedPrediction, goal };
+  const index = predictions.findIndex((prediction) => finite(prediction?.goal) === goal);
+  if (index >= 0) predictions[index] = selected;
+  else predictions.unshift(selected);
+  return predictions.sort((left, right) => finite(left?.goal) - finite(right?.goal));
 }
 
 async function loadPredictionState(db) {
@@ -102,9 +122,10 @@ export const DASHBOARD_CONTEXT_SQL = `WITH latest_channel AS (
     id,observed_at,channel_id,channel_alias,channel_name,station_id,
     is_launched,is_broadcasting,chat_status,listener_count,online_member_count,
     total_member_count,guest_count,total_listens,stream_goal,current_stream_count,
-    host_account_id,host_handle,broadcast_start_time,comment_velocity,raw_json
-  FROM sh_channel_snapshots
-  ORDER BY observed_at DESC,id DESC
+    host_account_id,host_handle,broadcast_start_time,
+    ${commentVelocityExpression('snapshots')} AS comment_velocity,snapshots.raw_json
+  FROM sh_channel_snapshots AS snapshots
+  ORDER BY snapshots.observed_at DESC,snapshots.id DESC
   LIMIT 1
 ), station_queue AS (
   SELECT station_id,queue_id,start_time,is_paused,observed_at,
@@ -156,8 +177,12 @@ LEFT JOIN queue_stats ON 1=1`;
 
 function latestSnapshotSql(sql) {
   const value = String(sql || '').replace(/\s+/g, ' ');
-  return value.includes('comment_velocity,raw_json')
-    && value.includes('FROM sh_channel_snapshots ORDER BY observed_at DESC,id DESC LIMIT 1');
+  return value.includes('comment_velocity')
+    && value.includes('raw_json')
+    && value.includes('FROM sh_channel_snapshots')
+    && value.includes('ORDER BY')
+    && value.includes('observed_at DESC')
+    && value.includes('id DESC LIMIT 1');
 }
 
 export async function loadDashboardContext(db, queueContext) {
@@ -301,10 +326,17 @@ export async function onRequestGet(context) {
     predictionPromise,
   ]);
   const payload = JSON.parse(body);
-  payload.goal_prediction = selectGoalPrediction(
+  const currentGoal = finite(payload.latest?.stream_goal);
+  const selectedPrediction = selectGoalPrediction(
     predictionState,
     payload.goal_prediction,
-    finite(payload.latest?.stream_goal),
+    currentGoal,
+  );
+  payload.goal_prediction = selectedPrediction;
+  payload.goal_predictions = mergeGoalPredictions(
+    payload.goal_predictions,
+    selectedPrediction,
+    currentGoal,
   );
   const output = JSON.stringify(decorateQueueResponse(payload, queueContext));
   const headers = new Headers(response.headers);

@@ -36,6 +36,11 @@ test('dashboard context SQL returns latest snapshot and queue revision state in 
     CREATE TABLE sh_track_metadata (
       spotify_id TEXT PRIMARY KEY,fetched_at INTEGER
     );
+    CREATE TABLE sh_comment_minute_counts (
+      station_id INTEGER NOT NULL,
+      bucket_start INTEGER NOT NULL,
+      comment_count INTEGER NOT NULL
+    );
   `);
   db.prepare(`INSERT INTO sh_channel_snapshots VALUES(
     1,1000,10,'buddies','Old',20,1,1,'live',10,11,12,13,14,15,16,17,'old',18,1,'{}'

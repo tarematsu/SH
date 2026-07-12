@@ -12,11 +12,17 @@ export async function onRequestGet({ env }) {
   try {
     const result = await env.DB.prepare(`
       SELECT
-        CAST(observed_at / 300000 AS INTEGER) * 300000 AS bucket_at,
-        MAX(COALESCE(comment_velocity, 0)) AS comment_velocity
-      FROM sh_channel_snapshots
-      WHERE observed_at >= unixepoch('now', '-24 hours') * 1000
-      GROUP BY CAST(observed_at / 300000 AS INTEGER)
+        CAST(snapshots.observed_at / 300000 AS INTEGER) * 300000 AS bucket_at,
+        MAX(COALESCE((
+          SELECT SUM(counts.comment_count)
+          FROM sh_comment_minute_counts AS counts
+          WHERE counts.station_id=snapshots.station_id
+            AND counts.bucket_start>=snapshots.observed_at-120000
+            AND counts.bucket_start<=snapshots.observed_at
+        ),snapshots.comment_velocity,0)) AS comment_velocity
+      FROM sh_channel_snapshots AS snapshots
+      WHERE snapshots.observed_at >= unixepoch('now', '-24 hours') * 1000
+      GROUP BY CAST(snapshots.observed_at / 300000 AS INTEGER)
       ORDER BY bucket_at ASC
       LIMIT 300
     `).all();

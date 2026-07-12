@@ -2,6 +2,7 @@
   const baseRenderPrediction = renderPrediction;
   let lastGoalPrediction = null;
   let lastPredictionGoal = null;
+  let lastGoalPredictions = null;
 
   function finite(value) {
     const number = Number(value);
@@ -22,14 +23,20 @@
       || nextGoal === lastPredictionGoal;
   }
 
-  renderPrediction = function renderPredictionWithFallback(prediction, current, goal) {
+  renderPrediction = function renderPredictionWithFallback(prediction, current, goal, predictions) {
     const currentValue = finite(current) ?? 0;
     const goalValue = finite(goal) ?? 0;
     let selected = prediction;
+    const selectedPredictions = Array.isArray(predictions) && predictions.length
+      ? predictions
+      : lastGoalPredictions;
 
     if (validPrediction(prediction)) {
       lastGoalPrediction = structuredClone(prediction);
       lastPredictionGoal = goalValue || null;
+      if (Array.isArray(predictions) && predictions.length) {
+        lastGoalPredictions = structuredClone(predictions);
+      }
     } else if (goalValue > 0 && currentValue < goalValue && lastGoalPrediction && sameGoal(goalValue)) {
       selected = structuredClone(lastGoalPrediction);
     } else if (goalValue > 0 && currentValue >= goalValue) {
@@ -37,6 +44,6 @@
       lastPredictionGoal = null;
     }
 
-    return baseRenderPrediction(selected, current, goal);
+    return baseRenderPrediction(selected, current, goal, selectedPredictions);
   };
 })();

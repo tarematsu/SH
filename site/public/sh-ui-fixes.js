@@ -34,8 +34,41 @@
     };
   }
 
+  function renderGoalMilestones(predictions, configuredGoal) {
+    const root = el('goalMilestones');
+    if (!root) return;
+    const configured = Number(configuredGoal);
+    const extras = (Array.isArray(predictions) ? predictions : [])
+      .filter((prediction) => {
+        const target = Number(prediction?.goal);
+        const eta = Number(prediction?.eta);
+        return Number.isFinite(target) && Number.isFinite(eta)
+          && (!Number.isFinite(configured) || target !== configured);
+      })
+      .sort((left, right) => Number(left.goal) - Number(right.goal));
+    const signature = extras.map((prediction) => [
+      prediction.goal,
+      prediction.eta,
+      prediction.rate_per_hour,
+    ].join(':')).join('|');
+    if (root.dataset.signature === signature) return;
+    root.dataset.signature = signature;
+    root.replaceChildren(...extras.map((prediction) => {
+      const item = document.createElement('div');
+      item.className = 'goal-milestone';
+      const target = document.createElement('strong');
+      target.textContent = integerFormatter.format(Number(prediction.goal));
+      const eta = document.createElement('span');
+      eta.textContent = etaDateTime(prediction.eta);
+      const rate = document.createElement('em');
+      rate.textContent = `+${integerFormatter.format(Math.round(Number(prediction.rate_per_hour)))} /h`;
+      item.append(target, eta, rate);
+      return item;
+    }));
+  }
+
   if (typeof renderPrediction === 'function') {
-    renderPrediction = function renderPredictionDifferential(prediction, current, goal) {
+    renderPrediction = function renderPredictionDifferential(prediction, current, goal, predictions) {
       const eta = el('goalEta');
       const rate = el('goalRate');
       if (!eta || !rate) return;
@@ -47,6 +80,7 @@
         : '最低15分以上の履歴が必要です';
       if (eta.textContent !== etaText) eta.textContent = etaText;
       if (rate.textContent !== rateText) rate.textContent = rateText;
+      renderGoalMilestones(predictions, goal);
     };
   }
 

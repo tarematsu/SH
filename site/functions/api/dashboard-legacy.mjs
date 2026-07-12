@@ -7,6 +7,9 @@ import {
 import { LATEST_QUEUE_WITH_ITEMS_SQL, parseLatestQueueRows } from '../lib/latest-queue.js';
 
 const INITIAL_QUEUE_ITEMS = 11;
+export const ROUND_GOAL_STEP = 5_000_000;
+export const ROUND_GOAL_COUNT = 3;
+const COMMENT_VELOCITY_WINDOW_MS = 2 * 60_000;
 
 const json = (data, status = 200, cache = 'public, max-age=20, s-maxage=30, stale-while-revalidate=90') =>
   new Response(JSON.stringify(data), {
@@ -94,10 +97,10 @@ export function resetHostMetricCache() {
   hostMetricCache.clear();
 }
 
-export function linearRegressionPrediction(rows, goal, now = Date.now()) {
+function linearRegressionModel(rows) {
   const points = rows.map((r) => ({ t: num(r.observed_at), y: num(r.current_stream_count) }))
     .filter((p) => p.t != null && p.y != null).sort((a, b) => a.t - b.t);
-  if (!goal || points.length < 5) return null;
+  if (points.length < 5) return null;
   const firstT = points[0].t;
   const spanMs = points.at(-1).t - firstT;
   if (spanMs < 15 * 60000) return null;
@@ -113,18 +116,32 @@ export function linearRegressionPrediction(rows, goal, now = Date.now()) {
   if (varX <= 0) return null;
   const ratePerHour = cov / varX;
   if (!Number.isFinite(ratePerHour) || ratePerHour <= 0) return null;
-  const latest = points.at(-1).y;
-  const remaining = Math.max(0, goal - latest);
   return {
-    eta: remaining === 0 ? now : now + (remaining / ratePerHour) * 3600000,
-    rate_per_hour: ratePerHour,
-    remaining,
-    sample_count: points.length,
-    span_hours: spanMs / 3600000,
+    latest: points.at(-1).y,
+    ratePerHour,
+    sampleCount: points.length,
+    spanHours: spanMs / 3600000,
   };
 }
 
-export function linearRegressionPredictionFromAggregate(row, goal, now = Date.now()) {
+function predictionFromModel(model, goal, now) {
+  if (!model || !goal || goal <= 0) return null;
+  const remaining = Math.max(0, goal - model.latest);
+  return {
+    goal,
+    eta: remaining === 0 ? now : now + (remaining / model.ratePerHour) * 3600000,
+    rate_per_hour: model.ratePerHour,
+    remaining,
+    sample_count: model.sampleCount,
+    span_hours: model.spanHours,
+  };
+}
+
+export function linearRegressionPrediction(rows, goal, now = Date.now()) {
+  return predictionFromModel(linearRegressionModel(rows), goal, now);
+}
+
+function aggregateRegressionModel(row) {
   const sampleCount = num(row?.sample_count);
   const firstT = num(row?.first_t);
   const lastT = num(row?.last_t);
@@ -133,7 +150,7 @@ export function linearRegressionPredictionFromAggregate(row, goal, now = Date.no
   const xyMean = num(row?.xy_mean);
   const xxMean = num(row?.xx_mean);
   const latest = num(row?.latest_y);
-  if (!goal || sampleCount == null || sampleCount < 5 || firstT == null || lastT == null || latest == null) return null;
+  if (sampleCount == null || sampleCount < 5 || firstT == null || lastT == null || latest == null) return null;
   const spanMs = lastT - firstT;
   if (spanMs < 15 * 60000 || [xMean, yMean, xyMean, xxMean].some((value) => value == null)) return null;
   const covariance = xyMean - xMean * yMean;
@@ -141,35 +158,100 @@ export function linearRegressionPredictionFromAggregate(row, goal, now = Date.no
   if (!Number.isFinite(variance) || variance <= 0) return null;
   const ratePerHour = covariance / variance;
   if (!Number.isFinite(ratePerHour) || ratePerHour <= 0) return null;
-  const remaining = Math.max(0, goal - latest);
   return {
-    eta: remaining === 0 ? now : now + (remaining / ratePerHour) * 3600000,
-    rate_per_hour: ratePerHour,
-    remaining,
-    sample_count: sampleCount,
-    span_hours: spanMs / 3600000,
+    latest,
+    ratePerHour,
+    sampleCount,
+    spanHours: spanMs / 3600000,
   };
 }
 
+export function linearRegressionPredictionFromAggregate(row, goal, now = Date.now()) {
+  return predictionFromModel(aggregateRegressionModel(row), goal, now);
+}
+
+export function linearRegressionPredictions(rows, goals, now = Date.now()) {
+  const model = linearRegressionModel(rows);
+  return (Array.isArray(goals) ? goals : [])
+    .map((goal) => predictionFromModel(model, num(goal), now))
+    .filter(Boolean);
+}
+
+export function linearRegressionPredictionsFromAggregate(row, goals, now = Date.now()) {
+  const model = aggregateRegressionModel(row);
+  return (Array.isArray(goals) ? goals : [])
+    .map((goal) => predictionFromModel(model, num(goal), now))
+    .filter(Boolean);
+}
+
+export function dashboardGoalTargets(current, configuredGoal, {
+  step = ROUND_GOAL_STEP,
+  count = ROUND_GOAL_COUNT,
+} = {}) {
+  const currentValue = num(current);
+  const configured = num(configuredGoal);
+  const targets = new Set();
+  if (configured != null && configured > 0) targets.add(configured);
+  if (currentValue == null || currentValue < 0 || step <= 0 || count <= 0) {
+    return [...targets].sort((left, right) => left - right);
+  }
+
+  const firstRoundGoal = Math.floor(currentValue / step + 1) * step;
+  for (let index = 0; index < count; index += 1) {
+    targets.add(firstRoundGoal + index * step);
+  }
+  return [...targets].sort((left, right) => left - right);
+}
+
+export function dashboardGoalPredictions({
+  rows,
+  aggregate,
+  current,
+  configuredGoal,
+  now = Date.now(),
+  useAggregate = false,
+} = {}) {
+  const goals = dashboardGoalTargets(current, configuredGoal);
+  const predictions = useAggregate
+    ? linearRegressionPredictionsFromAggregate(aggregate, goals, now)
+    : linearRegressionPredictions(rows, goals, now);
+  const configured = num(configuredGoal);
+  return {
+    goalPrediction: predictions.find((prediction) => prediction.goal === configured) || null,
+    goalPredictions: predictions,
+  };
+}
+
+export function commentVelocityExpression(alias) {
+  return `COALESCE((
+    SELECT SUM(counts.comment_count)
+    FROM sh_comment_minute_counts AS counts
+    WHERE counts.station_id=${alias}.station_id
+      AND counts.bucket_start>=${alias}.observed_at-${COMMENT_VELOCITY_WINDOW_MS}
+      AND counts.bucket_start<=${alias}.observed_at
+  ),${alias}.comment_velocity,0)`;
+}
+
 const LATEST_SQL = `SELECT
-  id,observed_at,channel_id,channel_alias,channel_name,station_id,
-  is_launched,is_broadcasting,chat_status,listener_count,online_member_count,
-  total_member_count,guest_count,total_listens,stream_goal,current_stream_count,
-  host_account_id,host_handle,broadcast_start_time,comment_velocity,raw_json
-FROM sh_channel_snapshots ORDER BY observed_at DESC,id DESC LIMIT 1`;
+  snapshots.id,snapshots.observed_at,snapshots.channel_id,snapshots.channel_alias,snapshots.channel_name,snapshots.station_id,
+  snapshots.is_launched,snapshots.is_broadcasting,snapshots.chat_status,snapshots.listener_count,snapshots.online_member_count,
+  snapshots.total_member_count,snapshots.guest_count,snapshots.total_listens,snapshots.stream_goal,snapshots.current_stream_count,
+  snapshots.host_account_id,snapshots.host_handle,snapshots.broadcast_start_time,
+  ${commentVelocityExpression('snapshots')} AS comment_velocity,snapshots.raw_json
+FROM sh_channel_snapshots AS snapshots ORDER BY snapshots.observed_at DESC,snapshots.id DESC LIMIT 1`;
 
 function historyBucketSql(whereClause) {
   return `WITH ranked AS (
-  SELECT id,observed_at,listener_count,online_member_count,total_member_count,
-    total_listens,current_stream_count,stream_goal,
-    MAX(COALESCE(comment_velocity, 0)) OVER (
-      PARTITION BY CAST(observed_at/300000 AS INTEGER)
+  SELECT snapshots.id,snapshots.observed_at,snapshots.listener_count,snapshots.online_member_count,snapshots.total_member_count,
+    snapshots.total_listens,snapshots.current_stream_count,snapshots.stream_goal,
+    MAX(${commentVelocityExpression('snapshots')}) OVER (
+      PARTITION BY CAST(snapshots.observed_at/300000 AS INTEGER)
     ) AS comment_velocity_max,
     ROW_NUMBER() OVER (
-      PARTITION BY CAST(observed_at/300000 AS INTEGER)
-      ORDER BY observed_at DESC,id DESC
+      PARTITION BY CAST(snapshots.observed_at/300000 AS INTEGER)
+      ORDER BY snapshots.observed_at DESC,snapshots.id DESC
     ) AS rn
-  FROM sh_channel_snapshots
+  FROM sh_channel_snapshots AS snapshots
   WHERE ${whereClause}
 )
 SELECT observed_at,listener_count,online_member_count,total_member_count,
@@ -177,8 +259,8 @@ SELECT observed_at,listener_count,online_member_count,total_member_count,
 FROM ranked WHERE rn=1 ORDER BY observed_at ASC LIMIT 300`;
 }
 
-export const HISTORY_24H_SQL = historyBucketSql("observed_at >= (unixepoch('now','-24 hours')*1000)");
-export const HISTORY_SINCE_SQL = historyBucketSql('observed_at>?');
+export const HISTORY_24H_SQL = historyBucketSql("snapshots.observed_at >= (unixepoch('now','-24 hours')*1000)");
+export const HISTORY_SINCE_SQL = historyBucketSql('snapshots.observed_at>?');
 
 export const PREDICTION_24H_SQL = `WITH ranked AS (
   SELECT id,observed_at,current_stream_count,
@@ -304,9 +386,19 @@ export async function onRequestGet({ request, env }) {
     const owner = station.owner || {};
     const streaming = station.streaming_party || {};
     const goal = latest?.stream_goal ?? streaming.stream_goal ?? null;
-    const goalPrediction = initial && includeHistory
-      ? linearRegressionPrediction(history, num(goal), generatedAt)
-      : linearRegressionPredictionFromAggregate(predictionResult, num(goal), generatedAt);
+    const current = num(
+      latest?.current_stream_count
+      ?? streaming.current_stream_count
+      ?? latest?.total_listens,
+    );
+    const { goalPrediction, goalPredictions } = dashboardGoalPredictions({
+      rows: history,
+      aggregate: predictionResult,
+      current,
+      configuredGoal: num(goal),
+      now: generatedAt,
+      useAggregate: !(initial && includeHistory),
+    });
 
     return json({
       ok: true,
@@ -329,6 +421,7 @@ export async function onRequestGet({ request, env }) {
           ? num(latest.total_listens) - num(previousListens.total_listens) : null,
       } : null,
       goal_prediction: goalPrediction,
+      goal_predictions: goalPredictions,
       queue: enrichedQueue,
       queue_status: compactQueueStatus(latestQueue, latest, playback, queue.length, queueWindow.length),
     });

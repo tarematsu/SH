@@ -41,7 +41,7 @@ section.panel{margin-top:9px}
 .goal-numbers span{color:var(--muted)}
 .goal-foot{display:flex;justify-content:space-between;color:var(--muted);font-size:.78rem;margin-top:8px}
 .prediction-card{margin-top:14px;padding:12px;border:1px solid var(--line);border-radius:13px;background:rgba(255,255,255,.025)}
-.prediction-card small,.prediction-card span,.prediction-card em{display:block}.prediction-card small{color:var(--muted)}.prediction-card strong{display:block;margin-top:4px;font-size:1.1rem}.prediction-card span{margin-top:4px;color:var(--muted);font-size:.77rem}
+.prediction-card small,.prediction-card span,.prediction-card em{display:block}.prediction-card small{color:var(--muted)}.prediction-card strong{display:block;margin-top:4px;font-size:1.1rem}.prediction-card span{margin-top:4px;color:var(--muted);font-size:.77rem}.goal-milestones{display:grid;gap:5px;margin-top:10px;padding-top:8px;border-top:1px solid var(--line)}.goal-milestone{display:grid;grid-template-columns:auto 1fr auto;gap:8px;align-items:baseline;font-size:.74rem}.goal-milestone strong{margin:0;font-size:.78rem}.goal-milestone span,.goal-milestone em{margin:0;color:var(--muted);font-size:.72rem}.goal-milestone span{text-align:right}
 .host{display:flex;align-items:center;gap:10px}.host img{width:40px;height:40px;object-fit:cover;border-radius:50%}.host small{display:block;color:var(--muted)}.host strong{display:block;margin-top:2px}
 .chip{border:1px solid var(--line);color:var(--muted);border-radius:999px;padding:4px 8px;font-size:.72rem}
 .queue-list{display:grid;grid-template-columns:1fr 1fr;gap:4px 10px}

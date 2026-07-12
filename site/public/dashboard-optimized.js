@@ -90,7 +90,7 @@
       dom.setStyle(el('goalBar'), 'width', `${pct}%`);
       dom.setText(el('goalPercent'), `${pct.toFixed(2)}%`);
       dom.setText(el('goalRemaining'), goal && count != null ? `残り ${dom.formatNumber(Math.max(0, goal - count))}` : '-');
-      renderPrediction(data.goal_prediction, count, goal);
+      renderPrediction(data.goal_prediction, count, goal, data.goal_predictions);
 
       const responseRevision = String(data.queue_revision || '');
       const queueUnchanged = Boolean(

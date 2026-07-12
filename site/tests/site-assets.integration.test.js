@@ -64,6 +64,7 @@ test('browser application remains wired to the dashboard API and resilient refre
 
 test('dashboard chart renderer preserves ETA and comment velocity overlays', async () => {
   const html = await text('public/index.html');
+  const app = await text('public/app.js');
   const guards = await text('public/dashboard-display-guards.js');
   const chart = await text('public/app-chart.js');
   assert.match(html, /\/dashboard-display-guards\.js/);
@@ -72,6 +73,8 @@ test('dashboard chart renderer preserves ETA and comment velocity overlays', asy
   assert.match(chart, /commentVelocityValues/);
   assert.match(chart, /commentVelocityMax/);
   assert.match(chart, /drawCommentVelocityBars/);
+  assert.match(html, /id="goalMilestones"/);
+  assert.match(app, /data\.goal_predictions/);
 });
 
 test('dashboard fetch cache does not request queue-unchanged deltas without a local queue', async () => {

@@ -66,7 +66,7 @@ async function refresh() {
     el('goalBar').style.width = `${pct}%`;
     el('goalPercent').textContent = `${pct.toFixed(2)}%`;
     el('goalRemaining').textContent = goal && count != null ? `残り ${number(Math.max(0, goal - count))}` : '-';
-    renderPrediction(data.goal_prediction, count, goal);
+    renderPrediction(data.goal_prediction, count, goal, data.goal_predictions);
 
     const queue = Array.isArray(data.queue) ? data.queue : [];
     const foundCurrentIndex = queue.findIndex(t => t.is_current);

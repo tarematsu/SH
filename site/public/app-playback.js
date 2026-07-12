@@ -256,7 +256,7 @@ function renderQueue(queue, totalItems) {
   box.replaceChildren(...nodes);
 }
 
-function renderPrediction(prediction, current, goal) {
+function renderPrediction(prediction, current, goal, _predictions) {
   const eta = el('goalEta');
   const rate = el('goalRate');
   if (!eta || !rate) return;

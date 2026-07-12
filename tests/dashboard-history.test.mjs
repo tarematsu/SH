@@ -7,6 +7,8 @@ import {
   PREDICTION_24H_SQL,
   linearRegressionPrediction,
   linearRegressionPredictionFromAggregate,
+  dashboardGoalTargets,
+  dashboardGoalPredictions,
   cachedHostMetric,
   resetHostMetricCache,
 } from '../site/functions/api/dashboard.js';
@@ -23,7 +25,13 @@ function createSnapshotsDb() {
       total_listens INTEGER,
       current_stream_count INTEGER,
       stream_goal INTEGER,
-      comment_velocity INTEGER
+      comment_velocity INTEGER,
+      station_id INTEGER
+    );
+    CREATE TABLE sh_comment_minute_counts (
+      station_id INTEGER NOT NULL,
+      bucket_start INTEGER NOT NULL,
+      comment_count INTEGER NOT NULL
     );
   `);
   return db;
@@ -33,9 +41,9 @@ test('dashboard history keeps latest values and maximum comment velocity per buc
   const db = createSnapshotsDb();
   const now = Date.now();
   const bucket = Math.floor(now / 300000) * 300000;
-  const insert = db.prepare(`INSERT INTO sh_channel_snapshots VALUES (?,?,?,?,?,?,?,?,?)`);
-  insert.run(1, bucket + 1000, 10, 20, 30, 40, 50, 60, 25);
-  insert.run(2, bucket + 2000, 11, 21, 31, 41, 51, 61, 3);
+  const insert = db.prepare(`INSERT INTO sh_channel_snapshots VALUES (?,?,?,?,?,?,?,?,?,?)`);
+  insert.run(1, bucket + 1000, 10, 20, 30, 40, 50, 60, 25, 10);
+  insert.run(2, bucket + 2000, 11, 21, 31, 41, 51, 61, 3, 10);
 
   const rows = db.prepare(HISTORY_24H_SQL).all();
 
@@ -44,12 +52,27 @@ test('dashboard history keeps latest values and maximum comment velocity per buc
   assert.equal(rows[0].comment_velocity, 25);
 });
 
+test('dashboard history reads normalized comment minute counts for velocity', () => {
+  const db = createSnapshotsDb();
+  const now = Date.now();
+  const bucket = Math.floor(now / 300000) * 300000;
+  db.prepare(`INSERT INTO sh_channel_snapshots VALUES (?,?,?,?,?,?,?,?,?,?)`)
+    .run(1, bucket + 1000, 10, 20, 30, 40, 50, 60, null, 10);
+  db.prepare(`INSERT INTO sh_comment_minute_counts VALUES (?,?,?)`)
+    .run(10, bucket, 7);
+
+  const rows = db.prepare(HISTORY_24H_SQL).all();
+
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].comment_velocity, 7);
+});
+
 test('aggregate prediction matches row-based regression without returning 24 hours of rows', () => {
   const db = createSnapshotsDb();
   const base = Math.floor((Date.now() - 30 * 60000) / 300000) * 300000;
-  const insert = db.prepare(`INSERT INTO sh_channel_snapshots VALUES (?,?,?,?,?,?,?,?,?)`);
+  const insert = db.prepare(`INSERT INTO sh_channel_snapshots VALUES (?,?,?,?,?,?,?,?,?,?)`);
   for (let index = 0; index < 5; index += 1) {
-    insert.run(index + 1, base + index * 300000 + 1000, null, null, null, null, 100 + index * 5, 180, null);
+    insert.run(index + 1, base + index * 300000 + 1000, null, null, null, null, 100 + index * 5, 180, null, 10);
   }
   const rows = db.prepare(HISTORY_24H_SQL).all();
   const aggregate = db.prepare(PREDICTION_24H_SQL).get();
@@ -63,6 +86,27 @@ test('aggregate prediction matches row-based regression without returning 24 hou
   assert.ok(Math.abs(fromAggregate.rate_per_hour - 60) < 1e-8);
   assert.ok(Math.abs(fromAggregate.rate_per_hour - fromRows.rate_per_hour) < 1e-8);
   assert.ok(Math.abs(fromAggregate.eta - fromRows.eta) < 1);
+});
+
+test('dashboard predicts configured and five-million round goals from one trend', () => {
+  const rows = Array.from({ length: 5 }, (_, index) => ({
+    observed_at: 1_000_000 + index * 300_000,
+    current_stream_count: 49_000_000 + index * 100_000,
+  }));
+  assert.deepEqual(
+    dashboardGoalTargets(49_400_000, 53_240_000),
+    [50_000_000, 53_240_000, 55_000_000, 60_000_000],
+  );
+  const result = dashboardGoalPredictions({
+    rows,
+    current: 49_400_000,
+    configuredGoal: 53_240_000,
+    now: 2_000_000,
+  });
+  assert.equal(result.goalPrediction.goal, 53_240_000);
+  assert.deepEqual(result.goalPredictions.map(({ goal }) => goal), [
+    50_000_000, 53_240_000, 55_000_000, 60_000_000,
+  ]);
 });
 
 test('dashboard baseline requests share and reuse the same host/day query', async () => {
