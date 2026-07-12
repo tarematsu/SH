@@ -1,5 +1,5 @@
 import mainApp, { withD1WriteThrottling } from './main.js';
-import app from './official-news-reconcile-entry.js';
+import app from './email-recap-index.js';
 import {
   PrimaryCollectionTimeoutError,
   resetPrimaryScheduledFlightForTests as resetSharedPrimaryScheduledFlightForTests,

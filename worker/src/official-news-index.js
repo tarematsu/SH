@@ -1,7 +1,5 @@
 import app from './optimized-index.js';
 import { officialNewsHealth } from './official-news-health.js';
-import { runOfficialNewsMonitor } from './official-news-probe.js';
-import { officialNewsConfig } from './official-news-utils.js';
 
 export {
   checkOfficialNews,
@@ -45,10 +43,11 @@ export {
   timedFetch,
 } from './official-news-utils.js';
 
+// Official news monitoring + reconciliation now runs on the "other" worker's
+// own cron (see other-entry.js); the buddies worker must not duplicate it.
 export default {
   async scheduled(controller, env, ctx) {
     await app.scheduled(controller, env, ctx);
-    ctx.waitUntil(runOfficialNewsMonitor(env, officialNewsConfig(env), Date.now()));
   },
 
   async fetch(request, env, ctx) {
