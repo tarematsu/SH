@@ -65,7 +65,7 @@ test('collector converts the already-read auth state without another DB query', 
   assert.equal(authHealth(authState).auth_session_ready, true);
 });
 
-test('track likes use one D1 batch and preserve newest source row', async () => {
+test('track likes use one compact realtime D1 query', async () => {
   let batchCalls = 0;
   const statements = [];
   const db = {
@@ -80,19 +80,17 @@ test('track likes use one D1 batch and preserve newest source row', async () => 
     },
     async batch(items) {
       batchCalls += 1;
-      assert.equal(items.length, 3);
+      assert.equal(items.length, 1);
       return [
         { results: [{ play_date: '2026-07-01', spotify_id: 'track', like_count: 30, observed_at: 300, source: 'collector' }] },
-        { results: [{ play_date: '2026-07-01', spotify_id: 'track', like_count: 20, observed_at: 200, source: 'queue' }] },
-        { results: [{ play_date: '2026-07-01', title: 'Track', artist: 'Artist', like_count: 10, observed_at: 100, source: 'sheet' }] },
       ];
     },
   };
 
   const rows = await loadTrackLikeRows(db, 1, 2);
   assert.equal(batchCalls, 1);
-  assert.equal(statements.length, 3);
-  assert.deepEqual(statements.map((statement) => statement.values), [[1, 2], [1, 2], [1, 2]]);
+  assert.equal(statements.length, 1);
+  assert.deepEqual(statements.map((statement) => statement.values), [[1, 2]]);
   const spotify = rows.find((row) => row.spotify_id === 'track');
   assert.equal(spotify.like_count, 30);
   assert.equal(spotify.source, 'collector');

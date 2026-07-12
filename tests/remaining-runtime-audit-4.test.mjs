@@ -9,7 +9,7 @@ import {
   loadLeaderboardContext,
 } from '../worker/src/cloud-weekly-leaderboard.js';
 
-test('track history and three like sources share one D1 batch', async () => {
+test('track history and compact realtime likes share one D1 batch', async () => {
   let batchCalls = 0;
   let allCalls = 0;
   const statements = [];
@@ -26,12 +26,10 @@ test('track history and three like sources share one D1 batch', async () => {
     },
     async batch(items) {
       batchCalls += 1;
-      assert.equal(items.length, 4);
+      assert.equal(items.length, 2);
       return [
         { results: [{ play_date: '2026-07-01', play_count: 1 }] },
         { results: [{ play_date: '2026-07-01', spotify_id: 'track-1', like_count: 3, observed_at: 300, source: 'collector' }] },
-        { results: [{ play_date: '2026-07-01', spotify_id: 'track-1', like_count: 2, observed_at: 200, source: 'queue' }] },
-        { results: [] },
       ];
     },
   };
@@ -39,7 +37,7 @@ test('track history and three like sources share one D1 batch', async () => {
   const loaded = await loadTrackHistoryData(db, 0, 86400000, 100, true);
   assert.equal(batchCalls, 1);
   assert.equal(allCalls, 0);
-  assert.equal(statements.length, 4);
+  assert.equal(statements.length, 2);
   assert.equal(loaded.result.results[0].play_count, 1);
   assert.equal(loaded.likeRows.length, 1);
   assert.equal(loaded.likeRows[0].like_count, 3);
