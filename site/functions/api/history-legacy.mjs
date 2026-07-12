@@ -1,3 +1,5 @@
+import { isRealIsoDate } from '../lib/api-utils.js';
+
 const JSON_HEADERS = {
   'content-type': 'application/json; charset=utf-8',
   'cache-control': 'public, max-age=300, s-maxage=900, stale-while-revalidate=3600',
@@ -20,7 +22,7 @@ quality_score,quality_flags`;
 const FEATURED_HOSTS = ['sakuramankai', 'sakurazaka46jp'];
 
 function parseDateStart(value, fallback) {
-  const text = /^\d{4}-\d{2}-\d{2}$/.test(value || '') ? value : fallback;
+  const text = isRealIsoDate(value) ? value : fallback;
   return Date.parse(`${text}T00:00:00+09:00`);
 }
 
@@ -53,7 +55,7 @@ function safeText(value, max = 100) {
 }
 
 function validDate(value) {
-  return /^\d{4}-\d{2}-\d{2}$/.test(String(value || ''));
+  return isRealIsoDate(value);
 }
 
 function hostKey(value) {
@@ -350,8 +352,18 @@ export async function onRequestGet({ request, env }) {
   try {
     const url = new URL(request.url);
     const mode = url.searchParams.get('mode') || 'weekly';
-    const from = url.searchParams.get('from') || '2024-06-01';
-    const to = url.searchParams.get('to') || todayJstString();
+    const fromParam = url.searchParams.get('from');
+    const toParam = url.searchParams.get('to');
+    if ((fromParam && !isRealIsoDate(fromParam)) || (toParam && !isRealIsoDate(toParam))) {
+      return json({ ok: false, error: 'from and to must be valid YYYY-MM-DD dates' }, 400, {
+        'cache-control': 'no-store',
+      });
+    }
+    const from = fromParam || '2024-06-01';
+    const to = toParam || todayJstString();
+    if (from > to) {
+      return json({ ok: false, error: 'from must not be after to' }, 400, { 'cache-control': 'no-store' });
+    }
     if (mode === 'ranking') return loadRanking(url, env);
     if (mode === 'broadcasts') {
       const fromTs = parseDateStart(from, '2024-06-01');

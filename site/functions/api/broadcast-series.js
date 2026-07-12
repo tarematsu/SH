@@ -1,3 +1,5 @@
+import { isRealIsoDate } from '../lib/api-utils.js';
+
 const JSON_HEADERS = {
   'content-type': 'application/json; charset=utf-8',
   'cache-control': 'public, max-age=300, s-maxage=3600, stale-while-revalidate=7200',
@@ -14,7 +16,7 @@ const json = (data, status = 200) => new Response(JSON.stringify(data), {
 });
 
 function dateParam(value, fallback) {
-  return /^\d{4}-\d{2}-\d{2}$/.test(value || '') ? value : fallback;
+  return isRealIsoDate(value) ? value : fallback;
 }
 function parseDateStart(value) { return Date.parse(`${value}T00:00:00Z`); }
 function addDays(timestamp, days) { return timestamp + days * 86400000; }
@@ -230,8 +232,14 @@ export async function onRequestGet({ request, env }) {
   try {
     const url = new URL(request.url);
     const today = todayUtcString();
-    const from = dateParam(url.searchParams.get('from'), '2024-05-01');
-    const to = dateParam(url.searchParams.get('to'), today);
+    const fromParam = url.searchParams.get('from');
+    const toParam = url.searchParams.get('to');
+    if ((fromParam && !isRealIsoDate(fromParam)) || (toParam && !isRealIsoDate(toParam))) {
+      return json({ ok: false, error: 'from and to must be valid YYYY-MM-DD dates' }, 400);
+    }
+    const from = dateParam(fromParam, '2024-05-01');
+    const to = dateParam(toParam, today);
+    if (from > to) return json({ ok: false, error: 'from must not be after to' }, 400);
     const payload = await cachedBroadcastSeries(
       `broadcast-series:v3:${from}:${to}`,
       () => loadBroadcastSeries(env, from, to),

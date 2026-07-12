@@ -14,6 +14,9 @@ import {
   resetHistoryLoadCache,
 } from '../functions/api/history.js';
 import { onRequestGet as playbackGet } from '../functions/api/playback.js';
+import { onRequestGet as broadcastSeriesGet } from '../functions/api/broadcast-series.js';
+import { onRequestGet as officialHistoryGet } from '../functions/api/official-history.js';
+import { onRequestGet as trackLikesGet } from '../functions/api/track-likes.js';
 import { FakeD1Database, responseJson } from './helpers/fake-d1.js';
 
 test('playback endpoint rejects a missing D1 binding without cacheable output', async () => {
@@ -101,6 +104,76 @@ test('broadcast history reports setup-required only when no imported event exist
   assert.equal(body.mode, 'broadcasts');
   assert.equal(body.setup_required, true);
   assert.deepEqual(body.rows, []);
+});
+
+test('history rejects impossible dates before querying D1', async () => {
+  const env = {
+    DB: {
+      prepare() { throw new Error('D1 should not be queried'); },
+    },
+  };
+  const response = await historyGet({
+    request: new Request('https://skrzk.test/api/history?mode=broadcasts&from=2026-02-30&to=2026-03-01'),
+    env,
+  });
+  assert.equal(response.status, 400);
+  assert.deepEqual(await responseJson(response), {
+    ok: false,
+    error: 'from and to must be valid YYYY-MM-DD dates',
+  });
+});
+
+test('broadcast series rejects impossible dates before querying D1', async () => {
+  const env = {
+    DB: {
+      prepare() { throw new Error('D1 should not be queried'); },
+    },
+  };
+  const response = await broadcastSeriesGet({
+    request: new Request('https://skrzk.test/api/broadcast-series?from=2026-02-30&to=2026-03-01'),
+    env,
+  });
+  assert.equal(response.status, 400);
+  assert.deepEqual(await responseJson(response), {
+    ok: false,
+    error: 'from and to must be valid YYYY-MM-DD dates',
+  });
+});
+
+test('official history rejects impossible dates before querying D1', async () => {
+  const env = {
+    DB: {
+      prepare() { throw new Error('D1 should not be queried'); },
+    },
+  };
+  const response = await officialHistoryGet({
+    request: new Request('https://skrzk.test/api/official-history?from=2026-02-30&to=2026-03-01'),
+    env,
+  });
+  assert.equal(response.status, 400);
+  assert.equal(response.headers.get('cache-control'), 'no-store');
+  assert.deepEqual(await responseJson(response), {
+    ok: false,
+    error: 'from and to must be valid YYYY-MM-DD dates',
+  });
+});
+
+test('track likes rejects impossible dates before querying D1', async () => {
+  const env = {
+    DB: {
+      prepare() { throw new Error('D1 should not be queried'); },
+    },
+  };
+  const response = await trackLikesGet({
+    request: new Request('https://skrzk.test/api/track-likes?from=2026-02-30&to=2026-03-01'),
+    env,
+  });
+  assert.equal(response.status, 400);
+  assert.equal(response.headers.get('cache-control'), 'no-store');
+  assert.deepEqual(await responseJson(response), {
+    ok: false,
+    error: 'from and to must be valid YYYY-MM-DD dates',
+  });
 });
 
 test('history cache coalesces concurrent readers and can be reset safely', async () => {

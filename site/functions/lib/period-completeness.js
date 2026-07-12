@@ -1,3 +1,5 @@
+import { isRealIsoDate } from './api-utils.js';
+
 const DAY_MS = 86400000;
 const JST_OFFSET_MS = 9 * 3600000;
 
@@ -17,11 +19,12 @@ function finiteNumber(value) {
 }
 
 function validDate(value) {
-  return /^\d{4}-\d{2}-\d{2}$/.test(String(value || ''));
+  return isRealIsoDate(value);
 }
 
 function validMonth(value) {
-  return /^\d{4}-\d{2}$/.test(String(value || ''));
+  const text = String(value || '');
+  return /^\d{4}-(0[1-9]|1[0-2])$/.test(text);
 }
 
 export function periodBoundaryToleranceMs(mode) {

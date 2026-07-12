@@ -5,6 +5,7 @@ import {
   liveSummarySql,
   loadSummaryWithLive,
 } from '../lib/history-summary.js';
+import { isRealIsoDate } from '../lib/api-utils.js';
 
 export { combineSummaryRows, liveSummarySql, loadSummaryWithLive };
 
@@ -217,9 +218,22 @@ export async function onRequestGet(context) {
   if (!env.DB) return json({ ok: false, error: 'DB binding missing' }, 500, { 'cache-control': 'no-store' });
   const url = new URL(request.url);
   const mode = url.searchParams.get('mode') || 'weekly';
-  const from = url.searchParams.get('from') || '2024-06-01';
-  const to = url.searchParams.get('to') || (mode === 'daily' ? todayUtcString() : todayJstString());
+  const fromParam = url.searchParams.get('from');
+  const toParam = url.searchParams.get('to');
+  const from = fromParam || '2024-06-01';
+  const to = toParam || (mode === 'daily' ? todayUtcString() : todayJstString());
   try {
+    if (mode !== 'raw' && ((fromParam && !isRealIsoDate(fromParam))
+      || (toParam && !isRealIsoDate(toParam)))) {
+      return json({ ok: false, error: 'from and to must be valid YYYY-MM-DD dates' }, 400, {
+        'cache-control': 'no-store',
+      });
+    }
+    if (mode !== 'raw' && from > to) {
+      return json({ ok: false, error: 'from must not be after to' }, 400, {
+        'cache-control': 'no-store',
+      });
+    }
     if (Object.hasOwn(SUMMARY_TABLES, mode)) {
       const summary = await cachedHistoryLoad(
         `summary:v4:${mode}:${from}:${to}`,

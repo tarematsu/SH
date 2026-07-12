@@ -42,7 +42,7 @@ export async function renewCollectorLease(env) {
 export async function readCollectorLease(env) {
   if (!env.DB) return null;
   try {
-    return env.DB.prepare(`SELECT scope,holder_id,holder_kind,priority,
+    return await env.DB.prepare(`SELECT scope,holder_id,holder_kind,priority,
       lease_until,heartbeat_at,updated_at FROM sh_collector_leases WHERE scope=?`)
       .bind(COLLECTOR_LEASE_SCOPE).first();
   } catch (error) {

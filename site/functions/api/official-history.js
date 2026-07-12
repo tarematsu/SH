@@ -1,3 +1,5 @@
+import { isRealIsoDate } from '../lib/api-utils.js';
+
 const json = (data, status = 200, cache = 'public, max-age=300, s-maxage=3600, stale-while-revalidate=86400') =>
   new Response(JSON.stringify(data), {
     status,
@@ -9,7 +11,7 @@ const json = (data, status = 200, cache = 'public, max-age=300, s-maxage=3600, s
   });
 
 function parseDateStart(value, fallback) {
-  const text = /^\d{4}-\d{2}-\d{2}$/.test(value || '') ? value : fallback;
+  const text = isRealIsoDate(value) ? value : fallback;
   return Date.parse(`${text}T00:00:00+09:00`);
 }
 
@@ -17,8 +19,14 @@ export async function onRequestGet({ request, env }) {
   if (!env.DB) return json({ ok: false, error: 'DB binding missing' }, 500, 'no-store');
   try {
     const url = new URL(request.url);
-    const from = url.searchParams.get('from') || '2024-06-01';
-    const to = url.searchParams.get('to') || new Date(Date.now() + 9 * 3600000).toISOString().slice(0, 10);
+    const fromParam = url.searchParams.get('from');
+    const toParam = url.searchParams.get('to');
+    if ((fromParam && !isRealIsoDate(fromParam)) || (toParam && !isRealIsoDate(toParam))) {
+      return json({ ok: false, error: 'from and to must be valid YYYY-MM-DD dates' }, 400, 'no-store');
+    }
+    const from = fromParam || '2024-06-01';
+    const to = toParam || new Date(Date.now() + 9 * 3600000).toISOString().slice(0, 10);
+    if (from > to) return json({ ok: false, error: 'from must not be after to' }, 400, 'no-store');
     const fromTs = parseDateStart(from, '2024-06-01');
     const toTs = parseDateStart(to, to) + 86400000;
 

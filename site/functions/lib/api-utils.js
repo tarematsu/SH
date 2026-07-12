@@ -44,6 +44,14 @@ export function num(value) {
   return Number.isFinite(n) ? n : null;
 }
 
+export function isRealIsoDate(value) {
+  const text = String(value || '');
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(text)) return false;
+  const timestamp = Date.parse(`${text}T00:00:00Z`);
+  return Number.isFinite(timestamp)
+    && new Date(timestamp).toISOString().slice(0, 10) === text;
+}
+
 export function bool(value) {
   if (value === undefined || value === null) return null;
   if (typeof value === 'boolean') return value ? 1 : 0;
