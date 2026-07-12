@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
-import { MINUTE_FACT_DERIVE_CRON, MINUTE_FACT_LEGACY_CRON, MINUTE_FACT_REBUILD_CRON, MINUTE_FACT_RECOVERY_MINUTE, MINUTE_FACT_WORKER_CRON, runMinuteScheduled } from '../src/minute-entry.js';
+import minuteApp, { MINUTE_FACT_DERIVE_CRON, MINUTE_FACT_LEGACY_CRON, MINUTE_FACT_REBUILD_CRON, MINUTE_FACT_RECOVERY_MINUTE, MINUTE_FACT_WORKER_CRON, runMinuteScheduled } from '../src/minute-entry.js';
 import { legacyFact, runMinuteFactsLegacyBackfill } from '../src/minute-facts-legacy-backfill.js';
 
 test('minute worker routes every creation path without running the collector', async () => {
@@ -48,6 +48,40 @@ test('minute worker has dedicated name, bindings and crons', () => {
 test('legacy fact creation is enabled in the dedicated worker', async () => {
   const result = await runMinuteFactsLegacyBackfill({}, {});
   assert.deepEqual(result, { skipped: true, reason: 'legacy-db-binding-missing' });
+});
+
+test('minute worker /health responses are cached across repeated requests', async () => {
+  let reads = 0;
+  const env = {
+    DB: {
+      prepare(sql) {
+        return {
+          bind() {
+            return this;
+          },
+          async all() {
+            reads += 1;
+            if (sql.includes('sh_minute_fact_runtime_state')) return { results: [] };
+            return { results: [] };
+          },
+          async first() {
+            return null;
+          },
+          async run() {
+            return { meta: { changes: 0 } };
+          },
+        };
+      },
+    },
+  };
+  const request = new Request('https://example.com/health');
+
+  const first = await minuteApp.fetch(request, env, {});
+  const second = await minuteApp.fetch(request, env, {});
+
+  assert.equal(first.status, 200);
+  assert.equal(second.headers.get('x-health-cache'), 'hit');
+  assert.equal(reads, 1);
 });
 
 test('legacy facts use the current numeric source and track-detection columns', () => {

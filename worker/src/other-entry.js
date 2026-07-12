@@ -1,10 +1,12 @@
 import { scheduleBuddyPlayback, scheduledTimestamp } from './cadenced-entry.js';
+import { applyCronStagger } from './cron-stagger.js';
 import { runCloudHostMonitor } from './cloud-host-monitor.js';
 import { withScheduledD1Optimizations } from './d1-scheduled-optimizer.js';
 import { reconcileOfficialAnnouncements } from './official-news-reconcile.js';
 import { runOfficialNewsMonitor } from './official-news-probe.js';
 import { officialNewsConfig } from './official-news-utils.js';
 import { runScheduledMaintenance } from './scheduled-maintenance.js';
+import { pruneOldSnapshotsSafely } from './snapshot-retention.js';
 import { runStreamGoalPrediction } from './stream-goal-prediction.js';
 
 // If probe throws, reconcile is skipped (reconcile only makes sense once the
@@ -29,6 +31,7 @@ export async function runOtherScheduled(controller, env, ctx, dependencies = {})
     (dependencies.prediction || runStreamGoalPrediction)(env, now),
     (dependencies.maintenance || runScheduledMaintenance)(env, now),
     (dependencies.officialNews || runOfficialNewsWithReconcile)(env, now),
+    (dependencies.snapshotRetention || pruneOldSnapshotsSafely)(env, now),
   ];
   const results = await Promise.allSettled(tasks);
   const failures = results.filter((result) => result.status === 'rejected');
@@ -37,6 +40,9 @@ export async function runOtherScheduled(controller, env, ctx, dependencies = {})
 }
 
 export default {
-  scheduled(controller, env, ctx) { return runOtherScheduled(controller, env, ctx); },
+  async scheduled(controller, env, ctx) {
+    await applyCronStagger(env, 'other');
+    return runOtherScheduled(controller, env, ctx);
+  },
   fetch() { return new Response('Not found', { status: 404 }); },
 };

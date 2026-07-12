@@ -1,8 +1,10 @@
+import { applyCronStagger } from './cron-stagger.js';
 import { runMinuteFactsBackfill } from './minute-facts-backfill.js';
 import { runMinuteFactDeriveCron } from './minute-facts-derive.js';
 import { runMinuteFactsLegacyBackfill } from './minute-facts-legacy-backfill.js';
 import { requeueDeadMinuteFactJobs } from './minute-facts-inbox.js';
 import { minuteFactRuntimeSignals, readMinuteFactRuntimeState, recordMinuteFactRuntimeState } from './minute-facts-runtime-state.js';
+import { createPublicHealthCachedApp } from './public-health-cache.js';
 
 export const MINUTE_FACT_DERIVE_CRON = '*/2 * * * *';
 export const MINUTE_FACT_REBUILD_CRON = '7,17,27,37,47,57 * * * *';
@@ -52,8 +54,11 @@ export async function runMinuteScheduled(controller = {}, env, dependencies = {}
   return { skipped: true, reason: 'unsupported-minute-facts-cron', cron };
 }
 
-export default {
-  scheduled(controller, env, ctx) { return runMinuteScheduled(controller, env, { ctx }); },
+const rawApp = {
+  async scheduled(controller, env, ctx) {
+    await applyCronStagger(env, 'minute');
+    return runMinuteScheduled(controller, env, { ctx });
+  },
   async fetch(request, env) {
     if (request.method !== 'GET' || new URL(request.url).pathname !== '/health') return new Response('Not found', { status: 404 });
     const tasks = await readMinuteFactRuntimeState(env);
@@ -65,3 +70,5 @@ export default {
     return Response.json({ ok, tasks: health });
   },
 };
+
+export default createPublicHealthCachedApp(rawApp);

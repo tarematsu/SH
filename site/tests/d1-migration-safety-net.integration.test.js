@@ -11,9 +11,9 @@ const migration = readFileSync(
   'utf8',
 );
 
-test('D1 recovery remains a manual fallback and cannot race deployments', () => {
+test('site D1 migrations remain a manual fallback and cannot race deployments', () => {
   assert.match(workflow, /workflow_dispatch:/);
-  assert.doesNotMatch(workflow, /\bpush:/);
+  assert.match(workflow, /if: inputs\.operation == 'site-migrations'/);
   assert.doesNotMatch(workflow, /\bschedule:/);
   assert.doesNotMatch(workflow, /sleep\s+120/);
   assert.match(workflow, /group: sh-database-operations/);
@@ -22,6 +22,15 @@ test('D1 recovery remains a manual fallback and cannot race deployments', () => 
   assert.match(workflow, /D1_MIGRATION_TARGET: remote/);
   assert.match(workflow, /npm run db:migrate/);
   assert.match(workflow, /npm run db:verify/);
+});
+
+test('facts-db auto-apply on push stays narrowly scoped to main and its own migration files', () => {
+  const pushBlock = workflow.match(/^on:\n([\s\S]*?)\n(?:permissions:)/m)?.[1] || '';
+  assert.match(pushBlock, /push:/);
+  assert.match(pushBlock, /branches:\s*\n\s*- main/);
+  assert.match(pushBlock, /paths:\s*\n(\s*- '.*'\n)+/);
+  assert.doesNotMatch(pushBlock, /'\*\*'\s*$/m, 'push paths must not match the whole repo');
+  assert.match(workflow, /if: github\.event_name == 'push' \|\| inputs\.operation == 'facts-db'/);
 });
 
 test('unused queue Spotify index is removed', () => {

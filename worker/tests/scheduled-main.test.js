@@ -14,11 +14,23 @@ function trackingDb() {
     calls,
     prepare(sql) {
       calls.push(sql);
-      return {
-        bind() { return this; },
-        async first() { return null; },
+      const statement = {
+        boundParams: [],
+        bind(...params) {
+          statement.boundParams = params;
+          return statement;
+        },
+        async first() {
+          // Simulate an uncontested primary-run-lock claim so tests unrelated
+          // to that mechanism don't need to know about it.
+          if (sql.startsWith('INSERT INTO sh_primary_run_lock')) {
+            return { holder_id: statement.boundParams[1] };
+          }
+          return null;
+        },
         async run() { return { meta: { changes: 0 } }; },
       };
+      return statement;
     },
   };
 }
@@ -65,7 +77,8 @@ test('buddies worker defers the prediction/maintenance auxiliaries to the other 
   await Promise.allSettled(waitUntilTasks);
 
   assert.equal(result, 'primary-done');
-  assert.equal(env.DB.calls.length, 0, 'expected no auxiliary D1 access when deferred to the other worker');
+  const auxiliaryCalls = env.DB.calls.filter((sql) => !sql.includes('sh_primary_run_lock'));
+  assert.equal(auxiliaryCalls.length, 0, 'expected no auxiliary D1 access when deferred to the other worker');
   resetPrimaryScheduledFlightForTests();
 });
 
