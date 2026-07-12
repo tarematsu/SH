@@ -1,4 +1,5 @@
 import { cleanSpotifyTitle } from './shared-utils.js';
+import { combinedAbortSignal } from './request-signal.js';
 
 const COMPLETE_CACHE_MS = 6 * 60 * 60 * 1000;
 const RETRY_MS = 24 * 60 * 60 * 1000;
@@ -38,7 +39,7 @@ export async function fetchTrackMetadata(track, config) {
     `https://open.spotify.com/oembed?url=${encodeURIComponent(spotifyUrl)}`,
     {
       headers: { accept: 'application/json' },
-      signal: AbortSignal.timeout(config.requestTimeoutMs),
+      signal: combinedAbortSignal(config.collectionSignal, config.requestTimeoutMs),
     },
   ).then((response) => response.ok ? response.json() : null).catch(() => null);
   if (!spotify?.title) return null;

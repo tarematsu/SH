@@ -4,7 +4,7 @@ import test from 'node:test';
 
 import { runOfficialNewsWithReconcile, runOtherScheduled } from '../src/other-entry.js';
 
-test('other worker scheduled run drives buddy playback, host, prediction, maintenance, and official news', async () => {
+test('other worker scheduled run drives buddy playback, host, prediction, maintenance, official news, and snapshot retention', async () => {
   const calls = [];
   const controller = { scheduledTime: 300_000, cron: '* * * * *' };
   const env = { marker: true };
@@ -31,16 +31,20 @@ test('other worker scheduled run drives buddy playback, host, prediction, mainte
       calls.push(['officialNews', receivedEnv, now]);
       return 'official-news-done';
     },
+    snapshotRetention: (receivedEnv, now) => {
+      calls.push(['snapshotRetention', receivedEnv, now]);
+      return 'snapshot-retention-done';
+    },
   });
 
   assert.deepEqual(
     results,
-    ['buddy-done', 'host-done', 'prediction-done', 'maintenance-done', 'official-news-done'],
+    ['buddy-done', 'host-done', 'prediction-done', 'maintenance-done', 'official-news-done', 'snapshot-retention-done'],
   );
-  assert.equal(calls.length, 5);
+  assert.equal(calls.length, 6);
   assert.deepEqual(
     calls.map((call) => call[0]),
-    ['buddy', 'host', 'prediction', 'maintenance', 'officialNews'],
+    ['buddy', 'host', 'prediction', 'maintenance', 'officialNews', 'snapshotRetention'],
   );
   assert.equal(calls[0][1], env);
   assert.equal(calls[0][2], ctx);
@@ -49,7 +53,7 @@ test('other worker scheduled run drives buddy playback, host, prediction, mainte
 
 test('other worker scheduled run reports failures without stopping the remaining tasks', async () => {
   const failure = new Error('prediction failed');
-  const ran = { host: false, prediction: false, maintenance: false, officialNews: false };
+  const ran = { host: false, prediction: false, maintenance: false, officialNews: false, snapshotRetention: false };
 
   await assert.rejects(
     runOtherScheduled({ scheduledTime: 0 }, {}, { waitUntil() {} }, {
@@ -58,6 +62,7 @@ test('other worker scheduled run reports failures without stopping the remaining
       prediction: async () => { throw failure; },
       maintenance: () => { ran.maintenance = true; return 'maintenance-done'; },
       officialNews: () => { ran.officialNews = true; return 'official-news-done'; },
+      snapshotRetention: () => { ran.snapshotRetention = true; return 'snapshot-retention-done'; },
     }),
     (error) => error instanceof AggregateError && error.errors.includes(failure),
   );
@@ -65,6 +70,7 @@ test('other worker scheduled run reports failures without stopping the remaining
   assert.equal(ran.host, true);
   assert.equal(ran.maintenance, true);
   assert.equal(ran.officialNews, true);
+  assert.equal(ran.snapshotRetention, true);
 });
 
 test('official news reconcile runs only after a successful probe', async () => {

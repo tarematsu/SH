@@ -1,5 +1,6 @@
 import app from './email-recap-index.js';
 import { runCloudHostMonitor } from './cloud-host-monitor.js';
+import { claimPrimaryRunLock, releasePrimaryRunLock } from './primary-run-lock.js';
 import { runScheduledMaintenance } from './scheduled-maintenance.js';
 
 const DEFAULT_PRIMARY_WATCHDOG_MS = 55_000;
@@ -76,6 +77,27 @@ function releaseRequestFlight(ctx, flight) {
   if (key && primaryFlightsByContext.get(key) === flight) primaryFlightsByContext.delete(key);
 }
 
+function runLockHolderId(now) {
+  return `${now}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+// Only releases the lock when `scheduled` resolves normally. On abort/error
+// the lease is left to expire on its own TTL, since Cloudflare aborting our
+// await doesn't forcibly stop the underlying collection -- releasing early
+// here would just let the very next cron tick race a run that may still be
+// finishing up in the background.
+async function runPrimaryWithLock(controller, env, runtimeEnv, ctx, scheduled) {
+  const now = Date.now();
+  const holderId = runLockHolderId(now);
+  const claimed = await claimPrimaryRunLock(env, holderId, now);
+  if (!claimed) {
+    return { skipped: true, reason: 'primary-run-in-progress' };
+  }
+  const result = await scheduled(controller, runtimeEnv, ctx);
+  await releasePrimaryRunLock(env, holderId).catch(() => {});
+  return result;
+}
+
 function primaryFlightForRequest(controller, env, ctx, scheduled, timeoutMs) {
   const key = requestContextKey(ctx);
   if (key) {
@@ -88,7 +110,9 @@ function primaryFlightForRequest(controller, env, ctx, scheduled, timeoutMs) {
   const runtimeEnv = withCollectionRuntime(env, abortController.signal, deadlineAt);
   const flight = {
     abortController,
-    primary: Promise.resolve().then(() => scheduled(controller, runtimeEnv, ctx)),
+    primary: env?.DB
+      ? runPrimaryWithLock(controller, env, runtimeEnv, ctx, scheduled)
+      : Promise.resolve().then(() => scheduled(controller, runtimeEnv, ctx)),
   };
   if (key) primaryFlightsByContext.set(key, flight);
   flight.primary.then(

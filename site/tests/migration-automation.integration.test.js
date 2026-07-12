@@ -13,12 +13,19 @@ test('production build applies migrations and verifies the resulting schema', ()
   assert.ok(packageJson.scripts.build.indexOf('db:migrate') < packageJson.scripts.build.indexOf('db:verify'));
 });
 
-test('database workflow keeps migrations as an explicit manual operation', () => {
+test('database workflow keeps site migrations as an explicit manual operation', () => {
   assert.match(workflow, /workflow_dispatch:/);
-  assert.doesNotMatch(workflow, /\n\s+push:/);
+  assert.match(workflow, /if: inputs\.operation == 'site-migrations'/);
   assert.match(workflow, /site-migrations/);
   assert.match(workflow, /npm run db:migrate/);
   assert.match(workflow, /npm run db:verify/);
+});
+
+test('database workflow only auto-applies facts-db migrations, scoped to main and their own files', () => {
+  assert.match(workflow, /if: github\.event_name == 'push' \|\| inputs\.operation == 'facts-db'/);
+  const pushBlock = workflow.match(/^on:\n([\s\S]*?)\n(?:permissions:)/m)?.[1] || '';
+  assert.match(pushBlock, /branches:\s*\n\s*- main/);
+  assert.match(pushBlock, /paths:/);
 });
 
 test('migration and verification detect both Pages and Workers production branches', () => {
