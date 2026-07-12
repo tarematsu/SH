@@ -28,15 +28,15 @@ function fakeDb() {
 test('runtime state creates its own persistent table once', async () => {
   resetMinuteFactRuntimeStateForTests();
   const db = fakeDb();
-  assert.equal(await ensureMinuteFactRuntimeStateSchema({ DB: db }), true);
-  assert.equal(await ensureMinuteFactRuntimeStateSchema({ DB: db }), false);
+  assert.equal(await ensureMinuteFactRuntimeStateSchema({ FACTS_DB: db }), true);
+  assert.equal(await ensureMinuteFactRuntimeStateSchema({ FACTS_DB: db }), false);
   assert.match(db.calls[0].sql, /CREATE TABLE IF NOT EXISTS sh_minute_fact_runtime_state/);
 });
 
 test('runtime state records success counters and inbox health', async () => {
   resetMinuteFactRuntimeStateForTests();
   const db = fakeDb();
-  const state = await recordMinuteFactRuntimeState({ DB: db }, 'derive', {
+  const state = await recordMinuteFactRuntimeState({ FACTS_DB: db }, 'derive', {
     processed: 3, failed: 1, pending_count: 4, processing_count: 2, dead_count: 1, oldest_pending_minute: 60_000,
   }, { now: 100_000, startedAt: 98_500 });
   assert.deepEqual(state, {
@@ -54,7 +54,7 @@ test('runtime state records success counters and inbox health', async () => {
 test('runtime state records sanitized task failures and exposes backlog signals', async () => {
   resetMinuteFactRuntimeStateForTests();
   const db = fakeDb();
-  const state = await recordMinuteFactRuntimeState({ DB: db }, 'legacy', { error: new Error('token=secret failed'), dead_count: 2 }, { now: 100 });
+  const state = await recordMinuteFactRuntimeState({ FACTS_DB: db }, 'legacy', { error: new Error('token=secret failed'), dead_count: 2 }, { now: 100 });
   assert.equal(state.ok, false);
   assert.equal(state.error, 'token=secret failed');
   const values = db.calls.at(-1).values;
@@ -70,5 +70,5 @@ test('runtime state records sanitized task failures and exposes backlog signals'
 
 test('runtime state rejects unsafe task names', async () => {
   resetMinuteFactRuntimeStateForTests();
-  await assert.rejects(recordMinuteFactRuntimeState({ DB: fakeDb() }, 'derive;drop', {}), /task name is invalid/);
+  await assert.rejects(recordMinuteFactRuntimeState({ FACTS_DB: fakeDb() }, 'derive;drop', {}), /task name is invalid/);
 });

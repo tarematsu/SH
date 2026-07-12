@@ -65,12 +65,12 @@ async function ensureInboxColumns(db) {
 }
 
 export async function ensureMinuteFactInboxSchema(env) {
-  if (!env?.DB) throw new Error('minute fact inbox DB binding is missing');
+  if (!env?.FACTS_DB) throw new Error('minute fact inbox DB binding is missing');
   if (schemaReady) return false;
-  await env.DB.prepare(MINUTE_FACT_INBOX_SCHEMA_SQL).run();
-  await ensureInboxColumns(env.DB);
-  await env.DB.prepare('DROP INDEX IF EXISTS idx_sh_minute_fact_jobs_pending').run();
-  await env.DB.prepare(MINUTE_FACT_INBOX_INDEX_SQL).run();
+  await env.FACTS_DB.prepare(MINUTE_FACT_INBOX_SCHEMA_SQL).run();
+  await ensureInboxColumns(env.FACTS_DB);
+  await env.FACTS_DB.prepare('DROP INDEX IF EXISTS idx_sh_minute_fact_jobs_pending').run();
+  await env.FACTS_DB.prepare(MINUTE_FACT_INBOX_INDEX_SQL).run();
   schemaReady = true;
   return true;
 }
@@ -86,7 +86,7 @@ export async function enqueueMinuteFactJob(env, input = {}, options = {}) {
   const jobKind = text(options.jobKind, payload.rebuild ? 'rebuild' : 'live');
   const jobPriority = positiveInteger(options.jobPriority, payload.rebuild ? 20 : 100, 1000);
   const requeueCompleted = options.requeueCompleted === true ? 1 : 0;
-  const result = await env.DB.prepare(`INSERT INTO sh_minute_fact_jobs(
+  const result = await env.FACTS_DB.prepare(`INSERT INTO sh_minute_fact_jobs(
       channel_id,minute_at,observed_at,payload_version,payload_json,job_kind,job_priority,
       status,attempts,next_attempt_at,lease_until,processed_at,last_error,created_at,updated_at
     ) VALUES(?,?,?,?,?,?,?,'pending',0,0,NULL,NULL,NULL,?,?)
@@ -119,7 +119,7 @@ export async function enqueueMinuteFactJob(env, input = {}, options = {}) {
 }
 
 async function releaseExpiredLeases(env, now) {
-  await env.DB.prepare(`UPDATE sh_minute_fact_jobs SET
+  await env.FACTS_DB.prepare(`UPDATE sh_minute_fact_jobs SET
       status='pending',lease_until=NULL,updated_at=?
     WHERE status='processing' AND COALESCE(lease_until,0)<?`)
     .bind(now, now)
@@ -133,7 +133,7 @@ export async function claimMinuteFactJobs(env, options = {}) {
   const leaseMs = positiveInteger(options.leaseMs, 60_000, 10 * 60_000);
   await releaseExpiredLeases(env, now);
 
-  const candidates = await env.DB.prepare(`SELECT id FROM sh_minute_fact_jobs
+  const candidates = await env.FACTS_DB.prepare(`SELECT id FROM sh_minute_fact_jobs
     WHERE status='pending' AND next_attempt_at<=?
     ORDER BY job_priority DESC,minute_at ASC,id ASC LIMIT ?`)
     .bind(now, limit)
@@ -143,13 +143,13 @@ export async function claimMinuteFactJobs(env, options = {}) {
   for (const candidate of candidates.results || []) {
     const id = integer(candidate?.id);
     if (id == null) continue;
-    const result = await env.DB.prepare(`UPDATE sh_minute_fact_jobs SET
+    const result = await env.FACTS_DB.prepare(`UPDATE sh_minute_fact_jobs SET
         status='processing',attempts=attempts+1,lease_until=?,updated_at=?
       WHERE id=? AND status='pending' AND next_attempt_at<=?`)
       .bind(now + leaseMs, now, id, now)
       .run();
     if (Number(result?.meta?.changes || 0) <= 0) continue;
-    const row = await env.DB.prepare('SELECT * FROM sh_minute_fact_jobs WHERE id=?')
+    const row = await env.FACTS_DB.prepare('SELECT * FROM sh_minute_fact_jobs WHERE id=?')
       .bind(id)
       .first();
     if (row) claimed.push(row);
@@ -158,7 +158,7 @@ export async function claimMinuteFactJobs(env, options = {}) {
 }
 
 export async function completeMinuteFactJob(env, jobId, now = Date.now()) {
-  await env.DB.prepare(`UPDATE sh_minute_fact_jobs SET
+  await env.FACTS_DB.prepare(`UPDATE sh_minute_fact_jobs SET
       status='done',lease_until=NULL,processed_at=?,last_error=NULL,updated_at=?
     WHERE id=? AND status='processing'`)
     .bind(now, now, jobId)
@@ -172,7 +172,7 @@ export async function failMinuteFactJob(env, job, error, options = {}) {
   const terminal = attempts >= maxAttempts;
   const retryDelayMs = positiveInteger(options.retryDelayMs, 60_000, 60 * 60_000);
   const message = sanitizeFailureDetail(error?.message || error).slice(0, 800);
-  await env.DB.prepare(`UPDATE sh_minute_fact_jobs SET
+  await env.FACTS_DB.prepare(`UPDATE sh_minute_fact_jobs SET
       status=?,next_attempt_at=?,lease_until=NULL,last_error=?,updated_at=?
     WHERE id=? AND status='processing'`)
     .bind(
@@ -190,12 +190,12 @@ export async function requeueDeadMinuteFactJobs(env, options = {}) {
   await ensureMinuteFactInboxSchema(env);
   const limit = positiveInteger(options.limit, 20, 100);
   const now = integer(options.now) ?? Date.now();
-  const candidates = await env.DB.prepare(`SELECT id FROM sh_minute_fact_jobs
+  const candidates = await env.FACTS_DB.prepare(`SELECT id FROM sh_minute_fact_jobs
     WHERE status='dead' ORDER BY updated_at ASC,id ASC LIMIT ?`).bind(limit).all();
   const ids = (candidates.results || []).map((row) => integer(row.id)).filter((id) => id != null);
   if (!ids.length) return { requeued: 0 };
   const placeholders = ids.map(() => '?').join(',');
-  const result = await env.DB.prepare(`UPDATE sh_minute_fact_jobs SET
+  const result = await env.FACTS_DB.prepare(`UPDATE sh_minute_fact_jobs SET
       status='pending',attempts=0,next_attempt_at=0,lease_until=NULL,last_error=NULL,updated_at=?
     WHERE status='dead' AND id IN (${placeholders})`).bind(now, ...ids).run();
   return { requeued: Number(result?.meta?.changes || 0) };
@@ -203,7 +203,7 @@ export async function requeueDeadMinuteFactJobs(env, options = {}) {
 
 export async function minuteFactInboxStats(env) {
   await ensureMinuteFactInboxSchema(env);
-  const row = await env.DB.prepare(`SELECT
+  const row = await env.FACTS_DB.prepare(`SELECT
       SUM(CASE WHEN status='pending' THEN 1 ELSE 0 END) AS pending_count,
       SUM(CASE WHEN status='processing' THEN 1 ELSE 0 END) AS processing_count,
       SUM(CASE WHEN status='dead' THEN 1 ELSE 0 END) AS dead_count,

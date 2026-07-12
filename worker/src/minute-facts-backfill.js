@@ -153,10 +153,10 @@ export function buildRebuildCandidates(rows = [], previousRow = null, options = 
 }
 
 async function ensureRebuildSchema(env) {
-  if (!env?.DB) throw new Error('minute fact rebuild DB binding is missing');
+  if (!env?.FACTS_DB) throw new Error('minute fact rebuild FACTS_DB binding is missing');
   if (schemaReady) return;
-  await env.DB.prepare(MINUTE_FACT_REBUILD_STATE_SQL).run();
-  await env.DB.prepare(`INSERT OR IGNORE INTO sh_minute_fact_rebuild_state(
+  await env.FACTS_DB.prepare(MINUTE_FACT_REBUILD_STATE_SQL).run();
+  await env.FACTS_DB.prepare(`INSERT OR IGNORE INTO sh_minute_fact_rebuild_state(
       rebuild_key,updated_at
     ) VALUES(?,?)`).bind(REBUILD_STATE_KEY, Date.now()).run();
   schemaReady = true;
@@ -164,14 +164,14 @@ async function ensureRebuildSchema(env) {
 
 async function loadState(env) {
   await ensureRebuildSchema(env);
-  return env.DB.prepare('SELECT * FROM sh_minute_fact_rebuild_state WHERE rebuild_key=?')
+  return env.FACTS_DB.prepare('SELECT * FROM sh_minute_fact_rebuild_state WHERE rebuild_key=?')
     .bind(REBUILD_STATE_KEY)
     .first();
 }
 
 async function saveState(env, values = {}) {
   const state = await loadState(env);
-  await env.DB.prepare(`UPDATE sh_minute_fact_rebuild_state SET
+  await env.FACTS_DB.prepare(`UPDATE sh_minute_fact_rebuild_state SET
       cursor_observed_at=?,cursor_snapshot_id=?,last_snapshot_json=?,pending_json=?,
       scanned_snapshots=?,exact_candidates=?,carried_candidates=?,enqueued_jobs=?,
       skipped_existing=?,last_error=?,updated_at=?
