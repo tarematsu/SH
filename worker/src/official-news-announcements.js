@@ -13,13 +13,13 @@ import {
 } from './official-news-html.js';
 
 export async function monitorState(env) {
-  return env.DB.prepare(`SELECT last_check_at,last_success_at,last_error FROM sh_official_news_monitor_state WHERE id=?`)
+  return env.OTHER_DB.prepare(`SELECT last_check_at,last_success_at,last_error FROM sh_official_news_monitor_state WHERE id=?`)
     .bind(OFFICIAL_NEWS_STATE_ID).first();
 }
 
 export async function saveMonitorState(env, values) {
   const now = Date.now();
-  await env.DB.prepare(`INSERT INTO sh_official_news_monitor_state
+  await env.OTHER_DB.prepare(`INSERT INTO sh_official_news_monitor_state
       (id,last_check_at,last_success_at,last_error,updated_at)
       VALUES (?,?,?,?,?)
       ON CONFLICT(id) DO UPDATE SET
@@ -33,7 +33,7 @@ export async function saveMonitorState(env, values) {
 export async function saveAnnouncement(env, article, scheduledAt, detectedAt) {
   const rawText = article.text.slice(0, 50000);
   if (scheduledAt) {
-    const row = await env.DB.prepare(`INSERT INTO sh_official_news_announcements
+    const row = await env.OTHER_DB.prepare(`INSERT INTO sh_official_news_announcements
         (news_id,news_url,published_date,title,event_name,scheduled_at,detected_at,updated_at,status,raw_text)
         VALUES (?,?,?,?,?,?,?,?,?,?)
         ON CONFLICT(news_id,scheduled_at) DO UPDATE SET
@@ -53,11 +53,11 @@ export async function saveAnnouncement(env, article, scheduledAt, detectedAt) {
     return Number(row?.id || 0);
   }
 
-  const existing = await env.DB.prepare(`SELECT id FROM sh_official_news_announcements
+  const existing = await env.OTHER_DB.prepare(`SELECT id FROM sh_official_news_announcements
       WHERE news_id=? AND scheduled_at IS NULL LIMIT 1`)
     .bind(article.newsId).first();
   if (existing?.id) {
-    await env.DB.prepare(`UPDATE sh_official_news_announcements SET
+    await env.OTHER_DB.prepare(`UPDATE sh_official_news_announcements SET
         news_url=?,published_date=?,title=?,event_name=?,updated_at=?,raw_text=?
         WHERE id=? AND (
           news_url IS NOT ? OR published_date IS NOT ? OR title IS NOT ?
@@ -71,7 +71,7 @@ export async function saveAnnouncement(env, article, scheduledAt, detectedAt) {
     return Number(existing.id);
   }
 
-  const result = await env.DB.prepare(`INSERT INTO sh_official_news_announcements
+  const result = await env.OTHER_DB.prepare(`INSERT INTO sh_official_news_announcements
       (news_id,news_url,published_date,title,event_name,scheduled_at,detected_at,updated_at,status,raw_text)
       VALUES (?,?,?,?,?,?,?,?,?,?)`)
     .bind(
@@ -82,7 +82,7 @@ export async function saveAnnouncement(env, article, scheduledAt, detectedAt) {
 }
 
 export async function markMissedAnnouncements(env, cfg, now) {
-  await env.DB.prepare(`UPDATE sh_official_news_announcements SET status='missed',updated_at=?
+  await env.OTHER_DB.prepare(`UPDATE sh_official_news_announcements SET status='missed',updated_at=?
     WHERE status='scheduled' AND scheduled_at IS NOT NULL AND scheduled_at<?`)
     .bind(now, now - cfg.lateWindowMs).run();
 }

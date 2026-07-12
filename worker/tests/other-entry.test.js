@@ -75,7 +75,11 @@ test('other worker scheduled run reports failures without stopping the remaining
 
 test('official news reconcile runs only after a successful probe', async () => {
   const order = [];
-  const env = { marker: true, DB: { prepare() { throw new Error('unused in this test'); } } };
+  const env = {
+    marker: true,
+    DB: { prepare() { throw new Error('unused in this test'); } },
+    OTHER_DB: { prepare() { throw new Error('unused in this test'); } },
+  };
 
   const result = await runOfficialNewsWithReconcile(
     env,

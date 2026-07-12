@@ -43,7 +43,7 @@ export function japaneseHourScheduleTimes(text, fallbackYear) {
 }
 
 function promotionInsert(env, row, scheduledAt, completedAt) {
-  return env.DB.prepare(`INSERT INTO sh_official_news_announcements
+  return env.OTHER_DB.prepare(`INSERT INTO sh_official_news_announcements
       (news_id,news_url,published_date,title,event_name,scheduled_at,detected_at,updated_at,status,raw_text)
     VALUES (?,?,?,?,?,?,?,?,?,?)
     ON CONFLICT(news_id,scheduled_at) DO UPDATE SET
@@ -72,8 +72,8 @@ export async function promoteJapaneseHourAnnouncements(
   runStartedAt = Date.now(),
   completedAt = Date.now(),
 ) {
-  if (!env?.DB) return { promoted: 0, skipped: true };
-  const result = await env.DB.prepare(PROMOTABLE_TIME_UNKNOWN_SQL)
+  if (!env?.OTHER_DB) return { promoted: 0, skipped: true };
+  const result = await env.OTHER_DB.prepare(PROMOTABLE_TIME_UNKNOWN_SQL)
     .bind(runStartedAt)
     .all();
   let promoted = 0;
@@ -90,7 +90,7 @@ export async function promoteJapaneseHourAnnouncements(
       scheduledAt,
       completedAt,
     ));
-    const results = await env.DB.batch(statements);
+    const results = await env.OTHER_DB.batch(statements);
     promoted += (results || []).reduce(
       (total, item) => total + Number(item?.meta?.changes || 0),
       0,

@@ -10,7 +10,7 @@ FROM (SELECT ? AS id) requested
 LEFT JOIN sh_official_news_monitor_state monitor ON monitor.id=requested.id`;
 
 export async function loadOfficialHealthState(env, now = Date.now()) {
-  return env.DB.prepare(OFFICIAL_HEALTH_SQL).bind(now, OFFICIAL_NEWS_STATE_ID).first();
+  return env.OTHER_DB.prepare(OFFICIAL_HEALTH_SQL).bind(now, OFFICIAL_NEWS_STATE_ID).first();
 }
 
 export async function officialNewsHealth(env, baseResponse) {

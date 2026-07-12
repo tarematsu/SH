@@ -168,7 +168,7 @@ function combineSummaryRows(base, live) {
 async function loadSummaryWithLive(env, mode, from, to) {
   const table = SUMMARY_TABLES[mode] || SUMMARY_TABLES.weekly;
   const limit = mode === 'daily' ? 800 : mode === 'weekly' ? 160 : 60;
-  const baseResult = await env.DB.prepare(
+  const baseResult = await env.OTHER_DB.prepare(
     `SELECT ${SUMMARY_COLUMNS} FROM ${table} WHERE period_key>=? AND period_key<=? ORDER BY period_key ASC LIMIT ?`,
   ).bind(from, to, limit).all();
   const baseRows = baseResult.results || [];

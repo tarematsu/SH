@@ -63,7 +63,7 @@ test('idle solo monitor only runs inside an official announcement window', async
   };
   const now = Date.parse('2026-07-06T12:00:00Z');
   const env = {
-    DB: {
+    OTHER_DB: {
       prepare(sql) {
         assert.match(sql, /sh_official_news_announcements/);
         return statementResult({ due: 1 }, calls);
@@ -110,7 +110,7 @@ test('announcement-free idle state skips the solo endpoint', async () => {
     officialLateWindowMs: 90 * 60_000
   };
   const env = {
-    DB: {
+    OTHER_DB: {
       prepare() {
         return statementResult(null, []);
       }

@@ -38,6 +38,7 @@ function trackingDb() {
 function baseEnv(extra = {}) {
   return {
     DB: trackingDb(),
+    OTHER_DB: trackingDb(),
     DATA_MAINTENANCE_ENABLED: 'false',
     ...extra,
   };
@@ -60,7 +61,7 @@ test('primary schedule runs the prediction/maintenance auxiliaries when not defe
 
   assert.equal(result, 'primary-done');
   assert.ok(
-    env.DB.calls.some((sql) => sql.includes('sh_stream_goal_prediction_state')),
+    env.OTHER_DB.calls.some((sql) => sql.includes('sh_stream_goal_prediction_state')),
     'expected the stream goal prediction claim to run when auxiliaries are not deferred',
   );
   resetPrimaryScheduledFlightForTests();

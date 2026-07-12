@@ -1,11 +1,11 @@
 import { execFileSync } from 'node:child_process';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 const workerRoot = resolve(import.meta.dirname, '..');
 const repositoryRoot = resolve(workerRoot, '..');
 const wranglerScript = resolve(workerRoot, 'node_modules/wrangler/bin/wrangler.js');
-const schemaPath = resolve(repositoryRoot, 'database/other-migrations/001_initial_schema.sql');
+const migrationsDir = resolve(repositoryRoot, 'database/other-migrations');
 const metadataPath = resolve(repositoryRoot, 'database/other-db.json');
 const databaseName = process.env.OTHER_DATABASE_NAME || 'stationhead-other';
 const BINDING = 'OTHER_DB';
@@ -67,16 +67,21 @@ for (const configPath of configPaths) {
   writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`);
 }
 
-wrangler([
-  'd1', 'execute', databaseName,
-  '--remote', '--yes',
-  '--file', schemaPath,
-]);
+const migrationFiles = readdirSync(migrationsDir)
+  .filter((name) => name.endsWith('.sql'))
+  .sort();
+for (const migrationFile of migrationFiles) {
+  wrangler([
+    'd1', 'execute', databaseName,
+    '--remote', '--yes',
+    '--file', resolve(migrationsDir, migrationFile),
+  ]);
+}
 
 writeFileSync(metadataPath, `${JSON.stringify({
   binding: BINDING,
   database_name: databaseName,
   database_id: databaseId,
-  schema: 'database/other-migrations/001_initial_schema.sql',
+  schema: `database/other-migrations/${migrationFiles.at(-1)}`,
 }, null, 2)}\n`);
 console.log(JSON.stringify({ ok: true, database_name: databaseName, database_id: databaseId }));

@@ -63,7 +63,7 @@ test('a recovered Japanese schedule is upserted while the source row remains ava
   };
 
   const result = await promoteJapaneseHourAnnouncements(
-    { DB: db },
+    { OTHER_DB: db },
     2000,
     3000
   );

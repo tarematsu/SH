@@ -176,30 +176,14 @@ export function trimSeries(seriesRows, limit = MAX_POINTS) {
   return { series: result, pointCount: limit - remaining, truncated: sourceTruncated || originalPoints > limit };
 }
 
-function broadcastSeriesStatements(db, fromTs, toTs) {
-  return [
-    db.prepare(LEGACY_SERIES_SQL).bind(fromTs, toTs),
-    db.prepare(FAILSAFE_SERIES_SQL).bind(fromTs, toTs),
-  ];
-}
-
-export async function loadBroadcastSeriesRows(db, fromTs, toTs) {
-  if (typeof db.batch === 'function') {
-    try {
-      const [legacyResult, failSafeResult] = await db.batch(broadcastSeriesStatements(db, fromTs, toTs));
-      return {
-        legacy: decodeSeriesRows(legacyResult?.results || [], 'historical_import'),
-        failSafe: decodeSeriesRows(failSafeResult?.results || [], 'official_news_fail_safe'),
-      };
-    } catch (error) {
-      if (!/no such table/i.test(String(error?.message || ''))) throw error;
-    }
-  }
-
-  const legacyResult = await db.prepare(LEGACY_SERIES_SQL).bind(fromTs, toTs).all();
+// LEGACY_SERIES_SQL (sh_legacy_snapshots) and FAILSAFE_SERIES_SQL
+// (sh_official_news_*) live in different D1 databases, so they can no
+// longer share a single db.batch() call and are run independently.
+export async function loadBroadcastSeriesRows(legacyDb, otherDb, fromTs, toTs) {
+  const legacyResult = await legacyDb.prepare(LEGACY_SERIES_SQL).bind(fromTs, toTs).all();
   let failSafeRows = [];
   try {
-    const failSafeResult = await db.prepare(FAILSAFE_SERIES_SQL).bind(fromTs, toTs).all();
+    const failSafeResult = await otherDb.prepare(FAILSAFE_SERIES_SQL).bind(fromTs, toTs).all();
     failSafeRows = failSafeResult.results || [];
   } catch (error) {
     if (!/no such table/i.test(String(error?.message || ''))) throw error;
@@ -213,7 +197,7 @@ export async function loadBroadcastSeriesRows(db, fromTs, toTs) {
 async function loadBroadcastSeries(env, from, to) {
   const fromTs = parseDateStart(from);
   const toTs = addDays(parseDateStart(to), 1);
-  const { legacy, failSafe } = await loadBroadcastSeriesRows(env.DB, fromTs, toTs);
+  const { legacy, failSafe } = await loadBroadcastSeriesRows(env.DB, env.OTHER_DB, fromTs, toTs);
   const trimmed = trimSeries(legacy.concat(failSafe));
   let failSafeEventCount = 0;
   for (const item of trimmed.series) {

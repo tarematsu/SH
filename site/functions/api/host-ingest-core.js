@@ -282,7 +282,7 @@ async function claimWsEvent(db, observedAt, data, source) {
 
 export async function onRequestPost(context) {
   const { request, env } = context;
-  if (!authorized(request, env) || !env.DB) return legacyPost(context);
+  if (!authorized(request, env) || !env.DB || !env.OTHER_DB) return legacyPost(context);
   let body;
   try {
     body = await request.json();
@@ -300,10 +300,13 @@ export async function onRequestPost(context) {
     collectorKind: 'external',
   });
 
+  // Dedup claims (sh_ingest_claims/sh_ingest_conflicts) stay on DB alongside
+  // the buddies/minute collector-coordination tables they're tied to; the
+  // actual host-monitoring data they gate lives in OTHER_DB.
   try {
     if (type === 'solo_station_snapshot') {
       const claim = await claimStationSnapshot(env.DB, observedAt, data, source);
-      if (claim.accepted) await saveStationSnapshot(env.DB, observedAt, data);
+      if (claim.accepted) await saveStationSnapshot(env.OTHER_DB, observedAt, data);
       return json({
         ok: true,
         type,
@@ -313,7 +316,7 @@ export async function onRequestPost(context) {
       });
     }
     if (type === 'solo_comments') {
-      await saveComments(env.DB, observedAt, data);
+      await saveComments(env.OTHER_DB, observedAt, data);
       return json({ ok: true, type, accepted: true });
     }
     const claim = await claimWsEvent(env.DB, observedAt, data, source);
@@ -326,7 +329,7 @@ export async function onRequestPost(context) {
         claim_reason: claim.reason,
       });
     }
-    const stored = await saveWsEvent(env.DB, observedAt, data);
+    const stored = await saveWsEvent(env.OTHER_DB, observedAt, data);
     return json({ ok: true, type, accepted: true, stored });
   } catch (error) {
     console.error(error);

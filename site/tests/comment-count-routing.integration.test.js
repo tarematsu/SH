@@ -17,7 +17,7 @@ function post(body) {
   });
 }
 
-const env = (db) => ({ DB: db, INGEST_SECRET: 'test-key' });
+const env = (db) => ({ DB: db, OTHER_DB: db, INGEST_SECRET: 'test-key' });
 
 test('primary comments update aggregate counters without storing raw comment rows', async () => {
   const db = new FakeD1Database();
