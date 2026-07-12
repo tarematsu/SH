@@ -20,7 +20,7 @@ test('parsed ingest requests reuse one JSON body for the legacy handler', async 
   assert.equal(wrapped.headers.get('authorization'), 'Bearer secret');
 });
 
-test('concurrent collection triggers share one in-flight collector run', async () => {
+test('concurrent collection triggers remain request-scoped', async () => {
   resetCollectionFlight();
   let calls = 0;
   let release;
@@ -33,16 +33,16 @@ test('concurrent collection triggers share one in-flight collector run', async (
 
   const first = runCollection({}, 'cron', collector);
   const second = runCollection({}, 'http', collector);
-  assert.strictEqual(first, second);
+  assert.notStrictEqual(first, second);
   assert.equal(calls, 0);
   await Promise.resolve();
-  assert.equal(calls, 1);
+  assert.equal(calls, 2);
   release();
   assert.deepEqual(await first, { ok: true, source: 'cron' });
-  assert.deepEqual(await second, { ok: true, source: 'cron' });
+  assert.deepEqual(await second, { ok: true, source: 'http' });
 });
 
-test('collection single-flight clears after failure', async () => {
+test('collection runner accepts a new invocation after failure', async () => {
   resetCollectionFlight();
   let calls = 0;
   await assert.rejects(() => runCollection({}, 'first', async () => {
