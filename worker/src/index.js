@@ -19,7 +19,7 @@ export {
   normalizeSnapshot,
   validateChannelPayload,
 } from './collector-payload.js';
-export { collectOnce, resetCollectionFlight, runCollection } from './collector-runner.js';
+export { collectOnce, runCollection } from './collector-runner.js';
 export {
   collectorStateFromAuthState,
   loadCollectorState,

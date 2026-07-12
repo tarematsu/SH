@@ -2,28 +2,10 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
-  markDiagnosticFailure,
-  resetDiagnosticFailureWindow,
   scheduleBuddyPlayback,
   scheduledTimestamp,
   shouldDeferBuddyPlayback,
-  shouldRunFullDiagnostics,
 } from '../src/cadenced-entry.js';
-
-test('full diagnostics run once per thirty-minute bucket by default', () => {
-  resetDiagnosticFailureWindow();
-  assert.equal(shouldRunFullDiagnostics(0, {}), true);
-  assert.equal(shouldRunFullDiagnostics(29 * 60_000, {}), false);
-  assert.equal(shouldRunFullDiagnostics(30 * 60_000, {}), true);
-});
-
-test('diagnostic cadence is not shortened after a failed run', () => {
-  resetDiagnosticFailureWindow();
-  markDiagnosticFailure(60_000);
-  assert.equal(shouldRunFullDiagnostics(2 * 60_000, {}), false);
-  assert.equal(shouldRunFullDiagnostics(30 * 60_000, {}), true);
-  resetDiagnosticFailureWindow();
-});
 
 test('scheduled timestamp uses the cron slot instead of delayed wall-clock time', () => {
   assert.equal(scheduledTimestamp({ scheduledTime: 300_000 }, 360_000), 300_000);

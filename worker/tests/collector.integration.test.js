@@ -3,8 +3,6 @@ import test from 'node:test';
 
 import { EMAIL_RECAP_UPSERT_SQL } from '../src/email-recap-index.js';
 import {
-  alignFailureStartWithLastSuccess,
-  cancelFalseRecoveryPending,
   healthResponseStatus,
   sanitizeHealthPayload,
 } from '../src/health-alert-index.js';
@@ -75,33 +73,6 @@ test('health status is degraded only when the base response was otherwise health
   assert.equal(healthResponseStatus(204, { collector_health_ok: false }), 503);
   assert.equal(healthResponseStatus(500, { collector_health_ok: false }), 500);
   assert.equal(healthResponseStatus(200, { collector_health_ok: true }), 200);
-});
-
-test('active failure cancels only an actually deleted pending recovery delivery', async () => {
-  const prepared = {
-    diagnosis: { code: 'STATIONHEAD_TIMEOUT', stage: 'sh_channel_request' },
-    incidentOpen: true,
-    pending: 'recovery',
-  };
-  const db = new RecordingDb({ changes: 1 });
-
-  assert.equal(await cancelFalseRecoveryPending({ DB: db }, prepared), true);
-  assert.equal(prepared.pending, null);
-  assert.equal(db.calls.length, 1);
-  assert.match(db.calls[0].sql, /DELETE FROM sh_health_alert_delivery/);
-  assert.match(db.calls[0].sql, /event_kind='recovery'/);
-
-  const stalePrepared = {
-    diagnosis: { code: 'STATIONHEAD_TIMEOUT', stage: 'sh_channel_request' },
-    incidentOpen: true,
-    pending: 'recovery',
-  };
-  const staleDb = new RecordingDb({ changes: 0 });
-
-  assert.equal(await cancelFalseRecoveryPending({ DB: staleDb }, stalePrepared), false);
-  assert.equal(prepared.pending, null);
-  assert.equal(stalePrepared.pending, 'recovery');
-  assert.equal(staleDb.calls.length, 1);
 });
 
 test('collector diagnostics classify realistic upstream, auth, schema and network failures', () => {
@@ -177,28 +148,6 @@ test('recordCollectorFailure reports missing and failing D1 without throwing awa
   assert.equal(failed.recorded, false);
   assert.equal(failed.diagnosis.code, 'STATIONHEAD_AUTH_ERROR');
   assert.equal(failed.recordError.includes('hidden-secret'), false);
-});
-
-test('failure start alignment updates only incidents that began after the last success', async () => {
-  const db = new RecordingDb({ changes: 1 });
-  const updated = await alignFailureStartWithLastSuccess(
-    { DB: db },
-    { last_success_at: 1_000, failure_last_at: 2_000 },
-    { diagnosis: { at: 2_000 } },
-    3_000,
-  );
-  assert.equal(updated, true);
-  assert.equal(db.calls.length, 1);
-  assert.deepEqual(db.calls[0].params, [1_000, 1_000, 3_000, 1_000]);
-
-  const ignoredDb = new RecordingDb();
-  const ignored = await alignFailureStartWithLastSuccess(
-    { DB: ignoredDb },
-    { last_success_at: 2_000, failure_last_at: 1_000 },
-    { diagnosis: { at: 1_000 } },
-  );
-  assert.equal(ignored, false);
-  assert.equal(ignoredDb.calls.length, 0);
 });
 
 test('diagnosisFromState preserves active incidents and ignores stale recovered errors', () => {

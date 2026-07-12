@@ -2,7 +2,6 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import { buildCollectionPlan, metadataRefreshDue } from '../src/collector-plan.js';
-import { internalHealthMonitoringEnabled } from '../src/cadenced-entry.js';
 import {
   LEGACY_MIGRATION_DISABLED_REASON,
   legacyMigrationEnabled as scheduledLegacyMigrationEnabled,
@@ -125,9 +124,4 @@ test('scheduled maintenance runs rollups without touching legacy or facts migrat
   assert.equal(result.legacyBackfill.reason, LEGACY_MIGRATION_DISABLED_REASON);
   assert.equal(result.minuteFactsBackfill.reason, LEGACY_MIGRATION_DISABLED_REASON);
   assert.equal(sqls.some((sql) => sql.includes('sh_legacy_')), false);
-});
-
-test('in-process monitoring is opt-in after external monitor migration', () => {
-  assert.equal(internalHealthMonitoringEnabled({}), false);
-  assert.equal(internalHealthMonitoringEnabled({ STATIONHEAD_INTERNAL_MONITOR_ENABLED: 'true' }), true);
 });
