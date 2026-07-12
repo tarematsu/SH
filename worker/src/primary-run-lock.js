@@ -23,6 +23,7 @@ const CLAIM_SQL = `INSERT INTO sh_primary_run_lock (scope,holder_id,claimed_at,l
   RETURNING holder_id`;
 
 const RELEASE_SQL = `UPDATE sh_primary_run_lock SET lease_until=? WHERE scope=? AND holder_id=?`;
+const STATUS_SQL = `SELECT lease_until FROM sh_primary_run_lock WHERE scope=?`;
 
 function ttlMs(env = {}) {
   const configured = Number(env.PRIMARY_RUN_LOCK_TTL_MS ?? DEFAULT_TTL_MS);
@@ -60,6 +61,27 @@ export async function claimPrimaryRunLock(env, holderId, now = Date.now()) {
       error: String(error?.message || error).slice(0, 500),
     }));
     return true;
+  }
+}
+
+// Read-only check other workers can use to back off heavy/bursty D1 writes
+// (e.g. snapshot retention) while buddies is actively mid-collection, since
+// D1/SQLite serializes writes database-wide -- a large write burst from
+// another worker can add latency to buddies' own writes even on unrelated
+// tables. Fails open (treats buddies as not active) on any error so a
+// lock-table problem can never make another worker's task starve forever.
+export async function isPrimaryRunLockActive(env, now = Date.now()) {
+  if (!env?.DB) return false;
+  try {
+    const row = await env.DB.prepare(STATUS_SQL).bind(SCOPE).first();
+    return Boolean(row) && Number(row.lease_until) > now;
+  } catch (error) {
+    if (noSuchTable(error)) return false;
+    console.error(JSON.stringify({
+      event: 'primary_run_lock_status_check_failed',
+      error: String(error?.message || error).slice(0, 500),
+    }));
+    return false;
   }
 }
 

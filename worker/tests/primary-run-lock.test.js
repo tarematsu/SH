@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { claimPrimaryRunLock, primaryRunLockEnabled, releasePrimaryRunLock } from '../src/primary-run-lock.js';
+import { claimPrimaryRunLock, isPrimaryRunLockActive, primaryRunLockEnabled, releasePrimaryRunLock } from '../src/primary-run-lock.js';
 
 function fakeDb() {
   const calls = [];
@@ -26,6 +26,9 @@ function fakeDb() {
                   return { holder_id: holderId };
                 }
                 return null;
+              }
+              if (sql.startsWith('SELECT lease_until FROM sh_primary_run_lock')) {
+                return row ? { lease_until: row.lease_until } : null;
               }
               throw new Error(`unexpected first() for sql: ${sql}`);
             },
@@ -117,4 +120,23 @@ test('releasePrimaryRunLock is a no-op for a holder that no longer owns the lock
 
 test('releasePrimaryRunLock returns false with no DB binding', async () => {
   assert.equal(await releasePrimaryRunLock({}, 'run-1'), false);
+});
+
+test('isPrimaryRunLockActive is false with no DB binding, no row, or a missing table', async () => {
+  assert.equal(await isPrimaryRunLockActive({}), false);
+  assert.equal(await isPrimaryRunLockActive({ DB: fakeDb() }), false);
+  const throwingDb = { prepare() { return { bind() { return { async first() { throw new Error('no such table: sh_primary_run_lock'); } }; } }; } };
+  assert.equal(await isPrimaryRunLockActive({ DB: throwingDb }), false);
+});
+
+test('isPrimaryRunLockActive fails closed-to-false (not stuck-true) on an unexpected D1 error', async () => {
+  const throwingDb = { prepare() { return { bind() { return { async first() { throw new Error('D1 network hiccup'); } }; } }; } };
+  assert.equal(await isPrimaryRunLockActive({ DB: throwingDb }), false);
+});
+
+test('isPrimaryRunLockActive reflects a live claim and its expiry', async () => {
+  const db = fakeDb();
+  await claimPrimaryRunLock({ DB: db }, 'run-1', 1_000);
+  assert.equal(await isPrimaryRunLockActive({ DB: db }, 11_000), true, 'well inside the 70s TTL');
+  assert.equal(await isPrimaryRunLockActive({ DB: db }, 72_000), false, 'past the 70s TTL');
 });

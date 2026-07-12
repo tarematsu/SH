@@ -8,7 +8,7 @@ import {
   snapshotRetentionEnabled,
 } from '../src/snapshot-retention.js';
 
-function fakeDb({ stateRow = null, deleteBatches = {} } = {}) {
+function fakeDb({ stateRow = null, deleteBatches = {}, lockRow = null } = {}) {
   const calls = [];
   const remaining = { ...deleteBatches };
   return {
@@ -19,6 +19,7 @@ function fakeDb({ stateRow = null, deleteBatches = {} } = {}) {
           return {
             async first() {
               calls.push({ kind: 'first', sql, params });
+              if (sql.startsWith('SELECT lease_until FROM sh_primary_run_lock')) return lockRow;
               return stateRow;
             },
             async run() {
@@ -68,6 +69,31 @@ test('pruneOldSnapshots skips when the last cleanup was recent', async () => {
   const db = fakeDb({ stateRow: { last_cleanup_at: now - 5 * 60_000 } });
   const result = await pruneOldSnapshots({ DB: db }, now);
   assert.deepEqual(result, { skipped: true, reason: 'not-due' });
+});
+
+test('pruneOldSnapshots backs off without consuming the interval while buddies holds the primary run lock', async () => {
+  const now = 10 * 60 * 60_000;
+  const db = fakeDb({ stateRow: null, lockRow: { lease_until: now + 30_000 } });
+
+  const result = await pruneOldSnapshots({ DB: db }, now);
+
+  assert.deepEqual(result, { skipped: true, reason: 'buddies-active' });
+  assert.equal(db.calls.some((call) => call.sql.startsWith('DELETE FROM')), false, 'no deletes should run while buddies is active');
+  assert.equal(db.calls.some((call) => call.sql.startsWith('INSERT INTO sh_data_maintenance_state')), false, 'the retry interval must not be consumed by a deferred run');
+});
+
+test('pruneOldSnapshots proceeds once the primary run lock has expired', async () => {
+  const now = 10 * 60 * 60_000;
+  const db = fakeDb({
+    stateRow: null,
+    lockRow: { lease_until: now - 1_000 },
+    deleteBatches: { sh_channel_snapshots: [10], sh_queue_snapshots: [5] },
+  });
+
+  const result = await pruneOldSnapshots({ DB: db }, now);
+
+  assert.equal(result.skipped, false);
+  assert.deepEqual(result.deleted, { sh_channel_snapshots: 10, sh_queue_snapshots: 5 });
 });
 
 test('pruneOldSnapshots deletes old rows from both snapshot tables and records state', async () => {
