@@ -1,7 +1,6 @@
-name: Cloudflare build diagnostics
+name: Cloudflare Git build diagnostics (manual)
 
 on:
-  push:
   workflow_dispatch:
 
 permissions:
@@ -15,11 +14,6 @@ concurrency:
 
 jobs:
   diagnose:
-    if: >-
-      github.event_name == 'workflow_dispatch' ||
-      github.ref == 'refs/heads/main' ||
-      contains(github.event.head_commit.message, '[ci full]') ||
-      github.ref == 'refs/heads/fix/diagnostics-state-20260703'
     runs-on: ubuntu-latest
     timeout-minutes: 25
     env:
