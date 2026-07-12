@@ -53,6 +53,8 @@ jobs:
       - run: npm ci --no-audit --no-fund
       - run: npm run check
       - run: npm test
+      - name: Verify production migration command is skipped in CI
+        run: npm run db:migrate
 
   worker:
     name: Worker checks
