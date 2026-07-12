@@ -7,9 +7,9 @@ import { officialNewsConfig } from './official-news-utils.js';
 import { runScheduledMaintenance } from './scheduled-maintenance.js';
 import { runStreamGoalPrediction } from './stream-goal-prediction.js';
 
-// Reconciliation only makes sense once the probe has actually run, so a
-// failed probe intentionally skips it (matching the buddies worker's prior
-// runScheduledWithOfficialReconciliation behavior).
+// If probe throws, reconcile is skipped (reconcile only makes sense once the
+// probe has actually run). In production runOfficialNewsMonitor catches its
+// own errors and never rejects, so this only matters for injected probes.
 export async function runOfficialNewsWithReconcile(
   env,
   now,
