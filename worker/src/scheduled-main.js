@@ -7,7 +7,6 @@ import {
 } from './main-scheduler.js';
 import { expireLeaseWhenPrimaryFailed as defaultExpireLeaseWhenPrimaryFailed } from './main-lease.js';
 import { runCloudHostMonitor } from './cloud-host-monitor.js';
-import { resetCollectionFlight } from './index.js';
 import { runScheduledMaintenance } from './scheduled-maintenance.js';
 import { runStreamGoalPrediction } from './stream-goal-prediction.js';
 
@@ -40,7 +39,6 @@ export function shouldDeferAuxiliaryRunners(env = {}) {
 
 export function resetPrimaryScheduledFlightForTests() {
   resetSharedPrimaryScheduledFlightForTests();
-  resetCollectionFlight();
 }
 
 export function runPrimaryScheduled(
@@ -56,7 +54,6 @@ export function runPrimaryScheduled(
   return runSharedPrimaryScheduled(controller, env, ctx, scheduled, timeoutOverride, {
     ...options,
     auxiliaryRunners,
-    resetCollectionFlight: options.resetCollectionFlight || resetCollectionFlight,
   });
 }
 

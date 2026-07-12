@@ -9,33 +9,7 @@ import coreApp from './scheduled-main.js';
 import diagnosticApp from './health-alert-index.js';
 
 export const DEFER_BUDDY_PLAYBACK_FLAG = '__DEFER_BUDDY_PLAYBACK';
-const DEFAULT_DIAGNOSTIC_INTERVAL_MINUTES = 30;
-let forceDiagnosticsUntil = 0;
 let buddyPlaybackFlightsByContext = new WeakMap();
-
-export function diagnosticIntervalMinutes(env = {}) {
-  const configured = Number(env.DIAGNOSTIC_INTERVAL_MINUTES ?? DEFAULT_DIAGNOSTIC_INTERVAL_MINUTES);
-  if (!Number.isFinite(configured)) return DEFAULT_DIAGNOSTIC_INTERVAL_MINUTES;
-  return Math.max(1, Math.min(60, Math.trunc(configured)));
-}
-
-export function internalHealthMonitoringEnabled(env = {}) {
-  const value = String(env.STATIONHEAD_INTERNAL_MONITOR_ENABLED || env.SH_INTERNAL_MONITOR_ENABLED || '').trim().toLowerCase();
-  return ['1', 'true', 'yes', 'on'].includes(value);
-}
-
-export function shouldRunFullDiagnostics(now = Date.now(), env = {}) {
-  return now < forceDiagnosticsUntil
-    || Math.floor(now / 60_000) % diagnosticIntervalMinutes(env) === 0;
-}
-
-export function markDiagnosticFailure(_now = Date.now()) {
-  forceDiagnosticsUntil = 0;
-}
-
-export function resetDiagnosticFailureWindow() {
-  forceDiagnosticsUntil = 0;
-}
 
 export function resetBuddyPlaybackFlightForTests() {
   buddyPlaybackFlightsByContext = new WeakMap();
@@ -120,16 +94,6 @@ export default {
   async scheduled(controller, env, ctx) {
     const scheduledAt = scheduledTimestamp(controller);
     if (!shouldDeferBuddyPlayback(env)) scheduleBuddyPlayback(env, ctx, scheduledAt);
-
-    if (internalHealthMonitoringEnabled(env) && shouldRunFullDiagnostics(scheduledAt, env)) {
-      try {
-        return await diagnosticApp.scheduled(controller, env, ctx);
-      } catch (error) {
-        markDiagnosticFailure(scheduledAt);
-        throw error;
-      }
-    }
-
     return coreApp.scheduled(controller, env, ctx);
   },
 
