@@ -5,10 +5,15 @@ import { resolve } from 'node:path';
 const workerRoot = resolve(import.meta.dirname, '..');
 const repositoryRoot = resolve(workerRoot, '..');
 const configPath = resolve(workerRoot, 'wrangler.jsonc');
+const wranglerScript = resolve(workerRoot, 'node_modules/wrangler/bin/wrangler.js');
 const schemaPath = resolve(repositoryRoot, 'database/facts-migrations/001_initial_schema.sql');
 const enumMigrationPath = resolve(
   repositoryRoot,
   'database/facts-migrations/002_normalize_minute_fact_enums.sql',
+);
+const compactMigrationPath = resolve(
+  repositoryRoot,
+  'database/facts-migrations/003_compact_minute_facts.sql',
 );
 const metadataPath = resolve(repositoryRoot, 'database/facts-db.json');
 const databaseName = process.env.FACTS_DATABASE_NAME || 'Stationhead-DB';
@@ -21,7 +26,7 @@ if (!process.env.CLOUDFLARE_ACCOUNT_ID) {
 }
 
 function wrangler(args) {
-  return execFileSync('npx', ['wrangler', ...args], {
+  return execFileSync(process.execPath, [wranglerScript, ...args], {
     cwd: workerRoot,
     env: process.env,
     encoding: 'utf8',
@@ -76,28 +81,36 @@ else bindings.push(nextBinding);
 config.d1_databases = bindings;
 writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`);
 
-const factsColumns = tableColumnNames(databaseName, 'sh_minute_facts');
-const factsTableExists = factsColumns.size > 0;
-const factsAlreadyNormalized = factsColumns.has('source_code');
-if (factsTableExists && !factsAlreadyNormalized) {
-  console.log('Migrating sh_minute_facts.source/track_detection_method to integer codes...');
-  wrangler([
-    'd1', 'execute', databaseName,
-    '--remote', '--yes',
-    '--file', enumMigrationPath,
-  ]);
-}
-
 wrangler([
   'd1', 'execute', databaseName,
   '--remote', '--yes',
   '--file', schemaPath,
 ]);
 
+let factsColumns = tableColumnNames(databaseName, 'sh_minute_facts');
+if (factsColumns.size > 0 && !factsColumns.has('source_code')) {
+  console.log('Migrating sh_minute_facts.source/track_detection_method to integer codes...');
+  wrangler([
+    'd1', 'execute', databaseName,
+    '--remote', '--yes',
+    '--file', enumMigrationPath,
+  ]);
+  factsColumns = tableColumnNames(databaseName, 'sh_minute_facts');
+}
+
+if (factsColumns.has('source_code') && !factsColumns.has('collector_code')) {
+  console.log('Compacting sh_minute_facts and normalizing sparse context...');
+  wrangler([
+    'd1', 'execute', databaseName,
+    '--remote', '--yes',
+    '--file', compactMigrationPath,
+  ]);
+}
+
 writeFileSync(metadataPath, `${JSON.stringify({
   binding: 'FACTS_DB',
   database_name: databaseName,
   database_id: databaseId,
-  schema: 'database/facts-migrations/001_initial_schema.sql',
+  schema: 'database/facts-migrations/003_compact_minute_facts.sql',
 }, null, 2)}\n`);
 console.log(JSON.stringify({ ok: true, database_name: databaseName, database_id: databaseId }));

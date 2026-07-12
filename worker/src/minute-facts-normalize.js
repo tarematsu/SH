@@ -165,29 +165,69 @@ export function qualityScore(flags) {
   return Math.max(0, Number(score.toFixed(2)));
 }
 
+export function scoreCode(value, fallback = null) {
+  const parsed = num(value);
+  if (parsed == null) return fallback;
+  return Math.max(0, Math.min(100, Math.round(parsed * 100)));
+}
+
+export function scoreFromCode(value, fallback = null) {
+  const parsed = integer(value);
+  return parsed == null ? fallback : parsed / 100;
+}
+
+export const MINUTE_FACT_COLLECTOR_CODES = Object.freeze({
+  'cloudflare-worker': 1,
+  'cloudflare-worker:rebuild': 2,
+  'legacy-migration': 3,
+});
+
+export function minuteFactCollectorCode(value) {
+  return MINUTE_FACT_COLLECTOR_CODES[text(value)] ?? 0;
+}
+
+export function minuteFactCollectorName(code) {
+  const numericCode = integer(code);
+  return Object.entries(MINUTE_FACT_COLLECTOR_CODES)
+    .find(([, value]) => value === numericCode)?.[0] || null;
+}
+
+export async function ensureMinuteFactCollectorCode(db, value) {
+  const collectorId = text(value) || 'cloudflare-worker';
+  const knownCode = minuteFactCollectorCode(collectorId);
+  if (knownCode) return knownCode;
+  await db.prepare(`INSERT OR IGNORE INTO sh_minute_fact_collectors(collector_id)
+    VALUES(?)`).bind(collectorId).run();
+  const row = await db.prepare(`SELECT collector_code FROM sh_minute_fact_collectors
+    WHERE collector_id=? LIMIT 1`).bind(collectorId).first();
+  return integer(row?.collector_code) || 0;
+}
+
 const FACT_COLUMNS = [
-  'channel_id', 'station_id', 'minute_at', 'observed_at', 'received_at', 'source_code', 'source_priority',
-  'source_record_id', 'collector_id', 'broadcast_session_id', 'host_id', 'is_broadcasting',
-  'broadcast_start_time', 'listener_count', 'online_member_count', 'total_member_count', 'guest_count',
-  'reported_total_listens', 'reported_current_stream_count', 'validated_stream_count',
-  'stream_count_rejected', 'queue_revision_id', 'queue_id', 'queue_start_time', 'is_paused',
-  'queue_track_count', 'queue_available', 'track_id', 'queue_position', 'track_detection_code',
-  'track_confidence', 'schedule_valid', 'track_bite_count', 'comment_count', 'comment_total',
-  'comments_degraded', 'quality_score', 'quality_flags',
+  'channel_id', 'minute_at', 'observed_at', 'received_at', 'source_code', 'source_priority',
+  'source_record_id', 'collector_code', 'broadcast_session_id', 'is_broadcasting',
+  'listener_count', 'online_member_count', 'total_member_count', 'guest_count',
+  'reported_total_listens', 'reported_current_stream_count', 'is_paused',
+  'track_detection_code', 'track_confidence_code', 'schedule_valid', 'comment_count',
+  'comment_total', 'comments_degraded', 'quality_score_code', 'quality_flags',
 ];
 
 export function minuteFactStatement(db, fact) {
+  const collectorCode = integer(fact.collector_code)
+    ?? minuteFactCollectorCode(fact.collector_id);
+  const trackConfidenceCode = integer(fact.track_confidence_code)
+    ?? scoreCode(fact.track_confidence, 0);
+  const qualityScoreCode = integer(fact.quality_score_code)
+    ?? scoreCode(fact.quality_score, 100);
   const values = [
-    fact.channel_id, fact.station_id, fact.minute_at, fact.observed_at, fact.received_at,
-    fact.source_code, fact.source_priority, fact.source_record_id, fact.collector_id,
-    fact.broadcast_session_id, fact.host_id, fact.is_broadcasting, fact.broadcast_start_time,
+    fact.channel_id, fact.minute_at, fact.observed_at, fact.received_at,
+    fact.source_code, fact.source_priority, fact.source_record_id, collectorCode,
+    fact.broadcast_session_id, fact.is_broadcasting,
     fact.listener_count, fact.online_member_count, fact.total_member_count, fact.guest_count,
-    fact.reported_total_listens, fact.reported_current_stream_count, fact.validated_stream_count,
-    fact.stream_count_rejected, fact.queue_revision_id, fact.queue_id, fact.queue_start_time,
-    fact.is_paused, fact.queue_track_count, fact.queue_available, fact.track_id,
-    fact.queue_position, fact.track_detection_code, fact.track_confidence,
-    fact.schedule_valid, fact.track_bite_count, fact.comment_count, fact.comment_total,
-    fact.comments_degraded, fact.quality_score, fact.quality_flags,
+    fact.reported_total_listens, fact.reported_current_stream_count, fact.is_paused,
+    fact.track_detection_code, trackConfidenceCode, fact.schedule_valid,
+    fact.comment_count, fact.comment_total, fact.comments_degraded,
+    qualityScoreCode, fact.quality_flags,
   ];
   const assignments = FACT_COLUMNS.slice(1).map((column) => `${column}=excluded.${column}`).join(',');
   const placeholders = FACT_COLUMNS.map(() => '?').join(',');
@@ -195,8 +235,90 @@ export function minuteFactStatement(db, fact) {
     ON CONFLICT(channel_id,minute_at) DO UPDATE SET ${assignments}
     WHERE excluded.source_priority>sh_minute_facts.source_priority
       OR (excluded.source_priority=sh_minute_facts.source_priority
-        AND excluded.quality_score>sh_minute_facts.quality_score)
+        AND excluded.quality_score_code>sh_minute_facts.quality_score_code)
       OR (excluded.source_priority=sh_minute_facts.source_priority
-        AND excluded.quality_score=sh_minute_facts.quality_score
+        AND excluded.quality_score_code=sh_minute_facts.quality_score_code
         AND excluded.observed_at>=sh_minute_facts.observed_at)`).bind(...values);
+}
+
+const CONTEXT_COLUMNS = [
+  'station_id', 'host_id', 'broadcast_start_time', 'queue_revision_id', 'queue_id',
+  'queue_start_time', 'queue_track_count', 'queue_available', 'track_id',
+  'queue_position', 'track_bite_count',
+];
+
+const WINNER_CONDITION = `
+  ? > f.source_priority
+  OR (? = f.source_priority AND ? > f.quality_score_code)
+  OR (? = f.source_priority AND ? = f.quality_score_code AND ? >= f.observed_at)`;
+
+function contextPresent(fact) {
+  return fact.station_id != null
+    || fact.host_id != null
+    || fact.broadcast_start_time != null
+    || fact.queue_revision_id != null
+    || fact.queue_id != null
+    || fact.queue_start_time != null
+    || fact.queue_track_count != null
+    || Number(fact.queue_available || 0) !== 0
+    || fact.track_id != null
+    || fact.queue_position != null
+    || fact.track_bite_count != null;
+}
+
+function compactScoreCode(fact) {
+  return integer(fact.quality_score_code) ?? scoreCode(fact.quality_score, 100);
+}
+
+export function minuteFactContextUpsertStatement(db, fact) {
+  const values = CONTEXT_COLUMNS.map((column) => fact[column]);
+  return db.prepare(`INSERT INTO sh_minute_fact_context(
+      fact_id,${CONTEXT_COLUMNS.join(',')}
+    )
+    SELECT f.id,${CONTEXT_COLUMNS.map((column) => `?`).join(',')}
+    FROM sh_minute_facts f
+    WHERE f.channel_id=? AND f.minute_at=?
+      AND (${WINNER_CONDITION})
+      AND (?=1)
+    ON CONFLICT(fact_id) DO UPDATE SET
+      ${CONTEXT_COLUMNS.map((column) => `${column}=excluded.${column}`).join(',')}`).bind(
+    ...values,
+    fact.channel_id,
+    fact.minute_at,
+    fact.source_priority,
+    fact.source_priority,
+    compactScoreCode(fact),
+    fact.source_priority,
+    compactScoreCode(fact),
+    fact.observed_at,
+    contextPresent(fact) ? 1 : 0,
+  );
+}
+
+export function minuteFactContextDeleteStatement(db, fact) {
+  return db.prepare(`DELETE FROM sh_minute_fact_context
+    WHERE fact_id=(
+      SELECT f.id FROM sh_minute_facts f
+      WHERE f.channel_id=? AND f.minute_at=?
+        AND (${WINNER_CONDITION})
+    )
+    AND ?=0`).bind(
+    fact.channel_id,
+    fact.minute_at,
+    fact.source_priority,
+    fact.source_priority,
+    compactScoreCode(fact),
+    fact.source_priority,
+    compactScoreCode(fact),
+    fact.observed_at,
+    contextPresent(fact) ? 1 : 0,
+  );
+}
+
+export function minuteFactStatements(db, fact) {
+  return [
+    minuteFactStatement(db, fact),
+    minuteFactContextUpsertStatement(db, fact),
+    minuteFactContextDeleteStatement(db, fact),
+  ];
 }

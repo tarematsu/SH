@@ -93,6 +93,32 @@ SELECT
   quality_score,quality_flags
 FROM sh_minute_facts;
 
+-- Repair live rows whose validated stream value came from total_listens.
+UPDATE sh_minute_facts_v2
+SET validated_stream_count=NULL,
+    stream_count_rejected=1,
+    quality_flags=quality_flags | 64,
+    quality_score=MAX(0,quality_score-CASE WHEN (quality_flags & 64)=0 THEN 0.1 ELSE 0 END)
+WHERE source_code=1
+  AND reported_current_stream_count IS NOT NULL
+  AND reported_total_listens IS NOT NULL
+  AND validated_stream_count=reported_total_listens
+  AND reported_current_stream_count<>reported_total_listens;
+
+-- Remove validated stream values that were carried forward from an earlier minute.
+UPDATE sh_minute_facts_v2
+SET validated_stream_count=NULL
+WHERE source_code=1
+  AND validated_stream_count IS NOT NULL
+  AND (stream_count_rejected=1 OR reported_current_stream_count IS NULL);
+
+-- Do not retain derived stream validation values.
+UPDATE sh_minute_facts_v2
+SET validated_stream_count=NULL,
+    stream_count_rejected=0,
+    quality_score=MIN(1,quality_score+CASE WHEN (quality_flags & 64)<>0 THEN 0.1 ELSE 0 END),
+    quality_flags=quality_flags & ~64;
+
 DROP TABLE sh_minute_facts;
 ALTER TABLE sh_minute_facts_v2 RENAME TO sh_minute_facts;
 

@@ -4,6 +4,7 @@ import { resolve } from 'node:path';
 
 const workerRoot = resolve(import.meta.dirname, '..');
 const repositoryRoot = resolve(workerRoot, '..');
+const wranglerScript = resolve(workerRoot, 'node_modules/wrangler/bin/wrangler.js');
 const outputPath = resolve(repositoryRoot, 'database/facts-live-verification.json');
 const databaseName = process.env.FACTS_DATABASE_NAME || 'Stationhead-DB';
 const attempts = Math.max(1, Math.min(10, Number(process.env.FACTS_VERIFY_ATTEMPTS || 5)));
@@ -11,7 +12,7 @@ const delayMs = Math.max(5_000, Number(process.env.FACTS_VERIFY_DELAY_MS || 20_0
 const freshnessMs = Math.max(120_000, Number(process.env.FACTS_VERIFY_FRESHNESS_MS || 15 * 60_000));
 
 function wrangler(args) {
-  return execFileSync('npx', ['wrangler', ...args], {
+  return execFileSync(process.execPath, [wranglerScript, ...args], {
     cwd: workerRoot,
     env: process.env,
     encoding: 'utf8',

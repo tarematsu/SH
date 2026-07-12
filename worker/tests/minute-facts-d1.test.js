@@ -10,6 +10,7 @@ const stateDirectory = path.resolve(workerRoot, '.wrangler-minute-facts-test-sta
 const executable = process.execPath;
 const wranglerScript = path.resolve(workerRoot, 'node_modules/wrangler/bin/wrangler.js');
 const schemaPath = path.resolve(repositoryRoot, 'database/facts-migrations/001_initial_schema.sql');
+const compactMigrationPath = path.resolve(repositoryRoot, 'database/facts-migrations/003_compact_minute_facts.sql');
 const factsBinding = 'FACTS_DB';
 
 function run(args) {
@@ -32,8 +33,15 @@ test('minute facts D1 schema applies and exposes required tables', { timeout: 60
       '--local', '--persist-to', stateDirectory,
       '--file', schemaPath,
     ]);
+    run([
+      'd1', 'execute', factsBinding,
+      '--local', '--persist-to', stateDirectory,
+      '--file', compactMigrationPath,
+    ]);
     const requiredTables = [
       'sh_minute_facts',
+      'sh_minute_fact_context',
+      'sh_minute_fact_collectors',
       'sh_broadcast_sessions',
       'sh_queue_revisions',
       'sh_queue_revision_items',
@@ -53,6 +61,26 @@ test('minute facts D1 schema applies and exposes required tables', { timeout: 60
         '--command', `SELECT COUNT(*) AS row_count FROM ${table};`,
       ]);
     }
+    const compactColumns = run([
+      'd1', 'execute', factsBinding,
+      '--local', '--persist-to', stateDirectory,
+      '--command', "SELECT name FROM pragma_table_info('sh_minute_facts') ORDER BY cid;",
+    ]);
+    assert.match(compactColumns, /collector_code/);
+    assert.match(compactColumns, /track_confidence_code/);
+    assert.match(compactColumns, /quality_score_code/);
+    assert.doesNotMatch(compactColumns, /collector_id/);
+    assert.doesNotMatch(compactColumns, /validated_stream_count/);
+    assert.doesNotMatch(compactColumns, /stream_count_rejected/);
+
+    const compactIndexes = run([
+      'd1', 'execute', factsBinding,
+      '--local', '--persist-to', stateDirectory,
+      '--command', "SELECT name FROM sqlite_master WHERE type='index' AND name LIKE 'idx_sh_minute_facts%';",
+    ]);
+    assert.match(compactIndexes, /idx_sh_minute_facts_source_record/);
+    assert.match(compactIndexes, /idx_sh_minute_facts_time/);
+    assert.doesNotMatch(compactIndexes, /host_time|track_time|session_time/);
   } finally {
     rmSync(stateDirectory, { recursive: true, force: true });
   }

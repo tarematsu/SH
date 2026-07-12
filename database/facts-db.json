@@ -2,5 +2,5 @@
   "binding": "FACTS_DB",
   "database_name": "Stationhead-DB",
   "database_id": "c2661253-5e1b-4060-a7b4-acf6dc2a8988",
-  "schema": "database/facts-migrations/001_initial_schema.sql"
+  "schema": "database/facts-migrations/003_compact_minute_facts.sql"
 }

@@ -14,6 +14,8 @@ import {
   text,
   timestampMs,
   batchRun,
+  ensureMinuteFactCollectorCode,
+  minuteFactStatements,
 } from './minute-facts-normalize.js';
 import { resolveHost, resolveLiveSession, resolveTrack } from './minute-facts-legacy-resolve.js';
 import { createRevision, updatePlaybackState, writeCurrentBite } from './minute-facts-legacy-revision.js';
@@ -22,6 +24,7 @@ export {
   FACT_QUALITY_FLAGS,
   minuteBucket,
   minuteFactStatement,
+  minuteFactStatements,
   qualityScore,
   queueRevisionItemStatement,
   queueStructuralHash,
@@ -68,7 +71,10 @@ export function trackDetectionMethodName(code) {
 }
 
 export async function upsertMinuteFact(db, fact) {
-  return minuteFactStatement(db, fact).run();
+  const collectorCode = fact.collector_code == null
+    ? await ensureMinuteFactCollectorCode(db, fact.collector_id)
+    : fact.collector_code;
+  return db.batch(minuteFactStatements(db, { ...fact, collector_code: collectorCode }));
 }
 
 export async function saveLiveMinuteFact(env, input) {
@@ -155,8 +161,6 @@ export async function saveLiveMinuteFact(env, input) {
     guest_count: integer(snapshot.guest_count),
     reported_total_listens: integer(snapshot.total_listens),
     reported_current_stream_count: reportedStreamCount(snapshot.current_stream_count),
-    validated_stream_count: null,
-    stream_count_rejected: 0,
     queue_revision_id: revisionId,
     queue_id: integer(queue?.queue_id),
     queue_start_time: timestampMs(queue?.start_time),

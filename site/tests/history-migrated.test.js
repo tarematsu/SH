@@ -13,6 +13,8 @@ test('history confirmation reads Stationhead-DB minute facts and normalized cata
   assert.match(sql, /FROM sh_minute_facts f/);
   assert.match(sql, /LEFT JOIN sh_tracks/);
   assert.match(sql, /LEFT JOIN sh_hosts/);
+  assert.match(sql, /LEFT JOIN sh_minute_fact_context/);
+  assert.match(sql, /LEFT JOIN sh_minute_fact_collectors/);
   assert.match(sql, /LEFT JOIN sh_broadcast_sessions/);
   assert.match(sql, /LEFT JOIN sh_queue_revisions/);
   assert.doesNotMatch(sql, /sh_legacy_samples/);
@@ -27,6 +29,8 @@ test('history separates cumulative listeners from Stationhead total streams', ()
   assert.match(sql, /COALESCE\(f\.reported_current_stream_count,f\.reported_total_listens\)/);
   assert.match(sql, /AS total_stream_count/);
   assert.doesNotMatch(sql, /f\.validated_stream_count/);
+  assert.match(sql, /f\.track_confidence_code\/100\.0 AS track_confidence/);
+  assert.match(sql, /f\.quality_score_code\/100\.0 AS quality_score/);
 });
 
 test('minute facts history adds source, host, track and cursor filters', () => {

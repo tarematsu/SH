@@ -5,7 +5,7 @@ const JSON_HEADERS = {
 };
 const JST_OFFSET_MS = 9 * 3_600_000;
 const ALLOWED_SOURCES = new Set(['live_collector', 'legacy_normalized', 'legacy_raw']);
-// sh_minute_facts.source/track_detection_method are stored as dictionary-coded
+// sh_minute_facts source and track detection values are dictionary-coded
 // integers; these mirror the codes defined in worker/src/minute-facts-store.js.
 const SOURCE_CODES = Object.freeze({
   live_collector: 1,
@@ -80,28 +80,30 @@ export const decodeMigratedCursor = decodeMinuteFactsCursor;
 
 export function minuteFactsRowsSql(options = {}) {
   let sql = `SELECT
-    f.id,f.channel_id,f.station_id,f.minute_at,f.observed_at,f.received_at,
-    f.source_code,f.source_priority,f.source_record_id,f.collector_id,
-    f.broadcast_session_id,f.is_broadcasting,f.broadcast_start_time,
+    f.id,f.channel_id,c.station_id,f.minute_at,f.observed_at,f.received_at,
+    f.source_code,f.source_priority,f.source_record_id,fc.collector_id,
+    f.broadcast_session_id,f.is_broadcasting,c.broadcast_start_time,
     f.listener_count,f.online_member_count,f.total_member_count,f.guest_count,
     CASE WHEN f.source_code=1 THEN f.reported_total_listens ELSE NULL END
       AS cumulative_listener_count,
     CASE WHEN f.source_code=1 THEN f.reported_current_stream_count
       ELSE COALESCE(f.reported_current_stream_count,f.reported_total_listens) END
-      AS total_stream_count,f.queue_revision_id,f.queue_id,f.queue_start_time,
-    f.is_paused,f.queue_track_count,f.queue_available,f.queue_position,
-    f.track_detection_code,f.track_confidence,f.schedule_valid,
-    f.track_bite_count,f.comment_count,f.comment_total,f.comments_degraded,
-    f.quality_score,f.quality_flags,
+      AS total_stream_count,c.queue_revision_id,c.queue_id,c.queue_start_time,
+    f.is_paused,c.queue_track_count,c.queue_available,c.queue_position,
+    f.track_detection_code,f.track_confidence_code/100.0 AS track_confidence,
+    f.schedule_valid,c.track_bite_count,f.comment_count,f.comment_total,
+    f.comments_degraded,f.quality_score_code/100.0 AS quality_score,f.quality_flags,
     t.title AS track_title,t.artist AS artist_name,t.isrc,t.spotify_id,
     h.current_handle AS host_handle,
     s.status AS session_status,s.source AS session_source,
     r.status AS revision_status,r.item_count AS revision_item_count
   FROM sh_minute_facts f
-  LEFT JOIN sh_tracks t ON t.id=f.track_id
-  LEFT JOIN sh_hosts h ON h.id=f.host_id
+  LEFT JOIN sh_minute_fact_context c ON c.fact_id=f.id
+  LEFT JOIN sh_minute_fact_collectors fc ON fc.collector_code=f.collector_code
+  LEFT JOIN sh_tracks t ON t.id=c.track_id
+  LEFT JOIN sh_hosts h ON h.id=c.host_id
   LEFT JOIN sh_broadcast_sessions s ON s.id=f.broadcast_session_id
-  LEFT JOIN sh_queue_revisions r ON r.id=f.queue_revision_id
+  LEFT JOIN sh_queue_revisions r ON r.id=c.queue_revision_id
   WHERE f.minute_at>=? AND f.minute_at<?`;
   if (options.source) sql += ' AND f.source_code=?';
   if (options.host) sql += ` AND lower(COALESCE(h.current_handle,'')) LIKE ? ESCAPE '\\'`;

@@ -212,8 +212,6 @@ export async function saveOptimizedLiveMinuteFact(env, input) {
     guest_count: integer(snapshot.guest_count),
     reported_total_listens: integer(snapshot.total_listens),
     reported_current_stream_count: reportedStreamCount(snapshot.current_stream_count),
-    validated_stream_count: null,
-    stream_count_rejected: 0,
     queue_revision_id: revisionId,
     queue_id: integer(queue?.queue_id),
     queue_start_time: timestampMs(queue?.start_time),

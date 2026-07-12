@@ -2,7 +2,7 @@ import {
   FACT_QUALITY_FLAGS,
   MINUTE_FACT_SOURCE_CODES,
   minuteBucket,
-  minuteFactStatement,
+  minuteFactStatements,
   resolveHost,
   resolveTrack,
 } from './minute-facts-store.js';
@@ -186,8 +186,6 @@ export function legacyFact({ row, channelId, hostId, trackId, sessionId, source,
     guest_count: null,
     reported_total_listens: integer(row.total_stream_count),
     reported_current_stream_count: null,
-    validated_stream_count: null,
-    stream_count_rejected: 0,
     queue_revision_id: null,
     queue_id: null,
     queue_start_time: null,
@@ -300,7 +298,7 @@ export async function runMinuteFactsLegacyBackfill(env, options = {}) {
       const sessionId = await resolveLegacySession(factsDb, state, {
         channelId, hostId, row, source, observedAt,
       });
-      statements.push(minuteFactStatement(factsDb, legacyFact({
+      statements.push(...minuteFactStatements(factsDb, legacyFact({
         row, channelId, hostId, trackId, sessionId, source, sourcePriority,
       })));
       state.cursor_observed_at = observedAt;

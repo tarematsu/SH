@@ -2,6 +2,11 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+  minuteFactCollectorCode,
+  scoreCode,
+  scoreFromCode,
+} from '../src/minute-facts-normalize.js';
+import {
   FACT_QUALITY_FLAGS,
   minuteBucket,
   qualityScore,
@@ -72,4 +77,13 @@ test('reported stream count preserves Stationhead values without continuity vali
   assert.equal(reportedStreamCount(null), null);
   assert.equal(reportedStreamCount(-1), null);
   assert.equal(reportedStreamCount('not-a-number'), null);
+});
+
+test('minute fact repeated labels and scores use compact codes', () => {
+  assert.equal(minuteFactCollectorCode('cloudflare-worker'), 1);
+  assert.equal(minuteFactCollectorCode('cloudflare-worker:rebuild'), 2);
+  assert.equal(minuteFactCollectorCode('legacy-migration'), 3);
+  assert.equal(scoreCode(0.9), 90);
+  assert.equal(scoreCode(1), 100);
+  assert.equal(scoreFromCode(55), 0.55);
 });
