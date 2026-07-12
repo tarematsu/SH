@@ -73,9 +73,14 @@ function failureMessage(error) {
   return String(error?.message || error).slice(0, 1000);
 }
 
-export function withScheduledD1Optimizations(env, nowFn = Date.now) {
-  if (!env?.DB) return env;
-  const db = env.DB;
+// bindingName selects which D1 binding this wraps: 'DB' for the
+// retention-cleanup/maintenance-final-state patterns (buddies' own
+// snapshot tables), 'OTHER_DB' for the official-news-state patterns
+// (moved off buddies' database). Each call site only ever exercises one
+// domain's SQL against the wrapped proxy.
+export function withScheduledD1Optimizations(env, nowFn = Date.now, bindingName = 'DB') {
+  if (!env?.[bindingName]) return env;
+  const db = env[bindingName];
   const state = {
     officialClaimAt: 0,
     officialLastSuccessAt: null,
@@ -208,7 +213,7 @@ export function withScheduledD1Optimizations(env, nowFn = Date.now) {
 
   return new Proxy(env, {
     get(target, property, receiver) {
-      if (property === 'DB') return optimizedDb;
+      if (property === bindingName) return optimizedDb;
       return Reflect.get(target, property, receiver);
     },
   });

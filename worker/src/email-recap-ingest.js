@@ -45,7 +45,7 @@ export const EMAIL_RECAP_UPSERT_SQL = `
      OR sh_email_stream_snapshots.validation_notes IS NOT excluded.validation_notes`;
 
 export async function ingestEmailRecap(request, env) {
-  if (!env.DB) return json({ ok: false, error: 'DB binding missing' }, 500);
+  if (!env.DB || !env.OTHER_DB) return json({ ok: false, error: 'DB binding missing' }, 500);
   if (!authorized(request, env)) return json({ ok: false, error: 'unauthorized' }, 401);
 
   let body;

@@ -96,12 +96,12 @@ async function internalIngest(handler, env, type, data, observedAt) {
 }
 
 async function stateRow(env, id) {
-  return env.DB.prepare(`SELECT * FROM sh_cloud_host_monitor_state WHERE id=?`).bind(id).first();
+  return env.OTHER_DB.prepare(`SELECT * FROM sh_cloud_host_monitor_state WHERE id=?`).bind(id).first();
 }
 
 async function saveState(env, id, values) {
   const now = Date.now();
-  await env.DB.prepare(`INSERT INTO sh_cloud_host_monitor_state (
+  await env.OTHER_DB.prepare(`INSERT INTO sh_cloud_host_monitor_state (
       id,session_id,station_id,phase,candidate_count,inactive_count,
       last_profile_at,last_queue_hash,last_success_at,last_error,updated_at
     ) VALUES (?,?,?,?,?,?,?,?,?,?,?)
@@ -142,7 +142,7 @@ async function recoverSoloState(env, config) {
     };
   }
 
-  const sessionRow = await env.DB.prepare(`SELECT id,station_id,status,last_observed_at
+  const sessionRow = await env.OTHER_DB.prepare(`SELECT id,station_id,status,last_observed_at
     FROM sh_host_broadcast_sessions
     WHERE source_scope='sakurazaka46jp_solo' AND handle=?
       AND status IN ('provisional','active')
@@ -162,7 +162,7 @@ async function recoverSoloState(env, config) {
 export async function shouldProbeSolo(env, config, state, now = Date.now()) {
   if (state?.sessionId || state?.phase === 'provisional' || state?.phase === 'active') return true;
   try {
-    const due = await env.DB.prepare(`SELECT 1 AS due
+    const due = await env.OTHER_DB.prepare(`SELECT 1 AS due
       FROM sh_official_news_announcements
       WHERE scheduled_at IS NOT NULL AND (
         (status='scheduled' AND scheduled_at>=? AND scheduled_at<=?)
@@ -445,7 +445,7 @@ async function probeSolo(env, config, auth, now, recoveredState = null) {
 }
 
 export async function runCloudHostMonitor(env) {
-  if (!env.DB) return;
+  if (!env.DB || !env.OTHER_DB) return;
   const config = cfg(env);
   const now = Date.now();
   try {

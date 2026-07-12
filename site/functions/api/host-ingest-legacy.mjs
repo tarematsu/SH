@@ -385,6 +385,7 @@ async function claimForType(db, type, observedAt, data, source) {
 export async function onRequestPost({ request, env }) {
   if (!authorized(request, env)) return json({ ok: false, error: 'unauthorized' }, 401);
   if (!env.DB) return json({ ok: false, error: 'DB binding missing' }, 500);
+  if (!env.OTHER_DB) return json({ ok: false, error: 'OTHER_DB binding missing' }, 500);
   let body;
   try { body = await request.json(); } catch { return json({ ok: false, error: 'invalid JSON' }, 400); }
   const type = body?.type;
@@ -395,6 +396,9 @@ export async function onRequestPost({ request, env }) {
     collectorKind: 'external',
   });
 
+  // Dedup claims (sh_ingest_claims/sh_ingest_conflicts) stay on DB alongside
+  // the buddies/minute collector-coordination tables they're tied to; the
+  // actual host-monitoring data they gate lives in OTHER_DB.
   try {
     const claim = await claimForType(env.DB, type, observedAt, data, source);
     if (claim && !claim.accepted) {
@@ -408,20 +412,20 @@ export async function onRequestPost({ request, env }) {
     }
 
     switch (type) {
-      case 'host_profile_snapshot': await saveProfile(env.DB, observedAt, data); break;
+      case 'host_profile_snapshot': await saveProfile(env.OTHER_DB, observedAt, data); break;
       case 'solo_session_open': {
-        const row = await openSession(env.DB, observedAt, data);
+        const row = await openSession(env.OTHER_DB, observedAt, data);
         return json({ ok: true, type, accepted: true, session_id: row?.id ?? null });
       }
-      case 'solo_session_confirm': await confirmSession(env.DB, observedAt, data); break;
-      case 'solo_station_snapshot': await saveStationSnapshot(env.DB, observedAt, data); break;
-      case 'solo_queue': await saveQueue(env.DB, observedAt, data); break;
-      case 'solo_comments': await saveComments(env.DB, observedAt, data); break;
+      case 'solo_session_confirm': await confirmSession(env.OTHER_DB, observedAt, data); break;
+      case 'solo_station_snapshot': await saveStationSnapshot(env.OTHER_DB, observedAt, data); break;
+      case 'solo_queue': await saveQueue(env.OTHER_DB, observedAt, data); break;
+      case 'solo_comments': await saveComments(env.OTHER_DB, observedAt, data); break;
       case 'solo_ws_event': {
-        const stored = await saveWsEvent(env.DB, observedAt, data);
+        const stored = await saveWsEvent(env.OTHER_DB, observedAt, data);
         return json({ ok: true, type, accepted: true, stored });
       }
-      case 'solo_session_close': await closeSession(env.DB, observedAt, data); break;
+      case 'solo_session_close': await closeSession(env.OTHER_DB, observedAt, data); break;
       default: return json({ ok: false, error: `unknown type: ${type}` }, 400);
     }
     return json({ ok: true, type, accepted: true });

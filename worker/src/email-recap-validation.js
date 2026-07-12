@@ -4,7 +4,7 @@ export async function loadReferencePoints(env, effectiveAt) {
   const center = jstDate(effectiveAt);
   const from = addDays(center, -3);
   const to = addDays(center, 3);
-  const result = await env.DB.prepare(`
+  const result = await env.OTHER_DB.prepare(`
     SELECT period_key,period_start,period_end,stream_start,stream_end
     FROM sh_daily_summary
     WHERE period_key>=? AND period_key<=?

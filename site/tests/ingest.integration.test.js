@@ -13,7 +13,7 @@ function post(url, body, authorization = 'Bearer test-key') {
   });
 }
 
-const env = (db) => ({ DB: db, INGEST_SECRET: 'test-key' });
+const env = (db) => ({ DB: db, OTHER_DB: db, INGEST_SECRET: 'test-key' });
 
 test('queue ingest claims, snapshots and writes changed tracks in one request flow', async () => {
   const db = new FakeD1Database();

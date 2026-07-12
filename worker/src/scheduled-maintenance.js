@@ -33,7 +33,7 @@ export function legacyMigrationEnabled() {
 }
 
 export async function runScheduledMaintenance(env, now = Date.now()) {
-  if (!env?.DB) return { skipped: true, reason: 'db-binding-missing' };
+  if (!env?.DB || !env?.OTHER_DB) return { skipped: true, reason: 'db-binding-missing' };
   if (!dataMaintenanceEnabled(env)) {
     return { skipped: true, reason: 'disabled' };
   }
@@ -41,7 +41,7 @@ export async function runScheduledMaintenance(env, now = Date.now()) {
     return { skipped: true, reason: 'not-due' };
   }
 
-  const rollup = await runRollupMaintenanceSafely(env.DB, now);
+  const rollup = await runRollupMaintenanceSafely(env.DB, env.OTHER_DB, now);
   const migrationDisabled = {
     skipped: true,
     reason: LEGACY_MIGRATION_DISABLED_REASON,

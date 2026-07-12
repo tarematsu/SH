@@ -16,5 +16,8 @@
     "DATA_MAINTENANCE_ENABLED": false
   },
   "triggers": { "crons": ["* * * * *"] },
-  "d1_databases": [{ "binding": "DB", "database_name": "stationhead-monitor", "database_id": "5d5f0d47-7951-4900-821a-e1907c7e890b" }]
+  "d1_databases": [
+    { "binding": "DB", "database_name": "stationhead-monitor", "database_id": "5d5f0d47-7951-4900-821a-e1907c7e890b" },
+    { "binding": "OTHER_DB", "database_name": "stationhead-other", "database_id": "21e70e92-6725-4e62-809e-8aadb088cc11" }
+  ]
 }

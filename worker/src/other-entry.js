@@ -18,7 +18,7 @@ export async function runOfficialNewsWithReconcile(
   probe = runOfficialNewsMonitor,
   reconcile = reconcileOfficialAnnouncements,
 ) {
-  const result = await probe(withScheduledD1Optimizations(env), officialNewsConfig(env), now);
+  const result = await probe(withScheduledD1Optimizations(env, Date.now, 'OTHER_DB'), officialNewsConfig(env), now);
   await reconcile(env, now);
   return result;
 }

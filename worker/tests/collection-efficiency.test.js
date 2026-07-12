@@ -118,6 +118,11 @@ test('scheduled maintenance runs rollups without touching legacy or facts migrat
         throw new Error('FACTS_DB must not be touched by scheduled maintenance');
       },
     }),
+    OTHER_DB: new Proxy({}, {
+      get() {
+        throw new Error('OTHER_DB must not be touched when there is no source data to roll up');
+      },
+    }),
   }, 3_600_000);
 
   assert.equal(result.skipped, false);

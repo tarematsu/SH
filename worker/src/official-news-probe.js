@@ -115,7 +115,7 @@ export function compactProbePayload(station, identity = stationIdentity(station)
 
 function probeStatement(env, announcement, station, active, now, identity, compact) {
   const minute = Math.floor(now / 60000);
-  return env.DB.prepare(`INSERT INTO sh_official_news_station_probes
+  return env.OTHER_DB.prepare(`INSERT INTO sh_official_news_station_probes
       (announcement_id,observed_at,observed_minute,station_id,broadcast_id,broadcast_start_time,
        is_broadcasting,listener_count,guest_count,total_listens,status,chat_status,
        channel_id,channel_alias,queue_json,raw_json)
@@ -138,7 +138,7 @@ async function loadExistingOfficialComments(env, announcementIds, commentIds) {
   if (!announcementIds.length || !commentIds.length) return [];
   const announcementPlaceholders = announcementIds.map(() => '?').join(',');
   const commentPlaceholders = commentIds.map(() => '?').join(',');
-  const result = await env.DB.prepare(`SELECT announcement_id,comment_id,raw_json
+  const result = await env.OTHER_DB.prepare(`SELECT announcement_id,comment_id,raw_json
     FROM sh_official_news_comments
     WHERE announcement_id IN (${announcementPlaceholders})
       AND comment_id IN (${commentPlaceholders})`)
@@ -166,7 +166,7 @@ export function officialCommentWriteCounts(changedComments) {
 }
 
 function commentStatement(env, announcementId, stationId, comment, now, raw) {
-  return env.DB.prepare(`INSERT INTO sh_official_news_comments
+  return env.OTHER_DB.prepare(`INSERT INTO sh_official_news_comments
       (announcement_id,station_id,comment_id,observed_at,account_id,handle,text,chat_time,chat_time_ms,raw_json)
       VALUES (?,?,?,?,?,?,?,?,?,?)
       ON CONFLICT(announcement_id,comment_id) DO UPDATE SET
@@ -179,7 +179,7 @@ function commentStatement(env, announcementId, stationId, comment, now, raw) {
 }
 
 async function dueAnnouncements(env, cfg, now) {
-  const result = await env.DB.prepare(`SELECT
+  const result = await env.OTHER_DB.prepare(`SELECT
       id,event_name,scheduled_at,status,inactive_streak,first_broadcast_at
     FROM sh_official_news_announcements
     WHERE scheduled_at IS NOT NULL AND (
@@ -224,7 +224,7 @@ export async function probeAnnouncements(env, cfg, now) {
       env, announcementId, identity.stationId, comment, now, raw,
     )));
     for (const announcement of announcements) {
-      statements.push(env.DB.prepare(`UPDATE sh_official_news_announcements SET
+      statements.push(env.OTHER_DB.prepare(`UPDATE sh_official_news_announcements SET
           status='active',matched_station_id=?,first_broadcast_at=COALESCE(first_broadcast_at,?),
           last_broadcast_at=?,inactive_streak=0,updated_at=? WHERE id=?`)
         .bind(identity.stationId, identity.broadcastStartTime || now, now, now, announcement.id));
@@ -233,12 +233,12 @@ export async function probeAnnouncements(env, cfg, now) {
     for (const announcement of announcements) {
       if (announcement.status !== 'active') continue;
       const streak = Number(announcement.inactive_streak || 0) + 1;
-      statements.push(env.DB.prepare(`UPDATE sh_official_news_announcements SET
+      statements.push(env.OTHER_DB.prepare(`UPDATE sh_official_news_announcements SET
           inactive_streak=?,status=CASE WHEN ?>=? THEN 'ended' ELSE status END,updated_at=? WHERE id=?`)
         .bind(streak, streak, cfg.endConfirmPolls, now, announcement.id));
     }
   }
-  await runDbBatches(env.DB, statements);
+  await runDbBatches(env.OTHER_DB, statements);
 
   for (const announcement of announcements) {
     console.log(JSON.stringify({
@@ -253,7 +253,7 @@ export async function probeAnnouncements(env, cfg, now) {
 }
 
 export async function runOfficialNewsMonitor(env, cfg, now) {
-  if (!env.DB) return;
+  if (!env.DB || !env.OTHER_DB) return;
   try {
     await checkOfficialNews(env, cfg, now);
     await probeAnnouncements(env, cfg, now);

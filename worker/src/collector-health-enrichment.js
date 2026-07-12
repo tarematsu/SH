@@ -8,7 +8,7 @@ export async function enhancedHealth(app, request, env, ctx) {
   let hostMonitor = null;
   try {
     lease = await readCollectorLease(env);
-    hostMonitor = await env.DB.prepare(`SELECT phase,session_id,station_id,last_success_at,last_error,updated_at
+    hostMonitor = await env.OTHER_DB.prepare(`SELECT phase,session_id,station_id,last_success_at,last_error,updated_at
       FROM sh_cloud_host_monitor_state WHERE id=?`).bind('solo:sakurazaka46jp').first();
   } catch (error) {
     if (!/no such table/i.test(String(error?.message || ''))) console.error(error);
