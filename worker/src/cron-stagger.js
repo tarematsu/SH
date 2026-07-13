@@ -1,12 +1,14 @@
-// All three workers (buddies/other/minute) share the same "* * * * *" cron and
-// the same D1 database. Buddies is the latency-sensitive primary collector and
-// is left unstaggered; other/minute delay their own D1-touching work by a few
-// seconds each so the three workers don't all start hitting D1 in the same
-// instant every minute.
+// All three workers (buddies/other/minute) share the same "* * * * *" cron.
+// Buddies is the latency-sensitive primary collector that writes the shared DB
+// and is left unstaggered; other/minute delay their own DB-touching work by a
+// few seconds so the workers don't all start hitting the shared DB in the same
+// instant every minute. The delay is spent blocking (setTimeout) inside the
+// invocation, so it must stay well under the runtime limits -- callers should
+// only pay it before work that actually touches the shared DB.
 const MAX_DELAY_MS = 45_000;
 const DEFAULT_DELAYS_MS = {
   other: 10_000,
-  minute: 20_000,
+  minute: 5_000,
 };
 
 function defaultSleep(ms) {

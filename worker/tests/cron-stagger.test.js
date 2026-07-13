@@ -11,14 +11,14 @@ test('cronStaggerEnabled defaults to true and honors explicit disable', () => {
 
 test('cronStaggerDelayMs uses per-worker defaults and env overrides', () => {
   assert.equal(cronStaggerDelayMs({}, 'other'), 10_000);
-  assert.equal(cronStaggerDelayMs({}, 'minute'), 20_000);
+  assert.equal(cronStaggerDelayMs({}, 'minute'), 5_000);
   assert.equal(cronStaggerDelayMs({}, 'buddies'), 0);
   assert.equal(cronStaggerDelayMs({ CRON_STAGGER_OTHER_MS: 5_000 }, 'other'), 5_000);
 });
 
 test('cronStaggerDelayMs clamps overrides to a sane maximum', () => {
   assert.equal(cronStaggerDelayMs({ CRON_STAGGER_MINUTE_MS: 999_999 }, 'minute'), 45_000);
-  assert.equal(cronStaggerDelayMs({ CRON_STAGGER_MINUTE_MS: -5 }, 'minute'), 20_000);
+  assert.equal(cronStaggerDelayMs({ CRON_STAGGER_MINUTE_MS: -5 }, 'minute'), 5_000);
 });
 
 test('applyCronStagger sleeps for the configured delay using the injected sleep function', async () => {

@@ -18,6 +18,22 @@ function scheduledMinute(controller = {}) {
   return new Date(timestamp).getUTCMinutes();
 }
 
+// The stagger is a blocking sleep, so only pay it before jobs that actually
+// read the shared DB and could collide with buddies' top-of-minute writes.
+// Derive and recovery touch only FACTS_DB; sleeping ahead of them just burns
+// wall time (and, at the old 20s delay, tripped the minute worker's runtime
+// limit every minute). Rebuild (minute ending in 7) and legacy (ending in 9)
+// are the only DB-reading paths.
+export function minuteStaggerApplies(controller = {}) {
+  const cron = String(controller.cron || '');
+  if (cron === MINUTE_FACT_REBUILD_CRON || cron === MINUTE_FACT_LEGACY_CRON) return true;
+  if (cron !== MINUTE_FACT_WORKER_CRON) return false;
+  const minute = scheduledMinute(controller);
+  if (minute == null) return false;
+  if (minute % 10 === MINUTE_FACT_RECOVERY_MINUTE) return false;
+  return minute % 10 === 7 || minute % 10 === 9;
+}
+
 function enabled(value) {
   return ['1', 'true', 'yes', 'on'].includes(String(value ?? '').trim().toLowerCase());
 }
@@ -56,7 +72,7 @@ export async function runMinuteScheduled(controller = {}, env, dependencies = {}
 
 const rawApp = {
   async scheduled(controller, env, ctx) {
-    await applyCronStagger(env, 'minute');
+    if (minuteStaggerApplies(controller)) await applyCronStagger(env, 'minute');
     return runMinuteScheduled(controller, env, { ctx });
   },
   async fetch(request, env) {

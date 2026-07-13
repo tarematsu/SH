@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
-import minuteApp, { MINUTE_FACT_DERIVE_CRON, MINUTE_FACT_LEGACY_CRON, MINUTE_FACT_REBUILD_CRON, MINUTE_FACT_RECOVERY_MINUTE, MINUTE_FACT_WORKER_CRON, runMinuteScheduled } from '../src/minute-entry.js';
+import minuteApp, { MINUTE_FACT_DERIVE_CRON, MINUTE_FACT_LEGACY_CRON, MINUTE_FACT_REBUILD_CRON, MINUTE_FACT_RECOVERY_MINUTE, MINUTE_FACT_WORKER_CRON, minuteStaggerApplies, runMinuteScheduled } from '../src/minute-entry.js';
 import { legacyFact, runMinuteFactsLegacyBackfill } from '../src/minute-facts-legacy-backfill.js';
 
 test('minute worker routes every creation path without running the collector', async () => {
@@ -28,6 +28,25 @@ test('single minute-worker cron preserves derive, rebuild, and legacy cadence', 
   assert.equal(await run(7), 'rebuild');
   assert.equal(await run(9), 'legacy');
   assert.deepEqual(calls, ['derive', 'rebuild', 'legacy']);
+});
+
+test('minute worker only staggers before shared-DB rebuild and legacy jobs', () => {
+  const at = (minute) => ({ cron: MINUTE_FACT_WORKER_CRON, scheduledTime: minute * 60_000 });
+  // Rebuild (minute ending in 7) and legacy (ending in 9) read the shared DB.
+  assert.equal(minuteStaggerApplies(at(7)), true);
+  assert.equal(minuteStaggerApplies(at(17)), true);
+  assert.equal(minuteStaggerApplies(at(9)), true);
+  assert.equal(minuteStaggerApplies(at(59)), true);
+  // Derive (even minutes), recovery, and not-due minutes only touch FACTS_DB.
+  assert.equal(minuteStaggerApplies(at(2)), false);
+  assert.equal(minuteStaggerApplies(at(MINUTE_FACT_RECOVERY_MINUTE)), false);
+  assert.equal(minuteStaggerApplies(at(3)), false);
+  // A missing scheduled time cannot be classified, so it must not block.
+  assert.equal(minuteStaggerApplies({ cron: MINUTE_FACT_WORKER_CRON }), false);
+  // Dedicated rebuild/legacy crons (legacy multi-cron config) still stagger.
+  assert.equal(minuteStaggerApplies({ cron: MINUTE_FACT_REBUILD_CRON }), true);
+  assert.equal(minuteStaggerApplies({ cron: MINUTE_FACT_LEGACY_CRON }), true);
+  assert.equal(minuteStaggerApplies({ cron: MINUTE_FACT_DERIVE_CRON }), false);
 });
 
 test('minute worker retries a bounded set of dead jobs in its recovery slot', async () => {
