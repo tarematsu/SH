@@ -122,7 +122,7 @@ test('secondary playback endpoint stays available before migration is applied', 
   );
   const response = await playbackGet({
     request: new Request('https://skrzk.test/api/playback?channel=buddy46'),
-    env: { DB: db },
+    env: { DB: db, OTHER_DB: db },
   });
   const payload = await responseJson(response);
   assert.equal(response.status, 200);

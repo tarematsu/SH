@@ -408,10 +408,10 @@ function primaryPlaybackPayload({ latest, latestQueue, rows, revision }, generat
   };
 }
 
-async function secondaryPlaybackResponse(db, alias, generatedAt, includeRawPayload = false) {
-  const collector = await loadBuddyCollectorStatus(db, alias);
+async function secondaryPlaybackResponse(db, otherDb, alias, generatedAt, includeRawPayload = false) {
+  const collector = await loadBuddyCollectorStatus(otherDb, alias);
   try {
-    const row = await db.prepare(SECONDARY_PLAYBACK_SQL).bind(alias).first();
+    const row = await otherDb.prepare(SECONDARY_PLAYBACK_SQL).bind(alias).first();
     const metadata = row ? await loadMetadataForQueueJson(db, row.queue_json) : new Map();
     const payload = row
       ? secondaryPlaybackPayload(row, generatedAt, { includeRawPayload, metadata })
@@ -438,13 +438,15 @@ async function secondaryPlaybackResponse(db, alias, generatedAt, includeRawPaylo
 
 export async function onRequestGet({ request, env }) {
   const db = env.DB;
+  const otherDb = env.OTHER_DB;
   if (!db) return playbackJson({ ok: false, error: 'DB binding missing' }, 500, 'no-store');
 
   try {
     const generatedAt = Date.now();
     const channelAlias = requestedChannel(request);
     if (channelAlias !== DEFAULT_CHANNEL_ALIAS) {
-      return await secondaryPlaybackResponse(db, channelAlias, generatedAt, requestedRawPayload(request));
+      if (!otherDb) return playbackJson({ ok: false, error: 'OTHER_DB binding missing' }, 500, 'no-store');
+      return await secondaryPlaybackResponse(db, otherDb, channelAlias, generatedAt, requestedRawPayload(request));
     }
 
     const result = await db.prepare(PLAYBACK_FEED_SQL).all();

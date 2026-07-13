@@ -217,16 +217,29 @@ function isAuthFailure(error) {
     .test(String(error?.message || error));
 }
 
+// sh_worker_collector_state/sh_worker_auth_control/sh_playback_channel_current
+// are shared, alias-keyed tables (auth-state.js's functions also serve
+// buddies' own primary loop under the 'stationhead' id) -- schema init and
+// session refresh for buddy46 specifically run against OTHER_DB, via this
+// scoped substitute env, so buddy46's rows never touch buddies' database.
+// The actual playback collection below still gets the real env, since it
+// also enriches sh_track_metadata, a cache genuinely shared with buddies'
+// own collection and minute-facts derivation.
+function otherDbEnv(env) {
+  return { ...env, DB: env.OTHER_DB };
+}
+
 export async function collectBuddyPlaybackReady(env, observedAt = Date.now(), dependencies = {}) {
-  await ensureBuddyPlaybackSchema(env);
-  let state = await refreshSession(env, dependencies);
+  const otherEnv = otherDbEnv(env);
+  await ensureBuddyPlaybackSchema(otherEnv);
+  let state = await refreshSession(otherEnv, dependencies);
 
   const collect = dependencies.collect || collectBuddyPlayback;
   try {
     return await collect(withBuddyAuthState(env, state), observedAt, dependencies);
   } catch (error) {
     if (!isAuthFailure(error)) throw error;
-    state = await refreshSession(env, dependencies, { force: true });
+    state = await refreshSession(otherEnv, dependencies, { force: true });
     return collect(withBuddyAuthState(env, state), observedAt, dependencies);
   }
 }

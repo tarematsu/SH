@@ -46,13 +46,13 @@ function failureStage(error) {
 
 async function ensureHealthSchema(env) {
   if (healthSchemaReady) return;
-  await env.DB.prepare(BUDDY_HEALTH_SCHEMA_SQL).run();
+  await env.OTHER_DB.prepare(BUDDY_HEALTH_SCHEMA_SQL).run();
   healthSchemaReady = true;
 }
 
 async function currentHealth(env, collectorId) {
   await ensureHealthSchema(env);
-  return env.DB.prepare(`SELECT last_success_at,tracks
+  return env.OTHER_DB.prepare(`SELECT last_success_at,tracks
     FROM sh_collector_status WHERE collector_id=? LIMIT 1`)
     .bind(collectorId)
     .first();
@@ -60,7 +60,7 @@ async function currentHealth(env, collectorId) {
 
 async function writeHealth(env, values) {
   await ensureHealthSchema(env);
-  await env.DB.prepare(`INSERT INTO sh_collector_status (
+  await env.OTHER_DB.prepare(`INSERT INTO sh_collector_status (
       collector_id,status,last_attempt_at,last_success_at,last_error,
       failure_code,failure_stage,failure_summary,failure_hint,tracks,changed,updated_at
     ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
@@ -94,7 +94,7 @@ async function writeHealth(env, values) {
 }
 
 export async function recordBuddySuccess(env, alias, result = {}, at = Date.now()) {
-  if (!env?.DB) return false;
+  if (!env?.OTHER_DB) return false;
   await writeHealth(env, {
     collectorId: buddyHealthId(alias),
     status: 'ok',
@@ -112,7 +112,7 @@ export async function recordBuddySuccess(env, alias, result = {}, at = Date.now(
 }
 
 export async function recordBuddyFailure(env, alias, error, at = Date.now()) {
-  if (!env?.DB) return false;
+  if (!env?.OTHER_DB) return false;
   const collectorId = buddyHealthId(alias);
   const current = await currentHealth(env, collectorId).catch(() => null);
   const diagnosis = diagnoseCollectorFailure(error, failureStage(error), at);
