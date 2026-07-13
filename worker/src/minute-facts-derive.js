@@ -6,6 +6,7 @@ import {
   completeMinuteFactJob,
   failMinuteFactJob,
   minuteFactInboxStats,
+  releaseMinuteFactJobs,
 } from './minute-facts-inbox.js';
 
 export const MINUTE_FACT_DERIVE_CRON = '*/2 * * * *';
@@ -71,6 +72,7 @@ export async function runMinuteFactDeriveCron(env, dependencies = {}) {
   const claim = dependencies.claim || claimMinuteFactJobs;
   const complete = dependencies.complete || completeMinuteFactJob;
   const fail = dependencies.fail || failMinuteFactJob;
+  const release = dependencies.release || releaseMinuteFactJobs;
   const liveWrite = dependencies.liveWrite || saveOptimizedMinuteFactWithinBudget;
   const rebuildWrite = dependencies.rebuildWrite || saveReconstructedMinuteFactWithinBudget;
   const write = dependencies.write || ((activeEnv, payload) => (
@@ -89,20 +91,22 @@ export async function runMinuteFactDeriveCron(env, dependencies = {}) {
     skipped_budget: 0,
   };
 
-  while (summary.processed + summary.failed < config.maxJobs) {
+  // Lease the whole batch up front (one round trip) instead of re-claiming a
+  // single job every iteration, then process until the time budget runs out.
+  const jobs = await claim(env, {
+    now: nowFn(),
+    limit: config.maxJobs,
+    leaseMs: config.leaseMs,
+  });
+
+  let index = 0;
+  for (; index < jobs.length; index += 1) {
     if (nowFn() >= deadlineAt - 1_000) {
       summary.skipped_budget += 1;
       break;
     }
 
-    const jobs = await claim(env, {
-      now: nowFn(),
-      limit: 1,
-      leaseMs: config.leaseMs,
-    });
-    const job = jobs?.[0];
-    if (!job) break;
-
+    const job = jobs[index];
     try {
       const payload = parseJobPayload(job);
       await write(withDeriveTimeout(env, config.jobTimeoutMs), payload);
@@ -124,6 +128,21 @@ export async function runMinuteFactDeriveCron(env, dependencies = {}) {
         job_kind: job.job_kind || 'live',
         attempts: Number(job.attempts || 0),
         terminal: Boolean(result?.terminal),
+        error: sanitizeFailureDetail(error?.message || error),
+      }));
+    }
+  }
+
+  // Return any jobs the budget prevented us from reaching so they retry on the
+  // next run rather than sitting leased until the lease expires.
+  const unprocessed = jobs.slice(index).map((job) => job.id);
+  if (unprocessed.length) {
+    try {
+      await release(env, unprocessed, { now: nowFn() });
+    } catch (error) {
+      console.warn(JSON.stringify({
+        event: 'minute_fact_release_failed',
+        count: unprocessed.length,
         error: sanitizeFailureDetail(error?.message || error),
       }));
     }

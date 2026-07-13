@@ -133,28 +133,40 @@ export async function claimMinuteFactJobs(env, options = {}) {
   const leaseMs = positiveInteger(options.leaseMs, 60_000, 10 * 60_000);
   await releaseExpiredLeases(env, now);
 
-  const candidates = await env.FACTS_DB.prepare(`SELECT id FROM sh_minute_fact_jobs
-    WHERE status='pending' AND next_attempt_at<=?
-    ORDER BY job_priority DESC,minute_at ASC,id ASC LIMIT ?`)
-    .bind(now, limit)
+  // Claim the whole batch in one round trip: a single UPDATE leases the top
+  // `limit` due jobs and RETURNING hands back their full rows. This replaces the
+  // old per-job "SELECT id -> UPDATE -> SELECT *" loop, which issued ~3 queries
+  // (plus a table-wide lease sweep) for every job the derive cron processed.
+  const claimed = await env.FACTS_DB.prepare(`UPDATE sh_minute_fact_jobs SET
+      status='processing',attempts=attempts+1,lease_until=?,updated_at=?
+    WHERE id IN (
+      SELECT id FROM sh_minute_fact_jobs
+      WHERE status='pending' AND next_attempt_at<=?
+      ORDER BY job_priority DESC,minute_at ASC,id ASC
+      LIMIT ?
+    )
+    RETURNING *`)
+    .bind(now + leaseMs, now, now, limit)
     .all();
+  return claimed.results || [];
+}
 
-  const claimed = [];
-  for (const candidate of candidates.results || []) {
-    const id = integer(candidate?.id);
-    if (id == null) continue;
-    const result = await env.FACTS_DB.prepare(`UPDATE sh_minute_fact_jobs SET
-        status='processing',attempts=attempts+1,lease_until=?,updated_at=?
-      WHERE id=? AND status='pending' AND next_attempt_at<=?`)
-      .bind(now + leaseMs, now, id, now)
-      .run();
-    if (Number(result?.meta?.changes || 0) <= 0) continue;
-    const row = await env.FACTS_DB.prepare('SELECT * FROM sh_minute_fact_jobs WHERE id=?')
-      .bind(id)
-      .first();
-    if (row) claimed.push(row);
-  }
-  return claimed;
+// Hand claimed-but-unprocessed jobs (e.g. left over when the derive run hits its
+// time budget) straight back to the queue, undoing the attempt increment the
+// claim charged so they retry immediately instead of waiting out the lease.
+export async function releaseMinuteFactJobs(env, jobIds, options = {}) {
+  const ids = (Array.isArray(jobIds) ? jobIds : [])
+    .map((id) => integer(id))
+    .filter((id) => id != null);
+  if (!ids.length) return { released: 0 };
+  const now = integer(options.now) ?? Date.now();
+  const placeholders = ids.map(() => '?').join(',');
+  const result = await env.FACTS_DB.prepare(`UPDATE sh_minute_fact_jobs SET
+      status='pending',attempts=MAX(0,attempts-1),next_attempt_at=0,lease_until=NULL,updated_at=?
+    WHERE status='processing' AND id IN (${placeholders})`)
+    .bind(now, ...ids)
+    .run();
+  return { released: Number(result?.meta?.changes || 0) };
 }
 
 export async function completeMinuteFactJob(env, jobId, now = Date.now()) {

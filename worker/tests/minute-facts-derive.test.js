@@ -41,8 +41,7 @@ test('retry delay grows exponentially and is capped at one hour', () => {
   assert.equal(minuteFactRetryDelayMs(99), 3_600_000);
 });
 
-test('derive cron claims, writes, and completes pending jobs', async () => {
-  const pending = [job(1), job(2)];
+test('derive cron claims the batch once, then writes and completes each job', async () => {
   const calls = [];
   const result = await runMinuteFactDeriveCron(
     { DB: {}, FACTS_DB: {} },
@@ -50,7 +49,7 @@ test('derive cron claims, writes, and completes pending jobs', async () => {
       now: () => 1_000,
       claim: async (_env, options) => {
         calls.push(['claim', options.limit, options.leaseMs]);
-        return pending.length ? [pending.shift()] : [];
+        return [job(1), job(2)];
       },
       write: async (env, payload) => {
         calls.push(['write', env.MINUTE_FACT_TIMEOUT_MS, payload.observedAt]);
@@ -61,21 +60,46 @@ test('derive cron claims, writes, and completes pending jobs', async () => {
       fail: async () => {
         throw new Error('unexpected fail');
       },
+      release: async () => {
+        throw new Error('unexpected release');
+      },
       stats: async () => ({ pending_count: 0, processing_count: 0, dead_count: 0 }),
     },
   );
 
   assert.equal(result.processed, 2);
   assert.equal(result.failed, 0);
+  // A single claim leases the whole batch (limit == maxJobs), no re-claim loop.
   assert.deepEqual(calls, [
-    ['claim', 1, 60_000],
+    ['claim', 8, 60_000],
     ['write', 18_000, 120_001],
     ['complete', 1],
-    ['claim', 1, 60_000],
     ['write', 18_000, 120_002],
     ['complete', 2],
-    ['claim', 1, 60_000],
   ]);
+});
+
+test('derive cron returns budget-stranded jobs to the queue', async () => {
+  const released = [];
+  let clock = 1_000;
+  const result = await runMinuteFactDeriveCron(
+    { DB: {}, FACTS_DB: {}, DERIVE_RUN_BUDGET_MS: 5_000 },
+    {
+      // First job processes at t=1000; the budget deadline is 1000+5000-1000
+      // guard = 5000, so the second job is skipped once the clock passes it.
+      now: () => clock,
+      claim: async () => [job(1), job(2)],
+      write: async () => { clock = 6_000; },
+      complete: async () => {},
+      fail: async () => { throw new Error('unexpected fail'); },
+      release: async (_env, ids) => { released.push(...ids); return { released: ids.length }; },
+      stats: async () => ({ pending_count: 1, processing_count: 0, dead_count: 0 }),
+    },
+  );
+
+  assert.equal(result.processed, 1);
+  assert.equal(result.skipped_budget, 1);
+  assert.deepEqual(released, [2]);
 });
 
 test('derive cron reschedules failed jobs without failing the cron event', async () => {
