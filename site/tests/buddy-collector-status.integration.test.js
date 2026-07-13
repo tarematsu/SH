@@ -79,7 +79,7 @@ test('secondary playback endpoint exposes collector failure when no queue row ex
 
   const response = await onRequestGet({
     request: new Request('https://skrzk.test/api/playback?channel=buddy46'),
-    env: { DB: db },
+    env: { DB: db, OTHER_DB: db },
   });
   const body = await responseJson(response);
 
@@ -100,7 +100,7 @@ test('collector health read failure does not take down the playback endpoint', a
 
   const response = await onRequestGet({
     request: new Request('https://skrzk.test/api/playback?channel=buddy46'),
-    env: { DB: db },
+    env: { DB: db, OTHER_DB: db },
   });
   const body = await responseJson(response);
 

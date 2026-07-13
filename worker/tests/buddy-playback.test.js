@@ -170,7 +170,7 @@ test('buddy playback rejects malformed channel payloads before replacing current
 
 test('changed playback replaces the one current-state row with compact JSON', async () => {
   const db = new FakeDb();
-  const result = await collectBuddyPlayback({ DB: db }, 600_000, {
+  const result = await collectBuddyPlayback({ DB: db, OTHER_DB: db }, 600_000, {
     loadSession: async () => ({ authToken: 'token', deviceUid: 'device' }),
     fetchChannel: async () => channel,
     stateHash: async () => 'hash-new',
@@ -198,6 +198,7 @@ test('buddy playback loads only the buddy46 auth state when no runtime session i
   let observedSession = null;
   await collectBuddyPlayback({
     DB: db,
+    OTHER_DB: db,
     STATIONHEAD_AUTH_TOKEN: 'Bearer buddies-token',
     STATIONHEAD_DEVICE_UID: 'buddies-device',
   }, 600_000, {
@@ -225,7 +226,7 @@ test('metadata-only refresh updates queue JSON without resetting playback change
     },
     metadata: [metadataRow],
   });
-  const result = await collectBuddyPlayback({ DB: db }, 600_000, {
+  const result = await collectBuddyPlayback({ DB: db, OTHER_DB: db }, 600_000, {
     loadSession: async () => ({ authToken: 'token', deviceUid: 'device' }),
     fetchChannel: async () => channel,
     stateHash: async () => 'same',
@@ -250,7 +251,7 @@ test('broadcast-only changes update display state without moving the playback an
     },
     metadata: [metadataRow],
   });
-  const result = await collectBuddyPlayback({ DB: db }, 600_000, {
+  const result = await collectBuddyPlayback({ DB: db, OTHER_DB: db }, 600_000, {
     loadSession: async () => ({ authToken: 'token', deviceUid: 'device' }),
     fetchChannel: async () => channel,
     stateHash: async () => 'same',
@@ -275,7 +276,7 @@ test('unchanged playback updates only checked_at', async () => {
     },
     metadata: [metadataRow],
   });
-  const result = await collectBuddyPlayback({ DB: db }, 600_000, {
+  const result = await collectBuddyPlayback({ DB: db, OTHER_DB: db }, 600_000, {
     loadSession: async () => ({ authToken: 'token', deviceUid: 'device' }),
     fetchChannel: async () => channel,
     stateHash: async () => 'same',
@@ -289,7 +290,7 @@ test('unchanged playback updates only checked_at', async () => {
 test('missing current-state table skips collection before external requests', async () => {
   const db = new FakeDb({ currentError: new Error('no such table: sh_playback_channel_current') });
   let loadedSession = false;
-  const result = await collectBuddyPlayback({ DB: db }, 600_000, {
+  const result = await collectBuddyPlayback({ DB: db, OTHER_DB: db }, 600_000, {
     loadSession: async () => {
       loadedSession = true;
       return { authToken: 'token', deviceUid: 'device' };

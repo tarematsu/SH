@@ -131,7 +131,7 @@ async function loadSession(env) {
   }
 
   const config = buddyPlaybackConfig(env);
-  const row = await env.DB.prepare(`SELECT auth_token,device_uid
+  const row = await env.OTHER_DB.prepare(`SELECT auth_token,device_uid
     FROM sh_worker_collector_state WHERE id=?`).bind(config.authStateId).first();
   const fallback = buddyScopedCredentials(env);
   const authToken = normalizeBearer(row?.auth_token || fallback.authToken);
@@ -189,13 +189,13 @@ function displayStateChanged(current, queue) {
 }
 
 export async function collectBuddyPlayback(env, now = Date.now(), dependencies = {}) {
-  if (!env?.DB) return { skipped: true, reason: 'db-binding-missing' };
+  if (!env?.DB || !env?.OTHER_DB) return { skipped: true, reason: 'db-binding-missing' };
   const config = buddyPlaybackConfig(env);
   if (!config.enabled) return { skipped: true, reason: 'disabled' };
 
   let current;
   try {
-    current = await env.DB.prepare(BUDDY_PLAYBACK_SELECT_SQL).bind(config.alias).first();
+    current = await env.OTHER_DB.prepare(BUDDY_PLAYBACK_SELECT_SQL).bind(config.alias).first();
   } catch (error) {
     if (missingTable(error)) return { skipped: true, reason: 'playback-table-setup-required' };
     throw error;
@@ -232,10 +232,10 @@ export async function collectBuddyPlayback(env, now = Date.now(), dependencies =
   const changed = playbackChanged || contentChanged || displayChanged;
 
   if (!changed) {
-    await env.DB.prepare(BUDDY_PLAYBACK_TOUCH_SQL).bind(now, config.alias).run();
+    await env.OTHER_DB.prepare(BUDDY_PLAYBACK_TOUCH_SQL).bind(now, config.alias).run();
   } else {
     const changedAt = playbackChanged ? now : finiteNumber(current?.changed_at, now);
-    await env.DB.prepare(BUDDY_PLAYBACK_UPSERT_SQL).bind(
+    await env.OTHER_DB.prepare(BUDDY_PLAYBACK_UPSERT_SQL).bind(
       config.alias,
       queue.station_id,
       queue.queue_id,

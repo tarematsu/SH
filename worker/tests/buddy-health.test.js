@@ -70,7 +70,7 @@ class FakeDb {
 test('buddy health records success and creates its schema only once', async () => {
   resetBuddyHealthForTests();
   const db = new FakeDb();
-  const env = { DB: db };
+  const env = { OTHER_DB: db };
 
   await recordBuddySuccess(env, 'buddy46', { tracks: 4, changed: true }, 1000);
   await recordBuddySuccess(env, 'buddy46', { tracks: 4, changed: false }, 2000);
@@ -86,7 +86,7 @@ test('buddy health records success and creates its schema only once', async () =
 test('buddy health preserves unknown track counts as null', async () => {
   resetBuddyHealthForTests();
   const db = new FakeDb();
-  const env = { DB: db };
+  const env = { OTHER_DB: db };
 
   await recordBuddySuccess(env, 'buddy46', { tracks: null }, 1000);
 
@@ -97,7 +97,7 @@ test('buddy health preserves unknown track counts as null', async () => {
 test('buddy health preserves the last success when a later collection fails', async () => {
   resetBuddyHealthForTests();
   const db = new FakeDb();
-  const env = { DB: db };
+  const env = { OTHER_DB: db };
 
   await recordBuddySuccess(env, 'buddy46', { tracks: 3 }, 1000);
   await recordBuddyFailure(
@@ -119,7 +119,7 @@ test('buddy health preserves the last success when a later collection fails', as
 test('buddy health does not invent zero metrics for a first-run failure', async () => {
   resetBuddyHealthForTests();
   const db = new FakeDb();
-  const env = { DB: db };
+  const env = { OTHER_DB: db };
 
   await recordBuddyFailure(env, 'buddy46', new Error('database unavailable'), 2000);
 
@@ -131,7 +131,7 @@ test('buddy health does not invent zero metrics for a first-run failure', async 
 test('buddy health classifies Stationhead not-found responses as upstream API failures', async () => {
   resetBuddyHealthForTests();
   const db = new FakeDb();
-  const env = { DB: db };
+  const env = { OTHER_DB: db };
 
   await recordBuddyFailure(
     env,
