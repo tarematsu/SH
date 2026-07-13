@@ -256,19 +256,6 @@ async function loadHistoricalQueue(env, candidate) {
   };
 }
 
-async function loadHistoricalComments(env, candidate) {
-  if (candidate.snapshot?.station_id == null) return { commentCount: null, commentTotal: null, degraded: true };
-  const row = await env.DB.prepare(`SELECT comment_count FROM sh_comment_minute_counts
-    WHERE station_id IS ? AND bucket_start=? LIMIT 1`)
-    .bind(candidate.snapshot.station_id, candidate.minuteAt)
-    .first();
-  return {
-    commentCount: row?.comment_count == null ? null : Number(row.comment_count),
-    commentTotal: null,
-    degraded: !row,
-  };
-}
-
 async function loadHistoricalCommentsBatch(env, candidates) {
   const byKey = new Map();
   const pairs = [...new Map((candidates || [])
@@ -385,7 +372,7 @@ export async function runMinuteFactsBackfill(env, dependencies = {}) {
       enqueued,
       skipped_existing: skippedExisting,
       pending_candidates: remaining.length,
-      cursor_observed_at: Number((await loadState(env)).cursor_observed_at || 0),
+      cursor_observed_at: Number(latestState.cursor_observed_at || 0),
     };
     console.log(JSON.stringify(summary));
     return summary;
