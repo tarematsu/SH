@@ -25,7 +25,7 @@ Push-Location (Join-Path $root 'worker')
 try {
   Write-Host 'Loading sh_daily_summary...' -ForegroundColor Cyan
   $sql = "SELECT period_key,period_start,period_end,stream_start,stream_end FROM sh_daily_summary WHERE period_key>='2025-11-30' AND period_key<='2026-06-23' ORDER BY period_key ASC;"
-  $raw = & npx wrangler d1 execute sh-monitor --remote --json --command=$sql 2>&1
+  $raw = & npx wrangler d1 execute stationhead-legacy --remote --config ..\site\wrangler.jsonc --json --command=$sql 2>&1
   if ($LASTEXITCODE -ne 0) {
     Write-Host ($raw -join "`n") -ForegroundColor Red
     throw 'D1 daily-summary query failed'

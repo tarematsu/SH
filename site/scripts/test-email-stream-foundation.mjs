@@ -31,7 +31,7 @@ try {
   });
 
   run(process.execPath, [wranglerScript, ...[
-    'd1', 'execute', 'sh-monitor',
+    'd1', 'execute', 'stationhead-legacy',
     '--local', '--persist-to', stateDirectory,
     '--command', `INSERT INTO sh_email_stream_snapshots (
       source_key,week_of,email_sent_at,effective_at,stream_count,source,

@@ -106,7 +106,7 @@ SELECT
 "@
 
     Write-Host "Validating $($email.WeekOf)..." -ForegroundColor Cyan
-    $raw = & npx wrangler d1 execute sh-monitor --remote --json --command=$sql
+    $raw = & npx wrangler d1 execute stationhead-legacy --remote --config ..\site\wrangler.jsonc --json --command=$sql
     if ($LASTEXITCODE -ne 0) { throw "D1 query failed for $($email.WeekOf)" }
 
     $parsed = ($raw -join "`n") | ConvertFrom-Json

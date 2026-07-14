@@ -64,7 +64,7 @@ Invoke-Step "Apply D1 migrations" {
   $migrationFiles = Get-ChildItem -Path $migrationRoot -File -Filter "*.sql" | Sort-Object Name
   foreach ($migrationFile in $migrationFiles) {
     Invoke-External -FilePath "npx" -Arguments @(
-      "wrangler", "d1", "execute", "sh-monitor",
+      "wrangler", "d1", "execute", "stationhead-legacy", "--config", "..\site\wrangler.jsonc",
       "--remote",
       "--file", ("..\database\migrations\" + $migrationFile.Name)
     ) -WorkingDirectory $workerRoot

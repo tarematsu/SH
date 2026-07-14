@@ -66,7 +66,7 @@ const sql = `SELECT
   (SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='idx_sh_track_metadata_spotify_fetched') AS redundant_metadata_index`;
 
 const result = spawnSync(process.execPath, [wranglerScript, ...[
-  'd1', 'execute', 'sh-monitor', '--remote', '--config', wranglerConfigPath,
+  'd1', 'execute', 'stationhead-legacy', '--remote', '--config', wranglerConfigPath,
   '--command', sql, '--json',
 ]], {
   cwd: siteDirectory,

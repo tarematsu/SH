@@ -7,6 +7,7 @@ export const DATA_ONLY_MIGRATIONS = new Set([
   '106_drop_stale_validated_stream_trigger.sql',
   '105_backfill_comment_velocity_history.sql',
   '129_add_queue_reachability_index.sql',
+  '131_drop_local_collector_backup.sql',
 ]);
 export const RUNTIME_MIGRATION_COVERAGE = {
   '008_buddy_auth_control.sql': {

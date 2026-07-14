@@ -99,6 +99,6 @@ test('Pages configuration binds the expected D1 database and output directory', 
   assert.equal(config.name, 'skrzk');
   assert.equal(config.pages_build_output_dir, './public');
   assert.equal(config.d1_databases?.[0]?.binding, 'DB');
-  assert.equal(config.d1_databases?.[0]?.database_name, 'sh-monitor');
+  assert.equal(config.d1_databases?.[0]?.database_name, 'stationhead-legacy');
   assert.equal(config.d1_databases?.[0]?.migrations_dir, '../database/migrations');
 });
