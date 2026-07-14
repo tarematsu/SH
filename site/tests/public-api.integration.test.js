@@ -19,6 +19,29 @@ import { onRequestGet as officialHistoryGet } from '../functions/api/official-hi
 import { onRequestGet as trackLikesGet } from '../functions/api/track-likes.js';
 import { FakeD1Database, responseJson } from './helpers/fake-d1.js';
 
+const PLAYBACK_CORE_FIELDS = [
+  'ok',
+  'channel_alias',
+  'generated_at',
+  'latest_observed_at',
+  'queue_observed_at',
+  'changed_at',
+  'station_id',
+  'is_broadcasting',
+  'host_account_id',
+  'host_handle',
+  'playing',
+  'stale',
+  'setup_required',
+  'queue_revision',
+  'queue_status',
+  'queue',
+];
+
+function assertPlaybackCoreEnvelope(payload) {
+  for (const field of PLAYBACK_CORE_FIELDS) assert.ok(field in payload, `missing playback field: ${field}`);
+}
+
 test('playback endpoint rejects a missing D1 binding without cacheable output', async () => {
   const response = await playbackGet({ env: {} });
   assert.equal(response.status, 500);
@@ -96,6 +119,35 @@ test('playback endpoint maps a live queue into current-track state and cache hea
   assert.equal(body.queue[0].artist, 'Integration Artist');
   assert.equal('apple_music_id' in body.queue[0], false);
   assert.match(body.queue_revision, /^[a-z0-9_-]+/i);
+});
+
+test('buddies and buddy46 expose the same core playback envelope when empty', async () => {
+  const primaryResponse = await playbackGet({
+    request: new Request('https://skrzk.test/api/playback?channel=buddies'),
+    env: { FACTS_DB: new FakeD1Database().route('first', 'FROM sh_minute_facts f', null) },
+  });
+  const secondaryDb = new FakeD1Database()
+    .route('first', 'sh_collector_status', null)
+    .route('first', 'sh_playback_channel_current', null);
+  const secondaryResponse = await playbackGet({
+    request: new Request('https://skrzk.test/api/playback?channel=buddy46'),
+    env: { OTHER_DB: secondaryDb },
+  });
+  const primary = await responseJson(primaryResponse);
+  const secondary = await responseJson(secondaryResponse);
+
+  assert.equal(primaryResponse.status, 200);
+  assert.equal(secondaryResponse.status, 200);
+  assertPlaybackCoreEnvelope(primary);
+  assertPlaybackCoreEnvelope(secondary);
+  assert.equal(primary.host_account_id, null);
+  assert.equal(primary.host_handle, null);
+  assert.equal(secondary.host_account_id, null);
+  assert.equal(secondary.host_handle, null);
+  assert.deepEqual(primary.queue, []);
+  assert.deepEqual(secondary.queue, []);
+  assert.equal('collector' in primary, false);
+  assert.equal(secondary.collector.status, 'never');
 });
 
 test('history endpoint rejects unknown modes and never caches errors', async () => {

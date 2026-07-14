@@ -11,6 +11,23 @@ import { QUEUE_READ_MODEL_SQL, queueFromReadModel } from '../lib/public-read-mod
 const CACHE_CONTROL = 'public, max-age=5, s-maxage=10, stale-while-revalidate=30';
 const DEFAULT_CHANNEL_ALIAS = 'buddies';
 const SECONDARY_STALE_MS = 4 * 60 * 60_000;
+const PLAYBACK_SUCCESS_DEFAULTS = Object.freeze({
+  channel_alias: null,
+  generated_at: null,
+  latest_observed_at: null,
+  queue_observed_at: null,
+  changed_at: null,
+  station_id: null,
+  is_broadcasting: false,
+  host_account_id: null,
+  host_handle: null,
+  playing: false,
+  stale: true,
+  setup_required: false,
+  queue_revision: null,
+  queue_status: null,
+  queue: [],
+});
 const PLAYBACK_CORS_HEADERS = Object.freeze({
   'access-control-allow-origin': '*',
   'access-control-allow-methods': 'GET, OPTIONS',
@@ -22,7 +39,27 @@ export { computePlayback };
 
 function playbackJson(data, status = 200, cache = null) {
   const { raw_payload_passthrough: _rawPayloadPassthrough, ...payload } = data || {};
-  return json(stripPlaybackPublicFields(payload), status, cache, PLAYBACK_CORS_HEADERS);
+  return json(stripPlaybackPublicFields(stabilizePlaybackSuccess(payload)), status, cache, PLAYBACK_CORS_HEADERS);
+}
+
+function stabilizePlaybackSuccess(data) {
+  if (!data || data.ok !== true) return data;
+
+  const queue = Array.isArray(data.queue)
+    ? data.queue.map((track) => {
+        if (!track || track.is_current !== false) return track;
+        const { is_current: _isCurrent, ...rest } = track;
+        return rest;
+      })
+    : [];
+
+  return {
+    ok: true,
+    ...PLAYBACK_SUCCESS_DEFAULTS,
+    ...data,
+    queue_status: data.queue_status ?? null,
+    queue,
+  };
 }
 
 export function onRequestOptions() {
@@ -131,6 +168,8 @@ function emptySecondaryPayload(alias, generatedAt, setupRequired = false) {
     changed_at: null,
     station_id: null,
     is_broadcasting: false,
+    host_account_id: null,
+    host_handle: null,
     playing: false,
     stale: true,
     setup_required: setupRequired,

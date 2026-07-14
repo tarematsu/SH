@@ -131,6 +131,25 @@ test('secondary playback endpoint stays available before migration is applied', 
   assert.deepEqual(payload.queue, []);
 });
 
+test('secondary stale endpoint uses the same absent-current marker as buddies', async () => {
+  const db = new FakeD1Database()
+    .route('first', 'sh_collector_status', {
+      status: 'ok',
+      last_attempt_at: Date.now(),
+      last_success_at: Date.now(),
+    })
+    .route('first', 'sh_playback_channel_current', playbackRow({ checked_at: 1 }));
+  const response = await playbackGet({
+    request: new Request('https://skrzk.test/api/playback?channel=buddy46'),
+    env: { OTHER_DB: db },
+  });
+  const payload = await responseJson(response);
+
+  assert.equal(response.status, 200);
+  assert.equal(payload.stale, true);
+  assert.equal('is_current' in payload.queue[0], false);
+});
+
 test('playback endpoint answers CORS preflight without credentials', () => {
   const response = playbackOptions();
   assert.equal(response.status, 204);
