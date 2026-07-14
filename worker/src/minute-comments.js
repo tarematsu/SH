@@ -27,7 +27,7 @@ export const MINUTE_COMMENT_TASK_SCHEMA_SQL = `CREATE TABLE IF NOT EXISTS sh_min
 export const MINUTE_COMMENT_TASK_INDEX_SQL = `CREATE INDEX IF NOT EXISTS idx_sh_minute_comment_tasks_pending
   ON sh_minute_comment_tasks(status, next_attempt_at, minute_at)`;
 
-const schemaReady = new WeakSet();
+let schemaReady = new WeakSet();
 const DEFAULT_TASK_LIMIT = 1;
 const DEFAULT_LEASE_MS = 60_000;
 const DEFAULT_MAX_ATTEMPTS = 4;
@@ -236,6 +236,5 @@ export async function runMinuteCommentTasks(env, options = {}) {
 }
 
 export function resetMinuteCommentTaskSchemaForTests() {
-  // WeakSet has no clear operation; test DB objects are isolated and this
-  // function intentionally exists only for API symmetry with other modules.
+  schemaReady = new WeakSet();
 }
