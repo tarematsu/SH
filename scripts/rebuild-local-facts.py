@@ -400,7 +400,7 @@ def write_manifest(path: Path, facts: sqlite3.Connection, imported: int, summari
     path.write_text(json.dumps({"facts_rows_imported": imported, "tables": counts, "summaries": summaries}, indent=2) + "\n", encoding="utf-8")
 
 
-def write_upload_files(facts: sqlite3.Connection, out_dir: Path, rows_per_file: int = 50_000) -> list[dict]:
+def write_upload_files(facts: sqlite3.Connection, out_dir: Path, rows_per_file: int = 10_000) -> list[dict]:
     """Emit schema, bounded data chunks, and indexes for staged D1 upload."""
     ordered = [
         "sh_hosts", "sh_host_aliases", "sh_tracks", "sh_track_aliases",
@@ -456,7 +456,7 @@ def write_upload_files(facts: sqlite3.Connection, out_dir: Path, rows_per_file: 
                 close_batch()
                 open_batch()
             values = ",".join(sql_literal(value) for value in row)
-            output.write(f"INSERT INTO \"{table}\"({quoted_columns}) VALUES({values});\n")
+            output.write(f"INSERT OR IGNORE INTO \"{table}\"({quoted_columns}) VALUES({values});\n")
             batch_rows += 1
             batches[-1]["rows"] += 1
     close_batch()
