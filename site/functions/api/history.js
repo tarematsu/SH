@@ -1,4 +1,5 @@
 import { onRequestGet as rawHistory } from './history-raw.js';
+import { loadRanking } from './history-legacy.mjs';
 import {
   SUMMARY_TABLES,
   combineSummaryRows,
@@ -19,6 +20,15 @@ const json = (data, status = 200, headers = {}) =>
 const HISTORY_CACHE_MAX = 32;
 const historyLoadCache = new Map();
 export const BROADCAST_SESSION_GAP_MS = 6 * 60 * 60 * 1000;
+
+function rankingCacheKey(url) {
+  const from = url.searchParams.get('from') || '2024-06-01';
+  const to = url.searchParams.get('to') || todayUtcString();
+  const scope = url.searchParams.get('scope') === 'all' ? 'all' : 'featured';
+  const host = String(url.searchParams.get('host') || '').trim().slice(0, 100).toLowerCase();
+  const limit = Math.min(Math.max(Number(url.searchParams.get('limit')) || 5000, 20), 10000);
+  return `ranking:v1:${from}:${to}:${scope}:${host}:${limit}`;
+}
 
 function promoteCacheEntry(key, entry) {
   historyLoadCache.delete(key);
@@ -249,6 +259,14 @@ export async function onRequestGet(context) {
       return json({ ok: true, mode, from, to, ...summary }, 200, {
         'cache-control': 'public, max-age=30, s-maxage=60, stale-while-revalidate=120',
       });
+    }
+    if (mode === 'ranking') {
+      if (!env.OTHER_DB) return json({ ok: false, error: 'OTHER_DB binding missing' }, 500, { 'cache-control': 'no-store' });
+      return cachedLegacyHistoryResponse(
+        rankingCacheKey(url),
+        30000,
+        () => loadRanking(url, env, loadSummaryWithLive),
+      );
     }
     if (mode === 'broadcasts') return loadBroadcasts(env, from, to);
     if (mode === 'raw') return rawHistory(context);

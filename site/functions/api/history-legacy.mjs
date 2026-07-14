@@ -262,7 +262,7 @@ function completeRankingTimeline(actualRows, rankingWeeks, hosts) {
   return completed;
 }
 
-async function loadRanking(requestUrl, env) {
+export async function loadRanking(requestUrl, env, summaryLoader = loadSummaryWithLive) {
   const from = requestUrl.searchParams.get('from') || '2024-06-01';
   const to = requestUrl.searchParams.get('to') || new Date().toISOString().slice(0, 10);
   const hostSearch = safeText(requestUrl.searchParams.get('host'));
@@ -287,7 +287,7 @@ WHERE r.ranking_date>=? AND r.ranking_date<=?`;
   try {
     const [rankingResult, weeklyResult, weeksResult] = await Promise.all([
       env.OTHER_DB.prepare(sql).bind(...binds).all(),
-      loadSummaryWithLive(env, 'weekly', from, to),
+      summaryLoader(env, 'weekly', from, to),
       env.OTHER_DB.prepare(`SELECT DISTINCT ranking_date
 FROM sh_channel_rankings
 WHERE ranking_date>=? AND ranking_date<=?

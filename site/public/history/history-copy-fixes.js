@@ -135,7 +135,11 @@
     else current = data.rows || [];
     nextCursor = data.next_cursor || null;
     updateSummary(current, mode);
-    renderTable(data.rows || [], mode, append);
+    const newestFirstModes = new Set(['daily', 'weekly', 'monthly', 'broadcasts']);
+    const tableRows = newestFirstModes.has(mode) && !append
+      ? [...(data.rows || [])].reverse()
+      : data.rows || [];
+    renderTable(tableRows, mode, append);
     $('#more').hidden = mode !== 'raw' || !data.has_more;
     $('#chartPanel').hidden = mode === 'raw';
     if (mode !== 'raw' && mode !== 'broadcasts') draw(current, $('#metric').value);
