@@ -5,7 +5,7 @@ import {
   resetCommentCountRuntimeState,
   saveCommentCounts,
 } from '../functions/lib/comment-counts.js';
-import { normalizeComments } from '../../worker/src/shared-utils.js';
+import { normalizeComments } from '../../packages/sh-shared/index.mjs';
 import { FakeD1Database } from './helpers/fake-d1.js';
 
 test('comment_id-only payloads normalize to a stable numeric id', () => {

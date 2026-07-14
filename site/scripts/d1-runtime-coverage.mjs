@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 
@@ -48,18 +48,32 @@ function migrationNames(output) {
     .filter((name) => /^\d+_[A-Za-z0-9._-]+\.sql$/.test(name));
 }
 
+function knownMigrationNames(repositoryRoot) {
+  const migrationDirectory = path.join(repositoryRoot, 'database', 'migrations');
+  if (!existsSync(migrationDirectory)) return [];
+  return readdirSync(migrationDirectory)
+    .filter((name) => /^\d+_[A-Za-z0-9._-]+\.sql$/.test(name))
+    .filter((name) => RUNTIME_MIGRATION_COVERAGE[name] || DATA_ONLY_MIGRATIONS.has(name));
+}
+
 export function changedMigrationNames(repositoryRoot) {
-  const baselineOutput = gitOutput(repositoryRoot, [
-    'diff', '--name-only', '--diff-filter=A',
-    `${TOKENLESS_SCHEMA_BASELINE}..HEAD`, '--', 'database/migrations',
-  ]);
-  if (baselineOutput != null) return migrationNames(baselineOutput);
+  const baselineExists = gitOutput(repositoryRoot, [
+    'cat-file', '-e', `${TOKENLESS_SCHEMA_BASELINE}^{commit}`,
+  ]) != null;
+  if (baselineExists) {
+    const baselineOutput = gitOutput(repositoryRoot, [
+      'diff', '--name-only', '--diff-filter=A',
+      `${TOKENLESS_SCHEMA_BASELINE}..HEAD`, '--', 'database/migrations',
+    ]);
+    if (baselineOutput != null) return migrationNames(baselineOutput);
+  }
 
   const headOutput = gitOutput(repositoryRoot, [
     'diff', '--name-only', '--diff-filter=A',
     'HEAD^..HEAD', '--', 'database/migrations',
   ]);
-  return headOutput == null ? [] : migrationNames(headOutput);
+  const headNames = headOutput == null ? [] : migrationNames(headOutput);
+  return headNames.length ? headNames : knownMigrationNames(repositoryRoot);
 }
 
 export function uncoveredRuntimeMigrations(names, coverage = RUNTIME_MIGRATION_COVERAGE) {
