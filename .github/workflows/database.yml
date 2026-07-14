@@ -36,7 +36,7 @@ concurrency:
 
 jobs:
   site-migrations:
-    name: Apply site D1 migrations
+    name: Apply stationhead-legacy migrations
     if: inputs.operation == 'site-migrations'
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -62,7 +62,7 @@ jobs:
         run: npm run db:verify
 
   facts-db:
-    name: Provision or update Stationhead-DB
+    name: Provision or update stationhead-minute
     if: github.event_name == 'push' || inputs.operation == 'facts-db'
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -72,7 +72,7 @@ jobs:
     env:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN || secrets.CLOUDFLARE_BUILDS_API_TOKEN || secrets.CF_API_TOKEN }}
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID || secrets.CF_ACCOUNT_ID }}
-      FACTS_DATABASE_NAME: Stationhead-DB
+      FACTS_DATABASE_NAME: stationhead-minute
       FACTS_VERIFY_ATTEMPTS: '5'
       FACTS_VERIFY_DELAY_MS: '20000'
     steps:

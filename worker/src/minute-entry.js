@@ -1,4 +1,7 @@
+import { applyCronStagger } from './cron-stagger.js';
+import { runMinuteFactsBackfill } from './minute-facts-backfill.js';
 import { runMinuteFactDeriveCron } from './minute-facts-derive.js';
+import { runMinuteFactsLegacyBackfill } from './minute-facts-legacy-backfill.js';
 import { requeueDeadMinuteFactJobs } from './minute-facts-inbox.js';
 import { consumeMinuteFactBatch } from './minute-facts-queue.js';
 import {
@@ -10,9 +13,11 @@ import { minuteFactRuntimeSignals, readMinuteFactRuntimeState, recordMinuteFactR
 import { createPublicHealthCachedApp } from './public-health-cache.js';
 
 export const MINUTE_FACT_DERIVE_CRON = '*/2 * * * *';
+export const MINUTE_FACT_REBUILD_CRON = '7,17,27,37,47,57 * * * *';
+export const MINUTE_FACT_LEGACY_CRON = '9,19,29,39,49,59 * * * *';
 export const MINUTE_FACT_WORKER_CRON = '* * * * *';
 export const MINUTE_FACT_RECOVERY_MINUTE = 5;
-const ACTIVE_HEALTH_TASKS = new Set(['derive', 'recovery']);
+const ACTIVE_HEALTH_TASKS = new Set(['derive', 'recovery', 'rebuild', 'legacy']);
 
 export function activeMinuteHealthTasks(tasks = []) {
   return tasks.filter((task) => ACTIVE_HEALTH_TASKS.has(String(task?.task_name || '')));
@@ -24,8 +29,30 @@ function scheduledMinute(controller = {}) {
   return new Date(timestamp).getUTCMinutes();
 }
 
+export function minuteStaggerApplies(controller = {}) {
+  const cron = String(controller.cron || '');
+  if (cron === MINUTE_FACT_REBUILD_CRON || cron === MINUTE_FACT_LEGACY_CRON) return true;
+  if (cron !== MINUTE_FACT_WORKER_CRON) return false;
+  const minute = scheduledMinute(controller);
+  return minute != null && (minute % 10 === 7 || minute % 10 === 9);
+}
+
 function enabled(value) {
   return ['1', 'true', 'yes', 'on'].includes(String(value ?? '').trim().toLowerCase());
+}
+
+function withSourceDatabase(env, binding) {
+  const source = env?.[binding];
+  if (!source) return env;
+  return new Proxy(env, {
+    get(target, property, receiver) {
+      if (property === 'DB') return source;
+      return Reflect.get(target, property, receiver);
+    },
+    has(target, property) {
+      return property === 'DB' || Reflect.has(target, property);
+    },
+  });
 }
 
 async function runTracked(env, task, action) {
@@ -40,9 +67,32 @@ async function runTracked(env, task, action) {
   }
 }
 
+function runDerive(env, dependencies) {
+  return (dependencies.runDerive || runMinuteFactDeriveCron)(
+    withSourceDatabase(env, 'BUDDIES_DB'),
+    dependencies.derive || {},
+  );
+}
+
+function runRebuild(env, dependencies) {
+  return (dependencies.runRebuild || runMinuteFactsBackfill)(
+    withSourceDatabase(env, 'BUDDIES_DB'),
+    dependencies.rebuild || {},
+  );
+}
+
+function runLegacy(env, dependencies) {
+  return (dependencies.runLegacy || runMinuteFactsLegacyBackfill)(
+    withSourceDatabase(env, 'LEGACY_DB'),
+    dependencies.legacy || {},
+  );
+}
+
 export async function runMinuteScheduled(controller = {}, env, dependencies = {}) {
   const cron = String(controller.cron || '');
-  if (cron === MINUTE_FACT_DERIVE_CRON) return (dependencies.runDerive || runMinuteFactDeriveCron)(env, dependencies.derive || {});
+  if (cron === MINUTE_FACT_DERIVE_CRON) return runTracked(env, 'derive', () => runDerive(env, dependencies));
+  if (cron === MINUTE_FACT_REBUILD_CRON) return runTracked(env, 'rebuild', () => runRebuild(env, dependencies));
+  if (cron === MINUTE_FACT_LEGACY_CRON) return runTracked(env, 'legacy', () => runLegacy(env, dependencies));
   if (cron === MINUTE_FACT_WORKER_CRON) {
     const minute = scheduledMinute(controller);
     if (minute == null) return { skipped: true, reason: 'scheduled-time-missing' };
@@ -50,7 +100,9 @@ export async function runMinuteScheduled(controller = {}, env, dependencies = {}
       if (!enabled(env.MINUTE_FACT_AUTO_REQUEUE_DEAD)) return { skipped: true, reason: 'dead-job-auto-requeue-disabled' };
       return runTracked(env, 'recovery', () => (dependencies.requeueDead || requeueDeadMinuteFactJobs)(env, { limit: env.MINUTE_FACT_DEAD_REQUEUE_LIMIT }));
     }
-    if (minute % 2 === 0) return runTracked(env, 'derive', () => (dependencies.runDerive || runMinuteFactDeriveCron)(env, dependencies.derive || {}));
+    if (minute % 2 === 0) return runTracked(env, 'derive', () => runDerive(env, dependencies));
+    if (minute % 10 === 7) return runTracked(env, 'rebuild', () => runRebuild(env, dependencies));
+    if (minute % 10 === 9) return runTracked(env, 'legacy', () => runLegacy(env, dependencies));
     return { skipped: true, reason: 'not-due', minute };
   }
   return { skipped: true, reason: 'unsupported-minute-facts-cron', cron };
@@ -65,6 +117,7 @@ const rawApp = {
     });
   },
   async scheduled(controller, env, ctx) {
+    if (minuteStaggerApplies(controller)) await applyCronStagger(env, 'minute');
     return runMinuteScheduled(controller, env, { ctx });
   },
   async fetch(request, env) {

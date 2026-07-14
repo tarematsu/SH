@@ -30,7 +30,7 @@
   },
   "triggers": { "crons": ["* * * * *"] },
   "d1_databases": [
-    { "binding": "FACTS_DB", "database_name": "Stationhead-DB", "database_id": "c2661253-5e1b-4060-a7b4-acf6dc2a8988" },
+    { "binding": "FACTS_DB", "database_name": "stationhead-minute", "database_id": "c2661253-5e1b-4060-a7b4-acf6dc2a8988" },
     { "binding": "OTHER_DB", "database_name": "stationhead-other", "database_id": "21e70e92-6725-4e62-809e-8aadb088cc11" }
   ]
 }

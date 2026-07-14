@@ -19,7 +19,7 @@ const readModelMigrationPath = resolve(
   'database/facts-migrations/004_buddies_queue_read_models.sql',
 );
 const metadataPath = resolve(repositoryRoot, 'database/facts-db.json');
-const databaseName = process.env.FACTS_DATABASE_NAME || 'Stationhead-DB';
+const databaseName = process.env.FACTS_DATABASE_NAME || 'stationhead-minute';
 
 if (!process.env.CLOUDFLARE_API_TOKEN) {
   throw new Error('CLOUDFLARE_API_TOKEN is required');
