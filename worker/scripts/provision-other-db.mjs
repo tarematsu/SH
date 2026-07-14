@@ -26,12 +26,17 @@ if (!process.env.CLOUDFLARE_ACCOUNT_ID) {
 }
 
 function wrangler(args) {
-  return execFileSync(process.execPath, [wranglerScript, ...args], {
-    cwd: workerRoot,
-    env: process.env,
-    encoding: 'utf8',
-    stdio: ['ignore', 'pipe', 'inherit'],
-  });
+  try {
+    return execFileSync(process.execPath, [wranglerScript, ...args], {
+      cwd: workerRoot,
+      env: process.env,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+  } catch (error) {
+    if (error.stderr) process.stderr.write(error.stderr);
+    throw error;
+  }
 }
 
 function parseJsonOutput(output) {
@@ -71,11 +76,20 @@ const migrationFiles = readdirSync(migrationsDir)
   .filter((name) => name.endsWith('.sql'))
   .sort();
 for (const migrationFile of migrationFiles) {
-  wrangler([
-    'd1', 'execute', databaseName,
-    '--remote', '--yes',
-    '--file', resolve(migrationsDir, migrationFile),
-  ]);
+  try {
+    wrangler([
+      'd1', 'execute', databaseName,
+      '--remote', '--yes',
+      '--file', resolve(migrationsDir, migrationFile),
+    ]);
+  } catch (error) {
+    const details = `${error.stderr || ''}\n${error.stdout || ''}`;
+    if (migrationFile === '006_legacy_snapshot_stream_count.sql'
+        && /duplicate column name:\s*total_stream_count/i.test(details)) {
+      continue;
+    }
+    throw error;
+  }
 }
 
 writeFileSync(metadataPath, `${JSON.stringify({
