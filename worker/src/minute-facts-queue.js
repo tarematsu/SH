@@ -31,18 +31,49 @@ function invalidMessage(detail) {
   return error;
 }
 
+function objectValue(value) {
+  return value && typeof value === 'object' && !Array.isArray(value) ? value : null;
+}
+
 function compactReadModel(readModel, payload) {
   if (!readModel || typeof readModel !== 'object') return null;
-  if (!readModel.queue || !payload.queue || !Object.hasOwn(readModel.queue, 'value')) return readModel;
-  const queue = { ...readModel.queue };
-  delete queue.value;
-  return { ...readModel, queue };
+  const snapshot = objectValue(payload.snapshot);
+  const channel = objectValue(readModel.channel);
+  const presentation = objectValue(channel?.presentation);
+  const compactPresentation = snapshot && presentation
+    ? Object.fromEntries(
+      Object.entries(presentation).filter(([key]) => !Object.hasOwn(snapshot, key)),
+    )
+    : presentation;
+  const channelChanged = presentation && compactPresentation
+    && Object.keys(compactPresentation).length !== Object.keys(presentation).length;
+  const queue = objectValue(readModel.queue);
+  const queueChanged = queue && payload.queue && Object.hasOwn(queue, 'value');
+  if (!channelChanged && !queueChanged) return readModel;
+  return {
+    ...readModel,
+    ...(channelChanged ? { channel: { ...channel, presentation: compactPresentation } } : {}),
+    ...(queueChanged ? { queue: (({ value, ...rest }) => rest)(queue) } : {}),
+  };
 }
 
 function hydrateReadModel(readModel, payload) {
   if (!readModel || typeof readModel !== 'object') return null;
-  if (!readModel.queue || !payload.queue || Object.hasOwn(readModel.queue, 'value')) return readModel;
-  return { ...readModel, queue: { ...readModel.queue, value: payload.queue } };
+  const snapshot = objectValue(payload.snapshot);
+  const channel = objectValue(readModel.channel);
+  const presentation = objectValue(channel?.presentation);
+  const hydratedPresentation = snapshot && presentation
+    ? { ...snapshot, ...presentation }
+    : presentation;
+  const channelChanged = Boolean(snapshot && presentation);
+  const queue = objectValue(readModel.queue);
+  const queueChanged = Boolean(queue && payload.queue && !Object.hasOwn(queue, 'value'));
+  if (!channelChanged && !queueChanged) return readModel;
+  return {
+    ...readModel,
+    ...(channelChanged ? { channel: { ...channel, presentation: hydratedPresentation } } : {}),
+    ...(queueChanged ? { queue: { ...queue, value: payload.queue } } : {}),
+  };
 }
 
 export function minuteFactQueueMessage(input = {}, options = {}) {

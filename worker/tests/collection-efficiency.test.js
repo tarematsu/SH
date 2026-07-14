@@ -47,6 +47,7 @@ test('collection plan disables heartbeat and metadata for an unchanged queue wit
   assert.equal(plan.queue, true);
   assert.equal(plan.comments, true);
   assert.equal(plan.metadata, false);
+  assert.equal(plan.metadataDue, false);
   assert.equal(plan.heartbeat, false);
 });
 

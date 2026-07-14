@@ -207,8 +207,7 @@ export async function collectOnce(env, source = 'manual') {
     if (initialPlan.queue) {
       stage = 'd1_write_queue';
       queueResult = await timedStage(stage, () => ingest(activeEnv, 'queue', queue, observedAt));
-      const completedPlan = buildCollectionPlan({ ...planInput, queueResult });
-      metadataPlanned = completedPlan.metadata;
+      metadataPlanned = initialPlan.metadataDue || queueResult?.structure_changed === true;
       if (metadataPlanned) {
         stage = 'd1_write_track_metadata';
         const metadataResult = await timedStage(stage, () => enrichTracks(

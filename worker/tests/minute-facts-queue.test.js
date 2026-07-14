@@ -212,17 +212,25 @@ test('producer stores queue tracks once and consumer restores the read model val
   const queue = { station_id: 5, queue_id: 9, tracks };
   const message = minuteFactQueueMessage({ ...input, queue }, {
     readModel: {
-      channel: { channel_id: 10, observed_at: input.observedAt, presentation: {} },
+      channel: {
+        channel_id: 10,
+        observed_at: input.observedAt,
+        presentation: { listener_count: 42, description: 'channel details' },
+      },
       queue: { station_id: 5, queue_id: 9, value: queue },
       collector: { collector_id: 'cloudflare-worker' },
     },
   });
 
   assert.equal(Object.hasOwn(message.read_model.queue, 'value'), false);
+  assert.equal(Object.hasOwn(message.read_model.channel.presentation, 'listener_count'), false);
+  assert.equal(message.read_model.channel.presentation.description, 'channel details');
   assert.ok(new TextEncoder().encode(JSON.stringify(message)).byteLength < MINUTE_FACT_QUEUE_MAX_MESSAGE_BYTES);
   const parsed = parseMinuteFactQueueMessage(message);
   assert.strictEqual(parsed.read_model.queue.value, parsed.payload.queue);
   assert.equal(parsed.read_model.queue.value.tracks.length, 70);
+  assert.equal(parsed.read_model.channel.presentation.listener_count, 42);
+  assert.equal(parsed.read_model.channel.presentation.description, 'channel details');
 });
 
 test('consumer read model writes channel, queue, and collector state to FACTS_DB', async () => {

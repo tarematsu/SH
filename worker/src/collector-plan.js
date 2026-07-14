@@ -36,6 +36,7 @@ export function buildCollectionPlan({
     snapshot: true,
     queue: queueEnabled,
     comments: Boolean(state?.stationId),
+    metadataDue,
     metadata: queueEnabled && (
       queueResult?.structure_changed === true
       || metadataDue
