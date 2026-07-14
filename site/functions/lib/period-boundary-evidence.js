@@ -13,20 +13,7 @@ function finiteNumber(value) {
   return Number.isFinite(number) ? number : null;
 }
 
-export function periodBoundaryEvidenceSql(
-  includeLegacy = true,
-  toleranceMs = PERIOD_BOUNDARY_TOLERANCE_MS,
-) {
-  const legacy = includeLegacy ? `
-    UNION ALL
-    SELECT boundaries.period_key,boundaries.boundary_name,boundaries.target_at,
-      legacy.observed_at,legacy.total_stream_count AS stream_value,
-      legacy.total_member_count AS member_value,1 AS source_priority,legacy.id AS source_id
-    FROM boundaries
-    JOIN sh_legacy_snapshots legacy
-      ON legacy.observed_at BETWEEN boundaries.target_at-${toleranceMs}
-        AND boundaries.target_at+${toleranceMs}` : '';
-
+export function periodBoundaryEvidenceSql(_includeLegacy = false, toleranceMs = PERIOD_BOUNDARY_TOLERANCE_MS) {
   return `WITH periods AS (
     SELECT
       json_extract(value,'$.period_key') AS period_key,
@@ -45,7 +32,7 @@ export function periodBoundaryEvidenceSql(
     FROM boundaries
     JOIN sh_channel_snapshots snapshots
       ON snapshots.observed_at BETWEEN boundaries.target_at-${toleranceMs}
-        AND boundaries.target_at+${toleranceMs}${legacy}
+        AND boundaries.target_at+${toleranceMs}
   ), ranked AS (
     SELECT candidates.*,
       ROW_NUMBER() OVER (
@@ -130,10 +117,10 @@ export async function loadPeriodBoundaryEvidence(db, rows, mode) {
   const toleranceMs = periodBoundaryToleranceMs(mode);
   let result;
   try {
-    result = await db.prepare(periodBoundaryEvidenceSql(true, toleranceMs)).bind(payload).all();
+    result = await db.prepare(periodBoundaryEvidenceSql(false, toleranceMs)).bind(payload).all();
   } catch (error) {
     if (!/no such table|no such column/i.test(String(error?.message || ''))) throw error;
-    result = await db.prepare(periodBoundaryEvidenceSql(false, toleranceMs)).bind(payload).all();
+    return new Map();
   }
   return new Map((result.results || []).map((row) => [String(row.period_key), row]));
 }

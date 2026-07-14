@@ -31,7 +31,7 @@ test('raw history cursor pagination can continue beyond the former 31-day bounda
 
   const firstResponse = await rawHistoryGet({
     request: request(`from=${from}&to=${to}&limit=20`),
-    env: { DB: db },
+    env: { OTHER_DB: db },
   });
   const firstBody = await responseJson(firstResponse);
 
@@ -48,7 +48,7 @@ test('raw history cursor pagination can continue beyond the former 31-day bounda
 
   const secondResponse = await rawHistoryGet({
     request: request(`from=${from}&to=${to}&limit=20&cursor=${encodeURIComponent(firstBody.next_cursor)}`),
-    env: { DB: db },
+    env: { OTHER_DB: db },
   });
   const secondBody = await responseJson(secondResponse);
 
@@ -69,7 +69,7 @@ test('invalid calendar dates are rejected instead of silently normalizing', asyn
   const db = new FakeD1Database();
   const response = await rawHistoryGet({
     request: request('from=2025-02-30&to=2025-03-10'),
-    env: { DB: db },
+    env: { OTHER_DB: db },
   });
   const body = await responseJson(response);
 
@@ -83,20 +83,20 @@ test('reversed ranges and malformed cursors are rejected before D1 reads', async
 
   const reversed = await rawHistoryGet({
     request: request('from=2025-04-01&to=2025-03-01'),
-    env: { DB: db },
+    env: { OTHER_DB: db },
   });
   assert.equal(reversed.status, 400);
 
   const malformed = await rawHistoryGet({
     request: request('from=2025-03-01&to=2025-04-01&cursor=not-base64'),
-    env: { DB: db },
+    env: { OTHER_DB: db },
   });
   assert.equal(malformed.status, 400);
 
   const outside = btoa(`${Date.parse('2025-05-01T00:00:00+09:00')}:10`);
   const outsideResponse = await rawHistoryGet({
     request: request(`from=2025-03-01&to=2025-04-01&cursor=${encodeURIComponent(outside)}`),
-    env: { DB: db },
+    env: { OTHER_DB: db },
   });
   assert.equal(outsideResponse.status, 400);
   assert.equal(db.calls.length, 0);

@@ -94,10 +94,9 @@ export async function cachedLegacyHistoryResponse(key, ttlMs, loader) {
 
 function parseDateStart(value, fallback) {
   const text = /^\d{4}-\d{2}-\d{2}$/.test(value || '') ? value : fallback;
-  return Date.parse(`${text}T00:00:00+09:00`);
+  return Date.parse(`${text}T00:00:00Z`);
 }
 
-const todayJstString = () => new Date(Date.now() + 9 * 3600000).toISOString().slice(0, 10);
 const todayUtcString = () => new Date().toISOString().slice(0, 10);
 
 export function broadcastSummarySql(source) {
@@ -172,17 +171,24 @@ export function parseBroadcastSummaryRows(resultRows) {
 
 async function loadBroadcastPayload(env, from, to) {
   const fromTs = parseDateStart(from, '2024-06-01');
-  const toTs = parseDateStart(to, todayJstString()) + 86400000;
+  const toTs = parseDateStart(to, todayUtcString()) + 86400000;
   let result;
   let storageSource = 'lightweight';
   try {
-    result = await env.DB.prepare(BROADCAST_SUMMARY_SQL)
+    result = await env.OTHER_DB.prepare(BROADCAST_SUMMARY_SQL)
       .bind(fromTs, toTs, BROADCAST_SESSION_GAP_MS).all();
   } catch (error) {
     if (!/no such table|no such view/i.test(String(error?.message || ''))) throw error;
-    result = await env.DB.prepare(broadcastSummarySql('sh_legacy_snapshots'))
-      .bind(fromTs, toTs, BROADCAST_SESSION_GAP_MS).all();
-    storageSource = 'legacy-fallback';
+    return {
+      ok: true,
+      mode: 'broadcasts',
+      from,
+      to,
+      rows: [],
+      setup_required: true,
+      storage_source: 'summary-only',
+      diagnostic: { imported_rows: 0, imported_events: 0, first_observed_jst: null, last_observed_jst: null },
+    };
   }
   const parsed = parseBroadcastSummaryRows(result.results || []);
   return {
@@ -221,7 +227,7 @@ export async function onRequestGet(context) {
   const fromParam = url.searchParams.get('from');
   const toParam = url.searchParams.get('to');
   const from = fromParam || '2024-06-01';
-  const to = toParam || (mode === 'daily' ? todayUtcString() : todayJstString());
+  const to = toParam || todayUtcString();
   try {
     if (mode !== 'raw' && ((fromParam && !isRealIsoDate(fromParam))
       || (toParam && !isRealIsoDate(toParam)))) {

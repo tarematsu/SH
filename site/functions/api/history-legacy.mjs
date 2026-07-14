@@ -23,16 +23,11 @@ const FEATURED_HOSTS = ['sakuramankai', 'sakurazaka46jp'];
 
 function parseDateStart(value, fallback) {
   const text = isRealIsoDate(value) ? value : fallback;
-  return Date.parse(`${text}T00:00:00+09:00`);
+  return Date.parse(`${text}T00:00:00Z`);
 }
 
 function addDays(ts, days) {
   return ts + days * 86400000;
-}
-
-function todayJstString() {
-  const shifted = new Date(Date.now() + 9 * 3600000);
-  return shifted.toISOString().slice(0, 10);
 }
 
 function encodeCursor(row) {
@@ -173,7 +168,7 @@ async function loadSummaryWithLive(env, mode, from, to) {
   ).bind(from, to, limit).all();
   const baseRows = baseResult.results || [];
   const fromTs = parseDateStart(from, '2024-06-01');
-  const toTs = addDays(parseDateStart(to, todayJstString()), 1);
+  const toTs = addDays(parseDateStart(to, new Date().toISOString().slice(0, 10)), 1);
   const lastBaseStart = finiteNumber(baseRows.at(-1)?.period_start);
   const liveStart = Math.max(fromTs, lastBaseStart ?? fromTs);
   const liveResult = await env.DB.prepare(`SELECT observed_at,listener_count,online_member_count,total_member_count,total_listens,current_stream_count,host_handle
@@ -251,7 +246,7 @@ function completeRankingTimeline(actualRows, rankingWeeks, hosts) {
       if (existing) completed.push(existing);
       else completed.push({
         ranking_date: week,
-        observed_at: Date.parse(`${week}T00:00:00+09:00`),
+        observed_at: Date.parse(`${week}T00:00:00Z`),
         ranking_type: '週間リーダーボード',
         rank: null,
         host_name: host,
@@ -291,9 +286,9 @@ WHERE r.ranking_date>=? AND r.ranking_date<=?`;
   binds.push(limit);
   try {
     const [rankingResult, weeklyResult, weeksResult] = await Promise.all([
-      env.DB.prepare(sql).bind(...binds).all(),
+      env.OTHER_DB.prepare(sql).bind(...binds).all(),
       loadSummaryWithLive(env, 'weekly', from, to),
-      env.DB.prepare(`SELECT DISTINCT ranking_date
+      env.OTHER_DB.prepare(`SELECT DISTINCT ranking_date
 FROM sh_channel_rankings
 WHERE ranking_date>=? AND ranking_date<=?
 ORDER BY ranking_date ASC`).bind(from, to).all(),
@@ -348,7 +343,7 @@ ORDER BY ranking_date ASC`).bind(from, to).all(),
 }
 
 export async function onRequestGet({ request, env }) {
-  if (!env.DB) return json({ ok: false, error: 'DB binding missing' }, 500);
+  if (!env.DB || !env.OTHER_DB) return json({ ok: false, error: 'history database binding missing' }, 500);
   try {
     const url = new URL(request.url);
     const mode = url.searchParams.get('mode') || 'weekly';
@@ -360,16 +355,16 @@ export async function onRequestGet({ request, env }) {
       });
     }
     const from = fromParam || '2024-06-01';
-    const to = toParam || todayJstString();
+    const to = toParam || new Date().toISOString().slice(0, 10);
     if (from > to) {
       return json({ ok: false, error: 'from must not be after to' }, 400, { 'cache-control': 'no-store' });
     }
     if (mode === 'ranking') return loadRanking(url, env);
     if (mode === 'broadcasts') {
       const fromTs = parseDateStart(from, '2024-06-01');
-      const toTs = addDays(parseDateStart(to, todayJstString()), 1);
+      const toTs = addDays(parseDateStart(to, new Date().toISOString().slice(0, 10)), 1);
       const [result, diagnostic] = await Promise.all([
-        env.DB.prepare(`SELECT
+        env.OTHER_DB.prepare(`SELECT
           source_note AS event_name,
           MIN(observed_at) AS started_at,
           MAX(observed_at) AS ended_at,
@@ -381,16 +376,16 @@ export async function onRequestGet({ request, env }) {
           MAX(likes) AS likes_max,
           COUNT(DISTINCT CASE WHEN track_title IS NOT NULL AND track_title<>'' THEN track_title END) AS distinct_tracks,
           host_handle
-        FROM sh_legacy_snapshots
+        FROM sh_legacy_history_rows
         WHERE observed_at>=? AND observed_at<? AND host_handle='sakurazaka46jp' AND source_note IS NOT NULL
         GROUP BY source_note,host_handle
         ORDER BY started_at ASC`).bind(fromTs, toTs).all(),
-        env.DB.prepare(`SELECT
+        env.OTHER_DB.prepare(`SELECT
           COUNT(*) AS imported_rows,
           COUNT(DISTINCT source_note) AS imported_events,
           MIN(observed_jst) AS first_observed_jst,
           MAX(observed_jst) AS last_observed_jst
-        FROM sh_legacy_snapshots
+        FROM sh_legacy_history_rows
         WHERE host_handle='sakurazaka46jp' AND source_note IS NOT NULL`).first(),
       ]);
       const rows = result.results || [];
@@ -414,14 +409,14 @@ export async function onRequestGet({ request, env }) {
     }
     if (mode === 'raw') {
       const fromTs = parseDateStart(from, '2024-06-01');
-      const requestedToTs = addDays(parseDateStart(to, todayJstString()), 1);
+      const requestedToTs = addDays(parseDateStart(to, new Date().toISOString().slice(0, 10)), 1);
       const toTs = Math.min(requestedToTs, addDays(fromTs, 31));
       const limit = Math.min(Math.max(Number(url.searchParams.get('limit')) || 200, 20), 500);
       const cursor = decodeCursor(url.searchParams.get('cursor'));
       let sql = `SELECT id,observed_at,observed_jst,listener_count,total_stream_count,
 track_title,artist_name,likes,comment_velocity,host_handle,total_member_count,
 source_note,quality_score,quality_flags
-FROM sh_legacy_snapshots
+FROM sh_legacy_history_rows
 WHERE observed_at>=? AND observed_at<?`;
       const binds = [fromTs, toTs];
       if (cursor) {
@@ -430,7 +425,7 @@ WHERE observed_at>=? AND observed_at<?`;
       }
       sql += ' ORDER BY observed_at ASC,id ASC LIMIT ?';
       binds.push(limit + 1);
-      const result = await env.DB.prepare(sql).bind(...binds).all();
+      const result = await env.OTHER_DB.prepare(sql).bind(...binds).all();
       const allRows = result.results || [];
       const hasMore = allRows.length > limit;
       const rows = hasMore ? allRows.slice(0, limit) : allRows;

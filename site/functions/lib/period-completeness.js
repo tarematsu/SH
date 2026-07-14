@@ -1,7 +1,6 @@
 import { isRealIsoDate } from './api-utils.js';
 
 const DAY_MS = 86400000;
-const JST_OFFSET_MS = 9 * 3600000;
 
 export const DAILY_BOUNDARY_TOLERANCE_MS = 15 * 60 * 1000;
 export const WEEKLY_BOUNDARY_TOLERANCE_MS = 12 * 60 * 60 * 1000;
@@ -63,7 +62,7 @@ export function expectedPeriodBounds(mode, periodKey) {
   }
   if (mode === 'weekly') {
     if (!validDate(periodKey)) return null;
-    const start = Date.parse(`${periodKey}T00:00:00+09:00`);
+    const start = Date.parse(`${periodKey}T00:00:00Z`);
     return Number.isFinite(start) ? { start, end: start + 7 * DAY_MS } : null;
   }
   if (mode === 'monthly') {
@@ -71,8 +70,8 @@ export function expectedPeriodBounds(mode, periodKey) {
       ? periodKey
       : validDate(periodKey) ? String(periodKey).slice(0, 7) : null;
     if (!monthKey) return null;
-    const start = Date.parse(`${monthKey}-01T00:00:00+09:00`);
-    const end = Date.parse(`${nextMonthKey(monthKey)}-01T00:00:00+09:00`);
+    const start = Date.parse(`${monthKey}-01T00:00:00Z`);
+    const end = Date.parse(`${nextMonthKey(monthKey)}-01T00:00:00Z`);
     return Number.isFinite(start) && Number.isFinite(end) ? { start, end } : null;
   }
   return null;
@@ -81,17 +80,15 @@ export function expectedPeriodBounds(mode, periodKey) {
 export function parseRangeStart(mode, value, fallback) {
   const text = validDate(value) ? value : fallback;
   if (!validDate(text)) return NaN;
-  return Date.parse(mode === 'daily'
-    ? `${text}T00:00:00Z`
-    : `${text}T00:00:00+09:00`);
+  return Date.parse(`${text}T00:00:00Z`);
 }
 
 export function currentPeriodKey(mode, now = Date.now()) {
-  if (mode === 'daily') return new Date(now).toISOString().slice(0, 10);
-  const shifted = new Date(now + JST_OFFSET_MS);
-  const year = shifted.getUTCFullYear();
-  const month = shifted.getUTCMonth() + 1;
-  const day = shifted.getUTCDate();
+  const current = new Date(now);
+  const year = current.getUTCFullYear();
+  const month = current.getUTCMonth() + 1;
+  const day = current.getUTCDate();
+  if (mode === 'daily') return current.toISOString().slice(0, 10);
   if (mode === 'monthly') return `${year}-${String(month).padStart(2, '0')}`;
   const monday = new Date(Date.UTC(year, month - 1, day));
   monday.setUTCDate(monday.getUTCDate() - ((monday.getUTCDay() + 6) % 7));

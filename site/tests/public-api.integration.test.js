@@ -165,12 +165,12 @@ test('history endpoint rejects unknown modes and never caches errors', async () 
 
 test('broadcast history reports setup-required only when no imported event exists', async () => {
   resetHistoryLoadCache();
-  const db = new FakeD1Database().route('all', 'WITH summaries AS', {
+  const db = new FakeD1Database().route('all', 'WITH eligible AS', {
     results: [{ event_name: null, has_data: 0 }],
   });
   const response = await historyGet({
     request: new Request('https://skrzk.test/api/history?mode=broadcasts&from=2026-01-01&to=2026-01-02'),
-    env: { DB: db },
+    env: { DB: new FakeD1Database(), OTHER_DB: db },
   });
   const body = await responseJson(response);
   assert.equal(response.status, 200);
@@ -182,9 +182,12 @@ test('broadcast history reports setup-required only when no imported event exist
 
 test('history rejects impossible dates before querying D1', async () => {
   const env = {
-    DB: {
-      prepare() { throw new Error('D1 should not be queried'); },
-    },
+      DB: {
+        prepare() { throw new Error('D1 should not be queried'); },
+      },
+      OTHER_DB: {
+        prepare() { throw new Error('D1 should not be queried'); },
+      },
   };
   const response = await historyGet({
     request: new Request('https://skrzk.test/api/history?mode=broadcasts&from=2026-02-30&to=2026-03-01'),
@@ -199,9 +202,9 @@ test('history rejects impossible dates before querying D1', async () => {
 
 test('broadcast series rejects impossible dates before querying D1', async () => {
   const env = {
-    DB: {
-      prepare() { throw new Error('D1 should not be queried'); },
-    },
+      OTHER_DB: {
+        prepare() { throw new Error('D1 should not be queried'); },
+      },
   };
   const response = await broadcastSeriesGet({
     request: new Request('https://skrzk.test/api/broadcast-series?from=2026-02-30&to=2026-03-01'),
@@ -216,9 +219,9 @@ test('broadcast series rejects impossible dates before querying D1', async () =>
 
 test('official history rejects impossible dates before querying D1', async () => {
   const env = {
-    DB: {
-      prepare() { throw new Error('D1 should not be queried'); },
-    },
+      OTHER_DB: {
+        prepare() { throw new Error('D1 should not be queried'); },
+      },
   };
   const response = await officialHistoryGet({
     request: new Request('https://skrzk.test/api/official-history?from=2026-02-30&to=2026-03-01'),

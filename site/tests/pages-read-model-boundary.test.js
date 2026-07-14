@@ -20,10 +20,10 @@ test('FACTS read-model SQL never references the private buddies tables', () => {
   }
 });
 
-test('Pages has no binding to the private buddies database', () => {
+test('Pages uses the current buddies database for live reads', () => {
   const config = JSON.parse(readFileSync(new URL('../wrangler.jsonc', import.meta.url), 'utf8'));
-  assert.equal(config.d1_databases.some(({ database_name }) => database_name === 'stationhead-buddies'), false);
-  assert.equal(config.d1_databases.some(({ database_id }) => database_id === 'f361aae0-05f0-42bc-8784-77100e80133d'), false);
+  assert.equal(config.d1_databases.some(({ database_name }) => database_name === 'stationhead-buddies'), true);
+  assert.equal(config.d1_databases.some(({ database_id }) => database_id === 'f361aae0-05f0-42bc-8784-77100e80133d'), true);
 });
 
 test('queue read model accepts both an array and an object envelope', () => {

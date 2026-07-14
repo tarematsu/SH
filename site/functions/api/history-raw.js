@@ -58,7 +58,7 @@ async function loadRows(db, source, fromTs, toTs, cursor, limit) {
 }
 
 export async function onRequestGet({ request, env }) {
-  if (!env.DB) return json({ ok: false, error: 'DB binding missing' }, 500);
+  if (!env.OTHER_DB) return json({ ok: false, error: 'OTHER_DB binding missing' }, 500);
   const url = new URL(request.url);
   const from = url.searchParams.get('from') || '2024-06-01';
   const to = url.searchParams.get('to') || todayJstString();
@@ -86,11 +86,10 @@ export async function onRequestGet({ request, env }) {
     let result;
     let source = 'lightweight';
     try {
-      result = await loadRows(env.DB, 'sh_legacy_history_rows', fromTs, toTs, cursor, limit);
+      result = await loadRows(env.OTHER_DB, 'sh_legacy_history_rows', fromTs, toTs, cursor, limit);
     } catch (error) {
       if (!/no such table|no such view/i.test(String(error?.message || ''))) throw error;
-      result = await loadRows(env.DB, 'sh_legacy_snapshots', fromTs, toTs, cursor, limit);
-      source = 'legacy-fallback';
+      return json({ ok: false, error: 'raw history is no longer available from Pages' }, 410);
     }
     const allRows = result.results || [];
     const hasMore = allRows.length > limit;

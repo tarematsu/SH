@@ -54,7 +54,7 @@ export function resetBroadcastSeriesCache() {
 export const LEGACY_SERIES_SQL = `WITH base AS (
   SELECT source_note AS event_name,observed_at,listener_count,
     MIN(observed_at) OVER (PARTITION BY source_note) AS started_at
-  FROM sh_legacy_snapshots
+FROM sh_legacy_history_rows
   WHERE observed_at>=? AND observed_at<?
     AND host_handle='sakurazaka46jp'
     AND source_note IS NOT NULL AND source_note<>''
@@ -176,11 +176,17 @@ export function trimSeries(seriesRows, limit = MAX_POINTS) {
   return { series: result, pointCount: limit - remaining, truncated: sourceTruncated || originalPoints > limit };
 }
 
-// LEGACY_SERIES_SQL (sh_legacy_snapshots) and FAILSAFE_SERIES_SQL
+// IMPORTED_SERIES_SQL (sh_legacy_history_rows) and FAILSAFE_SERIES_SQL
 // (sh_official_news_*) live in different D1 databases, so they can no
 // longer share a single db.batch() call and are run independently.
 export async function loadBroadcastSeriesRows(legacyDb, otherDb, fromTs, toTs) {
-  const legacyResult = await legacyDb.prepare(LEGACY_SERIES_SQL).bind(fromTs, toTs).all();
+  let legacyRows = [];
+  try {
+    const legacyResult = await legacyDb.prepare(LEGACY_SERIES_SQL).bind(fromTs, toTs).all();
+    legacyRows = legacyResult.results || [];
+  } catch (error) {
+    if (!/no such table|no such view/i.test(String(error?.message || ''))) throw error;
+  }
   let failSafeRows = [];
   try {
     const failSafeResult = await otherDb.prepare(FAILSAFE_SERIES_SQL).bind(fromTs, toTs).all();
@@ -189,7 +195,7 @@ export async function loadBroadcastSeriesRows(legacyDb, otherDb, fromTs, toTs) {
     if (!/no such table/i.test(String(error?.message || ''))) throw error;
   }
   return {
-    legacy: decodeSeriesRows(legacyResult.results || [], 'historical_import'),
+    legacy: decodeSeriesRows(legacyRows, 'historical_import'),
     failSafe: decodeSeriesRows(failSafeRows, 'official_news_fail_safe'),
   };
 }
@@ -197,7 +203,7 @@ export async function loadBroadcastSeriesRows(legacyDb, otherDb, fromTs, toTs) {
 async function loadBroadcastSeries(env, from, to) {
   const fromTs = parseDateStart(from);
   const toTs = addDays(parseDateStart(to), 1);
-  const { legacy, failSafe } = await loadBroadcastSeriesRows(env.DB, env.OTHER_DB, fromTs, toTs);
+  const { legacy, failSafe } = await loadBroadcastSeriesRows(env.OTHER_DB, env.OTHER_DB, fromTs, toTs);
   const trimmed = trimSeries(legacy.concat(failSafe));
   let failSafeEventCount = 0;
   for (const item of trimmed.series) {
@@ -212,7 +218,7 @@ async function loadBroadcastSeries(env, from, to) {
 }
 
 export async function onRequestGet({ request, env }) {
-  if (!env.DB) return json({ ok: false, error: 'DB binding missing' }, 500);
+  if (!env.OTHER_DB) return json({ ok: false, error: 'OTHER_DB binding missing' }, 500);
   try {
     const url = new URL(request.url);
     const today = todayUtcString();
