@@ -9,13 +9,13 @@
   "d1_databases": [
     {
       "binding": "DB",
-      "database_name": "sh-monitor",
+      "database_name": "stationhead-legacy",
       "database_id": "5d5f0d47-7951-4900-821a-e1907c7e890b",
       "migrations_dir": "../database/migrations"
     },
     {
       "binding": "FACTS_DB",
-      "database_name": "Stationhead-DB",
+      "database_name": "stationhead-minute",
       "database_id": "c2661253-5e1b-4060-a7b4-acf6dc2a8988"
     },
     {
