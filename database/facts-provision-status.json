@@ -1,5 +1,5 @@
 {
-  "database_name": "Stationhead-DB",
+  "database_name": "stationhead-minute",
   "deployment_path": "cloudflare_git",
   "provision_result": "success",
   "provision_outcome": "success",
