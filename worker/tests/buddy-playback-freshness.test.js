@@ -6,6 +6,7 @@ import {
   scheduleBuddyPlayback,
 } from '../src/cadenced-entry.js';
 import { resetBuddyHealthForTests } from '../src/buddy-health.js';
+import { collectBuddyRawPlayback } from '../src/buddy-raw-playback.js';
 
 function requestContext() {
   return { waitUntil() {} };
@@ -121,4 +122,32 @@ test('a due buddy playback setup skip is recorded as a failure, not a success', 
   assert.equal(writes[0][1], 'error');
   assert.equal(writes[0][3], null);
   assert.match(writes[0][4], /playback-table-setup-required/);
+});
+
+test('other-owned buddy playback does not require the private buddies DB binding', async () => {
+  const OTHER_DB = {
+    prepare() {
+      return {
+        bind() { return this; },
+        async first() { return null; },
+        async run() { return { meta: { changes: 1 } }; },
+      };
+    },
+  };
+  const result = await collectBuddyRawPlayback({
+    OTHER_DB,
+    BUDDY_PLAYBACK_ENABLED: true,
+    BUDDY_PLAYBACK_ALIAS: 'buddy46',
+  }, 600_000, {
+    fetchRawBuddyPayload: async () => ({
+      alias: 'buddy46',
+      current_station: {
+        id: 5,
+        is_broadcasting: true,
+        queue: { id: 9, start_time: 500_000, queue_tracks: [] },
+      },
+    }),
+    stateHash: async () => 'state-hash',
+  });
+  assert.equal(result.skipped, false);
 });

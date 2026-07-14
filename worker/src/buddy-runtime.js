@@ -222,9 +222,8 @@ function isAuthFailure(error) {
 // buddies' own primary loop under the 'stationhead' id) -- schema init and
 // session refresh for buddy46 specifically run against OTHER_DB, via this
 // scoped substitute env, so buddy46's rows never touch buddies' database.
-// The actual playback collection below still gets the real env, since it
-// also enriches sh_track_metadata, a cache genuinely shared with buddies'
-// own collection and minute-facts derivation.
+// The playback collection below also uses OTHER_DB exclusively. It must not
+// depend on the private buddies collector database.
 function otherDbEnv(env) {
   return { ...env, DB: env.OTHER_DB };
 }

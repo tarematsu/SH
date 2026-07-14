@@ -133,7 +133,7 @@ async function fetchRawBuddyPayload(env, config, request = fetch) {
 }
 
 export async function collectBuddyRawPlayback(env, now = Date.now(), dependencies = {}) {
-  if (!env?.DB || !env?.OTHER_DB) return { skipped: true, reason: 'db-binding-missing' };
+  if (!env?.OTHER_DB) return { skipped: true, reason: 'db-binding-missing' };
   const config = buddyPlaybackConfig(env);
   if (!config.enabled) return { skipped: true, reason: 'disabled' };
 
