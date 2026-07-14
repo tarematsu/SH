@@ -124,6 +124,7 @@ test('other worker Wrangler configuration deploys every minute against a shared 
   assert.equal(config.name, 'sh-monitor-other');
   assert.equal(config.main, 'src/other-entry.js');
   assert.deepEqual(config.triggers?.crons, ['* * * * *']);
+  assert.equal(config.vars?.PUBLIC_HEALTH_CACHE_MS, 60_000);
 });
 
 test('other worker invalidates public health cache after every scheduled run', async () => {
@@ -137,6 +138,7 @@ test('other worker invalidates public health cache after every scheduled run', a
     dependencies,
     stagger: async (_env, worker) => events.push(`stagger:${worker}`),
     healthApp: { invalidateHealthCache: () => events.push('invalidate') },
+    recordSuccess: async () => events.push('heartbeat'),
   });
 
   assert.equal(events[0], 'stagger:other');
@@ -154,6 +156,7 @@ test('other worker invalidates public health cache when a scheduled task fails',
     dependencies,
     stagger: async () => {},
     healthApp: { invalidateHealthCache: () => { invalidated = true; } },
+    recordFailure: async () => {},
   }), AggregateError);
 
   assert.equal(invalidated, true);
@@ -172,6 +175,9 @@ test('other worker owns the public health endpoint', async () => {
             }
             if (kind === 'other' && sql.includes('sh_cloud_host_monitor_state')) {
               return { phase: 'idle', last_success_at: now };
+            }
+            if (kind === 'other' && sql.includes('sh_collector_status')) {
+              return { status: 'ok', last_attempt_at: now, last_success_at: now };
             }
             if (sql.includes('collector_state.auth_token')) {
               return {
@@ -278,9 +284,12 @@ test('other health is unavailable while an owned monitor has an active error', a
           bind() { return this; },
           async first() {
             if (sql.includes('sh_official_news_monitor_state')) {
-              return { last_error: 'official probe failed' };
+              return { last_check_at: Date.now(), last_error: 'official probe failed' };
             }
-            return { last_error: null };
+            if (sql.includes('sh_collector_status')) {
+              return { status: 'ok', last_attempt_at: Date.now(), last_success_at: Date.now() };
+            }
+            return { phase: 'idle', last_error: null };
           },
         };
       },
@@ -293,6 +302,43 @@ test('other health is unavailable while an owned monitor has an active error', a
   assert.equal(payload.other_health_ok, false);
   assert.equal(payload.official_news_last_error_present, true);
   assert.equal('official_news_last_error' in payload, false);
+});
+
+test('other health detects a stopped cron heartbeat', async () => {
+  const now = Date.now();
+  const app = createOtherHealthApp();
+  const response = await app.fetch(new Request('https://other.test/health'), {
+    DB: healthyPrimaryDb(),
+    OTHER_CRON_STALE_MS: 120_000,
+    OTHER_DB: taskHealthDb(now, {
+      'other-cron': { status: 'ok', last_attempt_at: now - 180_000, last_success_at: now - 180_000 },
+      'buddy46-playback': { status: 'ok', last_attempt_at: now, last_success_at: now },
+    }),
+  }, {});
+  const payload = await response.json();
+
+  assert.equal(response.status, 503);
+  assert.equal(payload.other_cron_health_ok, false);
+  assert.equal(payload.buddy_playback_health_ok, true);
+});
+
+test('other health exposes buddy playback failures', async () => {
+  const now = Date.now();
+  const app = createOtherHealthApp();
+  const response = await app.fetch(new Request('https://other.test/health'), {
+    DB: healthyPrimaryDb(),
+    OTHER_DB: taskHealthDb(now, {
+      'other-cron': { status: 'ok', last_attempt_at: now, last_success_at: now },
+      'buddy46-playback': { status: 'error', last_attempt_at: now, last_error: 'playback failed' },
+    }),
+  }, {});
+  const payload = await response.json();
+
+  assert.equal(response.status, 503);
+  assert.equal(payload.other_cron_health_ok, true);
+  assert.equal(payload.buddy_playback_health_ok, false);
+  assert.equal(payload.buddy_playback_last_error_present, true);
+  assert.equal('buddy_playback_last_error' in payload, false);
 });
 
 function healthyPrimaryDb() {
@@ -334,6 +380,27 @@ function healthyOtherDb() {
       return {
         bind() { return this; },
         async first() { return {}; },
+      };
+    },
+  };
+}
+
+function taskHealthDb(now, rows) {
+  return {
+    prepare(sql) {
+      let values = [];
+      return {
+        bind(...bound) { values = bound; return this; },
+        async first() {
+          if (sql.includes('sh_official_news_monitor_state')) {
+            return { last_check_at: now, last_success_at: now, upcoming_count: 0, active_count: 0 };
+          }
+          if (sql.includes('sh_cloud_host_monitor_state')) {
+            return { phase: 'idle', last_success_at: now };
+          }
+          if (sql.includes('sh_collector_status')) return rows[values[0]] || null;
+          return null;
+        },
       };
     },
   };

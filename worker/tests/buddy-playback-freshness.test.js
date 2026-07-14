@@ -5,6 +5,7 @@ import {
   resetBuddyPlaybackFlightForTests,
   scheduleBuddyPlayback,
 } from '../src/cadenced-entry.js';
+import { resetBuddyHealthForTests } from '../src/buddy-health.js';
 
 function requestContext() {
   return { waitUntil() {} };
@@ -85,4 +86,39 @@ test('different request contexts never share buddy playback I/O', async () => {
     { skipped: false, call: 2 },
   ]);
   resetBuddyPlaybackFlightForTests();
+});
+
+test('a due buddy playback setup skip is recorded as a failure, not a success', async () => {
+  resetBuddyPlaybackFlightForTests();
+  resetBuddyHealthForTests();
+  const writes = [];
+  const env = {
+    OTHER_DB: {
+      prepare(sql) {
+        let values = [];
+        return {
+          bind(...bound) { values = bound; return this; },
+          async first() { return null; },
+          async run() {
+            if (sql.includes('INSERT INTO sh_collector_status')) writes.push(values);
+            return { meta: { changes: 1 } };
+          },
+        };
+      },
+    },
+  };
+
+  const result = await scheduleBuddyPlayback(
+    env,
+    requestContext(),
+    300_000,
+    async () => ({ skipped: true, reason: 'playback-table-setup-required' }),
+    () => 360_000,
+  );
+
+  assert.deepEqual(result, { skipped: true, reason: 'playback-table-setup-required' });
+  assert.equal(writes.length, 1);
+  assert.equal(writes[0][1], 'error');
+  assert.equal(writes[0][3], null);
+  assert.match(writes[0][4], /playback-table-setup-required/);
 });

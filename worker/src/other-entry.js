@@ -1,4 +1,5 @@
 import { scheduleBuddyPlayback, scheduledTimestamp } from './buddy-playback-scheduler.js';
+import { recordOtherCronFailure, recordOtherCronSuccess } from './buddy-health.js';
 import { applyCronStagger } from './cron-stagger.js';
 import { runCloudHostMonitor } from './cloud-host-monitor.js';
 import { withScheduledD1Optimizations } from './d1-scheduled-optimizer.js';
@@ -45,9 +46,16 @@ export async function runOtherScheduled(controller, env, ctx, dependencies = {})
 export async function runOtherCron(controller, env, ctx, options = {}) {
   const stagger = options.stagger || applyCronStagger;
   const healthApp = options.healthApp || otherHealthApp;
-  await stagger(env, 'other');
+  const recordSuccess = options.recordSuccess || recordOtherCronSuccess;
+  const recordFailure = options.recordFailure || recordOtherCronFailure;
   try {
-    return await runOtherScheduled(controller, env, ctx, options.dependencies);
+    await stagger(env, 'other');
+    const result = await runOtherScheduled(controller, env, ctx, options.dependencies);
+    await recordSuccess(env);
+    return result;
+  } catch (error) {
+    await recordFailure(env, error).catch(() => {});
+    throw error;
   } finally {
     healthApp.invalidateHealthCache();
   }

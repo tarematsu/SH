@@ -126,6 +126,12 @@ async function saveState(env, id, values) {
     ).run();
 }
 
+export async function clearRecoveredCloudHostError(env, state, probeDue, save = saveState) {
+  if (probeDue || !state?.lastError) return false;
+  await save(env, state.id, { ...state, lastError: null });
+  return true;
+}
+
 async function recoverSoloState(env, config) {
   const id = `solo:${config.soloHandle}`;
   const stored = await stateRow(env, id);
@@ -139,6 +145,7 @@ async function recoverSoloState(env, config) {
       inactiveCount: Number(stored.inactive_count || 0),
       lastProfileAt: finite(stored.last_profile_at) || 0,
       lastQueueHash: stored.last_queue_hash || null,
+      lastError: stored.last_error || null,
     };
   }
 
@@ -455,6 +462,7 @@ export async function runCloudHostMonitor(env) {
     const tasks = [collectGeneralProfile(env, config, auth, now)];
     if (probeDue) tasks.push(probeSolo(env, config, auth, now, soloState));
     await Promise.all(tasks);
+    await clearRecoveredCloudHostError(env, soloState, probeDue);
   } catch (error) {
     const message = String(error?.message || error).slice(0, 1000);
     console.error(JSON.stringify({ event: 'cloud_host_monitor_failed', error: message }));

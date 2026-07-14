@@ -35,7 +35,10 @@ export function sanitizePublicHealth(payload) {
 function responseFromEntry(entry, cacheStatus) {
   const headers = new Headers(entry.headers);
   headers.set('content-type', 'application/json; charset=utf-8');
-  headers.set('cache-control', 'public, max-age=30, stale-while-revalidate=30');
+  headers.set(
+    'cache-control',
+    entry.status >= 500 ? 'no-store' : 'public, max-age=30, stale-while-revalidate=30',
+  );
   headers.set('x-health-cache', cacheStatus);
   return new Response(entry.body, { status: entry.status, headers });
 }
@@ -54,10 +57,12 @@ async function buildEntry(app, request, env, ctx) {
 
 export function createPublicHealthCachedApp(app, nowFn = Date.now) {
   let cached = null;
-  let flight = null;
+  let cacheEpoch = 0;
+  let latestBuildId = 0;
 
   function invalidate() {
     cached = null;
+    cacheEpoch += 1;
   }
 
   return {
@@ -81,22 +86,16 @@ export function createPublicHealthCachedApp(app, nowFn = Date.now) {
 
       const now = Number(nowFn()) || Date.now();
       if (cached && cached.expiresAt > now) return responseFromEntry(cached, 'hit');
-      if (flight) {
-        const entry = await flight;
-        return entry ? responseFromEntry(entry, 'coalesced') : app.fetch(request, env, ctx);
+      const startedEpoch = cacheEpoch;
+      const buildId = ++latestBuildId;
+      const { response, entry } = await buildEntry(app, request, env, ctx);
+      if (entry
+        && entry.status < 500
+        && startedEpoch === cacheEpoch
+        && buildId === latestBuildId) {
+        cached = { ...entry, expiresAt: now + ttlMs(env) };
       }
-
-      flight = buildEntry(app, request, env, ctx)
-        .then(({ entry }) => {
-          if (entry && entry.status < 500) {
-            cached = { ...entry, expiresAt: now + ttlMs(env) };
-          }
-          return entry;
-        })
-        .finally(() => { flight = null; });
-
-      const entry = await flight;
-      return entry ? responseFromEntry(entry, 'miss') : app.fetch(request, env, ctx);
+      return entry ? responseFromEntry(entry, 'miss') : response;
     },
 
     invalidateHealthCache: invalidate,

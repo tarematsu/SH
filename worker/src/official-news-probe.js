@@ -4,7 +4,11 @@ import {
   finite,
   timedFetch,
 } from './official-news-utils.js';
-import { checkOfficialNews } from './official-news-announcements.js';
+import {
+  checkOfficialNews,
+  monitorState,
+  saveMonitorState,
+} from './official-news-announcements.js';
 
 function stationHeaders(cfg, session) {
   return {
@@ -252,13 +256,23 @@ export async function probeAnnouncements(env, cfg, now) {
   }
 }
 
-export async function runOfficialNewsMonitor(env, cfg, now) {
+export async function runOfficialNewsMonitor(env, cfg, now, dependencies = {}) {
   if (!env.DB || !env.OTHER_DB) return;
+  const check = dependencies.checkOfficialNews || checkOfficialNews;
+  const probe = dependencies.probeAnnouncements || probeAnnouncements;
+  const readState = dependencies.monitorState || monitorState;
+  const writeState = dependencies.saveMonitorState || saveMonitorState;
   try {
-    await checkOfficialNews(env, cfg, now);
-    await probeAnnouncements(env, cfg, now);
+    await check(env, cfg, now);
+    await probe(env, cfg, now);
   } catch (error) {
     const message = String(error?.message || error).slice(0, 1000);
+    const state = await readState(env).catch(() => null);
+    await writeState(env, {
+      lastCheckAt: finite(state?.last_check_at) ?? now,
+      lastSuccessAt: finite(state?.last_success_at),
+      lastError: message,
+    }).catch(() => {});
     console.error(JSON.stringify({ event: 'official_news_monitor_failed', error: message }));
   }
 }

@@ -14,6 +14,7 @@ export const BUDDY_HEALTH_SCHEMA_SQL = `CREATE TABLE IF NOT EXISTS sh_collector_
   changed INTEGER,
   updated_at INTEGER NOT NULL
 )`;
+export const OTHER_CRON_HEALTH_ID = 'other-cron';
 
 let healthSchemaReady = false;
 
@@ -91,6 +92,40 @@ async function writeHealth(env, values) {
       values.lastAttemptAt,
     )
     .run();
+}
+
+export async function recordOtherCronSuccess(env, at = Date.now()) {
+  await writeHealth(env, {
+    collectorId: OTHER_CRON_HEALTH_ID,
+    status: 'ok',
+    lastAttemptAt: at,
+    lastSuccessAt: at,
+    lastError: null,
+    failureCode: null,
+    failureStage: null,
+    failureSummary: null,
+    failureHint: null,
+    tracks: null,
+    changed: null,
+  });
+}
+
+export async function recordOtherCronFailure(env, error, at = Date.now()) {
+  const current = await currentHealth(env, OTHER_CRON_HEALTH_ID).catch(() => null);
+  const diagnosis = diagnoseCollectorFailure(error, 'other_cron', at);
+  await writeHealth(env, {
+    collectorId: OTHER_CRON_HEALTH_ID,
+    status: 'error',
+    lastAttemptAt: at,
+    lastSuccessAt: nullableNumber(current?.last_success_at),
+    lastError: sanitizeFailureDetail(error?.message || error),
+    failureCode: diagnosis.code,
+    failureStage: diagnosis.stage,
+    failureSummary: diagnosis.summary,
+    failureHint: diagnosis.hint,
+    tracks: null,
+    changed: null,
+  });
 }
 
 export async function recordBuddySuccess(env, alias, result = {}, at = Date.now()) {

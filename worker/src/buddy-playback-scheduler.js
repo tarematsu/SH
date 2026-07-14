@@ -64,6 +64,12 @@ export function scheduleBuddyPlayback(
   const task = Promise.resolve().then(async () => {
     try {
       const result = await runner(env, observedAt);
+      if (result?.skipped) {
+        const reason = String(result.reason || 'unknown');
+        await recordBuddyFailure(env, config.alias, new Error(`Buddy playback skipped: ${reason}`), safeNow(now))
+          .catch((healthError) => healthWriteError('buddy_playback_health_skip_write_failed', healthError));
+        return result;
+      }
       await recordBuddySuccess(env, config.alias, result, safeNow(now))
         .catch((error) => healthWriteError('buddy_playback_health_success_write_failed', error));
       return result;
