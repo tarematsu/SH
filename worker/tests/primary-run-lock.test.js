@@ -11,6 +11,13 @@ function fakeDb() {
     get row() { return row; },
     prepare(sql) {
       return {
+        async run() {
+          calls.push({ kind: 'run', sql, params: [] });
+          if (sql.startsWith('CREATE TABLE IF NOT EXISTS sh_primary_run_lock')) {
+            return { meta: { changes: 0 } };
+          }
+          throw new Error(`unexpected direct run() for sql: ${sql}`);
+        },
         bind(...params) {
           return {
             async first() {

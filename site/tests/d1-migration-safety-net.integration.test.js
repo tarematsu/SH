@@ -5,7 +5,7 @@ import test from 'node:test';
 const workflow = readFileSync(
   new URL('../../.github/workflows/database.yml', import.meta.url),
   'utf8',
-);
+).replace(/\r\n/g, '\n');
 const migration = readFileSync(
   new URL('../../database/migrations/035_drop_queue_spotify_index.sql', import.meta.url),
   'utf8',

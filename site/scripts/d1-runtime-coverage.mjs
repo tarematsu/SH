@@ -23,6 +23,10 @@ export const RUNTIME_MIGRATION_COVERAGE = {
     runtime_file: 'worker/src/buddy-health.js',
     required_tables: ['sh_collector_status'],
   },
+  '130_add_primary_run_lock.sql': {
+    runtime_file: 'worker/src/primary-run-lock.js',
+    required_tables: ['sh_primary_run_lock'],
+  },
 };
 
 function gitOutput(repositoryRoot, args) {

@@ -15,6 +15,21 @@ const DEFAULT_TTL_MS = 70_000;
 const MIN_TTL_MS = 30_000;
 const MAX_TTL_MS = 180_000;
 
+export const PRIMARY_RUN_LOCK_SCHEMA_SQL = `CREATE TABLE IF NOT EXISTS sh_primary_run_lock (
+  scope TEXT PRIMARY KEY,
+  holder_id TEXT NOT NULL,
+  claimed_at INTEGER NOT NULL,
+  lease_until INTEGER NOT NULL
+)`;
+
+let primaryRunLockSchemaReady = false;
+
+async function ensurePrimaryRunLockSchema(db) {
+  if (primaryRunLockSchemaReady) return;
+  await db.prepare(PRIMARY_RUN_LOCK_SCHEMA_SQL).run();
+  primaryRunLockSchemaReady = true;
+}
+
 const CLAIM_SQL = `INSERT INTO sh_primary_run_lock (scope,holder_id,claimed_at,lease_until)
   VALUES (?,?,?,?)
   ON CONFLICT(scope) DO UPDATE SET
@@ -49,6 +64,7 @@ export async function claimPrimaryRunLock(env, holderId, now = Date.now()) {
   if (!env?.DB) return true;
   if (!primaryRunLockEnabled(env)) return true;
   try {
+    await ensurePrimaryRunLockSchema(env.DB);
     const leaseUntil = now + ttlMs(env);
     const row = await env.DB.prepare(CLAIM_SQL)
       .bind(SCOPE, holderId, now, leaseUntil, now)

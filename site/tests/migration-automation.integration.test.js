@@ -3,7 +3,8 @@ import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
 const packageJson = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
-const workflow = readFileSync(new URL('../../.github/workflows/database.yml', import.meta.url), 'utf8');
+const workflow = readFileSync(new URL('../../.github/workflows/database.yml', import.meta.url), 'utf8')
+  .replace(/\r\n/g, '\n');
 const migrator = readFileSync(new URL('../scripts/apply-d1-migrations.mjs', import.meta.url), 'utf8');
 const verifier = readFileSync(new URL('../scripts/verify-d1-schema.mjs', import.meta.url), 'utf8');
 
