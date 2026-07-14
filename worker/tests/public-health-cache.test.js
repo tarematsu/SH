@@ -12,6 +12,8 @@ test('sanitizePublicHealth removes internal errors and identifiers', () => {
     cloud_host_last_error: 'browser failure',
     collector_health_error: 'D1 failure',
     token_expires_at: 999,
+    auth_token_expires_at: 999,
+    browser_token_expires_at: 999,
     channel_id: 1,
     station_id: 2,
     cloud_solo_session_id: 3,

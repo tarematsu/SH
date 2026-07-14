@@ -26,8 +26,8 @@ test('optimized scheduled collection refreshes authentication once after a 401',
 
   await runOptimizedScheduled({}, {}, {}, {
     ensureSession: async () => AUTH_STATE,
-    refreshSession: async (_env, reason, force) => {
-      calls.push(['refresh', reason, force]);
+    refreshSession: async (_env, reason) => {
+      calls.push(['refresh', reason]);
       return refreshed;
     },
     collectorScheduled: async (_controller, env) => {
@@ -38,7 +38,49 @@ test('optimized scheduled collection refreshes authentication once after a 401',
 
   assert.deepEqual(calls, [
     ['collector', 'token', 'device'],
-    ['refresh', 'api-401', true],
+    ['refresh', 'api-auth-failure'],
     ['collector', 'new-token', 'new-device'],
   ]);
+});
+
+test('optimized scheduled collection also refreshes authentication after a 403', async () => {
+  let collectorCalls = 0;
+  let refreshCalls = 0;
+
+  await runOptimizedScheduled({}, {}, {}, {
+    ensureSession: async () => AUTH_STATE,
+    refreshSession: async () => {
+      refreshCalls += 1;
+      return { authToken: 'new-token', deviceUid: 'new-device' };
+    },
+    collectorScheduled: async () => {
+      collectorCalls += 1;
+      if (collectorCalls === 1) throw new Error('Stationhead API 403');
+    },
+  });
+
+  assert.equal(refreshCalls, 1);
+  assert.equal(collectorCalls, 2);
+});
+
+test('optimized scheduled collection does not retry when auth refresh is in backoff', async () => {
+  const failure = new Error('401 session expired');
+  let collectorCalls = 0;
+
+  const originalConsoleError = console.error;
+  console.error = () => {};
+  try {
+    await assert.rejects(runOptimizedScheduled({}, {}, {}, {
+      ensureSession: async () => AUTH_STATE,
+      refreshSession: async () => null,
+      collectorScheduled: async () => {
+        collectorCalls += 1;
+        throw failure;
+      },
+    }), failure);
+  } finally {
+    console.error = originalConsoleError;
+  }
+
+  assert.equal(collectorCalls, 1);
 });

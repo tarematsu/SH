@@ -247,6 +247,54 @@ test('other health reports OTHER_DB query failures instead of masking them', asy
   assert.equal(payload.cloud_host_setup_required, true);
 });
 
+test('other health reports primary DB failures as unavailable JSON', async () => {
+  const app = createOtherHealthApp();
+  const originalConsoleError = console.error;
+  console.error = () => {};
+  try {
+    const response = await app.fetch(new Request('https://other.test/health'), {
+      DB: {
+        prepare() { throw new Error('primary D1 unavailable'); },
+      },
+      OTHER_DB: healthyOtherDb(),
+    }, {});
+    const payload = await response.json();
+
+    assert.equal(response.status, 503);
+    assert.equal(payload.ok, false);
+    assert.equal(payload.primary_health_error_present, true);
+  } finally {
+    console.error = originalConsoleError;
+  }
+});
+
+test('other health is unavailable while an owned monitor has an active error', async () => {
+  const app = createOtherHealthApp();
+  const response = await app.fetch(new Request('https://other.test/health'), {
+    DB: healthyPrimaryDb(),
+    OTHER_DB: {
+      prepare(sql) {
+        return {
+          bind() { return this; },
+          async first() {
+            if (sql.includes('sh_official_news_monitor_state')) {
+              return { last_error: 'official probe failed' };
+            }
+            return { last_error: null };
+          },
+        };
+      },
+    },
+  }, {});
+  const payload = await response.json();
+
+  assert.equal(response.status, 503);
+  assert.equal(payload.ok, false);
+  assert.equal(payload.other_health_ok, false);
+  assert.equal(payload.official_news_last_error_present, true);
+  assert.equal('official_news_last_error' in payload, false);
+});
+
 function healthyPrimaryDb() {
   const now = Date.now();
   return {
@@ -275,6 +323,17 @@ function healthyPrimaryDb() {
           }
           return null;
         },
+      };
+    },
+  };
+}
+
+function healthyOtherDb() {
+  return {
+    prepare() {
+      return {
+        bind() { return this; },
+        async first() { return {}; },
       };
     },
   };

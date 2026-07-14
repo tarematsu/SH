@@ -1,8 +1,10 @@
 import collector from './index.js';
-import { health as collectorHealth } from './collector-http.js';
 import { jsonResponse as json, normalizeBearer, jwtExpiryMs, positiveNumber as positive } from './shared.js';
 import { ensureAuthControlRow, readAuthState } from './auth-state.js';
 import { combinedAbortSignal } from './request-signal.js';
+import { withAuthState } from './optimized-health.js';
+
+export { authHealth, readOptimizedHealth, withAuthState } from './optimized-health.js';
 
 const API_ORIGIN = 'https://production1.stationhead.com';
 const STATE_ID = 'stationhead';
@@ -89,15 +91,6 @@ globalThis.fetch = async (input, init = {}) => {
 
   return chatFallbackResponse(requestedLimit, lastReason);
 };
-
-export function withAuthState(env, state) {
-  return new Proxy(env, {
-    get(target, property, receiver) {
-      if (property === '__shAuthState') return state;
-      return Reflect.get(target, property, receiver);
-    },
-  });
-}
 
 async function claimAuthLock(env, cfg) {
   const now = Date.now();
@@ -205,12 +198,12 @@ async function acquireDirectSession(cfg) {
   return { authToken, deviceUid };
 }
 
-async function refreshSession(env, reason, force = false) {
+async function refreshSession(env, reason) {
   const cfg = authConfig(env);
   const initial = await readAuthState(env, STATE_ID);
   const now = Date.now();
 
-  if (!force && initial.lastError && initial.lastAttemptAt && now - initial.lastAttemptAt < cfg.backoffMs) {
+  if (initial.lastError && initial.lastAttemptAt && now - initial.lastAttemptAt < cfg.backoffMs) {
     return null;
   }
 
@@ -250,25 +243,8 @@ async function ensureSession(env) {
   return refreshSession(env, ready ? 'token-near-expiry' : 'initial-session');
 }
 
-function is401(value) {
-  return /\b401\b|session expired/i.test(String(value?.message || value));
-}
-
-export function authHealth(state) {
-  return {
-    auth_method: 'direct-api',
-    auth_session_ready: Boolean(state?.authToken && state?.deviceUid),
-    auth_token_expires_at: state?.tokenExpiresAt || null,
-    auth_last_attempt_at: state?.lastAttemptAt || null,
-    auth_last_success_at: state?.lastSuccessAt || null,
-    auth_last_error: state?.lastError || null,
-    browser_binding: false,
-    browser_session_ready: Boolean(state?.authToken && state?.deviceUid),
-    browser_token_expires_at: state?.tokenExpiresAt || null,
-    browser_last_auth_attempt_at: state?.lastAttemptAt || null,
-    browser_last_auth_success_at: state?.lastSuccessAt || null,
-    browser_last_auth_error: state?.lastError || null,
-  };
+function isAuthFailure(value) {
+  return /\b401\b|\b403\b|session expired|unauthori[sz]ed/i.test(String(value?.message || value));
 }
 
 export async function runOptimizedScheduled(controller, env, ctx, dependencies = {}) {
@@ -285,8 +261,8 @@ export async function runOptimizedScheduled(controller, env, ctx, dependencies =
     try {
       await runCollector(controller, withAuthState(env, state), ctx);
     } catch (error) {
-      if (!is401(error)) throw error;
-      state = await refresh(env, 'api-401', true);
+      if (!isAuthFailure(error)) throw error;
+      state = await refresh(env, 'api-auth-failure');
       if (!state) throw error;
       await runCollector(controller, withAuthState(env, state), ctx);
     }
@@ -294,12 +270,6 @@ export async function runOptimizedScheduled(controller, env, ctx, dependencies =
     console.error(error);
     throw error;
   }
-}
-
-export async function readOptimizedHealth(env) {
-  const state = await readAuthState(env, STATE_ID);
-  const base = await collectorHealth(withAuthState(env, state));
-  return json({ ...base, ...authHealth(state) });
 }
 
 export async function handleOptimizedRequest() {

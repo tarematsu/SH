@@ -11,6 +11,8 @@ const PRIVATE_HEALTH_FIELDS = new Set([
   'cloud_host_last_error',
   'collector_health_error',
   'token_expires_at',
+  'auth_token_expires_at',
+  'browser_token_expires_at',
   'channel_id',
   'station_id',
   'cloud_solo_session_id',

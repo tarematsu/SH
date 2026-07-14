@@ -1,4 +1,4 @@
-import { readOptimizedHealth } from './optimized-index.js';
+import { readOptimizedHealth } from './optimized-health.js';
 import { getCollectorHealthView } from './health-alert.js';
 import { loadOfficialHealthState } from './official-news-health.js';
 import { finite } from './official-news-utils.js';
@@ -37,20 +37,25 @@ async function loadOtherHealth(env) {
   ]);
   const official = officialResult.status === 'fulfilled' ? officialResult.value : null;
   const host = hostResult.status === 'fulfilled' ? hostResult.value : null;
+  const officialError = official?.last_error || null;
+  const hostError = host?.last_error || null;
   return {
-    other_health_ok: officialResult.status === 'fulfilled' && hostResult.status === 'fulfilled',
+    other_health_ok: officialResult.status === 'fulfilled'
+      && hostResult.status === 'fulfilled'
+      && !officialError
+      && !hostError,
     official_news_setup_required: officialResult.status === 'rejected',
     cloud_host_setup_required: hostResult.status === 'rejected',
     official_news_last_check_at: finite(official?.last_check_at),
     official_news_last_success_at: finite(official?.last_success_at),
-    official_news_last_error: official?.last_error || null,
+    official_news_last_error: officialError,
     official_news_upcoming_count: Number(official?.upcoming_count || 0),
     official_news_active_count: Number(official?.active_count || 0),
     cloud_solo_phase: host?.phase || null,
     cloud_solo_session_id: finite(host?.session_id),
     cloud_solo_station_id: finite(host?.station_id),
     cloud_host_last_success_at: finite(host?.last_success_at),
-    cloud_host_last_error: host?.last_error || null,
+    cloud_host_last_error: hostError,
   };
 }
 
@@ -58,7 +63,16 @@ const healthApp = {
   scheduled() {},
 
   async fetch(request, env, ctx) {
-    const baseResponse = await readOptimizedHealth(env);
+    const baseResponse = await readOptimizedHealth(env).catch((error) => {
+      console.error(JSON.stringify({
+        event: 'other_primary_health_failed',
+        error: String(error?.message || error),
+      }));
+      return Response.json({
+        ok: false,
+        primary_health_error_present: true,
+      }, { status: 503 });
+    });
     const base = await baseResponse.json().catch(() => ({}));
     const [collectorHealth, otherHealth] = await Promise.all([
       getCollectorHealthView(env).catch(() => ({

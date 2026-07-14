@@ -97,6 +97,6 @@ test('all local failover launch paths preload the track lookup cache', () => {
     'utf8',
   );
   assert.match(supervisor, /spawn\(process\.execPath, \['--import=\.\/fetch-cache\.mjs', 'collector\.mjs'\]/);
-  assert.match(supervisor, /COLLECTOR_MODE \|\| 'auto'/);
+  assert.match(supervisor, /COLLECTOR_MODE \|\| 'standby'/);
   assert.match(supervisor, /\['auto', 'active', 'standby'\]/);
 });

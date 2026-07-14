@@ -102,7 +102,7 @@ test('official health state combines monitor and announcement counts in one quer
   let prepares = 0;
   let binds = null;
   const env = {
-    DB: {
+    OTHER_DB: {
       prepare(sql) {
         prepares += 1;
         assert.equal(sql, OFFICIAL_HEALTH_SQL);

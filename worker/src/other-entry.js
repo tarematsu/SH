@@ -1,4 +1,4 @@
-import { scheduleBuddyPlayback, scheduledTimestamp } from './cadenced-entry.js';
+import { scheduleBuddyPlayback, scheduledTimestamp } from './buddy-playback-scheduler.js';
 import { applyCronStagger } from './cron-stagger.js';
 import { runCloudHostMonitor } from './cloud-host-monitor.js';
 import { withScheduledD1Optimizations } from './d1-scheduled-optimizer.js';
