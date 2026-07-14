@@ -268,3 +268,51 @@ test('consumer read model writes channel, queue, and collector state to FACTS_DB
   assert.equal(batches[1][0].params[0], 10);
   assert.equal(batches[1][2].params[0], 'buddies-worker');
 });
+
+test('minute worker hydrates queue metadata from BUDDIES_DB instead of the primary collector', async () => {
+  let metadataBindings = [];
+  const BUDDIES_DB = {
+    prepare(sql) {
+      assert.match(sql, /FROM sh_track_metadata/);
+      return {
+        bind(...values) {
+          metadataBindings = values;
+          return this;
+        },
+        async all() {
+          return { results: [{ spotify_id: 'track-1', title: 'Song', artist: 'Artist' }] };
+        },
+      };
+    },
+  };
+  const batches = [];
+  const FACTS_DB = {
+    prepare(sql) {
+      return {
+        sql,
+        params: [],
+        bind(...params) { this.params = params; return this; },
+      };
+    },
+    async batch(statements) {
+      batches.push(statements);
+      return statements.map(() => ({ success: true }));
+    },
+  };
+
+  await saveMinuteFactReadModels({ BUDDIES_DB, FACTS_DB }, {
+    channel: { channel_id: 10, observed_at: 123_456, presentation: {} },
+    queue: {
+      station_id: 5,
+      queue_id: 9,
+      start_time: 100,
+      is_paused: false,
+      value: { tracks: [{ spotify_id: 'track-1', title: null, artist: null }] },
+    },
+    collector: { collector_id: 'cloudflare-worker', updated_at: 123_456 },
+  }, 'minute-fact:10:120000');
+
+  assert.deepEqual(metadataBindings, ['track-1']);
+  assert.match(batches[1][1].params[6], /"title":"Song"/);
+  assert.match(batches[1][1].params[6], /"artist":"Artist"/);
+});

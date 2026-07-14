@@ -202,7 +202,6 @@ export async function collectOnce(env, source = 'manual') {
 
     let queueResult = null;
     let metadataSaved = 0;
-    let metadataRows = [];
     let metadataPlanned = false;
     if (initialPlan.queue) {
       stage = 'd1_write_queue';
@@ -210,14 +209,7 @@ export async function collectOnce(env, source = 'manual') {
       metadataPlanned = initialPlan.metadataDue || queueResult?.structure_changed === true;
       if (metadataPlanned) {
         stage = 'd1_write_track_metadata';
-        const metadataResult = await timedStage(stage, () => enrichTracks(
-          activeEnv,
-          queue,
-          observedAt,
-          { ...config, returnDetails: true },
-        ));
-        metadataSaved = metadataResult?.saved ?? metadataResult ?? 0;
-        metadataRows = metadataResult?.rows || [];
+        metadataSaved = await timedStage(stage, () => enrichTracks(activeEnv, queue, observedAt, config));
       }
     }
 
@@ -238,21 +230,7 @@ export async function collectOnce(env, source = 'manual') {
     );
 
     const factSnapshot = minuteFactSnapshot(snapshot);
-    let factQueue = minuteFactQueue(queue);
-    if (factQueue?.tracks?.length) {
-      stage = 'd1_read_track_metadata_read_model';
-      try {
-        factQueue = await timedStage(
-          stage,
-          () => loadMinuteFactQueueMetadata(activeEnv.DB, factQueue, metadataRows),
-        );
-      } catch (error) {
-        console.warn(JSON.stringify({
-          event: 'minute_fact_queue_metadata_degraded',
-          error: sanitizeFailureDetail(error?.message || error),
-        }));
-      }
-    }
+    const factQueue = minuteFactQueue(queue);
     stage = 'd1_outbox_minute_fact';
     const minuteFactJob = await timedStage(stage, () => handoffMinuteFactJob(activeEnv, {
       observedAt,

@@ -1,3 +1,5 @@
+import { attachMinuteFactQueueMetadata } from './collector-payload.js';
+
 export const MINUTE_FACT_QUEUE_RECEIPT_SCHEMA_SQL = `CREATE TABLE IF NOT EXISTS sh_minute_fact_queue_receipts (
   job_id TEXT PRIMARY KEY,
   received_at INTEGER NOT NULL
@@ -47,6 +49,32 @@ function booleanCode(value) {
   return 1;
 }
 
+async function hydrateQueueMetadataFromSource(env, readModel) {
+  const db = env?.BUDDIES_DB;
+  const queue = readModel?.queue?.value;
+  if (!db || !queue?.tracks?.length) return readModel;
+  const spotifyIds = [...new Set(
+    queue.tracks
+      .filter((track) => track?.spotify_id
+        && (!track.title || !track.artist || !track.thumbnail_url))
+      .map((track) => String(track.spotify_id).trim())
+      .filter(Boolean),
+  )].slice(0, 80);
+  if (!spotifyIds.length) return readModel;
+  try {
+    const placeholders = spotifyIds.map(() => '?').join(',');
+    const result = await db.prepare(`SELECT spotify_id,title,artist,thumbnail_url
+      FROM sh_track_metadata WHERE spotify_id IN (${placeholders})`)
+      .bind(...spotifyIds).all();
+    const hydratedQueue = attachMinuteFactQueueMetadata(queue, result.results || []);
+    return hydratedQueue === queue
+      ? readModel
+      : { ...readModel, queue: { ...readModel.queue, value: hydratedQueue } };
+  } catch {
+    return readModel;
+  }
+}
+
 export async function ensureMinuteFactReadModelSchema(env) {
   if (!env?.FACTS_DB) throw new Error('minute fact read model FACTS_DB binding is missing');
   if (schemaReady.has(env.FACTS_DB)) return false;
@@ -77,10 +105,11 @@ export async function saveMinuteFactQueueReceipt(env, jobId) {
 
 export async function saveMinuteFactReadModels(env, readModel, _jobId) {
   await ensureMinuteFactReadModelSchema(env);
-  if (!readModel || typeof readModel !== 'object') throw new Error('minute fact read model payload is missing');
-  const channel = readModel.channel || {};
-  const queue = readModel.queue || {};
-  const collector = readModel.collector || {};
+  const hydratedReadModel = await hydrateQueueMetadataFromSource(env, readModel);
+  if (!hydratedReadModel || typeof hydratedReadModel !== 'object') throw new Error('minute fact read model payload is missing');
+  const channel = hydratedReadModel.channel || {};
+  const queue = hydratedReadModel.queue || {};
+  const collector = hydratedReadModel.collector || {};
   const channelId = integer(channel.channel_id);
   const observedAt = integer(channel.observed_at);
   if (channelId == null || observedAt == null) throw new Error('channel read model identity is missing');
