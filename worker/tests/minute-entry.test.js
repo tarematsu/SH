@@ -68,8 +68,8 @@ test('minute worker has dedicated name, source bindings and one routing cron', (
   assert.deepEqual(config.d1_databases.map(({ binding }) => binding), ['BUDDIES_DB', 'LEGACY_DB', 'FACTS_DB']);
   assert.deepEqual(config.d1_databases.map(({ database_name }) => database_name), [
     'stationhead-buddies',
-    'sh-monitor',
-    'Stationhead-DB',
+    'stationhead-legacy',
+    'stationhead-minute',
   ]);
 });
 
