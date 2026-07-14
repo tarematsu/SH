@@ -56,7 +56,7 @@ export function parseAuthState(row, env = {}, stateId = DEFAULT_AUTH_STATE_ID) {
   return {
     authToken,
     deviceUid,
-    tokenExpiresAt: jwtExpiryMs(authToken) || Number(row?.token_expires_at || 0),
+    tokenExpiresAt: Number(row?.token_expires_at || 0) || jwtExpiryMs(authToken),
     lastAttemptAt: Number(row?.last_attempt_at || 0),
     lastSuccessAt: Number(row?.last_success_at || 0),
     lastError: row?.last_error || null,

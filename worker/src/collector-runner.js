@@ -30,20 +30,21 @@ async function enrichTracks(env, queue, observedAt, config) {
   return sharedEnrichTracks(env, ingest, queue, observedAt, config);
 }
 
-export async function loadMinuteFactQueueMetadata(db, queue) {
+export async function loadMinuteFactQueueMetadata(db, queue, providedRows = []) {
+  let hydratedQueue = attachMinuteFactQueueMetadata(queue, providedRows);
   const spotifyIds = [...new Set(
-    (queue?.tracks || [])
+    (hydratedQueue?.tracks || [])
       .filter((track) => track?.spotify_id
         && (!track.title || !track.artist || !track.thumbnail_url))
       .map((track) => String(track.spotify_id).trim())
       .filter(Boolean),
   )].slice(0, 80);
-  if (!spotifyIds.length) return queue;
+  if (!spotifyIds.length) return hydratedQueue;
   const placeholders = spotifyIds.map(() => '?').join(',');
   const result = await db.prepare(`SELECT spotify_id,title,artist,thumbnail_url
     FROM sh_track_metadata WHERE spotify_id IN (${placeholders})`)
     .bind(...spotifyIds).all();
-  return attachMinuteFactQueueMetadata(queue, result.results || []);
+  return attachMinuteFactQueueMetadata(hydratedQueue, result.results || []);
 }
 
 function signalFrom(value) {
@@ -188,10 +189,9 @@ export async function collectOnce(env, source = 'manual') {
     };
     const initialPlan = buildCollectionPlan(planInput);
 
-    let snapshotResult = null;
     if (initialPlan.snapshot) {
       stage = 'd1_write_snapshot';
-      snapshotResult = await timedStage(stage, () => ingest(
+      await timedStage(stage, () => ingest(
         activeEnv,
         'snapshot',
         snapshot,
@@ -202,6 +202,7 @@ export async function collectOnce(env, source = 'manual') {
 
     let queueResult = null;
     let metadataSaved = 0;
+    let metadataRows = [];
     let metadataPlanned = false;
     if (initialPlan.queue) {
       stage = 'd1_write_queue';
@@ -210,7 +211,14 @@ export async function collectOnce(env, source = 'manual') {
       metadataPlanned = completedPlan.metadata;
       if (metadataPlanned) {
         stage = 'd1_write_track_metadata';
-        metadataSaved = await timedStage(stage, () => enrichTracks(activeEnv, queue, observedAt, config));
+        const metadataResult = await timedStage(stage, () => enrichTracks(
+          activeEnv,
+          queue,
+          observedAt,
+          { ...config, returnDetails: true },
+        ));
+        metadataSaved = metadataResult?.saved ?? metadataResult ?? 0;
+        metadataRows = metadataResult?.rows || [];
       }
     }
 
@@ -235,7 +243,10 @@ export async function collectOnce(env, source = 'manual') {
     if (factQueue?.tracks?.length) {
       stage = 'd1_read_track_metadata_read_model';
       try {
-        factQueue = await timedStage(stage, () => loadMinuteFactQueueMetadata(activeEnv.DB, factQueue));
+        factQueue = await timedStage(
+          stage,
+          () => loadMinuteFactQueueMetadata(activeEnv.DB, factQueue, metadataRows),
+        );
       } catch (error) {
         console.warn(JSON.stringify({
           event: 'minute_fact_queue_metadata_degraded',

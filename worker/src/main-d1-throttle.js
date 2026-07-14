@@ -38,7 +38,12 @@ export function withD1WriteThrottling(env) {
   const wrappedDb = new Proxy(db, {
     get(target, property) {
       if (property === 'prepare') {
-        return (sql) => wrapStatement(target.prepare(rewriteThrottledSql(sql)));
+        return (sql) => {
+          const original = String(sql || '');
+          const rewritten = rewriteThrottledSql(original);
+          const statement = target.prepare(rewritten);
+          return rewritten === original ? statement : wrapStatement(statement);
+        };
       }
       if (property === 'batch') {
         return (statements) => target.batch(

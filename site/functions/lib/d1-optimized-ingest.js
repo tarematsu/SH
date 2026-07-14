@@ -4,8 +4,7 @@ import {
   normalizedTrackIsrc,
   normalizedTrackSpotifyId,
   observationTrackKey,
-  planLikeCurrentMigrations,
-  planLikeObservations,
+  planLikeChanges,
   queueItemsToWriteLean,
   queueStructuralPayload,
   saveLeanSnapshot,
@@ -45,23 +44,37 @@ async function runBatches(db, statements) {
 }
 
 export function queueLikesPayload(tracks) {
+  return analyzeQueueLikes(tracks).payload;
+}
+
+export function analyzeQueueLikes(tracks) {
   const unique = new Map();
+  const trackKeys = new Set();
+  let identifiable = 0;
+  let complete = true;
   for (const track of Array.isArray(tracks) ? tracks : []) {
     const trackKey = observationTrackKey(track);
+    if (!trackKey) continue;
+    identifiable += 1;
+    trackKeys.add(trackKey);
     const likeCount = num(track?.bite_count);
-    if (!trackKey || likeCount == null) continue;
+    if (likeCount == null) {
+      complete = false;
+      continue;
+    }
     unique.set(trackKey, likeCount);
   }
-  return [...unique.entries()]
-    .map(([trackKey, likeCount]) => ({ track_key: trackKey, like_count: likeCount }))
-    .sort((left, right) => left.track_key.localeCompare(right.track_key));
+  return {
+    complete: identifiable === 0 || complete,
+    trackKeys: [...trackKeys],
+    payload: [...unique.entries()]
+      .map(([trackKey, likeCount]) => ({ track_key: trackKey, like_count: likeCount }))
+      .sort((left, right) => left.track_key.localeCompare(right.track_key)),
+  };
 }
 
 export function hasCompleteLikeSnapshot(tracks) {
-  const identifiable = (Array.isArray(tracks) ? tracks : [])
-    .filter((track) => observationTrackKey(track));
-  return identifiable.length === 0
-    || identifiable.every((track) => num(track?.bite_count) != null);
+  return analyzeQueueLikes(tracks).complete;
 }
 
 function compactQueueItemRaw(track, queueId) {
@@ -144,7 +157,8 @@ async function loadComparisonState(db, stationId, startTime, positions, likeTrac
 }
 
 function queueItemWriteStatements(db, tracks, observedAt, stationId, queueId, startTime) {
-  return tracks.map((track) => prepared(db.prepare(`INSERT INTO sh_queue_items (
+  if (!tracks.length) return [];
+  const statement = db.prepare(`INSERT INTO sh_queue_items (
       observed_at,station_id,queue_id,start_time,position,
       queue_track_id,stationhead_track_id,spotify_id,
       deezer_id,isrc,duration_ms,preview_url,bite_count,raw_json
@@ -155,12 +169,12 @@ function queueItemWriteStatements(db, tracks, observedAt, stationId, queueId, st
       spotify_id=excluded.spotify_id,apple_music_id=NULL,
       deezer_id=excluded.deezer_id,isrc=excluded.isrc,duration_ms=excluded.duration_ms,
       preview_url=excluded.preview_url,raw_json=excluded.raw_json
-    WHERE excluded.observed_at>=COALESCE((
+      WHERE excluded.observed_at>=COALESCE((
       SELECT MAX(snapshot.observed_at) FROM sh_queue_snapshots snapshot
       WHERE snapshot.station_id IS excluded.station_id
         AND snapshot.start_time IS excluded.start_time
-    ),sh_queue_items.observed_at)`)
-    .bind(
+    ),sh_queue_items.observed_at)`);
+  return tracks.map((track) => prepared(statement.bind(
       observedAt, stationId, queueId, startTime, num(track?.position),
       num(track?.queue_track_id), num(track?.stationhead_track_id),
       normalizedTrackSpotifyId(track), text(track?.deezer_id), normalizedTrackIsrc(track),
@@ -170,16 +184,18 @@ function queueItemWriteStatements(db, tracks, observedAt, stationId, queueId, st
 }
 
 function queueItemLikeUpdateStatements(db, tracks, observedAt, stationId, startTime) {
-  return (Array.isArray(tracks) ? tracks : [])
+  const eligible = (Array.isArray(tracks) ? tracks : [])
     .filter((track) => num(track?.position) != null && num(track?.bite_count) != null)
-    .map((track) => prepared(db.prepare(`UPDATE sh_queue_items
+  if (!eligible.length) return [];
+  const statement = db.prepare(`UPDATE sh_queue_items
       SET bite_count=?
       WHERE station_id IS ? AND start_time IS ? AND position IS ?
         AND bite_count IS NOT ?
         AND ?>=COALESCE((
           SELECT MAX(snapshot.observed_at) FROM sh_queue_snapshots snapshot
           WHERE snapshot.station_id IS ? AND snapshot.start_time IS ?
-        ),0)`).bind(
+        ),0)`);
+  return eligible.map((track) => prepared(statement.bind(
       num(track?.bite_count),
       stationId,
       startTime,
@@ -191,9 +207,7 @@ function queueItemLikeUpdateStatements(db, tracks, observedAt, stationId, startT
     ), 8));
 }
 
-function likeCurrentStatement(db, entry, observedAt, stationId, queueId, startTime) {
-  const { trackKey, track } = entry;
-  return prepared(db.prepare(`INSERT INTO sh_track_like_current (
+const LIKE_CURRENT_SQL = `INSERT INTO sh_track_like_current (
       station_id,track_key,queue_id,start_time,position,queue_track_id,
       stationhead_track_id,spotify_id,isrc,like_count,observed_at
     ) SELECT ?,?,?,?,?,?,?,?,?,?,?
@@ -207,8 +221,18 @@ function likeCurrentStatement(db, entry, observedAt, stationId, queueId, startTi
       spotify_id=excluded.spotify_id,apple_music_id=NULL,isrc=excluded.isrc,
       like_count=excluded.like_count,observed_at=excluded.observed_at
     WHERE excluded.observed_at>=sh_track_like_current.observed_at
-      AND excluded.like_count IS NOT sh_track_like_current.like_count`)
-    .bind(
+      AND excluded.like_count IS NOT sh_track_like_current.like_count`;
+
+const LIKE_OBSERVATION_SQL = `INSERT INTO sh_track_like_observations (
+        observed_at,station_id,queue_id,start_time,position,
+        queue_track_id,stationhead_track_id,spotify_id,isrc,
+        track_key,like_count,source,raw_json
+      ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`;
+
+function likeCurrentStatement(db, entry, observedAt, stationId, queueId, startTime, statement = null) {
+  const { trackKey, track } = entry;
+  const base = statement || db.prepare(LIKE_CURRENT_SQL);
+  return prepared(base.bind(
       stationId, trackKey, queueId, startTime, num(track?.position),
       num(track?.queue_track_id), num(track?.stationhead_track_id),
       normalizedTrackSpotifyId(track), normalizedTrackIsrc(track), num(track?.bite_count), observedAt,
@@ -217,6 +241,8 @@ function likeCurrentStatement(db, entry, observedAt, stationId, queueId, startTi
 }
 
 function likeCurrentMigrationStatements(db, migrations, observedAt, stationId, queueId, startTime) {
+  if (!migrations.length) return [];
+  const statement = db.prepare(LIKE_CURRENT_SQL);
   return migrations.map((entry) => likeCurrentStatement(
     db,
     entry,
@@ -224,19 +250,19 @@ function likeCurrentMigrationStatements(db, migrations, observedAt, stationId, q
     stationId,
     queueId,
     startTime,
+    statement,
   ));
 }
 
 function likeWriteStatements(db, observations, observedAt, stationId, queueId, startTime) {
+  if (!observations.length) return [];
+  const currentStatement = db.prepare(LIKE_CURRENT_SQL);
+  const observationStatement = db.prepare(LIKE_OBSERVATION_SQL);
   return observations.flatMap((entry) => {
     const { trackKey, track } = entry;
     return [
-      likeCurrentStatement(db, entry, observedAt, stationId, queueId, startTime),
-      prepared(db.prepare(`INSERT INTO sh_track_like_observations (
-        observed_at,station_id,queue_id,start_time,position,
-        queue_track_id,stationhead_track_id,spotify_id,isrc,
-        track_key,like_count,source,raw_json
-      ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`).bind(
+      likeCurrentStatement(db, entry, observedAt, stationId, queueId, startTime, currentStatement),
+      prepared(observationStatement.bind(
         observedAt, stationId, queueId, startTime, num(track?.position),
         num(track?.queue_track_id), num(track?.stationhead_track_id),
         normalizedTrackSpotifyId(track), normalizedTrackIsrc(track),
@@ -313,7 +339,8 @@ export async function saveLeanQueue(db, observedAt, body) {
   const structuralPayload = queueStructuralPayload(data);
   const structuralHash = await payloadHash(structuralPayload);
   const tracks = Array.isArray(data?.tracks) ? data.tracks : [];
-  const completeLikes = hasCompleteLikeSnapshot(tracks);
+  const likeAnalysis = analyzeQueueLikes(tracks);
+  const completeLikes = likeAnalysis.complete;
   const stationId = num(data?.station_id);
   const startTime = num(data?.start_time);
   const queueId = num(data?.queue_id);
@@ -331,7 +358,7 @@ export async function saveLeanQueue(db, observedAt, body) {
   );
   const staleCurrent = currentWatermark > 0 && observedAt < currentWatermark;
   const likesHash = completeLikes
-    ? await payloadHash(queueLikesPayload(tracks))
+    ? await payloadHash(likeAnalysis.payload)
     : text(current?.likes_hash);
   const structureChanged = current?.structural_hash !== structuralHash;
   const likesChanged = completeLikes && current?.likes_hash !== likesHash;
@@ -377,12 +404,16 @@ export async function saveLeanQueue(db, observedAt, body) {
     }
   }
 
-  const positions = [...new Set(tracks
-    .map((track) => num(track?.position))
-    .filter((value) => value != null))];
-  const currentTrackKeys = completeLikes
-    ? [...new Set(tracks.map(observationTrackKey).filter(Boolean))]
-    : [];
+  const positions = [];
+  const positionSet = new Set();
+  for (const track of tracks) {
+    const position = num(track?.position);
+    if (position != null && !positionSet.has(position)) {
+      positionSet.add(position);
+      positions.push(position);
+    }
+  }
+  const currentTrackKeys = completeLikes ? likeAnalysis.trackKeys : [];
   const { existingRows, latestRows } = await loadComparisonState(
     db,
     stationId,
@@ -394,10 +425,9 @@ export async function saveLeanQueue(db, observedAt, body) {
   const changedTracks = structureChanged
     ? queueItemsToWriteLean(tracks, existingRows, queueId)
     : [];
-  const observations = likesChanged ? planLikeObservations(tracks, latestRows) : [];
-  const currentLikeMigrations = likesChanged
-    ? planLikeCurrentMigrations(tracks, latestRows)
-    : [];
+  const likeChanges = likesChanged ? planLikeChanges(tracks, latestRows) : null;
+  const observations = likeChanges?.observations || [];
+  const currentLikeMigrations = likeChanges?.currentLikeMigrations || [];
 
   const statements = [];
   if (structureChanged && !staleCurrent) {

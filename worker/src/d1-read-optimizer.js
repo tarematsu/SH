@@ -16,7 +16,9 @@ export function rewriteDuplicateVelocityRead(sql, chatEnabled = true) {
 }
 
 function statementKind(sql) {
-  const compact = String(sql || '').replace(/\s+/g, ' ').trim().toLowerCase();
+  const raw = String(sql || '');
+  if (!/sh_(?:collector_|worker_collector_state)/i.test(raw)) return null;
+  const compact = raw.replace(/\s+/g, ' ').trim().toLowerCase();
   if (compact.startsWith('insert into sh_collector_heartbeats')) return 'heartbeat';
   if (compact.startsWith('delete from sh_collector_failure_state') && compact.includes('where id=?')) {
     return 'failure-clear';
@@ -200,9 +202,12 @@ export function withDuplicateVelocityReadRemoved(env, nowFn = Date.now) {
       if (property === 'prepare') {
         return (sql) => {
           const rewritten = rewriteDuplicateVelocityRead(sql, chatEnabled);
-          return wrapStatement(target.prepare(rewritten), {
+          const kind = statementKind(rewritten);
+          const statement = target.prepare(rewritten);
+          if (kind === null && rewritten === String(sql || '')) return statement;
+          return wrapStatement(statement, {
             sql: rewritten,
-            kind: statementKind(rewritten),
+            kind,
             binds: [],
           });
         };

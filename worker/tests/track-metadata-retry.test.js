@@ -80,5 +80,5 @@ test('repair updates only incomplete D1 metadata rows', () => {
 
 test('Spotify failures receive a retry cooldown', () => {
   assert.match(source, /FAILURE_RETRY_MS = 15 \* 60 \* 1000/);
-  assert.match(source, /cacheMetadataState\(spotifyId, now \+ FAILURE_RETRY_MS\)/);
+  assert.match(source, /cacheMetadataState\(spotifyId, now \+ FAILURE_RETRY_MS/);
 });

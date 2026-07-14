@@ -54,3 +54,28 @@ test('loadMinuteFactQueueMetadata skips tracks whose presentation metadata is co
   assert.equal(prepared, false);
   assert.strictEqual(result, queue);
 });
+
+test('loadMinuteFactQueueMetadata reuses metadata already fetched in the same collection', async () => {
+  let prepared = false;
+  const db = {
+    prepare() {
+      prepared = true;
+      throw new Error('metadata should not be reread');
+    },
+  };
+  const queue = {
+    tracks: [{ spotify_id: 'track-1', title: null, artist: null, thumbnail_url: null }],
+  };
+
+  const result = await loadMinuteFactQueueMetadata(db, queue, [{
+    spotify_id: 'track-1',
+    title: 'Song',
+    artist: 'Artist',
+    thumbnail_url: 'https://example.test/cover.jpg',
+  }]);
+
+  assert.equal(prepared, false);
+  assert.equal(result.tracks[0].title, 'Song');
+  assert.equal(result.tracks[0].artist, 'Artist');
+  assert.equal(result.tracks[0].thumbnail_url, 'https://example.test/cover.jpg');
+});

@@ -9,7 +9,7 @@ export function collectorStateFromAuthState(authState, env = {}) {
   return {
     authToken,
     deviceUid,
-    tokenExpiresAt: jwtExpiryMs(authToken) || Number(authState?.tokenExpiresAt || 0),
+    tokenExpiresAt: Number(authState?.tokenExpiresAt || 0) || jwtExpiryMs(authToken),
     lastRunAt: Number(authState?.collectorLastRunAt || 0),
     lastSuccessAt: Number(authState?.collectorLastSuccessAt || 0),
     lastError: authState?.collectorLastError || null,
@@ -40,7 +40,7 @@ export async function loadCollectorState(env) {
   return {
     authToken,
     deviceUid,
-    tokenExpiresAt: jwtExpiryMs(authToken) || Number(row?.token_expires_at || 0),
+    tokenExpiresAt: Number(row?.token_expires_at || 0) || jwtExpiryMs(authToken),
     lastRunAt: Number(row?.last_run_at || 0),
     lastSuccessAt: Number(row?.last_success_at || 0),
     lastError: row?.last_error || null,

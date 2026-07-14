@@ -211,26 +211,24 @@ export function queueItemsToWriteLean(tracks, existingRows, queueId = null) {
 }
 
 export function planLikeObservations(tracks, latestRows) {
-  const latest = latestRowsByIdentity(latestRows);
-  const unique = new Map();
-  for (const track of Array.isArray(tracks) ? tracks : []) {
-    const identity = observationTrackKey(track);
-    if (!identity || num(track?.bite_count) == null) continue;
-    unique.set(identity, track);
-  }
-  return [...unique.entries()]
-    .filter(([identity, track]) => num(latest.get(identity)?.like_count) !== num(track.bite_count))
-    .map(([trackKey, track]) => ({ trackKey, track }));
+  return planLikeChanges(tracks, latestRows).observations;
 }
 
 export function planLikeCurrentMigrations(tracks, latestRows) {
+  return planLikeChanges(tracks, latestRows).currentLikeMigrations;
+}
+
+export function planLikeChanges(tracks, latestRows) {
   const latest = latestRowsByIdentity(latestRows);
+  const unique = new Map();
   const migrations = [];
   const seen = new Set();
   for (const track of Array.isArray(tracks) ? tracks : []) {
     const canonical = observationTrackKey(track);
     const likeCount = num(track?.bite_count);
-    if (!canonical || likeCount == null || seen.has(canonical)) continue;
+    if (!canonical || likeCount == null) continue;
+    unique.set(canonical, track);
+    if (seen.has(canonical)) continue;
     seen.add(canonical);
     const row = latest.get(canonical);
     if (row && String(row.track_key || '') !== canonical
@@ -238,5 +236,8 @@ export function planLikeCurrentMigrations(tracks, latestRows) {
       migrations.push({ trackKey: canonical, track });
     }
   }
-  return migrations;
+  const observations = [...unique.entries()]
+    .filter(([identity, track]) => num(latest.get(identity)?.like_count) !== num(track.bite_count))
+    .map(([trackKey, track]) => ({ trackKey, track }));
+  return { observations, currentLikeMigrations: migrations };
 }

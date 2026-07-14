@@ -43,6 +43,9 @@ export function withCollectionRuntime(env = {}, signal = null, deadlineAt = null
 }
 
 function startAuxiliaryOnce(flight, env, includeFailureOnly, runners = NO_AUXILIARY_RUNNERS) {
+  if (!runners || runners === NO_AUXILIARY_RUNNERS || Object.keys(runners).length === 0) {
+    return Promise.resolve([]);
+  }
   const tasks = Object.entries(runners).flatMap(([name, task]) => {
     const definition = typeof task === 'function' ? {} : (task || {});
     const runner = typeof task === 'function' ? task : task?.run;

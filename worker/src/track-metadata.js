@@ -13,9 +13,10 @@ function pruneCache() {
   }
 }
 
-function cacheMetadataState(spotifyId, expiresAt) {
+function cacheMetadataState(spotifyId, expiresAt, row = null) {
+  const previous = metadataCache.get(spotifyId);
   metadataCache.delete(spotifyId);
-  metadataCache.set(spotifyId, { expiresAt });
+  metadataCache.set(spotifyId, { expiresAt, row: row || previous?.row || null });
   pruneCache();
 }
 
@@ -27,7 +28,7 @@ function metadataStateCached(spotifyId, now = Date.now()) {
   }
   metadataCache.delete(spotifyId);
   metadataCache.set(spotifyId, cached);
-  return true;
+  return cached;
 }
 
 export async function fetchTrackMetadata(track, config) {
@@ -181,7 +182,7 @@ async function repairMetadataFromIsrc(db, tracks, now) {
         JSON.stringify(row.raw),
       )));
   }
-  return new Set(repairs.map((row) => row.spotify_id));
+  return repairs;
 }
 
 export function resetTrackMetadataQueueCache() {
@@ -194,25 +195,37 @@ export async function enrichTracks(env, ingestFn, queue, observedAt, config) {
     if (track?.spotify_id) unique.set(String(track.spotify_id), track);
   }
   const candidates = [...unique.values()];
-  if (!candidates.length) return 0;
+  const withDetails = config?.returnDetails === true;
+  if (!candidates.length) return withDetails ? { saved: 0, rows: [] } : 0;
 
   const now = Date.now();
-  const uncached = candidates.filter((track) => !metadataStateCached(String(track.spotify_id), now));
-  if (!uncached.length) return 0;
+  const cachedRows = [];
+  const uncached = [];
+  for (const track of candidates) {
+    const cached = metadataStateCached(String(track.spotify_id), now);
+    if (cached) {
+      if (cached.row) cachedRows.push(cached.row);
+    } else {
+      uncached.push(track);
+    }
+  }
+  if (!uncached.length) return withDetails ? { saved: 0, rows: cachedRows } : 0;
 
   const spotifyIds = uncached.map((track) => String(track.spotify_id));
   const placeholders = spotifyIds.map(() => '?').join(',');
-  const stored = await env.DB.prepare(`SELECT spotify_id,title,artist,fetched_at
+  const stored = await env.DB.prepare(`SELECT spotify_id,title,artist,thumbnail_url,fetched_at
     FROM sh_track_metadata WHERE spotify_id IN (${placeholders})`)
     .bind(...spotifyIds).all();
   const storedById = new Map((stored.results || []).map((item) => [String(item.spotify_id), item]));
+  const detailRows = new Map(cachedRows.map((row) => [String(row.spotify_id), row]));
+  for (const row of stored.results || []) detailRows.set(String(row.spotify_id), row);
 
   const complete = new Set();
   for (const item of stored.results || []) {
     const spotifyId = String(item.spotify_id);
     if (completeMetadata(item, spotifyId)) {
       complete.add(spotifyId);
-      cacheMetadataState(spotifyId, now + COMPLETE_CACHE_MS);
+      cacheMetadataState(spotifyId, now + COMPLETE_CACHE_MS, item);
     }
   }
 
@@ -224,9 +237,11 @@ export async function enrichTracks(env, ingestFn, queue, observedAt, config) {
   const repairCandidates = metadataRepairCandidates(unresolved, repairLimit);
   if (repairCandidates.length) {
     const repaired = await repairMetadataFromIsrc(env.DB, repairCandidates, now);
-    for (const spotifyId of repaired) {
+    for (const item of repaired) {
+      const spotifyId = String(item.spotify_id);
       complete.add(spotifyId);
-      cacheMetadataState(spotifyId, now + COMPLETE_CACHE_MS);
+      detailRows.set(spotifyId, item);
+      cacheMetadataState(spotifyId, now + COMPLETE_CACHE_MS, item);
     }
   }
 
@@ -236,12 +251,14 @@ export async function enrichTracks(env, ingestFn, queue, observedAt, config) {
     const storedItem = storedById.get(spotifyId);
     if (!metadataNeedsRefresh(storedItem, spotifyId, now)) {
       const fetchedAt = Number(storedItem?.fetched_at || now);
-      cacheMetadataState(spotifyId, Math.max(now + 60_000, fetchedAt + RETRY_MS));
+      cacheMetadataState(spotifyId, Math.max(now + 60_000, fetchedAt + RETRY_MS), storedItem);
       return false;
     }
     return true;
   });
-  if (!retryable.length || metadataLimit <= 0) return 0;
+  if (!retryable.length || metadataLimit <= 0) {
+    return withDetails ? { saved: 0, rows: [...detailRows.values()] } : 0;
+  }
 
   const missing = retryable.slice(0, metadataLimit);
   const metadata = [];
@@ -262,11 +279,15 @@ export async function enrichTracks(env, ingestFn, queue, observedAt, config) {
       cacheMetadataState(
         spotifyId,
         completeMetadata(item, spotifyId) ? now + COMPLETE_CACHE_MS : now + RETRY_MS,
+        item,
       );
+      detailRows.set(spotifyId, item);
     }
   }
   for (const spotifyId of failedIds) {
-    cacheMetadataState(spotifyId, now + FAILURE_RETRY_MS);
+    cacheMetadataState(spotifyId, now + FAILURE_RETRY_MS, storedById.get(spotifyId));
   }
-  return metadata.length;
+  return withDetails
+    ? { saved: metadata.length, rows: [...detailRows.values()] }
+    : metadata.length;
 }
