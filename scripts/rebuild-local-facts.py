@@ -35,6 +35,8 @@ TRANSIENT_TABLES = {
     "sh_queue_read_model_current",
     "sh_collector_read_model",
     "sh_migration_state",
+    "sh_playback_current",
+    "sh_system_settings",
 }
 
 
@@ -405,9 +407,8 @@ def write_upload_files(facts: sqlite3.Connection, out_dir: Path, rows_per_file: 
     ordered = [
         "sh_hosts", "sh_host_aliases", "sh_tracks", "sh_track_aliases",
         "sh_broadcast_sessions", "sh_queue_revisions", "sh_queue_revision_items",
-        "sh_queue_state_events", "sh_playback_current", "sh_track_bite_observations",
+        "sh_queue_state_events", "sh_track_bite_observations",
         "sh_minute_fact_collectors", "sh_minute_facts", "sh_minute_fact_context",
-        "sh_system_settings",
     ]
     existing = {row[0] for row in facts.execute("SELECT name FROM sqlite_master WHERE type='table'")}
     ordered = [table for table in ordered if table in existing and table not in TRANSIENT_TABLES]

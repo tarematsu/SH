@@ -1,6 +1,6 @@
 {
   "binding": "FACTS_DB",
   "database_name": "stationhead-minute",
-  "database_id": "c2661253-5e1b-4060-a7b4-acf6dc2a8988",
+  "database_id": "43c12c1e-886d-4496-9c37-61bc8a15bbd7",
   "schema": "database/facts-migrations/005_minute_comment_tasks.sql"
 }

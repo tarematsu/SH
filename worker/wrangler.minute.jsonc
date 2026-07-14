@@ -20,7 +20,6 @@
     "REBUILD_MAX_JOBS": 4,
     "REBUILD_RECENT_GUARD_MS": 900000,
     "REBUILD_MAX_CARRY_MINUTES": 5,
-    "MINUTE_FACTS_BACKFILL_BATCH": 250,
     "MINUTE_FACT_PENDING_ALERT_MS": 900000,
     "MINUTE_FACT_DEAD_REQUEUE_LIMIT": 20,
     "MINUTE_FACT_AUTO_REQUEUE_DEAD": false
@@ -28,8 +27,7 @@
   "triggers": { "crons": ["* * * * *"] },
   "d1_databases": [
     { "binding": "BUDDIES_DB", "database_name": "stationhead-buddies", "database_id": "f361aae0-05f0-42bc-8784-77100e80133d" },
-    { "binding": "LEGACY_DB", "database_name": "stationhead-legacy", "database_id": "5d5f0d47-7951-4900-821a-e1907c7e890b" },
-    { "binding": "FACTS_DB", "database_name": "stationhead-minute", "database_id": "c2661253-5e1b-4060-a7b4-acf6dc2a8988" }
+    { "binding": "FACTS_DB", "database_name": "stationhead-minute", "database_id": "43c12c1e-886d-4496-9c37-61bc8a15bbd7" }
   ],
   "queues": {
     "consumers": [

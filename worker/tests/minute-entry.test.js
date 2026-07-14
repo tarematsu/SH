@@ -4,19 +4,16 @@ import test from 'node:test';
 import minuteApp, {
   activeMinuteHealthTasks,
   MINUTE_FACT_DERIVE_CRON,
-  MINUTE_FACT_LEGACY_CRON,
   MINUTE_FACT_REBUILD_CRON,
   MINUTE_FACT_RECOVERY_MINUTE,
   MINUTE_FACT_WORKER_CRON,
   minuteStaggerApplies,
   runMinuteScheduled,
 } from '../src/minute-entry.js';
-import { legacyFact } from '../src/minute-facts-legacy-backfill.js';
 
-test('minute worker routes dedicated derive, rebuild and legacy crons', async () => {
+test('minute worker routes derive and rebuild through the buddies source only', async () => {
   const buddiesDb = { name: 'buddies' };
-  const legacyDb = { name: 'legacy' };
-  const env = { BUDDIES_DB: buddiesDb, LEGACY_DB: legacyDb };
+  const env = { BUDDIES_DB: buddiesDb };
 
   assert.equal(await runMinuteScheduled({ cron: MINUTE_FACT_DERIVE_CRON }, env, {
     runDerive: async (activeEnv) => {
@@ -30,29 +27,20 @@ test('minute worker routes dedicated derive, rebuild and legacy crons', async ()
       return 'rebuild';
     },
   }), 'rebuild');
-  assert.equal(await runMinuteScheduled({ cron: MINUTE_FACT_LEGACY_CRON }, env, {
-    runLegacy: async (activeEnv) => {
-      assert.equal(activeEnv.DB, legacyDb);
-      return 'legacy';
-    },
-  }), 'legacy');
   assert.equal(Object.hasOwn(env, 'DB'), false);
 });
-
-test('single minute-worker cron runs derive, rebuild and legacy in separate slots', async () => {
+test('single minute-worker cron runs derive and rebuild in separate slots', async () => {
   const calls = [];
-  const env = { BUDDIES_DB: { name: 'buddies' }, LEGACY_DB: { name: 'legacy' } };
+  const env = { BUDDIES_DB: { name: 'buddies' } };
   const run = (minute) => runMinuteScheduled({ cron: MINUTE_FACT_WORKER_CRON, scheduledTime: minute * 60_000 }, env, {
     runDerive: async (activeEnv) => { calls.push(`derive:${activeEnv.DB.name}`); return 'derive'; },
     runRebuild: async (activeEnv) => { calls.push(`rebuild:${activeEnv.DB.name}`); return 'rebuild'; },
-    runLegacy: async (activeEnv) => { calls.push(`legacy:${activeEnv.DB.name}`); return 'legacy'; },
   });
   assert.equal(await run(2), 'derive');
   assert.equal(await run(7), 'rebuild');
-  assert.equal(await run(9), 'legacy');
-  assert.deepEqual(calls, ['derive:buddies', 'rebuild:buddies', 'legacy:legacy']);
+  assert.deepEqual(await run(9), { skipped: true, reason: 'not-due', minute: 9 });
+  assert.deepEqual(calls, ['derive:buddies', 'rebuild:buddies']);
 });
-
 test('minute worker retries a bounded set of dead jobs in its recovery slot', async () => {
   const result = await runMinuteScheduled({ cron: MINUTE_FACT_WORKER_CRON, scheduledTime: MINUTE_FACT_RECOVERY_MINUTE * 60_000 }, { MINUTE_FACT_AUTO_REQUEUE_DEAD: true }, {
     requeueDead: async (_env, options) => ({ requeued: options.limit }),
@@ -65,10 +53,9 @@ test('minute worker has dedicated name, source bindings and one routing cron', (
   assert.equal(config.name, 'sh-monitor-minute');
   assert.equal(config.main, 'src/minute-entry.js');
   assert.deepEqual(config.triggers.crons, [MINUTE_FACT_WORKER_CRON]);
-  assert.deepEqual(config.d1_databases.map(({ binding }) => binding), ['BUDDIES_DB', 'LEGACY_DB', 'FACTS_DB']);
+  assert.deepEqual(config.d1_databases.map(({ binding }) => binding), ['BUDDIES_DB', 'FACTS_DB']);
   assert.deepEqual(config.d1_databases.map(({ database_name }) => database_name), [
     'stationhead-buddies',
-    'stationhead-legacy',
     'stationhead-minute',
   ]);
 });
@@ -76,20 +63,18 @@ test('minute worker has dedicated name, source bindings and one routing cron', (
 test('minute stagger applies only to shared source database jobs', () => {
   assert.equal(minuteStaggerApplies({ cron: MINUTE_FACT_DERIVE_CRON }), false);
   assert.equal(minuteStaggerApplies({ cron: MINUTE_FACT_REBUILD_CRON }), true);
-  assert.equal(minuteStaggerApplies({ cron: MINUTE_FACT_LEGACY_CRON }), true);
   assert.equal(minuteStaggerApplies({ cron: MINUTE_FACT_WORKER_CRON, scheduledTime: 2 * 60_000 }), false);
   assert.equal(minuteStaggerApplies({ cron: MINUTE_FACT_WORKER_CRON, scheduledTime: 7 * 60_000 }), true);
   assert.equal(minuteStaggerApplies({ cron: MINUTE_FACT_WORKER_CRON, scheduledTime: 9 * 60_000 }), true);
 });
 
-test('minute health includes derive, recovery, rebuild and legacy jobs', () => {
+test('minute health includes only active derive, recovery and rebuild jobs', () => {
   assert.deepEqual(activeMinuteHealthTasks([
     { task_name: 'derive' },
     { task_name: 'recovery' },
-    { task_name: 'legacy' },
     { task_name: 'rebuild' },
     { task_name: 'retired' },
-  ]).map(({ task_name }) => task_name), ['derive', 'recovery', 'legacy', 'rebuild']);
+  ]).map(({ task_name }) => task_name), ['derive', 'recovery', 'rebuild']);
 });
 
 test('minute worker /health responses are cached across repeated requests', async () => {
@@ -126,18 +111,3 @@ test('minute worker /health responses are cached across repeated requests', asyn
   assert.equal(reads, 1);
 });
 
-test('legacy facts use the current numeric source and track-detection columns', () => {
-  const fact = legacyFact({
-    row: { source_id: 1, observed_at: 120_000 },
-    channelId: 10,
-    hostId: null,
-    trackId: 7,
-    sessionId: 3,
-    source: 'legacy_normalized',
-    sourcePriority: 80,
-  });
-  assert.equal(fact.source_code, 3);
-  assert.equal(fact.track_detection_code, 0);
-  assert.equal('source' in fact, false);
-  assert.equal('track_detection_method' in fact, false);
-});

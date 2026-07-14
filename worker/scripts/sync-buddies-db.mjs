@@ -11,7 +11,10 @@ import {
 
 const workerRoot = resolve(import.meta.dirname, '..');
 const wranglerScript = resolve(workerRoot, 'node_modules/wrangler/bin/wrangler.js');
-const source = process.env.BUDDIES_SOURCE_DATABASE_NAME || 'stationhead-monitor';
+const source = process.env.BUDDIES_SOURCE_DATABASE_NAME;
+if (!source) {
+  throw new Error('BUDDIES_SOURCE_DATABASE_NAME is required; refusing to use an implicit legacy database');
+}
 const target = process.env.BUDDIES_DATABASE_NAME || 'stationhead-buddies';
 const mode = process.argv.find((arg) => arg.startsWith('--mode='))?.slice('--mode='.length) || 'verify';
 
