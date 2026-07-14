@@ -1,25 +1,9 @@
-import { DEFER_BUDDY_PLAYBACK_FLAG } from './cadenced-entry.js';
-import { DEFER_AUXILIARY_RUNNERS_FLAG } from './scheduled-main.js';
-import resilientApp from './resilient-entry.js';
-
-export function withBuddyPlaybackDeferred(env = {}) {
-  return new Proxy(env, {
-    get(target, property, receiver) {
-      if (property === DEFER_BUDDY_PLAYBACK_FLAG) return true;
-      if (property === DEFER_AUXILIARY_RUNNERS_FLAG) return true;
-      return Reflect.get(target, property, receiver);
-    },
-    has(target, property) {
-      return property === DEFER_BUDDY_PLAYBACK_FLAG
-        || property === DEFER_AUXILIARY_RUNNERS_FLAG
-        || Reflect.has(target, property);
-    },
-  });
-}
+import './fetch-guard.js';
+import primaryApp from './scheduled-main.js';
 
 export async function runProductionScheduled(controller, env, ctx, dependencies = {}) {
-  const app = dependencies.app || resilientApp;
-  return app.scheduled(controller, withBuddyPlaybackDeferred(env), ctx);
+  const app = dependencies.app || primaryApp;
+  return app.scheduled(controller, env, ctx);
 }
 
 export async function runProductionCron(controller, env, ctx, dependencies = {}) {
@@ -37,6 +21,6 @@ export default {
 
   async fetch(request, env, ctx) {
     if (isFaviconRequest(request)) return new Response(null, { status: 204 });
-    return resilientApp.fetch(request, env, ctx);
+    return Response.json({ ok: false, error: 'not found' }, { status: 404 });
   },
 };

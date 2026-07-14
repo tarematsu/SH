@@ -143,7 +143,7 @@ test('successful primary cycles never expire a lease using a throttled timestamp
   assert.equal(expirations, 0);
 });
 
-test('failed primary cycles expire the lease and preserve the primary error', async () => {
+test('failed primary cycles preserve the primary error without lease coordination', async () => {
   let expirations = 0;
   const expected = new Error('primary failed');
   await assert.rejects(
@@ -157,5 +157,5 @@ test('failed primary cycles expire the lease and preserve the primary error', as
     }),
     (error) => error === expected,
   );
-  assert.equal(expirations, 1);
+  assert.equal(expirations, 0);
 });

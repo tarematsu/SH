@@ -2,129 +2,58 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
-import {
+import productionApp, {
   runProductionCron,
   runProductionScheduled,
-  withBuddyPlaybackDeferred,
 } from '../src/production-entry.js';
 
-
-test.skip('production cron runs primary before buddy46 collection', async () => {
+test('production cron delegates only to the primary collection app', async () => {
   const calls = [];
-  const waitUntilTasks = [];
   const controller = { scheduledTime: 300_000, cron: '* * * * *' };
   const env = { marker: true };
-  const ctx = { waitUntil(task) { waitUntilTasks.push(task); } };
-
+  const ctx = {};
   const result = await runProductionScheduled(controller, env, ctx, {
-    scheduleBuddyPlayback(receivedEnv, receivedCtx, scheduledAt) {
-      calls.push(['buddy', receivedEnv, receivedCtx, scheduledAt]);
-      return Promise.resolve('buddy-done');
-    },
     app: {
       async scheduled(receivedController, receivedEnv, receivedCtx) {
-        calls.push(['primary', receivedController, receivedEnv, receivedCtx]);
-        return 'done';
+        calls.push([receivedController, receivedEnv, receivedCtx]);
+        return 'primary-done';
       },
     },
   });
 
-  assert.equal(result, 'done');
-  assert.equal(calls.length, 2);
-  assert.equal(calls[0][0], 'primary');
-  assert.equal(calls[0][1], controller);
-  assert.equal(calls[0][2].marker, true);
-  assert.equal(calls[0][2].__DEFER_BUDDY_PLAYBACK, true);
-  assert.equal(calls[0][3], ctx);
-  assert.equal(calls[1][0], 'buddy');
-  assert.equal(calls[1][1], env);
-  assert.equal(calls[1][2].waitUntil, undefined);
-  assert.equal(calls[1][3], 300_000);
-  assert.equal(waitUntilTasks.length, 1);
-  assert.equal(await waitUntilTasks[0], 'buddy-done');
+  assert.equal(result, 'primary-done');
+  assert.deepEqual(calls, [[controller, env, ctx]]);
+  assert.equal(await runProductionCron(controller, env, ctx, {
+    app: { scheduled: async () => 'cron-done' },
+  }), 'cron-done');
 });
 
-test.skip('production cron attaches buddy46 collection to waitUntil after primary completes', async () => {
-  const calls = [];
-  const waitUntilTasks = [];
-  let releaseBuddy;
-  const buddyGate = new Promise((resolve) => { releaseBuddy = resolve; });
-  const run = runProductionScheduled(
-    { scheduledTime: 300_000 },
-    {},
-    { waitUntil(task) { waitUntilTasks.push(task); } },
-    {
-      scheduleBuddyPlayback() {
-        calls.push('buddy-start');
-        return buddyGate.then(() => calls.push('buddy-done'));
-      },
-      app: {
-        async scheduled() {
-          calls.push('primary-done');
-          return 'done';
-        },
-      },
-    },
-  );
+test('buddies worker exposes no HTTP control or health endpoints', async () => {
+  const requests = [
+    new Request('https://buddies.test/'),
+    new Request('https://buddies.test/health'),
+    new Request('https://buddies.test/run', { method: 'POST' }),
+    new Request('https://buddies.test/refresh-auth', { method: 'POST' }),
+    new Request('https://buddies.test/coordination/lease'),
+    new Request('https://buddies.test/ingest/email-recap', { method: 'POST' }),
+  ];
 
-  await Promise.resolve();
-  assert.deepEqual(calls, ['primary-done', 'buddy-start']);
-  assert.equal(await run, 'done');
-  assert.equal(waitUntilTasks.length, 1);
-  assert.deepEqual(calls, ['primary-done', 'buddy-start']);
-  releaseBuddy();
-  await waitUntilTasks[0];
-  assert.deepEqual(calls, ['primary-done', 'buddy-start', 'buddy-done']);
+  for (const request of requests) {
+    const response = await productionApp.fetch(request, {}, {});
+    assert.equal(response.status, 404, `${request.method} ${new URL(request.url).pathname}`);
+  }
+  assert.equal((await productionApp.fetch(new Request('https://buddies.test/favicon.ico'), {}, {})).status, 204);
 });
 
-test.skip('production cron still schedules buddy46 after a primary failure', async () => {
-  const calls = [];
-  const waitUntilTasks = [];
-  const primaryError = new Error('primary failed');
-  const run = runProductionScheduled(
-    { scheduledTime: 300_000 },
-    {},
-    { waitUntil(task) { waitUntilTasks.push(task); } },
-    {
-      scheduleBuddyPlayback() {
-        calls.push('buddy-start');
-        return Promise.resolve('buddy-done');
-      },
-      app: {
-        async scheduled() {
-          calls.push('primary-start');
-          throw primaryError;
-        },
-      },
-    },
-  );
-
-  await assert.rejects(run, primaryError);
-  assert.deepEqual(calls, ['primary-start', 'buddy-start']);
-  assert.equal(waitUntilTasks.length, 1);
-  assert.equal(await waitUntilTasks[0], 'buddy-done');
-});
-
-test('production primary env defers inner buddy playback without mutating the original env', () => {
-  const env = { marker: true };
-  const deferred = withBuddyPlaybackDeferred(env);
-  assert.notEqual(deferred, env);
-  assert.equal(deferred.marker, true);
-  assert.equal(deferred.__DEFER_BUDDY_PLAYBACK, true);
-  assert.equal('__DEFER_BUDDY_PLAYBACK' in deferred, true);
-  assert.equal(env.__DEFER_BUDDY_PLAYBACK, undefined);
-});
-
-test('production primary env also defers weekly/prediction/maintenance/host auxiliaries to the other worker', () => {
-  const env = { marker: true };
-  const deferred = withBuddyPlaybackDeferred(env);
-  assert.equal(deferred.__DEFER_AUXILIARY_RUNNERS, true);
-  assert.equal('__DEFER_AUXILIARY_RUNNERS' in deferred, true);
-  assert.equal(env.__DEFER_AUXILIARY_RUNNERS, undefined);
-});
-
-test('collector Wrangler configuration only deploys the capture cron', () => {
+test('buddies Wrangler configuration contains only primary-collector settings and bindings', () => {
   const config = JSON.parse(readFileSync(new URL('../wrangler.jsonc', import.meta.url), 'utf8'));
   assert.equal(config.main, 'src/production-entry.js');
   assert.deepEqual(config.triggers?.crons, ['* * * * *']);
+  assert.deepEqual(config.d1_databases.map(({ binding }) => binding), ['DB', 'FACTS_DB']);
+
+  const names = Object.keys(config.vars || {});
+  for (const prefix of ['BUDDY_PLAYBACK_', 'HOST_', 'SOLO_', 'OFFICIAL_NEWS_', 'DERIVE_', 'HEALTH_ALERT_']) {
+    assert.equal(names.some((name) => name.startsWith(prefix)), false, prefix);
+  }
+  assert.equal('DATA_MAINTENANCE_ENABLED' in config.vars, false);
 });

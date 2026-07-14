@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
-import { runOfficialNewsWithReconcile, runOtherScheduled } from '../src/other-entry.js';
+import otherApp, { runOfficialNewsWithReconcile, runOtherScheduled } from '../src/other-entry.js';
 
 test('other worker scheduled run drives buddy playback, host, prediction, maintenance, official news, and snapshot retention', async () => {
   const calls = [];
@@ -123,4 +123,56 @@ test('other worker Wrangler configuration deploys every minute against a shared 
   assert.equal(config.name, 'sh-monitor-other');
   assert.equal(config.main, 'src/other-entry.js');
   assert.deepEqual(config.triggers?.crons, ['* * * * *']);
+});
+
+test('other worker owns the public health endpoint', async () => {
+  const now = Date.now();
+  function dbFor(kind) {
+    return {
+      prepare(sql) {
+        return {
+          bind() { return this; },
+          async first() {
+            if (kind === 'other' && sql.includes('sh_official_news_monitor_state')) {
+              return { last_check_at: now, last_success_at: now, upcoming_count: 1, active_count: 0 };
+            }
+            if (kind === 'other' && sql.includes('sh_cloud_host_monitor_state')) {
+              return { phase: 'idle', last_success_at: now };
+            }
+            if (sql.includes('collector_state.auth_token')) {
+              return {
+                auth_token: 'token',
+                device_uid: 'device',
+                collector_last_run_at: now,
+                collector_last_success_at: now,
+                collector_updated_at: now,
+                control_id: 'stationhead',
+                last_success_at: now,
+              };
+            }
+            if (sql.includes('sh_health_alert_state')) {
+              return {
+                last_run_at: now,
+                last_success_at: now,
+                alert_table_ready: true,
+                delivery_table_ready: true,
+              };
+            }
+            return null;
+          },
+        };
+      },
+    };
+  }
+
+  const env = { DB: dbFor('primary'), OTHER_DB: dbFor('other') };
+  const response = await otherApp.fetch(new Request('https://other.test/health'), env, {});
+  const payload = await response.json();
+
+  assert.equal(response.status, 200);
+  assert.equal(payload.ok, true);
+  assert.equal(payload.collector_health_ok, true);
+  assert.equal(payload.official_news_upcoming_count, 1);
+  assert.equal(payload.cloud_solo_phase, 'idle');
+  assert.equal((await otherApp.fetch(new Request('https://other.test/run', { method: 'POST' }), env, {})).status, 404);
 });

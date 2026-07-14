@@ -19,7 +19,7 @@ function statementResult(row, calls) {
 
 function workerConfig() {
   return JSON.parse(readFileSync(
-    new URL('../wrangler.jsonc', import.meta.url),
+    new URL('../wrangler.other.jsonc', import.meta.url),
     'utf8'
   ));
 }

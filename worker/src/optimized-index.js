@@ -1,4 +1,5 @@
 import collector from './index.js';
+import { health as collectorHealth } from './collector-http.js';
 import { jsonResponse as json, normalizeBearer, jwtExpiryMs, positiveNumber as positive } from './shared.js';
 import { ensureAuthControlRow, readAuthState } from './auth-state.js';
 import { combinedAbortSignal } from './request-signal.js';
@@ -253,11 +254,6 @@ function is401(value) {
   return /\b401\b|session expired/i.test(String(value?.message || value));
 }
 
-function authorized(request, env) {
-  const expected = String(env.RUN_SECRET || '').trim();
-  return Boolean(expected) && request.headers.get('authorization') === `Bearer ${expected}`;
-}
-
 export function authHealth(state) {
   return {
     auth_method: 'direct-api',
@@ -275,65 +271,38 @@ export function authHealth(state) {
   };
 }
 
-export default {
-  async scheduled(controller, env, ctx) {
+export async function runOptimizedScheduled(controller, env, ctx) {
+  try {
+    let state = await ensureSession(env);
+    if (!state?.authToken || !state?.deviceUid) {
+      console.warn(JSON.stringify({ event: 'sh_auth_backoff' }));
+      return;
+    }
+
     try {
-      let state = await ensureSession(env);
-      if (!state?.authToken || !state?.deviceUid) {
-        console.warn(JSON.stringify({ event: 'sh_auth_backoff' }));
-        return;
-      }
-
-      try {
-        await collector.scheduled(controller, withAuthState(env, state), ctx);
-      } catch (error) {
-        if (!is401(error)) throw error;
-        state = await refreshSession(env, 'api-401', true);
-        if (!state) throw error;
-        await collector.scheduled(controller, withAuthState(env, state), ctx);
-      }
+      await collector.scheduled(controller, withAuthState(env, state), ctx);
     } catch (error) {
-      console.error(error);
+      if (!is401(error)) throw error;
+      state = await refreshSession(env, 'api-401', true);
+      if (!state) throw error;
+      await collector.scheduled(controller, withAuthState(env, state), ctx);
     }
-  },
+  } catch (error) {
+    console.error(error);
+  }
+}
 
-  async fetch(request, env, ctx) {
-    const url = new URL(request.url);
+export async function readOptimizedHealth(env) {
+  const state = await readAuthState(env, STATE_ID);
+  const base = await collectorHealth(withAuthState(env, state));
+  return json({ ...base, ...authHealth(state) });
+}
 
-    if (request.method === 'POST' && url.pathname === '/refresh-auth') {
-      if (!authorized(request, env)) return json({ ok: false, error: 'unauthorized' }, 401);
-      try {
-        const state = await refreshSession(env, 'manual-refresh', true);
-        return json({ ok: Boolean(state), token_expires_at: state?.tokenExpiresAt || null });
-      } catch (error) {
-        return json({ ok: false, error: error?.message || String(error) }, 500);
-      }
-    }
+export async function handleOptimizedRequest() {
+  return json({ ok: false, error: 'not found' }, 404);
+}
 
-    if (request.method === 'GET' && (url.pathname === '/' || url.pathname === '/health')) {
-      const state = await readAuthState(env, STATE_ID);
-      const baseResponse = await collector.fetch(request, withAuthState(env, state), ctx);
-      const base = await baseResponse.json().catch(() => ({}));
-      return json({ ...base, ...authHealth(state) }, baseResponse.status);
-    }
-
-    if (request.method === 'POST' && url.pathname === '/run') {
-      if (!authorized(request, env)) return json({ ok: false, error: 'unauthorized' }, 401);
-      try {
-        let state = await ensureSession(env);
-        if (!state?.authToken || !state?.deviceUid) return json({ ok: false, error: 'authentication backoff' }, 503);
-        let response = await collector.fetch(request, withAuthState(env, state), ctx);
-        if (response.status === 500 && is401(await response.clone().text().catch(() => ''))) {
-          state = await refreshSession(env, 'api-401', true);
-          if (!state) return response;
-          response = await collector.fetch(request, withAuthState(env, state), ctx);
-        }
-        return response;
-      } catch (error) {
-        return json({ ok: false, error: error?.message || String(error) }, 500);
-      }
-    }
-
-    return collector.fetch(request, env, ctx);
-  },
+export default {
+  scheduled: runOptimizedScheduled,
+  fetch: handleOptimizedRequest,
 };

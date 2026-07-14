@@ -1,7 +1,4 @@
-import app from './email-recap-index.js';
-import { runCloudHostMonitor } from './cloud-host-monitor.js';
 import { claimPrimaryRunLock, releasePrimaryRunLock } from './primary-run-lock.js';
-import { runScheduledMaintenance } from './scheduled-maintenance.js';
 
 const DEFAULT_PRIMARY_WATCHDOG_MS = 55_000;
 const MIN_PRIMARY_WATCHDOG_MS = 10_000;
@@ -10,10 +7,7 @@ const MAX_PRIMARY_WATCHDOG_MS = 55_000;
 export const COLLECTION_ABORT_SIGNAL = '__COLLECTION_ABORT_SIGNAL';
 export const COLLECTION_DEADLINE_AT = '__COLLECTION_DEADLINE_AT';
 
-const DEFAULT_AUXILIARY_RUNNERS = Object.freeze({
-  maintenance: { failureEvent: 'data_maintenance_failed', run: runScheduledMaintenance },
-  host: { failureEvent: 'cloud_host_monitor_failed', run: runCloudHostMonitor, onFailureOnly: true },
-});
+const NO_AUXILIARY_RUNNERS = Object.freeze({});
 
 let primaryFlightsByContext = new WeakMap();
 
@@ -48,7 +42,7 @@ export function withCollectionRuntime(env = {}, signal = null, deadlineAt = null
   });
 }
 
-function startAuxiliaryOnce(flight, env, includeFailureOnly, runners = DEFAULT_AUXILIARY_RUNNERS) {
+function startAuxiliaryOnce(flight, env, includeFailureOnly, runners = NO_AUXILIARY_RUNNERS) {
   const tasks = Object.entries(runners).flatMap(([name, task]) => {
     const definition = typeof task === 'function' ? {} : (task || {});
     const runner = typeof task === 'function' ? task : task?.run;
@@ -78,7 +72,7 @@ function releaseRequestFlight(ctx, flight) {
 }
 
 function runLockHolderId(now) {
-  return `${now}-${Math.random().toString(36).slice(2, 10)}`;
+  return `${now}-${crypto.randomUUID()}`;
 }
 
 // Only releases the lock when `scheduled` resolves normally. On abort/error
@@ -130,7 +124,7 @@ export async function runPrimaryScheduled(
   controller,
   env,
   ctx,
-  scheduled = app.scheduled.bind(app),
+  scheduled,
   timeoutOverride = null,
   options = {},
 ) {
@@ -169,7 +163,7 @@ export async function runPrimaryScheduled(
       flight,
       env,
       false,
-      options.auxiliaryRunners || DEFAULT_AUXILIARY_RUNNERS,
+      options.auxiliaryRunners || NO_AUXILIARY_RUNNERS,
     );
     if (typeof ctx?.waitUntil === 'function') ctx.waitUntil(auxiliary);
     else await auxiliary;
@@ -179,7 +173,7 @@ export async function runPrimaryScheduled(
       flight,
       env,
       true,
-      options.auxiliaryRunners || DEFAULT_AUXILIARY_RUNNERS,
+      options.auxiliaryRunners || NO_AUXILIARY_RUNNERS,
     );
     if (typeof ctx?.waitUntil === 'function') ctx.waitUntil(auxiliary);
     else await auxiliary;

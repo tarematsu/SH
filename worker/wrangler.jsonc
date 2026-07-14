@@ -13,36 +13,11 @@
     "SH_APP_VERSION": "1.0.0",
     "COLLECTOR_ID": "cloudflare-worker",
     "METADATA_LIMIT": 1,
-    "DERIVE_MAX_JOBS": 8,
-    "DERIVE_JOB_TIMEOUT_MS": 18000,
-    "DERIVE_LEASE_MS": 60000,
-    "DERIVE_MAX_ATTEMPTS": 8,
-    "DERIVE_RUN_BUDGET_MS": 50000,
-    "BUDDY_PLAYBACK_ENABLED": true,
-    "BUDDY_PLAYBACK_ALIAS": "buddy46",
-    "BUDDY_PLAYBACK_AUTH_STATE_ID": "buddy46",
-    "BUDDY_PLAYBACK_INTERVAL_MS": 10800000,
-    "BUDDY_PLAYBACK_MAX_TRACKS": 80,
-    "BUDDY_PLAYBACK_METADATA_LIMIT": 5,
     "REQUEST_TIMEOUT_MS": 8000,
     "AUTH_REFRESH_BEFORE_MS": 3600000,
     "AUTH_REFRESH_COOLDOWN_MS": 300000,
     "AUTH_FAILURE_BACKOFF_MS": 900000,
-    "AUTH_LOCK_MS": 60000,
-    "DATA_MAINTENANCE_ENABLED": false,
-    "HEALTH_ALERT_STALE_MS": 3600000,
-    "HEALTH_ALERT_RESEND_TIMEOUT_MS": 10000,
-    "HOST_PROFILE_HANDLE": "sakuramankai",
-    "HOST_PROFILE_ACCOUNT_ID": 3334889,
-    "HOST_PROFILE_INTERVAL_MS": 3600000,
-    "SOLO_BROADCAST_HANDLE": "sakurazaka46jp",
-    "SOLO_CONFIRM_POLLS": 2,
-    "SOLO_END_CONFIRM_POLLS": 3,
-    "SOLO_CHAT_LIMIT": 50,
-    "SOLO_PROFILE_INTERVAL_MS": 3600000,
-    "OFFICIAL_NEWS_CHECK_INTERVAL_MS": 3600000,
-    "OFFICIAL_NEWS_EARLY_WINDOW_MS": 600000,
-    "OFFICIAL_NEWS_BODY_SCAN_COUNT": 1
+    "AUTH_LOCK_MS": 60000
   },
   "triggers": {
     "crons": [
@@ -59,11 +34,6 @@
       "binding": "FACTS_DB",
       "database_name": "Stationhead-DB",
       "database_id": "c2661253-5e1b-4060-a7b4-acf6dc2a8988"
-    },
-    {
-      "binding": "OTHER_DB",
-      "database_name": "stationhead-other",
-      "database_id": "21e70e92-6725-4e62-809e-8aadb088cc11"
     }
   ]
 }

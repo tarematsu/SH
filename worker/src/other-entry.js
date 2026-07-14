@@ -5,9 +5,12 @@ import { withScheduledD1Optimizations } from './d1-scheduled-optimizer.js';
 import { reconcileOfficialAnnouncements } from './official-news-reconcile.js';
 import { runOfficialNewsMonitor } from './official-news-probe.js';
 import { officialNewsConfig } from './official-news-utils.js';
+import { createOtherHealthApp } from './other-health.js';
 import { runScheduledMaintenance } from './scheduled-maintenance.js';
 import { pruneOldSnapshotsSafely } from './snapshot-retention.js';
 import { runStreamGoalPrediction } from './stream-goal-prediction.js';
+
+const otherHealthApp = createOtherHealthApp();
 
 // If probe throws, reconcile is skipped (reconcile only makes sense once the
 // probe has actually run). In production runOfficialNewsMonitor catches its
@@ -44,5 +47,11 @@ export default {
     await applyCronStagger(env, 'other');
     return runOtherScheduled(controller, env, ctx);
   },
-  fetch() { return new Response('Not found', { status: 404 }); },
+  fetch(request, env, ctx) {
+    const url = new URL(request.url);
+    if (request.method === 'GET' && (url.pathname === '/' || url.pathname === '/health')) {
+      return otherHealthApp.fetch(request, env, ctx);
+    }
+    return Response.json({ ok: false, error: 'not found' }, { status: 404 });
+  },
 };

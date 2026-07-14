@@ -71,8 +71,9 @@ Invoke-Step "Apply D1 migrations" {
   }
 }
 
-Invoke-Step "Deploy Worker" {
+Invoke-Step "Deploy monitor Workers" {
   Invoke-External -FilePath "npx" -Arguments @("wrangler", "deploy", "--config", ".\wrangler.jsonc") -WorkingDirectory $workerRoot
+  Invoke-External -FilePath "npx" -Arguments @("wrangler", "deploy", "--config", ".\wrangler.other.jsonc") -WorkingDirectory $workerRoot
 }
 
 Invoke-Step "Site install and checks" {
@@ -89,7 +90,7 @@ Invoke-Step "Deploy Pages site" {
 }
 
 Invoke-Step "Verify Worker health" {
-  $response = Invoke-RestMethod "https://sh-monitor-buddies.tarematsu.workers.dev/health"
+  $response = Invoke-RestMethod "https://sh-monitor-other.tarematsu.workers.dev/health"
   $isHealthy = $false
   if ($response.PSObject.Properties.Name -contains "healthy") {
     $isHealthy = [bool]$response.healthy

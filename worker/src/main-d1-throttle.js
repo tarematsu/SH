@@ -3,29 +3,6 @@ const ORIGINAL_D1_STATEMENT = Symbol('original-d1-statement');
 export function rewriteThrottledSql(value) {
   let sql = String(value || '');
 
-  if (sql.includes('INSERT INTO sh_collector_leases') && !sql.includes('sh_collector_leases.updated_at >= 120000')) {
-    sql = sql.replace(
-      'metadata_json=excluded.metadata_json',
-      `metadata_json=excluded.metadata_json
-      WHERE excluded.updated_at-sh_collector_leases.updated_at >= 120000
-         OR excluded.holder_id IS NOT sh_collector_leases.holder_id
-         OR excluded.holder_kind IS NOT sh_collector_leases.holder_kind
-         OR excluded.priority IS NOT sh_collector_leases.priority
-         OR excluded.metadata_json IS NOT sh_collector_leases.metadata_json`,
-    );
-  }
-
-  if (sql.includes('INSERT INTO sh_collector_heartbeats') && !sql.includes('sh_collector_heartbeats.last_seen_at>=300000')) {
-    sql = sql.replace(
-      'version=excluded.version, metadata_json=excluded.metadata_json',
-      `version=excluded.version, metadata_json=excluded.metadata_json
-      WHERE excluded.last_seen_at-sh_collector_heartbeats.last_seen_at>=300000
-         OR excluded.hostname IS NOT sh_collector_heartbeats.hostname
-         OR excluded.version IS NOT sh_collector_heartbeats.version
-         OR excluded.metadata_json IS NOT sh_collector_heartbeats.metadata_json`,
-    );
-  }
-
   if (sql.includes('INSERT INTO sh_worker_collector_state') && !sql.includes('sh_worker_collector_state.last_success_at')) {
     sql = sql.replace(
       'updated_at=excluded.updated_at',
@@ -38,22 +15,6 @@ export function rewriteThrottledSql(value) {
          OR excluded.last_station_id IS NOT sh_worker_collector_state.last_station_id
          OR COALESCE(excluded.last_success_at,0)-COALESCE(sh_worker_collector_state.last_success_at,0)>=300000
          OR COALESCE(excluded.last_run_at,0)-COALESCE(sh_worker_collector_state.last_run_at,0)>=300000`,
-    );
-  }
-
-  if (sql.includes('INSERT INTO sh_cloud_host_monitor_state') && !sql.includes('sh_cloud_host_monitor_state.updated_at>=300000')) {
-    sql = sql.replace(
-      'last_error=excluded.last_error,updated_at=excluded.updated_at',
-      `last_error=excluded.last_error,updated_at=excluded.updated_at
-      WHERE excluded.phase IS NOT sh_cloud_host_monitor_state.phase
-         OR excluded.session_id IS NOT sh_cloud_host_monitor_state.session_id
-         OR excluded.station_id IS NOT sh_cloud_host_monitor_state.station_id
-         OR excluded.candidate_count IS NOT sh_cloud_host_monitor_state.candidate_count
-         OR excluded.inactive_count IS NOT sh_cloud_host_monitor_state.inactive_count
-         OR excluded.last_profile_at IS NOT sh_cloud_host_monitor_state.last_profile_at
-         OR excluded.last_queue_hash IS NOT sh_cloud_host_monitor_state.last_queue_hash
-         OR excluded.last_error IS NOT sh_cloud_host_monitor_state.last_error
-         OR excluded.updated_at-sh_cloud_host_monitor_state.updated_at>=300000`,
     );
   }
 

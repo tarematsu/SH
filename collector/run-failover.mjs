@@ -6,9 +6,6 @@ import { fileURLToPath } from 'node:url';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const mode = String(process.env.COLLECTOR_MODE || 'auto').trim().toLowerCase();
-const coordinationUrl = process.env.COORDINATION_URL
-  || 'https://sh-monitor-buddies.tarematsu.workers.dev/coordination/lease';
-const checkIntervalMs = positive('FAILOVER_CHECK_INTERVAL_MS', 60000);
 const graceMs = positive('FAILOVER_GRACE_MS', 180000);
 const shutdownTimeoutMs = positive('FAILOVER_SHUTDOWN_TIMEOUT_MS', 15000);
 const baseCollectorId = process.env.COLLECTOR_ID || os.hostname();
@@ -19,10 +16,6 @@ if (!['auto', 'active', 'standby'].includes(mode)) {
 
 let child = null;
 let stopping = false;
-let checking = false;
-let unreachableSince = 0;
-let lastCloudHealthy = null;
-let lastWarningAt = 0;
 
 function positive(name, fallback) {
   const value = Number(process.env[name] ?? fallback);
@@ -37,7 +30,6 @@ function log(level, message, extra = null) {
 
 function childCollectorId() {
   if (mode === 'active') return `${baseCollectorId}-active`;
-  if (mode === 'auto') return `${baseCollectorId}-auto`;
   return `${baseCollectorId}-standby`;
 }
 
@@ -80,66 +72,20 @@ async function stopCollector(reason) {
   }
 }
 
-async function cloudLease() {
-  const response = await fetch(coordinationUrl, {
-    headers: { accept: 'application/json' },
-    cache: 'no-store',
-    signal: AbortSignal.timeout(10000),
-  });
-  if (!response.ok) throw new Error(`coordination HTTP ${response.status}`);
-  const body = await response.json();
-  if (!body?.ok) throw new Error(body?.error || 'coordination response invalid');
-  return body;
-}
-
-async function evaluateAutoMode() {
-  if (checking || stopping) return;
-  checking = true;
-  try {
-    const lease = await cloudLease();
-    unreachableSince = 0;
-    lastWarningAt = 0;
-    const healthy = Boolean(lease.healthy && Number(lease.lease_until || 0) > Date.now());
-    if (healthy !== lastCloudHealthy) {
-      log('info', 'cloud lease state changed', {
-        healthy,
-        holder_id: lease.holder_id || null,
-        lease_until: lease.lease_until || null,
-      });
-      lastCloudHealthy = healthy;
-    }
-    if (healthy) await stopCollector('cloud lease healthy');
-    else startCollector('cloud lease expired');
-  } catch (error) {
-    const now = Date.now();
-    if (!unreachableSince) unreachableSince = now;
-    const elapsed = now - unreachableSince;
-    if (!lastWarningAt || now - lastWarningAt >= 300000) {
-      lastWarningAt = now;
-      log('warn', 'cloud coordination unavailable', { error: error.message, elapsed_ms: elapsed });
-    }
-    if (elapsed >= graceMs) startCollector('coordination unavailable past grace');
-  } finally {
-    checking = false;
-  }
-}
-
 async function run() {
   log('info', 'collector supervisor started', {
     mode,
-    coordination_url: coordinationUrl,
-    check_interval_ms: checkIntervalMs,
-    grace_ms: graceMs,
   });
 
   if (mode === 'active') startCollector('active mode');
   if (mode === 'standby') log('info', 'standby mode: collector will not be started');
-  if (mode === 'auto') await evaluateAutoMode();
+  if (mode === 'auto') {
+    log('warn', 'auto mode is deprecated because cloud lease coordination was removed; remaining in standby');
+  }
 
   const timer = setInterval(() => {
-    if (mode === 'auto') evaluateAutoMode().catch((error) => log('error', 'auto evaluation failed', { error: error.message }));
     if (mode === 'active' && !child) startCollector('active mode child restart');
-  }, checkIntervalMs);
+  }, graceMs);
 
   const shutdown = async (signal) => {
     if (stopping) return;
