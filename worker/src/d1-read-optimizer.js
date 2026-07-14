@@ -17,7 +17,7 @@ export function rewriteDuplicateVelocityRead(sql, chatEnabled = true) {
 
 function statementKind(sql) {
   const raw = String(sql || '');
-  if (!/sh_(?:collector_|worker_collector_state)/i.test(raw)) return null;
+  if (!raw.includes('sh_collector_') && !raw.includes('sh_worker_collector_state')) return null;
   const compact = raw.replace(/\s+/g, ' ').trim().toLowerCase();
   if (compact.startsWith('insert into sh_collector_heartbeats')) return 'heartbeat';
   if (compact.startsWith('delete from sh_collector_failure_state') && compact.includes('where id=?')) {

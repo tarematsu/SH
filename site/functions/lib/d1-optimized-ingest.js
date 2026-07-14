@@ -49,13 +49,33 @@ export function queueLikesPayload(tracks) {
 
 export function analyzeQueueLikes(tracks) {
   const unique = new Map();
+  let identifiable = 0;
+  let complete = true;
+  for (const track of Array.isArray(tracks) ? tracks : []) {
+    const trackKey = observationTrackKey(track);
+    if (!trackKey) continue;
+    identifiable += 1;
+    const likeCount = num(track?.bite_count);
+    if (likeCount == null) {
+      complete = false;
+      continue;
+    }
+    unique.set(trackKey, likeCount);
+  }
+  return {
+    complete: identifiable === 0 || complete,
+    payload: [...unique.entries()]
+      .map(([trackKey, likeCount]) => ({ track_key: trackKey, like_count: likeCount }))
+      .sort((left, right) => left.track_key.localeCompare(right.track_key)),
+  };
+}
+
+function analyzeQueueIdentity(tracks) {
   const trackKeys = new Set();
   const isrcs = new Set();
   const spotifyIds = new Set();
   const positions = [];
   const positionSet = new Set();
-  let identifiable = 0;
-  let complete = true;
   for (const track of Array.isArray(tracks) ? tracks : []) {
     const position = num(track?.position);
     if (position != null && !positionSet.has(position)) {
@@ -67,25 +87,13 @@ export function analyzeQueueLikes(tracks) {
     const spotifyId = normalizedTrackSpotifyId(track);
     if (!isrc && spotifyId) spotifyIds.add(spotifyId);
     const trackKey = observationTrackKey(track);
-    if (!trackKey) continue;
-    identifiable += 1;
-    trackKeys.add(trackKey);
-    const likeCount = num(track?.bite_count);
-    if (likeCount == null) {
-      complete = false;
-      continue;
-    }
-    unique.set(trackKey, likeCount);
+    if (trackKey) trackKeys.add(trackKey);
   }
   return {
-    complete: identifiable === 0 || complete,
     trackKeys: [...trackKeys],
     isrcs: [...isrcs],
     spotifyIds: [...spotifyIds],
     positions,
-    payload: [...unique.entries()]
-      .map(([trackKey, likeCount]) => ({ track_key: trackKey, like_count: likeCount }))
-      .sort((left, right) => left.track_key.localeCompare(right.track_key)),
   };
 }
 
@@ -416,14 +424,15 @@ export async function saveLeanQueue(db, observedAt, body) {
     }
   }
 
-  const positions = likeAnalysis.positions;
-  const currentTrackKeys = completeLikes ? likeAnalysis.trackKeys : [];
+  const queueIdentity = analyzeQueueIdentity(tracks);
+  const positions = queueIdentity.positions;
+  const currentTrackKeys = completeLikes ? queueIdentity.trackKeys : [];
   const { existingRows, latestRows } = await loadComparisonState(
     db,
     stationId,
     startTime,
     positions,
-    likeAnalysis,
+    queueIdentity,
     { includeItems: structureChanged, includeLikes: likesChanged },
   );
   const changedTracks = structureChanged
