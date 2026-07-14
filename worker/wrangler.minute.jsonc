@@ -23,8 +23,8 @@
   "triggers": { "crons": ["* * * * *"] },
   "d1_databases": [
     { "binding": "BUDDIES_DB", "database_name": "stationhead-buddies", "database_id": "f361aae0-05f0-42bc-8784-77100e80133d" },
-    { "binding": "LEGACY_DB", "database_name": "sh-monitor", "database_id": "5d5f0d47-7951-4900-821a-e1907c7e890b" },
-    { "binding": "FACTS_DB", "database_name": "Stationhead-DB", "database_id": "c2661253-5e1b-4060-a7b4-acf6dc2a8988" }
+    { "binding": "LEGACY_DB", "database_name": "stationhead-legacy", "database_id": "5d5f0d47-7951-4900-821a-e1907c7e890b" },
+    { "binding": "FACTS_DB", "database_name": "stationhead-minute", "database_id": "c2661253-5e1b-4060-a7b4-acf6dc2a8988" }
   ],
   "queues": {
     "consumers": [
