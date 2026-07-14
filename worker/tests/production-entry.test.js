@@ -47,7 +47,9 @@ test('buddies worker exposes no HTTP control or health endpoints', async () => {
 
 test('buddies Wrangler configuration contains only primary-collector settings and bindings', () => {
   const config = JSON.parse(readFileSync(new URL('../wrangler.jsonc', import.meta.url), 'utf8'));
+  const source = readFileSync(new URL('../src/production-entry.js', import.meta.url), 'utf8');
   assert.equal(config.main, 'src/production-entry.js');
+  assert.doesNotMatch(source, /fetch-guard/);
   assert.deepEqual(config.triggers?.crons, ['* * * * *']);
   assert.deepEqual(config.d1_databases.map(({ binding }) => binding), ['DB']);
   assert.equal(config.d1_databases[0].database_name, 'stationhead-buddies');

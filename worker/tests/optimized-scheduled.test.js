@@ -1,9 +1,15 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
 import { runOptimizedScheduled } from '../src/optimized-index.js';
 
 const AUTH_STATE = { authToken: 'token', deviceUid: 'device' };
+
+test('buddies primary auth path has no lock wait or failure backoff', () => {
+  const source = readFileSync(new URL('../src/optimized-index.js', import.meta.url), 'utf8');
+  assert.doesNotMatch(source, /waitForAuth|AUTH_FAILURE_BACKOFF_MS|chatFallbackResponse|setTimeout/);
+});
 
 test('optimized scheduled collection propagates collector failures', async () => {
   const failure = new Error('collector failed');
@@ -63,7 +69,7 @@ test('optimized scheduled collection also refreshes authentication after a 403',
   assert.equal(collectorCalls, 2);
 });
 
-test('optimized scheduled collection does not retry when auth refresh is in backoff', async () => {
+test('optimized scheduled collection does not retry when auth refresh is unavailable', async () => {
   const failure = new Error('401 session expired');
   let collectorCalls = 0;
 

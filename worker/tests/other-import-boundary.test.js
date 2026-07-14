@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
 test('importing the other worker does not install the buddies chat fallback', async () => {
+  const source = readFileSync(new URL('../src/other-entry.js', import.meta.url), 'utf8');
+  assert.match(source, /fetch-guard/);
   const runtimeFetch = globalThis.fetch;
   let calls = 0;
   globalThis.fetch = async () => {

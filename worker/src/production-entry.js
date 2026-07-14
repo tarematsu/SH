@@ -1,4 +1,3 @@
-import './fetch-guard.js';
 import primaryApp from './scheduled-main.js';
 
 export async function runProductionScheduled(controller, env, ctx, dependencies = {}) {

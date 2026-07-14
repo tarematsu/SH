@@ -1,7 +1,6 @@
 import collector from './index.js';
 import { jsonResponse as json, normalizeBearer, jwtExpiryMs, positiveNumber as positive } from './shared.js';
 import { ensureAuthControlRow, readAuthState } from './auth-state.js';
-import { combinedAbortSignal } from './request-signal.js';
 import { withAuthState } from './optimized-health.js';
 
 export { authHealth, readOptimizedHealth, withAuthState } from './optimized-health.js';
@@ -18,80 +17,9 @@ function authConfig(env) {
     requestTimeoutMs: Math.min(positive(env.REQUEST_TIMEOUT_MS, 20_000), 30_000),
     refreshBeforeMs: positive(env.AUTH_REFRESH_BEFORE_MS, 3_600_000),
     cooldownMs: positive(env.AUTH_REFRESH_COOLDOWN_MS, 300_000),
-    backoffMs: positive(env.AUTH_FAILURE_BACKOFF_MS, 900_000),
     lockMs: positive(env.AUTH_LOCK_MS, 60_000),
   };
 }
-
-function sleep(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-function isChatHistory(url) {
-  return url.origin === API_ORIGIN && /\/station\/[^/]+\/chatHistory$/i.test(url.pathname);
-}
-
-function chatFallbackResponse(requestedLimit, reason) {
-  console.warn(JSON.stringify({
-    event: 'sh_chat_history_skipped',
-    requested_limit: requestedLimit,
-    reason,
-  }));
-  return new Response(JSON.stringify({ chats: { items: [], next: null } }), {
-    status: 200,
-    headers: { 'content-type': 'application/json' },
-  });
-}
-
-globalThis.fetch = async (input, init = {}) => {
-  const rawUrl = typeof input === 'string' ? input : input?.url;
-  if (!rawUrl) return nativeFetch(input, init);
-  if (!String(rawUrl).includes('/chatHistory')) return nativeFetch(input, init);
-
-  let url;
-  try {
-    url = new URL(rawUrl);
-  } catch {
-    return nativeFetch(input, init);
-  }
-  if (!isChatHistory(url)) return nativeFetch(input, init);
-
-  const requestedLimit = Math.max(1, Number(url.searchParams.get('limit')) || 50);
-  const limits = [...new Set([requestedLimit, Math.min(requestedLimit, 20)])];
-  let lastReason = 'unknown';
-
-  for (const limit of limits) {
-    const retryUrl = new URL(url);
-    retryUrl.searchParams.set('limit', String(limit));
-    try {
-      const response = await nativeFetch(retryUrl.toString(), {
-        ...init,
-        headers: init.headers ? new Headers(init.headers) : undefined,
-        signal: combinedAbortSignal(init.signal, 15_000),
-      });
-
-      if (response.status < 500) {
-        if (limit !== requestedLimit) {
-          console.warn(JSON.stringify({
-            event: 'sh_chat_history_fallback',
-            requested_limit: requestedLimit,
-            successful_limit: limit,
-          }));
-        }
-        return response;
-      }
-
-      lastReason = `HTTP ${response.status} at limit=${limit}`;
-      await response.arrayBuffer().catch(() => {});
-    } catch (error) {
-      const message = String(error?.message || error);
-      if (!/timeout|timed out|aborted/i.test(message)) throw error;
-      lastReason = `${message} at limit=${limit}`;
-    }
-  }
-
-  return chatFallbackResponse(requestedLimit, lastReason);
-};
 
 async function claimAuthLock(env, cfg) {
   const now = Date.now();
@@ -103,15 +31,9 @@ async function claimAuthLock(env, cfg) {
   return Number(result?.meta?.changes || 0) > 0;
 }
 
-async function waitForAuth(env, previousSuccessAt, cfg) {
-  const deadline = Date.now() + Math.min(cfg.lockMs, 30_000);
-  while (Date.now() < deadline) {
-    await sleep(1_500);
-    const state = await readAuthState(env, STATE_ID);
-    if (state.lastSuccessAt > previousSuccessAt && state.authToken && state.deviceUid) return state;
-    if (state.lockUntil <= Date.now()) break;
-  }
-  return null;
+function usableAuthState(state, now = Date.now()) {
+  if (!state?.authToken || !state?.deviceUid) return false;
+  return state.tokenExpiresAt == null || Number(state.tokenExpiresAt) > now;
 }
 
 async function saveSession(env, authToken, deviceUid) {
@@ -204,13 +126,10 @@ async function refreshSession(env, reason) {
   const initial = await readAuthState(env, STATE_ID);
   const now = Date.now();
 
-  if (initial.lastError && initial.lastAttemptAt && now - initial.lastAttemptAt < cfg.backoffMs) {
-    return null;
-  }
-
   if (!initial.controlExists) await ensureAuthControlRow(env, STATE_ID, now);
   if (!await claimAuthLock(env, cfg)) {
-    return waitForAuth(env, initial.lastSuccessAt, cfg);
+    const latest = await readAuthState(env, STATE_ID);
+    return usableAuthState(latest, now) ? latest : null;
   }
 
   try {
@@ -255,7 +174,7 @@ export async function runOptimizedScheduled(controller, env, ctx, dependencies =
   try {
     let state = await ensure(env);
     if (!state?.authToken || !state?.deviceUid) {
-      console.warn(JSON.stringify({ event: 'sh_auth_backoff' }));
+      console.warn(JSON.stringify({ event: 'sh_auth_unavailable' }));
       return;
     }
 

@@ -1,3 +1,4 @@
+import './fetch-guard.js';
 import { scheduleBuddyPlayback, scheduledTimestamp } from './buddy-playback-scheduler.js';
 import { recordOtherCronFailure, recordOtherCronSuccess } from './buddy-health.js';
 import { applyCronStagger } from './cron-stagger.js';
