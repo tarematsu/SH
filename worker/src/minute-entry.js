@@ -67,6 +67,13 @@ async function runTracked(env, task, action) {
   }
 }
 
+function runDerive(env, dependencies) {
+  return (dependencies.runDerive || runMinuteFactDeriveCron)(
+    withSourceDatabase(env, 'BUDDIES_DB'),
+    dependencies.derive || {},
+  );
+}
+
 function runRebuild(env, dependencies) {
   return (dependencies.runRebuild || runMinuteFactsBackfill)(
     withSourceDatabase(env, 'BUDDIES_DB'),
@@ -83,9 +90,7 @@ function runLegacy(env, dependencies) {
 
 export async function runMinuteScheduled(controller = {}, env, dependencies = {}) {
   const cron = String(controller.cron || '');
-  if (cron === MINUTE_FACT_DERIVE_CRON) {
-    return runTracked(env, 'derive', () => (dependencies.runDerive || runMinuteFactDeriveCron)(env, dependencies.derive || {}));
-  }
+  if (cron === MINUTE_FACT_DERIVE_CRON) return runTracked(env, 'derive', () => runDerive(env, dependencies));
   if (cron === MINUTE_FACT_REBUILD_CRON) return runTracked(env, 'rebuild', () => runRebuild(env, dependencies));
   if (cron === MINUTE_FACT_LEGACY_CRON) return runTracked(env, 'legacy', () => runLegacy(env, dependencies));
   if (cron === MINUTE_FACT_WORKER_CRON) {
@@ -95,9 +100,7 @@ export async function runMinuteScheduled(controller = {}, env, dependencies = {}
       if (!enabled(env.MINUTE_FACT_AUTO_REQUEUE_DEAD)) return { skipped: true, reason: 'dead-job-auto-requeue-disabled' };
       return runTracked(env, 'recovery', () => (dependencies.requeueDead || requeueDeadMinuteFactJobs)(env, { limit: env.MINUTE_FACT_DEAD_REQUEUE_LIMIT }));
     }
-    if (minute % 2 === 0) {
-      return runTracked(env, 'derive', () => (dependencies.runDerive || runMinuteFactDeriveCron)(env, dependencies.derive || {}));
-    }
+    if (minute % 2 === 0) return runTracked(env, 'derive', () => runDerive(env, dependencies));
     if (minute % 10 === 7) return runTracked(env, 'rebuild', () => runRebuild(env, dependencies));
     if (minute % 10 === 9) return runTracked(env, 'legacy', () => runLegacy(env, dependencies));
     return { skipped: true, reason: 'not-due', minute };
