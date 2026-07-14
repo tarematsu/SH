@@ -1,5 +1,6 @@
 import { sanitizeFailureDetail } from './collector-failure.js';
 import { enqueueMinuteFactJob, minuteFactJobPayload } from './minute-facts-inbox.js';
+import { loadMinuteCommentFacts } from './minute-facts-source.js';
 import { minuteBucket } from './minute-facts-store.js';
 
 export const MINUTE_FACT_QUEUE_MESSAGE_TYPE = 'minute-fact-job';
@@ -29,6 +30,31 @@ function invalidMessage(detail) {
   const error = new Error(`invalid minute fact queue message: ${detail}`);
   error.code = 'MINUTE_FACT_QUEUE_INVALID_MESSAGE';
   return error;
+}
+
+async function hydrateMinuteFactComments(env, payload) {
+  const stationId = payload?.snapshot?.station_id;
+  if (!env?.BUDDIES_DB || stationId == null) return payload;
+  try {
+    const facts = await loadMinuteCommentFacts(
+      env.BUDDIES_DB,
+      stationId,
+      payload.observedAt,
+      payload.comments,
+    );
+    if (facts.commentCount == null && facts.commentTotal == null) return payload;
+    return {
+      ...payload,
+      comments: {
+        ...(payload.comments || {}),
+        commentCount: facts.commentCount,
+        commentTotal: facts.commentTotal,
+        commentTotalKnown: facts.commentTotal != null,
+      },
+    };
+  } catch {
+    return payload;
+  }
 }
 
 function objectValue(value) {
@@ -289,7 +315,8 @@ export async function consumeMinuteFactBatch(batch, env, dependencies = {}) {
         message.ack();
         continue;
       }
-      const result = await enqueue(env, parsed.payload, parsed.options);
+      const payload = await hydrateMinuteFactComments(env, parsed.payload);
+      const result = await enqueue(env, payload, parsed.options);
       await saveReadModels(env, parsed.read_model, parsed.job_id);
       await saveReceipt(env, parsed.job_id);
       if (result?.enqueued) summary.enqueued += 1;

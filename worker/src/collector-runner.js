@@ -19,7 +19,6 @@ import {
 } from './collector-payload.js';
 import { ingest } from './collector-ingest.js';
 import { loadCollectorState, saveCollectorState } from './collector-state.js';
-import { loadMinuteCommentFacts } from './minute-facts-source.js';
 import { handoffMinuteFactJob } from './minute-facts-queue.js';
 import { enrichTracks as sharedEnrichTracks } from './shared.js';
 
@@ -223,12 +222,6 @@ export async function collectOnce(env, source = 'manual') {
         degraded: false,
         errorStage: null,
       };
-    stage = 'd1_read_minute_comments';
-    const minuteComments = await timedStage(
-      stage,
-      () => loadMinuteCommentFacts(activeEnv.DB, state.stationId, observedAt, commentResult),
-    );
-
     const factSnapshot = minuteFactSnapshot(snapshot);
     const factQueue = minuteFactQueue(queue);
     stage = 'd1_outbox_minute_fact';
@@ -236,7 +229,7 @@ export async function collectOnce(env, source = 'manual') {
       observedAt,
       snapshot: factSnapshot,
       queue: factQueue,
-      comments: { ...commentResult, ...minuteComments },
+      comments: commentResult,
     }, {
       readModel: {
         channel: {

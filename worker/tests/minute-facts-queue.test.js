@@ -316,3 +316,39 @@ test('minute worker hydrates queue metadata from BUDDIES_DB instead of the prima
   assert.match(batches[1][1].params[6], /"title":"Song"/);
   assert.match(batches[1][1].params[6], /"artist":"Artist"/);
 });
+
+test('minute worker hydrates comment facts before enqueueing minute facts', async () => {
+  let enqueuedPayload = null;
+  const BUDDIES_DB = {
+    prepare(sql) {
+      return {
+        bind() { return this; },
+        async first() {
+          return sql.includes('sh_comment_minute_counts')
+            ? { comment_count: 3 }
+            : { total_count: 12 };
+        },
+      };
+    },
+  };
+  const message = queueMessage(minuteFactQueueMessage({
+    observedAt: 123_456,
+    snapshot: { channel_id: 10, station_id: 5 },
+    comments: { commentTotalKnown: false },
+  }));
+
+  await consumeMinuteFactBatch({ messages: [message] }, { BUDDIES_DB }, {
+    hasReceipt: async () => false,
+    enqueue: async (_env, payload) => {
+      enqueuedPayload = payload;
+      return { enqueued: true };
+    },
+    saveReadModels: async () => {},
+    saveReceipt: async () => {},
+  });
+
+  assert.equal(enqueuedPayload.comments.commentCount, 3);
+  assert.equal(enqueuedPayload.comments.commentTotal, 12);
+  assert.equal(enqueuedPayload.comments.commentTotalKnown, true);
+  assert.deepEqual(message.calls, [['ack']]);
+});
