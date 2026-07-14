@@ -1,7 +1,12 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { minuteFactQueue, minuteFactSnapshot, readModelPresentation } from '../src/collector-payload.js';
+import {
+  attachMinuteFactQueueMetadata,
+  minuteFactQueue,
+  minuteFactSnapshot,
+  readModelPresentation,
+} from '../src/collector-payload.js';
 
 test('minuteFactSnapshot strips the embedded raw channel payload', () => {
   const snapshot = { channel_id: 10, listener_count: 42, raw: { huge: 'channel payload' } };
@@ -81,4 +86,28 @@ test('read models retain bounded channel and track presentation fields without r
     album_name: 'Album',
     thumbnail_url: 'https://example.com/album.jpg',
   });
+});
+
+test('attachMinuteFactQueueMetadata fills missing presentation fields without overwriting upstream values', () => {
+  const queue = {
+    tracks: [
+      { spotify_id: 'a', title: null, artist: null, album_name: null, thumbnail_url: null },
+      { spotify_id: 'b', title: 'Upstream title', artist: null, thumbnail_url: null },
+      { spotify_id: 'missing', title: null },
+    ],
+  };
+  const hydrated = attachMinuteFactQueueMetadata(queue, [
+    { spotify_id: 'a', title: 'Stored title', artist: 'Stored artist', thumbnail_url: 'https://example.com/a.jpg' },
+    { spotify_id: 'b', title: 'Stored replacement', artist: 'Stored artist B' },
+  ]);
+  assert.deepEqual(hydrated.tracks[0], {
+    spotify_id: 'a',
+    title: 'Stored title',
+    artist: 'Stored artist',
+    album_name: null,
+    thumbnail_url: 'https://example.com/a.jpg',
+  });
+  assert.equal(hydrated.tracks[1].title, 'Upstream title');
+  assert.equal(hydrated.tracks[1].artist, 'Stored artist B');
+  assert.deepEqual(hydrated.tracks[2], queue.tracks[2]);
 });

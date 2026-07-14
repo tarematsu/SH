@@ -126,6 +126,25 @@ export function minuteFactQueue(queue) {
   };
 }
 
+export function attachMinuteFactQueueMetadata(queue, rows = []) {
+  if (!queue?.tracks?.length || !rows?.length) return queue;
+  const metadata = new Map(rows.map((row) => [String(row.spotify_id || ''), row]));
+  return {
+    ...queue,
+    tracks: queue.tracks.map((track) => {
+      const row = track.spotify_id ? metadata.get(String(track.spotify_id)) : null;
+      if (!row) return track;
+      return {
+        ...track,
+        title: track.title || boundedText(row.title, 500),
+        artist: track.artist || boundedText(row.artist, 500),
+        album_name: track.album_name || boundedText(row.album_name, 500),
+        thumbnail_url: track.thumbnail_url || boundedText(row.thumbnail_url, 2_048),
+      };
+    }),
+  };
+}
+
 export function extractQueue(channel, stationId) {
   const station = channel?.current_station || {};
   const queue = station?.queue || channel?.queue || null;

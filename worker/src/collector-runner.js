@@ -8,6 +8,7 @@ import { buildCollectionPlan } from './collector-plan.js';
 import { configFromEnv, shJson } from './collector-config.js';
 import { collectOptionalComments } from './collector-comments.js';
 import {
+  attachMinuteFactQueueMetadata,
   extractIds,
   extractQueue,
   minuteFactQueue,
@@ -27,6 +28,18 @@ const RAW_D1_STATEMENT = Symbol('collector-raw-d1-statement');
 
 async function enrichTracks(env, queue, observedAt, config) {
   return sharedEnrichTracks(env, ingest, queue, observedAt, config);
+}
+
+export async function loadMinuteFactQueueMetadata(db, queue) {
+  const spotifyIds = [...new Set(
+    (queue?.tracks || []).map((track) => String(track?.spotify_id || '').trim()).filter(Boolean),
+  )].slice(0, 80);
+  if (!spotifyIds.length) return queue;
+  const placeholders = spotifyIds.map(() => '?').join(',');
+  const result = await db.prepare(`SELECT spotify_id,title,artist,thumbnail_url
+    FROM sh_track_metadata WHERE spotify_id IN (${placeholders})`)
+    .bind(...spotifyIds).all();
+  return attachMinuteFactQueueMetadata(queue, result.results || []);
 }
 
 function signalFrom(value) {
@@ -208,7 +221,18 @@ export async function collectOnce(env, source = 'manual') {
     );
 
     const factSnapshot = minuteFactSnapshot(snapshot);
-    const factQueue = minuteFactQueue(queue);
+    let factQueue = minuteFactQueue(queue);
+    if (factQueue?.tracks?.length) {
+      stage = 'd1_read_track_metadata_read_model';
+      try {
+        factQueue = await timedStage(stage, () => loadMinuteFactQueueMetadata(activeEnv.DB, factQueue));
+      } catch (error) {
+        console.warn(JSON.stringify({
+          event: 'minute_fact_queue_metadata_degraded',
+          error: sanitizeFailureDetail(error?.message || error),
+        }));
+      }
+    }
     stage = 'd1_outbox_minute_fact';
     const minuteFactJob = await timedStage(stage, () => handoffMinuteFactJob(activeEnv, {
       observedAt,
