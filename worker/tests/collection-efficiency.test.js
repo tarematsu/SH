@@ -99,9 +99,9 @@ test('scheduled maintenance is due only on its configured interval boundary', ()
   assert.equal(shouldRunScheduledMaintenance(15 * 60_000, { DATA_MAINTENANCE_INTERVAL_MS: 15 * 60_000 }), true);
 });
 
-test('minute facts cutover detection remains compatible with both D1 bindings', () => {
+test('minute facts cutover requires only the FACTS binding', () => {
   assert.equal(minuteFactsCutoverEnabled({ DB: {} }), false);
-  assert.equal(minuteFactsCutoverEnabled({ FACTS_DB: {} }), false);
+  assert.equal(minuteFactsCutoverEnabled({ FACTS_DB: {} }), true);
   assert.equal(minuteFactsCutoverEnabled({ DB: {}, FACTS_DB: {} }), true);
 });
 
@@ -109,7 +109,7 @@ test('scheduled maintenance legacy migration entry point remains disabled', asyn
   assert.equal(scheduledLegacyMigrationEnabled(), false);
 });
 
-test('scheduled maintenance runs rollups without touching legacy or facts migration tables', async () => {
+test('scheduled maintenance skips archive rollups owned outside other', async () => {
   const sqls = [];
   const result = await runScheduledMaintenance({
     DB: noSourceDataDb(sqls),
@@ -125,7 +125,8 @@ test('scheduled maintenance runs rollups without touching legacy or facts migrat
     }),
   }, 3_600_000);
 
-  assert.equal(result.skipped, false);
+  assert.equal(result.skipped, true);
+  assert.equal(result.reason, 'archive-maintenance-disabled');
   assert.equal(result.legacyBackfill.reason, LEGACY_MIGRATION_DISABLED_REASON);
   assert.equal(result.minuteFactsBackfill.reason, LEGACY_MIGRATION_DISABLED_REASON);
   assert.equal(sqls.some((sql) => sql.includes('sh_legacy_')), false);

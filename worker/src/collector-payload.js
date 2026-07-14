@@ -66,12 +66,63 @@ export function minuteFactSnapshot(snapshot) {
   return rest;
 }
 
+function boundedText(value, maximum = 500) {
+  const parsed = String(value ?? '').trim();
+  return parsed ? parsed.slice(0, maximum) : null;
+}
+
+export function readModelPresentation(snapshot) {
+  const raw = snapshot?.raw || {};
+  const station = raw?.current_station || {};
+  const owner = station?.owner || raw?.owner || raw?.account || raw?.creator || {};
+  const images = raw?.images || {};
+  return {
+    ...minuteFactSnapshot(snapshot),
+    description: boundedText(raw?.description ?? raw?.channel_description, 2_000),
+    artist_name: boundedText(raw?.artist_name, 500),
+    accent_color: boundedText(raw?.accent_color, 100),
+    images: {
+      medium: { url: boundedText(images?.medium?.url ?? raw?.image_url ?? raw?.channel_image_url ?? raw?.avatar_url, 2_048) },
+      logo: { medium: { url: boundedText(images?.logo?.medium?.url, 2_048) } },
+    },
+    current_station: {
+      status: boundedText(station?.status, 2_000),
+      streaming_party: {
+        stream_goal: station?.streaming_party?.stream_goal ?? snapshot?.stream_goal ?? null,
+        current_stream_count: station?.streaming_party?.current_stream_count ?? snapshot?.current_stream_count ?? null,
+      },
+      owner: {
+        thumbnail: { url: boundedText(owner?.thumbnail?.url, 2_048) },
+        medium: { url: boundedText(owner?.medium?.url, 2_048) },
+      },
+    },
+  };
+}
+
 export function minuteFactQueue(queue) {
   if (!queue) return queue;
   const { raw, tracks, ...rest } = queue;
   return {
     ...rest,
-    tracks: (tracks || []).map(({ raw: trackRaw, ...track }) => track),
+    tracks: (tracks || []).map(({ raw: trackRaw, ...track }) => {
+      const source = trackRaw?.track || trackRaw || {};
+      const artist = source?.artist || source?.artists?.[0] || {};
+      const album = source?.album || {};
+      return {
+        ...track,
+        title: boundedText(source?.title ?? source?.name, 500),
+        artist: boundedText(
+          typeof artist === 'string' ? artist : (artist?.name ?? source?.artist_name),
+          500,
+        ),
+        album_name: boundedText(album?.name ?? source?.album_name, 500),
+        thumbnail_url: boundedText(
+          source?.image_url ?? source?.artwork_url ?? source?.album_art_url
+            ?? album?.image_url ?? album?.artwork_url,
+          2_048,
+        ),
+      };
+    }),
   };
 }
 

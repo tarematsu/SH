@@ -19,15 +19,15 @@ WHERE sh_stream_goal_prediction_state.next_refresh_at<=?
 RETURNING generated_at`;
 
 export const STREAM_GOAL_PREDICTION_AGGREGATE_SQL = `WITH ranked AS (
-  SELECT id,observed_at,stream_goal,
-    COALESCE(validated_stream_count,current_stream_count,total_listens) AS stream_value,
+  SELECT f.id,f.observed_at,
+    f.reported_current_stream_count AS stream_value,
     ROW_NUMBER() OVER (
-      PARTITION BY CAST(observed_at/300000 AS INTEGER)
-      ORDER BY observed_at DESC,id DESC
+      PARTITION BY CAST(f.observed_at/300000 AS INTEGER)
+      ORDER BY f.observed_at DESC,f.id DESC
     ) AS bucket_rank
-  FROM sh_channel_snapshots
-  WHERE observed_at>=?
-    AND COALESCE(validated_stream_count,current_stream_count,total_listens) IS NOT NULL
+  FROM sh_minute_facts AS f
+  WHERE f.observed_at>=?
+    AND f.reported_current_stream_count IS NOT NULL
 ), points AS (
   SELECT id,observed_at,
     CAST(stream_value AS REAL) AS y,
@@ -36,10 +36,15 @@ export const STREAM_GOAL_PREDICTION_AGGREGATE_SQL = `WITH ranked AS (
   FROM ranked
   WHERE bucket_rank=1
 ), latest AS (
-  SELECT observed_at,stream_goal,
-    COALESCE(validated_stream_count,current_stream_count,total_listens) AS stream_value
-  FROM sh_channel_snapshots
-  ORDER BY observed_at DESC,id DESC
+  SELECT f.observed_at,
+    COALESCE(
+      json_extract(p.presentation_json,'$.stream_goal'),
+      json_extract(p.presentation_json,'$.current_station.streaming_party.stream_goal')
+    ) AS stream_goal,
+    f.reported_current_stream_count AS stream_value
+  FROM sh_minute_facts AS f
+  LEFT JOIN sh_channel_read_model AS p ON p.channel_id=f.channel_id
+  ORDER BY f.minute_at DESC,f.id DESC
   LIMIT 1
 )
 SELECT COUNT(*) AS sample_count,
@@ -129,7 +134,7 @@ function savePredictionStatement(env, prediction, now, intervalMs) {
 }
 
 export async function runStreamGoalPrediction(env, now = Date.now()) {
-  if (!env?.DB || !env?.OTHER_DB) return { skipped: true, reason: 'db-binding-missing' };
+  if (!env?.FACTS_DB || !env?.OTHER_DB) return { skipped: true, reason: 'db-binding-missing' };
 
   const intervalMs = streamGoalPredictionIntervalMs(env);
   let claimed;
@@ -147,7 +152,7 @@ export async function runStreamGoalPrediction(env, now = Date.now()) {
   if (!claimed) return { skipped: true, reason: 'not-due' };
 
   try {
-    const aggregate = await env.DB.prepare(STREAM_GOAL_PREDICTION_AGGREGATE_SQL)
+    const aggregate = await env.FACTS_DB.prepare(STREAM_GOAL_PREDICTION_AGGREGATE_SQL)
       .bind(now - PREDICTION_DAY_MS)
       .first();
     const prediction = predictionFromAggregate(aggregate, now);

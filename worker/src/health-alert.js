@@ -66,26 +66,28 @@ export function hasCollectorRecovered(state, health) {
 }
 
 async function loadCollectorOnly(env) {
-  const row = await env.DB.prepare(`SELECT last_run_at,last_success_at,last_error
-    FROM sh_worker_collector_state WHERE id='stationhead'`).first();
+  const collectorId = text(env.COLLECTOR_ID) || 'cloudflare-worker';
+  const row = await env.FACTS_DB.prepare(`SELECT last_run_at,last_success_at,last_error_present
+    FROM sh_collector_read_model WHERE collector_id=?`).bind(collectorId).first();
   return {
     ...row,
+    last_error: row?.last_error_present ? 'present' : null,
     alert_table_ready: false,
     delivery_table_ready: false,
   };
 }
 
 async function loadAlertWithoutDelivery(env) {
-  const row = await env.DB.prepare(`SELECT
-      collector.last_run_at,collector.last_success_at,collector.last_error,
-      alert.id AS alert_id,alert.incident_open,alert.incident_started_at,
+  const [collector, row] = await Promise.all([
+    loadCollectorOnly(env),
+    env.OTHER_DB.prepare(`SELECT
+      id AS alert_id,incident_open,incident_started_at,
       alert.last_alert_at,alert.last_recovery_at,alert.last_observed_success_at,
       alert.last_error AS alert_last_error,alert.updated_at AS alert_updated_at
-    FROM (SELECT ? AS id) requested
-    LEFT JOIN sh_worker_collector_state collector ON collector.id='stationhead'
-    LEFT JOIN sh_health_alert_state alert ON alert.id=requested.id`)
-    .bind(ALERT_ID).first();
+    FROM sh_health_alert_state AS alert WHERE id=?`).bind(ALERT_ID).first(),
+  ]);
   return {
+    ...collector,
     ...row,
     alert_table_ready: true,
     delivery_table_ready: false,
@@ -94,12 +96,9 @@ async function loadAlertWithoutDelivery(env) {
 
 async function loadState(env) {
   try {
-    const row = await env.DB.prepare(`SELECT
-        collector.last_run_at,collector.last_success_at,collector.last_error,
-        alert.id AS alert_id,alert.incident_open,alert.incident_started_at,
-        alert.last_alert_at,alert.last_recovery_at,alert.last_observed_success_at,
-        alert.last_error AS alert_last_error,alert.updated_at AS alert_updated_at,
-        delivery.event_kind AS pending_event_kind,
+    const [state, delivery] = await Promise.all([
+      loadAlertWithoutDelivery(env),
+      env.OTHER_DB.prepare(`SELECT event_kind AS pending_event_kind,
         delivery.incident_started_at AS pending_incident_started_at,
         delivery.observed_at AS pending_observed_at,
         delivery.baseline_success_at AS pending_baseline_success_at,
@@ -110,12 +109,9 @@ async function loadState(env) {
         delivery.idempotency_key AS pending_idempotency_key,
         delivery.last_attempt_at AS pending_last_attempt_at,
         delivery.last_error AS pending_last_error
-      FROM (SELECT ? AS id) requested
-      LEFT JOIN sh_worker_collector_state collector ON collector.id='stationhead'
-      LEFT JOIN sh_health_alert_state alert ON alert.id=requested.id
-      LEFT JOIN sh_health_alert_delivery delivery ON delivery.id=requested.id`)
-      .bind(ALERT_ID).first();
-    return { ...row, alert_table_ready: true, delivery_table_ready: true };
+      FROM sh_health_alert_delivery AS delivery WHERE id=?`).bind(ALERT_ID).first(),
+    ]);
+    return { ...state, ...delivery, alert_table_ready: true, delivery_table_ready: true };
   } catch (error) {
     if (!/no such table/i.test(String(error?.message || ''))) throw error;
     try {
@@ -128,7 +124,7 @@ async function loadState(env) {
 }
 
 export async function getCollectorHealthView(env, now = Date.now()) {
-  if (!env.DB) return { collector_health_ok: false, collector_health_setup_required: true };
+  if (!env.FACTS_DB || !env.OTHER_DB) return { collector_health_ok: false, collector_health_setup_required: true };
   const cfg = healthAlertConfig(env);
   const state = await loadState(env);
   const health = evaluateCollectorHealth(state, now, cfg.staleMs);

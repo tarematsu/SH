@@ -290,7 +290,7 @@ SELECT COUNT(*) AS sample_count,
   MAX(CASE WHEN latest_rank=1 THEN y END) AS latest_y
 FROM points`;
 
-function publicLatest(latest, channel, station, owner, goal) {
+export function publicLatest(latest, channel, station, owner, goal) {
   if (!latest) return null;
   return {
     observed_at: latest.observed_at,
@@ -321,7 +321,7 @@ function publicLatest(latest, channel, station, owner, goal) {
   };
 }
 
-function compactQueueStatus(latestQueue, latest, playback, totalItems, loadedItems = totalItems) {
+export function compactQueueStatus(latestQueue, latest, playback, totalItems, loadedItems = totalItems) {
   if (!latestQueue) return null;
   const playing = latest?.is_broadcasting !== 0
     && latest?.is_broadcasting !== false

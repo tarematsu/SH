@@ -1,5 +1,5 @@
-import { onRequestPost as saveHostIngest } from '../../site/functions/api/host-ingest.js';
-import { onRequestPost as savePrimaryIngest } from '../../site/functions/api/ingest.js';
+import { hostIngestInternal as saveHostIngest } from '../../site/functions/api/host-ingest.js';
+import { ingestInternal as savePrimaryIngest } from '../../site/functions/api/ingest.js';
 import {
   positiveNumber as positive,
   enrichTracks as sharedEnrichTracks,
@@ -31,6 +31,7 @@ function cfg(env) {
     officialEarlyWindowMs: positive(env.OFFICIAL_NEWS_EARLY_WINDOW_MS, 10 * 60 * 1000),
     officialLateWindowMs: positive(env.OFFICIAL_NEWS_LATE_WINDOW_MS, 90 * 60 * 1000),
     metadataLimit: Math.min(positive(env.METADATA_LIMIT, 3), 10),
+    metadataRepairLimit: 0,
     requestTimeoutMs: Math.min(positive(env.REQUEST_TIMEOUT_MS, 20000), 30000),
     appVersion: env.STATIONHEAD_APP_VERSION || env.SH_APP_VERSION || '1.0.0',
   };
@@ -51,8 +52,8 @@ function headers(config, session) {
 }
 
 async function session(env) {
-  const row = await env.DB.prepare(`SELECT auth_token,device_uid
-    FROM sh_worker_collector_state WHERE id='stationhead'`).first();
+  const row = await env.OTHER_DB.prepare(`SELECT auth_token,device_uid
+    FROM sh_worker_collector_state WHERE id='buddy46'`).first();
   if (!row?.auth_token || !row?.device_uid) throw new Error('Stationhead cloud session unavailable');
   return row;
 }
@@ -87,7 +88,10 @@ async function internalIngest(handler, env, type, data, observedAt) {
       data,
     }),
   });
-  const response = await handler({ request, env: { ...env, INGEST_SECRET: secret } });
+  const response = await handler({
+    request,
+    env: { ...env, DB: env.OTHER_DB, INGEST_SECRET: secret },
+  });
   const payload = await response.json().catch(() => ({}));
   if (!response.ok || !payload.ok) {
     throw new Error(`${type} ingest failed ${response.status}: ${JSON.stringify(payload).slice(0, 500)}`);
@@ -187,8 +191,8 @@ export async function shouldProbeSolo(env, config, state, now = Date.now()) {
 
 async function account(env, config, auth, accountId) {
   if (!accountId) return null;
-  const channel = await env.DB.prepare(`SELECT channel_id FROM sh_channel_snapshots
-    ORDER BY observed_at DESC LIMIT 1`).first();
+  const channel = await env.FACTS_DB.prepare(`SELECT channel_id FROM sh_minute_facts
+    ORDER BY minute_at DESC,id DESC LIMIT 1`).first();
   const channelId = finite(channel?.channel_id) || 318;
   const payload = await stationRequest(
     `/account?ids=${encodeURIComponent(accountId)}&channelId=${encodeURIComponent(channelId)}`,
@@ -224,7 +228,7 @@ async function collectGeneralProfile(env, config, auth, now) {
 
 async function enrichTracks(env, config, queue, now) {
   const ingestFn = (e, type, data, observedAt) => internalIngest(savePrimaryIngest, e, type, data, observedAt);
-  await sharedEnrichTracks(env, ingestFn, queue, now, config);
+  await sharedEnrichTracks({ ...env, DB: env.OTHER_DB }, ingestFn, queue, now, config);
 }
 
 async function collectSoloProfile(env, config, auth, state, accountId, now) {
@@ -352,7 +356,8 @@ async function probeSolo(env, config, auth, now, recoveredState = null) {
       method: 'POST',
       body: '{}',
     }),
-    env.DB.prepare(`SELECT station_id FROM sh_channel_snapshots ORDER BY observed_at DESC LIMIT 1`).first(),
+    env.FACTS_DB.prepare(`SELECT station_id FROM sh_queue_read_model_current
+      ORDER BY observed_at DESC LIMIT 1`).first(),
   ]);
   const stationIdentity = identity(station);
   const buddiesStationId = finite(buddies?.station_id);
@@ -452,7 +457,7 @@ async function probeSolo(env, config, auth, now, recoveredState = null) {
 }
 
 export async function runCloudHostMonitor(env) {
-  if (!env.DB || !env.OTHER_DB) return;
+  if (!env.FACTS_DB || !env.OTHER_DB) return;
   const config = cfg(env);
   const now = Date.now();
   try {

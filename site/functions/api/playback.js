@@ -6,6 +6,7 @@ import {
 import { parseLatestQueueRows } from '../lib/latest-queue.js';
 import { computePlayback, normalizePlaybackTrack } from '../lib/playback.js';
 import { hostIdentity, queueRevision, stateFromQueue } from '../lib/queue-state.js';
+import { QUEUE_READ_MODEL_SQL, queueFromReadModel } from '../lib/public-read-model.js';
 
 const CACHE_CONTROL = 'public, max-age=5, s-maxage=10, stale-while-revalidate=30';
 const DEFAULT_CHANNEL_ALIAS = 'buddies';
@@ -412,7 +413,9 @@ async function secondaryPlaybackResponse(db, otherDb, alias, generatedAt, includ
   const collector = await loadBuddyCollectorStatus(otherDb, alias);
   try {
     const row = await otherDb.prepare(SECONDARY_PLAYBACK_SQL).bind(alias).first();
-    const metadata = row ? await loadMetadataForQueueJson(db, row.queue_json) : new Map();
+    // Secondary playback is owned by OTHER_DB. Its persisted queue_json is the
+    // complete public read model; Pages must never enrich it from the buddies DB.
+    const metadata = new Map();
     const payload = row
       ? secondaryPlaybackPayload(row, generatedAt, { includeRawPayload, metadata })
       : emptySecondaryPayload(alias, generatedAt);
@@ -437,9 +440,8 @@ async function secondaryPlaybackResponse(db, otherDb, alias, generatedAt, includ
 }
 
 export async function onRequestGet({ request, env }) {
-  const db = env.DB;
+  const db = env.FACTS_DB;
   const otherDb = env.OTHER_DB;
-  if (!db) return playbackJson({ ok: false, error: 'DB binding missing' }, 500, 'no-store');
 
   try {
     const generatedAt = Date.now();
@@ -448,9 +450,19 @@ export async function onRequestGet({ request, env }) {
       if (!otherDb) return playbackJson({ ok: false, error: 'OTHER_DB binding missing' }, 500, 'no-store');
       return await secondaryPlaybackResponse(db, otherDb, channelAlias, generatedAt, requestedRawPayload(request));
     }
+    if (!db) return playbackJson({ ok: false, error: 'FACTS_DB binding missing' }, 500, 'no-store');
 
-    const result = await db.prepare(PLAYBACK_FEED_SQL).all();
-    const { latest, latestQueue, queue: rows } = parsePlaybackFeedRows(result.results || []);
+    const latest = await db.prepare(`SELECT f.observed_at,f.channel_id,f.is_broadcasting,
+      c.station_id,c.broadcast_start_time,h.stationhead_account_id AS host_account_id,
+      h.current_handle AS host_handle
+      FROM sh_minute_facts f
+      LEFT JOIN sh_minute_fact_context c ON c.fact_id=f.id
+      LEFT JOIN sh_hosts h ON h.id=c.host_id
+      ORDER BY f.minute_at DESC,f.id DESC LIMIT 1`).first();
+    const queueRow = latest?.channel_id == null
+      ? null
+      : await db.prepare(QUEUE_READ_MODEL_SQL).bind(latest.channel_id).first();
+    const { latestQueue, queue: rows } = queueFromReadModel(queueRow);
     const revision = queueRevision(stateFromQueue(latestQueue, rows), hostIdentity(latest));
     return playbackJson(
       primaryPlaybackPayload({ latest, latestQueue, rows, revision }, generatedAt),

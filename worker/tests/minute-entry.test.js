@@ -1,52 +1,30 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
-import minuteApp, { MINUTE_FACT_DERIVE_CRON, MINUTE_FACT_LEGACY_CRON, MINUTE_FACT_REBUILD_CRON, MINUTE_FACT_RECOVERY_MINUTE, MINUTE_FACT_WORKER_CRON, minuteStaggerApplies, runMinuteScheduled } from '../src/minute-entry.js';
-import { legacyFact, runMinuteFactsLegacyBackfill } from '../src/minute-facts-legacy-backfill.js';
+import minuteApp, { activeMinuteHealthTasks, MINUTE_FACT_DERIVE_CRON, MINUTE_FACT_RECOVERY_MINUTE, MINUTE_FACT_WORKER_CRON, runMinuteScheduled } from '../src/minute-entry.js';
+import { legacyFact } from '../src/minute-facts-legacy-backfill.js';
 
-test('minute worker routes every creation path without running the collector', async () => {
-  const calls = [];
-  for (const [cron, expected] of [[MINUTE_FACT_DERIVE_CRON, 'derive'], [MINUTE_FACT_REBUILD_CRON, 'rebuild'], [MINUTE_FACT_LEGACY_CRON, 'legacy']]) {
-    const result = await runMinuteScheduled({ cron }, {}, {
-      runDerive: async () => { calls.push('derive'); return 'derive'; },
-      runRebuild: async () => { calls.push('rebuild'); return 'rebuild'; },
-      runLegacy: async () => { calls.push('legacy'); return 'legacy'; },
-    });
-    assert.equal(result, expected);
-  }
-  assert.deepEqual(calls, ['derive', 'rebuild', 'legacy']);
+test('minute worker routes FACTS-only derive and rejects retired shared-DB crons', async () => {
+  const result = await runMinuteScheduled({ cron: MINUTE_FACT_DERIVE_CRON }, {}, {
+    runDerive: async () => 'derive',
+  });
+  assert.equal(result, 'derive');
+  assert.deepEqual(await runMinuteScheduled({ cron: '7,17,27,37,47,57 * * * *' }, {}), {
+    skipped: true,
+    reason: 'unsupported-minute-facts-cron',
+    cron: '7,17,27,37,47,57 * * * *',
+  });
 });
 
-test('single minute-worker cron preserves derive, rebuild, and legacy cadence', async () => {
+test('single minute-worker cron runs derive and leaves odd minutes idle', async () => {
   const calls = [];
   const run = (minute) => runMinuteScheduled({ cron: MINUTE_FACT_WORKER_CRON, scheduledTime: minute * 60_000 }, {}, {
     runDerive: async () => { calls.push('derive'); return 'derive'; },
-    runRebuild: async () => { calls.push('rebuild'); return 'rebuild'; },
-    runLegacy: async () => { calls.push('legacy'); return 'legacy'; },
   });
   assert.equal(await run(2), 'derive');
-  assert.equal(await run(7), 'rebuild');
-  assert.equal(await run(9), 'legacy');
-  assert.deepEqual(calls, ['derive', 'rebuild', 'legacy']);
-});
-
-test('minute worker only staggers before shared-DB rebuild and legacy jobs', () => {
-  const at = (minute) => ({ cron: MINUTE_FACT_WORKER_CRON, scheduledTime: minute * 60_000 });
-  // Rebuild (minute ending in 7) and legacy (ending in 9) read the shared DB.
-  assert.equal(minuteStaggerApplies(at(7)), true);
-  assert.equal(minuteStaggerApplies(at(17)), true);
-  assert.equal(minuteStaggerApplies(at(9)), true);
-  assert.equal(minuteStaggerApplies(at(59)), true);
-  // Derive (even minutes), recovery, and not-due minutes only touch FACTS_DB.
-  assert.equal(minuteStaggerApplies(at(2)), false);
-  assert.equal(minuteStaggerApplies(at(MINUTE_FACT_RECOVERY_MINUTE)), false);
-  assert.equal(minuteStaggerApplies(at(3)), false);
-  // A missing scheduled time cannot be classified, so it must not block.
-  assert.equal(minuteStaggerApplies({ cron: MINUTE_FACT_WORKER_CRON }), false);
-  // Dedicated rebuild/legacy crons (legacy multi-cron config) still stagger.
-  assert.equal(minuteStaggerApplies({ cron: MINUTE_FACT_REBUILD_CRON }), true);
-  assert.equal(minuteStaggerApplies({ cron: MINUTE_FACT_LEGACY_CRON }), true);
-  assert.equal(minuteStaggerApplies({ cron: MINUTE_FACT_DERIVE_CRON }), false);
+  assert.deepEqual(await run(7), { skipped: true, reason: 'not-due', minute: 7 });
+  assert.deepEqual(await run(9), { skipped: true, reason: 'not-due', minute: 9 });
+  assert.deepEqual(calls, ['derive']);
 });
 
 test('minute worker retries a bounded set of dead jobs in its recovery slot', async () => {
@@ -61,12 +39,16 @@ test('minute worker has dedicated name, bindings and crons', () => {
   assert.equal(config.name, 'sh-monitor-minute');
   assert.equal(config.main, 'src/minute-entry.js');
   assert.deepEqual(config.triggers.crons, [MINUTE_FACT_WORKER_CRON]);
-  assert.deepEqual(config.d1_databases.map(({ binding }) => binding), ['DB', 'FACTS_DB']);
+  assert.deepEqual(config.d1_databases.map(({ binding }) => binding), ['FACTS_DB']);
 });
 
-test('legacy fact creation is enabled in the dedicated worker', async () => {
-  const result = await runMinuteFactsLegacyBackfill({}, {});
-  assert.deepEqual(result, { skipped: true, reason: 'legacy-db-binding-missing' });
+test('minute health ignores persisted runtime rows for retired jobs', () => {
+  assert.deepEqual(activeMinuteHealthTasks([
+    { task_name: 'derive' },
+    { task_name: 'recovery' },
+    { task_name: 'legacy' },
+    { task_name: 'rebuild' },
+  ]).map(({ task_name }) => task_name), ['derive', 'recovery']);
 });
 
 test('minute worker /health responses are cached across repeated requests', async () => {

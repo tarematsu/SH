@@ -1,5 +1,4 @@
 import {
-  onRequestGet as legacyDashboard,
   hostScopeFromSnapshot,
   linearRegressionPrediction,
   linearRegressionPredictionFromAggregate,
@@ -10,8 +9,18 @@ import {
   commentVelocityExpression,
   HISTORY_24H_SQL,
   PREDICTION_24H_SQL,
+  publicLatest,
+  compactQueueStatus,
 } from './dashboard-legacy.mjs';
 import { LATEST_QUEUE_WITH_ITEMS_SQL, parseLatestQueueRows } from '../lib/latest-queue.js';
+import { num } from '../lib/api-utils.js';
+import { computePlayback, normalizePlaybackTrack } from '../lib/playback.js';
+import {
+  factsAreFresh,
+  loadFactsBaseline,
+  loadFactsDashboard,
+} from '../lib/dashboard-facts.js';
+import { loadPublicReadModels, presentationFromRow, queueFromReadModel } from '../lib/public-read-model.js';
 import {
   hostIdentity,
   parseQueueState,
@@ -297,7 +306,12 @@ export function decorateQueueResponse(payload, queueContext) {
 }
 
 export async function onRequestGet(context) {
-  if (!context.env?.DB) return legacyDashboard(context);
+  if (!context.env?.FACTS_DB) {
+    return new Response(JSON.stringify({ ok: false, error: 'FACTS_DB binding missing' }), {
+      status: 500,
+      headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' },
+    });
+  }
   const url = new URL(context.request.url);
   const queueContext = {
     requestedRevision: url.searchParams.get('queue_revision') || '',
@@ -311,35 +325,105 @@ export async function onRequestGet(context) {
     console.error(error);
     return null;
   });
-  const response = await legacyDashboard({
-    ...context,
-    env: { ...context.env, DB: proxyDatabase(context.env.DB, queueContext) },
-  });
-  if (!response.ok) return response;
+  const since = Math.max(0, Number(url.searchParams.get('since')) || 0);
+  const includeHistory = url.searchParams.get('history') !== '0';
+  try {
+    const [facts, predictionState] = await Promise.all([
+      loadFactsDashboard(context.env.FACTS_DB, { since, includeHistory }),
+      predictionPromise,
+    ]);
+    if (!factsAreFresh(facts.latest)) {
+      return new Response(JSON.stringify({ ok: false, error: 'FACTS_DB telemetry is stale' }), {
+        status: 503,
+        headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' },
+      });
+    }
+    const models = await loadPublicReadModels(context.env.FACTS_DB, facts.latest.channel_id);
+    const presentation = presentationFromRow(models.presentation);
+    const channel = presentation.channel || presentation;
+    const station = channel.current_station || presentation.current_station || {};
+    const owner = station.owner || presentation.owner || {};
+    const streaming = station.streaming_party || presentation.streaming_party || {};
+    const latest = { ...presentation, ...presentation.latest, ...facts.latest };
+    const goal = latest.stream_goal ?? streaming.stream_goal ?? null;
+    const { latestQueue, queue } = queueFromReadModel(models.queue);
+    const generatedAt = Date.now();
+    const playback = computePlayback(queue, generatedAt);
+    const startIndex = Math.max(0, playback.currentIndex);
+    const queueWindow = queue.slice(startIndex, startIndex + 11);
+    const enrichedQueue = queueWindow.map((track, index) => normalizePlaybackTrack(track, startIndex + index, playback));
+    queueContext.state = stateFromQueue(latestQueue, queue);
+    queueContext.hostIdentity = hostIdentity(latest);
+    queueContext.revision = queueRevision(queueContext.state, queueContext.hostIdentity);
+    queueContext.unchanged = Boolean(queueContext.requestedRevision && queueContext.requestedRevision === queueContext.revision);
 
-  const [body, predictionState] = await Promise.all([
-    response.text(),
-    predictionPromise,
-  ]);
-  const payload = JSON.parse(body);
-  const currentGoal = finite(payload.latest?.stream_goal);
-  const selectedPrediction = selectGoalPrediction(
-    predictionState,
-    payload.goal_prediction,
-    currentGoal,
-  );
-  payload.goal_prediction = selectedPrediction;
-  payload.goal_predictions = mergeGoalPredictions(
-    payload.goal_predictions,
-    selectedPrediction,
-    currentGoal,
-  );
-  const output = JSON.stringify(decorateQueueResponse(payload, queueContext));
-  const headers = new Headers(response.headers);
-  headers.set('cache-control', 'no-store');
-  return new Response(output, {
-    status: response.status,
-    statusText: response.statusText,
-    headers,
-  });
+    const now = Date.now();
+    const shifted = new Date(now + 9 * 3600000);
+    const range = (hour) => {
+      let currentStart = Date.UTC(shifted.getUTCFullYear(), shifted.getUTCMonth(), shifted.getUTCDate(), hour) - 9 * 3600000;
+      if (now < currentStart) currentStart -= 86400000;
+      return { previousStart: currentStart - 86400000, currentStart };
+    };
+    const memberRange = range(16);
+    const listensRange = range(9);
+    const [previousMembers, previousListens] = await Promise.all([
+      loadFactsBaseline(context.env.FACTS_DB, 'total_member_count', facts.latest.host_id, memberRange.previousStart, memberRange.currentStart),
+      loadFactsBaseline(context.env.FACTS_DB, 'total_listens', facts.latest.host_id, listensRange.previousStart, listensRange.currentStart),
+    ]);
+    const current = num(latest.current_stream_count ?? streaming.current_stream_count ?? latest.total_listens);
+    const { goalPrediction, goalPredictions } = dashboardGoalPredictions({
+      rows: facts.history,
+      aggregate: facts.prediction,
+      current,
+      configuredGoal: num(goal),
+      now: generatedAt,
+      useAggregate: since > 0 || !includeHistory,
+    });
+    const payload = {
+      ok: true,
+      generated_at: generatedAt,
+      metrics_source: 'facts-db',
+      storage_source: 'facts-db',
+      delta: since > 0,
+      history_deferred: since <= 0 && !includeHistory,
+      latest_observed_at: latest.observed_at || since,
+      latest: publicLatest(latest, channel, station, owner, goal),
+      history: facts.history,
+      daily_change: {
+        host_account_id: latest.host_account_id ?? null,
+        host_handle: latest.host_handle ?? null,
+        member_baseline_observed_at: previousMembers?.observed_at || null,
+        listens_baseline_observed_at: previousListens?.observed_at || null,
+        member_cutoff_hour_jst: 16,
+        listens_cutoff_hour_jst: 9,
+        total_member_count: previousMembers && num(latest.total_member_count) != null && num(previousMembers.total_member_count) != null
+          ? num(latest.total_member_count) - num(previousMembers.total_member_count) : null,
+        total_listens: previousListens && num(latest.total_listens) != null && num(previousListens.total_listens) != null
+          ? num(latest.total_listens) - num(previousListens.total_listens) : null,
+      },
+      goal_prediction: goalPrediction,
+      goal_predictions: goalPredictions,
+      queue: queueContext.unchanged ? [] : enrichedQueue,
+      queue_status: compactQueueStatus(latestQueue, latest, playback, queue.length, queueWindow.length),
+      ...queueResponseFields(queueContext),
+    };
+    const currentGoal = finite(payload.latest?.stream_goal);
+    const selectedPrediction = selectGoalPrediction(
+      predictionState,
+      payload.goal_prediction,
+      currentGoal,
+    );
+    payload.goal_prediction = selectedPrediction;
+    payload.goal_predictions = mergeGoalPredictions(payload.goal_predictions, selectedPrediction, currentGoal);
+    return new Response(JSON.stringify(decorateQueueResponse(payload, queueContext)), {
+      status: 200,
+      headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' },
+    });
+  } catch (error) {
+    console.error(error);
+    return new Response(JSON.stringify({ ok: false, error: error?.message || 'dashboard error' }), {
+      status: 500,
+      headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' },
+    });
+  }
 }

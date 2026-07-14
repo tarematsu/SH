@@ -119,12 +119,14 @@ test('official news reconcile is skipped when the probe fails', async () => {
   assert.equal(reconciled, false);
 });
 
-test('other worker Wrangler configuration deploys every minute against a shared D1 binding', () => {
+test('other worker Wrangler configuration deploys every minute without the buddies D1 binding', () => {
   const config = JSON.parse(readFileSync(new URL('../wrangler.other.jsonc', import.meta.url), 'utf8'));
   assert.equal(config.name, 'sh-monitor-other');
   assert.equal(config.main, 'src/other-entry.js');
   assert.deepEqual(config.triggers?.crons, ['* * * * *']);
   assert.equal(config.vars?.PUBLIC_HEALTH_CACHE_MS, 60_000);
+  assert.deepEqual(config.d1_databases.map(({ binding }) => binding), ['FACTS_DB', 'OTHER_DB']);
+  assert.equal(config.d1_databases.some(({ database_name }) => database_name === 'stationhead-buddies'), false);
 });
 
 test('other worker invalidates public health cache after every scheduled run', async () => {
@@ -179,7 +181,7 @@ test('other worker owns the public health endpoint', async () => {
             if (kind === 'other' && sql.includes('sh_collector_status')) {
               return { status: 'ok', last_attempt_at: now, last_success_at: now };
             }
-            if (sql.includes('collector_state.auth_token')) {
+            if (kind === 'other' && sql.includes('collector_state.auth_token')) {
               return {
                 auth_token: 'token',
                 device_uid: 'device',
@@ -190,13 +192,19 @@ test('other worker owns the public health endpoint', async () => {
                 last_success_at: now,
               };
             }
-            if (sql.includes('sh_health_alert_state')) {
+            if (kind === 'other' && sql.includes('sh_health_alert_state')) {
               return {
                 last_run_at: now,
                 last_success_at: now,
                 alert_table_ready: true,
                 delivery_table_ready: true,
               };
+            }
+            if (kind === 'facts' && sql.includes('sh_collector_read_model')) {
+              return { last_run_at: now, last_success_at: now, last_error_present: 0, updated_at: now };
+            }
+            if (kind === 'facts' && sql.includes('FROM sh_minute_facts')) {
+              return { channel_id: 318, station_id: 123, observed_at: now };
             }
             return null;
           },
@@ -205,7 +213,7 @@ test('other worker owns the public health endpoint', async () => {
     };
   }
 
-  const env = { DB: dbFor('primary'), OTHER_DB: dbFor('other') };
+  const env = { FACTS_DB: dbFor('facts'), OTHER_DB: dbFor('other') };
   const response = await otherApp.fetch(new Request('https://other.test/health'), env, {});
   const payload = await response.json();
 
@@ -220,7 +228,7 @@ test('other worker owns the public health endpoint', async () => {
 test('other health reports a missing OTHER_DB binding as unavailable JSON', async () => {
   const app = createOtherHealthApp();
   const response = await app.fetch(new Request('https://other.test/health'), {
-    DB: healthyPrimaryDb(),
+    FACTS_DB: healthyPrimaryDb(),
   }, {});
   const payload = await response.json();
 
@@ -234,7 +242,7 @@ test('other health reports a missing OTHER_DB binding as unavailable JSON', asyn
 test('other health reports OTHER_DB query failures instead of masking them', async () => {
   const app = createOtherHealthApp();
   const response = await app.fetch(new Request('https://other.test/health'), {
-    DB: healthyPrimaryDb(),
+    FACTS_DB: healthyPrimaryDb(),
     OTHER_DB: {
       prepare() {
         return {
@@ -253,13 +261,13 @@ test('other health reports OTHER_DB query failures instead of masking them', asy
   assert.equal(payload.cloud_host_setup_required, true);
 });
 
-test('other health reports primary DB failures as unavailable JSON', async () => {
+test('other health reports FACTS_DB failures as unavailable JSON', async () => {
   const app = createOtherHealthApp();
   const originalConsoleError = console.error;
   console.error = () => {};
   try {
     const response = await app.fetch(new Request('https://other.test/health'), {
-      DB: {
+      FACTS_DB: {
         prepare() { throw new Error('primary D1 unavailable'); },
       },
       OTHER_DB: healthyOtherDb(),
@@ -277,7 +285,7 @@ test('other health reports primary DB failures as unavailable JSON', async () =>
 test('other health is unavailable while an owned monitor has an active error', async () => {
   const app = createOtherHealthApp();
   const response = await app.fetch(new Request('https://other.test/health'), {
-    DB: healthyPrimaryDb(),
+    FACTS_DB: healthyPrimaryDb(),
     OTHER_DB: {
       prepare(sql) {
         return {
@@ -308,7 +316,7 @@ test('other health detects a stopped cron heartbeat', async () => {
   const now = Date.now();
   const app = createOtherHealthApp();
   const response = await app.fetch(new Request('https://other.test/health'), {
-    DB: healthyPrimaryDb(),
+    FACTS_DB: healthyPrimaryDb(),
     OTHER_CRON_STALE_MS: 120_000,
     OTHER_DB: taskHealthDb(now, {
       'other-cron': { status: 'ok', last_attempt_at: now - 180_000, last_success_at: now - 180_000 },
@@ -326,7 +334,7 @@ test('other health exposes buddy playback failures', async () => {
   const now = Date.now();
   const app = createOtherHealthApp();
   const response = await app.fetch(new Request('https://other.test/health'), {
-    DB: healthyPrimaryDb(),
+    FACTS_DB: healthyPrimaryDb(),
     OTHER_DB: taskHealthDb(now, {
       'other-cron': { status: 'ok', last_attempt_at: now, last_success_at: now },
       'buddy46-playback': { status: 'error', last_attempt_at: now, last_error: 'playback failed' },
@@ -348,24 +356,11 @@ function healthyPrimaryDb() {
       return {
         bind() { return this; },
         async first() {
-          if (sql.includes('collector_state.auth_token')) {
-            return {
-              auth_token: 'token',
-              device_uid: 'device',
-              collector_last_run_at: now,
-              collector_last_success_at: now,
-              collector_updated_at: now,
-              control_id: 'stationhead',
-              last_success_at: now,
-            };
+          if (sql.includes('sh_collector_read_model')) {
+            return { last_run_at: now, last_success_at: now, last_error_present: 0, updated_at: now };
           }
-          if (sql.includes('sh_health_alert_state')) {
-            return {
-              last_run_at: now,
-              last_success_at: now,
-              alert_table_ready: true,
-              delivery_table_ready: true,
-            };
+          if (sql.includes('FROM sh_minute_facts')) {
+            return { channel_id: 318, station_id: 123, observed_at: now };
           }
           return null;
         },
@@ -376,10 +371,16 @@ function healthyPrimaryDb() {
 
 function healthyOtherDb() {
   return {
-    prepare() {
+    prepare(sql) {
       return {
         bind() { return this; },
-        async first() { return {}; },
+        async first() {
+          if (sql.includes('collector_state.auth_token')) {
+            return { auth_token: 'token', device_uid: 'device', control_id: 'stationhead' };
+          }
+          if (sql.includes('sh_health_alert_state')) return {};
+          return {};
+        },
       };
     },
   };
@@ -392,6 +393,10 @@ function taskHealthDb(now, rows) {
       return {
         bind(...bound) { values = bound; return this; },
         async first() {
+          if (sql.includes('collector_state.auth_token')) {
+            return { auth_token: 'token', device_uid: 'device', control_id: 'stationhead' };
+          }
+          if (sql.includes('sh_health_alert_state')) return {};
           if (sql.includes('sh_official_news_monitor_state')) {
             return { last_check_at: now, last_success_at: now, upcoming_count: 0, active_count: 0 };
           }

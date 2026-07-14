@@ -64,7 +64,6 @@ function parseJobPayload(job) {
 }
 
 export async function runMinuteFactDeriveCron(env, dependencies = {}) {
-  if (!env?.DB) throw new Error('minute fact derive DB binding is missing');
   if (!env?.FACTS_DB) throw new Error('minute fact derive FACTS_DB binding is missing');
 
   const config = deriveConfig(env);

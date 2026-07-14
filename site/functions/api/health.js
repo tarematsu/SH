@@ -21,17 +21,11 @@ export async function cachedSnapshotCount(db, now = Date.now()) {
   if (snapshotCountCache.value != null && snapshotCountCache.expiresAt > now) {
     return snapshotCountCache.value;
   }
-  if (!snapshotCountCache.pending) {
-    snapshotCountCache.pending = db.prepare('SELECT COUNT(*) AS count FROM sh_channel_snapshots').first()
-      .then((row) => {
-        const value = Number(row?.count || 0);
-        snapshotCountCache.value = value;
-        snapshotCountCache.expiresAt = Date.now() + CACHE_MS;
-        return value;
-      })
-      .finally(() => { snapshotCountCache.pending = null; });
-  }
-  return snapshotCountCache.pending;
+  const row = await db.prepare('SELECT COUNT(*) AS count FROM sh_minute_facts').first();
+  const value = Number(row?.count || 0);
+  snapshotCountCache.value = value;
+  snapshotCountCache.expiresAt = Date.now() + CACHE_MS;
+  return value;
 }
 
 export function resetSnapshotCountCache() {
@@ -67,32 +61,14 @@ async function loadAlertWithoutDelivery(db) {
 }
 
 async function loadCollectorState(db) {
-  try {
-    const row = await db.prepare(`SELECT
-        collector.last_run_at,collector.last_success_at,collector.last_error,
-        alert.incident_open,alert.incident_started_at,alert.last_alert_at,
-        alert.last_recovery_at,alert.last_observed_success_at,
-        alert.last_error AS alert_last_error,alert.updated_at AS alert_updated_at,
-        delivery.event_kind AS pending_event_kind,
-        delivery.last_error AS pending_last_error
-      FROM (SELECT 'stationhead-collector' AS id) requested
-      LEFT JOIN sh_worker_collector_state collector ON collector.id='stationhead'
-      LEFT JOIN sh_health_alert_state alert ON alert.id=requested.id
-      LEFT JOIN sh_health_alert_delivery delivery ON delivery.id=requested.id`).first();
-    return {
-      ...row,
-      alert_setup_required: false,
-      delivery_setup_required: false,
-    };
-  } catch (error) {
-    if (!/no such table/i.test(String(error?.message || ''))) throw error;
-    try {
-      return await loadAlertWithoutDelivery(db);
-    } catch (fallbackError) {
-      if (!/no such table/i.test(String(fallbackError?.message || ''))) throw fallbackError;
-      return loadCollectorOnly(db);
-    }
-  }
+  const row = await db.prepare(`SELECT last_run_at,last_success_at,last_error_present,updated_at
+    FROM sh_collector_read_model WHERE collector_id='cloudflare-worker' LIMIT 1`).first();
+  return {
+    ...row,
+    last_error: row?.last_error_present ? 'present' : null,
+    alert_setup_required: false,
+    delivery_setup_required: false,
+  };
 }
 
 export function publicCollectorHealth(state, now, staleAfterMs) {
@@ -128,9 +104,10 @@ export function publicCollectorHealth(state, now, staleAfterMs) {
 export async function onRequestGet(context) {
   const now = Date.now();
   try {
+    if (!context.env.FACTS_DB) throw new Error('FACTS_DB binding missing');
     const [snapshotCount, state] = await Promise.all([
-      cachedSnapshotCount(context.env.DB, now),
-      loadCollectorState(context.env.DB),
+      cachedSnapshotCount(context.env.FACTS_DB, now),
+      loadCollectorState(context.env.FACTS_DB),
     ]);
     const staleAfterMs = healthStaleMs(context.env);
     const health = publicCollectorHealth(state, now, staleAfterMs);

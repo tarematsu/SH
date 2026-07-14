@@ -69,7 +69,7 @@ function buddyMetadataNeedsRefresh(row, track, now) {
 
 export async function enrichQueueMetadata(env, queue, now, config, fetchMetadata = fetchTrackMetadata) {
   const spotifyIds = [...new Set(queue.tracks.map((track) => track.spotify_id).filter(Boolean))];
-  const metadata = await loadTrackMetadata(env.DB, spotifyIds);
+  const metadata = await loadTrackMetadata(env.OTHER_DB, spotifyIds);
   if (!spotifyIds.length || config.metadataLimit <= 0) return metadata;
 
   const index = currentIndex(queue, now);
@@ -103,7 +103,7 @@ export async function enrichQueueMetadata(env, queue, now, config, fetchMetadata
     fetched.push(row);
     metadata.set(String(row.spotify_id), row);
   }
-  await saveTrackMetadata(env.DB, fetched);
+  await saveTrackMetadata(env.OTHER_DB, fetched);
   return metadata;
 }
 

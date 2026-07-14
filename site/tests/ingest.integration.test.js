@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { onRequestPost as hostIngestPost } from '../functions/api/host-ingest.js';
-import { onRequestPost as ingestPost } from '../functions/api/ingest.js';
+import { hostIngestInternal as hostIngestPost } from '../functions/api/host-ingest.js';
+import { ingestInternal as ingestPost } from '../functions/api/ingest.js';
 import { FakeD1Database, responseJson } from './helpers/fake-d1.js';
 
 function post(url, body, authorization = 'Bearer test-key') {

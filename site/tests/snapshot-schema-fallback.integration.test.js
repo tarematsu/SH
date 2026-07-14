@@ -3,7 +3,7 @@ import test from 'node:test';
 
 import {
   isPendingStreamSchemaError,
-  onRequestPost as ingestPost,
+  ingestInternal as ingestPost,
 } from '../functions/api/ingest.js';
 import { FakeD1Database, responseJson } from './helpers/fake-d1.js';
 

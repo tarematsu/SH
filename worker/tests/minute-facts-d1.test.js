@@ -12,9 +12,10 @@ const wranglerScript = path.resolve(workerRoot, 'node_modules/wrangler/bin/wrang
 const schemaPath = path.resolve(repositoryRoot, 'database/facts-migrations/001_initial_schema.sql');
 const compactMigrationPath = path.resolve(repositoryRoot, 'database/facts-migrations/003_compact_minute_facts.sql');
 const factsBinding = 'FACTS_DB';
+const minuteConfigPath = path.resolve(workerRoot, 'wrangler.minute.jsonc');
 
 function run(args) {
-  const result = spawnSync(executable, [wranglerScript, ...args], {
+  const result = spawnSync(executable, [wranglerScript, ...args, '--config', minuteConfigPath], {
     cwd: workerRoot,
     env: { ...process.env, CI: 'true' },
     encoding: 'utf8',
@@ -54,13 +55,12 @@ test('minute facts D1 schema applies and exposes required tables', { timeout: 60
       'sh_track_bite_observations',
       'sh_migration_state',
     ];
-    for (const table of requiredTables) {
-      run([
-        'd1', 'execute', factsBinding,
-        '--local', '--persist-to', stateDirectory,
-        '--command', `SELECT COUNT(*) AS row_count FROM ${table};`,
-      ]);
-    }
+    const tables = run([
+      'd1', 'execute', factsBinding,
+      '--local', '--persist-to', stateDirectory,
+      '--command', "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name;",
+    ]);
+    for (const table of requiredTables) assert.match(tables, new RegExp(`\\b${table}\\b`));
     const compactColumns = run([
       'd1', 'execute', factsBinding,
       '--local', '--persist-to', stateDirectory,

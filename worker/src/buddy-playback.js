@@ -189,7 +189,7 @@ function displayStateChanged(current, queue) {
 }
 
 export async function collectBuddyPlayback(env, now = Date.now(), dependencies = {}) {
-  if (!env?.DB || !env?.OTHER_DB) return { skipped: true, reason: 'db-binding-missing' };
+  if (!env?.OTHER_DB) return { skipped: true, reason: 'db-binding-missing' };
   const config = buddyPlaybackConfig(env);
   if (!config.enabled) return { skipped: true, reason: 'disabled' };
 

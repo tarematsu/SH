@@ -1,10 +1,9 @@
 import { execFileSync } from 'node:child_process';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 const workerRoot = resolve(import.meta.dirname, '..');
 const repositoryRoot = resolve(workerRoot, '..');
-const configPath = resolve(workerRoot, 'wrangler.jsonc');
 const wranglerScript = resolve(workerRoot, 'node_modules/wrangler/bin/wrangler.js');
 const schemaPath = resolve(repositoryRoot, 'database/facts-migrations/001_initial_schema.sql');
 const enumMigrationPath = resolve(
@@ -14,6 +13,10 @@ const enumMigrationPath = resolve(
 const compactMigrationPath = resolve(
   repositoryRoot,
   'database/facts-migrations/003_compact_minute_facts.sql',
+);
+const readModelMigrationPath = resolve(
+  repositoryRoot,
+  'database/facts-migrations/004_buddies_queue_read_models.sql',
 );
 const metadataPath = resolve(repositoryRoot, 'database/facts-db.json');
 const databaseName = process.env.FACTS_DATABASE_NAME || 'Stationhead-DB';
@@ -68,26 +71,15 @@ if (!database) throw new Error(`Wrangler did not create or list ${databaseName}`
 const databaseId = database.uuid || database.id || database.database_id;
 if (!databaseId) throw new Error(`Could not determine database id for ${databaseName}`);
 
-const config = JSON.parse(readFileSync(configPath, 'utf8'));
-const bindings = Array.isArray(config.d1_databases) ? config.d1_databases : [];
-const nextBinding = {
-  binding: 'FACTS_DB',
-  database_name: databaseName,
-  database_id: databaseId,
-};
-const index = bindings.findIndex((item) => item.binding === 'FACTS_DB');
-if (index >= 0) bindings[index] = nextBinding;
-else bindings.push(nextBinding);
-config.d1_databases = bindings;
-writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`);
-
-wrangler([
-  'd1', 'execute', databaseName,
-  '--remote', '--yes',
-  '--file', schemaPath,
-]);
-
 let factsColumns = tableColumnNames(databaseName, 'sh_minute_facts');
+if (factsColumns.size === 0) {
+  wrangler([
+    'd1', 'execute', databaseName,
+    '--remote', '--yes',
+    '--file', schemaPath,
+  ]);
+  factsColumns = tableColumnNames(databaseName, 'sh_minute_facts');
+}
 if (factsColumns.size > 0 && !factsColumns.has('source_code')) {
   console.log('Migrating sh_minute_facts.source/track_detection_method to integer codes...');
   wrangler([
@@ -107,10 +99,16 @@ if (factsColumns.has('source_code') && !factsColumns.has('collector_code')) {
   ]);
 }
 
+wrangler([
+  'd1', 'execute', databaseName,
+  '--remote', '--yes',
+  '--file', readModelMigrationPath,
+]);
+
 writeFileSync(metadataPath, `${JSON.stringify({
   binding: 'FACTS_DB',
   database_name: databaseName,
   database_id: databaseId,
-  schema: 'database/facts-migrations/003_compact_minute_facts.sql',
+  schema: 'database/facts-migrations/004_buddies_queue_read_models.sql',
 }, null, 2)}\n`);
 console.log(JSON.stringify({ ok: true, database_name: databaseName, database_id: databaseId }));

@@ -9,7 +9,7 @@ import {
 test('reconciliation only supersedes older pending schedules for the same article', async () => {
   const calls = [];
   const env = {
-    DB: {
+    OTHER_DB: {
       prepare(sql) {
         calls.push({ kind: 'prepare', sql });
         return {
@@ -42,7 +42,7 @@ test('reconciliation only supersedes older pending schedules for the same articl
 
 test('missing optional announcement tables skip reconciliation', async () => {
   const env = {
-    DB: {
+    OTHER_DB: {
       prepare() {
         return {
           bind() {

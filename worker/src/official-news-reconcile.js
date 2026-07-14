@@ -26,9 +26,9 @@ export async function reconcileSupersededAnnouncements(
   runStartedAt = Date.now(),
   completedAt = Date.now(),
 ) {
-  if (!env?.DB) return { changes: 0, skipped: true };
+  if (!env?.OTHER_DB) return { changes: 0, skipped: true };
   try {
-    const result = await env.DB.prepare(RECONCILE_SUPERSEDED_ANNOUNCEMENTS_SQL)
+    const result = await env.OTHER_DB.prepare(RECONCILE_SUPERSEDED_ANNOUNCEMENTS_SQL)
       .bind(completedAt, runStartedAt)
       .run();
     return {
@@ -48,7 +48,7 @@ export async function reconcileOfficialAnnouncements(
   runStartedAt = Date.now(),
   completedAt = Date.now(),
 ) {
-  if (!env?.DB) return { promoted: 0, changes: 0, skipped: true };
+  if (!env?.OTHER_DB) return { promoted: 0, changes: 0, skipped: true };
   try {
     const promotion = await promoteJapaneseHourAnnouncements(env, runStartedAt, completedAt);
     const reconciliation = await reconcileSupersededAnnouncements(env, runStartedAt, completedAt);

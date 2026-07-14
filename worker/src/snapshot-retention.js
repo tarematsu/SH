@@ -1,5 +1,3 @@
-import { isPrimaryRunLockActive } from './primary-run-lock.js';
-
 const DEFAULT_RETENTION_MS = 30 * 24 * 60 * 60_000;
 const MIN_RETENTION_MS = 24 * 60 * 60_000;
 const DEFAULT_INTERVAL_MS = 60 * 60_000;
@@ -68,42 +66,8 @@ async function pruneTable(db, table, cutoff, size, batches) {
 }
 
 export async function pruneOldSnapshots(env, now = Date.now()) {
-  if (!env?.DB) return { skipped: true, reason: 'db-binding-missing' };
   if (!snapshotRetentionEnabled(env)) return { skipped: true, reason: 'disabled' };
-  const db = env.DB;
-
-  const state = await db.prepare(`SELECT last_cleanup_at FROM sh_data_maintenance_state WHERE id=?`)
-    .bind(STATE_ID).first().catch((error) => {
-      if (/no such table/i.test(String(error?.message || ''))) return null;
-      throw error;
-    });
-  if (!shouldRunSnapshotRetention(state?.last_cleanup_at, now, env)) {
-    return { skipped: true, reason: 'not-due' };
-  }
-
-  // sh-monitor-buddies writes into sh_channel_snapshots/sh_queue_snapshots
-  // every minute; back off this run (without consuming the hourly interval,
-  // so it's retried next minute) rather than let a multi-statement DELETE
-  // burst compete with buddies' own writes on the same tables/database.
-  if (await isPrimaryRunLockActive(env, now)) {
-    return { skipped: true, reason: 'buddies-active' };
-  }
-
-  const cutoff = now - retentionMs(env);
-  const size = batchSize(env);
-  const batches = maxBatches(env);
-  const deleted = {};
-  for (const table of TABLES) {
-    deleted[table] = await pruneTable(db, table, cutoff, size, batches);
-  }
-
-  await db.prepare(`INSERT INTO sh_data_maintenance_state(
-      id,last_rollup_key,last_cleanup_at,legacy_backfill_id,updated_at
-    ) VALUES(?,NULL,?,0,?)
-    ON CONFLICT(id) DO UPDATE SET last_cleanup_at=excluded.last_cleanup_at,updated_at=excluded.updated_at`)
-    .bind(STATE_ID, now, now).run();
-
-  return { skipped: false, cutoff, deleted };
+  return { skipped: true, reason: 'archive-retention-disabled' };
 }
 
 export async function pruneOldSnapshotsSafely(env, now = Date.now()) {

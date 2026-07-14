@@ -118,10 +118,11 @@ export function minuteFactRuntimeSignals(state, options = {}) {
   const now = finiteInteger(options.now, Date.now());
   const pendingAgeMs = nonNegativeInteger(options.pendingAgeMs, 15 * 60_000);
   const oldest = finiteInteger(state?.oldest_pending_minute);
+  const pendingBacklog = nonNegativeInteger(state?.pending_count) > 0;
   return {
     has_dead_jobs: nonNegativeInteger(state?.dead_count) > 0,
-    pending_backlog: nonNegativeInteger(state?.pending_count) > 0,
-    pending_stale: oldest != null && oldest <= now - pendingAgeMs,
+    pending_backlog: pendingBacklog,
+    pending_stale: pendingBacklog && oldest != null && oldest > 0 && oldest <= now - pendingAgeMs,
     last_run_failed: finiteInteger(state?.last_failure_at, 0) > finiteInteger(state?.last_success_at, 0),
   };
 }

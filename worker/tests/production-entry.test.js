@@ -49,7 +49,13 @@ test('buddies Wrangler configuration contains only primary-collector settings an
   const config = JSON.parse(readFileSync(new URL('../wrangler.jsonc', import.meta.url), 'utf8'));
   assert.equal(config.main, 'src/production-entry.js');
   assert.deepEqual(config.triggers?.crons, ['* * * * *']);
-  assert.deepEqual(config.d1_databases.map(({ binding }) => binding), ['DB', 'FACTS_DB']);
+  assert.deepEqual(config.d1_databases.map(({ binding }) => binding), ['DB']);
+  assert.equal(config.d1_databases[0].database_name, 'stationhead-buddies');
+  assert.equal(config.d1_databases[0].database_id, 'f361aae0-05f0-42bc-8784-77100e80133d');
+  assert.deepEqual(config.queues?.producers, [{
+    binding: 'MINUTE_FACT_QUEUE',
+    queue: 'stationhead-buddies-facts',
+  }]);
 
   const names = Object.keys(config.vars || {});
   for (const prefix of ['BUDDY_PLAYBACK_', 'HOST_', 'SOLO_', 'OFFICIAL_NEWS_', 'DERIVE_', 'HEALTH_ALERT_']) {

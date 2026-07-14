@@ -23,7 +23,7 @@ test('playback endpoint rejects a missing D1 binding without cacheable output', 
   const response = await playbackGet({ env: {} });
   assert.equal(response.status, 500);
   assert.equal(response.headers.get('cache-control'), 'no-store');
-  assert.deepEqual(await responseJson(response), { ok: false, error: 'DB binding missing' });
+  assert.deepEqual(await responseJson(response), { ok: false, error: 'FACTS_DB binding missing' });
 });
 
 test('playback endpoint maps a live queue into current-track state and cache headers', async () => {
@@ -58,8 +58,30 @@ test('playback endpoint maps a live queue into current-track state and cache hea
     metadata_fetched_at: now - 2_000,
     metadata_raw_json: null,
   }];
-  const db = new FakeD1Database().route('all', 'WITH latest_channel AS', { results: rows });
-  const response = await playbackGet({ env: { DB: db } });
+  const db = new FakeD1Database()
+    .route('first', 'FROM sh_minute_facts f', {
+      observed_at: now - 1_000,
+      channel_id: 318,
+      station_id: 3328626,
+      is_broadcasting: 1,
+      host_account_id: 46,
+      host_handle: 'sakurazaka46jp',
+      broadcast_start_time: now - 600_000,
+    })
+    .route('first', 'FROM sh_queue_read_model_current', {
+      channel_id: 318,
+      observed_at: now - 500,
+      station_id: 3328626,
+      queue_id: 91,
+      start_time: now - 30_000,
+      is_paused: 0,
+      queue_json: JSON.stringify(rows.map((row) => ({
+        ...row,
+        station_id: row.queue_station_id,
+        start_time: row.queue_start_time,
+      }))),
+    });
+  const response = await playbackGet({ env: { FACTS_DB: db } });
   const body = await responseJson(response);
 
   assert.equal(response.status, 200);

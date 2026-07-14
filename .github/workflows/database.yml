@@ -10,6 +10,11 @@ on:
       - 'worker/scripts/verify-facts-live.mjs'
       - 'database/other-migrations/**'
       - 'worker/scripts/provision-other-db.mjs'
+      - 'database/buddies-migrations/**'
+      - 'worker/scripts/provision-buddies-db.mjs'
+      - 'worker/scripts/buddies-db-tables.mjs'
+      - 'worker/scripts/buddies-db-export.mjs'
+      - 'worker/scripts/sync-buddies-db.mjs'
   workflow_dispatch:
     inputs:
       operation:
@@ -20,6 +25,7 @@ on:
           - site-migrations
           - facts-db
           - other-db
+          - buddies-db
 
 permissions:
   contents: read
@@ -104,3 +110,26 @@ jobs:
       - run: npm ci --no-audit --no-fund
       - name: Create or update database
         run: node scripts/provision-other-db.mjs
+
+  buddies-db:
+    name: Provision or update stationhead-buddies
+    if: github.event_name == 'push' || inputs.operation == 'buddies-db'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: worker
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN || secrets.CLOUDFLARE_BUILDS_API_TOKEN || secrets.CF_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID || secrets.CF_ACCOUNT_ID }}
+      BUDDIES_DATABASE_NAME: stationhead-buddies
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: worker/package-lock.json
+      - run: npm ci --no-audit --no-fund
+      - name: Create or update database
+        run: node scripts/provision-buddies-db.mjs

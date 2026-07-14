@@ -13,19 +13,15 @@ import {
   minuteFactQueue,
   minuteFactSnapshot,
   normalizeSnapshot,
+  readModelPresentation,
   validateChannelPayload,
 } from './collector-payload.js';
 import { ingest } from './collector-ingest.js';
 import { loadCollectorState, saveCollectorState } from './collector-state.js';
 import { loadMinuteCommentFacts } from './minute-facts-source.js';
-import { enqueueMinuteFactJob } from './minute-facts-inbox.js';
-import { saveLiveMinuteFact } from './minute-facts-store.js';
-import { combinedAbortSignal } from './request-signal.js';
+import { handoffMinuteFactJob } from './minute-facts-queue.js';
 import { enrichTracks as sharedEnrichTracks } from './shared.js';
 
-const DEFAULT_MINUTE_FACT_TIMEOUT_MS = 12_000;
-const MIN_MINUTE_FACT_TIMEOUT_MS = 1_000;
-const MAX_MINUTE_FACT_TIMEOUT_MS = 20_000;
 const SLOW_STAGE_THRESHOLD_MS = 1_000;
 const RAW_D1_STATEMENT = Symbol('collector-raw-d1-statement');
 
@@ -98,47 +94,19 @@ export function withAbortableD1(db, signal, stage = 'd1') {
 }
 
 function withCollectionSignal(env, signal) {
-  const db = withAbortableD1(env?.DB, signal, 'stationhead-monitor');
-  const factsDb = withAbortableD1(env?.FACTS_DB, signal, 'Stationhead-DB');
+  const db = withAbortableD1(env?.DB, signal, 'stationhead-buddies');
   return new Proxy(env || {}, {
     get(target, property, receiver) {
       if (property === '__COLLECTION_ABORT_SIGNAL') return signal;
       if (property === 'DB') return db;
-      if (property === 'FACTS_DB') return factsDb;
       return Reflect.get(target, property, receiver);
     },
     has(target, property) {
       return property === '__COLLECTION_ABORT_SIGNAL'
         || property === 'DB'
-        || property === 'FACTS_DB'
         || Reflect.has(target, property);
     },
   });
-}
-
-function minuteFactTimeoutMs(env = {}) {
-  const configured = Number(env.MINUTE_FACT_TIMEOUT_MS ?? DEFAULT_MINUTE_FACT_TIMEOUT_MS);
-  if (!Number.isFinite(configured)) return DEFAULT_MINUTE_FACT_TIMEOUT_MS;
-  return Math.max(MIN_MINUTE_FACT_TIMEOUT_MS, Math.min(MAX_MINUTE_FACT_TIMEOUT_MS, configured));
-}
-
-function rejectWhenAborted(signal, stage) {
-  return new Promise((_, reject) => {
-    if (signal.aborted) {
-      reject(collectionAbortError(signal, stage));
-      return;
-    }
-    signal.addEventListener('abort', () => reject(collectionAbortError(signal, stage)), { once: true });
-  });
-}
-
-export async function saveLiveMinuteFactWithinBudget(env, input, writer = saveLiveMinuteFact) {
-  const signal = combinedAbortSignal(signalFrom(env), minuteFactTimeoutMs(env));
-  const boundedEnv = withCollectionSignal(env, signal);
-  return Promise.race([
-    Promise.resolve().then(() => writer(boundedEnv, input)),
-    rejectWhenAborted(signal, 'd1_write_minute_fact'),
-  ]);
 }
 
 async function timedStage(stage, operation, thresholdMs = SLOW_STAGE_THRESHOLD_MS) {
@@ -239,12 +207,36 @@ export async function collectOnce(env, source = 'manual') {
       () => loadMinuteCommentFacts(activeEnv.DB, state.stationId, observedAt),
     );
 
-    stage = 'd1_enqueue_minute_fact';
-    const minuteFactJob = await timedStage(stage, () => enqueueMinuteFactJob(activeEnv, {
+    const factSnapshot = minuteFactSnapshot(snapshot);
+    const factQueue = minuteFactQueue(queue);
+    stage = 'd1_outbox_minute_fact';
+    const minuteFactJob = await timedStage(stage, () => handoffMinuteFactJob(activeEnv, {
       observedAt,
-      snapshot: minuteFactSnapshot(snapshot),
-      queue: minuteFactQueue(queue),
+      snapshot: factSnapshot,
+      queue: factQueue,
       comments: { ...commentResult, ...minuteComments },
+    }, {
+      readModel: {
+        channel: {
+          channel_id: state.channelId,
+          observed_at: observedAt,
+          presentation: readModelPresentation(snapshot),
+        },
+        queue: {
+          station_id: factQueue?.station_id ?? state.stationId,
+          queue_id: factQueue?.queue_id ?? null,
+          start_time: factQueue?.start_time ?? null,
+          is_paused: factQueue?.is_paused ?? null,
+          value: factQueue,
+        },
+        collector: {
+          collector_id: config.collectorId,
+          last_run_at: observedAt,
+          last_success_at: observedAt,
+          last_error_present: false,
+          updated_at: observedAt,
+        },
+      },
     }));
 
     throwIfCollectionAborted(activeEnv, 'd1_write_collector_state');
@@ -281,6 +273,7 @@ export async function collectOnce(env, source = 'manual') {
       metadata_saved: metadataSaved,
       metadata_deferred: Boolean(queue && !metadataPlanned),
       minute_fact_job_enqueued: Boolean(minuteFactJob?.enqueued),
+      minute_fact_outbox_pending: Boolean(minuteFactJob?.outbox_pending),
       minute_fact_job_minute_at: minuteFactJob?.minute_at ?? null,
       heartbeat_written: false,
       token_expires_at: state.tokenExpiresAt || null,

@@ -1,0 +1,7 @@
+{
+  "binding": "DB",
+  "database_name": "stationhead-buddies",
+  "database_id": "f361aae0-05f0-42bc-8784-77100e80133d",
+  "migrations_dir": "database/buddies-migrations",
+  "schema": "database/buddies-migrations/002_minute_fact_outbox.sql"
+}

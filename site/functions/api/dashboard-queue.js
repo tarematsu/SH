@@ -1,6 +1,6 @@
 import { num } from '../lib/api-utils.js';
 import { computePlayback as computePlaybackWithAnchors, normalizePlaybackTrack } from '../lib/playback.js';
-import { LATEST_QUEUE_WITH_ITEMS_SQL, parseLatestQueueRows } from '../lib/latest-queue.js';
+import { queueFromReadModel, QUEUE_READ_MODEL_SQL } from '../lib/public-read-model.js';
 
 const DEFAULT_LIMIT = 20;
 const MAX_LIMIT = 40;
@@ -21,14 +21,17 @@ function boundedInteger(value, fallback, min, max) {
 }
 
 export async function onRequestGet({ request, env }) {
-  const db = env.DB;
-  if (!db) return json({ ok: false, error: 'DB binding missing' }, 500);
+  const db = env.FACTS_DB;
+  if (!db) return json({ ok: false, error: 'FACTS_DB binding missing' }, 500);
   try {
     const url = new URL(request.url);
     const offset = boundedInteger(url.searchParams.get('offset'), 11, 0, 200);
     const limit = boundedInteger(url.searchParams.get('limit'), DEFAULT_LIMIT, 1, MAX_LIMIT);
-    const result = await db.prepare(LATEST_QUEUE_WITH_ITEMS_SQL).all();
-    const { latestQueue, queue } = parseLatestQueueRows(result.results || []);
+    const channel = await db.prepare('SELECT channel_id FROM sh_minute_facts ORDER BY minute_at DESC,id DESC LIMIT 1').first();
+    const row = channel?.channel_id == null
+      ? null
+      : await db.prepare(QUEUE_READ_MODEL_SQL).bind(channel.channel_id).first();
+    const { latestQueue, queue } = queueFromReadModel(row);
     const generatedAt = Date.now();
     const playback = computePlaybackWithAnchors(queue, generatedAt);
     const startIndex = Math.max(0, playback.currentIndex);

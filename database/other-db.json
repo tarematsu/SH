@@ -2,5 +2,5 @@
   "binding": "OTHER_DB",
   "database_name": "stationhead-other",
   "database_id": "21e70e92-6725-4e62-809e-8aadb088cc11",
-  "schema": "database/other-migrations/001_initial_schema.sql"
+  "schema": "database/other-migrations/004_track_metadata.sql"
 }

@@ -83,6 +83,16 @@ test('main dashboard prefers fresh FACTS_DB metrics and history over conflicting
     .route('all', 'WITH latest_channel AS', {
       results: [{ observed_at: now - 2_000, online_member_count: 167, current_stream_count: 49_127_261 }],
     })
+    .route('first', 'FROM sh_channel_read_model', {
+      channel_id: 318,
+      observed_at: now - 2_000,
+      presentation_json: JSON.stringify({
+        channel_name: 'Buddies',
+        channel_alias: 'buddies',
+        stream_goal: 50_000_000,
+      }),
+    })
+    .route('first', 'FROM sh_queue_read_model_current', null)
     .route('first', 'f.total_member_count AS total_member_count', {
       observed_at: now - 86_400_000,
       total_member_count: 30_500,
@@ -128,7 +138,7 @@ test('dashboard history and recovery select FACTS_DB when it is bound', async ()
   assert.equal(recovery.rows[0].online_member_count, 12);
 });
 
-test('dashboard history falls back to DB when the facts schema is unavailable', async () => {
+test('dashboard history does not fall back to the private buddies DB', async () => {
   const facts = new FakeD1Database().route(
     'all',
     'WITH latest_channel AS',
@@ -138,7 +148,6 @@ test('dashboard history falls back to DB when the facts schema is unavailable', 
     results: [{ observed_at: 200, online_member_count: 9 }],
   });
   const payload = await responseJson(await dashboardHistoryGet({ env: { DB: db, FACTS_DB: facts } }));
-  assert.equal(payload.ok, true);
-  assert.equal(payload.storage_source, 'legacy-db');
-  assert.equal(payload.history[0].online_member_count, 9);
+  assert.equal(payload.ok, false);
+  assert.equal(db.calls.length, 0);
 });

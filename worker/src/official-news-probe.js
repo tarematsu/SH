@@ -24,16 +24,18 @@ function stationHeaders(cfg, session) {
   };
 }
 
-export const OFFICIAL_PROBE_CONTEXT_SQL = `SELECT
-  collector.auth_token,collector.device_uid,
-  (SELECT station_id FROM sh_channel_snapshots
-    WHERE station_id IS NOT NULL
-    ORDER BY observed_at DESC,id DESC LIMIT 1) AS buddies_station_id
-FROM sh_worker_collector_state collector
-WHERE collector.id='stationhead' LIMIT 1`;
+export const OFFICIAL_PROBE_CONTEXT_SQL = `SELECT auth_token,device_uid
+FROM sh_worker_collector_state WHERE id='buddy46' LIMIT 1`;
+
+export const OFFICIAL_BUDDIES_STATION_SQL = `SELECT station_id AS buddies_station_id
+FROM sh_queue_read_model_current ORDER BY observed_at DESC LIMIT 1`;
 
 export async function loadOfficialProbeContext(env) {
-  return env.DB.prepare(OFFICIAL_PROBE_CONTEXT_SQL).first();
+  const [session, station] = await Promise.all([
+    env.OTHER_DB.prepare(OFFICIAL_PROBE_CONTEXT_SQL).first(),
+    env.FACTS_DB.prepare(OFFICIAL_BUDDIES_STATION_SQL).first(),
+  ]);
+  return { ...session, buddies_station_id: station?.buddies_station_id ?? null };
 }
 
 async function stationRequest(path, cfg, session, options = {}) {
@@ -257,7 +259,7 @@ export async function probeAnnouncements(env, cfg, now) {
 }
 
 export async function runOfficialNewsMonitor(env, cfg, now, dependencies = {}) {
-  if (!env.DB || !env.OTHER_DB) return;
+  if (!env.OTHER_DB) return;
   const check = dependencies.checkOfficialNews || checkOfficialNews;
   const probe = dependencies.probeAnnouncements || probeAnnouncements;
   const readState = dependencies.monitorState || monitorState;

@@ -32,42 +32,12 @@ function json(data, status = 200, cache = CACHE_CONTROL) {
 }
 
 export async function onRequestGet({ env }) {
-  if (!env.FACTS_DB && !env.DB) {
-    return json({ ok: false, error: 'DB binding missing' }, 500, 'no-store');
+  if (!env.FACTS_DB) {
+    return json({ ok: false, error: 'FACTS_DB binding missing' }, 500, 'no-store');
   }
 
   try {
-    const legacySql = `WITH latest AS (
-      SELECT MAX(observed_at) AS latest_at FROM sh_channel_snapshots
-    ), ranked AS (
-      SELECT observed_at,listener_count,online_member_count,total_member_count,
-        total_listens,current_stream_count,stream_goal,
-        ROW_NUMBER() OVER (
-          PARTITION BY CAST(observed_at/300000 AS INTEGER)
-          ORDER BY observed_at DESC,id DESC
-        ) AS rn
-      FROM sh_channel_snapshots,latest
-      WHERE latest.latest_at IS NOT NULL
-        AND observed_at>=latest.latest_at-86400000
-    )
-    SELECT observed_at,listener_count,online_member_count,total_member_count,
-      total_listens,current_stream_count,stream_goal
-    FROM ranked WHERE rn=1 ORDER BY observed_at ASC LIMIT 300`;
-    let result;
-    let storageSource;
-    try {
-      if (!env.FACTS_DB) throw new Error('FACTS_DB binding missing');
-      result = await env.FACTS_DB.prepare(FACTS_RECOVERY_SQL).all();
-      storageSource = 'facts-db';
-    } catch (factsError) {
-      if (!env.DB) throw factsError;
-      console.error(JSON.stringify({
-        event: 'dashboard_recovery_facts_fallback',
-        error: String(factsError?.message || factsError),
-      }));
-      result = await env.DB.prepare(legacySql).all();
-      storageSource = 'legacy-db';
-    }
+    const result = await env.FACTS_DB.prepare(FACTS_RECOVERY_SQL).all();
 
     const rows = result.results || [];
     const latestObservedAt = Number(rows.at(-1)?.observed_at || 0) || null;
@@ -75,7 +45,7 @@ export async function onRequestGet({ env }) {
     return json({
       ok: true,
       generated_at: generatedAt,
-      storage_source: storageSource,
+      storage_source: 'facts-db',
       latest_observed_at: latestObservedAt,
       stale: !latestObservedAt || generatedAt - latestObservedAt > STALE_AFTER_MS,
       rows,

@@ -72,3 +72,18 @@ test('runtime state rejects unsafe task names', async () => {
   resetMinuteFactRuntimeStateForTests();
   await assert.rejects(recordMinuteFactRuntimeState({ FACTS_DB: fakeDb() }, 'derive;drop', {}), /task name is invalid/);
 });
+
+test('runtime signals never report stale backlog when the pending count is zero', () => {
+  assert.deepEqual(minuteFactRuntimeSignals({
+    pending_count: 0,
+    oldest_pending_minute: 0,
+    dead_count: 0,
+    last_failure_at: 0,
+    last_success_at: 1,
+  }, { now: 1_000_000, pendingAgeMs: 60_000 }), {
+    has_dead_jobs: false,
+    pending_backlog: false,
+    pending_stale: false,
+    last_run_failed: false,
+  });
+});
