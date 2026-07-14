@@ -1,6 +1,6 @@
 {
   "result": "success",
-  "database_name": "Stationhead-DB",
+  "database_name": "stationhead-minute",
   "attempt": 1,
   "fact_count": 2026,
   "live_fact_count": 489,
