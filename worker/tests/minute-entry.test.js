@@ -19,7 +19,10 @@ test('minute worker routes dedicated derive, rebuild and legacy crons', async ()
   const env = { BUDDIES_DB: buddiesDb, LEGACY_DB: legacyDb };
 
   assert.equal(await runMinuteScheduled({ cron: MINUTE_FACT_DERIVE_CRON }, env, {
-    runDerive: async () => 'derive',
+    runDerive: async (activeEnv) => {
+      assert.equal(activeEnv.DB, buddiesDb);
+      return 'derive';
+    },
   }), 'derive');
   assert.equal(await runMinuteScheduled({ cron: MINUTE_FACT_REBUILD_CRON }, env, {
     runRebuild: async (activeEnv) => {
@@ -40,14 +43,14 @@ test('single minute-worker cron runs derive, rebuild and legacy in separate slot
   const calls = [];
   const env = { BUDDIES_DB: { name: 'buddies' }, LEGACY_DB: { name: 'legacy' } };
   const run = (minute) => runMinuteScheduled({ cron: MINUTE_FACT_WORKER_CRON, scheduledTime: minute * 60_000 }, env, {
-    runDerive: async () => { calls.push('derive'); return 'derive'; },
+    runDerive: async (activeEnv) => { calls.push(`derive:${activeEnv.DB.name}`); return 'derive'; },
     runRebuild: async (activeEnv) => { calls.push(`rebuild:${activeEnv.DB.name}`); return 'rebuild'; },
     runLegacy: async (activeEnv) => { calls.push(`legacy:${activeEnv.DB.name}`); return 'legacy'; },
   });
   assert.equal(await run(2), 'derive');
   assert.equal(await run(7), 'rebuild');
   assert.equal(await run(9), 'legacy');
-  assert.deepEqual(calls, ['derive', 'rebuild:buddies', 'legacy:legacy']);
+  assert.deepEqual(calls, ['derive:buddies', 'rebuild:buddies', 'legacy:legacy']);
 });
 
 test('minute worker retries a bounded set of dead jobs in its recovery slot', async () => {
