@@ -1,5 +1,6 @@
 import { sanitizeFailureDetail } from './collector-failure.js';
 import { enqueueMinuteFactJob, minuteFactJobPayload } from './minute-facts-inbox.js';
+import { saveMinuteCommentTask } from './minute-comments.js';
 import { loadMinuteCommentFacts } from './minute-facts-source.js';
 import { minuteBucket } from './minute-facts-store.js';
 
@@ -122,6 +123,7 @@ export function minuteFactQueueMessage(input = {}, options = {}) {
       jobPriority: options.jobPriority ?? (payload.rebuild ? 20 : 100),
       requeueCompleted: options.requeueCompleted === true,
       enrichTrackMetadata: options.enrichTrackMetadata === true,
+      collectComments: options.collectComments === true,
     },
   };
   const serialized = JSON.stringify(message);
@@ -163,6 +165,7 @@ export function parseMinuteFactQueueMessage(body) {
       jobPriority: body.options?.jobPriority,
       requeueCompleted: body.options?.requeueCompleted === true,
       enrichTrackMetadata: body.options?.enrichTrackMetadata === true,
+      collectComments: body.options?.collectComments === true,
     },
     job_id: jobId,
     read_model: hydrateReadModel(body.read_model, payload),
@@ -307,6 +310,7 @@ export async function consumeMinuteFactBatch(batch, env, dependencies = {}) {
   const saveReadModels = dependencies.saveReadModels || (async () => {});
   const hasReceipt = dependencies.hasReceipt || (async () => false);
   const saveReceipt = dependencies.saveReceipt || (async () => {});
+  const saveCommentTask = dependencies.saveCommentTask || saveMinuteCommentTask;
   const onCommitted = dependencies.onCommitted || (() => {});
   const summary = { received: 0, enqueued: 0, duplicates: 0, retried: 0, invalid: 0 };
   for (const message of batch?.messages || []) {
@@ -321,6 +325,13 @@ export async function consumeMinuteFactBatch(batch, env, dependencies = {}) {
       const payload = await hydrateMinuteFactComments(env, parsed.payload);
       const result = await enqueue(env, payload, parsed.options);
       await saveReadModels(env, parsed.read_model, parsed.job_id);
+      if (parsed.options.collectComments) {
+        await saveCommentTask(env, {
+          jobId: parsed.job_id,
+          payload,
+          options: parsed.options,
+        });
+      }
       await saveReceipt(env, parsed.job_id);
       if (result?.enqueued) summary.enqueued += 1;
       else summary.duplicates += 1;

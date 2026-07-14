@@ -7,7 +7,9 @@ import { loadMinuteFactQueueMetadata } from '../src/collector-runner.js';
 test('primary collector delegates optional metadata enrichment downstream', () => {
   const source = readFileSync(new URL('../src/collector-runner.js', import.meta.url), 'utf8');
   assert.doesNotMatch(source, /sharedEnrichTracks|d1_write_track_metadata/);
+  assert.doesNotMatch(source, /collectOptionalComments|sh_chat_history/);
   assert.match(source, /enrichTrackMetadata: metadataPlanned/);
+  assert.match(source, /collectComments: initialPlan\.comments/);
 });
 
 test('loadMinuteFactQueueMetadata reads distinct ids and hydrates the Queue read model', async () => {

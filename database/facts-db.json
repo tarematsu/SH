@@ -2,5 +2,5 @@
   "binding": "FACTS_DB",
   "database_name": "stationhead-minute",
   "database_id": "c2661253-5e1b-4060-a7b4-acf6dc2a8988",
-  "schema": "database/facts-migrations/004_buddies_queue_read_models.sql"
+  "schema": "database/facts-migrations/005_minute_comment_tasks.sql"
 }

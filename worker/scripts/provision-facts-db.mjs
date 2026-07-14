@@ -18,6 +18,10 @@ const readModelMigrationPath = resolve(
   repositoryRoot,
   'database/facts-migrations/004_buddies_queue_read_models.sql',
 );
+const commentTaskMigrationPath = resolve(
+  repositoryRoot,
+  'database/facts-migrations/005_minute_comment_tasks.sql',
+);
 const metadataPath = resolve(repositoryRoot, 'database/facts-db.json');
 const databaseName = process.env.FACTS_DATABASE_NAME || 'stationhead-minute';
 
@@ -104,11 +108,16 @@ wrangler([
   '--remote', '--yes',
   '--file', readModelMigrationPath,
 ]);
+wrangler([
+  'd1', 'execute', databaseName,
+  '--remote', '--yes',
+  '--file', commentTaskMigrationPath,
+]);
 
 writeFileSync(metadataPath, `${JSON.stringify({
   binding: 'FACTS_DB',
   database_name: databaseName,
   database_id: databaseId,
-  schema: 'database/facts-migrations/004_buddies_queue_read_models.sql',
+  schema: 'database/facts-migrations/005_minute_comment_tasks.sql',
 }, null, 2)}\n`);
 console.log(JSON.stringify({ ok: true, database_name: databaseName, database_id: databaseId }));

@@ -96,7 +96,10 @@ test('producer awaits durable Queue acceptance without touching FACTS_DB', async
     },
   };
 
-  const result = await sendMinuteFactJob(env, input, { enrichTrackMetadata: true });
+  const result = await sendMinuteFactJob(env, input, {
+    enrichTrackMetadata: true,
+    collectComments: true,
+  });
 
   assert.equal(accepted, true);
   assert.equal(result.enqueued, true);
@@ -105,6 +108,7 @@ test('producer awaits durable Queue acceptance without touching FACTS_DB', async
   assert.equal(sent.options.contentType, 'json');
   const parsed = parseMinuteFactQueueMessage(sent.body);
   assert.equal(parsed.options.enrichTrackMetadata, true);
+  assert.equal(parsed.options.collectComments, true);
   assert.deepEqual(parsed.payload, {
     payload_version: 1,
     observedAt: 123_456,
@@ -177,9 +181,12 @@ test('consumer enqueues once and acknowledges duplicate at-least-once delivery',
   assert.deepEqual(duplicate.calls, [['ack']]);
 });
 
-test('consumer emits optional metadata work only after the durable commit and acknowledgement', async () => {
+test('consumer emits optional work only after the durable commit and acknowledgement', async () => {
   const calls = [];
-  const body = minuteFactQueueMessage(input, { enrichTrackMetadata: true });
+  const body = minuteFactQueueMessage(input, {
+    enrichTrackMetadata: true,
+    collectComments: true,
+  });
   const message = {
     body,
     attempts: 1,
@@ -190,13 +197,14 @@ test('consumer emits optional metadata work only after the durable commit and ac
     hasReceipt: async () => false,
     enqueue: async () => { calls.push('enqueue'); return { enqueued: true }; },
     saveReadModels: async () => { calls.push('read_model'); },
+    saveCommentTask: async () => { calls.push('comment_task'); },
     saveReceipt: async () => { calls.push('receipt'); },
     onCommitted(job) {
       calls.push(`committed:${job.options.enrichTrackMetadata}`);
     },
   });
 
-  assert.deepEqual(calls, ['enqueue', 'read_model', 'receipt', 'ack', 'committed:true']);
+  assert.deepEqual(calls, ['enqueue', 'read_model', 'comment_task', 'receipt', 'ack', 'committed:true']);
 });
 
 test('consumer retries transient D1 failures and acks poison messages', async () => {

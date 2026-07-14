@@ -5,6 +5,7 @@ import { ingest } from './collector-ingest.js';
 import { runMinuteFactsBackfill } from './minute-facts-backfill.js';
 import { runMinuteFactDeriveCron } from './minute-facts-derive.js';
 import { runMinuteFactsLegacyBackfill } from './minute-facts-legacy-backfill.js';
+import { runMinuteCommentTasks } from './minute-comments.js';
 import { requeueDeadMinuteFactJobs } from './minute-facts-inbox.js';
 import { consumeMinuteFactBatch } from './minute-facts-queue.js';
 import {
@@ -21,7 +22,7 @@ export const MINUTE_FACT_REBUILD_CRON = '7,17,27,37,47,57 * * * *';
 export const MINUTE_FACT_LEGACY_CRON = '9,19,29,39,49,59 * * * *';
 export const MINUTE_FACT_WORKER_CRON = '* * * * *';
 export const MINUTE_FACT_RECOVERY_MINUTE = 5;
-const ACTIVE_HEALTH_TASKS = new Set(['derive', 'recovery', 'rebuild', 'legacy']);
+const ACTIVE_HEALTH_TASKS = new Set(['comments', 'derive', 'recovery', 'rebuild', 'legacy']);
 
 export function activeMinuteHealthTasks(tasks = []) {
   return tasks.filter((task) => ACTIVE_HEALTH_TASKS.has(String(task?.task_name || '')));
@@ -129,12 +130,28 @@ function runLegacy(env, dependencies) {
   );
 }
 
+async function runOptionalCommentTasks(env, dependencies) {
+  try {
+    return await (dependencies.runComments || runMinuteCommentTasks)(
+      env,
+      dependencies.comments || {},
+    );
+  } catch (error) {
+    console.warn(JSON.stringify({
+      event: 'minute_comment_tasks_failed',
+      error: sanitizeFailureDetail(error?.message || error),
+    }));
+    return { skipped: true, reason: 'task-runner-failed', failed: 1 };
+  }
+}
+
 export async function runMinuteScheduled(controller = {}, env, dependencies = {}) {
   const cron = String(controller.cron || '');
   if (cron === MINUTE_FACT_DERIVE_CRON) return runTracked(env, 'derive', () => runDerive(env, dependencies));
   if (cron === MINUTE_FACT_REBUILD_CRON) return runTracked(env, 'rebuild', () => runRebuild(env, dependencies));
   if (cron === MINUTE_FACT_LEGACY_CRON) return runTracked(env, 'legacy', () => runLegacy(env, dependencies));
   if (cron === MINUTE_FACT_WORKER_CRON) {
+    await runTracked(env, 'comments', () => runOptionalCommentTasks(env, dependencies));
     const minute = scheduledMinute(controller);
     if (minute == null) return { skipped: true, reason: 'scheduled-time-missing' };
     if (minute % 10 === MINUTE_FACT_RECOVERY_MINUTE) {

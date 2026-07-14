@@ -6,7 +6,6 @@ import {
 } from './collector-failure.js';
 import { buildCollectionPlan } from './collector-plan.js';
 import { configFromEnv, shJson } from './collector-config.js';
-import { collectOptionalComments } from './collector-comments.js';
 import {
   attachMinuteFactQueueMetadata,
   extractIds,
@@ -202,16 +201,13 @@ export async function collectOnce(env, source = 'manual') {
       metadataPlanned = initialPlan.metadataDue || queueResult?.structure_changed === true;
     }
 
-    stage = 'sh_chat_history';
-    const commentResult = initialPlan.comments
-      ? await timedStage(stage, () => collectOptionalComments(activeEnv, state, config, observedAt))
-      : {
-        commentsSaved: 0,
-        commentTotal: null,
-        commentTotalKnown: false,
-        degraded: false,
-        errorStage: null,
-      };
+    const commentResult = {
+      commentsSaved: 0,
+      commentTotal: null,
+      commentTotalKnown: false,
+      degraded: false,
+      errorStage: null,
+    };
     const factSnapshot = minuteFactSnapshot(snapshot);
     const factQueue = minuteFactQueue(queue);
     stage = 'd1_outbox_minute_fact';
@@ -222,6 +218,7 @@ export async function collectOnce(env, source = 'manual') {
       comments: commentResult,
     }, {
       enrichTrackMetadata: metadataPlanned,
+      collectComments: initialPlan.comments,
       readModel: {
         channel: {
           channel_id: state.channelId,
@@ -270,6 +267,7 @@ export async function collectOnce(env, source = 'manual') {
       comments_saved: commentResult.commentsSaved,
       comments_degraded: commentResult.degraded,
       comments_error_stage: commentResult.errorStage,
+      comments_deferred: Boolean(initialPlan.comments),
       queue_tracks: queue?.tracks?.length || 0,
       queue_inspected: Boolean(queueResult?.queue_inspected),
       queue_structure_changed: Boolean(queueResult?.structure_changed),
