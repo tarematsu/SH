@@ -121,6 +121,7 @@ export function minuteFactQueueMessage(input = {}, options = {}) {
       jobKind: options.jobKind || (payload.rebuild ? 'rebuild' : 'live'),
       jobPriority: options.jobPriority ?? (payload.rebuild ? 20 : 100),
       requeueCompleted: options.requeueCompleted === true,
+      enrichTrackMetadata: options.enrichTrackMetadata === true,
     },
   };
   const serialized = JSON.stringify(message);
@@ -161,6 +162,7 @@ export function parseMinuteFactQueueMessage(body) {
       jobKind: body.options?.jobKind,
       jobPriority: body.options?.jobPriority,
       requeueCompleted: body.options?.requeueCompleted === true,
+      enrichTrackMetadata: body.options?.enrichTrackMetadata === true,
     },
     job_id: jobId,
     read_model: hydrateReadModel(body.read_model, payload),
@@ -305,6 +307,7 @@ export async function consumeMinuteFactBatch(batch, env, dependencies = {}) {
   const saveReadModels = dependencies.saveReadModels || (async () => {});
   const hasReceipt = dependencies.hasReceipt || (async () => false);
   const saveReceipt = dependencies.saveReceipt || (async () => {});
+  const onCommitted = dependencies.onCommitted || (() => {});
   const summary = { received: 0, enqueued: 0, duplicates: 0, retried: 0, invalid: 0 };
   for (const message of batch?.messages || []) {
     summary.received += 1;
@@ -322,6 +325,19 @@ export async function consumeMinuteFactBatch(batch, env, dependencies = {}) {
       if (result?.enqueued) summary.enqueued += 1;
       else summary.duplicates += 1;
       message.ack();
+      try {
+        onCommitted({
+          jobId: parsed.job_id,
+          payload,
+          options: parsed.options,
+        });
+      } catch (error) {
+        console.warn(JSON.stringify({
+          event: 'minute_fact_post_commit_hook_failed',
+          job_id: parsed.job_id,
+          error: sanitizeFailureDetail(error?.message || error),
+        }));
+      }
     } catch (error) {
       if (error?.code === 'MINUTE_FACT_QUEUE_INVALID_MESSAGE') {
         summary.invalid += 1;

@@ -1,7 +1,14 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
 import { loadMinuteFactQueueMetadata } from '../src/collector-runner.js';
+
+test('primary collector delegates optional metadata enrichment downstream', () => {
+  const source = readFileSync(new URL('../src/collector-runner.js', import.meta.url), 'utf8');
+  assert.doesNotMatch(source, /sharedEnrichTracks|d1_write_track_metadata/);
+  assert.match(source, /enrichTrackMetadata: metadataPlanned/);
+});
 
 test('loadMinuteFactQueueMetadata reads distinct ids and hydrates the Queue read model', async () => {
   let bindings = [];

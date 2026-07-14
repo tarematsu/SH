@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import minuteApp from '../src/minute-entry.js';
+import minuteApp, { runCommittedMetadataEnrichment } from '../src/minute-entry.js';
 import { saveMinuteFactReadModels } from '../src/minute-facts-read-model.js';
 import {
   consumeMinuteFactBatch,
@@ -96,14 +96,16 @@ test('producer awaits durable Queue acceptance without touching FACTS_DB', async
     },
   };
 
-  const result = await sendMinuteFactJob(env, input);
+  const result = await sendMinuteFactJob(env, input, { enrichTrackMetadata: true });
 
   assert.equal(accepted, true);
   assert.equal(result.enqueued, true);
   assert.equal(result.channel_id, 10);
   assert.equal(result.minute_at, 120_000);
   assert.equal(sent.options.contentType, 'json');
-  assert.deepEqual(parseMinuteFactQueueMessage(sent.body).payload, {
+  const parsed = parseMinuteFactQueueMessage(sent.body);
+  assert.equal(parsed.options.enrichTrackMetadata, true);
+  assert.deepEqual(parsed.payload, {
     payload_version: 1,
     observedAt: 123_456,
     snapshot: input.snapshot,
@@ -175,6 +177,28 @@ test('consumer enqueues once and acknowledges duplicate at-least-once delivery',
   assert.deepEqual(duplicate.calls, [['ack']]);
 });
 
+test('consumer emits optional metadata work only after the durable commit and acknowledgement', async () => {
+  const calls = [];
+  const body = minuteFactQueueMessage(input, { enrichTrackMetadata: true });
+  const message = {
+    body,
+    attempts: 1,
+    ack() { calls.push('ack'); },
+    retry() { calls.push('retry'); },
+  };
+  await consumeMinuteFactBatch({ messages: [message] }, {}, {
+    hasReceipt: async () => false,
+    enqueue: async () => { calls.push('enqueue'); return { enqueued: true }; },
+    saveReadModels: async () => { calls.push('read_model'); },
+    saveReceipt: async () => { calls.push('receipt'); },
+    onCommitted(job) {
+      calls.push(`committed:${job.options.enrichTrackMetadata}`);
+    },
+  });
+
+  assert.deepEqual(calls, ['enqueue', 'read_model', 'receipt', 'ack', 'committed:true']);
+});
+
 test('consumer retries transient D1 failures and acks poison messages', async () => {
   const transient = queueMessage(minuteFactQueueMessage(input), 3);
   const poison = queueMessage({ message_type: 'unknown' });
@@ -194,6 +218,33 @@ test('consumer retries transient D1 failures and acks poison messages', async ()
 
 test('minute worker exposes the Queue consumer handler through the health wrapper', () => {
   assert.equal(typeof minuteApp.queue, 'function');
+});
+
+test('delegated metadata enrichment uses BUDDIES_DB and cannot fail the Queue job', async () => {
+  const env = { BUDDIES_DB: {}, FACTS_DB: {} };
+  let receivedEnv = null;
+  let receivedQueue = null;
+  let receivedObservedAt = null;
+  await runCommittedMetadataEnrichment(env, [{
+    jobId: 'minute-fact:10:120000',
+    payload: { queue: { tracks: [{ spotify_id: 'track-1' }] }, observedAt: 123_456 },
+  }], {
+    enrichTracks: async (sourceEnv, _ingest, queue, observedAt) => {
+      receivedEnv = sourceEnv;
+      receivedQueue = queue;
+      receivedObservedAt = observedAt;
+      return 1;
+    },
+  });
+  assert.strictEqual(receivedEnv.DB, env.BUDDIES_DB);
+  assert.strictEqual(receivedEnv.FACTS_DB, env.FACTS_DB);
+  assert.equal(receivedQueue.tracks[0].spotify_id, 'track-1');
+  assert.equal(receivedObservedAt, 123_456);
+
+  await assert.doesNotReject(runCommittedMetadataEnrichment(env, [{
+    jobId: 'minute-fact:10:120000',
+    payload: { queue: { tracks: [{ spotify_id: 'track-1' }] }, observedAt: 123_456 },
+  }], { enrichTracks: async () => { throw new Error('Spotify unavailable'); } }));
 });
 
 test('producer rejects messages above the Queue safety limit', () => {

@@ -1,4 +1,7 @@
 import { applyCronStagger } from './cron-stagger.js';
+import { sanitizeFailureDetail } from './collector-failure.js';
+import { configFromEnv } from './collector-config.js';
+import { ingest } from './collector-ingest.js';
 import { runMinuteFactsBackfill } from './minute-facts-backfill.js';
 import { runMinuteFactDeriveCron } from './minute-facts-derive.js';
 import { runMinuteFactsLegacyBackfill } from './minute-facts-legacy-backfill.js';
@@ -11,6 +14,7 @@ import {
 } from './minute-facts-read-model.js';
 import { minuteFactRuntimeSignals, readMinuteFactRuntimeState, recordMinuteFactRuntimeState } from './minute-facts-runtime-state.js';
 import { createPublicHealthCachedApp } from './public-health-cache.js';
+import { enrichTracks as sharedEnrichTracks } from './shared.js';
 
 export const MINUTE_FACT_DERIVE_CRON = '*/2 * * * *';
 export const MINUTE_FACT_REBUILD_CRON = '7,17,27,37,47,57 * * * *';
@@ -53,6 +57,43 @@ function withSourceDatabase(env, binding) {
       return property === 'DB' || Reflect.has(target, property);
     },
   });
+}
+
+export async function runCommittedMetadataEnrichment(env, jobs, dependencies = {}) {
+  const sourceEnv = withSourceDatabase(env, 'BUDDIES_DB');
+  if (!env?.BUDDIES_DB || !sourceEnv?.DB) {
+    console.warn(JSON.stringify({
+      event: 'minute_track_metadata_enrichment_skipped',
+      reason: 'buddies-db-binding-missing',
+      jobs: jobs.length,
+    }));
+    return;
+  }
+  const enrichTracks = dependencies.enrichTracks || sharedEnrichTracks;
+  const writeIngest = dependencies.ingest || ingest;
+  const config = dependencies.config || configFromEnv(sourceEnv);
+  for (const job of jobs) {
+    try {
+      const saved = await enrichTracks(
+        sourceEnv,
+        writeIngest,
+        job.payload.queue,
+        job.payload.observedAt,
+        config,
+      );
+      console.log(JSON.stringify({
+        event: 'minute_track_metadata_enriched',
+        job_id: job.jobId,
+        saved: Number(saved || 0),
+      }));
+    } catch (error) {
+      console.warn(JSON.stringify({
+        event: 'minute_track_metadata_enrichment_failed',
+        job_id: job.jobId,
+        error: sanitizeFailureDetail(error?.message || error),
+      }));
+    }
+  }
 }
 
 async function runTracked(env, task, action) {
@@ -109,12 +150,24 @@ export async function runMinuteScheduled(controller = {}, env, dependencies = {}
 }
 
 const rawApp = {
-  async queue(batch, env) {
-    return consumeMinuteFactBatch(batch, env, {
+  async queue(batch, env, ctx) {
+    const metadataJobs = [];
+    const result = await consumeMinuteFactBatch(batch, env, {
       hasReceipt: hasMinuteFactQueueReceipt,
       saveReceipt: saveMinuteFactQueueReceipt,
       saveReadModels: saveMinuteFactReadModels,
+      onCommitted(job) {
+        if (job.options.enrichTrackMetadata && job.payload.queue?.tracks?.length) {
+          metadataJobs.push(job);
+        }
+      },
     });
+    if (metadataJobs.length) {
+      const task = runCommittedMetadataEnrichment(env, metadataJobs);
+      if (typeof ctx?.waitUntil === 'function') ctx.waitUntil(task);
+      else void task;
+    }
+    return result;
   },
   async scheduled(controller, env, ctx) {
     if (minuteStaggerApplies(controller)) await applyCronStagger(env, 'minute');

@@ -20,14 +20,9 @@ import {
 import { ingest } from './collector-ingest.js';
 import { loadCollectorState, saveCollectorState } from './collector-state.js';
 import { handoffMinuteFactJob } from './minute-facts-queue.js';
-import { enrichTracks as sharedEnrichTracks } from './shared.js';
 
 const SLOW_STAGE_THRESHOLD_MS = 1_000;
 const RAW_D1_STATEMENT = Symbol('collector-raw-d1-statement');
-
-async function enrichTracks(env, queue, observedAt, config) {
-  return sharedEnrichTracks(env, ingest, queue, observedAt, config);
-}
 
 export async function loadMinuteFactQueueMetadata(db, queue, providedRows = []) {
   let hydratedQueue = attachMinuteFactQueueMetadata(queue, providedRows);
@@ -200,16 +195,11 @@ export async function collectOnce(env, source = 'manual') {
     }
 
     let queueResult = null;
-    let metadataSaved = 0;
     let metadataPlanned = false;
     if (initialPlan.queue) {
       stage = 'd1_write_queue';
       queueResult = await timedStage(stage, () => ingest(activeEnv, 'queue', queue, observedAt));
       metadataPlanned = initialPlan.metadataDue || queueResult?.structure_changed === true;
-      if (metadataPlanned) {
-        stage = 'd1_write_track_metadata';
-        metadataSaved = await timedStage(stage, () => enrichTracks(activeEnv, queue, observedAt, config));
-      }
     }
 
     stage = 'sh_chat_history';
@@ -231,6 +221,7 @@ export async function collectOnce(env, source = 'manual') {
       queue: factQueue,
       comments: commentResult,
     }, {
+      enrichTrackMetadata: metadataPlanned,
       readModel: {
         channel: {
           channel_id: state.channelId,
@@ -285,8 +276,9 @@ export async function collectOnce(env, source = 'manual') {
       queue_likes_changed: Boolean(queueResult?.likes_changed),
       queue_items_written: Number(queueResult?.queue_items_written || 0),
       like_observations_written: Number(queueResult?.like_observations_written || 0),
-      metadata_saved: metadataSaved,
-      metadata_deferred: Boolean(queue && !metadataPlanned),
+      metadata_saved: 0,
+      metadata_deferred: Boolean(queue),
+      metadata_delegated: Boolean(metadataPlanned),
       minute_fact_job_enqueued: Boolean(minuteFactJob?.enqueued),
       minute_fact_outbox_pending: Boolean(minuteFactJob?.outbox_pending),
       minute_fact_job_minute_at: minuteFactJob?.minute_at ?? null,
