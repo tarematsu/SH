@@ -4,7 +4,8 @@ function commentVelocitySql(alias = 'f') {
   return `COALESCE((
     SELECT SUM(recent.comment_count)
     FROM sh_minute_facts AS recent
-    WHERE recent.channel_id=${alias}.channel_id
+    WHERE recent.source_code=1
+      AND recent.channel_id=${alias}.channel_id
       AND recent.minute_at>=${alias}.minute_at-60000
       AND recent.minute_at<=${alias}.minute_at
   ),0)`;
@@ -23,19 +24,21 @@ export const FACTS_LATEST_SQL = `SELECT
 FROM sh_minute_facts AS f
 LEFT JOIN sh_minute_fact_context AS c ON c.fact_id=f.id
 LEFT JOIN sh_hosts AS h ON h.id=c.host_id
+WHERE f.source_code=1
 ORDER BY f.minute_at DESC,f.id DESC
 LIMIT 1`;
 
 function factsHistorySql(whereClause) {
   return `WITH latest_channel AS (
-    SELECT channel_id FROM sh_minute_facts ORDER BY minute_at DESC,id DESC LIMIT 1
+    SELECT channel_id FROM sh_minute_facts WHERE source_code=1 ORDER BY minute_at DESC,id DESC LIMIT 1
   ), points AS (
     SELECT f.id,f.minute_at,f.observed_at,f.listener_count,f.online_member_count,
       f.total_member_count,f.reported_total_listens AS total_listens,
       f.reported_current_stream_count AS current_stream_count,
       ${commentVelocitySql('f')} AS comment_velocity
     FROM sh_minute_facts AS f
-    WHERE f.channel_id=(SELECT channel_id FROM latest_channel)
+    WHERE f.source_code=1
+      AND f.channel_id=(SELECT channel_id FROM latest_channel)
       AND ${whereClause}
   ), ranked AS (
     SELECT *,
@@ -59,7 +62,7 @@ export const FACTS_HISTORY_24H_SQL = factsHistorySql(
 export const FACTS_HISTORY_SINCE_SQL = factsHistorySql('f.observed_at>?');
 
 export const FACTS_PREDICTION_24H_SQL = `WITH latest_channel AS (
-  SELECT channel_id FROM sh_minute_facts ORDER BY minute_at DESC,id DESC LIMIT 1
+  SELECT channel_id FROM sh_minute_facts WHERE source_code=1 ORDER BY minute_at DESC,id DESC LIMIT 1
 ), ranked AS (
   SELECT id,minute_at AS observed_at,reported_current_stream_count AS current_stream_count,
     ROW_NUMBER() OVER (
@@ -67,7 +70,8 @@ export const FACTS_PREDICTION_24H_SQL = `WITH latest_channel AS (
       ORDER BY minute_at DESC,id DESC
     ) AS bucket_rank
   FROM sh_minute_facts
-  WHERE channel_id=(SELECT channel_id FROM latest_channel)
+  WHERE source_code=1
+    AND channel_id=(SELECT channel_id FROM latest_channel)
     AND minute_at >= (unixepoch('now','-24 hours')*1000)
     AND reported_current_stream_count IS NOT NULL
 ), points AS (
@@ -143,6 +147,7 @@ export async function loadFactsBaseline(db, metricColumn, hostId, start, end) {
     FROM sh_minute_facts AS f
     LEFT JOIN sh_minute_fact_context AS c ON c.fact_id=f.id
     WHERE f.minute_at>=? AND f.minute_at<?
+      AND f.source_code=1
       AND (? IS NULL OR c.host_id=?)
     ORDER BY f.observed_at DESC,f.id DESC LIMIT 1`)
     .bind(start, end, hostId ?? null, hostId ?? null)

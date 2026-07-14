@@ -18,9 +18,12 @@ test('facts dashboard SQL preserves the main-page response contract', () => {
   assert.match(FACTS_LATEST_SQL, /reported_total_listens AS total_listens/);
   assert.match(FACTS_LATEST_SQL, /reported_current_stream_count AS current_stream_count/);
   assert.match(FACTS_LATEST_SQL, /LEFT JOIN sh_minute_fact_context/);
+  assert.match(FACTS_LATEST_SQL, /WHERE f\.source_code=1/);
   assert.match(FACTS_HISTORY_24H_SQL, /PARTITION BY CAST\(minute_at\/300000 AS INTEGER\)/);
   assert.match(FACTS_HISTORY_24H_SQL, /SUM\(recent\.comment_count\)/);
+  assert.match(FACTS_HISTORY_24H_SQL, /WHERE f\.source_code=1/);
   assert.match(FACTS_PREDICTION_24H_SQL, /reported_current_stream_count/);
+  assert.match(FACTS_PREDICTION_24H_SQL, /WHERE source_code=1/);
   assert.doesNotMatch(FACTS_HISTORY_24H_SQL, /sh_channel_snapshots/);
 });
 

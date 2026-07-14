@@ -4,7 +4,7 @@ const JSON_HEADERS = {
   vary: 'accept-encoding',
 };
 const JST_OFFSET_MS = 9 * 3_600_000;
-const ALLOWED_SOURCES = new Set(['live_collector', 'legacy_normalized', 'legacy_raw']);
+const ALLOWED_SOURCES = new Set(['live_collector', 'live_reconstructed', 'legacy_normalized', 'legacy_raw']);
 // sh_minute_facts source and track detection values are dictionary-coded
 // integers; these mirror the codes defined in worker/src/minute-facts-store.js.
 const SOURCE_CODES = Object.freeze({
@@ -104,16 +104,19 @@ export function minuteFactsRowsSql(options = {}) {
   LEFT JOIN sh_hosts h ON h.id=c.host_id
   LEFT JOIN sh_broadcast_sessions s ON s.id=f.broadcast_session_id
   LEFT JOIN sh_queue_revisions r ON r.id=c.queue_revision_id
-  WHERE f.minute_at>=? AND f.minute_at<?`;
-  if (options.source) sql += ' AND f.source_code=?';
-  if (options.host) sql += ` AND lower(COALESCE(h.current_handle,'')) LIKE ? ESCAPE '\\'`;
-  if (options.track) {
-    sql += ` AND (lower(COALESCE(t.title,'')) LIKE ? ESCAPE '\\'
+  `;
+  if (!options.latest) {
+    sql += ' WHERE f.minute_at>=? AND f.minute_at<?';
+    if (options.source) sql += ' AND f.source_code=?';
+    if (options.host) sql += ` AND lower(COALESCE(h.current_handle,'')) LIKE ? ESCAPE '\\'`;
+    if (options.track) {
+      sql += ` AND (lower(COALESCE(t.title,'')) LIKE ? ESCAPE '\\'
       OR lower(COALESCE(t.artist,'')) LIKE ? ESCAPE '\\'
       OR lower(COALESCE(t.isrc,'')) LIKE ? ESCAPE '\\')`;
+    }
+    if (options.cursor) sql += ' AND (f.minute_at>? OR (f.minute_at=? AND f.id>?))';
   }
-  if (options.cursor) sql += ' AND (f.minute_at>? OR (f.minute_at=? AND f.id>?))';
-  return `${sql} ORDER BY f.minute_at ASC,f.id ASC LIMIT ?`;
+  return `${sql} ORDER BY f.minute_at ${options.latest ? 'DESC' : 'ASC'},f.id ${options.latest ? 'DESC' : 'ASC'} LIMIT ?`;
 }
 
 export const migratedRowsSql = minuteFactsRowsSql;
@@ -122,10 +125,11 @@ export function minuteFactsStatsSql() {
   return `SELECT
     COUNT(*) AS total_rows,
     SUM(CASE WHEN source_code=1 THEN 1 ELSE 0 END) AS live_rows,
+    SUM(CASE WHEN source_code=2 THEN 1 ELSE 0 END) AS reconstructed_rows,
     SUM(CASE WHEN source_code=3 THEN 1 ELSE 0 END) AS normalized_rows,
     SUM(CASE WHEN source_code=4 THEN 1 ELSE 0 END) AS raw_rows,
-    MIN(minute_at) AS first_minute_at,
-    MAX(minute_at) AS last_minute_at,
+    MIN(observed_at) AS first_observed_at,
+    MAX(observed_at) AS last_observed_at,
     (SELECT COUNT(*) FROM sh_tracks) AS track_rows,
     (SELECT COUNT(*) FROM sh_hosts) AS host_rows,
     (SELECT COUNT(*) FROM sh_broadcast_sessions) AS session_rows,
@@ -146,18 +150,58 @@ export function migrationStateSql() {
 function sourceSummary(stats = {}) {
   const normalized = Math.max(0, Number(stats.normalized_rows || 0));
   const raw = Math.max(0, Number(stats.raw_rows || 0));
+  const reconstructed = Math.max(0, Number(stats.reconstructed_rows || 0));
   return {
     total: Math.max(0, Number(stats.total_rows || 0)),
     live: Math.max(0, Number(stats.live_rows || 0)),
+    live_reconstructed: reconstructed,
     legacy_normalized: normalized,
     legacy_raw: raw,
     legacy: normalized + raw,
   };
 }
 
+const LATEST_FACT_SQL = `SELECT id,source_code,minute_at,observed_at,received_at
+  FROM sh_minute_facts
+  ORDER BY minute_at DESC,id DESC LIMIT 1`;
+const LATEST_LIVE_FACT_SQL = `SELECT id,source_code,minute_at,observed_at,received_at
+  FROM sh_minute_facts
+  WHERE source_code=1
+  ORDER BY minute_at DESC,id DESC LIMIT 1`;
+
+async function loadLatestFacts(env, limit = 1440) {
+  const [rowsResult, latestAny, latestLive] = await Promise.all([
+    env.FACTS_DB.prepare(minuteFactsRowsSql({ latest: true })).bind(limit).all(),
+    env.FACTS_DB.prepare(LATEST_FACT_SQL).first(),
+    env.FACTS_DB.prepare(LATEST_LIVE_FACT_SQL).first(),
+  ]);
+  const rows = (rowsResult.results || []).map(decodeFactRow).reverse();
+  return {
+    ok: true,
+    mode: 'current',
+    database_name: 'stationhead-minute',
+    limit,
+    rows,
+    latest_any: latestAny ? { ...latestAny, source: SOURCE_NAMES[Number(latestAny.source_code)] || null } : null,
+    latest_live: latestLive ? { ...latestLive, source: SOURCE_NAMES[Number(latestLive.source_code)] || null } : null,
+    latest_observed_at: Number(latestLive?.observed_at || 0) || null,
+    storage_source: 'stationhead-minute.sh_minute_facts',
+  };
+}
+
 export async function onRequestGet({ request, env }) {
   if (!env.FACTS_DB) return json({ ok: false, error: 'FACTS_DB binding missing' }, 500);
   const url = new URL(request.url);
+  if (url.searchParams.get('latest') === '1') {
+    try {
+      return json(await loadLatestFacts(env));
+    } catch (error) {
+      if (/no such table|no such view/i.test(String(error?.message || ''))) {
+        return json({ ok: false, error: 'stationhead-minute minute facts schema is not installed', setup_required: true }, 503);
+      }
+      return json({ ok: false, error: error?.message || 'current minute facts error' }, 500);
+    }
+  }
   const from = url.searchParams.get('from') || '2024-06-01';
   const to = url.searchParams.get('to') || todayJstString();
   if (!validDateText(from) || !validDateText(to)) {
@@ -211,7 +255,7 @@ export async function onRequestGet({ request, env }) {
     return json({
       ok: true,
       mode: 'minute-facts',
-      database_name: 'Stationhead-DB',
+      database_name: 'stationhead-minute',
       from,
       to,
       filters: { source, host, track },
@@ -235,9 +279,9 @@ export async function onRequestGet({ request, env }) {
         last_error: migration.last_error || null,
         updated_at: Number(migration.updated_at || 0),
       } : null,
-      first_observed_at: Number(stats?.first_minute_at || 0) || null,
-      last_observed_at: Number(stats?.last_minute_at || 0) || null,
-      storage_source: 'Stationhead-DB.sh_minute_facts',
+      first_observed_at: Number(stats?.first_observed_at || 0) || null,
+      last_observed_at: Number(stats?.last_observed_at || 0) || null,
+      storage_source: 'stationhead-minute.sh_minute_facts',
     });
   } catch (error) {
     if (/no such table|no such view/i.test(String(error?.message || ''))) {

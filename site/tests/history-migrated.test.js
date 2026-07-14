@@ -43,9 +43,16 @@ test('minute facts history adds source, host, track and cursor filters', () => {
   assert.match(sql, /ORDER BY f\.minute_at ASC,f\.id ASC LIMIT \?$/);
 });
 
+test('current minute facts query reads exactly the newest rows for the current tab', () => {
+  const sql = minuteFactsRowsSql({ latest: true });
+  assert.doesNotMatch(sql, /WHERE f\.minute_at>=\?/);
+  assert.match(sql, /ORDER BY f\.minute_at DESC,f\.id DESC LIMIT \?$/);
+});
+
 test('minute facts stats report live and both legacy sources', () => {
   const sql = minuteFactsStatsSql();
   assert.match(sql, /source_code=1/);
+  assert.match(sql, /source_code=2/);
   assert.match(sql, /source_code=3/);
   assert.match(sql, /source_code=4/);
   assert.match(sql, /COUNT\(\*\) FROM sh_tracks/);
