@@ -1,4 +1,4 @@
-import { bool, num, rawJson, stripAppleMusicFields, text } from './api-utils.js';
+import { bool, num, rawJson, text } from './api-utils.js';
 import { prepared, runPreparedD1Batches } from './d1-batch.js';
 import {
   normalizedTrackIsrc,
@@ -355,7 +355,11 @@ function deleteMissingCurrentLikesStatements(db, stationId, trackKeys, observedA
 }
 
 export async function saveLeanQueue(db, observedAt, body) {
-  const data = stripAppleMusicFields(body?.data ?? {});
+  // Queue persistence only consumes the normalized structural/identity fields
+  // below. The old recursive playback-field scrub walked every upstream raw
+  // track before those fields were selected, even though raw JSON is rebuilt
+  // from structuralPayload later in this function.
+  const data = body?.data ?? {};
   const structuralPayload = queueStructuralPayload(data);
   const structuralHash = await payloadHash(structuralPayload);
   const tracks = Array.isArray(data?.tracks) ? data.tracks : [];
