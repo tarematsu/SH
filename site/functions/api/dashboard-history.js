@@ -1,4 +1,5 @@
 import { HISTORY_24H_SQL } from './dashboard-legacy.mjs';
+import { factsAreFresh, loadFactsDashboard } from '../lib/dashboard-facts.js';
 
 const json = (data, status = 200) => new Response(JSON.stringify(data), {
   status,
@@ -10,13 +11,29 @@ const json = (data, status = 200) => new Response(JSON.stringify(data), {
 });
 
 export async function onRequestGet({ env }) {
-  const db = env.DB;
-  if (!db) return json({ ok: false, error: 'DB binding missing' }, 500);
+  if (!env.FACTS_DB && !env.DB) return json({ ok: false, error: 'DB binding missing' }, 500);
   try {
-    const result = await db.prepare(HISTORY_24H_SQL).all();
+    let result;
+    let storageSource;
+    try {
+      if (!env.FACTS_DB) throw new Error('FACTS_DB binding missing');
+      const facts = await loadFactsDashboard(env.FACTS_DB);
+      if (!factsAreFresh(facts.latest)) throw new Error('FACTS_DB telemetry is stale');
+      result = { results: facts.history };
+      storageSource = 'facts-db';
+    } catch (factsError) {
+      if (!env.DB) throw factsError;
+      console.error(JSON.stringify({
+        event: 'dashboard_history_facts_fallback',
+        error: String(factsError?.message || factsError),
+      }));
+      result = await env.DB.prepare(HISTORY_24H_SQL).all();
+      storageSource = 'legacy-db';
+    }
     return json({
       ok: true,
       generated_at: Date.now(),
+      storage_source: storageSource,
       history: result.results || [],
     });
   } catch (error) {

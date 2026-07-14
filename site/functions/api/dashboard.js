@@ -38,26 +38,21 @@ FROM sh_stream_goal_prediction_state
 WHERE id='stream-goal-24h'
 LIMIT 1`;
 
-const cache = { value: null, hasValue: false, expiresAt: 0, pending: null };
+const cache = { value: null, hasValue: false, expiresAt: 0 };
 
 export async function cachedPrediction(statement, now = Date.now()) {
   if (cache.hasValue && cache.expiresAt > now) return cache.value;
-  if (!cache.pending) {
-    cache.pending = Promise.resolve(statement.first()).then((value) => {
-      cache.value = value ?? null;
-      cache.hasValue = true;
-      cache.expiresAt = Date.now() + 60000;
-      return cache.value;
-    }).finally(() => { cache.pending = null; });
-  }
-  return cache.pending;
+  const value = await statement.first();
+  cache.value = value ?? null;
+  cache.hasValue = true;
+  cache.expiresAt = Date.now() + 60000;
+  return cache.value;
 }
 
 export function resetPredictionCache() {
   cache.value = null;
   cache.hasValue = false;
   cache.expiresAt = 0;
-  cache.pending = null;
 }
 
 function finite(value) {
@@ -107,6 +102,7 @@ export function mergeGoalPredictions(calculatedPredictions, selectedPrediction, 
 }
 
 async function loadPredictionState(db) {
+  if (!db) return null;
   try {
     return await cachedPrediction(db.prepare(PREDICTION_STATE_SQL));
   } catch (error) {

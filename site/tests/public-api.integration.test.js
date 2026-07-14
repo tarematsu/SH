@@ -195,7 +195,7 @@ test('history cache coalesces concurrent readers and can be reset safely', async
   resetHistoryLoadCache();
 });
 
-test('dashboard prediction cache coalesces D1 reads and response decoration is stable', async () => {
+test('dashboard prediction cache retains completed values without sharing request-scoped D1 promises', async () => {
   resetPredictionCache();
   let reads = 0;
   const statement = {
@@ -210,7 +210,7 @@ test('dashboard prediction cache coalesces D1 reads and response decoration is s
     cachedPrediction(statement, 100),
   ]);
   assert.deepEqual(first, second);
-  assert.equal(reads, 1);
+  assert.equal(reads, 2);
 
   const decorated = decorateQueueResponse({
     ok: true,

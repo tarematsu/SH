@@ -5,6 +5,12 @@ import {
   safeJson,
 } from '../lib/playback.js';
 import { LATEST_QUEUE_WITH_ITEMS_SQL, parseLatestQueueRows } from '../lib/latest-queue.js';
+import {
+  factsAreFresh,
+  loadFactsBaseline,
+  loadFactsDashboard,
+  mergeFactsLatest,
+} from '../lib/dashboard-facts.js';
 
 const INITIAL_QUEUE_ITEMS = 11;
 export const ROUND_GOAL_STEP = 5_000_000;
@@ -76,21 +82,16 @@ export async function cachedHostMetric(db, metricColumn, hostScope, start, end, 
   const key = hostMetricCacheKey(metricColumn, hostScope, start, end);
   const cached = hostMetricCache.get(key);
   if (cached?.expiresAt > now && Object.hasOwn(cached, 'value')) return cached.value;
-  if (cached?.pending) return cached.pending;
-
-  const entry = cached || {};
-  entry.pending = db.prepare(hostScopedLatestSql(metricColumn, hostScope))
+  const value = await db.prepare(hostScopedLatestSql(metricColumn, hostScope))
     .bind(...hostScopedBinds(hostScope, start, end))
-    .first()
-    .then((value) => {
-      entry.value = value || null;
-      entry.expiresAt = Date.now() + HOST_METRIC_CACHE_MS;
-      return entry.value;
-    })
-    .finally(() => { entry.pending = null; });
+    .first();
+  const entry = {
+    value: value || null,
+    expiresAt: Date.now() + HOST_METRIC_CACHE_MS,
+  };
   hostMetricCache.set(key, entry);
   while (hostMetricCache.size > 16) hostMetricCache.delete(hostMetricCache.keys().next().value);
-  return entry.pending;
+  return entry.value;
 }
 
 export function resetHostMetricCache() {
@@ -350,27 +351,57 @@ export async function onRequestGet({ request, env }) {
     const listensRange = jstDayRange(Date.now(), 9);
     const memberRange = jstDayRange(Date.now(), 16);
 
-    const historyStatement = !includeHistory
-      ? null
-      : initial
-        ? db.prepare(HISTORY_24H_SQL)
-        : db.prepare(HISTORY_SINCE_SQL).bind(since);
-
-    const predictionStatement = initial && includeHistory ? null : db.prepare(PREDICTION_24H_SQL);
-    const [latest, historyResult, queueResult, predictionResult] = await Promise.all([
+    const factsPromise = env.FACTS_DB
+      ? loadFactsDashboard(env.FACTS_DB, { since, includeHistory }).catch((error) => {
+        console.error(JSON.stringify({ event: 'dashboard_facts_read_failed', error: String(error?.message || error) }));
+        return null;
+      })
+      : Promise.resolve(null);
+    const [snapshotLatest, queueResult, loadedFacts] = await Promise.all([
       db.prepare(LATEST_SQL).first(),
-      historyStatement ? historyStatement.all() : Promise.resolve({ results: [] }),
       db.prepare(LATEST_QUEUE_WITH_ITEMS_SQL).all(),
-      predictionStatement ? predictionStatement.first() : Promise.resolve(null),
+      factsPromise,
     ]);
+    const facts = factsAreFresh(loadedFacts?.latest) ? loadedFacts : null;
+    let latest = mergeFactsLatest(snapshotLatest, facts?.latest);
+    let history = facts?.history || null;
+    let predictionResult = facts?.prediction ?? null;
+    if (!facts) {
+      const historyStatement = !includeHistory
+        ? null
+        : initial
+          ? db.prepare(HISTORY_24H_SQL)
+          : db.prepare(HISTORY_SINCE_SQL).bind(since);
+      const fallbackPrediction = initial && includeHistory ? null : db.prepare(PREDICTION_24H_SQL);
+      const [historyResult, fallbackPredictionResult] = await Promise.all([
+        historyStatement ? historyStatement.all() : Promise.resolve({ results: [] }),
+        fallbackPrediction ? fallbackPrediction.first() : Promise.resolve(null),
+      ]);
+      history = historyResult.results || [];
+      predictionResult = fallbackPredictionResult;
+    }
 
     const hostScope = hostScopeFromSnapshot(latest);
-    const [previousMembers, previousListens] = await Promise.all([
-      cachedHostMetric(db, 'total_member_count', hostScope, memberRange.previousStart, memberRange.currentStart),
-      cachedHostMetric(db, 'total_listens', hostScope, listensRange.previousStart, listensRange.currentStart),
-    ]);
+    let previousMembers;
+    let previousListens;
+    if (facts) {
+      [previousMembers, previousListens] = await Promise.all([
+        loadFactsBaseline(env.FACTS_DB, 'total_member_count', facts.latest?.host_id, memberRange.previousStart, memberRange.currentStart),
+        loadFactsBaseline(env.FACTS_DB, 'total_listens', facts.latest?.host_id, listensRange.previousStart, listensRange.currentStart),
+      ]).catch(async (error) => {
+        console.error(JSON.stringify({ event: 'dashboard_facts_baseline_failed', error: String(error?.message || error) }));
+        return Promise.all([
+          cachedHostMetric(db, 'total_member_count', hostScope, memberRange.previousStart, memberRange.currentStart),
+          cachedHostMetric(db, 'total_listens', hostScope, listensRange.previousStart, listensRange.currentStart),
+        ]);
+      });
+    } else {
+      [previousMembers, previousListens] = await Promise.all([
+        cachedHostMetric(db, 'total_member_count', hostScope, memberRange.previousStart, memberRange.currentStart),
+        cachedHostMetric(db, 'total_listens', hostScope, listensRange.previousStart, listensRange.currentStart),
+      ]);
+    }
 
-    const history = historyResult.results || [];
     const { latestQueue, queue } = parseLatestQueueRows(queueResult.results || []);
 
     const generatedAt = Date.now();
@@ -403,6 +434,7 @@ export async function onRequestGet({ request, env }) {
     return json({
       ok: true,
       generated_at: generatedAt,
+      metrics_source: facts ? 'facts-db' : 'legacy-db',
       delta: !initial,
       history_deferred: initial && !includeHistory,
       latest_observed_at: latest?.observed_at || since,
