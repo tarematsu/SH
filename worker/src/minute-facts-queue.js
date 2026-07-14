@@ -29,6 +29,20 @@ function invalidMessage(detail) {
   return error;
 }
 
+function compactReadModel(readModel, payload) {
+  if (!readModel || typeof readModel !== 'object') return null;
+  if (!readModel.queue || !payload.queue || !Object.hasOwn(readModel.queue, 'value')) return readModel;
+  const queue = { ...readModel.queue };
+  delete queue.value;
+  return { ...readModel, queue };
+}
+
+function hydrateReadModel(readModel, payload) {
+  if (!readModel || typeof readModel !== 'object') return null;
+  if (!readModel.queue || !payload.queue || Object.hasOwn(readModel.queue, 'value')) return readModel;
+  return { ...readModel, queue: { ...readModel.queue, value: payload.queue } };
+}
+
 export function minuteFactQueueMessage(input = {}, options = {}) {
   const payload = minuteFactJobPayload(input);
   const channelId = integer(payload.snapshot?.channel_id);
@@ -43,7 +57,7 @@ export function minuteFactQueueMessage(input = {}, options = {}) {
     channel_id: channelId,
     minute_at: minuteAt,
     payload,
-    read_model: options.readModel || null,
+    read_model: compactReadModel(options.readModel, payload),
     options: {
       jobKind: options.jobKind || (payload.rebuild ? 'rebuild' : 'live'),
       jobPriority: options.jobPriority ?? (payload.rebuild ? 20 : 100),
@@ -88,7 +102,7 @@ export function parseMinuteFactQueueMessage(body) {
       requeueCompleted: body.options?.requeueCompleted === true,
     },
     job_id: jobId,
-    read_model: body.read_model || null,
+    read_model: hydrateReadModel(body.read_model, payload),
     channel_id: channelId,
     minute_at: minuteAt,
   };
