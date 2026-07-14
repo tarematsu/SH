@@ -17,6 +17,3 @@ Thumbs.db
 
 .wrangler/
 .sh-discovery/
-collector/.profile-capture-browser/
-collector/captures/
-collector/*.before-*

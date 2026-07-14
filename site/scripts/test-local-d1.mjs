@@ -11,6 +11,7 @@ const schemaFiles = [
   'host-monitoring.sql',
   'track-like-observations.sql',
   'migrations/004_collector_coordination.sql',
+  'migrations/131_drop_local_collector_backup.sql',
 ];
 
 function run(args) {

@@ -55,7 +55,7 @@ test('changed queue payload still creates a new canonical claim', async () => {
 
 test('higher priority queue source may replace a recent lower priority payload', async () => {
   const db = mockClaims({ recent: {
-    collector_id: 'surface-auto', collector_kind: 'local', source_priority: 70,
+    collector_id: 'legacy-cloud-worker', collector_kind: 'cloud', source_priority: 90,
     observed_at: 100, payload_hash: 'same', first_seen_at: 50,
   } });
   const result = await claimWrite(db, {

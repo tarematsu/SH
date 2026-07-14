@@ -4,7 +4,7 @@ export function collectorStateFromAuthState(authState, env = {}) {
   const authToken = normalizeBearer(authState?.authToken || env.STATIONHEAD_AUTH_TOKEN || env.SH_AUTH_TOKEN);
   const deviceUid = String(authState?.deviceUid || env.STATIONHEAD_DEVICE_UID || env.SH_DEVICE_UID || '').trim();
   if (!authToken || !deviceUid) {
-    throw new Error('Stationhead session is missing. Set SH_AUTH_TOKEN and SH_DEVICE_UID (or the legacy STATIONHEAD_AUTH_TOKEN / STATIONHEAD_DEVICE_UID) from collector/.sh-session.json.');
+    throw new Error('Stationhead session is missing. Set the SH_AUTH_TOKEN and SH_DEVICE_UID Worker secrets.');
   }
   return {
     authToken,
@@ -34,7 +34,7 @@ export async function loadCollectorState(env) {
   const deviceUid = String(row?.device_uid || env.STATIONHEAD_DEVICE_UID || env.SH_DEVICE_UID || '').trim();
 
   if (!authToken || !deviceUid) {
-    throw new Error('Stationhead session is missing. Set SH_AUTH_TOKEN and SH_DEVICE_UID (or the legacy STATIONHEAD_AUTH_TOKEN / STATIONHEAD_DEVICE_UID) from collector/.sh-session.json.');
+    throw new Error('Stationhead session is missing. Set the SH_AUTH_TOKEN and SH_DEVICE_UID Worker secrets.');
   }
 
   return {

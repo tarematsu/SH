@@ -4,15 +4,15 @@ import test from 'node:test';
 import { saveLeanQueue } from '../functions/lib/d1-optimized-ingest.js';
 import { FakeD1Database } from './helpers/fake-d1.js';
 
-test('historical duplicate claim still initializes queue current state', async () => {
+test('cloud duplicate claim still initializes queue current state', async () => {
   const observedAt = 1_751_500_160_000;
   const db = new FakeD1Database()
     .route('first', /FROM sh_queue_current/, null)
     .route('first', /WHERE data_type='queue' AND payload_hash=\?/, {
       dedupe_key: 'old-queue-claim',
       collector_id: 'integration-collector',
-      collector_kind: 'local',
-      source_priority: 70,
+      collector_kind: 'cloud',
+      source_priority: 100,
       observed_at: observedAt - 60_000,
       payload_hash: 'existing',
       first_seen_at: observedAt - 60_000,

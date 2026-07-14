@@ -40,30 +40,29 @@ test('track history and compact realtime likes share one D1 batch', async () => 
   assert.equal(loaded.likeRows[0].source, 'collector');
 });
 
-test('broadcast legacy and fail-safe series share one D1 batch', async () => {
-  let batchCalls = 0;
-  let allCalls = 0;
-  const db = {
+test('broadcast legacy and fail-safe series read from their owning databases', async () => {
+  let legacyCalls = 0;
+  let otherCalls = 0;
+  const database = (kind) => ({
     prepare(sql) {
       return {
         sql,
         bind(...values) { this.values = values; return this; },
-        async all() { allCalls += 1; return { results: [] }; },
+        async all() {
+          if (kind === 'legacy') {
+            legacyCalls += 1;
+            return { results: [{ series_key: 'legacy:a', event_name: 'A', started_at: 100, points_json: '[[0,10,1]]', total_points: 1 }] };
+          }
+          otherCalls += 1;
+          return { results: [{ series_key: 'news:b', event_name: 'B', started_at: 200, points_json: '[[0,20,2]]', total_points: 1 }] };
+        },
       };
     },
-    async batch(items) {
-      batchCalls += 1;
-      assert.equal(items.length, 2);
-      return [
-        { results: [{ series_key: 'legacy:a', event_name: 'A', started_at: 100, points_json: '[[0,10,1]]', total_points: 1 }] },
-        { results: [{ series_key: 'news:b', event_name: 'B', started_at: 200, points_json: '[[0,20,2]]', total_points: 1 }] },
-      ];
-    },
-  };
+  });
 
-  const loaded = await loadBroadcastSeriesRows(db, 0, 1000);
-  assert.equal(batchCalls, 1);
-  assert.equal(allCalls, 0);
+  const loaded = await loadBroadcastSeriesRows(database('legacy'), database('other'), 0, 1000);
+  assert.equal(legacyCalls, 1);
+  assert.equal(otherCalls, 1);
   assert.equal(loaded.legacy[0].source, 'historical_import');
   assert.equal(loaded.legacy[0].samples[0].listener, 10);
   assert.equal(loaded.failSafe[0].source, 'official_news_fail_safe');

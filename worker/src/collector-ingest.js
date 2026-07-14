@@ -1,7 +1,6 @@
 import {
   ingestOptimizedBody,
   isPendingStreamSchemaError,
-  onRequestPost as saveIngest,
   supportsOptimizedIngestType,
 } from '../../site/functions/api/ingest.js';
 
@@ -32,23 +31,5 @@ export async function ingest(env, type, data, observedAt, options = {}) {
     return returnDetails ? directResult : null;
   }
 
-  const internalSecret = env.INGEST_SECRET || 'worker-internal-ingest';
-  const request = new Request('https://worker.internal/api/ingest', {
-    method: 'POST',
-    headers: {
-      authorization: `Bearer ${internalSecret}`,
-      'content-type': 'application/json',
-    },
-    body: JSON.stringify(body),
-  });
-  const response = await saveIngest({
-    request,
-    env: { DB: env.DB, INGEST_SECRET: internalSecret },
-  });
-  if (!response.ok) {
-    const responseBody = await response.text().catch(() => '');
-    throw new Error(`D1 ingest failed (${type}) ${response.status}: ${responseBody.slice(0, 500)}`);
-  }
-  const returnDetails = type === 'queue' || options.returnDetails === true;
-  return returnDetails ? response.json().catch(() => ({})) : null;
+  throw new Error(`Direct D1 ingest is unavailable for type=${type}`);
 }

@@ -1,4 +1,3 @@
-import { handleCollectorRequest } from './collector-http.js';
 import { runCollection } from './collector-runner.js';
 
 export {
@@ -11,7 +10,6 @@ export {
   shJson,
 } from './collector-config.js';
 export { collectOptionalComments } from './collector-comments.js';
-export { authorized, handleCollectorRequest, health } from './collector-http.js';
 export { ingest } from './collector-ingest.js';
 export {
   extractIds,
@@ -32,7 +30,7 @@ export default {
     console.log(JSON.stringify(result));
   },
 
-  async fetch(request, env) {
-    return handleCollectorRequest(request, env);
+  fetch() {
+    return Response.json({ ok: false, error: 'not found' }, { status: 404 });
   },
 };

@@ -15,7 +15,6 @@ import {
   resetBroadcastSeriesCache,
   trimSeries,
 } from '../site/functions/api/broadcast-series.js';
-import { completeMetadataCount } from '../site/functions/api/track-metadata-refresh.js';
 import { cachedSnapshotCount, resetSnapshotCountCache } from '../site/functions/api/health.js';
 import { compactProbePayload, officialCommentsToWrite } from '../worker/src/official-news-index.js';
 
@@ -90,20 +89,15 @@ test('broadcast series cache coalesces concurrent heavy queries', async () => {
   assert.equal(calls, 1);
 });
 
-test('metadata remaining count only subtracts complete resolutions', () => {
-  const resolved = new Map([['a', { title: 'Title', artist: 'Artist' }], ['b', { title: 'Title', artist: '' }], ['c', { title: 'c', artist: 'Artist' }]]);
-  assert.equal(completeMetadataCount(resolved), 1);
-});
-
-test('snapshot health count is cached and concurrent reads share one query', async () => {
+test('snapshot health count keeps D1 work request-scoped', async () => {
   resetSnapshotCountCache();
   let calls = 0;
   const db = { prepare() { return { async first() { calls += 1; await new Promise((resolve) => setTimeout(resolve, 5)); return { count: 42 }; } }; } };
   const values = await Promise.all([cachedSnapshotCount(db), cachedSnapshotCount(db)]);
   assert.deepEqual(values, [42, 42]);
-  assert.equal(calls, 1);
+  assert.equal(calls, 2);
   assert.equal(await cachedSnapshotCount(db), 42);
-  assert.equal(calls, 1);
+  assert.equal(calls, 2);
 });
 
 test('official news only writes changed announcement comments', () => {

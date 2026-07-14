@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 
 import { requestWithParsedJson } from '../site/functions/api/ingest.js';
 import { AUTH_STATE_SQL, parseAuthState, readAuthState } from '../worker/src/auth-state.js';
-import { resetCollectionFlight, runCollection } from '../worker/src/index.js';
+import { runCollection } from '../worker/src/index.js';
 
 test('parsed ingest requests reuse one JSON body for the legacy handler', async () => {
   const request = new Request('https://example.test/api/ingest', {
@@ -21,7 +21,6 @@ test('parsed ingest requests reuse one JSON body for the legacy handler', async 
 });
 
 test('concurrent collection triggers remain request-scoped', async () => {
-  resetCollectionFlight();
   let calls = 0;
   let release;
   const gate = new Promise((resolve) => { release = resolve; });
@@ -43,7 +42,6 @@ test('concurrent collection triggers remain request-scoped', async () => {
 });
 
 test('collection runner accepts a new invocation after failure', async () => {
-  resetCollectionFlight();
   let calls = 0;
   await assert.rejects(() => runCollection({}, 'first', async () => {
     calls += 1;

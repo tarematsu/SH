@@ -1,5 +1,13 @@
 import { onRequestPost as corePost, onRequestGet as coreGet } from './ingest-core.js';
-import { authorized, json, observedAtFrom, readJsonBody } from '../lib/api-utils.js';
+import {
+  authorized,
+  json,
+  num,
+  observedAtFrom,
+  rawJson,
+  readJsonBody,
+  text,
+} from '../lib/api-utils.js';
 import { saveCommentCounts } from '../lib/comment-counts.js';
 import { saveLeanHeartbeat, saveLeanQueue, saveLeanSnapshot } from '../lib/d1-optimized-ingest.js';
 import { saveQueueReachability } from '../lib/queue-reachability.js';
@@ -32,6 +40,30 @@ const INGEST_HANDLERS = {
   collector_heartbeat: async ({ env, body, observedAt, data }) => {
     const result = await saveLeanHeartbeat(env.DB, observedAt, { ...data, collector_id: data?.collector_id || body?.collector_id });
     return { ok: true, type: body.type, accepted: result.accepted };
+  },
+  track_metadata: async ({ env, body, observedAt, data }) => {
+    const tracks = Array.isArray(data?.tracks) ? data.tracks : [];
+    const statements = tracks.filter((track) => track?.spotify_id).map((track) => env.DB.prepare(`INSERT INTO sh_track_metadata (
+        spotify_id,title,artist,display_title,thumbnail_url,
+        spotify_url,source,fetched_at,raw_json
+      ) VALUES (?,?,?,?,?,?,?,?,?)
+      ON CONFLICT(spotify_id) DO UPDATE SET
+        title=COALESCE(excluded.title,sh_track_metadata.title),
+        artist=COALESCE(excluded.artist,sh_track_metadata.artist),
+        display_title=COALESCE(excluded.display_title,sh_track_metadata.display_title),
+        thumbnail_url=COALESCE(excluded.thumbnail_url,sh_track_metadata.thumbnail_url),
+        spotify_url=COALESCE(excluded.spotify_url,sh_track_metadata.spotify_url),
+        source=excluded.source,
+        fetched_at=MAX(excluded.fetched_at,sh_track_metadata.fetched_at),
+        raw_json=COALESCE(excluded.raw_json,sh_track_metadata.raw_json)`)
+      .bind(
+        text(track.spotify_id), text(track.title), text(track.artist),
+        text(track.display_title), text(track.thumbnail_url), text(track.spotify_url),
+        text(track.source || 'spotify_oembed'), num(track.fetched_at) ?? observedAt,
+        rawJson(track.raw),
+      ));
+    if (statements.length) await env.DB.batch(statements);
+    return { ok: true, type: body.type, accepted: true, tracks_written: statements.length };
   },
 };
 

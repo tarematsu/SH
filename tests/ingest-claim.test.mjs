@@ -12,28 +12,14 @@ test('time buckets are deterministic', () => {
   assert.equal(hourBucket(1782133437000), 1782133200000);
 });
 
-test('cloud collector is inferred at priority 100', () => {
+test('all internal writes use the cloud collector identity and priority', () => {
   assert.deepEqual(
     sourceIdentity({ collector_id: 'cloudflare-worker' }, { collectorKind: 'external', sourcePriority: 50 }),
     { collectorId: 'cloudflare-worker', collectorKind: 'cloud', sourcePriority: 100 },
   );
-});
-
-test('local automatic and forced priorities are inferred', () => {
   assert.deepEqual(
-    sourceIdentity({ collector_id: 'surface-auto' }),
-    { collectorId: 'surface-auto', collectorKind: 'local', sourcePriority: 70 },
-  );
-  assert.deepEqual(
-    sourceIdentity({ collector_id: 'surface-active' }),
-    { collectorId: 'surface-active', collectorKind: 'local', sourcePriority: 80 },
-  );
-});
-
-test('explicit priority overrides inference', () => {
-  assert.deepEqual(
-    sourceIdentity({ collector_id: 'surface-active', collector_kind: 'local', source_priority: 65 }),
-    { collectorId: 'surface-active', collectorKind: 'local', sourcePriority: 65 },
+    sourceIdentity({ collector_id: 'cloud-host-monitor', collector_kind: 'local', source_priority: 1 }),
+    { collectorId: 'cloud-host-monitor', collectorKind: 'cloud', sourcePriority: 100 },
   );
 });
 

@@ -123,7 +123,7 @@ test('listener aggregates can be updated from the replaced minute delta', () => 
   assert.deepEqual(listenerAggregateDelta(10, null), { sum: -10, count: -1 });
 });
 
-test('concurrent dashboard prediction requests share one 24-hour aggregate query', async () => {
+test('concurrent dashboard prediction requests keep D1 work request-scoped', async () => {
   resetPredictionCache();
   let calls = 0;
   const statement = { first: async () => { calls += 1; return { sample_count: 1 }; } };
@@ -131,8 +131,8 @@ test('concurrent dashboard prediction requests share one 24-hour aggregate query
     cachedPrediction(statement),
     cachedPrediction(statement),
   ]);
-  assert.equal(calls, 1);
-  assert.equal(first, second);
+  assert.equal(calls, 2);
+  assert.deepEqual(first, second);
   await cachedPrediction(statement);
-  assert.equal(calls, 1);
+  assert.equal(calls, 2);
 });

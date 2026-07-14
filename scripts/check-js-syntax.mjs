@@ -3,7 +3,7 @@ import { existsSync } from 'node:fs';
 import { availableParallelism } from 'node:os';
 import { resolve } from 'node:path';
 
-const defaultRoots = ['collector', 'scraper', 'worker', 'site', 'tools', 'scripts', 'tests'];
+const defaultRoots = ['worker', 'site', 'tools', 'scripts', 'tests'];
 const requestedRoots = process.argv.slice(2);
 const roots = requestedRoots.length ? requestedRoots : defaultRoots;
 

@@ -109,7 +109,7 @@ test('dashboard predicts configured and five-million round goals from one trend'
   ]);
 });
 
-test('dashboard baseline requests share and reuse the same host/day query', async () => {
+test('dashboard baseline requests keep D1 work request-scoped', async () => {
   resetHostMetricCache();
   let calls = 0;
   const db = {
@@ -135,8 +135,8 @@ test('dashboard baseline requests share and reuse the same host/day query', asyn
     cachedHostMetric(db, 'total_member_count', scope, 1000, 2000),
   ]);
 
-  assert.equal(calls, 1);
-  assert.equal(first, second);
+  assert.equal(calls, 2);
+  assert.deepEqual(first, second);
   assert.equal((await cachedHostMetric(db, 'total_member_count', scope, 1000, 2000)).total_member_count, 123);
-  assert.equal(calls, 1);
+  assert.equal(calls, 2);
 });

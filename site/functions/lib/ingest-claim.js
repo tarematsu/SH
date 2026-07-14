@@ -4,30 +4,9 @@ export const minuteBucket = (value) => Math.floor(Number(value) / 60000) * 60000
 export const hourBucket = (value) => Math.floor(Number(value) / 3600000) * 3600000;
 export const QUEUE_DUPLICATE_WINDOW_MS = 60 * 60 * 1000;
 
-function inferredKind(id) {
-  const value = String(id || '').toLowerCase();
-  if (/cloudflare|worker/.test(value)) return 'cloud';
-  return value && value !== 'unknown' ? 'local' : 'unknown';
-}
-
-function inferredPriority(kind, id) {
-  if (kind === 'cloud') return 100;
-  if (kind === 'local' && /(?:^|[-_:])active(?:$|[-_:])/i.test(String(id))) return 80;
-  if (kind === 'local') return 70;
-  return 50;
-}
-
 export function sourceIdentity(body, defaults = {}) {
   const collectorId = String(body?.collector_id || defaults.collectorId || 'unknown').trim().slice(0, 200) || 'unknown';
-  const inferred = inferredKind(collectorId);
-  const requested = String(body?.collector_kind || defaults.collectorKind || '').trim().toLowerCase();
-  const collectorKind = !requested || requested === 'external' || requested === 'unknown' ? inferred : requested.slice(0, 50);
-  const automatic = inferredPriority(collectorKind, collectorId);
-  const fallback = defaults.sourcePriority;
-  const value = body?.source_priority ?? ((fallback === undefined || Number(fallback) === 50) ? automatic : fallback);
-  const parsed = Number(value);
-  const sourcePriority = Number.isFinite(parsed) ? Math.max(0, Math.min(1000, Math.trunc(parsed))) : automatic;
-  return { collectorId, collectorKind, sourcePriority };
+  return { collectorId, collectorKind: 'cloud', sourcePriority: 100 };
 }
 
 function canonical(value) {

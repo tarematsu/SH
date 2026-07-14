@@ -56,7 +56,7 @@ export async function shJson(state, config, path) {
   if (!response.ok) {
     const body = await response.text().catch(() => '');
     if (response.status === 401) {
-      throw new Error(`Stationhead session expired (401). Refresh collector/.sh-session.json and update Worker secrets. ${body.slice(0, 200)}`);
+      throw new Error(`Stationhead session expired (401). Refresh the Worker secrets. ${body.slice(0, 200)}`);
     }
     throw new Error(`Stationhead API ${response.status}: ${path}${body ? ` | ${body.slice(0, 300)}` : ''}`);
   }

@@ -75,26 +75,38 @@ test('normal host snapshot batches snapshot and session aggregate updates', asyn
   assert.deepEqual(batches[0].map((statement) => statement.kind), ['snapshot', 'session']);
 });
 
-test('official probe context loads worker session and Buddies station in one query', async () => {
+test('official probe context loads worker session and Buddies station from their owning databases', async () => {
   let prepares = 0;
   let firstCalls = 0;
   const env = {
-    DB: {
+    OTHER_DB: {
       prepare(sql) {
         prepares += 1;
-        assert.equal(sql, OFFICIAL_PROBE_CONTEXT_SQL);
+        assert.match(sql, /sh_worker_collector_state/);
         return {
           async first() {
             firstCalls += 1;
-            return { auth_token: 'token', device_uid: 'device', buddies_station_id: 123 };
+            return { auth_token: 'token', device_uid: 'device' };
+          },
+        };
+      },
+    },
+    FACTS_DB: {
+      prepare(sql) {
+        prepares += 1;
+        assert.match(sql, /sh_queue_read_model_current/);
+        return {
+          async first() {
+            firstCalls += 1;
+            return { buddies_station_id: 123 };
           },
         };
       },
     },
   };
   const value = await loadOfficialProbeContext(env);
-  assert.equal(prepares, 1);
-  assert.equal(firstCalls, 1);
+  assert.equal(prepares, 2);
+  assert.equal(firstCalls, 2);
   assert.equal(value.buddies_station_id, 123);
 });
 

@@ -1,17 +1,3 @@
-CREATE TABLE IF NOT EXISTS sh_collector_leases (
-  scope TEXT PRIMARY KEY,
-  holder_id TEXT NOT NULL,
-  holder_kind TEXT NOT NULL,
-  priority INTEGER NOT NULL,
-  lease_until INTEGER NOT NULL,
-  heartbeat_at INTEGER NOT NULL,
-  updated_at INTEGER NOT NULL,
-  metadata_json TEXT
-);
-
-CREATE INDEX IF NOT EXISTS idx_sh_collector_leases_expiry
-ON sh_collector_leases(lease_until);
-
 CREATE TABLE IF NOT EXISTS sh_ingest_claims (
   dedupe_key TEXT PRIMARY KEY,
   data_type TEXT NOT NULL,
@@ -48,14 +34,3 @@ CREATE TABLE IF NOT EXISTS sh_ingest_conflicts (
 
 CREATE INDEX IF NOT EXISTS idx_sh_ingest_conflicts_key_time
 ON sh_ingest_conflicts(dedupe_key, detected_at DESC);
-
-CREATE TABLE IF NOT EXISTS sh_local_outbox_receipts (
-  outbox_id TEXT PRIMARY KEY,
-  collector_id TEXT NOT NULL,
-  received_at INTEGER NOT NULL,
-  item_count INTEGER NOT NULL,
-  result_json TEXT
-);
-
-CREATE INDEX IF NOT EXISTS idx_sh_local_outbox_receipts_time
-ON sh_local_outbox_receipts(received_at DESC);
