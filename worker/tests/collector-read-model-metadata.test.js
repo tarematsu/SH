@@ -31,3 +31,26 @@ test('loadMinuteFactQueueMetadata reads distinct ids and hydrates the Queue read
   assert.equal(result.tracks[0].title, 'Song');
   assert.equal(result.tracks[1].artist, 'Artist');
 });
+
+test('loadMinuteFactQueueMetadata skips tracks whose presentation metadata is complete', async () => {
+  let prepared = false;
+  const db = {
+    prepare() {
+      prepared = true;
+      return { bind() { return this; }, async all() { return { results: [] }; } };
+    },
+  };
+  const queue = {
+    tracks: [{
+      spotify_id: 'track-1',
+      title: 'Song',
+      artist: 'Artist',
+      thumbnail_url: 'https://example.test/cover.jpg',
+    }],
+  };
+
+  const result = await loadMinuteFactQueueMetadata(db, queue);
+
+  assert.equal(prepared, false);
+  assert.strictEqual(result, queue);
+});

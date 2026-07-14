@@ -32,7 +32,11 @@ async function enrichTracks(env, queue, observedAt, config) {
 
 export async function loadMinuteFactQueueMetadata(db, queue) {
   const spotifyIds = [...new Set(
-    (queue?.tracks || []).map((track) => String(track?.spotify_id || '').trim()).filter(Boolean),
+    (queue?.tracks || [])
+      .filter((track) => track?.spotify_id
+        && (!track.title || !track.artist || !track.thumbnail_url))
+      .map((track) => String(track.spotify_id).trim())
+      .filter(Boolean),
   )].slice(0, 80);
   if (!spotifyIds.length) return queue;
   const placeholders = spotifyIds.map(() => '?').join(',');
@@ -213,11 +217,17 @@ export async function collectOnce(env, source = 'manual') {
     stage = 'sh_chat_history';
     const commentResult = initialPlan.comments
       ? await timedStage(stage, () => collectOptionalComments(activeEnv, state, config, observedAt))
-      : { commentsSaved: 0, degraded: false, errorStage: null };
+      : {
+        commentsSaved: 0,
+        commentTotal: null,
+        commentTotalKnown: false,
+        degraded: false,
+        errorStage: null,
+      };
     stage = 'd1_read_minute_comments';
     const minuteComments = await timedStage(
       stage,
-      () => loadMinuteCommentFacts(activeEnv.DB, state.stationId, observedAt),
+      () => loadMinuteCommentFacts(activeEnv.DB, state.stationId, observedAt, commentResult),
     );
 
     const factSnapshot = minuteFactSnapshot(snapshot);
@@ -269,7 +279,7 @@ export async function collectOnce(env, source = 'manual') {
       lastRunAt: observedAt,
       lastSuccessAt: Date.now(),
       lastError: null,
-      tokenExpiresAt: jwtExpiryMs(state.authToken) || state.tokenExpiresAt,
+      tokenExpiresAt: state.tokenExpiresAt || jwtExpiryMs(state.authToken),
     }));
     await clearCollectorFailure(activeEnv).catch((error) => {
       console.warn(JSON.stringify({
@@ -308,7 +318,7 @@ export async function collectOnce(env, source = 'manual') {
       await saveCollectorState(activeEnv, state, {
         lastRunAt: observedAt,
         lastError: failure.message.slice(0, 2000),
-        tokenExpiresAt: jwtExpiryMs(state.authToken) || state.tokenExpiresAt,
+        tokenExpiresAt: state.tokenExpiresAt || jwtExpiryMs(state.authToken),
       }).catch(() => {});
     }
     throw failure;

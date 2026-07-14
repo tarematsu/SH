@@ -16,7 +16,9 @@ export const MINUTE_FACT_OUTBOX_SCHEMA_SQL = `CREATE TABLE IF NOT EXISTS sh_minu
   last_error TEXT
 )`;
 
-const outboxSchemaReady = new WeakSet();
+const serializedMessages = new WeakMap();
+const messageEncoder = new TextEncoder();
+let lastOutboxCleanupMinute = null;
 
 function integer(value) {
   const parsed = Number(value);
@@ -64,10 +66,12 @@ export function minuteFactQueueMessage(input = {}, options = {}) {
       requeueCompleted: options.requeueCompleted === true,
     },
   };
-  const size = new TextEncoder().encode(JSON.stringify(message)).byteLength;
+  const serialized = JSON.stringify(message);
+  const size = messageEncoder.encode(serialized).byteLength;
   if (size > MINUTE_FACT_QUEUE_MAX_MESSAGE_BYTES) {
     throw invalidMessage(`message exceeds ${MINUTE_FACT_QUEUE_MAX_MESSAGE_BYTES} bytes`);
   }
+  serializedMessages.set(message, serialized);
   return message;
 }
 
@@ -126,23 +130,21 @@ export async function sendMinuteFactJob(env, input = {}, options = {}) {
 
 export async function ensureMinuteFactOutboxSchema(env) {
   if (!env?.DB) throw new Error('minute fact outbox DB binding is missing');
-  if (outboxSchemaReady.has(env.DB)) return false;
-  await env.DB.prepare(MINUTE_FACT_OUTBOX_SCHEMA_SQL).run();
-  outboxSchemaReady.add(env.DB);
-  return true;
+  // The table is owned by database/buddies-migrations/002_minute_fact_outbox.sql.
+  // Runtime DDL made the collector pay for CREATE TABLE on every fresh D1
+  // proxy, so migration state is now the single source of truth.
+  return false;
 }
 
-async function saveMinuteFactOutboxJob(env, message, now = Date.now()) {
-  await ensureMinuteFactOutboxSchema(env);
+async function saveMinuteFactOutboxJob(env, message, now = Date.now(), serialized = null) {
   await env.DB.prepare(`INSERT OR IGNORE INTO sh_minute_fact_outbox(
       job_id,payload_json,status,attempts,created_at,sent_at,last_attempt_at,last_error
     ) VALUES(?,?,'pending',0,?,NULL,NULL,NULL)`)
-    .bind(message.job_id, JSON.stringify(message), now)
+    .bind(message.job_id, serialized || serializedMessages.get(message) || JSON.stringify(message), now)
     .run();
 }
 
 export async function flushMinuteFactOutbox(env, options = {}) {
-  await ensureMinuteFactOutboxSchema(env);
   if (!env?.MINUTE_FACT_QUEUE?.send) {
     return { sent: 0, failed: 0, pending: true, reason: 'queue-binding-missing' };
   }
@@ -151,10 +153,15 @@ export async function flushMinuteFactOutbox(env, options = {}) {
     FROM sh_minute_fact_outbox WHERE status='pending'
     ORDER BY created_at ASC LIMIT ?`).bind(limit).all();
   const summary = { sent: 0, failed: 0, pending: false, current_sent: false };
+  let currentAttempted = false;
   for (const row of rows.results || []) {
     const attemptedAt = Date.now();
     try {
-      const message = JSON.parse(String(row.payload_json || ''));
+      const isCurrent = row.job_id === options.currentJobId;
+      if (isCurrent) currentAttempted = true;
+      const message = isCurrent && options.currentMessage
+        ? options.currentMessage
+        : JSON.parse(String(row.payload_json || ''));
       // Queue.send resolves only after the message has been persisted. The
       // status update happens afterwards, so a crash can only cause a safe
       // duplicate delivery, never a lost handoff.
@@ -165,6 +172,7 @@ export async function flushMinuteFactOutbox(env, options = {}) {
         .bind(attemptedAt, attemptedAt, row.job_id)
         .run();
       summary.sent += 1;
+      if (isCurrent) summary.current_sent = true;
     } catch (error) {
       summary.failed += 1;
       summary.pending = true;
@@ -183,11 +191,15 @@ export async function flushMinuteFactOutbox(env, options = {}) {
       break;
     }
   }
-  const pending = await env.DB.prepare(
-    "SELECT COUNT(*) AS count FROM sh_minute_fact_outbox WHERE status='pending'",
-  ).first();
-  summary.pending = Number(pending?.count || 0) > 0;
-  if (options.currentJobId) {
+  if (rows.results?.length >= limit) {
+    const pending = await env.DB.prepare(
+      "SELECT COUNT(*) AS count FROM sh_minute_fact_outbox WHERE status='pending'",
+    ).first();
+    summary.pending = Number(pending?.count || 0) > 0;
+  } else {
+    summary.pending = summary.failed > 0;
+  }
+  if (options.currentJobId && !currentAttempted) {
     const current = await env.DB.prepare(
       'SELECT status FROM sh_minute_fact_outbox WHERE job_id=? LIMIT 1',
     ).bind(String(options.currentJobId)).first();
@@ -199,15 +211,23 @@ export async function flushMinuteFactOutbox(env, options = {}) {
 export async function handoffMinuteFactJob(env, input = {}, options = {}) {
   const message = minuteFactQueueMessage(input, options);
   const now = Date.now();
-  await saveMinuteFactOutboxJob(env, message, now);
+  await saveMinuteFactOutboxJob(env, message, now, serializedMessages.get(message));
   const delivery = await flushMinuteFactOutbox(env, {
     limit: options.flushLimit,
     currentJobId: message.job_id,
+    currentMessage: message,
   });
-  await env.DB.prepare(`DELETE FROM sh_minute_fact_outbox WHERE job_id IN (
-      SELECT job_id FROM sh_minute_fact_outbox
-      WHERE status='sent' AND sent_at<? ORDER BY sent_at ASC LIMIT 20
-    )`).bind(now - 7 * 24 * 60 * 60_000).run().catch(() => {});
+  const cleanupMinute = Math.floor(now / 60_000);
+  const utcDate = new Date(now);
+  if (utcDate.getUTCHours() === 0
+      && utcDate.getUTCMinutes() === 0
+      && lastOutboxCleanupMinute !== cleanupMinute) {
+    lastOutboxCleanupMinute = cleanupMinute;
+    await env.DB.prepare(`DELETE FROM sh_minute_fact_outbox WHERE job_id IN (
+        SELECT job_id FROM sh_minute_fact_outbox
+        WHERE status='sent' AND sent_at<? ORDER BY sent_at ASC LIMIT 20
+      )`).bind(now - 7 * 24 * 60 * 60_000).run().catch(() => {});
+  }
   return {
     enqueued: delivery.current_sent,
     outbox_pending: delivery.pending,

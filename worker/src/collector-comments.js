@@ -22,12 +22,23 @@ export async function collectOptionalComments(env, state, config, observedAt, de
     stage = 'sh_chat_payload';
     const comments = normalizeComments(history, state.stationId);
     stage = 'd1_write_comments';
-    await writeIngest(env, 'comments', {
+    const ingestResult = await writeIngest(env, 'comments', {
       station_id: state.stationId,
       comments,
       raw_meta: { next: history?.chats?.next ?? history?.next ?? null },
-    }, observedAt);
-    return { commentsSaved: comments.length, degraded: false, errorStage: null };
+    }, observedAt, { returnDetails: true });
+    const commentDetails = ingestResult?.totalKnown === true
+      ? {
+        commentTotal: Number(ingestResult.total),
+        commentTotalKnown: true,
+      }
+      : {};
+    return {
+      commentsSaved: comments.length,
+      degraded: false,
+      errorStage: null,
+      ...commentDetails,
+    };
   } catch (error) {
     warn(JSON.stringify({
       event: 'optional_comment_collection_failed',

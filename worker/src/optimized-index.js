@@ -46,6 +46,7 @@ function chatFallbackResponse(requestedLimit, reason) {
 globalThis.fetch = async (input, init = {}) => {
   const rawUrl = typeof input === 'string' ? input : input?.url;
   if (!rawUrl) return nativeFetch(input, init);
+  if (!String(rawUrl).includes('/chatHistory')) return nativeFetch(input, init);
 
   let url;
   try {

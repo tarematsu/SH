@@ -33,9 +33,12 @@ function queueMessage(body, attempts = 1) {
 
 function outboxDb() {
   const rows = new Map();
+  const calls = [];
   return {
     rows,
+    calls,
     prepare(sql) {
+      calls.push(sql);
       const statement = {
         params: [],
         bind(...params) { this.params = params; return this; },
@@ -149,6 +152,9 @@ test('outbox keeps a failed Queue delivery pending and retries it on the next co
   assert.equal(second.outbox_pending, false);
   assert.equal([...DB.rows.values()][0].status, 'sent');
   assert.equal(attempts, 2);
+  assert.equal(DB.calls.some((sql) => sql.includes('CREATE TABLE')), false);
+  assert.equal(DB.calls.some((sql) => sql.includes('SELECT COUNT(*) AS count')), false);
+  assert.equal(DB.calls.some((sql) => sql.includes('SELECT status FROM sh_minute_fact_outbox')), false);
 });
 
 test('consumer enqueues once and acknowledges duplicate at-least-once delivery', async () => {

@@ -96,6 +96,7 @@ export async function saveCommentCounts(db, observedAt, data) {
     return {
       accepted: 0,
       total: reportedTotal ?? 0,
+      totalKnown: reportedTotal != null,
       last_comment_id: knownLastId,
       velocityUpdated: false,
       skipped: true,
@@ -106,6 +107,7 @@ export async function saveCommentCounts(db, observedAt, data) {
     return {
       accepted: 0,
       total: reportedTotal ?? 0,
+      totalKnown: reportedTotal != null,
       last_comment_id: knownLastId,
       velocityUpdated,
       skipped: true,
@@ -118,7 +120,8 @@ export async function saveCommentCounts(db, observedAt, data) {
     cursors.set(stationId, Math.max(cachedLastId ?? 0, knownLastId));
     return {
       accepted: 0,
-      total: reportedTotal ?? 0,
+      total: reportedTotal,
+      totalKnown: reportedTotal != null,
       last_comment_id: knownLastId,
       velocityUpdated: false,
       skipped: true,
@@ -131,6 +134,7 @@ export async function saveCommentCounts(db, observedAt, data) {
     return {
       accepted: 0,
       total: reportedTotal ?? 0,
+      totalKnown: reportedTotal != null,
       last_comment_id: trustedLastId,
       velocityUpdated,
       skipped: true,
@@ -150,6 +154,7 @@ export async function saveCommentCounts(db, observedAt, data) {
     return {
       accepted: 0,
       total,
+      totalKnown: true,
       last_comment_id: lastId || knownLastId,
       velocityUpdated,
       skipped: true,
@@ -200,6 +205,7 @@ export async function saveCommentCounts(db, observedAt, data) {
   return {
     accepted: fresh.length,
     total,
+    totalKnown: true,
     last_comment_id: newestAcceptedId,
     velocity: null,
     velocityUpdated,

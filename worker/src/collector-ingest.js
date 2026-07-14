@@ -27,7 +27,9 @@ export async function ingest(env, type, data, observedAt, options = {}) {
   const body = ingestBody(env, type, data, observedAt);
   const directResult = await directIngest(env, body);
   if (directResult) {
-    const returnDetails = type === 'queue' || options.returnDetails === true;
+    const returnDetails = type === 'queue'
+      || type === 'comments'
+      || options.returnDetails === true;
     return returnDetails ? directResult : null;
   }
 
