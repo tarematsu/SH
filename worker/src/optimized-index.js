@@ -271,24 +271,28 @@ export function authHealth(state) {
   };
 }
 
-export async function runOptimizedScheduled(controller, env, ctx) {
+export async function runOptimizedScheduled(controller, env, ctx, dependencies = {}) {
+  const ensure = dependencies.ensureSession || ensureSession;
+  const refresh = dependencies.refreshSession || refreshSession;
+  const runCollector = dependencies.collectorScheduled || collector.scheduled;
   try {
-    let state = await ensureSession(env);
+    let state = await ensure(env);
     if (!state?.authToken || !state?.deviceUid) {
       console.warn(JSON.stringify({ event: 'sh_auth_backoff' }));
       return;
     }
 
     try {
-      await collector.scheduled(controller, withAuthState(env, state), ctx);
+      await runCollector(controller, withAuthState(env, state), ctx);
     } catch (error) {
       if (!is401(error)) throw error;
-      state = await refreshSession(env, 'api-401', true);
+      state = await refresh(env, 'api-401', true);
       if (!state) throw error;
-      await collector.scheduled(controller, withAuthState(env, state), ctx);
+      await runCollector(controller, withAuthState(env, state), ctx);
     }
   } catch (error) {
     console.error(error);
+    throw error;
   }
 }
 

@@ -2,7 +2,8 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
-import otherApp, { runOfficialNewsWithReconcile, runOtherScheduled } from '../src/other-entry.js';
+import otherApp, { runOfficialNewsWithReconcile, runOtherCron, runOtherScheduled } from '../src/other-entry.js';
+import { createOtherHealthApp } from '../src/other-health.js';
 
 test('other worker scheduled run drives buddy playback, host, prediction, maintenance, official news, and snapshot retention', async () => {
   const calls = [];
@@ -125,6 +126,39 @@ test('other worker Wrangler configuration deploys every minute against a shared 
   assert.deepEqual(config.triggers?.crons, ['* * * * *']);
 });
 
+test('other worker invalidates public health cache after every scheduled run', async () => {
+  const events = [];
+  const dependencies = Object.fromEntries(
+    ['buddy', 'host', 'prediction', 'maintenance', 'officialNews', 'snapshotRetention']
+      .map((name) => [name, () => events.push(name)]),
+  );
+
+  await runOtherCron({ scheduledTime: 0 }, {}, {}, {
+    dependencies,
+    stagger: async (_env, worker) => events.push(`stagger:${worker}`),
+    healthApp: { invalidateHealthCache: () => events.push('invalidate') },
+  });
+
+  assert.equal(events[0], 'stagger:other');
+  assert.equal(events.at(-1), 'invalidate');
+});
+
+test('other worker invalidates public health cache when a scheduled task fails', async () => {
+  let invalidated = false;
+  const dependencies = Object.fromEntries(
+    ['buddy', 'host', 'prediction', 'maintenance', 'officialNews', 'snapshotRetention']
+      .map((name) => [name, name === 'host' ? async () => { throw new Error('host failed'); } : async () => {}]),
+  );
+
+  await assert.rejects(runOtherCron({ scheduledTime: 0 }, {}, {}, {
+    dependencies,
+    stagger: async () => {},
+    healthApp: { invalidateHealthCache: () => { invalidated = true; } },
+  }), AggregateError);
+
+  assert.equal(invalidated, true);
+});
+
 test('other worker owns the public health endpoint', async () => {
   const now = Date.now();
   function dbFor(kind) {
@@ -176,3 +210,72 @@ test('other worker owns the public health endpoint', async () => {
   assert.equal(payload.cloud_solo_phase, 'idle');
   assert.equal((await otherApp.fetch(new Request('https://other.test/run', { method: 'POST' }), env, {})).status, 404);
 });
+
+test('other health reports a missing OTHER_DB binding as unavailable JSON', async () => {
+  const app = createOtherHealthApp();
+  const response = await app.fetch(new Request('https://other.test/health'), {
+    DB: healthyPrimaryDb(),
+  }, {});
+  const payload = await response.json();
+
+  assert.equal(response.status, 503);
+  assert.equal(payload.ok, false);
+  assert.equal(payload.other_health_ok, false);
+  assert.equal(payload.official_news_setup_required, true);
+  assert.equal(payload.cloud_host_setup_required, true);
+});
+
+test('other health reports OTHER_DB query failures instead of masking them', async () => {
+  const app = createOtherHealthApp();
+  const response = await app.fetch(new Request('https://other.test/health'), {
+    DB: healthyPrimaryDb(),
+    OTHER_DB: {
+      prepare() {
+        return {
+          bind() { return this; },
+          async first() { throw new Error('D1 unavailable'); },
+        };
+      },
+    },
+  }, {});
+  const payload = await response.json();
+
+  assert.equal(response.status, 503);
+  assert.equal(payload.ok, false);
+  assert.equal(payload.other_health_ok, false);
+  assert.equal(payload.official_news_setup_required, true);
+  assert.equal(payload.cloud_host_setup_required, true);
+});
+
+function healthyPrimaryDb() {
+  const now = Date.now();
+  return {
+    prepare(sql) {
+      return {
+        bind() { return this; },
+        async first() {
+          if (sql.includes('collector_state.auth_token')) {
+            return {
+              auth_token: 'token',
+              device_uid: 'device',
+              collector_last_run_at: now,
+              collector_last_success_at: now,
+              collector_updated_at: now,
+              control_id: 'stationhead',
+              last_success_at: now,
+            };
+          }
+          if (sql.includes('sh_health_alert_state')) {
+            return {
+              last_run_at: now,
+              last_success_at: now,
+              alert_table_ready: true,
+              delivery_table_ready: true,
+            };
+          }
+          return null;
+        },
+      };
+    },
+  };
+}

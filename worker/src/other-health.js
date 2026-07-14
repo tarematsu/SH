@@ -23,13 +23,24 @@ function sanitizeErrors(payload = {}) {
 }
 
 async function loadOtherHealth(env) {
-  const [official, host] = await Promise.all([
-    loadOfficialHealthState(env).catch(() => null),
-    env.OTHER_DB.prepare(`SELECT phase,session_id,station_id,last_success_at,last_error,updated_at
-      FROM sh_cloud_host_monitor_state WHERE id=?`).bind('solo:sakurazaka46jp').first()
-      .catch(() => null),
+  if (!env?.OTHER_DB?.prepare) {
+    return {
+      other_health_ok: false,
+      official_news_setup_required: true,
+      cloud_host_setup_required: true,
+    };
+  }
+  const [officialResult, hostResult] = await Promise.allSettled([
+    loadOfficialHealthState(env),
+    Promise.resolve().then(() => env.OTHER_DB.prepare(`SELECT phase,session_id,station_id,last_success_at,last_error,updated_at
+      FROM sh_cloud_host_monitor_state WHERE id=?`).bind('solo:sakurazaka46jp').first()),
   ]);
+  const official = officialResult.status === 'fulfilled' ? officialResult.value : null;
+  const host = hostResult.status === 'fulfilled' ? hostResult.value : null;
   return {
+    other_health_ok: officialResult.status === 'fulfilled' && hostResult.status === 'fulfilled',
+    official_news_setup_required: officialResult.status === 'rejected',
+    cloud_host_setup_required: hostResult.status === 'rejected',
     official_news_last_check_at: finite(official?.last_check_at),
     official_news_last_success_at: finite(official?.last_success_at),
     official_news_last_error: official?.last_error || null,
@@ -56,13 +67,15 @@ const healthApp = {
       })),
       loadOtherHealth(env),
     ]);
-    const status = baseResponse.ok && collectorHealth.collector_health_ok === false
-      ? 503
-      : baseResponse.status;
+    const healthy = baseResponse.ok
+      && collectorHealth.collector_health_ok !== false
+      && otherHealth.other_health_ok;
+    const status = healthy ? baseResponse.status : 503;
     return Response.json(sanitizeErrors({
       ...base,
       ...collectorHealth,
       ...otherHealth,
+      ok: healthy,
     }), { status });
   },
 };

@@ -5,7 +5,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const mode = String(process.env.COLLECTOR_MODE || 'auto').trim().toLowerCase();
+const mode = String(process.env.COLLECTOR_MODE || 'standby').trim().toLowerCase();
 const graceMs = positive('FAILOVER_GRACE_MS', 180000);
 const shutdownTimeoutMs = positive('FAILOVER_SHUTDOWN_TIMEOUT_MS', 15000);
 const baseCollectorId = process.env.COLLECTOR_ID || os.hostname();

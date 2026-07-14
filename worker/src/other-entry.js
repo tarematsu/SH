@@ -42,10 +42,20 @@ export async function runOtherScheduled(controller, env, ctx, dependencies = {})
   return results.map((result) => result.value);
 }
 
+export async function runOtherCron(controller, env, ctx, options = {}) {
+  const stagger = options.stagger || applyCronStagger;
+  const healthApp = options.healthApp || otherHealthApp;
+  await stagger(env, 'other');
+  try {
+    return await runOtherScheduled(controller, env, ctx, options.dependencies);
+  } finally {
+    healthApp.invalidateHealthCache();
+  }
+}
+
 export default {
   async scheduled(controller, env, ctx) {
-    await applyCronStagger(env, 'other');
-    return runOtherScheduled(controller, env, ctx);
+    return runOtherCron(controller, env, ctx);
   },
   fetch(request, env, ctx) {
     const url = new URL(request.url);
