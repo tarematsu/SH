@@ -50,9 +50,22 @@ export function queueLikesPayload(tracks) {
 export function analyzeQueueLikes(tracks) {
   const unique = new Map();
   const trackKeys = new Set();
+  const isrcs = new Set();
+  const spotifyIds = new Set();
+  const positions = [];
+  const positionSet = new Set();
   let identifiable = 0;
   let complete = true;
   for (const track of Array.isArray(tracks) ? tracks : []) {
+    const position = num(track?.position);
+    if (position != null && !positionSet.has(position)) {
+      positionSet.add(position);
+      positions.push(position);
+    }
+    const isrc = normalizedTrackIsrc(track);
+    if (isrc) isrcs.add(isrc);
+    const spotifyId = normalizedTrackSpotifyId(track);
+    if (!isrc && spotifyId) spotifyIds.add(spotifyId);
     const trackKey = observationTrackKey(track);
     if (!trackKey) continue;
     identifiable += 1;
@@ -67,6 +80,9 @@ export function analyzeQueueLikes(tracks) {
   return {
     complete: identifiable === 0 || complete,
     trackKeys: [...trackKeys],
+    isrcs: [...isrcs],
+    spotifyIds: [...spotifyIds],
+    positions,
     payload: [...unique.entries()]
       .map(([trackKey, likeCount]) => ({ track_key: trackKey, like_count: likeCount }))
       .sort((left, right) => left.track_key.localeCompare(right.track_key)),
@@ -101,14 +117,10 @@ function queueItemLookupStatements(db, stationId, startTime, positions) {
   });
 }
 
-function latestLikeLookupStatements(db, stationId, tracks) {
-  const values = Array.isArray(tracks) ? tracks : [];
-  const trackKeys = [...new Set(values.map(observationTrackKey).filter(Boolean))];
-  const isrcs = [...new Set(values.map(normalizedTrackIsrc).filter(Boolean))];
-  const spotifyIds = [...new Set(values
-    .filter((track) => !normalizedTrackIsrc(track))
-    .map(normalizedTrackSpotifyId)
-    .filter(Boolean))];
+function latestLikeLookupStatements(db, stationId, analysis) {
+  const trackKeys = analysis?.trackKeys || [];
+  const isrcs = analysis?.isrcs || [];
+  const spotifyIds = analysis?.spotifyIds || [];
   const statements = [];
 
   for (const group of chunks(trackKeys, QUERY_CHUNK).filter((chunk) => chunk.length)) {
@@ -140,12 +152,12 @@ function latestLikeLookupStatements(db, stationId, tracks) {
   return statements;
 }
 
-async function loadComparisonState(db, stationId, startTime, positions, likeTracks, options) {
+async function loadComparisonState(db, stationId, startTime, positions, likeAnalysis, options) {
   const itemStatements = options.includeItems
     ? queueItemLookupStatements(db, stationId, startTime, positions)
     : [];
   const likeStatements = options.includeLikes
-    ? latestLikeLookupStatements(db, stationId, likeTracks)
+    ? latestLikeLookupStatements(db, stationId, likeAnalysis)
     : [];
   const statements = itemStatements.concat(likeStatements);
   if (!statements.length) return { existingRows: [], latestRows: [] };
@@ -404,22 +416,14 @@ export async function saveLeanQueue(db, observedAt, body) {
     }
   }
 
-  const positions = [];
-  const positionSet = new Set();
-  for (const track of tracks) {
-    const position = num(track?.position);
-    if (position != null && !positionSet.has(position)) {
-      positionSet.add(position);
-      positions.push(position);
-    }
-  }
+  const positions = likeAnalysis.positions;
   const currentTrackKeys = completeLikes ? likeAnalysis.trackKeys : [];
   const { existingRows, latestRows } = await loadComparisonState(
     db,
     stationId,
     startTime,
     positions,
-    tracks,
+    likeAnalysis,
     { includeItems: structureChanged, includeLikes: likesChanged },
   );
   const changedTracks = structureChanged
