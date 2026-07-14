@@ -1,1 +1,2 @@
-# No custom redirects. Cloudflare Pages serves the static test page directly.
+/history/migrated.html /history/ 301
+/*
