@@ -29,8 +29,6 @@ export const COLLECTOR_READ_MODEL_SCHEMA_SQL = `CREATE TABLE IF NOT EXISTS sh_co
   updated_at INTEGER NOT NULL
 )`;
 
-let schemaReady = new WeakSet();
-
 function integer(value) {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? Math.trunc(parsed) : null;
@@ -77,15 +75,8 @@ async function hydrateQueueMetadataFromSource(env, readModel) {
 
 export async function ensureMinuteFactReadModelSchema(env) {
   if (!env?.MINUTE_DB) throw new Error('minute fact read model MINUTE_DB binding is missing');
-  if (schemaReady.has(env.MINUTE_DB)) return false;
-  await env.MINUTE_DB.batch([
-    env.MINUTE_DB.prepare(MINUTE_FACT_QUEUE_RECEIPT_SCHEMA_SQL),
-    env.MINUTE_DB.prepare(CHANNEL_READ_MODEL_SCHEMA_SQL),
-    env.MINUTE_DB.prepare(QUEUE_READ_MODEL_SCHEMA_SQL),
-    env.MINUTE_DB.prepare(COLLECTOR_READ_MODEL_SCHEMA_SQL),
-  ]);
-  schemaReady.add(env.MINUTE_DB);
-  return true;
+  // Owned by database/facts-migrations/004_buddies_queue_read_models.sql.
+  return false;
 }
 
 export async function hasMinuteFactQueueReceipt(env, jobId) {
@@ -153,6 +144,4 @@ export async function saveMinuteFactReadModels(env, readModel, _jobId) {
   ]);
 }
 
-export function resetMinuteFactReadModelForTests() {
-  schemaReady = new WeakSet();
-}
+export function resetMinuteFactReadModelForTests() {}
