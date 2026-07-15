@@ -3,6 +3,8 @@ const inFlight = new Map();
 function cachePolicy(url) {
   if (url.pathname === '/api/dashboard') return { ttl: 60, browser: 30 };
   if (url.pathname === '/api/dashboard-history') return { ttl: 300, browser: 60 };
+  if (url.pathname === '/api/history-current') return { ttl: 60, browser: 30 };
+  if (url.pathname === '/api/track-history') return { ttl: 900, browser: 300 };
   if (url.pathname === '/api/broadcast-series') return { ttl: 3600, browser: 300 };
   if (url.pathname === '/api/history') {
     const mode = url.searchParams.get('mode') || 'weekly';
