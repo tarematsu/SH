@@ -1,3 +1,5 @@
+import { rewriteThrottledSql } from './main-d1-throttle.js';
+
 const VELOCITY_SUM = `SELECT COALESCE(SUM(comment_count),0) FROM sh_comment_minute_counts
       WHERE station_id=? AND bucket_start>=? AND bucket_start<=?`;
 const ZERO_VELOCITY = `SELECT 0 FROM (SELECT ? AS station_id, ? AS from_at, ? AS to_at)`;
@@ -215,7 +217,7 @@ export function withDuplicateVelocityReadRemoved(env, nowFn = Date.now) {
     get(target, property) {
       if (property === 'prepare') {
         return (sql) => {
-          const rewritten = rewriteDuplicateVelocityRead(sql, chatEnabled);
+          const rewritten = rewriteDuplicateVelocityRead(rewriteThrottledSql(sql), chatEnabled);
           const kind = rewritten.includes('sh_collector_') || rewritten.includes('sh_worker_collector_state')
             ? cachedStatementKind(shared, rewritten)
             : null;

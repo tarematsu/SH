@@ -80,6 +80,7 @@ test('lease health reads use the fresh state even when the D1 checkpoint write i
 
   await env.DB.prepare(STATE_WRITE_SQL).bind(...stateParams(10_000, 10_100)).run();
   assert.equal(db.runs.length, 1);
+  assert.match(db.runs[0].sql, /WHERE excluded\.auth_token IS NOT sh_worker_collector_state\.auth_token/);
 
   now += 60_000;
   const skipped = await env.DB.prepare(STATE_WRITE_SQL)

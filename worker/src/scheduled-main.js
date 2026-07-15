@@ -1,5 +1,4 @@
 import { withDuplicateVelocityReadRemoved } from './d1-read-optimizer.js';
-import { withD1WriteThrottling } from './main-d1-throttle.js';
 import { runOptimizedScheduled } from './optimized-index.js';
 import {
   PrimaryCollectionTimeoutError,
@@ -51,8 +50,7 @@ export async function runPrimaryCycle(
 
 export default {
   async scheduled(controller, env, ctx) {
-    const optimizedEnv = withDuplicateVelocityReadRemoved(env);
-    return runPrimaryCycle(controller, withD1WriteThrottling(optimizedEnv), env, ctx);
+    return runPrimaryCycle(controller, withDuplicateVelocityReadRemoved(env), env, ctx);
   },
 
   fetch() {
