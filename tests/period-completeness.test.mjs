@@ -192,26 +192,18 @@ test('track rows retain details but incomplete dates are marked for total exclus
   assert.deepEqual(result.excludedDates, ['2026-07-02']);
 });
 
-test('history page trusts server completeness and installs final runtime optimizations in order', () => {
+test('history lite client trusts server completeness and excludes incomplete track totals in one pass', () => {
   const html = readFileSync(new URL('../site/public/history/index.html', import.meta.url), 'utf8');
-  const filterIndex = html.indexOf('/history/history-period-completeness.js');
-  const copyFixIndex = html.indexOf('/history/history-copy-fixes.js');
-  const likesIndex = html.indexOf('/history/history-track-likes.js');
-  assert.ok(filterIndex >= 0 && filterIndex < copyFixIndex && copyFixIndex < likesIndex);
-
-  const filterSource = readFileSync(
-    new URL('../site/public/history/history-period-completeness.js', import.meta.url),
-    'utf8',
-  );
-  assert.match(filterSource, /この日の延べ曲数（集計対象外）/);
-  assert.match(filterSource, /track-history:v13:/);
-  assert.match(filterSource, /history:v11:/);
-  assert.doesNotMatch(filterSource, /mondayJstKey|expectedStart|expectedEnd/);
+  assert.match(html, /src="\/history\/history-lite\.js"/);
+  assert.doesNotMatch(html, /history-period-completeness\.js|history-copy-fixes\.js|history-track-likes\.js/);
 
   const runtimeSource = readFileSync(
-    new URL('../site/public/history/history-track-likes.js', import.meta.url),
+    new URL('../site/public/history/history-lite.js', import.meta.url),
     'utf8',
   );
-  assert.match(runtimeSource, /updateSummaryRuntimeSinglePass/);
-  assert.doesNotMatch(runtimeSource, /rows\.filter\(\(row\).*host_name/s);
+  assert.match(runtimeSource, /row\.period_complete !== false && row\.play_count_excluded !== true/);
+  assert.match(runtimeSource, /rowData\.period_complete === false \|\| rowData\.play_count_excluded === true/);
+  assert.match(runtimeSource, /const TRACK_COLUMNS/);
+  assert.match(runtimeSource, /\['like_count', 'いいね数'\]/);
+  assert.doesNotMatch(runtimeSource, /mondayJstKey|expectedStart|expectedEnd/);
 });

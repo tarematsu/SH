@@ -42,26 +42,20 @@ test('host summary returns profile, active session and recent sessions from one 
   assert.deepEqual(summary.recentSessions.map((row) => row.id), [2, 1]);
 });
 
-test('history runtime preloads the final enhancement and caches repeated axis preparation', () => {
+test('history runtime consolidates enhancements and reuses prepared chart state', () => {
   const html = readFileSync(new URL('../site/public/history/index.html', import.meta.url), 'utf8');
-  const loader = html.indexOf('/history/history-copy-fixes.js');
-  const finalRuntime = html.indexOf('/history/history-track-likes.js');
-  assert.ok(loader >= 0 && loader < finalRuntime);
+  assert.equal((html.match(/<script /g) || []).length, 1);
+  assert.match(html, /src="\/history\/history-lite\.js"/);
+  assert.doesNotMatch(html, /history-copy-fixes\.js|history-track-performance\.js|history-track-likes\.js/);
 
-  const copyFixes = readFileSync(
-    new URL('../site/public/history/history-copy-fixes.js', import.meta.url),
+  const runtime = readFileSync(
+    new URL('../site/public/history/history-lite.js', import.meta.url),
     'utf8',
   );
-  assert.match(copyFixes, /DOMContentLoaded/);
-  assert.doesNotMatch(copyFixes, /document\.createElement\('script'\)/);
-  assert.doesNotMatch(copyFixes, /appendChild\(likesScript\)/);
-
-  const performance = readFileSync(
-    new URL('../site/public/history/history-track-performance.js', import.meta.url),
-    'utf8',
-  );
-  assert.match(performance, /const xPositionCache = new WeakMap/);
-  assert.match(performance, /const dateAxisCache = new WeakMap/);
-  assert.match(performance, /cached\?\.cacheKey === cacheKey/);
-  assert.match(performance, /drawDateAxisCached/);
+  assert.match(runtime, /function positionsFromTimes/);
+  assert.match(runtime, /function drawDateAxis/);
+  assert.match(runtime, /state\.chartModel = \{ type: 'summary', positions, rows \}/);
+  assert.match(runtime, /const positions = state\.chartModel\.positions/);
+  assert.match(runtime, /const PAGE_SIZE = 200/);
+  assert.match(runtime, /sessionStorage\.getItem/);
 });
