@@ -1,6 +1,5 @@
 import { sanitizeFailureDetail } from './collector-failure.js';
 import { enqueueMinuteFactJob, minuteFactJobPayload } from './minute-facts-inbox.js';
-import { saveMinuteCommentTask } from './minute-comments.js';
 import { loadMinuteCommentFacts } from './minute-facts-source.js';
 import { minuteBucket } from './minute-facts-store.js';
 
@@ -324,7 +323,7 @@ export async function consumeMinuteFactBatch(batch, env, dependencies = {}) {
   const saveReadModels = dependencies.saveReadModels || (async () => {});
   const hasReceipt = dependencies.hasReceipt || (async () => false);
   const saveReceipt = dependencies.saveReceipt || (async () => {});
-  const saveCommentTask = dependencies.saveCommentTask || saveMinuteCommentTask;
+  const saveCommentTask = dependencies.saveCommentTask || null;
   const onCommitted = dependencies.onCommitted || (() => {});
   const summary = { received: 0, enqueued: 0, duplicates: 0, retried: 0, invalid: 0 };
   for (const message of batch?.messages || []) {
@@ -339,7 +338,7 @@ export async function consumeMinuteFactBatch(batch, env, dependencies = {}) {
       const payload = await hydrateMinuteFactComments(env, parsed.payload);
       const result = await enqueue(env, payload, parsed.options);
       await saveReadModels(env, parsed.read_model, parsed.job_id);
-      if (parsed.options.collectComments) {
+      if (parsed.options.collectComments && saveCommentTask) {
         await saveCommentTask(env, {
           jobId: parsed.job_id,
           payload,
