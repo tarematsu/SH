@@ -148,7 +148,10 @@ export async function runMinuteScheduled(controller = {}, env, dependencies = {}
   if (cron === MINUTE_FACT_REBUILD_CRON) return runTracked(env, 'rebuild', () => runRebuild(env, dependencies));
   if (cron === MINUTE_FACT_WORKER_CRON) {
     await runTracked(env, 'comments', () => runOptionalCommentTasks(env, dependencies));
-    if (env?.BUDDIES_DB || env?.DB) {
+    // Collector readiness is a priority hint, not a global circuit breaker.
+    // If collection failed or exceeded the wait window, keep derive/recovery
+    // moving so already-durable Queue jobs cannot accumulate indefinitely.
+    if (dependencies.collectorReady !== false && (env?.BUDDIES_DB || env?.DB)) {
       await runTracked(env, 'sync', () => runSync(env, dependencies));
     }
     const minute = scheduledMinute(controller);
@@ -162,6 +165,30 @@ export async function runMinuteScheduled(controller = {}, env, dependencies = {}
     return { skipped: true, reason: 'not-due', minute };
   }
   return { skipped: true, reason: 'unsupported-minute-facts-cron', cron };
+}
+
+export async function runMinuteScheduledWithCollectorPriority(
+  controller = {},
+  env = {},
+  ctx = null,
+  dependencies = {},
+) {
+  const stagger = dependencies.applyStagger || applyCronStagger;
+  const waitForCollector = dependencies.waitForCollector || waitForCollectorCompletion;
+  if (minuteStaggerApplies(controller)) await stagger(env, 'minute');
+  const collector = await waitForCollector(env, controller?.scheduledTime);
+  if (!collector.ready) {
+    console.warn(JSON.stringify({
+      event: 'minute_collector_priority_wait_expired',
+      reason: collector.reason || 'collector-not-ready',
+      target_minute: collector.targetMinute ?? null,
+    }));
+  }
+  return runMinuteScheduled(controller, env, {
+    ...dependencies,
+    ctx,
+    collectorReady: collector.ready,
+  });
 }
 
 const rawApp = {
@@ -184,11 +211,8 @@ const rawApp = {
     }
     return result;
   },
-  async scheduled(controller, env, ctx) {
-    if (minuteStaggerApplies(controller)) await applyCronStagger(env, 'minute');
-    const collector = await waitForCollectorCompletion(env, controller?.scheduledTime);
-    if (!collector.ready) return { skipped: true, reason: collector.reason, targetMinute: collector.targetMinute };
-    return runMinuteScheduled(controller, env, { ctx });
+  scheduled(controller, env, ctx) {
+    return runMinuteScheduledWithCollectorPriority(controller, env, ctx);
   },
   async fetch(request, env) {
     if (request.method !== 'GET' || new URL(request.url).pathname !== '/health') return new Response('Not found', { status: 404 });
