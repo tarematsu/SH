@@ -27,7 +27,6 @@ export const MINUTE_COMMENT_TASK_SCHEMA_SQL = `CREATE TABLE IF NOT EXISTS sh_min
 export const MINUTE_COMMENT_TASK_INDEX_SQL = `CREATE INDEX IF NOT EXISTS idx_sh_minute_comment_tasks_pending
   ON sh_minute_comment_tasks(status, next_attempt_at, minute_at)`;
 
-let schemaReady = new WeakSet();
 const DEFAULT_TASK_LIMIT = 1;
 const DEFAULT_LEASE_MS = 60_000;
 const DEFAULT_MAX_ATTEMPTS = 4;
@@ -40,26 +39,15 @@ function integer(value) {
 function withSourceDatabase(env, binding) {
   const source = env?.[binding];
   if (!source) return env;
-  return new Proxy(env, {
-    get(target, property, receiver) {
-      if (property === 'DB') return source;
-      return Reflect.get(target, property, receiver);
-    },
-    has(target, property) {
-      return property === 'DB' || Reflect.has(target, property);
-    },
-  });
+  const active = Object.create(env || null);
+  Object.defineProperty(active, 'DB', { value: source, enumerable: false });
+  return active;
 }
 
 async function ensureMinuteCommentTaskSchema(env) {
   if (!env?.MINUTE_DB) throw new Error('minute comment task MINUTE_DB binding is missing');
-  if (schemaReady.has(env.MINUTE_DB)) return false;
-  await env.MINUTE_DB.batch([
-    env.MINUTE_DB.prepare(MINUTE_COMMENT_TASK_SCHEMA_SQL),
-    env.MINUTE_DB.prepare(MINUTE_COMMENT_TASK_INDEX_SQL),
-  ]);
-  schemaReady.add(env.MINUTE_DB);
-  return true;
+  // Owned by database/facts-migrations/005_minute_comment_tasks.sql.
+  return false;
 }
 
 export function minuteCommentTaskId(sourceJobId) {
@@ -235,6 +223,4 @@ export async function runMinuteCommentTasks(env, options = {}) {
   return summary;
 }
 
-export function resetMinuteCommentTaskSchemaForTests() {
-  schemaReady = new WeakSet();
-}
+export function resetMinuteCommentTaskSchemaForTests() {}
