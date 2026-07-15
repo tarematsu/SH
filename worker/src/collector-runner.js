@@ -118,7 +118,12 @@ function withCollectionSignal(env, signal) {
   });
 }
 
-async function timedStage(stage, operation, thresholdMs = SLOW_STAGE_THRESHOLD_MS) {
+async function timedStage(
+  stage,
+  operation,
+  thresholdMs = SLOW_STAGE_THRESHOLD_MS,
+  timings = null,
+) {
   const startedAt = Date.now();
   let outcome = 'success';
   try {
@@ -128,6 +133,7 @@ async function timedStage(stage, operation, thresholdMs = SLOW_STAGE_THRESHOLD_M
     throw error;
   } finally {
     const durationMs = Date.now() - startedAt;
+    timings?.push({ stage, outcome, duration_ms: durationMs });
     if (outcome === 'error' || durationMs >= thresholdMs) {
       console.log(JSON.stringify({
         event: 'collector_stage_timing',
@@ -139,8 +145,28 @@ async function timedStage(stage, operation, thresholdMs = SLOW_STAGE_THRESHOLD_M
   }
 }
 
+function logCollectionTiming(source, observedAt, startedAt, timings, outcome, stage = null) {
+  console.log(JSON.stringify({
+    event: 'collector_timing',
+    source,
+    observed_at: observedAt,
+    outcome,
+    total_ms: Date.now() - startedAt,
+    ...(stage ? { failed_stage: stage } : {}),
+    stages: timings,
+  }));
+}
+
 export async function collectOnce(env, source = 'manual') {
   const observedAt = Date.now();
+  const startedAt = observedAt;
+  const timings = [];
+  const measure = (stage, operation) => timedStage(
+    stage,
+    operation,
+    SLOW_STAGE_THRESHOLD_MS,
+    timings,
+  );
   let stage = 'collector_start';
   let state = null;
   const activeEnv = withCollectionSignal(env, signalFrom(env));
@@ -151,38 +177,44 @@ export async function collectOnce(env, source = 'manual') {
     throwIfCollectionAborted(activeEnv, stage);
 
     stage = activeEnv.__shAuthState ? 'sh_auth' : 'd1_read_collector_state';
-    state = await timedStage(stage, () => loadCollectorState(activeEnv));
+    state = await measure(stage, () => loadCollectorState(activeEnv));
     const previousRunAt = Number(state.lastRunAt || 0);
     const metadataRetry = Boolean(state.lastError);
     state.lastRunAt = observedAt;
     state.lastError = null;
 
     stage = 'sh_channel_request';
-    const channel = await timedStage(stage, () => shJson(
+    const channel = await measure(stage, () => shJson(
       state,
       config,
       `/channels/alias/${encodeURIComponent(config.channelAlias)}`,
     ));
 
     stage = 'sh_channel_payload';
-    validateChannelPayload(channel, config.channelAlias);
-    extractIds(channel, state);
+    const { snapshot, queue, initialPlan } = await measure(stage, () => {
+      validateChannelPayload(channel, config.channelAlias);
+      extractIds(channel, state);
 
-    const snapshot = normalizeSnapshot(channel, state, config);
-    const queue = extractQueue(channel, state.stationId);
-    const planInput = {
-      state,
-      queue,
-      previousRunAt,
-      observedAt,
-      metadataRefreshIntervalMs: config.metadataRefreshIntervalMs,
-      metadataRetry,
-    };
-    const initialPlan = buildCollectionPlan(planInput);
+      const normalizedSnapshot = normalizeSnapshot(channel, state, config);
+      const extractedQueue = extractQueue(channel, state.stationId);
+      const planInput = {
+        state,
+        queue: extractedQueue,
+        previousRunAt,
+        observedAt,
+        metadataRefreshIntervalMs: config.metadataRefreshIntervalMs,
+        metadataRetry,
+      };
+      return {
+        snapshot: normalizedSnapshot,
+        queue: extractedQueue,
+        initialPlan: buildCollectionPlan(planInput),
+      };
+    });
 
     if (initialPlan.snapshot) {
       stage = 'd1_write_snapshot';
-      await timedStage(stage, () => ingest(
+      await measure(stage, () => ingest(
         activeEnv,
         'snapshot',
         snapshot,
@@ -195,7 +227,7 @@ export async function collectOnce(env, source = 'manual') {
     let metadataPlanned = false;
     if (initialPlan.queue) {
       stage = 'd1_write_queue';
-      queueResult = await timedStage(stage, () => ingest(activeEnv, 'queue', queue, observedAt));
+      queueResult = await measure(stage, () => ingest(activeEnv, 'queue', queue, observedAt));
       metadataPlanned = initialPlan.metadataDue || queueResult?.structure_changed === true;
     }
 
@@ -210,7 +242,7 @@ export async function collectOnce(env, source = 'manual') {
     const factQueue = minuteFactQueue(queue);
     const presentation = readModelPresentation(snapshot, factSnapshot);
     stage = 'd1_outbox_minute_fact';
-    const minuteFactJob = await timedStage(stage, () => handoffMinuteFactJob(activeEnv, {
+    const minuteFactJob = await measure(stage, () => handoffMinuteFactJob(activeEnv, {
       observedAt,
       snapshot: factSnapshot,
       queue: factQueue,
@@ -243,12 +275,13 @@ export async function collectOnce(env, source = 'manual') {
 
     throwIfCollectionAborted(activeEnv, 'd1_write_collector_state');
     stage = 'd1_write_collector_state';
-    await timedStage(stage, () => saveCollectorStateAndClearFailure(activeEnv, state, {
+    await measure(stage, () => saveCollectorStateAndClearFailure(activeEnv, state, {
       lastRunAt: observedAt,
       lastSuccessAt: Date.now(),
       lastError: null,
       tokenExpiresAt: state.tokenExpiresAt || jwtExpiryMs(state.authToken),
     }));
+    logCollectionTiming(source, observedAt, startedAt, timings, 'ok');
 
     return {
       ok: true,
@@ -285,6 +318,7 @@ export async function collectOnce(env, source = 'manual') {
         tokenExpiresAt: state.tokenExpiresAt || jwtExpiryMs(state.authToken),
       }).catch(() => {});
     }
+    logCollectionTiming(source, observedAt, startedAt, timings, 'error', stage);
     throw failure;
   }
 }
