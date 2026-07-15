@@ -5,12 +5,15 @@ import test from 'node:test';
 const historyPage = readFileSync(new URL('../public/history/index.html', import.meta.url), 'utf8');
 const historyClient = readFileSync(new URL('../public/history/history-lite.js', import.meta.url), 'utf8');
 const historyStyles = readFileSync(new URL('../public/history/history-lite.css', import.meta.url), 'utf8');
+const likesPage = readFileSync(new URL('../public/history/likes/index.html', import.meta.url), 'utf8');
+const likesClient = readFileSync(new URL('../public/history/history-likes.js', import.meta.url), 'utf8');
 const middleware = readFileSync(new URL('../functions/api/_middleware.js', import.meta.url), 'utf8');
 
-test('history page keeps every public mode in a single lightweight client', () => {
+test('history page keeps every public mode and links the like ranking tab', () => {
   for (const mode of ['current', 'daily', 'weekly', 'ranking', 'monthly', 'tracks', 'broadcasts']) {
     assert.match(historyPage, new RegExp(`data-mode="${mode}"`));
   }
+  assert.match(historyPage, /href="\/history\/likes\/">いいね<\/a>/);
   assert.equal((historyPage.match(/<link rel="stylesheet"/g) || []).length, 1);
   assert.equal((historyPage.match(/<script /g) || []).length, 1);
   assert.match(historyPage, /\/history\/history-lite\.css/);
@@ -25,6 +28,8 @@ test('history page uses the same white mobile-first visual system as the dashboa
   assert.match(historyStyles, /--bg:\s*#f6f8fb/);
   assert.match(historyStyles, /--panel:\s*#ffffff/);
   assert.match(historyStyles, /@media \(max-width: 760px\)/);
+  assert.match(historyStyles, /\.mode-tabs button, \.mode-tabs a/);
+  assert.match(historyStyles, /\.like-ranking/);
   assert.match(historyStyles, /overflow-x:\s*auto/);
 });
 
@@ -57,9 +62,24 @@ test('history tables render newest summary rows first and paginate only in the b
   assert.match(historyClient, /exportCsv/);
 });
 
-test('edge middleware shares current and track-history D1 reads', () => {
+test('likes tab ranks like and bite counters with cached fixed URLs', () => {
+  assert.match(likesPage, /aria-current="page" href="\/history\/likes\/">いいね<\/a>/);
+  assert.match(likesPage, /like \/ bite/);
+  assert.equal((likesPage.match(/<link rel="stylesheet"/g) || []).length, 1);
+  assert.equal((likesPage.match(/<script /g) || []).length, 1);
+  assert.match(likesClient, /\/api\/like-ranking\?/);
+  assert.match(likesClient, /sessionStorage\.getItem/);
+  assert.match(likesClient, /sessionStorage\.setItem/);
+  assert.match(likesClient, /total_like_count/);
+  assert.match(likesClient, /peak_like_count/);
+  assert.match(likesClient, /average_like_count/);
+  assert.doesNotMatch(likesClient, /cache:\s*['"]no-store['"]/);
+});
+
+test('edge middleware shares current, track-history and like-ranking D1 reads', () => {
   assert.match(middleware, /url\.pathname === '\/api\/history-current'/);
   assert.match(middleware, /ttl: 60, browser: 30/);
   assert.match(middleware, /url\.pathname === '\/api\/track-history'/);
+  assert.match(middleware, /url\.pathname === '\/api\/like-ranking'/);
   assert.match(middleware, /ttl: 900, browser: 300/);
 });

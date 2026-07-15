@@ -43,9 +43,9 @@ h2 { margin-bottom: 0; font-size: 1.08rem; }
 .button:disabled { cursor: wait; opacity: .65; }
 
 .mode-tabs { display: flex; gap: 7px; margin: 10px 0; padding: 4px; overflow-x: auto; border: 1px solid var(--line); border-radius: 15px; background: var(--panel); box-shadow: 0 6px 18px rgba(31, 45, 68, .04); scrollbar-width: thin; }
-.mode-tabs button { flex: 0 0 auto; min-height: 40px; padding: 8px 13px; border: 0; border-radius: 11px; background: transparent; color: var(--muted); cursor: pointer; font-weight: 760; white-space: nowrap; }
-.mode-tabs button:hover, .mode-tabs button:focus-visible { background: var(--panel-2); color: var(--text); outline: none; }
-.mode-tabs button.active { background: var(--accent); color: #fff; }
+.mode-tabs button, .mode-tabs a { display: inline-flex; flex: 0 0 auto; min-height: 40px; align-items: center; justify-content: center; padding: 8px 13px; border: 0; border-radius: 11px; background: transparent; color: var(--muted); cursor: pointer; font-weight: 760; text-decoration: none; white-space: nowrap; }
+.mode-tabs button:hover, .mode-tabs button:focus-visible, .mode-tabs a:hover, .mode-tabs a:focus-visible { background: var(--panel-2); color: var(--text); outline: none; }
+.mode-tabs button.active, .mode-tabs a.active { background: var(--accent); color: #fff; }
 
 .guide { display: flex; align-items: center; justify-content: space-between; gap: 18px; padding: 15px 17px; }
 .guide > p { max-width: 66ch; margin: 0; color: var(--muted); font-size: .86rem; }
@@ -83,6 +83,18 @@ h2 { margin-bottom: 0; font-size: 1.08rem; }
 .detail-row span { font-variant-numeric: tabular-nums; }
 .chart-foot { margin: 8px 0 0; color: var(--muted); font-size: .7rem; }
 
+.like-ranking { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
+.like-rank-item { display: grid; grid-template-columns: 34px minmax(0, 1fr); gap: 10px; align-items: center; padding: 10px; border: 1px solid var(--line); border-radius: 12px; background: #fff; }
+.like-rank-number { display: grid; width: 32px; height: 32px; place-items: center; border-radius: 10px; background: var(--panel-2); color: var(--accent); font-size: .86rem; font-variant-numeric: tabular-nums; }
+.like-rank-content { min-width: 0; }
+.like-rank-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+.like-rank-heading span { overflow: hidden; font-weight: 800; text-overflow: ellipsis; white-space: nowrap; }
+.like-rank-heading b { flex: 0 0 auto; color: var(--accent); font-size: .8rem; font-variant-numeric: tabular-nums; }
+.like-rank-content small { display: block; margin-top: 2px; overflow: hidden; color: var(--muted); font-size: .68rem; text-overflow: ellipsis; white-space: nowrap; }
+.like-rank-bar { height: 6px; margin-top: 7px; overflow: hidden; border-radius: 99px; background: var(--panel-2); }
+.like-rank-bar i { display: block; height: 100%; border-radius: inherit; background: linear-gradient(90deg, var(--accent), var(--accent-2)); }
+.empty-ranking { padding: 22px; border: 1px solid var(--line); border-radius: 12px; color: var(--muted); text-align: center; }
+
 .table-wrap { width: 100%; overflow-x: auto; border: 1px solid var(--line); border-radius: 12px; background: #fff; scrollbar-width: thin; }
 table { width: 100%; border-collapse: collapse; font-size: .76rem; white-space: nowrap; }
 th, td { padding: 9px 10px; border-bottom: 1px solid #e8edf3; text-align: left; font-variant-numeric: tabular-nums; }
@@ -113,6 +125,7 @@ tbody tr:hover { background: #fafbfd; }
   .chart-head { align-items: flex-start; flex-direction: column; }
   .chart-legend { justify-content: flex-start; }
   #chart { min-height: 240px; }
+  .like-rank-heading { align-items: flex-start; flex-direction: column; gap: 2px; }
   th, td { padding: 8px; }
 }
 
