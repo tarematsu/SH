@@ -24,6 +24,21 @@ export const MINUTE_FACT_INBOX_SCHEMA_SQL = `CREATE TABLE IF NOT EXISTS sh_minut
 export const MINUTE_FACT_INBOX_INDEX_SQL = `CREATE INDEX IF NOT EXISTS idx_sh_minute_fact_jobs_pending
   ON sh_minute_fact_jobs(status, job_priority DESC, next_attempt_at, minute_at)`;
 
+export const REQUEUE_DEAD_MINUTE_FACT_JOBS_SQL = `UPDATE sh_minute_fact_jobs SET
+    status='pending',attempts=0,next_attempt_at=0,lease_until=NULL,last_error=NULL,updated_at=?
+  WHERE id IN (
+    SELECT jobs.id FROM sh_minute_fact_jobs jobs
+    WHERE jobs.status='dead'
+      AND NOT EXISTS (
+        SELECT 1 FROM sh_minute_facts facts
+        WHERE facts.channel_id=jobs.channel_id AND facts.minute_at=jobs.minute_at
+      )
+      AND COALESCE(jobs.last_error,'') NOT LIKE 'invalid minute fact job payload:%'
+      AND COALESCE(jobs.last_error,'') NOT LIKE 'unsupported minute fact payload version:%'
+    ORDER BY jobs.updated_at ASC,jobs.id ASC LIMIT ?
+  ) AND status='dead'
+  RETURNING id`;
+
 let schemaReady = false;
 
 function integer(value) {
@@ -133,7 +148,7 @@ export async function claimMinuteFactJobs(env, options = {}) {
   const leaseMs = positiveInteger(options.leaseMs, 60_000, 10 * 60_000);
   await releaseExpiredLeases(env, now);
 
-  // Claim the whole batch in one round trip: a single UPDATE leases the top
+  // Lease the whole batch in one round trip: a single UPDATE leases the top
   // `limit` due jobs and RETURNING hands back their full rows. This replaces the
   // old per-job "SELECT id -> UPDATE -> SELECT *" loop, which issued ~3 queries
   // (plus a table-wide lease sweep) for every job the derive cron processed.
@@ -202,15 +217,10 @@ export async function requeueDeadMinuteFactJobs(env, options = {}) {
   await ensureMinuteFactInboxSchema(env);
   const limit = positiveInteger(options.limit, 20, 100);
   const now = integer(options.now) ?? Date.now();
-  const candidates = await env.MINUTE_DB.prepare(`SELECT id FROM sh_minute_fact_jobs
-    WHERE status='dead' ORDER BY updated_at ASC,id ASC LIMIT ?`).bind(limit).all();
-  const ids = (candidates.results || []).map((row) => integer(row.id)).filter((id) => id != null);
-  if (!ids.length) return { requeued: 0 };
-  const placeholders = ids.map(() => '?').join(',');
-  const result = await env.MINUTE_DB.prepare(`UPDATE sh_minute_fact_jobs SET
-      status='pending',attempts=0,next_attempt_at=0,lease_until=NULL,last_error=NULL,updated_at=?
-    WHERE status='dead' AND id IN (${placeholders})`).bind(now, ...ids).run();
-  return { requeued: Number(result?.meta?.changes || 0) };
+  const result = await env.MINUTE_DB.prepare(REQUEUE_DEAD_MINUTE_FACT_JOBS_SQL)
+    .bind(now, limit)
+    .all();
+  return { requeued: result.results?.length || 0 };
 }
 
 export async function minuteFactInboxStats(env) {
