@@ -6,10 +6,10 @@ const workerRoot = resolve(import.meta.dirname, '..');
 const wranglerScript = resolve(workerRoot, 'node_modules/wrangler/bin/wrangler.js');
 const sourceDatabase = process.env.OTHER_DATABASE_NAME || 'stationhead-other';
 const targetDatabase = process.env.BUDDIES_DATABASE_NAME || 'stationhead-buddies';
-const configuredPageSize = Number(process.env.TRACK_METADATA_PAGE_SIZE || 200);
+const configuredPageSize = Number(process.env.TRACK_METADATA_PAGE_SIZE || 25);
 const pageSize = Number.isFinite(configuredPageSize)
-  ? Math.max(1, Math.min(500, Math.trunc(configuredPageSize)))
-  : 200;
+  ? Math.max(1, Math.min(100, Math.trunc(configuredPageSize)))
+  : 25;
 const apply = String(process.env.TRACK_METADATA_APPLY || '').toLowerCase() === 'true';
 const dropSource = String(process.env.TRACK_METADATA_DROP_SOURCE || '').toLowerCase() === 'true';
 const columns = [
@@ -69,7 +69,7 @@ function countRows(database) {
 function quote(value) {
   if (value == null) return 'NULL';
   if (typeof value === 'number' && Number.isFinite(value)) return String(value);
-  return `'${String(value).replaceAll("'", "''")}'`;
+  return `'${String(value).replaceAll('\u0000', '').replaceAll("'", "''")}'`;
 }
 
 function sourcePage(offset) {
