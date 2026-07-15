@@ -1,8 +1,26 @@
-import { payloadHash } from './ingest-claim.js';
+import { payloadFingerprint, payloadHashFingerprint } from './ingest-claim.js';
 import { bool, num, rawJson, text } from './api-utils.js';
 
 const SNAPSHOT_CHECKPOINT_MS = 5 * 60_000;
 const QUEUE_STRUCTURAL_PAYLOAD = Symbol.for('stationhead.queue.structural-payload');
+const SNAPSHOT_HASH_CACHE_LIMIT = 16;
+const snapshotHashCache = new Map();
+
+export function resetSnapshotHashCacheForTests() {
+  snapshotHashCache.clear();
+}
+
+function snapshotHashCacheFor(channelKey) {
+  const existing = snapshotHashCache.get(channelKey);
+  if (existing) return existing;
+  if (snapshotHashCache.size >= SNAPSHOT_HASH_CACHE_LIMIT) {
+    const oldest = snapshotHashCache.keys().next().value;
+    if (oldest !== undefined) snapshotHashCache.delete(oldest);
+  }
+  const value = {};
+  snapshotHashCache.set(channelKey, value);
+  return value;
+}
 
 function snapshotRawPayload(data) {
   const presentation = data?.presentation;
@@ -81,7 +99,14 @@ export async function saveLeanSnapshot(db, observedAt, data) {
     FROM sh_snapshot_current WHERE channel_key=?`).bind(channelKey).first();
   const streamCount = reportedStreamCount(data);
   const compactPayload = snapshotRawPayload(data);
-  const hash = await payloadHash(snapshotHashPayload(data, streamCount, compactPayload));
+  const hashPayload = snapshotHashPayload(data, streamCount, compactPayload);
+  const hashFingerprint = payloadFingerprint(hashPayload);
+  const hashCache = snapshotHashCacheFor(channelKey);
+  const hash = hashCache.fingerprint === hashFingerprint
+    ? hashCache.hash
+    : await payloadHashFingerprint(hashFingerprint);
+  hashCache.fingerprint = hashFingerprint;
+  hashCache.hash = hash;
   if (current?.payload_hash === hash
       && observedAt - Number(current.last_snapshot_at || 0) < SNAPSHOT_CHECKPOINT_MS) {
     return {

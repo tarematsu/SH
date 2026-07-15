@@ -7,6 +7,7 @@ import {
   planLikeChanges,
   queueItemsToWriteLean,
   queueStructuralPayload,
+  resetSnapshotHashCacheForTests,
   saveLeanSnapshot,
 } from './d1-lean-ingest.js';
 import { claimWrite, payloadHash, sourceIdentity } from './ingest-claim.js';
@@ -21,6 +22,7 @@ const queueHashCache = new Map();
 
 export function resetQueueHashCacheForTests() {
   queueHashCache.clear();
+  resetSnapshotHashCacheForTests();
 }
 
 function queueHashCacheFor(stationId) {

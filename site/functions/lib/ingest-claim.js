@@ -18,9 +18,17 @@ function canonical(value) {
     .map((key) => `${JSON.stringify(key)}:${canonical(value[key])}`).join(',')}}`;
 }
 
-export async function payloadHash(value) {
-  const bytes = await crypto.subtle.digest('SHA-256', encoder.encode(canonical(value)));
+export function payloadFingerprint(value) {
+  return canonical(value);
+}
+
+export async function payloadHashFingerprint(fingerprint) {
+  const bytes = await crypto.subtle.digest('SHA-256', encoder.encode(fingerprint));
   return [...new Uint8Array(bytes)].map((part) => part.toString(16).padStart(2, '0')).join('');
+}
+
+export async function payloadHash(value) {
+  return payloadHashFingerprint(payloadFingerprint(value));
 }
 
 async function writeClaim(db, incoming, firstSeenAt) {

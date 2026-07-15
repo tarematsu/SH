@@ -7,6 +7,7 @@ import {
   planLikeObservations,
   queueItemsToWriteLean,
   queueStructuralPayload,
+  resetSnapshotHashCacheForTests,
 } from '../functions/lib/d1-lean-ingest.js';
 import {
   D1_BATCH_VARIABLE_LIMIT,
@@ -15,6 +16,7 @@ import {
   queueLikesPayload,
   resetQueueHashCacheForTests,
   saveLeanQueue,
+  saveLeanSnapshot,
 } from '../functions/lib/d1-optimized-ingest.js';
 import { payloadHash } from '../functions/lib/ingest-claim.js';
 import { FakeD1Database } from './helpers/fake-d1.js';
@@ -187,6 +189,42 @@ test('unchanged queue payloads reuse hashes within the worker isolate', async ()
   } finally {
     crypto.subtle.digest = originalDigest;
     resetQueueHashCacheForTests();
+  }
+});
+
+test('unchanged snapshot payloads reuse the hash within the worker isolate', async () => {
+  resetSnapshotHashCacheForTests();
+  const data = {
+    channel_id: 1,
+    station_id: 2,
+    channel_alias: 'buddies',
+    is_launched: true,
+    is_broadcasting: true,
+    listener_count: 10,
+    current_stream_count: 4,
+  };
+  const db = new FakeD1Database([
+    {
+      kind: 'first',
+      matcher: /FROM sh_snapshot_current/,
+      result: { payload_hash: 'not-the-current-hash', last_snapshot_at: 0 },
+    },
+  ]);
+  const originalDigest = crypto.subtle.digest;
+  let digestCalls = 0;
+  crypto.subtle.digest = async (...args) => {
+    digestCalls += 1;
+    return originalDigest.apply(crypto.subtle, args);
+  };
+  try {
+    await saveLeanSnapshot(db, 1_700_000_000_000, data);
+    const firstCallCount = digestCalls;
+    await saveLeanSnapshot(db, 1_700_000_060_000, data);
+    assert.equal(firstCallCount, 1);
+    assert.equal(digestCalls, firstCallCount);
+  } finally {
+    crypto.subtle.digest = originalDigest;
+    resetSnapshotHashCacheForTests();
   }
 });
 
