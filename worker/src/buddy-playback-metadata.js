@@ -28,27 +28,69 @@ export function resetMetadataFailureCache() {
   metadataFailureUntil.clear();
 }
 
-async function loadTrackMetadata(db, spotifyIds) {
-  if (!spotifyIds.length) return new Map();
-  const placeholders = spotifyIds.map(() => '?').join(',');
-  const result = await db.prepare(`SELECT spotify_id,title,artist,display_title,
+function normalizedIsrc(value) {
+  return String(value || '').trim().toUpperCase();
+}
+
+function metadataForTrack(metadata, track) {
+  const isrc = normalizedIsrc(track?.isrc);
+  const spotifyId = String(track?.spotify_id || '').trim();
+  return (isrc ? metadata.get(`isrc:${isrc}`) : null)
+    || (spotifyId ? metadata.get(`spotify:${spotifyId}`) : null)
+    || (spotifyId ? metadata.get(spotifyId) : null)
+    || null;
+}
+
+function indexMetadataRows(rows) {
+  const metadata = new Map();
+  for (const row of rows || []) {
+    const spotifyId = String(row?.spotify_id || '').trim();
+    const isrc = normalizedIsrc(row?.isrc);
+    if (spotifyId) {
+      metadata.set(spotifyId, row);
+      metadata.set(`spotify:${spotifyId}`, row);
+    }
+    if (isrc && !metadata.has(`isrc:${isrc}`)) metadata.set(`isrc:${isrc}`, row);
+  }
+  return metadata;
+}
+
+async function loadTrackMetadata(db, tracks) {
+  const spotifyIds = [...new Set(tracks.map((track) => String(track?.spotify_id || '').trim()).filter(Boolean))];
+  const isrcs = [...new Set(tracks.map((track) => normalizedIsrc(track?.isrc)).filter(Boolean))];
+  if (!spotifyIds.length && !isrcs.length) return new Map();
+
+  const clauses = [];
+  const bindings = [];
+  if (spotifyIds.length) {
+    clauses.push(`spotify_id IN (${spotifyIds.map(() => '?').join(',')})`);
+    bindings.push(...spotifyIds);
+  }
+  if (isrcs.length) {
+    clauses.push(`isrc IN (${isrcs.map(() => '?').join(',')})`);
+    bindings.push(...isrcs);
+  }
+  const result = await db.prepare(`SELECT spotify_id,isrc,title,artist,display_title,
       thumbnail_url,spotify_url,fetched_at
-    FROM sh_track_metadata WHERE spotify_id IN (${placeholders})`)
-    .bind(...spotifyIds).all();
-  return new Map((result.results || []).map((row) => [String(row.spotify_id), row]));
+    FROM sh_track_metadata WHERE ${clauses.join(' OR ')}
+    ORDER BY fetched_at DESC`)
+    .bind(...bindings).all();
+  return indexMetadataRows(result.results || []);
 }
 
 async function saveTrackMetadata(db, rows) {
   if (!rows.length) return;
   await db.batch(rows.map((row) => db.prepare(`INSERT INTO sh_track_metadata (
-      spotify_id,title,artist,display_title,thumbnail_url,spotify_url,source,fetched_at,raw_json
-    ) VALUES (?,?,?,?,?,?,?,?,?) ON CONFLICT(spotify_id) DO UPDATE SET
+      spotify_id,isrc,title,artist,display_title,thumbnail_url,spotify_url,source,fetched_at,raw_json
+    ) VALUES (?,?,?,?,?,?,?,?,?,?) ON CONFLICT(spotify_id) DO UPDATE SET
+      isrc=COALESCE(excluded.isrc,sh_track_metadata.isrc),
       title=excluded.title,artist=excluded.artist,display_title=excluded.display_title,
       thumbnail_url=COALESCE(excluded.thumbnail_url,sh_track_metadata.thumbnail_url),
       spotify_url=excluded.spotify_url,source=excluded.source,
       fetched_at=excluded.fetched_at,raw_json=excluded.raw_json`)
     .bind(
       row.spotify_id,
+      normalizedIsrc(row.isrc) || null,
       row.title,
       row.artist,
       row.display_title,
@@ -68,13 +110,13 @@ function buddyMetadataNeedsRefresh(row, track, now) {
 }
 
 export async function enrichQueueMetadata(env, queue, now, config, fetchMetadata = fetchTrackMetadata) {
-  const spotifyIds = [...new Set(queue.tracks.map((track) => track.spotify_id).filter(Boolean))];
+  const tracks = queue.tracks.filter((track) => track?.spotify_id || track?.isrc);
   // Primary track metadata is shared by the primary collector, Pages, and
   // buddy playback. Keep OTHER_DB as a one-release compatibility fallback so
   // an older deployment can still serve cached metadata during cutover.
   const metadataDb = env.BUDDIES_DB || env.OTHER_DB;
-  const metadata = await loadTrackMetadata(metadataDb, spotifyIds);
-  if (!spotifyIds.length || config.metadataLimit <= 0) return metadata;
+  const metadata = await loadTrackMetadata(metadataDb, tracks);
+  if (!tracks.some((track) => track.spotify_id) || config.metadataLimit <= 0) return metadata;
 
   const index = currentIndex(queue, now);
   const ordered = [
@@ -87,7 +129,7 @@ export async function enrichQueueMetadata(env, queue, now, config, fetchMetadata
     const spotifyId = track.spotify_id;
     if (!spotifyId || seen.has(spotifyId) || metadataRetryBlocked(spotifyId, now)) continue;
     seen.add(spotifyId);
-    if (buddyMetadataNeedsRefresh(metadata.get(spotifyId), track, now)) missing.push(track);
+    if (buddyMetadataNeedsRefresh(metadataForTrack(metadata, track), track, now)) missing.push(track);
     if (missing.length >= config.metadataLimit) break;
   }
 
@@ -105,7 +147,13 @@ export async function enrichQueueMetadata(env, queue, now, config, fetchMetadata
     }
     metadataFailureUntil.delete(track.spotify_id);
     fetched.push(row);
-    metadata.set(String(row.spotify_id), row);
+    const spotifyId = String(row.spotify_id || '').trim();
+    const isrc = normalizedIsrc(row.isrc);
+    if (spotifyId) {
+      metadata.set(spotifyId, row);
+      metadata.set(`spotify:${spotifyId}`, row);
+    }
+    if (isrc) metadata.set(`isrc:${isrc}`, row);
   }
   await saveTrackMetadata(metadataDb, fetched);
   return metadata;
@@ -113,7 +161,7 @@ export async function enrichQueueMetadata(env, queue, now, config, fetchMetadata
 
 export function attachBuddyMetadata(queue, metadata) {
   return queue.tracks.map((track) => {
-    const row = track.spotify_id ? metadata.get(String(track.spotify_id)) : null;
+    const row = metadataForTrack(metadata, track);
     const title = String(row?.title || '').trim() || null;
     const artist = String(row?.artist || '').trim() || null;
     return {
