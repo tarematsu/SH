@@ -46,7 +46,6 @@ function factsHistorySql(whereClause) {
         WHERE d.channel_id=f.channel_id AND d.day_at=(f.observed_at/86400000)*86400000
         ORDER BY d.last_observed_at DESC,d.host_key LIMIT 1),f.total_member_count)
         AS total_member_count,f.reported_total_listens AS total_listens,
-      f.reported_current_stream_count AS current_stream_count,
       ${commentVelocitySql('f')} AS comment_velocity
     FROM sh_minute_facts AS f
     WHERE f.source_code=1
@@ -64,7 +63,7 @@ function factsHistorySql(whereClause) {
     FROM points
   )
   SELECT observed_at,listener_count,online_member_count,total_member_count,
-    total_listens,current_stream_count,comment_velocity_max AS comment_velocity
+    total_listens,comment_velocity_max AS comment_velocity
   FROM ranked WHERE rn=1 ORDER BY observed_at ASC LIMIT 300`;
 }
 
