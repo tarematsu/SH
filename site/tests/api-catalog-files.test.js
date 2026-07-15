@@ -4,17 +4,36 @@ import test from 'node:test';
 
 import { apiCatalog } from '../functions/api/index.js';
 
-function routeFile(path) {
+function routeCandidates(path) {
   const relative = path.replace(/^\/api\/?/, '');
-  return relative
-    ? new URL(`../functions/api/${relative}.js`, import.meta.url)
-    : new URL('../functions/api/index.js', import.meta.url);
+  if (!relative) return [new URL('../functions/api/index.js', import.meta.url)];
+  return [
+    new URL(`../functions/api/${relative}.js`, import.meta.url),
+    new URL(`../functions/api/${relative}/index.js`, import.meta.url),
+  ];
 }
 
-test('documented Pages API routes have Function files', () => {
-  const routes = Object.values(apiCatalog(0).groups).flat();
+function routeExists(path) {
+  return routeCandidates(path).some((candidate) => existsSync(candidate));
+}
+
+test('documented canonical and compatibility Pages APIs have Function files', () => {
+  const catalog = apiCatalog(0);
+  const routes = [
+    ...Object.values(catalog.groups).flat(),
+    ...catalog.compatibility,
+  ];
   for (const route of routes) {
-    if (route.path === '/api/history') continue;
-    assert.equal(existsSync(routeFile(route.path)), true, `${route.path} must have a Function file`);
+    assert.equal(routeExists(route.path), true, `${route.path} must have a Function file`);
+  }
+});
+
+test('retired write APIs are not advertised as active groups', () => {
+  const catalog = apiCatalog(0);
+  const active = new Set(Object.values(catalog.groups).flat().map(({ path }) => path));
+  assert.equal(catalog.public_write_api, false);
+  for (const route of catalog.retired) {
+    assert.equal(active.has(route.path), false, `${route.path} must not be active`);
+    assert.equal(route.status, 404);
   }
 });
