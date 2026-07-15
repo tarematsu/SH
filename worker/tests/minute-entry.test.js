@@ -3,7 +3,6 @@ import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import minuteApp, {
   activeMinuteHealthTasks,
-  MINUTE_COMMENT_CRON,
   MINUTE_FACT_DERIVE_CRON,
   MINUTE_FACT_MAINTENANCE_CRON,
   MINUTE_FACT_RECOVERY_CRON,
@@ -111,30 +110,37 @@ test('collector priority timeout skips only optional buddies synchronization', a
   assert.deepEqual(calls, ['stagger']);
 });
 
-test('minute worker stays within the Free account cron-trigger budget', () => {
+test('minute worker has no every-minute Stationhead comment cron', async () => {
   const config = JSON.parse(readFileSync(new URL('../wrangler.minute.jsonc', import.meta.url), 'utf8'));
+  const source = readFileSync(new URL('../src/minute-entry.js', import.meta.url), 'utf8');
   assert.equal(config.name, 'sh-monitor-minute');
   assert.equal(config.main, 'src/minute-entry.js');
   assert.deepEqual(config.triggers.crons, [
-    MINUTE_COMMENT_CRON,
     MINUTE_FACT_DERIVE_CRON,
     MINUTE_FACT_MAINTENANCE_CRON,
   ]);
-  assert.equal(MINUTE_FACT_WORKER_CRON, MINUTE_COMMENT_CRON);
+  assert.equal(MINUTE_FACT_WORKER_CRON, MINUTE_FACT_DERIVE_CRON);
+  assert.equal(config.triggers.crons.includes('* * * * *'), false);
+  assert.doesNotMatch(source, /minute-comments\.js|runMinuteCommentTasks/);
   assert.deepEqual(config.d1_databases.map(({ binding }) => binding), ['BUDDIES_DB', 'MINUTE_DB']);
   assert.equal(config.vars.MINUTE_FACT_AUTO_REQUEUE_DEAD, true);
   assert.equal(config.vars.REBUILD_RECENT_GUARD_MS, 300_000);
+
+  assert.deepEqual(await runMinuteScheduled({ cron: '* * * * *' }, {}, {}), {
+    skipped: true,
+    reason: 'unsupported-minute-facts-cron',
+    cron: '* * * * *',
+  });
 });
 
 test('minute stagger applies only to rebuild and sync slots', () => {
-  assert.equal(minuteStaggerApplies({ cron: MINUTE_COMMENT_CRON }), false);
   assert.equal(minuteStaggerApplies({ cron: MINUTE_FACT_DERIVE_CRON }), false);
   assert.equal(minuteStaggerApplies({ cron: MINUTE_FACT_MAINTENANCE_CRON, scheduledTime: 5 * 60_000 }), false);
   assert.equal(minuteStaggerApplies({ cron: MINUTE_FACT_MAINTENANCE_CRON, scheduledTime: 7 * 60_000 }), true);
   assert.equal(minuteStaggerApplies({ cron: MINUTE_FACT_MAINTENANCE_CRON, scheduledTime: 9 * 60_000 }), true);
 });
 
-test('minute health includes only active task names', () => {
+test('minute health excludes retired comment tasks', () => {
   assert.deepEqual(activeMinuteHealthTasks([
     { task_name: 'comments' },
     { task_name: 'derive' },
@@ -142,7 +148,7 @@ test('minute health includes only active task names', () => {
     { task_name: 'rebuild' },
     { task_name: 'sync' },
     { task_name: 'retired' },
-  ]).map(({ task_name }) => task_name), ['comments', 'derive', 'recovery', 'rebuild', 'sync']);
+  ]).map(({ task_name }) => task_name), ['derive', 'recovery', 'rebuild', 'sync']);
 });
 
 test('minute worker /health responses are cached across repeated requests', async () => {
