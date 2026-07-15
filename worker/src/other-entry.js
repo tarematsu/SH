@@ -1,21 +1,8 @@
 import './fetch-guard.js';
 
-export const OTHER_HOST_CRON = '*/5 * * * *';
-export const OTHER_BUDDY_CRON = '0 */3 * * *';
-export const OTHER_PREDICTION_CRON = '10,40 * * * *';
-export const OTHER_OFFICIAL_NEWS_CRON = '20 * * * *';
-export const OTHER_MAINTENANCE_CRON = '30 * * * *';
-export const OTHER_RETENTION_CRON = '50 * * * *';
+export const OTHER_WORKER_CRON = '*/5 * * * *';
 
 const PRODUCTION_TASK_KEYS = ['buddy', 'host', 'prediction', 'maintenance', 'officialNews', 'snapshotRetention'];
-const TASK_BY_CRON = new Map([
-  [OTHER_HOST_CRON, 'host'],
-  [OTHER_BUDDY_CRON, 'buddy'],
-  [OTHER_PREDICTION_CRON, 'prediction'],
-  [OTHER_OFFICIAL_NEWS_CRON, 'officialNews'],
-  [OTHER_MAINTENANCE_CRON, 'maintenance'],
-  [OTHER_RETENTION_CRON, 'snapshotRetention'],
-]);
 let loadedHealthApp = null;
 
 export function scheduledTimestamp(controller, fallback = Date.now()) {
@@ -23,12 +10,27 @@ export function scheduledTimestamp(controller, fallback = Date.now()) {
   return Number.isFinite(value) && value >= 0 ? value : fallback;
 }
 
-export function otherTaskForCron(cron) {
-  return TASK_BY_CRON.get(String(cron || '')) || null;
+function positiveMinutes(value, fallbackMs) {
+  const milliseconds = Number(value ?? fallbackMs);
+  const safe = Number.isFinite(milliseconds) && milliseconds > 0 ? milliseconds : fallbackMs;
+  return Math.max(1, Math.round(safe / 60_000));
 }
 
-export function otherStaggerApplies(controller = {}) {
-  const task = otherTaskForCron(controller.cron);
+export function otherProductionTask(now, env = {}) {
+  const absoluteMinute = Math.floor(now / 60_000);
+  const minute = ((absoluteMinute % 60) + 60) % 60;
+  const buddyMinutes = positiveMinutes(env.BUDDY_PLAYBACK_INTERVAL_MS, 3 * 60 * 60_000);
+
+  if (minute === 0 && absoluteMinute % buddyMinutes === 0) return 'buddy';
+  if (minute === 10 || minute === 40) return 'prediction';
+  if (minute === 20) return 'officialNews';
+  if (minute === 30) return 'maintenance';
+  if (minute === 50) return 'snapshotRetention';
+  return 'host';
+}
+
+export function otherStaggerApplies(controller = {}, env = {}) {
+  const task = otherProductionTask(scheduledTimestamp(controller), env);
   return task === 'maintenance' || task === 'snapshotRetention';
 }
 
@@ -76,9 +78,9 @@ export async function runOfficialNewsWithReconcile(env, now, probe = null, recon
 }
 
 export async function runOtherScheduled(controller, env, ctx, dependencies = {}) {
-  if (hasInjectedTaskSet(dependencies) && !otherTaskForCron(controller.cron)) {
+  if (hasInjectedTaskSet(dependencies) && String(controller.cron || '') !== OTHER_WORKER_CRON) {
     // Preserve the broad injected mode used by integration tests and manual
-    // diagnostics. Production uses only the explicit cron routes above.
+    // diagnostics. Production uses one selected workload per five-minute tick.
     const collectorGate = env?.BUDDIES_DB?.prepare
       ? (dependencies.waitForCollector
         ? dependencies.waitForCollector(env, scheduledTimestamp(controller))
@@ -92,8 +94,10 @@ export async function runOtherScheduled(controller, env, ctx, dependencies = {})
     return results.map((result) => result.value);
   }
 
-  const name = otherTaskForCron(controller.cron);
-  if (!name) return [{ skipped: true, reason: 'unsupported-other-cron', cron: String(controller.cron || '') }];
+  if (String(controller.cron || '') !== OTHER_WORKER_CRON) {
+    return [{ skipped: true, reason: 'unsupported-other-cron', cron: String(controller.cron || '') }];
+  }
+  const name = otherProductionTask(scheduledTimestamp(controller), env);
   return [await invokeTask(name, controller, env, ctx, dependencies)];
 }
 
@@ -110,8 +114,12 @@ export async function runOtherCron(controller, env, ctx, options = {}) {
   const recordSuccess = options.recordSuccess || healthModule.recordOtherCronSuccess;
   const recordFailure = options.recordFailure || healthModule.recordOtherCronFailure;
   try {
-    const injectedBroadRun = Boolean(options.stagger && hasInjectedTaskSet(options.dependencies) && !otherTaskForCron(controller.cron));
-    if (otherStaggerApplies(controller) || injectedBroadRun) {
+    const injectedBroadRun = Boolean(
+      options.stagger
+      && hasInjectedTaskSet(options.dependencies)
+      && String(controller.cron || '') !== OTHER_WORKER_CRON
+    );
+    if (otherStaggerApplies(controller, env) || injectedBroadRun) {
       const stagger = options.stagger || (await import('./cron-stagger.js')).applyCronStagger;
       await stagger(env, 'other');
     }
