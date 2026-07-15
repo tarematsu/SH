@@ -398,7 +398,7 @@ test('producer can reuse collector presentation without rescanning snapshot fiel
   assert.equal(message.read_model.channel.presentation.description, 'channel details');
 });
 
-test('consumer read model writes channel, queue, and collector state to MINUTE_DB', async () => {
+test('consumer read model writes channel, queue, and collector state to MINUTE_DB without runtime DDL', async () => {
   const batches = [];
   const MINUTE_DB = {
     prepare(sql) {
@@ -425,13 +425,14 @@ test('consumer read model writes channel, queue, and collector state to MINUTE_D
     },
   }, 'minute-fact:10:120000');
 
-  assert.equal(batches.length, 2);
-  assert.equal(batches[1].length, 3);
-  assert.match(batches[1][0].sql, /sh_channel_read_model/);
-  assert.match(batches[1][1].sql, /sh_queue_read_model_current/);
-  assert.match(batches[1][2].sql, /sh_collector_read_model/);
-  assert.equal(batches[1][0].params[0], 10);
-  assert.equal(batches[1][2].params[0], 'buddies-worker');
+  assert.equal(batches.length, 1);
+  assert.equal(batches[0].length, 3);
+  assert.match(batches[0][0].sql, /sh_channel_read_model/);
+  assert.match(batches[0][1].sql, /sh_queue_read_model_current/);
+  assert.match(batches[0][2].sql, /sh_collector_read_model/);
+  assert.equal(batches[0][0].params[0], 10);
+  assert.equal(batches[0][2].params[0], 'buddies-worker');
+  assert.equal(batches[0].some(({ sql }) => /CREATE TABLE/.test(sql)), false);
 });
 
 test('minute worker hydrates queue metadata from BUDDIES_DB instead of the primary collector', async () => {
@@ -478,8 +479,8 @@ test('minute worker hydrates queue metadata from BUDDIES_DB instead of the prima
   }, 'minute-fact:10:120000');
 
   assert.deepEqual(metadataBindings, ['track-1']);
-  assert.match(batches[1][1].params[6], /"title":"Song"/);
-  assert.match(batches[1][1].params[6], /"artist":"Artist"/);
+  assert.match(batches[0][1].params[6], /"title":"Song"/);
+  assert.match(batches[0][1].params[6], /"artist":"Artist"/);
 });
 
 test('minute worker hydrates comment facts before enqueueing minute facts', async () => {

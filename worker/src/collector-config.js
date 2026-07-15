@@ -22,7 +22,7 @@ export function configFromEnv(env) {
       Math.min(numberValue(env.METADATA_REFRESH_INTERVAL_MS, 15 * 60_000), 7 * 24 * 60 * 60_000),
     ),
     requestTimeoutMs: Math.min(numberValue(env.REQUEST_TIMEOUT_MS, 15_000), 30_000),
-    collectionSignal: env.__COLLECTION_ABORT_SIGNAL || null,
+    collectionSignal: env.__COLLECTION_ABORT_SIGNAL || env.__COLLECTION_FETCH_ABORT_SIGNAL || null,
   };
 }
 

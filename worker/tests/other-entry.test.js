@@ -2,7 +2,14 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
-import otherApp, { runOfficialNewsWithReconcile, runOtherCron, runOtherScheduled } from '../src/other-entry.js';
+import otherApp, {
+  OTHER_WORKER_CRON,
+  otherProductionTask,
+  otherStaggerApplies,
+  runOfficialNewsWithReconcile,
+  runOtherCron,
+  runOtherScheduled,
+} from '../src/other-entry.js';
 import { createOtherHealthApp } from '../src/other-health.js';
 
 test('other worker scheduled run drives buddy playback, host, prediction, maintenance, official news, and snapshot retention', async () => {
@@ -87,7 +94,7 @@ test('official news reconcile runs only after a successful probe', async () => {
     300_000,
     async (receivedEnv, config, now) => {
       order.push('probe');
-      assert.notEqual(receivedEnv, env, 'expected the probe to receive the D1-optimized env wrapper');
+      assert.notEqual(receivedEnv, env, 'expected the probe to receive an isolated env wrapper');
       assert.equal(now, 300_000);
       return 'probe-done';
     },
@@ -119,14 +126,29 @@ test('official news reconcile is skipped when the probe fails', async () => {
   assert.equal(reconciled, false);
 });
 
-test('other worker Wrangler configuration includes the shared buddies D1 binding', () => {
+test('other worker Wrangler configuration uses one five-minute cron', () => {
   const config = JSON.parse(readFileSync(new URL('../wrangler.other.jsonc', import.meta.url), 'utf8'));
   assert.equal(config.name, 'sh-monitor-other');
   assert.equal(config.main, 'src/other-entry.js');
-  assert.deepEqual(config.triggers?.crons, ['* * * * *']);
+  assert.deepEqual(config.triggers?.crons, [OTHER_WORKER_CRON]);
   assert.equal(config.vars?.PUBLIC_HEALTH_CACHE_MS, 60_000);
   assert.deepEqual(config.d1_databases.map(({ binding }) => binding), ['BUDDIES_DB', 'MINUTE_DB', 'OTHER_DB']);
   assert.equal(config.d1_databases.some(({ database_name }) => database_name === 'stationhead-buddies'), true);
+});
+
+test('other worker selects one workload for each five-minute slot', () => {
+  const base = Date.UTC(2026, 0, 1, 0, 0, 0);
+  const env = { BUDDY_PLAYBACK_INTERVAL_MS: 3 * 60 * 60_000 };
+
+  assert.equal(otherProductionTask(base, env), 'buddy');
+  assert.equal(otherProductionTask(base + 5 * 60_000, env), 'host');
+  assert.equal(otherProductionTask(base + 10 * 60_000, env), 'prediction');
+  assert.equal(otherProductionTask(base + 20 * 60_000, env), 'officialNews');
+  assert.equal(otherProductionTask(base + 30 * 60_000, env), 'maintenance');
+  assert.equal(otherProductionTask(base + 50 * 60_000, env), 'snapshotRetention');
+  assert.equal(otherStaggerApplies({ cron: OTHER_WORKER_CRON, scheduledTime: base + 5 * 60_000 }, env), false);
+  assert.equal(otherStaggerApplies({ cron: OTHER_WORKER_CRON, scheduledTime: base + 30 * 60_000 }, env), true);
+  assert.equal(otherStaggerApplies({ cron: OTHER_WORKER_CRON, scheduledTime: base + 50 * 60_000 }, env), true);
 });
 
 test('other worker invalidates public health cache after every scheduled run', async () => {

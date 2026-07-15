@@ -25,12 +25,12 @@ function fakeDb() {
   };
 }
 
-test('runtime state creates its own persistent table once', async () => {
+test('runtime state schema is migration-owned and performs no runtime DDL', async () => {
   resetMinuteFactRuntimeStateForTests();
   const db = fakeDb();
-  assert.equal(await ensureMinuteFactRuntimeStateSchema({ MINUTE_DB: db }), true);
   assert.equal(await ensureMinuteFactRuntimeStateSchema({ MINUTE_DB: db }), false);
-  assert.match(db.calls[0].sql, /CREATE TABLE IF NOT EXISTS sh_minute_fact_runtime_state/);
+  assert.equal(await ensureMinuteFactRuntimeStateSchema({ MINUTE_DB: db }), false);
+  assert.deepEqual(db.calls, []);
 });
 
 test('runtime state records success counters and inbox health', async () => {

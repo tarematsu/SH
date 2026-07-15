@@ -1,4 +1,3 @@
-import { withDuplicateVelocityReadRemoved } from './d1-read-optimizer.js';
 import { runOptimizedScheduled } from './optimized-index.js';
 import {
   PrimaryCollectionTimeoutError,
@@ -27,6 +26,17 @@ export function runPrimaryScheduled(
   });
 }
 
+function withFetchAbortSignal(env, runtimeEnv) {
+  const signal = runtimeEnv?.__COLLECTION_ABORT_SIGNAL || null;
+  if (!signal) return env;
+  const active = Object.create(env || null);
+  Object.defineProperty(active, '__COLLECTION_FETCH_ABORT_SIGNAL', {
+    value: signal,
+    enumerable: false,
+  });
+  return active;
+}
+
 export async function runPrimaryCycle(
   controller,
   collectionEnv,
@@ -35,11 +45,20 @@ export async function runPrimaryCycle(
   options = {},
 ) {
   const runPrimary = options.runPrimary || runPrimaryScheduled;
+  const scheduled = options.scheduled || runOptimizedScheduled;
+  // Preserve the watchdog signal for Stationhead HTTP, but keep it out of the
+  // collector's D1 wrapper path. An in-flight D1 operation may finish after a
+  // timeout; the primary lease and idempotent writes prevent overlap/data loss.
+  const rawD1Scheduled = (activeController, runtimeEnv, activeCtx) => scheduled(
+    activeController,
+    withFetchAbortSignal(collectionEnv, runtimeEnv),
+    activeCtx,
+  );
   return runPrimary(
     controller,
     collectionEnv,
     ctx,
-    options.scheduled || runOptimizedScheduled,
+    rawD1Scheduled,
     options.timeoutOverride ?? null,
     {
       auxiliaryRunners: options.auxiliaryRunners || NO_AUXILIARY_RUNNERS,
@@ -50,7 +69,10 @@ export async function runPrimaryCycle(
 
 export default {
   async scheduled(controller, env, ctx) {
-    return runPrimaryCycle(controller, withDuplicateVelocityReadRemoved(env), env, ctx);
+    // D1 reads/writes are intentionally allowed to repeat. Avoiding the generic
+    // statement-rewrite/cache Proxy removes traps, SQL classification and JSON
+    // signatures from every collector D1 call.
+    return runPrimaryCycle(controller, env, env, ctx);
   },
 
   fetch() {

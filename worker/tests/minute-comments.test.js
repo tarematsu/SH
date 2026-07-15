@@ -12,7 +12,7 @@ test('minute comment task ids are stable and source-job scoped', () => {
   assert.equal(minuteCommentTaskId(''), 'minute-comments:');
 });
 
-test('minute comment task is persisted before the fact receipt can be saved', async () => {
+test('minute comment task is persisted without runtime schema DDL', async () => {
   const calls = [];
   const db = {
     prepare(sql) {
@@ -42,7 +42,8 @@ test('minute comment task is persisted before the fact receipt can be saved', as
   });
 
   assert.equal(result.created, true);
-  assert.equal(calls.includes('batch:2'), true);
+  assert.equal(calls.some((call) => call.startsWith('batch:')), false);
+  assert.equal(calls.some((call) => /CREATE TABLE|CREATE INDEX/.test(call)), false);
   assert.equal(calls.at(-1), 'run');
 });
 

@@ -8,6 +8,11 @@ function intervalMs(env = {}) {
   return Math.max(MIN_INTERVAL_MS, Math.trunc(configured));
 }
 
+function offsetMinutes(env = {}) {
+  const configured = Number(env.DATA_MAINTENANCE_OFFSET_MINUTES ?? 0);
+  return Number.isFinite(configured) ? Math.max(0, Math.trunc(configured)) : 0;
+}
+
 export function dataMaintenanceEnabled(env = {}) {
   const configured = env.DATA_MAINTENANCE_ENABLED;
   if (configured == null || configured === '') return true;
@@ -19,7 +24,8 @@ export function shouldRunScheduledMaintenance(now = Date.now(), env = {}) {
   const interval = intervalMs(env);
   const minute = Math.floor(now / 60_000);
   const intervalMinutes = Math.max(1, Math.round(interval / 60_000));
-  return minute % intervalMinutes === 0;
+  const offset = offsetMinutes(env) % intervalMinutes;
+  return ((minute - offset) % intervalMinutes + intervalMinutes) % intervalMinutes === 0;
 }
 
 export function minuteFactsCutoverEnabled(env = {}) {
@@ -42,6 +48,7 @@ export async function runScheduledMaintenance(env, now = Date.now()) {
     return { skipped: true, reason: 'not-due' };
   }
 
+  const { runRollupMaintenanceSafely } = await import('./rollup-maintenance.js');
   const rollup = await runRollupMaintenanceSafely(sourceDb, env.OTHER_DB, now);
   return {
     skipped: false,
@@ -51,4 +58,3 @@ export async function runScheduledMaintenance(env, now = Date.now()) {
     minuteFactsBackfill: { skipped: true, reason: LEGACY_MIGRATION_DISABLED_REASON },
   };
 }
-import { runRollupMaintenanceSafely } from './rollup-maintenance.js';

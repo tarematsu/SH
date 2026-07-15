@@ -39,8 +39,6 @@ export const REQUEUE_DEAD_MINUTE_FACT_JOBS_SQL = `UPDATE sh_minute_fact_jobs SET
   ) AND status='dead'
   RETURNING id`;
 
-let schemaReady = false;
-
 function integer(value) {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? Math.trunc(parsed) : null;
@@ -68,26 +66,10 @@ export function minuteFactJobPayload(input = {}) {
   };
 }
 
-async function ensureInboxColumns(db) {
-  const result = await db.prepare('PRAGMA table_info(sh_minute_fact_jobs)').all();
-  const columns = new Set((result.results || []).map((row) => String(row.name)));
-  if (!columns.has('job_kind')) {
-    await db.prepare("ALTER TABLE sh_minute_fact_jobs ADD COLUMN job_kind TEXT NOT NULL DEFAULT 'live'").run();
-  }
-  if (!columns.has('job_priority')) {
-    await db.prepare('ALTER TABLE sh_minute_fact_jobs ADD COLUMN job_priority INTEGER NOT NULL DEFAULT 100').run();
-  }
-}
-
 export async function ensureMinuteFactInboxSchema(env) {
   if (!env?.MINUTE_DB) throw new Error('minute fact inbox DB binding is missing');
-  if (schemaReady) return false;
-  await env.MINUTE_DB.prepare(MINUTE_FACT_INBOX_SCHEMA_SQL).run();
-  await ensureInboxColumns(env.MINUTE_DB);
-  await env.MINUTE_DB.prepare('DROP INDEX IF EXISTS idx_sh_minute_fact_jobs_pending').run();
-  await env.MINUTE_DB.prepare(MINUTE_FACT_INBOX_INDEX_SQL).run();
-  schemaReady = true;
-  return true;
+  // Owned by database/facts-migrations/012_minute_runtime_tables.sql.
+  return false;
 }
 
 export async function enqueueMinuteFactJob(env, input = {}, options = {}) {
@@ -148,10 +130,6 @@ export async function claimMinuteFactJobs(env, options = {}) {
   const leaseMs = positiveInteger(options.leaseMs, 60_000, 10 * 60_000);
   await releaseExpiredLeases(env, now);
 
-  // Lease the whole batch in one round trip: a single UPDATE leases the top
-  // `limit` due jobs and RETURNING hands back their full rows. This replaces the
-  // old per-job "SELECT id -> UPDATE -> SELECT *" loop, which issued ~3 queries
-  // (plus a table-wide lease sweep) for every job the derive cron processed.
   const claimed = await env.MINUTE_DB.prepare(`UPDATE sh_minute_fact_jobs SET
       status='processing',attempts=attempts+1,lease_until=?,updated_at=?
     WHERE id IN (
@@ -166,9 +144,6 @@ export async function claimMinuteFactJobs(env, options = {}) {
   return claimed.results || [];
 }
 
-// Hand claimed-but-unprocessed jobs (e.g. left over when the derive run hits its
-// time budget) straight back to the queue, undoing the attempt increment the
-// claim charged so they retry immediately instead of waiting out the lease.
 export async function releaseMinuteFactJobs(env, jobIds, options = {}) {
   const ids = (Array.isArray(jobIds) ? jobIds : [])
     .map((id) => integer(id))
@@ -243,6 +218,4 @@ export async function minuteFactInboxStats(env) {
   };
 }
 
-export function resetMinuteFactInboxForTests() {
-  schemaReady = false;
-}
+export function resetMinuteFactInboxForTests() {}

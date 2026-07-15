@@ -1,7 +1,5 @@
 import { sanitizeFailureDetail } from './collector-failure.js';
 
-// This is deliberately separate from the inbox: the inbox describes individual
-// jobs, while this table makes the health of each scheduled task cheap to inspect.
 export const MINUTE_FACT_RUNTIME_STATE_SCHEMA_SQL = `CREATE TABLE IF NOT EXISTS sh_minute_fact_runtime_state (
   task_name TEXT PRIMARY KEY,
   last_started_at INTEGER,
@@ -22,8 +20,6 @@ export const MINUTE_FACT_RUNTIME_STATE_SCHEMA_SQL = `CREATE TABLE IF NOT EXISTS 
   oldest_pending_minute INTEGER,
   updated_at INTEGER NOT NULL
 )`;
-
-let schemaReady = false;
 
 function finiteInteger(value, fallback = null) {
   const parsed = Number(value);
@@ -58,10 +54,8 @@ export function minuteFactRuntimeSnapshot(outcome = {}) {
 
 export async function ensureMinuteFactRuntimeStateSchema(env) {
   if (!env?.MINUTE_DB) throw new Error('minute fact runtime state DB binding is missing');
-  if (schemaReady) return false;
-  await env.MINUTE_DB.prepare(MINUTE_FACT_RUNTIME_STATE_SCHEMA_SQL).run();
-  schemaReady = true;
-  return true;
+  // Owned by database/facts-migrations/012_minute_runtime_tables.sql.
+  return false;
 }
 
 export async function recordMinuteFactRuntimeState(env, task, outcome = {}, options = {}) {
@@ -127,6 +121,4 @@ export function minuteFactRuntimeSignals(state, options = {}) {
   };
 }
 
-export function resetMinuteFactRuntimeStateForTests() {
-  schemaReady = false;
-}
+export function resetMinuteFactRuntimeStateForTests() {}

@@ -46,6 +46,14 @@ const counterRepairMigrationPath = resolve(
   repositoryRoot,
   'database/facts-migrations/011_repair_counter_current.sql',
 );
+const counterReadIndexMigrationPath = resolve(
+  repositoryRoot,
+  'database/facts-migrations/012_counter_current_read_index.sql',
+);
+const runtimeTablesMigrationPath = resolve(
+  repositoryRoot,
+  'database/facts-migrations/013_minute_runtime_tables.sql',
+);
 const metadataPath = resolve(repositoryRoot, 'database/facts-db.json');
 const databaseName = process.env.FACTS_DATABASE_NAME || 'stationhead-minute';
 
@@ -93,6 +101,14 @@ function parseJsonOutput(output) {
 
 function listDatabases() {
   return parseJsonOutput(wrangler(['d1', 'list', '--json']));
+}
+
+function executeCommand(sql) {
+  return wrangler([
+    'd1', 'execute', databaseName,
+    '--remote', '--yes',
+    '--command', sql,
+  ]);
 }
 
 function tableColumnNames(databaseName, table) {
@@ -145,36 +161,20 @@ if (factsColumns.has('source_code') && !factsColumns.has('collector_code')) {
   ]);
 }
 
-wrangler([
-  'd1', 'execute', databaseName,
-  '--remote', '--yes',
-  '--file', readModelMigrationPath,
-]);
-wrangler([
-  'd1', 'execute', databaseName,
-  '--remote', '--yes',
-  '--file', commentTaskMigrationPath,
-]);
-wrangler([
-  'd1', 'execute', databaseName,
-  '--remote', '--yes',
-  '--file', predictionStateMigrationPath,
-]);
-wrangler([
-  'd1', 'execute', databaseName,
-  '--remote', '--yes',
-  '--file', cleanupMigrationPath,
-]);
-wrangler([
-  'd1', 'execute', databaseName,
-  '--remote', '--yes',
-  '--file', downstreamArchiveMigrationPath,
-]);
-wrangler([
-  'd1', 'execute', databaseName,
-  '--remote', '--yes',
-  '--file', completionMigrationPath,
-]);
+for (const migrationPath of [
+  readModelMigrationPath,
+  commentTaskMigrationPath,
+  predictionStateMigrationPath,
+  cleanupMigrationPath,
+  downstreamArchiveMigrationPath,
+  completionMigrationPath,
+]) {
+  wrangler([
+    'd1', 'execute', databaseName,
+    '--remote', '--yes',
+    '--file', migrationPath,
+  ]);
+}
 
 if (tableColumnNames(databaseName, 'sh_minute_fact_context_v2').size === 0) {
   console.log('Applying sparse member/context and canonical counter-log migration...');
@@ -194,10 +194,29 @@ if (tableColumnNames(databaseName, 'sh_facts_storage_repairs').size === 0) {
   ]);
 }
 
+wrangler([
+  'd1', 'execute', databaseName,
+  '--remote', '--yes',
+  '--file', counterReadIndexMigrationPath,
+]);
+
+const inboxColumns = tableColumnNames(databaseName, 'sh_minute_fact_jobs');
+if (inboxColumns.size > 0 && !inboxColumns.has('job_kind')) {
+  executeCommand("ALTER TABLE sh_minute_fact_jobs ADD COLUMN job_kind TEXT NOT NULL DEFAULT 'live'");
+}
+if (inboxColumns.size > 0 && !inboxColumns.has('job_priority')) {
+  executeCommand('ALTER TABLE sh_minute_fact_jobs ADD COLUMN job_priority INTEGER NOT NULL DEFAULT 100');
+}
+wrangler([
+  'd1', 'execute', databaseName,
+  '--remote', '--yes',
+  '--file', runtimeTablesMigrationPath,
+]);
+
 writeFileSync(metadataPath, `${JSON.stringify({
   binding: 'MINUTE_DB',
   database_name: databaseName,
   database_id: databaseId,
-  schema: 'database/facts-migrations/011_repair_counter_current.sql',
+  schema: 'database/facts-migrations/013_minute_runtime_tables.sql',
 }, null, 2)}\n`);
 console.log(JSON.stringify({ ok: true, database_name: databaseName, database_id: databaseId }));
