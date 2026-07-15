@@ -11,6 +11,7 @@
     "db:verify": "node scripts/verify-d1-schema.mjs",
     "check": "node ../scripts/check-js-syntax.mjs site/functions site/public site/scripts site/tests",
     "test": "npm run test:integration && npm run test:d1",
+    "pretest:integration": "npm --prefix ../worker ci --no-audit --no-fund",
     "test:integration": "node --test tests/*.test.js",
     "test:d1": "node scripts/test-local-d1.mjs"
   },

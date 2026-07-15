@@ -10,6 +10,10 @@ const diagnosticsWorkflow = readFileSync(
   new URL('../.github/workflows/cloudflare-build-diagnostics.yml', import.meta.url),
   'utf8',
 );
+const workerPackage = JSON.parse(readFileSync(
+  new URL('../worker/package.json', import.meta.url),
+  'utf8',
+));
 
 test('manual deploy keeps all Cloudflare targets available', () => {
   const fallback = 'secrets.CLOUDFLARE_BUILDS_API_TOKEN || secrets.CLOUDFLARE_API_TOKEN || secrets.CF_API_TOKEN';
@@ -22,6 +26,11 @@ test('manual deploy keeps all Cloudflare targets available', () => {
   assert.match(deployWorkflow, /npm run deploy:other/);
   assert.match(deployWorkflow, /npm run deploy:minute/);
   assert.equal(occurrences, 4);
+});
+
+test('legacy Cloudflare minute deploy typo routes to the canonical script', () => {
+  assert.equal(workerPackage.scripts['deploy:mintue'], 'npm run deploy:minute');
+  assert.match(workerPackage.scripts['deploy:minute'], /wrangler\.minute\.jsonc/);
 });
 
 test('Cloudflare Git diagnostics run automatically for all Worker builds', () => {

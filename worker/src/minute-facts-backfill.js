@@ -152,6 +152,12 @@ export function buildRebuildCandidates(rows = [], previousRow = null, options = 
   };
 }
 
+export function retainUncommittedRebuildCandidate(result, candidate, remaining) {
+  if (result?.enqueued) return true;
+  remaining.push(candidate);
+  return false;
+}
+
 async function ensureRebuildSchema(env) {
   if (!env?.MINUTE_DB) throw new Error('minute fact rebuild MINUTE_DB binding is missing');
   if (schemaReady) return;
@@ -353,7 +359,7 @@ export async function runMinuteFactsBackfill(env, dependencies = {}) {
         jobPriority: mode === 'exact' ? 20 : 10,
         requeueCompleted: true,
       });
-      if (result.enqueued) enqueued += 1;
+      if (retainUncommittedRebuildCandidate(result, candidate, remaining)) enqueued += 1;
     }
 
     const latestState = await loadState(env);

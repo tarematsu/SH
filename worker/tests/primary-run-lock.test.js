@@ -83,6 +83,13 @@ test('a fresh lock claims on the first attempt', async () => {
   assert.equal(db.row.lease_until, 1_000 + 70_000);
 });
 
+test('a fresh lock claim does not run migration-owned schema DDL', async () => {
+  const db = fakeDb();
+  assert.equal(await claimPrimaryRunLock({ DB: db }, 'run-1', 1_000), true);
+  assert.equal(db.calls.some((call) => /CREATE TABLE/i.test(call.sql)), false);
+  assert.equal(db.calls.filter((call) => call.kind === 'first').length, 1);
+});
+
 test('a second claim attempt is rejected while the first lease is still active', async () => {
   const db = fakeDb();
   assert.equal(await claimPrimaryRunLock({ DB: db }, 'run-1', 1_000), true);

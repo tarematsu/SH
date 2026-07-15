@@ -4,11 +4,13 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "postinstall": "node scripts/select-cloudflare-build-config.mjs",
     "dev": "wrangler dev --test-scheduled",
     "deploy": "wrangler deploy",
     "deploy:buddies": "wrangler deploy --config wrangler.jsonc",
     "deploy:other": "wrangler deploy --config wrangler.other.jsonc",
     "deploy:minute": "wrangler deploy --config wrangler.minute.jsonc",
+    "deploy:mintue": "npm run deploy:minute",
     "tail": "wrangler tail",
     "check": "npm run check:syntax && npm run check:bundle",
     "check:syntax": "node ../scripts/check-js-syntax.mjs worker/src worker/tests worker/scripts",
