@@ -70,9 +70,6 @@ jobs:
           cache-dependency-path: |
             site/package-lock.json
             worker/package-lock.json
-      - name: Install Worker dependencies used by Pages integration tests
-        run: npm ci --no-audit --no-fund
-        working-directory: worker
       - run: npm ci --no-audit --no-fund
         working-directory: site
       - run: npm run check
@@ -119,6 +116,8 @@ jobs:
           cache-dependency-path: worker/package-lock.json
       - run: npm ci --no-audit --no-fund
       - run: npm run check
+      - name: Check minute Worker bundle
+        run: npm run check:minute-bundle
       - run: npm test
 
   audit:
