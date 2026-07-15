@@ -2,92 +2,95 @@
 <html lang="ja">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="theme-color" content="#111019">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0d1017">
+  <meta name="color-scheme" content="dark">
   <meta name="robots" content="noindex,nofollow,noarchive,nosnippet,noimageindex">
   <meta name="googlebot" content="noindex,nofollow,noarchive,nosnippet,noimageindex">
   <title>Buddies Station Monitor</title>
-  <link rel="stylesheet" href="/style.css">
-  <link rel="stylesheet" href="/dashboard-interactive.css">
-  <link rel="stylesheet" href="/design-system.css">
-  <link rel="stylesheet" href="/comment-velocity-chart.css">
+  <link rel="stylesheet" href="/app-lite.css">
 </head>
 <body>
-  <div class="backdrop"></div>
-  <main class="container">
-    <header class="hero panel">
-      <div class="identity">
-        <img id="channelImage" class="channel-image" alt="Buddies">
-        <div>
-          <p class="eyebrow">STATIONHEAD LIVE MONITOR</p>
+  <a class="skip-link" href="#content">本文へ移動</a>
+  <main id="content" class="shell">
+    <header class="top-card">
+      <div class="channel">
+        <img id="channelImage" class="channel-image" alt="" width="64" height="64" decoding="async">
+        <div class="channel-copy">
+          <p class="kicker">STATIONHEAD LIVE MONITOR</p>
           <h1 id="channelName">Buddies</h1>
-          <p id="description" class="muted">読み込み中...</p>
+          <p id="description" class="subtle">読み込み中...</p>
+          <p class="live-line"><span id="liveDot" class="live-dot" aria-hidden="true"></span><span id="liveState">状態を確認中</span><span aria-hidden="true">·</span><span id="updated">-</span></p>
         </div>
       </div>
-      <div class="hero-side">
-        <div class="actions">
-          <a class="action use-app" href="stationhead://station/3328626" aria-label="StationheadアプリでBuddiesを開く">
-            <span class="use-app-icon" aria-hidden="true">
-              <svg viewBox="0 0 24 24" role="img" focusable="false">
-                <path d="M8 2.75h8A2.25 2.25 0 0 1 18.25 5v14A2.25 2.25 0 0 1 16 21.25H8A2.25 2.25 0 0 1 5.75 19V5A2.25 2.25 0 0 1 8 2.75Zm0 1.5A.75.75 0 0 0 7.25 5v14c0 .414.336.75.75.75h8a.75.75 0 0 0 .75-.75V5a.75.75 0 0 0-.75-.75H8Zm2.25 13.5h3.5v1.5h-3.5v-1.5Zm1.75-11 3.25 3.25-1.06 1.06-1.44-1.44v4.63h-1.5V9.62l-1.44 1.44L8.75 10 12 6.75Z" fill="currentColor"/>
-              </svg>
-            </span>
-            <span>アプリで開く</span>
-          </a>
-          <a class="action" href="https://www.stationhead.com/c/buddies" target="_blank" rel="noopener">ウェブページを開く</a>
-        </div>
-        <span id="updated" class="muted small">-</span>
-      </div>
-      <a class="action primary history-link" href="/history/index.html">過去データ</a>
+      <nav class="top-actions" aria-label="関連リンク">
+        <a class="button primary" href="stationhead://station/3328626">アプリで開く</a>
+        <a class="button" href="https://www.stationhead.com/c/buddies" target="_blank" rel="noopener noreferrer">Webで開く</a>
+        <a class="button" href="/history/index.html">過去データ</a>
+      </nav>
     </header>
 
     <section class="metrics" aria-label="現在の指標">
-      <article class="metric metric-main"><span>オンライン</span><strong id="online">-</strong></article>
-      <article class="metric"><span>ユニーク参加者</span><strong id="members">-</strong><div id="membersDelta" class="daily-delta" hidden></div></article>
-      <article class="metric"><span>延べ参加者</span><strong id="totalListens">-</strong><div id="listensDelta" class="daily-delta" hidden></div></article>
+      <article class="metric featured"><span>オンライン</span><strong id="online">-</strong><small>人</small></article>
+      <article class="metric"><span>ユニーク参加者</span><strong id="members">-</strong><div id="membersDelta" class="delta" hidden></div></article>
+      <article class="metric"><span>延べ参加者</span><strong id="totalListens">-</strong><div id="listensDelta" class="delta" hidden></div></article>
     </section>
 
-    <section class="main-grid">
-      <article class="panel now-playing">
-        <div class="section-head"><div><p class="eyebrow">NOW PLAYING</p><h2>再生中</h2></div></div>
-        <div id="nowPlaying" class="now-content empty">曲情報を取得中...</div>
+    <section class="primary-grid">
+      <article class="card now-card">
+        <div class="section-head">
+          <div><p class="kicker">NOW PLAYING</p><h2>再生中</h2></div>
+          <div id="host" class="host"></div>
+        </div>
+        <a id="nowPlayingLink" class="now-playing" target="_blank" rel="noopener noreferrer" aria-disabled="true">
+          <img id="trackImage" class="track-image" alt="" width="104" height="104" decoding="async">
+          <div class="track-copy">
+            <strong id="trackTitle">曲情報を取得中...</strong>
+            <span id="trackArtist" class="subtle"></span>
+            <div class="time-row"><span id="trackTime">-</span><span id="spotifyHint" hidden>Spotifyで開く</span></div>
+            <div class="progress" aria-hidden="true"><i id="trackBar"></i></div>
+          </div>
+        </a>
       </article>
-      <article class="panel queue-panel">
-        <div class="section-head"><div><p class="eyebrow">UP NEXT</p><h2>今後の再生予定</h2></div><span id="queueCount" class="chip">-</span></div>
-        <div class="queue-slider-wrap"><div id="queue" class="queue-list" tabindex="0" aria-label="今後の再生予定。スクロールして全曲を確認できます"></div></div>
-        <p class="queue-hint">スクロールして全曲を確認</p>
+
+      <article class="card queue-card">
+        <div class="section-head">
+          <div><p class="kicker">UP NEXT</p><h2>今後の再生予定</h2></div>
+          <span id="queueCount" class="pill">-</span>
+        </div>
+        <div id="queue" class="queue" aria-live="polite"></div>
+        <button id="queueMore" class="button queue-more" type="button" hidden>続きを読み込む</button>
       </article>
     </section>
 
-    <section class="panel goal-panel">
-      <div class="section-head"><div><p class="eyebrow">STREAMING GOAL</p><h2>ストリーム目標</h2></div></div>
+    <section class="card goal-card">
+      <div class="section-head"><div><p class="kicker">STREAMING GOAL</p><h2>ストリーム目標</h2></div></div>
       <div class="goal-layout">
         <div>
-          <div class="goal-numbers"><strong id="streamCount">-</strong><span>/ <b id="streamGoal">-</b></span></div>
-          <div class="progress"><i id="goalBar"></i></div>
+          <div class="goal-number"><strong id="streamCount">-</strong><span>/ <b id="streamGoal">-</b></span></div>
+          <div class="progress large" aria-hidden="true"><i id="goalBar"></i></div>
           <div class="goal-foot"><span id="goalPercent">-</span><span id="goalRemaining">-</span></div>
         </div>
-        <div class="prediction-card"><small>予測到達時期</small><strong id="goalEta">計算中</strong><span id="goalRate">-</span><div id="goalMilestones" class="goal-milestones" aria-live="polite"></div></div>
+        <div class="prediction">
+          <span>予測到達時期</span>
+          <strong id="goalEta">計算中</strong>
+          <small id="goalRate">-</small>
+          <div id="goalMilestones" class="milestones"></div>
+        </div>
       </div>
     </section>
 
-    <section class="panel chart-panel">
-      <div class="section-head"><div><p class="eyebrow">LAST 24 HOURS</p><h2>オンライン・コメント勢い推移</h2></div><div class="legend"><span class="legend-online">● オンライン</span><span class="legend-comments">▮ コメント勢い</span></div></div>
-      <canvas id="chart" width="1200" height="360" aria-label="オンライン数とコメント勢いの推移"></canvas>
-      <div id="mainChartDetail" class="main-chart-detail" aria-live="polite">グラフをタッチまたはクリックすると、その時点の日時と数値を表示します。</div>
+    <section class="card chart-card">
+      <div class="section-head chart-head">
+        <div><p class="kicker">LAST 24 HOURS</p><h2>オンライン・再生数・コメント勢い</h2></div>
+        <div class="legend" aria-label="グラフ凡例"><span class="online-key">オンライン</span><span class="stream-key">再生数</span><span class="comment-key">コメント勢い</span></div>
+      </div>
+      <canvas id="chart" width="960" height="360" aria-label="過去24時間の推移"></canvas>
+      <div id="chartDetail" class="chart-detail">グラフをタッチすると、その時点の数値を表示します。</div>
     </section>
+
+    <p id="statusMessage" class="status-message" role="status" hidden></p>
   </main>
-  <script src="/dashboard-fetch-cache.js" defer></script>
-  <script src="/app-state.js" defer></script>
-  <script src="/app-chart.js" defer></script>
-  <script src="/app-playback.js" defer></script>
-  <script src="/app.js" defer></script>
-  <script src="/sh-ui-fixes.js" defer></script>
-  <script src="/dashboard-dom-utils.js" defer></script>
-  <script src="/dashboard-history-cache.js" defer></script>
-  <script src="/dashboard-optimized.js" defer></script>
-  <script src="/dashboard-display-guards.js" defer></script>
-  <script src="/dashboard-recovery.js" defer></script>
-  <script src="/eta-daypart.js" defer></script>
+  <script src="/app-lite.js" defer></script>
 </body>
 </html>
