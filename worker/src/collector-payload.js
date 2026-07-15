@@ -126,10 +126,10 @@ function normalizedBoolean(value) {
   return null;
 }
 
-function likeTrackKey(track) {
-  const isrc = normalizedText(track?.isrc)?.trim().toUpperCase();
+function likeTrackKey(isrcValue, spotifyIdValue) {
+  const isrc = normalizedText(isrcValue)?.trim().toUpperCase();
   if (isrc) return `isrc:${isrc}`;
-  const spotifyId = normalizedText(track?.spotify_id)?.trim();
+  const spotifyId = normalizedText(spotifyIdValue)?.trim();
   return spotifyId ? `spotify:${spotifyId}` : null;
 }
 
@@ -223,67 +223,85 @@ export function extractQueue(channel, stationId) {
   const station = channel?.current_station || {};
   const queue = station?.queue || channel?.queue || null;
   if (!queue) return null;
-  const queueTracks = queue?.queue_tracks || queue?.tracks || [];
-  const structuralTracks = [];
+  const queueTracks = Array.isArray(queue?.queue_tracks)
+    ? queue.queue_tracks
+    : Array.isArray(queue?.tracks)
+      ? queue.tracks
+      : [];
+  const compactTracks = new Array(queueTracks.length);
+  const structuralTracks = new Array(queueTracks.length);
   const likeValues = new Map();
   let identifiableLikes = 0;
   let completeLikes = true;
+
+  for (let position = 0; position < queueTracks.length; position += 1) {
+    const item = queueTracks[position];
+    const track = item?.track || item;
+    const artist = track?.artist || track?.artists?.[0] || {};
+    const queueTrackId = item?.id ?? null;
+    const stationheadTrackId = track?.id ?? null;
+    const spotifyId = track?.spotify_id ?? null;
+    const deezerId = track?.deezer_id ?? null;
+    const isrc = track?.isrc ?? null;
+    const durationMs = track?.duration ?? null;
+    const previewUrl = track?.preview ?? null;
+    const biteCount = track?.bite_count ?? null;
+
+    structuralTracks[position] = {
+      position,
+      queue_track_id: normalizedNumber(queueTrackId),
+      stationhead_track_id: normalizedNumber(stationheadTrackId),
+      spotify_id: normalizedText(spotifyId),
+      deezer_id: normalizedText(deezerId),
+      isrc: normalizedText(isrc),
+      duration_ms: normalizedNumber(durationMs),
+      preview_url: normalizedText(previewUrl),
+    };
+
+    const trackKey = likeTrackKey(isrc, spotifyId);
+    if (trackKey) {
+      identifiableLikes += 1;
+      const likeCount = normalizedNumber(biteCount);
+      if (likeCount == null) completeLikes = false;
+      else likeValues.set(trackKey, likeCount);
+    }
+
+    compactTracks[position] = {
+      position,
+      queue_track_id: queueTrackId,
+      stationhead_track_id: stationheadTrackId,
+      spotify_id: spotifyId,
+      deezer_id: deezerId,
+      isrc,
+      duration_ms: durationMs,
+      preview_url: previewUrl,
+      bite_count: biteCount,
+      title: boundedText(track?.title ?? track?.name, 500),
+      artist: boundedText(
+        typeof artist === 'string' ? artist : (artist?.name ?? track?.artist_name),
+        500,
+      ),
+    };
+  }
+
+  const likePayload = new Array(likeValues.size);
+  let likeIndex = 0;
+  for (const [trackKey, likeCount] of likeValues) {
+    likePayload[likeIndex] = { track_key: trackKey, like_count: likeCount };
+    likeIndex += 1;
+  }
+  likePayload.sort((left, right) => left.track_key.localeCompare(right.track_key));
+
   const compactQueue = {
     station_id: firstDefined(queue?.station_id, station?.id, stationId),
     queue_id: queue?.id ?? null,
     start_time: queue?.start_time ?? null,
     is_paused: queue?.is_paused ?? null,
-    tracks: queueTracks.map((item, position) => {
-      const track = item?.track || item;
-      const artist = track?.artist || track?.artists?.[0] || {};
-      const queueTrackId = item?.id ?? null;
-      const stationheadTrackId = track?.id ?? null;
-      const spotifyId = track?.spotify_id ?? null;
-      const deezerId = track?.deezer_id ?? null;
-      const isrc = track?.isrc ?? null;
-      const durationMs = track?.duration ?? null;
-      const previewUrl = track?.preview ?? null;
-      const biteCount = track?.bite_count ?? null;
-      structuralTracks.push({
-        position,
-        queue_track_id: normalizedNumber(queueTrackId),
-        stationhead_track_id: normalizedNumber(stationheadTrackId),
-        spotify_id: normalizedText(spotifyId),
-        deezer_id: normalizedText(deezerId),
-        isrc: normalizedText(isrc),
-        duration_ms: normalizedNumber(durationMs),
-        preview_url: normalizedText(previewUrl),
-      });
-      const trackKey = likeTrackKey({ isrc, spotify_id: spotifyId });
-      if (trackKey) {
-        identifiableLikes += 1;
-        const likeCount = normalizedNumber(biteCount);
-        if (likeCount == null) completeLikes = false;
-        else likeValues.set(trackKey, likeCount);
-      }
-      return {
-        position,
-        queue_track_id: queueTrackId,
-        stationhead_track_id: stationheadTrackId,
-        spotify_id: spotifyId,
-        deezer_id: deezerId,
-        isrc,
-        duration_ms: durationMs,
-        preview_url: previewUrl,
-        bite_count: biteCount,
-        title: boundedText(track?.title ?? track?.name, 500),
-        artist: boundedText(
-          typeof artist === 'string' ? artist : (artist?.name ?? track?.artist_name),
-          500,
-        ),
-      };
-    }),
+    tracks: compactTracks,
   };
   const likeAnalysis = {
     complete: identifiableLikes === 0 || completeLikes,
-    payload: [...likeValues.entries()]
-      .map(([trackKey, likeCount]) => ({ track_key: trackKey, like_count: likeCount }))
-      .sort((left, right) => left.track_key.localeCompare(right.track_key)),
+    payload: likePayload,
   };
   const structuralPayload = {
     station_id: normalizedNumber(compactQueue.station_id),
