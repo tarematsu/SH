@@ -34,11 +34,19 @@ export async function runPrimaryCycle(
   options = {},
 ) {
   const runPrimary = options.runPrimary || runPrimaryScheduled;
+  const scheduled = options.scheduled || runOptimizedScheduled;
+  // The watchdog still limits the awaited cron and retains the D1 lease on
+  // timeout, but the collector receives the raw environment. This avoids a
+  // Proxy around every D1 prepare/bind/run. An in-flight D1 call may finish
+  // after timeout, which is safe because all persistence paths are idempotent.
+  const stageBoundaryScheduled = (activeController, _runtimeEnv, activeCtx) => (
+    scheduled(activeController, collectionEnv, activeCtx)
+  );
   return runPrimary(
     controller,
     collectionEnv,
     ctx,
-    options.scheduled || runOptimizedScheduled,
+    stageBoundaryScheduled,
     options.timeoutOverride ?? null,
     {
       auxiliaryRunners: options.auxiliaryRunners || NO_AUXILIARY_RUNNERS,
