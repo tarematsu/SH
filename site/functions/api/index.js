@@ -42,18 +42,17 @@ export function apiCatalog(now = Date.now()) {
   };
 }
 
-export async function onRequestGet() {
+export async function onRequest(context) {
+  if (context.request.method !== 'GET') {
+    return Response.json({ ok: false, error: 'method-not-allowed' }, {
+      status: 405,
+      headers: { allow: 'GET' },
+    });
+  }
   return Response.json(apiCatalog(), {
     headers: {
       'cache-control': 'public, max-age=300, s-maxage=3600',
       'x-content-type-options': 'nosniff',
     },
-  });
-}
-
-export async function onRequest() {
-  return Response.json({ ok: false, error: 'method-not-allowed' }, {
-    status: 405,
-    headers: { allow: 'GET' },
   });
 }
