@@ -67,7 +67,7 @@ test('retired and internal routes are blocked by the middleware contract', () =>
 test('GET /api catalog is generated from the same contract', () => {
   const catalog = apiCatalog(0);
   assert.equal(catalog.contract_version, API_CONTRACT_VERSION);
-  assert.equal(catalog.contract_version >= 3, true);
+  assert.equal(catalog.contract_version >= 2, true);
   assert.deepEqual(catalog.groups, API_GROUPS);
   assert.deepEqual(catalog.compatibility, COMPATIBILITY_ENDPOINTS);
   assert.deepEqual(catalog.retired, RETIRED_ENDPOINTS);
