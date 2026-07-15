@@ -6,6 +6,22 @@ const JSON_HEADERS = {
 const json = (data, status = 200) => new Response(JSON.stringify(data), { status, headers: JSON_HEADERS });
 const JST_OFFSET_MS = 9 * 3_600_000;
 
+const RECOVERED_STREAM_SQL = `SELECT channel_id,
+  (observed_at/60000)*60000 AS minute_at,observed_at,id,
+  COALESCE(
+    CASE WHEN json_valid(raw_json)
+      AND json_type(raw_json,'$.current_stream_count') IN ('integer','real')
+      THEN CAST(json_extract(raw_json,'$.current_stream_count') AS INTEGER) END,
+    CASE WHEN json_valid(raw_json)
+      AND json_type(raw_json,'$.current_station.streaming_party.current_stream_count') IN ('integer','real')
+      THEN CAST(json_extract(raw_json,'$.current_station.streaming_party.current_stream_count') AS INTEGER) END,
+    CASE WHEN current_stream_count IS NOT NULL AND current_stream_count>=0
+      AND current_stream_count IS NOT total_listens THEN current_stream_count END
+  ) AS total_stream_count
+FROM sh_channel_snapshots
+WHERE observed_at>=? AND observed_at<?
+ORDER BY observed_at ASC,id ASC`;
+
 function validDateText(value) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(String(value || ''))) return false;
   const timestamp = Date.parse(`${value}T00:00:00+09:00`);
@@ -41,11 +57,10 @@ export function decodeRawHistoryCursor(value) {
 }
 
 export function rawHistorySql(cursor) {
-  let sql = `SELECT f.id,f.observed_at,
+  let sql = `SELECT f.id,f.channel_id,f.observed_at,
   strftime('%Y-%m-%d %H:%M:%S',f.observed_at/1000,'unixepoch','+9 hours') AS observed_jst,
   f.listener_count,
-  CASE WHEN f.source_code=1 THEN f.reported_current_stream_count
-    ELSE COALESCE(f.reported_current_stream_count,f.reported_total_listens) END AS total_stream_count,
+  f.reported_current_stream_count AS total_stream_count,
   t.title AS track_title,t.artist AS artist_name,c.track_bite_count AS likes,
   f.comment_count AS comment_velocity,h.current_handle AS host_handle,
   COALESCE((SELECT d.last_total_member_count FROM sh_total_member_daily d
@@ -63,11 +78,70 @@ WHERE f.source_code IN (3,4) AND f.minute_at>=? AND f.minute_at<?`;
   return `${sql} ORDER BY f.minute_at ASC,f.id ASC LIMIT ?`;
 }
 
+export function recoveredStreamSql() {
+  return RECOVERED_STREAM_SQL;
+}
+
+function finiteStreamCount(value) {
+  if (value == null || value === '') return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed >= 0 ? Math.trunc(parsed) : null;
+}
+
+function recoveryKey(row) {
+  const channelId = Number(row?.channel_id);
+  const minuteAt = Number(row?.minute_at);
+  return Number.isFinite(channelId) && Number.isFinite(minuteAt) ? `${channelId}:${minuteAt}` : null;
+}
+
+export function mergeRecoveredStreamCounts(rows = [], snapshots = []) {
+  const latest = new Map();
+  for (const snapshot of snapshots) {
+    const key = recoveryKey(snapshot);
+    const streamCount = finiteStreamCount(snapshot?.total_stream_count);
+    if (!key || streamCount == null) continue;
+    const previous = latest.get(key);
+    const observedAt = Number(snapshot?.observed_at || 0);
+    const id = Number(snapshot?.id || 0);
+    if (!previous || observedAt > previous.observedAt
+        || (observedAt === previous.observedAt && id >= previous.id)) {
+      latest.set(key, { streamCount, observedAt, id });
+    }
+  }
+
+  let recoveredCount = 0;
+  const mergedRows = rows.map((row) => {
+    if (finiteStreamCount(row?.total_stream_count) != null) return row;
+    const recovered = latest.get(recoveryKey(row));
+    if (!recovered) return row;
+    recoveredCount += 1;
+    return { ...row, total_stream_count: recovered.streamCount };
+  });
+  return { rows: mergedRows, recoveredCount };
+}
+
 async function loadRows(db, fromTs, toTs, cursor, limit) {
   const binds = [fromTs, toTs];
   if (cursor) binds.push(cursor.timestamp, cursor.timestamp, cursor.id);
   binds.push(limit + 1);
   return db.prepare(rawHistorySql(cursor)).bind(...binds).all();
+}
+
+async function recoverMissingStreamCounts(env, rows) {
+  if (!env.DB || !rows.some((row) => finiteStreamCount(row?.total_stream_count) == null)) {
+    return { rows, recoveredCount: 0 };
+  }
+  const minutes = rows.map((row) => Number(row?.minute_at)).filter(Number.isFinite);
+  if (!minutes.length) return { rows, recoveredCount: 0 };
+  const fromTs = Math.min(...minutes);
+  const toTs = Math.max(...minutes) + 60_000;
+  try {
+    const result = await env.DB.prepare(RECOVERED_STREAM_SQL).bind(fromTs, toTs).all();
+    return mergeRecoveredStreamCounts(rows, result.results || []);
+  } catch (error) {
+    if (!/no such table|no such column|malformed json/i.test(String(error?.message || ''))) throw error;
+    return { rows, recoveredCount: 0 };
+  }
 }
 
 export async function onRequestGet({ request, env }) {
@@ -105,7 +179,9 @@ export async function onRequestGet({ request, env }) {
     }
     const allRows = result.results || [];
     const hasMore = allRows.length > limit;
-    const rows = hasMore ? allRows.slice(0, limit) : allRows;
+    const pageRows = hasMore ? allRows.slice(0, limit) : allRows;
+    const recovered = await recoverMissingStreamCounts(env, pageRows);
+    const rows = recovered.rows;
     return json({
       ok: true,
       mode: 'raw',
@@ -114,6 +190,7 @@ export async function onRequestGet({ request, env }) {
       rows,
       has_more: hasMore,
       next_cursor: hasMore ? encodeCursor(rows.at(-1)) : null,
+      recovered_stream_count: recovered.recoveredCount,
       storage_source: 'stationhead-minute.sh_minute_facts',
     });
   } catch (error) {
