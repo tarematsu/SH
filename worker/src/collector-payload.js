@@ -102,9 +102,17 @@ export function readModelPresentation(snapshot) {
 export function minuteFactQueue(queue) {
   if (!queue) return queue;
   const { raw, tracks, ...rest } = queue;
+  const compactTracks = Array.isArray(tracks) ? tracks : [];
+  const alreadyCompact = !raw && compactTracks.every((track) => (
+    track && Object.prototype.hasOwnProperty.call(track, 'title')
+      && Object.prototype.hasOwnProperty.call(track, 'artist')
+      && Object.prototype.hasOwnProperty.call(track, 'album_name')
+      && Object.prototype.hasOwnProperty.call(track, 'thumbnail_url')
+  ));
+  if (alreadyCompact) return queue;
   return {
     ...rest,
-    tracks: (tracks || []).map(({ raw: trackRaw, ...track }) => {
+    tracks: compactTracks.map(({ raw: trackRaw, ...track }) => {
       const source = trackRaw?.track || trackRaw || {};
       const artist = source?.artist || source?.artists?.[0] || {};
       const album = source?.album || {};
@@ -157,6 +165,8 @@ export function extractQueue(channel, stationId) {
     is_paused: queue?.is_paused ?? null,
     tracks: queueTracks.map((item, position) => {
       const track = item?.track || item;
+      const artist = track?.artist || track?.artists?.[0] || {};
+      const album = track?.album || {};
       return {
         position,
         queue_track_id: item?.id ?? null,
@@ -168,9 +178,18 @@ export function extractQueue(channel, stationId) {
         duration_ms: track?.duration ?? null,
         preview_url: track?.preview ?? null,
         bite_count: track?.bite_count ?? null,
-        raw: item,
+        title: boundedText(track?.title ?? track?.name, 500),
+        artist: boundedText(
+          typeof artist === 'string' ? artist : (artist?.name ?? track?.artist_name),
+          500,
+        ),
+        album_name: boundedText(album?.name ?? track?.album_name, 500),
+        thumbnail_url: boundedText(
+          track?.image_url ?? track?.artwork_url ?? track?.album_art_url
+            ?? album?.image_url ?? album?.artwork_url,
+          2_048,
+        ),
       };
     }),
-    raw: queue,
   };
 }

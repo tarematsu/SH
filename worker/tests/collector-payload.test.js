@@ -3,6 +3,7 @@ import test from 'node:test';
 
 import {
   attachMinuteFactQueueMetadata,
+  extractQueue,
   minuteFactQueue,
   minuteFactSnapshot,
   readModelPresentation,
@@ -33,6 +34,48 @@ test('minuteFactQueue strips the queue raw payload and each track raw payload', 
     ],
   });
   assert.equal(minuteFactQueue(null), null);
+});
+
+test('extractQueue emits a compact queue that the minute job can reuse directly', () => {
+  const queue = extractQueue({
+    current_station: {
+      id: 5,
+      queue: {
+        id: 9,
+        queue_tracks: [{
+          id: 3,
+          track: {
+            id: 7,
+            spotify_id: 'spotify-7',
+            title: 'Song',
+            artist: { name: 'Artist' },
+            album: { name: 'Album', image_url: 'https://example.com/album.jpg' },
+            duration: 180_000,
+          },
+        }],
+      },
+    },
+  }, 5);
+
+  assert.equal('raw' in queue, false);
+  assert.equal('raw' in queue.tracks[0], false);
+  assert.equal(minuteFactQueue(queue), queue);
+  assert.deepEqual(queue.tracks[0], {
+    position: 0,
+    queue_track_id: 3,
+    stationhead_track_id: 7,
+    spotify_id: 'spotify-7',
+    apple_music_id: null,
+    deezer_id: null,
+    isrc: null,
+    duration_ms: 180_000,
+    preview_url: null,
+    bite_count: null,
+    title: 'Song',
+    artist: 'Artist',
+    album_name: 'Album',
+    thumbnail_url: 'https://example.com/album.jpg',
+  });
 });
 
 test('read models retain bounded channel and track presentation fields without raw payloads', () => {
