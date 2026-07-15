@@ -1,6 +1,8 @@
 const DASHBOARD_CACHE_KEY = 'sh.dashboard-lite.v1';
+const DAILY_REFRESH_MS = 5 * 60_000;
 const integer = new Intl.NumberFormat('ja-JP');
 const nativeFetch = window.fetch.bind(window);
+let loadedUtcDay = '';
 
 const byId = (id) => document.getElementById(id);
 const finite = (value) => {
@@ -48,13 +50,16 @@ function renderDailyChanges(data) {
 }
 
 async function loadDailyChanges() {
+  const utcDay = new Date().toISOString().slice(0, 10);
+  if (utcDay === loadedUtcDay) return;
   try {
-    const response = await nativeFetch('/api/dashboard-daily-changes', {
+    const response = await nativeFetch(`/api/dashboard-daily-changes?day=${encodeURIComponent(utcDay)}`, {
       headers: { accept: 'application/json' },
     });
     const data = await response.json();
     if (!response.ok || !data?.ok) throw new Error(data?.error || `daily changes API ${response.status}`);
     renderDailyChanges(data);
+    loadedUtcDay = utcDay;
   } catch (error) {
     console.error('dashboard UTC daily metrics failed to load', error);
     renderDailyChanges(null);
@@ -96,6 +101,12 @@ window.fetch = async (input, init) => {
 
 restoreDashboardCache();
 void loadDailyChanges();
+setInterval(() => {
+  if (!document.hidden) void loadDailyChanges();
+}, DAILY_REFRESH_MS);
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden) void loadDailyChanges();
+});
 void import('/app-main.js').catch((error) => {
   console.error('dashboard client failed to start', error);
   const status = byId('statusMessage');
