@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Prepare durable archive rows for stationhead-other.
+"""Prepare durable archive rows for stationhead-other and shared metadata.
 
-The source database is a local backup.  Runtime state, locks, jobs and current
-playback state are intentionally excluded.  Summary rows are rebuilt locally
-and converted to idempotent upserts without the destructive DELETE statements
-in the raw rebuild output.
+The source database is a local backup. Runtime state, locks, jobs and current
+playback state are intentionally excluded. Track metadata is emitted into a
+separate stationhead-buddies import because it is shared collector data, while
+the remaining output belongs to stationhead-other.
 """
 
 from __future__ import annotations
@@ -54,19 +54,23 @@ def main() -> None:
     args.out_dir.mkdir(parents=True, exist_ok=True)
 
     data_path = args.out_dir / "other-archive-data.sql"
+    metadata_path = args.out_dir / "buddies-track-metadata.sql"
     legacy_history_path = args.out_dir / "other-legacy-history.sql"
     summary_path = args.out_dir / "other-summary-data-utc.sql"
     data_path.write_text("PRAGMA foreign_keys=OFF;\n", encoding="utf-8")
+    metadata_path.write_text("PRAGMA foreign_keys=OFF;\n", encoding="utf-8")
     source = sqlite3.connect(args.legacy_sqlite)
     counts = {
         "sh_host_profile_snapshots": write_table_rows(
             source, data_path, "sh_host_profile_snapshots", omit_id=True
         ),
-        "sh_track_metadata": write_table_rows(
-            source, data_path, "sh_track_metadata", omit_id=False
-        ),
     }
+    counts["sh_track_metadata"] = write_table_rows(
+        source, metadata_path, "sh_track_metadata", omit_id=False
+    )
     with data_path.open("a", encoding="utf-8", newline="\n") as stream:
+        stream.write("PRAGMA foreign_keys=ON;\n")
+    with metadata_path.open("a", encoding="utf-8", newline="\n") as stream:
         stream.write("PRAGMA foreign_keys=ON;\n")
 
     legacy_history_path.write_text("PRAGMA foreign_keys=OFF;\n", encoding="utf-8")

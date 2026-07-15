@@ -22,6 +22,14 @@ const commentTaskMigrationPath = resolve(
   repositoryRoot,
   'database/facts-migrations/005_minute_comment_tasks.sql',
 );
+const predictionStateMigrationPath = resolve(
+  repositoryRoot,
+  'database/facts-migrations/006_stream_goal_prediction_state.sql',
+);
+const cleanupMigrationPath = resolve(
+  repositoryRoot,
+  'database/facts-migrations/007_remove_unused_runtime_tables.sql',
+);
 const metadataPath = resolve(repositoryRoot, 'database/facts-db.json');
 const databaseName = process.env.FACTS_DATABASE_NAME || 'stationhead-minute';
 
@@ -113,11 +121,21 @@ wrangler([
   '--remote', '--yes',
   '--file', commentTaskMigrationPath,
 ]);
+wrangler([
+  'd1', 'execute', databaseName,
+  '--remote', '--yes',
+  '--file', predictionStateMigrationPath,
+]);
+wrangler([
+  'd1', 'execute', databaseName,
+  '--remote', '--yes',
+  '--file', cleanupMigrationPath,
+]);
 
 writeFileSync(metadataPath, `${JSON.stringify({
   binding: 'FACTS_DB',
   database_name: databaseName,
   database_id: databaseId,
-  schema: 'database/facts-migrations/005_minute_comment_tasks.sql',
+  schema: 'database/facts-migrations/007_remove_unused_runtime_tables.sql',
 }, null, 2)}\n`);
 console.log(JSON.stringify({ ok: true, database_name: databaseName, database_id: databaseId }));

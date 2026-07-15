@@ -321,7 +321,7 @@ export async function onRequestGet(context) {
     unchanged: false,
     contextPromise: null,
   };
-  const predictionPromise = loadPredictionState(context.env.OTHER_DB).catch((error) => {
+  const predictionPromise = loadPredictionState(context.env.FACTS_DB).catch((error) => {
     console.error(error);
     return null;
   });

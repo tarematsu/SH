@@ -22,14 +22,14 @@ function run(script) {
   });
 }
 
-test('tokenless Pages build skips remote migration instead of failing deployment', () => {
+test('Pages build skips retired migration instead of targeting an orphaned database', () => {
   const result = run('apply-d1-migrations.mjs');
   assert.equal(result.status, 0, result.stderr || result.stdout);
-  assert.match(`${result.stdout}\n${result.stderr}`, /D1 migrations skipped: this Cloudflare build has no API token/);
+  assert.match(`${result.stdout}\n${result.stderr}`, /D1 migrations skipped: Pages has no owned database/);
 });
 
-test('tokenless Pages build skips remote verification instead of failing deployment', () => {
+test('Pages build skips retired verification instead of targeting an orphaned database', () => {
   const result = run('verify-d1-schema.mjs');
   assert.equal(result.status, 0, result.stderr || result.stdout);
-  assert.match(`${result.stdout}\n${result.stderr}`, /D1 schema verification skipped: this Cloudflare build has no API token/);
+  assert.match(`${result.stdout}\n${result.stderr}`, /D1 schema verification skipped: Pages has no owned database/);
 });

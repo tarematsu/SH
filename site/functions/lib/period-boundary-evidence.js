@@ -13,7 +13,18 @@ function finiteNumber(value) {
   return Number.isFinite(number) ? number : null;
 }
 
-export function periodBoundaryEvidenceSql(_includeLegacy = false, toleranceMs = PERIOD_BOUNDARY_TOLERANCE_MS) {
+export function periodBoundaryEvidenceSql(includeLegacy = false, toleranceMs = PERIOD_BOUNDARY_TOLERANCE_MS) {
+  const legacyCandidates = includeLegacy ? `
+    UNION ALL
+    SELECT boundaries.period_key,boundaries.boundary_name,boundaries.target_at,
+      snapshots.observed_at,
+      snapshots.total_stream_count AS stream_value,
+      snapshots.total_member_count AS member_value,1 AS source_priority,snapshots.id AS source_id
+    FROM boundaries
+    JOIN sh_legacy_snapshots snapshots
+      ON snapshots.observed_at BETWEEN boundaries.target_at-${toleranceMs}
+        AND boundaries.target_at+${toleranceMs}
+  ` : '';
   return `WITH periods AS (
     SELECT
       json_extract(value,'$.period_key') AS period_key,
@@ -33,6 +44,7 @@ export function periodBoundaryEvidenceSql(_includeLegacy = false, toleranceMs = 
     JOIN sh_channel_snapshots snapshots
       ON snapshots.observed_at BETWEEN boundaries.target_at-${toleranceMs}
         AND boundaries.target_at+${toleranceMs}
+    ${legacyCandidates}
   ), ranked AS (
     SELECT candidates.*,
       ROW_NUMBER() OVER (

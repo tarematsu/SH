@@ -36,7 +36,6 @@ TRANSIENT_TABLES = {
     "sh_collector_read_model",
     "sh_migration_state",
     "sh_playback_current",
-    "sh_system_settings",
 }
 
 

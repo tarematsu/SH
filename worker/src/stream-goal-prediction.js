@@ -118,7 +118,7 @@ export function predictionFromAggregate(row, generatedAt = Date.now()) {
 }
 
 function savePredictionStatement(env, prediction, now, intervalMs) {
-  return env.OTHER_DB.prepare(SAVE_STREAM_GOAL_PREDICTION_SQL).bind(
+  return env.FACTS_DB.prepare(SAVE_STREAM_GOAL_PREDICTION_SQL).bind(
     prediction.generatedAt,
     prediction.sourceObservedAt,
     prediction.goal,
@@ -134,12 +134,12 @@ function savePredictionStatement(env, prediction, now, intervalMs) {
 }
 
 export async function runStreamGoalPrediction(env, now = Date.now()) {
-  if (!env?.FACTS_DB || !env?.OTHER_DB) return { skipped: true, reason: 'db-binding-missing' };
+  if (!env?.FACTS_DB) return { skipped: true, reason: 'db-binding-missing' };
 
   const intervalMs = streamGoalPredictionIntervalMs(env);
   let claimed;
   try {
-    claimed = await env.OTHER_DB.prepare(CLAIM_STREAM_GOAL_PREDICTION_SQL)
+    claimed = await env.FACTS_DB.prepare(CLAIM_STREAM_GOAL_PREDICTION_SQL)
       .bind(PREDICTION_STATE_ID, now + PREDICTION_CLAIM_LEASE_MS, now, now)
       .first();
   } catch (error) {
@@ -168,7 +168,7 @@ export async function runStreamGoalPrediction(env, now = Date.now()) {
     }));
     return { skipped: false, ...prediction, nextRefreshAt: now + intervalMs };
   } catch (error) {
-    await env.OTHER_DB.prepare(FAIL_STREAM_GOAL_PREDICTION_SQL)
+    await env.FACTS_DB.prepare(FAIL_STREAM_GOAL_PREDICTION_SQL)
       .bind(now + PREDICTION_RETRY_MS, String(error?.message || error).slice(0, 1000), now, PREDICTION_STATE_ID)
       .run()
       .catch(() => {});

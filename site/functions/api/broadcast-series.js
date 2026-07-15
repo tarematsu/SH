@@ -54,7 +54,7 @@ export function resetBroadcastSeriesCache() {
 export const LEGACY_SERIES_SQL = `WITH base AS (
   SELECT source_note AS event_name,observed_at,listener_count,
     MIN(observed_at) OVER (PARTITION BY source_note) AS started_at
-FROM sh_legacy_history_rows
+FROM sh_legacy_snapshots
   WHERE observed_at>=? AND observed_at<?
     AND host_handle='sakurazaka46jp'
     AND source_note IS NOT NULL AND source_note<>''
@@ -176,7 +176,7 @@ export function trimSeries(seriesRows, limit = MAX_POINTS) {
   return { series: result, pointCount: limit - remaining, truncated: sourceTruncated || originalPoints > limit };
 }
 
-// IMPORTED_SERIES_SQL (sh_legacy_history_rows) and FAILSAFE_SERIES_SQL
+// IMPORTED_SERIES_SQL (sh_legacy_snapshots) and FAILSAFE_SERIES_SQL
 // (sh_official_news_*) live in different D1 databases, so they can no
 // longer share a single db.batch() call and are run independently.
 export async function loadBroadcastSeriesRows(legacyDb, otherDb, fromTs, toTs) {

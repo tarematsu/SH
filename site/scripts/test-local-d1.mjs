@@ -4,18 +4,50 @@ import { spawnSync } from 'node:child_process';
 
 const stateDirectory = path.resolve('.wrangler-pages-test-state');
 const wranglerScript = path.resolve('node_modules/wrangler/bin/wrangler.js');
-const databaseDirectory = path.resolve('..', 'database');
-const schemaFiles = [
-  'schema.sql',
-  'history-schema.sql',
-  'host-monitoring.sql',
-  'track-like-observations.sql',
-  'migrations/004_collector_coordination.sql',
-  'migrations/131_drop_local_collector_backup.sql',
+const repositoryRoot = path.resolve('..');
+const configPath = path.resolve('wrangler.jsonc');
+
+const databases = [
+  {
+    binding: 'DB',
+    files: [
+      'database/buddies-migrations/001_initial_schema.sql',
+      'database/buddies-migrations/002_minute_fact_outbox.sql',
+    ],
+    requiredTables: [
+      'sh_channel_snapshots',
+      'sh_queue_snapshots',
+      'sh_queue_items',
+      'sh_track_metadata',
+      'sh_ingest_claims',
+      'sh_data_maintenance_state',
+    ],
+  },
+  {
+    binding: 'OTHER_DB',
+    files: [
+      'database/other-migrations/001_initial_schema.sql',
+      'database/other-migrations/002_solo_activity_tables.sql',
+      'database/other-migrations/003_buddy_playback_state.sql',
+      'database/other-migrations/004_track_metadata.sql',
+      'database/other-migrations/005_legacy_history_tables.sql',
+      'database/other-migrations/006_legacy_snapshot_stream_count.sql',
+      'database/other-migrations/007_archive_gap_completion.sql',
+      'database/other-migrations/008_retire_unowned_state.sql',
+      'database/other-migrations/009_drop_duplicate_track_metadata.sql',
+    ],
+    requiredTables: [
+      'sh_host_broadcast_sessions',
+      'sh_legacy_snapshots',
+      'sh_daily_summary',
+      'sh_weekly_summary',
+      'sh_monthly_summary',
+    ],
+  },
 ];
 
 function run(args) {
-  const result = spawnSync(process.execPath, [wranglerScript, ...args], {
+  const result = spawnSync(process.execPath, [wranglerScript, ...args, '--config', configPath], {
     cwd: process.cwd(),
     env: { ...process.env, CI: 'true' },
     encoding: 'utf8',
@@ -27,40 +59,27 @@ function run(args) {
   }
 }
 
-function executeFile(filename) {
-  console.log(`Applying current D1 schema: ${filename}`);
+function executeFile(binding, filename) {
+  console.log(`Applying current ${binding} schema: ${filename}`);
   run([
-    'd1', 'execute', 'stationhead-legacy',
+    'd1', 'execute', binding,
     '--local', '--persist-to', stateDirectory,
-    '--file', path.join(databaseDirectory, filename),
+    '--file', path.join(repositoryRoot, filename),
   ]);
 }
 
 rmSync(stateDirectory, { recursive: true, force: true });
 
 try {
-  for (const filename of schemaFiles) executeFile(filename);
-
-  const requiredTables = [
-    'sh_channel_snapshots',
-    'sh_queue_snapshots',
-    'sh_queue_items',
-    'sh_playback_channel_current',
-    'sh_track_metadata',
-    'sh_ingest_claims',
-    'sh_host_broadcast_sessions',
-    'sh_host_station_snapshots',
-    'sh_host_raw_events',
-    'sh_legacy_snapshots',
-    'sh_track_like_observations',
-    'sh_weekly_summary',
-  ];
-  for (const table of requiredTables) {
-    run([
-      'd1', 'execute', 'stationhead-legacy',
-      '--local', '--persist-to', stateDirectory,
-      '--command', `SELECT COUNT(*) AS row_count FROM ${table};`,
-    ]);
+  for (const database of databases) {
+    for (const filename of database.files) executeFile(database.binding, filename);
+    for (const table of database.requiredTables) {
+      run([
+        'd1', 'execute', database.binding,
+        '--local', '--persist-to', stateDirectory,
+        '--command', `SELECT COUNT(*) AS row_count FROM ${table};`,
+      ]);
+    }
   }
   console.log('Current D1 schema smoke test passed.');
 } finally {

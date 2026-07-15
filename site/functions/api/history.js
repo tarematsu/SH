@@ -1,5 +1,5 @@
 import { onRequestGet as rawHistory } from './history-raw.js';
-import { loadRanking } from './history-legacy.mjs';
+import { loadRanking } from './history-ranking.js';
 import {
   SUMMARY_TABLES,
   combineSummaryRows,

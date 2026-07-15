@@ -119,14 +119,14 @@ test('official news reconcile is skipped when the probe fails', async () => {
   assert.equal(reconciled, false);
 });
 
-test('other worker Wrangler configuration deploys every minute without the buddies D1 binding', () => {
+test('other worker Wrangler configuration includes the shared buddies D1 binding', () => {
   const config = JSON.parse(readFileSync(new URL('../wrangler.other.jsonc', import.meta.url), 'utf8'));
   assert.equal(config.name, 'sh-monitor-other');
   assert.equal(config.main, 'src/other-entry.js');
   assert.deepEqual(config.triggers?.crons, ['* * * * *']);
   assert.equal(config.vars?.PUBLIC_HEALTH_CACHE_MS, 60_000);
-  assert.deepEqual(config.d1_databases.map(({ binding }) => binding), ['FACTS_DB', 'OTHER_DB']);
-  assert.equal(config.d1_databases.some(({ database_name }) => database_name === 'stationhead-buddies'), false);
+  assert.deepEqual(config.d1_databases.map(({ binding }) => binding), ['BUDDIES_DB', 'FACTS_DB', 'OTHER_DB']);
+  assert.equal(config.d1_databases.some(({ database_name }) => database_name === 'stationhead-buddies'), true);
 });
 
 test('other worker invalidates public health cache after every scheduled run', async () => {

@@ -62,6 +62,19 @@ function To-JstText {
   return [DateTimeOffset]::FromUnixTimeMilliseconds([int64]$Milliseconds).ToOffset([TimeSpan]::FromHours(9)).ToString('yyyy-MM-dd HH:mm:ss')
 }
 
+function Invoke-D1Rows {
+  param(
+    [Parameter(Mandatory=$true)][string]$Database,
+    [Parameter(Mandatory=$true)][string]$Config,
+    [Parameter(Mandatory=$true)][string]$Sql
+  )
+
+  $raw = & npx wrangler d1 execute $Database --remote --config $Config --json --command=$Sql
+  if ($LASTEXITCODE -ne 0) { throw "D1 query failed for $Database" }
+  $parsed = ($raw -join "`n") | ConvertFrom-Json
+  return @(Find-ResultRows $parsed)
+}
+
 Push-Location $workerDir
 try {
   $results = foreach ($email in $emails) {
@@ -70,52 +83,33 @@ try {
     $from = $timestamp - $window
     $to = $timestamp + $window
 
-    $sql = @"
-WITH candidates AS (
-  SELECT observed_at,total_stream_count AS stream_count,'legacy' AS source
-  FROM sh_legacy_snapshots
-  WHERE total_stream_count IS NOT NULL
-    AND observed_at BETWEEN $from AND $to
-  UNION ALL
-  SELECT observed_at,current_stream_count AS stream_count,'live' AS source
-  FROM sh_channel_snapshots
-  WHERE current_stream_count IS NOT NULL
-    AND observed_at BETWEEN $from AND $to
-),
-previous_point AS (
-  SELECT observed_at,stream_count,source
-  FROM candidates
-  WHERE observed_at<=$timestamp
-  ORDER BY observed_at DESC, CASE source WHEN 'live' THEN 0 ELSE 1 END
-  LIMIT 1
-),
-next_point AS (
-  SELECT observed_at,stream_count,source
-  FROM candidates
-  WHERE observed_at>=$timestamp
-  ORDER BY observed_at ASC, CASE source WHEN 'live' THEN 0 ELSE 1 END
-  LIMIT 1
-)
-SELECT
-  (SELECT observed_at FROM previous_point) AS previous_at,
-  (SELECT stream_count FROM previous_point) AS previous_count,
-  (SELECT source FROM previous_point) AS previous_source,
-  (SELECT observed_at FROM next_point) AS next_at,
-  (SELECT stream_count FROM next_point) AS next_count,
-  (SELECT source FROM next_point) AS next_source;
-"@
-
     Write-Host "Validating $($email.WeekOf)..." -ForegroundColor Cyan
-    $raw = & npx wrangler d1 execute stationhead-legacy --remote --config ..\site\wrangler.jsonc --json --command=$sql
-    if ($LASTEXITCODE -ne 0) { throw "D1 query failed for $($email.WeekOf)" }
+    $legacyRows = Invoke-D1Rows -Database 'stationhead-other' -Config '.\wrangler.other.jsonc' -Sql @"
+SELECT observed_at,total_stream_count AS stream_count,'legacy' AS source
+FROM sh_legacy_snapshots
+WHERE total_stream_count IS NOT NULL AND observed_at BETWEEN $from AND $to;
+"@
+    $liveRows = Invoke-D1Rows -Database 'stationhead-buddies' -Config '.\wrangler.jsonc' -Sql @"
+SELECT observed_at,current_stream_count AS stream_count,'live' AS source
+FROM sh_channel_snapshots
+WHERE current_stream_count IS NOT NULL AND observed_at BETWEEN $from AND $to;
+"@
+    $candidates = @($legacyRows + $liveRows)
+    $previous = @($candidates |
+      Where-Object { [int64]$_.observed_at -le $timestamp } |
+      Sort-Object @{ Expression = { [int64]$_.observed_at }; Descending = $true },
+        @{ Expression = { if ($_.source -eq 'live') { 0 } else { 1 } } } |
+      Select-Object -First 1)[0]
+    $next = @($candidates |
+      Where-Object { [int64]$_.observed_at -ge $timestamp } |
+      Sort-Object @{ Expression = { [int64]$_.observed_at } },
+        @{ Expression = { if ($_.source -eq 'live') { 0 } else { 1 } } } |
+      Select-Object -First 1)[0]
 
-    $parsed = ($raw -join "`n") | ConvertFrom-Json
-    $row = @(Find-ResultRows $parsed | Select-Object -First 1)[0]
-
-    $previousAt = if ($null -ne $row.previous_at) { [int64]$row.previous_at } else { $null }
-    $previousCount = if ($null -ne $row.previous_count) { [int64]$row.previous_count } else { $null }
-    $nextAt = if ($null -ne $row.next_at) { [int64]$row.next_at } else { $null }
-    $nextCount = if ($null -ne $row.next_count) { [int64]$row.next_count } else { $null }
+    $previousAt = if ($previous) { [int64]$previous.observed_at } else { $null }
+    $previousCount = if ($previous) { [int64]$previous.stream_count } else { $null }
+    $nextAt = if ($next) { [int64]$next.observed_at } else { $null }
+    $nextCount = if ($next) { [int64]$next.stream_count } else { $null }
 
     $estimated = $null
     if ($null -ne $previousAt -and $null -ne $nextAt -and $nextAt -gt $previousAt) {
@@ -131,9 +125,9 @@ SELECT
     $nearestCount = $null
     $nearestSource = $null
     if ($null -ne $previousAt -and ($null -eq $nextAt -or [Math]::Abs($timestamp-$previousAt) -le [Math]::Abs($nextAt-$timestamp))) {
-      $nearestAt = $previousAt; $nearestCount = $previousCount; $nearestSource = $row.previous_source
+      $nearestAt = $previousAt; $nearestCount = $previousCount; $nearestSource = $previous.source
     } elseif ($null -ne $nextAt) {
-      $nearestAt = $nextAt; $nearestCount = $nextCount; $nearestSource = $row.next_source
+      $nearestAt = $nextAt; $nearestCount = $nextCount; $nearestSource = $next.source
     }
 
     $difference = if ($null -ne $estimated) { [int64]$email.EmailStreams - $estimated } else { $null }

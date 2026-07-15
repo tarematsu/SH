@@ -69,7 +69,11 @@ function buddyMetadataNeedsRefresh(row, track, now) {
 
 export async function enrichQueueMetadata(env, queue, now, config, fetchMetadata = fetchTrackMetadata) {
   const spotifyIds = [...new Set(queue.tracks.map((track) => track.spotify_id).filter(Boolean))];
-  const metadata = await loadTrackMetadata(env.OTHER_DB, spotifyIds);
+  // Primary track metadata is shared by the primary collector, Pages, and
+  // buddy playback. Keep OTHER_DB as a one-release compatibility fallback so
+  // an older deployment can still serve cached metadata during cutover.
+  const metadataDb = env.BUDDIES_DB || env.OTHER_DB;
+  const metadata = await loadTrackMetadata(metadataDb, spotifyIds);
   if (!spotifyIds.length || config.metadataLimit <= 0) return metadata;
 
   const index = currentIndex(queue, now);
@@ -103,7 +107,7 @@ export async function enrichQueueMetadata(env, queue, now, config, fetchMetadata
     fetched.push(row);
     metadata.set(String(row.spotify_id), row);
   }
-  await saveTrackMetadata(env.OTHER_DB, fetched);
+  await saveTrackMetadata(metadataDb, fetched);
   return metadata;
 }
 

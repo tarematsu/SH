@@ -11,6 +11,8 @@ const executable = process.execPath;
 const wranglerScript = path.resolve(workerRoot, 'node_modules/wrangler/bin/wrangler.js');
 const schemaPath = path.resolve(repositoryRoot, 'database/facts-migrations/001_initial_schema.sql');
 const compactMigrationPath = path.resolve(repositoryRoot, 'database/facts-migrations/003_compact_minute_facts.sql');
+const predictionMigrationPath = path.resolve(repositoryRoot, 'database/facts-migrations/006_stream_goal_prediction_state.sql');
+const cleanupMigrationPath = path.resolve(repositoryRoot, 'database/facts-migrations/007_remove_unused_runtime_tables.sql');
 const factsBinding = 'FACTS_DB';
 const minuteConfigPath = path.resolve(workerRoot, 'wrangler.minute.jsonc');
 
@@ -39,6 +41,16 @@ test('minute facts D1 schema applies and exposes required tables', { timeout: 60
       '--local', '--persist-to', stateDirectory,
       '--file', compactMigrationPath,
     ]);
+    run([
+      'd1', 'execute', factsBinding,
+      '--local', '--persist-to', stateDirectory,
+      '--file', predictionMigrationPath,
+    ]);
+    run([
+      'd1', 'execute', factsBinding,
+      '--local', '--persist-to', stateDirectory,
+      '--file', cleanupMigrationPath,
+    ]);
     const requiredTables = [
       'sh_minute_facts',
       'sh_minute_fact_context',
@@ -54,6 +66,7 @@ test('minute facts D1 schema applies and exposes required tables', { timeout: 60
       'sh_host_aliases',
       'sh_track_bite_observations',
       'sh_migration_state',
+      'sh_stream_goal_prediction_state',
     ];
     const tables = run([
       'd1', 'execute', factsBinding,
@@ -61,6 +74,7 @@ test('minute facts D1 schema applies and exposes required tables', { timeout: 60
       '--command', "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name;",
     ]);
     for (const table of requiredTables) assert.match(tables, new RegExp(`\\b${table}\\b`));
+    assert.doesNotMatch(tables, /sh_system_settings|sh_minute_facts_v2|sh_minute_facts_compact|sh_minute_fact_context_compact/);
     const compactColumns = run([
       'd1', 'execute', factsBinding,
       '--local', '--persist-to', stateDirectory,

@@ -14,12 +14,10 @@ test('production build applies migrations and verifies the resulting schema', ()
   assert.ok(packageJson.scripts.build.indexOf('db:migrate') < packageJson.scripts.build.indexOf('db:verify'));
 });
 
-test('database workflow keeps site migrations as an explicit manual operation', () => {
+test('database workflow excludes the retired Pages migration operation', () => {
   assert.match(workflow, /workflow_dispatch:/);
-  assert.match(workflow, /if: inputs\.operation == 'site-migrations'/);
-  assert.match(workflow, /site-migrations/);
-  assert.match(workflow, /npm run db:migrate/);
-  assert.match(workflow, /npm run db:verify/);
+  assert.doesNotMatch(workflow, /site-migrations/);
+  assert.doesNotMatch(workflow, /stationhead-legacy/);
 });
 
 test('database workflow only auto-applies facts-db migrations, scoped to main and their own files', () => {
@@ -29,19 +27,9 @@ test('database workflow only auto-applies facts-db migrations, scoped to main an
   assert.match(pushBlock, /paths:/);
 });
 
-test('migration and verification detect both Pages and Workers production branches', () => {
-  for (const script of [migrator, verifier]) {
-    assert.match(script, /CF_PAGES_BRANCH/);
-    assert.match(script, /WORKERS_CI_BRANCH/);
-    assert.match(script, /currentBranch/);
-    assert.match(script, /main/);
-    assert.match(script, /Cloudflare build branch variable is missing/);
-  }
-  assert.match(migrator, /currentBranch !== productionBranch/);
-  assert.match(verifier, /currentBranch === 'main'/);
-});
-
-test('remote schema verification skips non-production builds unless forced', () => {
-  assert.match(verifier, /D1_MIGRATION_FORCE/);
-  assert.match(verifier, /verification skipped/);
+test('retired Pages scripts delegate ownership to Worker database jobs', () => {
+  assert.match(verifier, /Pages has no owned database/);
+  assert.match(migrator, /Worker database provisioning is authoritative/);
+  assert.doesNotMatch(migrator, /d1['"], ['"]migrations/);
+  assert.doesNotMatch(verifier, /d1['"], ['"]execute/);
 });

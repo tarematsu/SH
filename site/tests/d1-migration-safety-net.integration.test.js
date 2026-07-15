@@ -11,17 +11,16 @@ const migration = readFileSync(
   'utf8',
 );
 
-test('site D1 migrations remain a manual fallback and cannot race deployments', () => {
+test('retired Pages D1 migration path cannot race current database provisioning', () => {
   assert.match(workflow, /workflow_dispatch:/);
-  assert.match(workflow, /if: inputs\.operation == 'site-migrations'/);
+  assert.doesNotMatch(workflow, /site-migrations/);
   assert.doesNotMatch(workflow, /\bschedule:/);
   assert.doesNotMatch(workflow, /sleep\s+120/);
   assert.match(workflow, /group: sh-database-operations/);
   assert.match(workflow, /cancel-in-progress: false/);
-  assert.match(workflow, /D1_MIGRATION_FORCE: ['"]true['"]/);
-  assert.match(workflow, /D1_MIGRATION_TARGET: remote/);
-  assert.match(workflow, /npm run db:migrate/);
-  assert.match(workflow, /npm run db:verify/);
+  assert.match(workflow, /facts-db/);
+  assert.match(workflow, /other-db/);
+  assert.match(workflow, /buddies-db/);
 });
 
 test('facts-db auto-apply on push stays narrowly scoped to main and its own migration files', () => {

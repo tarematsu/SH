@@ -46,7 +46,6 @@ function Assert-CleanWorktree {
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $workerRoot = Join-Path $repoRoot "worker"
 $siteRoot = Join-Path $repoRoot "site"
-$migrationRoot = Join-Path $repoRoot "database\migrations"
 
 Set-Location $repoRoot
 Assert-CleanWorktree
@@ -60,15 +59,10 @@ Invoke-Step "Worker install and checks" {
   Invoke-External -FilePath "npm" -Arguments @("run", "check") -WorkingDirectory $workerRoot
 }
 
-Invoke-Step "Apply D1 migrations" {
-  $migrationFiles = Get-ChildItem -Path $migrationRoot -File -Filter "*.sql" | Sort-Object Name
-  foreach ($migrationFile in $migrationFiles) {
-    Invoke-External -FilePath "npx" -Arguments @(
-      "wrangler", "d1", "execute", "stationhead-legacy", "--config", "..\site\wrangler.jsonc",
-      "--remote",
-      "--file", ("..\database\migrations\" + $migrationFile.Name)
-    ) -WorkingDirectory $workerRoot
-  }
+Invoke-Step "Provision current D1 databases" {
+  Invoke-External -FilePath "node" -Arguments @("scripts/provision-buddies-db.mjs") -WorkingDirectory $workerRoot
+  Invoke-External -FilePath "node" -Arguments @("scripts/provision-facts-db.mjs") -WorkingDirectory $workerRoot
+  Invoke-External -FilePath "node" -Arguments @("scripts/provision-other-db.mjs") -WorkingDirectory $workerRoot
 }
 
 Invoke-Step "Deploy monitor Workers" {

@@ -15,10 +15,11 @@ test('latest queue reads the current-state table instead of queue history', () =
   assert.doesNotMatch(LATEST_QUEUE_WITH_ITEMS_SQL, /FROM sh_queue_snapshots/);
 });
 
-test('redundant indexes are removed and schema verification rejects their return', () => {
+test('redundant indexes are removed and the retired Pages verifier stays inactive', () => {
   assert.match(migration, /DROP INDEX IF EXISTS idx_sh_queue_items_station_start_position/);
   assert.match(migration, /DROP INDEX IF EXISTS idx_sh_track_metadata_spotify_fetched/);
-  assert.match(verifier, /pragma_index_list\('sh_queue_items'\)/);
-  assert.match(verifier, /redundant_queue_index/);
-  assert.match(verifier, /redundant_metadata_index/);
+  assert.match(verifier, /Pages has no owned database/);
+  assert.doesNotMatch(verifier, /pragma_index_list\('sh_queue_items'\)/);
+  assert.doesNotMatch(verifier, /redundant_queue_index/);
+  assert.doesNotMatch(verifier, /redundant_metadata_index/);
 });
