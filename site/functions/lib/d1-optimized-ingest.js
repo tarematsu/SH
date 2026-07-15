@@ -38,6 +38,79 @@ function queueHashCacheFor(stationId) {
   return value;
 }
 
+function structuralSignatureMatches(signature, payload) {
+  const tracks = Array.isArray(payload?.tracks) ? payload.tracks : [];
+  const expectedLength = 5 + tracks.length * 8;
+  if (!signature || signature.length !== expectedLength) return false;
+
+  let offset = 0;
+  if (signature[offset++] !== payload.station_id
+      || signature[offset++] !== payload.queue_id
+      || signature[offset++] !== payload.start_time
+      || signature[offset++] !== payload.is_paused
+      || signature[offset++] !== tracks.length) {
+    return false;
+  }
+
+  for (const track of tracks) {
+    if (signature[offset++] !== track.position
+        || signature[offset++] !== track.queue_track_id
+        || signature[offset++] !== track.stationhead_track_id
+        || signature[offset++] !== track.spotify_id
+        || signature[offset++] !== track.deezer_id
+        || signature[offset++] !== track.isrc
+        || signature[offset++] !== track.duration_ms
+        || signature[offset++] !== track.preview_url) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function captureStructuralSignature(payload) {
+  const tracks = Array.isArray(payload?.tracks) ? payload.tracks : [];
+  const signature = new Array(5 + tracks.length * 8);
+  let offset = 0;
+  signature[offset++] = payload.station_id;
+  signature[offset++] = payload.queue_id;
+  signature[offset++] = payload.start_time;
+  signature[offset++] = payload.is_paused;
+  signature[offset++] = tracks.length;
+  for (const track of tracks) {
+    signature[offset++] = track.position;
+    signature[offset++] = track.queue_track_id;
+    signature[offset++] = track.stationhead_track_id;
+    signature[offset++] = track.spotify_id;
+    signature[offset++] = track.deezer_id;
+    signature[offset++] = track.isrc;
+    signature[offset++] = track.duration_ms;
+    signature[offset++] = track.preview_url;
+  }
+  return signature;
+}
+
+function likesSignatureMatches(signature, payload) {
+  if (!signature || signature.length !== payload.length * 2) return false;
+  let offset = 0;
+  for (const like of payload) {
+    if (signature[offset++] !== like.track_key
+        || signature[offset++] !== like.like_count) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function captureLikesSignature(payload) {
+  const signature = new Array(payload.length * 2);
+  let offset = 0;
+  for (const like of payload) {
+    signature[offset++] = like.track_key;
+    signature[offset++] = like.like_count;
+  }
+  return signature;
+}
+
 export { saveLeanSnapshot };
 export { splitD1Batches } from './d1-batch.js';
 
@@ -399,9 +472,9 @@ export async function saveLeanQueue(db, observedAt, body) {
       ),0) AS latest_reachability_at
       FROM sh_queue_current current WHERE current.station_id IS ?`).bind(stationId).first();
   const cache = queueHashCacheFor(stationId);
-  const structuralFingerprint = JSON.stringify(structuralPayload);
-  const structuralHash = cache.structuralFingerprint === structuralFingerprint
-    && cache.structuralHash === current?.structural_hash
+  const structuralCacheHit = cache.structuralHash === current?.structural_hash
+    && structuralSignatureMatches(cache.structuralSignature, structuralPayload);
+  const structuralHash = structuralCacheHit
     ? cache.structuralHash
     : await payloadHash(structuralPayload);
   const currentWatermark = Math.max(
@@ -409,17 +482,21 @@ export async function saveLeanQueue(db, observedAt, body) {
     num(current?.latest_reachability_at) ?? 0,
   );
   const staleCurrent = currentWatermark > 0 && observedAt < currentWatermark;
-  const likesFingerprint = completeLikes ? JSON.stringify(likeAnalysis.payload) : null;
+  const likesCacheHit = completeLikes
+    && cache.likesHash === current?.likes_hash
+    && likesSignatureMatches(cache.likesSignature, likeAnalysis.payload);
   const likesHash = completeLikes
-    ? cache.likesFingerprint === likesFingerprint && cache.likesHash === current?.likes_hash
+    ? likesCacheHit
       ? cache.likesHash
       : await payloadHash(likeAnalysis.payload)
     : text(current?.likes_hash);
-  cache.structuralFingerprint = structuralFingerprint;
-  cache.structuralHash = structuralHash;
-  if (completeLikes) {
-    cache.likesFingerprint = likesFingerprint;
+  if (!structuralCacheHit) {
+    cache.structuralHash = structuralHash;
+    cache.structuralSignature = captureStructuralSignature(structuralPayload);
+  }
+  if (completeLikes && !likesCacheHit) {
     cache.likesHash = likesHash;
+    cache.likesSignature = captureLikesSignature(likeAnalysis.payload);
   }
   const structureChanged = current?.structural_hash !== structuralHash;
   const likesChanged = completeLikes && current?.likes_hash !== likesHash;
