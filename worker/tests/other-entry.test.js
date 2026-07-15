@@ -2,7 +2,19 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
-import otherApp, { runOfficialNewsWithReconcile, runOtherCron, runOtherScheduled } from '../src/other-entry.js';
+import otherApp, {
+  OTHER_BUDDY_CRON,
+  OTHER_HOST_CRON,
+  OTHER_MAINTENANCE_CRON,
+  OTHER_OFFICIAL_NEWS_CRON,
+  OTHER_PREDICTION_CRON,
+  OTHER_RETENTION_CRON,
+  otherStaggerApplies,
+  otherTaskForCron,
+  runOfficialNewsWithReconcile,
+  runOtherCron,
+  runOtherScheduled,
+} from '../src/other-entry.js';
 import { createOtherHealthApp } from '../src/other-health.js';
 
 test('other worker scheduled run drives buddy playback, host, prediction, maintenance, official news, and snapshot retention', async () => {
@@ -87,7 +99,7 @@ test('official news reconcile runs only after a successful probe', async () => {
     300_000,
     async (receivedEnv, config, now) => {
       order.push('probe');
-      assert.notEqual(receivedEnv, env, 'expected the probe to receive the D1-optimized env wrapper');
+      assert.notEqual(receivedEnv, env, 'expected the probe to receive an isolated env wrapper');
       assert.equal(now, 300_000);
       return 'probe-done';
     },
@@ -119,14 +131,34 @@ test('official news reconcile is skipped when the probe fails', async () => {
   assert.equal(reconciled, false);
 });
 
-test('other worker Wrangler configuration includes the shared buddies D1 binding', () => {
+test('other worker Wrangler configuration uses workload-specific low-frequency crons', () => {
   const config = JSON.parse(readFileSync(new URL('../wrangler.other.jsonc', import.meta.url), 'utf8'));
   assert.equal(config.name, 'sh-monitor-other');
   assert.equal(config.main, 'src/other-entry.js');
-  assert.deepEqual(config.triggers?.crons, ['* * * * *']);
+  assert.deepEqual(config.triggers?.crons, [
+    OTHER_HOST_CRON,
+    OTHER_BUDDY_CRON,
+    OTHER_PREDICTION_CRON,
+    OTHER_OFFICIAL_NEWS_CRON,
+    OTHER_MAINTENANCE_CRON,
+    OTHER_RETENTION_CRON,
+  ]);
   assert.equal(config.vars?.PUBLIC_HEALTH_CACHE_MS, 60_000);
   assert.deepEqual(config.d1_databases.map(({ binding }) => binding), ['BUDDIES_DB', 'MINUTE_DB', 'OTHER_DB']);
   assert.equal(config.d1_databases.some(({ database_name }) => database_name === 'stationhead-buddies'), true);
+});
+
+test('other worker routes each production cron to exactly one workload', () => {
+  assert.equal(otherTaskForCron(OTHER_HOST_CRON), 'host');
+  assert.equal(otherTaskForCron(OTHER_BUDDY_CRON), 'buddy');
+  assert.equal(otherTaskForCron(OTHER_PREDICTION_CRON), 'prediction');
+  assert.equal(otherTaskForCron(OTHER_OFFICIAL_NEWS_CRON), 'officialNews');
+  assert.equal(otherTaskForCron(OTHER_MAINTENANCE_CRON), 'maintenance');
+  assert.equal(otherTaskForCron(OTHER_RETENTION_CRON), 'snapshotRetention');
+  assert.equal(otherTaskForCron('* * * * *'), null);
+  assert.equal(otherStaggerApplies({ cron: OTHER_HOST_CRON }), false);
+  assert.equal(otherStaggerApplies({ cron: OTHER_MAINTENANCE_CRON }), true);
+  assert.equal(otherStaggerApplies({ cron: OTHER_RETENTION_CRON }), true);
 });
 
 test('other worker invalidates public health cache after every scheduled run', async () => {
