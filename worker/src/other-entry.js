@@ -110,7 +110,8 @@ export async function runOtherCron(controller, env, ctx, options = {}) {
   const recordSuccess = options.recordSuccess || healthModule.recordOtherCronSuccess;
   const recordFailure = options.recordFailure || healthModule.recordOtherCronFailure;
   try {
-    if (otherStaggerApplies(controller)) {
+    const injectedBroadRun = Boolean(options.stagger && hasInjectedTaskSet(options.dependencies) && !otherTaskForCron(controller.cron));
+    if (otherStaggerApplies(controller) || injectedBroadRun) {
       const stagger = options.stagger || (await import('./cron-stagger.js')).applyCronStagger;
       await stagger(env, 'other');
     }
