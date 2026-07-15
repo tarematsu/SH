@@ -10,6 +10,7 @@ on:
       - 'worker/scripts/verify-facts-live.mjs'
       - 'database/other-migrations/**'
       - 'worker/scripts/provision-other-db.mjs'
+      - 'worker/scripts/consolidate-track-metadata.mjs'
       - 'database/buddies-migrations/**'
       - 'worker/scripts/provision-buddies-db.mjs'
       - 'worker/scripts/buddies-db-tables.mjs'
