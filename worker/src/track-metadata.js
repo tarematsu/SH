@@ -13,6 +13,10 @@ function pruneCache() {
   }
 }
 
+function normalizedIsrc(value) {
+  return String(value || '').trim().toUpperCase() || null;
+}
+
 function cacheMetadataState(spotifyId, expiresAt, row = null) {
   const previous = metadataCache.get(spotifyId);
   metadataCache.delete(spotifyId);
@@ -52,6 +56,7 @@ export async function fetchTrackMetadata(track, config) {
     || null;
   return {
     spotify_id: spotifyId,
+    isrc: normalizedIsrc(track?.isrc),
     spotify_url: spotifyUrl,
     title,
     artist,
@@ -87,6 +92,7 @@ export function isrcMetadataRepairRows(rows, now = Date.now()) {
     .filter((row) => completeMetadata(row, row?.spotify_id))
     .map((row) => ({
       spotify_id: String(row.spotify_id),
+      isrc: normalizedIsrc(row.isrc),
       title: String(row.title).trim(),
       artist: String(row.artist).trim(),
       display_title: `${String(row.title).trim()} — ${String(row.artist).trim()}`,
@@ -151,10 +157,11 @@ async function repairMetadataFromIsrc(db, tracks, now) {
   const repairs = isrcMetadataRepairRows(result.results || [], now);
   if (repairs.length) {
     await db.batch(repairs.map((row) => db.prepare(`INSERT INTO sh_track_metadata(
-        spotify_id,title,artist,display_title,thumbnail_url,spotify_url,
+        spotify_id,isrc,title,artist,display_title,thumbnail_url,spotify_url,
         source,fetched_at,raw_json
-      ) VALUES(?,?,?,?,?,?,?,?,?)
+      ) VALUES(?,?,?,?,?,?,?,?,?,?)
       ON CONFLICT(spotify_id) DO UPDATE SET
+        isrc=COALESCE(excluded.isrc,sh_track_metadata.isrc),
         title=excluded.title,
         artist=excluded.artist,
         display_title=excluded.display_title,
@@ -172,6 +179,7 @@ async function repairMetadataFromIsrc(db, tracks, now) {
          OR sh_track_metadata.artist GLOB 'JP[A-Z0-9]*'`)
       .bind(
         row.spotify_id,
+        row.isrc,
         row.title,
         row.artist,
         row.display_title,
@@ -213,7 +221,7 @@ export async function enrichTracks(env, ingestFn, queue, observedAt, config) {
 
   const spotifyIds = uncached.map((track) => String(track.spotify_id));
   const placeholders = spotifyIds.map(() => '?').join(',');
-  const stored = await env.DB.prepare(`SELECT spotify_id,title,artist,thumbnail_url,fetched_at
+  const stored = await env.DB.prepare(`SELECT spotify_id,isrc,title,artist,thumbnail_url,fetched_at
     FROM sh_track_metadata WHERE spotify_id IN (${placeholders})`)
     .bind(...spotifyIds).all();
   const storedById = new Map((stored.results || []).map((item) => [String(item.spotify_id), item]));
