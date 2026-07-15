@@ -33,6 +33,14 @@ function invalidMessage(detail) {
   return error;
 }
 
+function serializedMessageFits(serialized) {
+  // Three UTF-8 bytes per UTF-16 code unit is a safe upper bound for a
+  // JSON.stringify result. Avoid a second full payload traversal for the
+  // normal, comfortably-under-limit message.
+  if (serialized.length * 3 <= MINUTE_FACT_QUEUE_MAX_MESSAGE_BYTES) return true;
+  return messageEncoder.encode(serialized).byteLength <= MINUTE_FACT_QUEUE_MAX_MESSAGE_BYTES;
+}
+
 async function hydrateMinuteFactComments(env, payload) {
   const stationId = payload?.snapshot?.station_id;
   if (!env?.BUDDIES_DB || stationId == null) return payload;
@@ -127,8 +135,7 @@ export function minuteFactQueueMessage(input = {}, options = {}) {
     },
   };
   const serialized = JSON.stringify(message);
-  const size = messageEncoder.encode(serialized).byteLength;
-  if (size > MINUTE_FACT_QUEUE_MAX_MESSAGE_BYTES) {
+  if (!serializedMessageFits(serialized)) {
     throw invalidMessage(`message exceeds ${MINUTE_FACT_QUEUE_MAX_MESSAGE_BYTES} bytes`);
   }
   serializedMessages.set(message, serialized);

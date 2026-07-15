@@ -1,5 +1,7 @@
 import { firstDefined } from './collector-config.js';
 
+const COMPACT_QUEUE_MARKER = Symbol('compact-queue');
+
 export function validateChannelPayload(channel, expectedAlias) {
   if (!channel || typeof channel !== 'object' || Array.isArray(channel)) {
     throw new Error('Stationhead channel response shape changed: root payload is not an object');
@@ -129,6 +131,7 @@ export function readModelPresentation(snapshot, compactSnapshot = null) {
 
 export function minuteFactQueue(queue) {
   if (!queue) return queue;
+  if (queue[COMPACT_QUEUE_MARKER]) return queue;
   const { raw, tracks, ...rest } = queue;
   const compactTracks = Array.isArray(tracks) ? tracks : [];
   const alreadyCompact = !raw && compactTracks.every((track) => (
@@ -186,7 +189,7 @@ export function extractQueue(channel, stationId) {
   const queue = station?.queue || channel?.queue || null;
   if (!queue) return null;
   const queueTracks = queue?.queue_tracks || queue?.tracks || [];
-  return {
+  const compactQueue = {
     station_id: firstDefined(queue?.station_id, station?.id, stationId),
     queue_id: queue?.id ?? null,
     start_time: queue?.start_time ?? null,
@@ -220,4 +223,6 @@ export function extractQueue(channel, stationId) {
       };
     }),
   };
+  Object.defineProperty(compactQueue, COMPACT_QUEUE_MARKER, { value: true });
+  return compactQueue;
 }

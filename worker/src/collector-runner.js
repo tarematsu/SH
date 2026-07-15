@@ -157,10 +157,16 @@ function logCollectionTiming(source, observedAt, startedAt, timings, outcome, st
   }));
 }
 
+function collectionTimingEnabled(env = {}) {
+  return ['1', 'true', 'yes', 'on'].includes(
+    String(env.COLLECTOR_TIMING_ENABLED ?? '').trim().toLowerCase(),
+  );
+}
+
 export async function collectOnce(env, source = 'manual') {
   const observedAt = Date.now();
   const startedAt = observedAt;
-  const timings = [];
+  const timings = collectionTimingEnabled(env) ? [] : null;
   const measure = (stage, operation) => timedStage(
     stage,
     operation,
@@ -281,7 +287,7 @@ export async function collectOnce(env, source = 'manual') {
       lastError: null,
       tokenExpiresAt: state.tokenExpiresAt || jwtExpiryMs(state.authToken),
     }));
-    logCollectionTiming(source, observedAt, startedAt, timings, 'ok');
+    if (timings) logCollectionTiming(source, observedAt, startedAt, timings, 'ok');
 
     return {
       ok: true,
@@ -318,7 +324,7 @@ export async function collectOnce(env, source = 'manual') {
         tokenExpiresAt: state.tokenExpiresAt || jwtExpiryMs(state.authToken),
       }).catch(() => {});
     }
-    logCollectionTiming(source, observedAt, startedAt, timings, 'error', stage);
+    if (timings) logCollectionTiming(source, observedAt, startedAt, timings, 'error', stage);
     throw failure;
   }
 }
