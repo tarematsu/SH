@@ -153,14 +153,13 @@ export async function writeCurrentBite(db, input) {
   const item = await db.prepare(`SELECT track_id FROM sh_queue_revision_items
     WHERE revision_id=? AND position=?`).bind(revisionId, position).first();
   const trackId = integer(item?.track_id);
-  if (trackId == null) return biteCount;
   const occurrenceKey = `revision:${revisionId}:${position}`;
   const trackKey = String(
     sourceTrack?.queue_track_id
       ?? sourceTrack?.stationhead_track_id
       ?? sourceTrack?.spotify_id
       ?? sourceTrack?.isrc
-      ?? `track:${trackId}`,
+      ?? `track:${revisionId}:${position}`,
   );
   const latest = await db.prepare(`SELECT count_value FROM sh_track_counter_changes
     WHERE occurrence_key=? ORDER BY observed_at DESC,id DESC LIMIT 1`)

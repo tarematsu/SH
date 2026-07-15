@@ -226,8 +226,12 @@ SELECT c.occurrence_key,c.station_id,c.queue_id,c.queue_start_time,c.queue_posit
   c.track_key,c.track_id,c.queue_revision_id,c.count_value,c.observed_at,c.id
 FROM sh_track_counter_changes c
 JOIN (
-  SELECT occurrence_key,MAX(id) AS id
-  FROM sh_track_counter_changes GROUP BY occurrence_key
+  SELECT id FROM (
+    SELECT id,ROW_NUMBER() OVER(
+      PARTITION BY occurrence_key ORDER BY observed_at DESC,id DESC
+    ) AS row_rank
+    FROM sh_track_counter_changes
+  ) ranked WHERE row_rank=1
 ) latest ON latest.id=c.id;
 
 DROP VIEW IF EXISTS sh_queue_items;

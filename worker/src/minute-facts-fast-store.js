@@ -18,6 +18,7 @@ import {
   resolveTracksBulk,
   timedStage,
 } from './minute-facts-track-resolution.js';
+import { writeCurrentBite } from './minute-facts-legacy-revision.js';
 
 export { buildTrackDescriptor, createOptimizedRevision, missingRevisionPositions, resolveTracksBulk };
 
@@ -83,39 +84,6 @@ async function updatePlaybackState(db, input) {
     current_position: currentPosition,
     delayed: false,
   };
-}
-
-async function writeCurrentBite(db, input) {
-  const { channelId, stationId, revisionId, position, observedAt, queue } = input;
-  if (position == null) return null;
-  const sourceTrack = (queue?.tracks || []).find(
-    (track, index) => (integer(track?.position) ?? index) === position,
-  );
-  const biteCount = integer(sourceTrack?.bite_count);
-  if (biteCount == null) return null;
-  const item = await db.prepare(`SELECT track_id FROM sh_queue_revision_items
-    WHERE revision_id=? AND position=?`).bind(revisionId, position).first();
-  const trackId = integer(item?.track_id);
-  if (trackId == null) return biteCount;
-  const latest = await db.prepare(`SELECT bite_count FROM sh_track_bite_observations
-    WHERE channel_id=? AND track_id=? ORDER BY observed_at DESC,id DESC LIMIT 1`)
-    .bind(channelId, trackId).first();
-  if (integer(latest?.bite_count) !== biteCount) {
-    await db.prepare(`INSERT OR IGNORE INTO sh_track_bite_observations(
-        observed_at,channel_id,station_id,revision_id,track_id,queue_position,bite_count,source
-      ) VALUES(?,?,?,?,?,?,?,'live_collector')`).bind(
-      observedAt,
-      channelId,
-      stationId,
-      revisionId,
-      trackId,
-      position,
-      biteCount,
-    ).run();
-  }
-  await db.prepare('UPDATE sh_queue_revision_items SET bite_count=? WHERE revision_id=? AND position=?')
-    .bind(biteCount, revisionId, position).run();
-  return biteCount;
 }
 
 export async function saveOptimizedLiveMinuteFact(env, input) {

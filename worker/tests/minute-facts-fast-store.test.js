@@ -6,6 +6,8 @@ import {
   missingRevisionPositions,
   resolveTracksBulk,
 } from '../src/minute-facts-fast-store.js';
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
 
 class FakeStatement {
   constructor(db, sql, args = []) {
@@ -140,4 +142,10 @@ test('99 tracks are resolved with bounded D1 round trips instead of per-track aw
   assert.equal(db.tracks.size, 99);
   assert.ok(db.allCalls <= 18, `expected at most 18 read round trips, got ${db.allCalls}`);
   assert.ok(db.batchCalls <= 15, `expected at most 15 batch round trips, got ${db.batchCalls}`);
+});
+
+test('optimized minute storage uses the canonical counter log for bite changes', () => {
+  const source = readFileSync(path.resolve(import.meta.dirname, '../src/minute-facts-fast-store.js'), 'utf8');
+  assert.match(source, /writeCurrentBite/);
+  assert.doesNotMatch(source, /sh_track_bite_observations/);
 });

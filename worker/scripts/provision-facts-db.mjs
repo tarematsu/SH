@@ -42,6 +42,10 @@ const storageRedesignMigrationPath = resolve(
   repositoryRoot,
   'database/facts-migrations/010_sparse_context_and_counter_log.sql',
 );
+const counterRepairMigrationPath = resolve(
+  repositoryRoot,
+  'database/facts-migrations/011_repair_counter_current.sql',
+);
 const metadataPath = resolve(repositoryRoot, 'database/facts-db.json');
 const databaseName = process.env.FACTS_DATABASE_NAME || 'stationhead-minute';
 
@@ -83,6 +87,17 @@ function tableColumnNames(databaseName, table) {
   const containers = Array.isArray(parsed) ? parsed : [parsed];
   const rows = containers.flatMap((container) => container?.results || []);
   return new Set(rows.map((row) => String(row.name)));
+}
+
+function hasRepairMarker(databaseName, repairKey) {
+  const output = wrangler([
+    'd1', 'execute', databaseName,
+    '--remote', '--yes', '--json',
+    '--command', `SELECT 1 FROM sh_facts_storage_repairs WHERE repair_key='${repairKey}' LIMIT 1`,
+  ]);
+  const parsed = parseJsonOutput(output);
+  const containers = Array.isArray(parsed) ? parsed : [parsed];
+  return containers.some((container) => Array.isArray(container?.results) && container.results.length > 0);
 }
 
 let database = listDatabases().find((item) => item.name === databaseName);
@@ -163,10 +178,20 @@ if (tableColumnNames(databaseName, 'sh_minute_fact_context_v2').size === 0) {
   ]);
 }
 
+const repairTableExists = tableColumnNames(databaseName, 'sh_facts_storage_repairs').size > 0;
+if (!repairTableExists || !hasRepairMarker(databaseName, '011_repair_counter_current')) {
+  console.log('Applying counter-current repair migration...');
+  wrangler([
+    'd1', 'execute', databaseName,
+    '--remote', '--yes',
+    '--file', counterRepairMigrationPath,
+  ]);
+}
+
 writeFileSync(metadataPath, `${JSON.stringify({
   binding: 'MINUTE_DB',
   database_name: databaseName,
   database_id: databaseId,
-  schema: 'database/facts-migrations/010_sparse_context_and_counter_log.sql',
+  schema: 'database/facts-migrations/011_repair_counter_current.sql',
 }, null, 2)}\n`);
 console.log(JSON.stringify({ ok: true, database_name: databaseName, database_id: databaseId }));
