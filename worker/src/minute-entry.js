@@ -1,9 +1,10 @@
 export const MINUTE_COMMENT_CRON = '* * * * *';
 export const MINUTE_FACT_DERIVE_CRON = '*/2 * * * *';
+export const MINUTE_FACT_MAINTENANCE_CRON = '5,7,9,15,17,19,25,27,29,35,37,39,45,47,49,55,57,59 * * * *';
+// Legacy direct routes remain supported for manual invocation and rollback.
 export const MINUTE_FACT_RECOVERY_CRON = '5,15,25,35,45,55 * * * *';
 export const MINUTE_FACT_REBUILD_CRON = '7,17,27,37,47,57 * * * *';
 export const MINUTE_FACT_SYNC_CRON = '9,19,29,39,49,59 * * * *';
-// Backward-compatible name used by older tests and callers.
 export const MINUTE_FACT_WORKER_CRON = MINUTE_COMMENT_CRON;
 export const MINUTE_FACT_RECOVERY_MINUTE = 5;
 
@@ -18,9 +19,30 @@ export function activeMinuteHealthTasks(tasks = []) {
   return tasks.filter((task) => ACTIVE_HEALTH_TASKS.has(String(task?.task_name || '')));
 }
 
-export function minuteStaggerApplies(controller = {}) {
+function scheduledMinute(controller = {}) {
+  const timestamp = Number(controller.scheduledTime);
+  if (!Number.isFinite(timestamp)) return null;
+  return new Date(timestamp).getUTCMinutes();
+}
+
+export function minuteMaintenanceTask(controller = {}) {
   const cron = String(controller.cron || '');
-  return cron === MINUTE_FACT_REBUILD_CRON || cron === MINUTE_FACT_SYNC_CRON;
+  if (cron === MINUTE_FACT_RECOVERY_CRON) return 'recovery';
+  if (cron === MINUTE_FACT_REBUILD_CRON) return 'rebuild';
+  if (cron === MINUTE_FACT_SYNC_CRON) return 'sync';
+  if (cron !== MINUTE_FACT_MAINTENANCE_CRON) return null;
+  const minute = scheduledMinute(controller);
+  if (minute == null) return null;
+  const slot = ((minute % 10) + 10) % 10;
+  if (slot === 5) return 'recovery';
+  if (slot === 7) return 'rebuild';
+  if (slot === 9) return 'sync';
+  return null;
+}
+
+export function minuteStaggerApplies(controller = {}) {
+  const task = minuteMaintenanceTask(controller);
+  return task === 'rebuild' || task === 'sync';
 }
 
 function enabled(value) {
@@ -150,16 +172,16 @@ export async function runMinuteScheduled(controller = {}, env, dependencies = {}
   if (cron === MINUTE_FACT_DERIVE_CRON) {
     return runTracked(env, 'derive', () => runDerive(env, dependencies), dependencies);
   }
-  if (cron === MINUTE_FACT_RECOVERY_CRON) {
+
+  const maintenanceTask = minuteMaintenanceTask(controller);
+  if (maintenanceTask === 'recovery') {
     return runTracked(env, 'recovery', () => runRecovery(env, dependencies), dependencies);
   }
-  if (cron === MINUTE_FACT_REBUILD_CRON) {
+  if (maintenanceTask === 'rebuild') {
     return runTracked(env, 'rebuild', () => runRebuild(env, dependencies), dependencies);
   }
-  if (cron === MINUTE_FACT_SYNC_CRON) {
-    if (dependencies.collectorReady === false) {
-      return { skipped: true, reason: 'collector-not-ready' };
-    }
+  if (maintenanceTask === 'sync') {
+    if (dependencies.collectorReady === false) return { skipped: true, reason: 'collector-not-ready' };
     if (!env?.BUDDIES_DB && !env?.DB) return { skipped: true, reason: 'source-db-binding-missing' };
     return runTracked(env, 'sync', () => runSync(env, dependencies), dependencies);
   }
@@ -208,15 +230,18 @@ export async function runMinuteScheduledWithCollectorPriority(
 }
 
 async function consumeQueue(batch, env, ctx) {
-  const [{ consumeMinuteFactBatch }, readModels] = await Promise.all([
+  const [{ consumeMinuteFactBatch }, { saveMinuteFactReadModels }] = await Promise.all([
     import('./minute-facts-queue.js'),
     import('./minute-facts-read-model.js'),
   ]);
   const metadataJobs = [];
   const result = await consumeMinuteFactBatch(batch, env, {
-    hasReceipt: readModels.hasMinuteFactQueueReceipt,
-    saveReceipt: readModels.saveMinuteFactQueueReceipt,
-    saveReadModels: readModels.saveMinuteFactReadModels,
+    // The inbox UNIQUE(channel_id, minute_at), read-model UPSERTs and comment
+    // task INSERT OR IGNORE already make duplicate delivery idempotent. Skip
+    // the receipt SELECT/INSERT pair and allow harmless repeat writes instead.
+    hasReceipt: async () => false,
+    saveReceipt: async () => {},
+    saveReadModels: saveMinuteFactReadModels,
     onCommitted(job) {
       if (job.options.enrichTrackMetadata && job.payload.queue?.tracks?.length) metadataJobs.push(job);
     },
