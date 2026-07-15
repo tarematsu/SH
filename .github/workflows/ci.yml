@@ -73,7 +73,10 @@ jobs:
           cache-dependency-path: site/package-lock.json
       - run: npm ci --no-audit --no-fund
       - run: npm run check
-      - run: npm test
+      - name: Run Pages integration tests
+        run: npm run test:integration
+      - name: Run local D1 tests
+        run: npm run test:d1
       - name: Verify production migration command is skipped in CI
         run: npm run db:migrate
 
