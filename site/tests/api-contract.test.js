@@ -46,11 +46,13 @@ test('API contract classifications are unique and mutually exclusive', () => {
 
 test('every compatibility route points to a documented canonical API', () => {
   const canonical = new Set(canonicalApiPaths());
-  for (const { path, successor } of COMPATIBILITY_ENDPOINTS) {
+  for (const { path, successor, behavior, status } of COMPATIBILITY_ENDPOINTS) {
     assert.equal(canonical.has(successorPath(successor)), true, `${path} successor must be canonical`);
     assert.equal(API_SUCCESSORS[path], successor);
     assert.equal(apiSuccessor(path), successor);
     assert.equal(apiSuccessor(`${path}/`), successor);
+    assert.ok(['redirect', 'response'].includes(behavior), `${path} must declare compatibility behavior`);
+    assert.equal(status, behavior === 'redirect' ? 308 : 200, `${path} status must match behavior`);
   }
 });
 
@@ -65,7 +67,7 @@ test('retired and internal routes are blocked by the middleware contract', () =>
 test('GET /api catalog is generated from the same contract', () => {
   const catalog = apiCatalog(0);
   assert.equal(catalog.contract_version, API_CONTRACT_VERSION);
-  assert.equal(catalog.contract_version >= 2, true);
+  assert.equal(catalog.contract_version >= 3, true);
   assert.deepEqual(catalog.groups, API_GROUPS);
   assert.deepEqual(catalog.compatibility, COMPATIBILITY_ENDPOINTS);
   assert.deepEqual(catalog.retired, RETIRED_ENDPOINTS);
