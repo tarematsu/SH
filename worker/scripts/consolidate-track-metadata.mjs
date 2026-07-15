@@ -69,6 +69,10 @@ function quote(value) {
   return `'${String(value).replaceAll('\u0000', '').replaceAll("'", "''")}'`;
 }
 
+function normalizedIsrc(value) {
+  return String(value || '').trim().toUpperCase();
+}
+
 function sourcePage(offset) {
   return rowsFrom(execute(
     sourceDatabase,
@@ -92,9 +96,33 @@ ON CONFLICT(spotify_id) DO UPDATE SET
   const sqlPath = join(directory, `track-metadata-${page}.sql`);
   writeFileSync(sqlPath, `${statements.join('\n')}\n`, 'utf8');
   wrangler([
-    'd1', 'execute', targetDatabase,
+    'd1', 'execute', database,
     '--remote', '--yes', '--file', sqlPath,
   ]);
+}
+
+function verifyPage(database, sourceRows) {
+  const expected = new Map(sourceRows
+    .map((row) => [String(row.spotify_id || '').trim(), normalizedIsrc(row.isrc)])
+    .filter(([spotifyId, isrc]) => spotifyId && isrc));
+  if (!expected.size) return 0;
+
+  const ids = [...expected.keys()];
+  const rows = rowsFrom(execute(
+    database,
+    `SELECT spotify_id,isrc FROM sh_track_metadata
+     WHERE spotify_id IN (${ids.map(quote).join(',')})`,
+  ));
+  const actual = new Map(rows.map((row) => [
+    String(row.spotify_id || '').trim(),
+    normalizedIsrc(row.isrc),
+  ]));
+  for (const [spotifyId, isrc] of expected) {
+    if (actual.get(spotifyId) !== isrc) {
+      throw new Error(`Target metadata ISRC mismatch for spotify_id=${spotifyId}`);
+    }
+  }
+  return expected.size;
 }
 
 let sourceCount;
@@ -125,10 +153,12 @@ if (!apply || sourceCount === 0) {
 const tempDirectory = mkdtempSync(join(workerRoot, '.track-metadata-'));
 try {
   let copied = 0;
+  let verifiedIsrcRows = 0;
   for (let offset = 0, page = 0; offset < sourceCount; offset += pageSize, page += 1) {
     const rows = sourcePage(offset);
     if (!rows.length) break;
     writePage(targetDatabase, rows, tempDirectory, page);
+    verifiedIsrcRows += verifyPage(targetDatabase, rows);
     copied += rows.length;
   }
 
@@ -146,6 +176,7 @@ try {
     target_database: targetDatabase,
     source_rows: sourceCount,
     copied_rows: copied,
+    verified_isrc_rows: verifiedIsrcRows,
     target_rows_before: targetBefore,
     target_rows_after: targetAfter,
     drop_source: dropSource,
