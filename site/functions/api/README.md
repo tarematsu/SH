@@ -11,9 +11,15 @@ Use `GET /api` for the machine-readable endpoint catalog. Canonical monitoring a
 - `GET /api/minute-facts/current`
 - `GET /api/minute-facts/latest`
 
-`/api/health/collector`, `history-current`, `history-migrated`, `history-raw`, and `official-history` remain compatibility aliases. Their responses include `Deprecation`, `Link`, and `X-API-Successor` headers pointing to the canonical route.
+Exact compatibility aliases use HTTP 308 redirects:
 
-The canonical groups, compatibility successors, retired endpoints, and internal blocked paths are defined once in `site/functions/lib/api-contract.js`. Both the API catalog and `_middleware.js` consume that contract so route documentation and enforcement cannot drift independently.
+- `/api/health/collector` → `/api/health`
+- `/api/history-current` → `/api/minute-facts/current`
+- `/api/history-migrated` → `/api/minute-facts`
+
+`history-raw` and `official-history` retain their compatibility response implementations because they are not exact aliases. All compatibility responses include `Deprecation`, `Link`, and `X-API-Successor` headers.
+
+The canonical groups, compatibility behavior, successors, retired endpoints, and internal blocked paths are defined once in `site/functions/lib/api-contract.js`. Both the API catalog and `_middleware.js` consume that contract so route documentation and enforcement cannot drift independently.
 
 Public Pages ingestion is disabled. `/api/ingest` and `/api/host-ingest` return 404, and `_middleware.js` also blocks implementation filenames such as `ingest-core`, `ingest-legacy`, `dashboard-legacy`, and `history-legacy` from becoming accidental APIs.
 
