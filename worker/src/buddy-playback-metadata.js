@@ -37,6 +37,7 @@ function metadataForTrack(metadata, track) {
   const spotifyId = String(track?.spotify_id || '').trim();
   return (isrc ? metadata.get(`isrc:${isrc}`) : null)
     || (spotifyId ? metadata.get(`spotify:${spotifyId}`) : null)
+    || (spotifyId ? metadata.get(spotifyId) : null)
     || null;
 }
 
@@ -45,7 +46,10 @@ function indexMetadataRows(rows) {
   for (const row of rows || []) {
     const spotifyId = String(row?.spotify_id || '').trim();
     const isrc = normalizedIsrc(row?.isrc);
-    if (spotifyId) metadata.set(`spotify:${spotifyId}`, row);
+    if (spotifyId) {
+      metadata.set(spotifyId, row);
+      metadata.set(`spotify:${spotifyId}`, row);
+    }
     if (isrc && !metadata.has(`isrc:${isrc}`)) metadata.set(`isrc:${isrc}`, row);
   }
   return metadata;
@@ -145,7 +149,10 @@ export async function enrichQueueMetadata(env, queue, now, config, fetchMetadata
     fetched.push(row);
     const spotifyId = String(row.spotify_id || '').trim();
     const isrc = normalizedIsrc(row.isrc);
-    if (spotifyId) metadata.set(`spotify:${spotifyId}`, row);
+    if (spotifyId) {
+      metadata.set(spotifyId, row);
+      metadata.set(`spotify:${spotifyId}`, row);
+    }
     if (isrc) metadata.set(`isrc:${isrc}`, row);
   }
   await saveTrackMetadata(metadataDb, fetched);
