@@ -98,7 +98,7 @@ function boundedText(value, maximum = 500) {
   return parsed ? parsed.slice(0, maximum) : null;
 }
 
-export function readModelPresentation(snapshot, compactSnapshot = null) {
+export function readModelPresentation(snapshot) {
   const raw = snapshot?.raw || {};
   const station = raw?.current_station || {};
   const owner = station?.owner || raw?.owner || raw?.account || raw?.creator || {};
@@ -123,10 +123,7 @@ export function readModelPresentation(snapshot, compactSnapshot = null) {
       },
     },
   };
-  return {
-    ...(compactSnapshot || minuteFactSnapshot(snapshot)),
-    ...presentation,
-  };
+  return presentation;
 }
 
 export function minuteFactQueue(queue) {

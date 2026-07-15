@@ -246,7 +246,7 @@ export async function collectOnce(env, source = 'manual') {
     };
     const factSnapshot = minuteFactSnapshot(snapshot);
     const factQueue = minuteFactQueue(queue);
-    const presentation = readModelPresentation(snapshot, factSnapshot);
+    const presentation = readModelPresentation(snapshot);
     stage = 'd1_outbox_minute_fact';
     const minuteFactJob = await measure(stage, () => handoffMinuteFactJob(activeEnv, {
       observedAt,
