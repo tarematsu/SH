@@ -7,7 +7,7 @@ import {
 } from '../../site/functions/lib/time-buckets.js';
 
 const STATE_ID = 'rollup-retention-v1';
-const STREAM_REPAIR_STATE_ID = 'rollup-stream-repair-2026-07';
+const STREAM_REPAIR_STATE_ID = 'rollup-stream-repair-2026-07-v2';
 const STREAM_REPAIR_KEYS = Object.freeze(['2026-07-11', '2026-07-12', '2026-07-13']);
 const STREAM_VALUE_SQL = `COALESCE(
   CASE WHEN validated_stream_count IS NOT NULL AND validated_stream_count>=0
@@ -153,15 +153,31 @@ async function repairContaminatedSummaries(db, otherDb, now) {
     weeks.set(week.key, week);
     months.set(month.key, month);
   }
-  for (const range of weeks.values()) await rollupFromDaily(otherDb, 'sh_weekly_summary', range, now);
-  for (const range of months.values()) await rollupFromDaily(otherDb, 'sh_monthly_summary', range, now);
+
+  const repairedWeeks = [];
+  for (const [key, range] of weeks) {
+    if (await rollupFromDaily(otherDb, 'sh_weekly_summary', range, now)) repairedWeeks.push(key);
+  }
+  const repairedMonths = [];
+  for (const [key, range] of months) {
+    if (await rollupFromDaily(otherDb, 'sh_monthly_summary', range, now)) repairedMonths.push(key);
+  }
+  if (repairedWeeks.length !== weeks.size || repairedMonths.length !== months.size) {
+    return {
+      skipped: true,
+      reason: 'repair-summary-write-incomplete',
+      repairedDays,
+      repairedWeeks,
+      repairedMonths,
+    };
+  }
 
   await db.prepare(`INSERT INTO sh_data_maintenance_state(
       id,last_rollup_key,last_cleanup_at,legacy_backfill_id,updated_at
     ) VALUES(?,?,0,0,?) ON CONFLICT(id) DO UPDATE SET
       last_rollup_key=excluded.last_rollup_key,updated_at=excluded.updated_at`)
     .bind(STREAM_REPAIR_STATE_ID, STREAM_REPAIR_KEYS.at(-1), now).run();
-  return { skipped: false, repairedDays, repairedWeeks: [...weeks.keys()], repairedMonths: [...months.keys()] };
+  return { skipped: false, repairedDays, repairedWeeks, repairedMonths };
 }
 
 // sh_channel_snapshots/sh_data_maintenance_state stay on `db` (buddies'
