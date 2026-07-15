@@ -3,6 +3,7 @@ import test from 'node:test';
 
 import {
   resetPrimaryScheduledFlightForTests,
+  runPrimaryCycle,
   runPrimaryScheduled,
 } from '../src/scheduled-main.js';
 
@@ -44,6 +45,27 @@ test('primary schedule runs no auxiliary tasks by default', async () => {
   assert.equal(result, 'primary-done');
   assert.equal(env.DB.calls.every((sql) => sql.includes('sh_primary_run_lock')), true);
   resetPrimaryScheduledFlightForTests();
+});
+
+test('primary cycle preserves fetch abort signal while keeping raw D1 binding', async () => {
+  const db = trackingDb();
+  const env = { DB: db };
+  const signal = new AbortController().signal;
+  const result = await runPrimaryCycle({ cron: '* * * * *' }, env, env, {}, {
+    runPrimary: async (controller, receivedEnv, ctx, scheduled) => scheduled(
+      controller,
+      Object.assign(Object.create(receivedEnv), { __COLLECTION_ABORT_SIGNAL: signal }),
+      ctx,
+    ),
+    scheduled: async (_controller, receivedEnv) => {
+      assert.equal(receivedEnv.DB, db);
+      assert.equal(receivedEnv.__COLLECTION_ABORT_SIGNAL, undefined);
+      assert.equal(receivedEnv.__COLLECTION_FETCH_ABORT_SIGNAL, signal);
+      return 'primary-done';
+    },
+  });
+
+  assert.equal(result, 'primary-done');
 });
 
 test('explicit auxiliary runners remain available for isolated scheduler tests', async () => {
