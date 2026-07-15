@@ -344,6 +344,46 @@ test('producer stores queue tracks once and consumer restores the read model val
   assert.equal(parsed.read_model.channel.presentation.description, 'channel details');
 });
 
+test('collector-style compact queue read models preserve the Queue message shape', () => {
+  const queue = { station_id: 5, queue_id: 9, tracks: [] };
+  const commonOptions = {
+    readModelPresentationOnly: true,
+    readModel: {
+      channel: { presentation: { description: 'channel details' } },
+      collector: { collector_id: 'cloudflare-worker' },
+    },
+  };
+  const legacy = minuteFactQueueMessage({ ...input, queue }, {
+    ...commonOptions,
+    readModel: {
+      ...commonOptions.readModel,
+      queue: { station_id: 5, queue_id: 9, value: queue },
+    },
+  });
+  const optimized = minuteFactQueueMessage({ ...input, queue }, {
+    ...commonOptions,
+    readModel: {
+      ...commonOptions.readModel,
+      queue: { station_id: 5, queue_id: 9 },
+    },
+  });
+
+  assert.deepEqual(optimized, legacy);
+  assert.equal(Object.hasOwn(optimized.read_model.queue, 'value'), false);
+  const parsed = parseMinuteFactQueueMessage(optimized);
+  assert.strictEqual(parsed.read_model.queue.value, parsed.payload.queue);
+});
+
+test('compact queue read models retain an explicit null queue value', () => {
+  const message = minuteFactQueueMessage({ ...input, queue: null }, {
+    readModelPresentationOnly: true,
+    readModel: { queue: { station_id: 5, queue_id: null, value: null } },
+  });
+
+  assert.equal(Object.hasOwn(message.read_model.queue, 'value'), true);
+  assert.equal(message.read_model.queue.value, null);
+});
+
 test('producer can reuse collector presentation without rescanning snapshot fields', () => {
   const message = minuteFactQueueMessage(input, {
     readModelPresentationOnly: true,

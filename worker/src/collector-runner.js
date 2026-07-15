@@ -249,6 +249,13 @@ export async function collectOnce(env, source = 'manual') {
     const factSnapshot = minuteFactSnapshot(snapshot);
     const factQueue = minuteFactQueue(queue);
     const presentation = readModelPresentation(snapshot);
+    const factQueueReadModel = {
+      station_id: factQueue?.station_id ?? state.stationId,
+      queue_id: factQueue?.queue_id ?? null,
+      start_time: factQueue?.start_time ?? null,
+      is_paused: factQueue?.is_paused ?? null,
+    };
+    if (factQueue === null) factQueueReadModel.value = null;
     stage = 'd1_outbox_minute_fact';
     const minuteFactJob = await measure(stage, () => handoffMinuteFactJob(activeEnv, {
       observedAt,
@@ -265,13 +272,7 @@ export async function collectOnce(env, source = 'manual') {
           observed_at: observedAt,
           presentation,
         },
-        queue: {
-          station_id: factQueue?.station_id ?? state.stationId,
-          queue_id: factQueue?.queue_id ?? null,
-          start_time: factQueue?.start_time ?? null,
-          is_paused: factQueue?.is_paused ?? null,
-          value: factQueue,
-        },
+        queue: factQueueReadModel,
         collector: {
           collector_id: config.collectorId,
           last_run_at: observedAt,
