@@ -28,7 +28,7 @@ button, input, select { min-height: 40px; }
 .skip-link:focus { transform: none; }
 
 .shell { width: min(1160px, 100%); margin: 0 auto; padding: max(14px, env(safe-area-inset-top)) max(14px, env(safe-area-inset-right)) max(30px, env(safe-area-inset-bottom)) max(14px, env(safe-area-inset-left)); }
-.card, .top-card, .guide, .summary-cards article { border: 1px solid var(--line); border-radius: var(--radius); background: rgba(255,255,255,.97); box-shadow: 0 10px 28px rgba(31,45,68,.065); }
+.card, .top-card, .summary-cards article { border: 1px solid var(--line); border-radius: var(--radius); background: rgba(255,255,255,.97); box-shadow: 0 10px 28px rgba(31,45,68,.065); }
 .top-card { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 18px; }
 .history-header h1 { margin-bottom: 0; }
 .kicker { margin: 0 0 5px; color: var(--accent); font-size: .67rem; font-weight: 850; letter-spacing: .15em; }
@@ -42,12 +42,11 @@ h2 { margin-bottom: 0; font-size: 1.12rem; letter-spacing: -.015em; }
 .button.primary { border-color: transparent; background: linear-gradient(135deg, #e34c82, var(--accent)); color: #fff; box-shadow: 0 8px 20px rgba(217,63,121,.16); }
 .button:disabled { cursor: wait; opacity: .65; }
 
-.mode-tabs { display: flex; gap: 5px; margin: 10px 0; padding: 4px; overflow-x: auto; border: 1px solid var(--line); border-radius: 15px; background: var(--panel); box-shadow: 0 6px 18px rgba(31,45,68,.04); scrollbar-width: thin; }
-.mode-tabs button, .mode-tabs a { display: inline-flex; flex: 0 0 auto; min-height: 38px; align-items: center; justify-content: center; padding: 7px 12px; border: 0; border-radius: 11px; background: transparent; color: var(--muted); cursor: pointer; font-size: .82rem; font-weight: 760; text-decoration: none; white-space: nowrap; }
+.mode-tabs { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); grid-auto-rows: minmax(40px, auto); gap: 5px; margin: 10px 0; padding: 4px; overflow: hidden; border: 1px solid var(--line); border-radius: 15px; background: var(--panel); box-shadow: 0 6px 18px rgba(31,45,68,.04); }
+.mode-tabs button, .mode-tabs a { display: inline-flex; width: 100%; min-width: 0; min-height: 40px; align-items: center; justify-content: center; padding: 6px 7px; border: 0; border-radius: 11px; background: transparent; color: var(--muted); cursor: pointer; font-size: .75rem; font-weight: 760; line-height: 1.15; text-align: center; text-decoration: none; white-space: normal; overflow-wrap: anywhere; }
 .mode-tabs button:hover, .mode-tabs button:focus-visible, .mode-tabs a:hover, .mode-tabs a:focus-visible { background: var(--panel-2); color: var(--text); outline: none; }
 .mode-tabs button.active, .mode-tabs a.active { background: var(--accent); color: #fff; }
 
-.guide { display: flex; align-items: center; justify-content: space-between; margin-bottom: 0; padding: 13px 16px; }
 .controls { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: end; gap: 10px; margin-top: 10px; padding: 11px; }
 .control-group { display: flex; align-items: end; gap: 9px; min-width: 0; }
 .standard-controls { flex-wrap: wrap; }
@@ -72,15 +71,14 @@ h2 { margin-bottom: 0; font-size: 1.12rem; letter-spacing: -.015em; }
 .summary-cards span { display: block; overflow: hidden; color: var(--muted); font-size: .7rem; font-weight: 760; text-overflow: ellipsis; white-space: nowrap; }
 .summary-cards strong { display: block; margin-top: 7px; overflow: hidden; font-size: clamp(1.45rem, 5vw, 2.1rem); line-height: 1; letter-spacing: -.035em; font-variant-numeric: tabular-nums; text-overflow: ellipsis; }
 
-.chart-panel, .data-panel { margin-top: 10px; padding: 16px; content-visibility: auto; contain-intrinsic-size: auto 380px; }
+.chart-panel { margin-top: 10px; padding: 16px; }
+.data-panel { margin-top: 10px; padding: 16px; content-visibility: auto; contain-intrinsic-size: auto 380px; }
 .section-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 13px; }
 .chart-head { align-items: center; }
 .chart-legend { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px 13px; color: var(--muted); font-size: .7rem; }
 .chart-legend span { display: inline-flex; align-items: center; gap: 5px; }
 .chart-legend i, .detail-row i { width: 9px; height: 9px; flex: 0 0 9px; border-radius: 50%; }
-.online-dot { background: var(--accent); }
-.comment-dot { background: var(--green); }
-#chart, #audienceChart { display: block; width: 100%; min-height: 245px; border-radius: 12px; background: #fff; touch-action: manipulation; }
+#chart { display: block; width: 100%; min-width: 0; min-height: 245px; border-radius: 12px; background: #fff; touch-action: manipulation; }
 .chart-axis { display: flex; justify-content: space-between; margin-top: 5px; color: var(--muted); font-size: .67rem; }
 .chart-detail { min-height: 40px; margin-top: 8px; padding: 9px 11px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel-2); color: var(--muted); font-size: .74rem; line-height: 1.45; }
 .chart-detail time { display: block; margin-bottom: 6px; color: var(--text); font-weight: 760; }
@@ -122,7 +120,7 @@ tbody tr:hover { background: #fafbfd; }
   .history-header { flex-direction: row; align-items: center; }
   .history-header .button { min-width: 88px; }
   .mode-tabs { margin-inline: -1px; }
-  .guide { padding: 12px 14px; }
+  .mode-tabs button, .mode-tabs a { min-height: 42px; padding: 5px 4px; font-size: .7rem; }
   .controls { grid-template-columns: minmax(0, 1fr); padding: 10px; }
   .control-group { width: 100%; }
   .standard-controls { display: grid; gap: 8px; }
@@ -135,7 +133,7 @@ tbody tr:hover { background: #fafbfd; }
   .chart-panel, .data-panel { padding: 14px; border-radius: 17px; }
   .chart-head { align-items: flex-start; flex-direction: column; }
   .chart-legend { justify-content: flex-start; }
-  #chart, #audienceChart { min-height: 240px; }
+  #chart { min-height: 240px; }
   .like-rank-item { grid-template-columns: 32px minmax(0, 1fr); }
   .like-rank-metrics { grid-column: 2; grid-template-columns: repeat(2, minmax(0, 1fr)); width: 100%; }
   .like-rank-metrics span { text-align: left; }
@@ -144,7 +142,7 @@ tbody tr:hover { background: #fafbfd; }
 
 @media (max-width: 430px) {
   .history-header h1 { font-size: 1.6rem; }
-  .mode-tabs button, .mode-tabs a { padding-inline: 11px; }
+  .mode-tabs button, .mode-tabs a { font-size: .64rem; }
   .summary-cards strong { font-size: 1.45rem; }
   .date-range { grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); gap: 4px; }
   .date-range input { font-size: .74rem; padding-inline: 7px; }
