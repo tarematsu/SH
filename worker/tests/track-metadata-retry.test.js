@@ -51,6 +51,7 @@ test('ISRC peer metadata becomes a complete D1 repair row', () => {
   }], 12345);
   assert.deepEqual(rows, [{
     spotify_id: 'spotify-missing',
+    isrc: 'JPABC2600001',
     title: 'Interlude #1',
     artist: '櫻坂46',
     display_title: 'Interlude #1 — 櫻坂46',
