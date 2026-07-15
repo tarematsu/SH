@@ -1,6 +1,21 @@
 import './fetch-guard.js';
 
+export const OTHER_HOST_CRON = '*/5 * * * *';
+export const OTHER_BUDDY_CRON = '0 */3 * * *';
+export const OTHER_PREDICTION_CRON = '10,40 * * * *';
+export const OTHER_OFFICIAL_NEWS_CRON = '20 * * * *';
+export const OTHER_MAINTENANCE_CRON = '30 * * * *';
+export const OTHER_RETENTION_CRON = '50 * * * *';
+
 const PRODUCTION_TASK_KEYS = ['buddy', 'host', 'prediction', 'maintenance', 'officialNews', 'snapshotRetention'];
+const TASK_BY_CRON = new Map([
+  [OTHER_HOST_CRON, 'host'],
+  [OTHER_BUDDY_CRON, 'buddy'],
+  [OTHER_PREDICTION_CRON, 'prediction'],
+  [OTHER_OFFICIAL_NEWS_CRON, 'officialNews'],
+  [OTHER_MAINTENANCE_CRON, 'maintenance'],
+  [OTHER_RETENTION_CRON, 'snapshotRetention'],
+]);
 let loadedHealthApp = null;
 
 export function scheduledTimestamp(controller, fallback = Date.now()) {
@@ -8,26 +23,13 @@ export function scheduledTimestamp(controller, fallback = Date.now()) {
   return Number.isFinite(value) && value >= 0 ? value : fallback;
 }
 
-function positiveMinutes(value, fallbackMs) {
-  const milliseconds = Number(value ?? fallbackMs);
-  const safe = Number.isFinite(milliseconds) && milliseconds > 0 ? milliseconds : fallbackMs;
-  return Math.max(1, Math.round(safe / 60_000));
+export function otherTaskForCron(cron) {
+  return TASK_BY_CRON.get(String(cron || '')) || null;
 }
 
-export function otherProductionTask(now, env = {}) {
-  const absoluteMinute = Math.floor(now / 60_000);
-  const buddyMinutes = positiveMinutes(env.BUDDY_PLAYBACK_INTERVAL_MS, 3 * 60 * 60_000);
-  const predictionMinutes = positiveMinutes(env.STREAM_GOAL_PREDICTION_INTERVAL_MS, 30 * 60_000);
-  const newsMinutes = positiveMinutes(env.OFFICIAL_NEWS_CHECK_INTERVAL_MS, 60 * 60_000);
-  const maintenanceMinutes = positiveMinutes(env.DATA_MAINTENANCE_INTERVAL_MS, 60 * 60_000);
-  const retentionMinutes = positiveMinutes(env.SNAPSHOT_RETENTION_INTERVAL_MS, 60 * 60_000);
-
-  if (absoluteMinute % buddyMinutes === 0) return 'buddy';
-  if ((absoluteMinute - 10) % predictionMinutes === 0) return 'prediction';
-  if ((absoluteMinute - 20) % newsMinutes === 0) return 'officialNews';
-  if ((absoluteMinute - 30) % maintenanceMinutes === 0) return 'maintenance';
-  if ((absoluteMinute - 50) % retentionMinutes === 0) return 'snapshotRetention';
-  return 'host';
+export function otherStaggerApplies(controller = {}) {
+  const task = otherTaskForCron(controller.cron);
+  return task === 'maintenance' || task === 'snapshotRetention';
 }
 
 function hasInjectedTaskSet(dependencies = {}) {
@@ -74,9 +76,9 @@ export async function runOfficialNewsWithReconcile(env, now, probe = null, recon
 }
 
 export async function runOtherScheduled(controller, env, ctx, dependencies = {}) {
-  if (hasInjectedTaskSet(dependencies)) {
+  if (hasInjectedTaskSet(dependencies) && !otherTaskForCron(controller.cron)) {
     // Preserve the broad injected mode used by integration tests and manual
-    // diagnostics. Production takes the single-task route below.
+    // diagnostics. Production uses only the explicit cron routes above.
     const collectorGate = env?.BUDDIES_DB?.prepare
       ? (dependencies.waitForCollector
         ? dependencies.waitForCollector(env, scheduledTimestamp(controller))
@@ -90,7 +92,8 @@ export async function runOtherScheduled(controller, env, ctx, dependencies = {})
     return results.map((result) => result.value);
   }
 
-  const name = otherProductionTask(scheduledTimestamp(controller), env);
+  const name = otherTaskForCron(controller.cron);
+  if (!name) return [{ skipped: true, reason: 'unsupported-other-cron', cron: String(controller.cron || '') }];
   return [await invokeTask(name, controller, env, ctx, dependencies)];
 }
 
@@ -100,8 +103,6 @@ async function healthApp() {
 }
 
 export async function runOtherCron(controller, env, ctx, options = {}) {
-  const cronModule = options.stagger ? null : await import('./cron-stagger.js');
-  const stagger = options.stagger || cronModule.applyCronStagger;
   const health = options.healthApp || loadedHealthApp;
   const healthModule = (!options.recordSuccess || !options.recordFailure)
     ? await import('./buddy-health.js')
@@ -109,7 +110,10 @@ export async function runOtherCron(controller, env, ctx, options = {}) {
   const recordSuccess = options.recordSuccess || healthModule.recordOtherCronSuccess;
   const recordFailure = options.recordFailure || healthModule.recordOtherCronFailure;
   try {
-    await stagger(env, 'other');
+    if (otherStaggerApplies(controller)) {
+      const stagger = options.stagger || (await import('./cron-stagger.js')).applyCronStagger;
+      await stagger(env, 'other');
+    }
     const result = await runOtherScheduled(controller, env, ctx, options.dependencies);
     await recordSuccess(env);
     return result;
