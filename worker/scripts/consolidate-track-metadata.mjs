@@ -54,6 +54,13 @@ function execute(database, command) {
   ]));
 }
 
+function executeDdl(database, command) {
+  wrangler([
+    'd1', 'execute', database,
+    '--remote', '--yes', '--command', command,
+  ]);
+}
+
 function countRows(database) {
   const rows = rowsFrom(execute(database, 'SELECT COUNT(*) AS row_count FROM sh_track_metadata'));
   return Number(rows[0]?.row_count || 0);
@@ -132,7 +139,7 @@ try {
     throw new Error(`Target metadata count ${targetAfter} is smaller than source count ${sourceCount}`);
   }
   if (dropSource) {
-    execute(sourceDatabase, 'DROP TABLE IF EXISTS sh_track_metadata');
+    executeDdl(sourceDatabase, 'DROP TABLE IF EXISTS sh_track_metadata');
   }
   console.log(JSON.stringify({
     ok: true,
