@@ -1,13 +1,14 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import {
-  apiSuccessor,
-  isBlockedApiPath,
-  onRequest,
-} from '../functions/api/_middleware.js';
+import { isBlockedApiPath, onRequest } from '../functions/api/_middleware.js';
 
 const BLOCKED = [
+  '/api/health/collector',
+  '/api/history-current',
+  '/api/history-migrated',
+  '/api/history-raw',
+  '/api/official-history',
   '/api/dashboard-legacy',
   '/api/history-legacy',
   '/api/ingest',
@@ -29,41 +30,24 @@ test('internal and retired Pages API paths are blocked including trailing slashe
 });
 
 test('blocked API paths return a no-store 404 before route handlers', async () => {
-  let nextCalls = 0;
-  const response = await onRequest({
-    request: new Request('https://example.com/api/ingest-core', {
-      method: 'POST',
-      headers: { authorization: 'Bearer should-not-bypass-boundary' },
-    }),
-    next: async () => {
-      nextCalls += 1;
-      return Response.json({ ok: true });
-    },
-  });
+  for (const path of ['/api/ingest-core', '/api/history-current', '/api/official-history']) {
+    let nextCalls = 0;
+    const response = await onRequest({
+      request: new Request(`https://example.com${path}`, {
+        headers: { authorization: 'Bearer should-not-bypass-boundary' },
+      }),
+      next: async () => {
+        nextCalls += 1;
+        return Response.json({ ok: true });
+      },
+    });
 
-  assert.equal(response.status, 404);
-  assert.equal(response.headers.get('cache-control'), 'no-store');
-  assert.equal(response.headers.get('x-content-type-options'), 'nosniff');
-  assert.deepEqual(await response.json(), { ok: false, error: 'not found' });
-  assert.equal(nextCalls, 0);
-});
-
-test('compatibility routes advertise their canonical successor', async () => {
-  assert.equal(apiSuccessor('/api/history-current'), '/api/minute-facts/current');
-  assert.equal(apiSuccessor('/api/history-migrated/'), '/api/minute-facts');
-  assert.equal(apiSuccessor('/api/official-history'), '/api/history?mode=broadcasts');
-  assert.equal(apiSuccessor('/api/history'), null);
-
-  const response = await onRequest({
-    request: new Request('https://example.com/api/official-history'),
-    next: async () => Response.json({ ok: true, rows: [] }),
-  });
-
-  assert.equal(response.status, 200);
-  assert.equal(response.headers.get('deprecation'), 'true');
-  assert.equal(response.headers.get('x-api-successor'), '/api/history?mode=broadcasts');
-  assert.equal(response.headers.get('link'), '</api/history?mode=broadcasts>; rel="successor-version"');
-  assert.deepEqual(await response.json(), { ok: true, rows: [] });
+    assert.equal(response.status, 404, path);
+    assert.equal(response.headers.get('cache-control'), 'no-store');
+    assert.equal(response.headers.get('x-content-type-options'), 'nosniff');
+    assert.deepEqual(await response.json(), { ok: false, error: 'not found' });
+    assert.equal(nextCalls, 0);
+  }
 });
 
 test('canonical uncached API routes continue to their Pages handler unchanged', async () => {
