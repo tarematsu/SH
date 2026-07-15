@@ -54,6 +54,17 @@ function boundedText(value, maximum) {
   return text ? text.slice(0, maximum) : null;
 }
 
+function mergeMetadataRow(current, row) {
+  if (!current) return { ...row };
+  return {
+    ...current,
+    title: current.title || row.title || null,
+    artist: current.artist || row.artist || null,
+    album_name: current.album_name || row.album_name || null,
+    thumbnail_url: current.thumbnail_url || row.thumbnail_url || null,
+  };
+}
+
 export function attachReadModelTrackMetadata(queue, rows = []) {
   if (!queue?.tracks?.length || !rows?.length) return queue;
 
@@ -62,22 +73,23 @@ export function attachReadModelTrackMetadata(queue, rows = []) {
   for (const row of rows) {
     const isrc = normalizedIsrc(row?.isrc);
     const spotifyId = String(row?.spotify_id || '').trim();
-    if (isrc && !byIsrc.has(isrc)) byIsrc.set(isrc, row);
-    if (spotifyId && !bySpotifyId.has(spotifyId)) bySpotifyId.set(spotifyId, row);
+    if (isrc) byIsrc.set(isrc, mergeMetadataRow(byIsrc.get(isrc), row));
+    if (spotifyId) bySpotifyId.set(spotifyId, mergeMetadataRow(bySpotifyId.get(spotifyId), row));
   }
 
   let changed = false;
   const tracks = queue.tracks.map((track) => {
     const isrc = normalizedIsrc(track?.isrc);
     const spotifyId = String(track?.spotify_id || '').trim();
-    const row = (isrc ? byIsrc.get(isrc) : null)
-      || (spotifyId ? bySpotifyId.get(spotifyId) : null);
-    if (!row) return track;
+    const preferred = isrc ? byIsrc.get(isrc) : null;
+    const fallback = spotifyId ? bySpotifyId.get(spotifyId) : null;
+    if (!preferred && !fallback) return track;
 
-    const title = track.title || boundedText(row.title, 500);
-    const artist = track.artist || boundedText(row.artist, 500);
-    const albumName = track.album_name || boundedText(row.album_name, 500);
-    const thumbnailUrl = track.thumbnail_url || boundedText(row.thumbnail_url, 2_048);
+    const title = track.title || boundedText(preferred?.title || fallback?.title, 500);
+    const artist = track.artist || boundedText(preferred?.artist || fallback?.artist, 500);
+    const albumName = track.album_name || boundedText(preferred?.album_name || fallback?.album_name, 500);
+    const thumbnailUrl = track.thumbnail_url
+      || boundedText(preferred?.thumbnail_url || fallback?.thumbnail_url, 2_048);
     if (title === track.title
       && artist === track.artist
       && albumName === track.album_name
