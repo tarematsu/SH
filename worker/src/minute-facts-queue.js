@@ -220,9 +220,14 @@ export async function flushMinuteFactOutbox(env, options = {}) {
     return { sent: 0, failed: 0, pending: true, reason: 'queue-binding-missing' };
   }
   const limit = Math.max(1, Math.min(5, integer(options.limit) || 3));
-  const rows = await env.DB.prepare(`SELECT job_id,payload_json,attempts
+  const inlineMessageJobId = options.currentMessage && options.currentJobId != null
+    ? options.currentJobId
+    : null;
+  const rows = await env.DB.prepare(`SELECT job_id,
+    CASE WHEN job_id=? THEN NULL ELSE payload_json END AS payload_json,
+    attempts
     FROM sh_minute_fact_outbox WHERE status='pending'
-    ORDER BY created_at ASC LIMIT ?`).bind(limit).all();
+    ORDER BY created_at ASC LIMIT ?`).bind(inlineMessageJobId, limit).all();
   const summary = { sent: 0, failed: 0, pending: false, current_sent: false };
   let currentAttempted = false;
   for (const row of rows.results || []) {

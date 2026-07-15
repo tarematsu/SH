@@ -5,6 +5,7 @@ import minuteApp, { runCommittedMetadataEnrichment } from '../src/minute-entry.j
 import { saveMinuteFactReadModels } from '../src/minute-facts-read-model.js';
 import {
   consumeMinuteFactBatch,
+  flushMinuteFactOutbox,
   handoffMinuteFactJob,
   MINUTE_FACT_QUEUE_MAX_MESSAGE_BYTES,
   minuteFactQueueMessage,
@@ -64,8 +65,15 @@ function outboxDb() {
         },
         async all() {
           if (sql.includes("WHERE status='pending'")) {
-            const limit = this.params[0];
-            return { results: [...rows.values()].filter((row) => row.status === 'pending').slice(0, limit) };
+            const [inlineMessageJobId, limit] = this.params;
+            return {
+              results: [...rows.values()]
+                .filter((row) => row.status === 'pending')
+                .slice(0, limit)
+                .map((row) => row.job_id === inlineMessageJobId
+                  ? { ...row, payload_json: null }
+                  : row),
+            };
           }
           throw new Error(`unexpected all: ${sql}`);
         },
@@ -133,6 +141,47 @@ test('producer does not report success before Queue send resolves', async () => 
   resolveSend();
   await pending;
   assert.equal(settled, true);
+});
+
+test('outbox reuses the current in-memory message instead of row payload JSON', async () => {
+  const DB = outboxDb();
+  let sent = null;
+  const env = {
+    DB,
+    MINUTE_FACT_QUEUE: {
+      async send(message) { sent = message; },
+    },
+  };
+
+  const result = await handoffMinuteFactJob(env, input);
+
+  assert.equal(result.enqueued, true);
+  assert.equal(sent?.job_id, 'minute-fact:10:120000');
+  assert.equal(DB.calls.some((sql) => sql.includes('CASE WHEN job_id=? THEN NULL')), true);
+  assert.equal(DB.rows.get(sent.job_id).status, 'sent');
+});
+
+test('outbox loads serialized payload when no current message is supplied', async () => {
+  const DB = outboxDb();
+  const message = minuteFactQueueMessage(input);
+  DB.rows.set(message.job_id, {
+    job_id: message.job_id,
+    payload_json: JSON.stringify(message),
+    status: 'pending',
+    attempts: 0,
+    created_at: 123,
+  });
+  let sent = null;
+  const result = await flushMinuteFactOutbox({
+    DB,
+    MINUTE_FACT_QUEUE: {
+      async send(value) { sent = value; },
+    },
+  }, { currentJobId: message.job_id });
+
+  assert.equal(result.sent, 1);
+  assert.equal(sent?.job_id, message.job_id);
+  assert.equal(DB.calls.some((sql) => sql.includes('CASE WHEN job_id=? THEN NULL')), true);
 });
 
 test('outbox keeps a failed Queue delivery pending and retries it on the next collection', async () => {
