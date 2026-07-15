@@ -22,12 +22,21 @@ test('track history uses the database that owns queue snapshots', () => {
   assert.match(trackEndpoint, /handleTrackHistory/);
 });
 
-test('track history is presented as an ordered like-count ranking', () => {
+test('track history defaults to yesterday as a single day', () => {
+  assert.match(historyEntry, /Date\.now\(\) - 86_400_000/);
+  assert.match(historyEntry, /trackDate\.value = yesterday/);
+  assert.match(historyEntry, /trackWeekMode\.checked = false/);
+});
+
+test('track history is presented as a daily play-count ranking using like-ranking cards', () => {
   assert.match(historyEntry, /import\('\/history\/history-page-fixes\.js'\)/);
-  assert.match(historyFixes, /labels\.indexOf\('いいね数'\)/);
+  assert.match(historyFixes, /labels\.indexOf\('再生回数'\)/);
   assert.match(historyFixes, /rows\.sort/);
-  assert.match(historyFixes, /再生曲 いいね数ランキング/);
-  assert.match(historyFixes, /daily-total-row/);
+  assert.match(historyFixes, /1日の再生数ランキング/);
+  assert.match(historyFixes, /className = 'like-rank-item'/);
+  assert.match(historyFixes, /metric\('再生回数'/);
+  assert.match(historyFixes, /metric\('いいね数'/);
+  assert.match(historyFixes, /tableWrap\.hidden = true/);
 });
 
 test('sparse daily summaries draw visible point markers instead of an empty canvas', () => {
