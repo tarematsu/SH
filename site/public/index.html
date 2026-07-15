@@ -15,7 +15,10 @@
   <main id="content" class="shell">
     <header class="top-card">
       <div class="channel">
-        <img id="channelImage" class="channel-image" alt="" width="64" height="64" decoding="async">
+        <span class="channel-visual" aria-hidden="true">
+          <span id="channelFallback" class="channel-fallback">B</span>
+          <img id="channelImage" class="channel-image" alt="" width="72" height="72" decoding="async" hidden>
+        </span>
         <div class="channel-copy">
           <p class="kicker">STATIONHEAD LIVE MONITOR</p>
           <h1 id="channelName">Buddies</h1>
@@ -25,25 +28,27 @@
       </div>
       <nav class="top-actions" aria-label="関連リンク">
         <a class="button primary" href="stationhead://station/3328626">アプリで開く</a>
-        <a class="button" href="https://www.stationhead.com/c/buddies" target="_blank" rel="noopener noreferrer">Webで開く</a>
-        <a class="button" href="/history/index.html">過去データ</a>
+        <a class="button" href="/history/">過去データ</a>
       </nav>
     </header>
 
     <section class="metrics" aria-label="現在の指標">
-      <article class="metric featured"><span>オンライン</span><strong id="online">-</strong><small>人</small></article>
-      <article class="metric"><span>ユニーク参加者</span><strong id="members">-</strong><div id="membersDelta" class="delta" hidden></div></article>
-      <article class="metric"><span>延べ参加者</span><strong id="totalListens">-</strong><div id="listensDelta" class="delta" hidden></div></article>
+      <article class="metric featured"><span>オンライン</span><div class="metric-value"><strong id="online">-</strong><small>人</small></div></article>
+      <article class="metric"><span>ユニーク参加者</span><div class="metric-value"><strong id="members">-</strong></div><div id="membersDelta" class="delta" hidden></div></article>
+      <article class="metric"><span>延べ参加者</span><div class="metric-value"><strong id="totalListens">-</strong></div><div id="listensDelta" class="delta" hidden></div></article>
     </section>
 
     <section class="primary-grid">
       <article class="card now-card">
-        <div class="section-head">
-          <div><p class="kicker">NOW PLAYING</p><h2>再生中</h2></div>
+        <div class="section-head now-head">
+          <div><p class="kicker">NOW PLAYING</p><h2>再生中の曲</h2></div>
           <div id="host" class="host"></div>
         </div>
         <a id="nowPlayingLink" class="now-playing" target="_blank" rel="noopener noreferrer" aria-disabled="true">
-          <img id="trackImage" class="track-image" alt="" width="104" height="104" decoding="async">
+          <span class="track-visual" aria-hidden="true">
+            <span id="trackFallback" class="track-fallback">♪</span>
+            <img id="trackImage" class="track-image" alt="" width="104" height="104" decoding="async" hidden>
+          </span>
           <div class="track-copy">
             <strong id="trackTitle">曲情報を取得中...</strong>
             <span id="trackArtist" class="subtle"></span>
@@ -54,7 +59,7 @@
       </article>
 
       <article class="card queue-card">
-        <div class="section-head">
+        <div class="section-head queue-head">
           <div><p class="kicker">UP NEXT</p><h2>今後の再生予定</h2></div>
           <span id="queueCount" class="pill">-</span>
         </div>
@@ -64,12 +69,12 @@
     </section>
 
     <section class="card goal-card">
-      <div class="section-head"><div><p class="kicker">STREAMING GOAL</p><h2>ストリーム目標</h2></div></div>
+      <div class="section-head"><div><p class="kicker">STREAMING GOAL</p><h2>累計再生数の目標</h2></div></div>
       <div class="goal-layout">
-        <div>
+        <div class="goal-progress">
           <div class="goal-number"><strong id="streamCount">-</strong><span>/ <b id="streamGoal">-</b></span></div>
           <div class="progress large" aria-hidden="true"><i id="goalBar"></i></div>
-          <div class="goal-foot"><span id="goalPercent">-</span><span id="goalRemaining">-</span></div>
+          <div class="goal-foot"><strong id="goalPercent">-</strong><span id="goalRemaining">-</span></div>
         </div>
         <div class="prediction">
           <span>予測到達時期</span>
@@ -82,15 +87,15 @@
 
     <section class="card chart-card">
       <div class="section-head chart-head">
-        <div><p class="kicker">LAST 24 HOURS</p><h2>オンライン・再生数・コメント勢い</h2></div>
-        <div class="legend" aria-label="グラフ凡例"><span class="online-key">オンライン</span><span class="stream-key">再生数</span><span class="comment-key">コメント勢い</span></div>
+        <div><p class="kicker">LAST 24 HOURS</p><h2>オンライン・コメント勢い</h2></div>
+        <div class="legend" aria-label="グラフ凡例"><span class="online-key">オンライン</span><span class="comment-key">コメント勢い</span></div>
       </div>
-      <canvas id="chart" width="960" height="360" aria-label="過去24時間の推移"></canvas>
+      <canvas id="audienceChart" width="960" height="360" aria-label="過去24時間のオンライン人数とコメント勢い"></canvas>
       <div id="chartDetail" class="chart-detail">グラフをタッチすると、その時点の数値を表示します。</div>
     </section>
 
     <p id="statusMessage" class="status-message" role="status" hidden></p>
   </main>
-  <script src="/app-lite.js" defer></script>
+  <script type="module" src="/app-main.js"></script>
 </body>
 </html>
