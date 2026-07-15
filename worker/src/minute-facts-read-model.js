@@ -108,6 +108,57 @@ export function attachReadModelTrackMetadata(queue, rows = []) {
   return changed ? { ...queue, tracks } : queue;
 }
 
+function queueValueFromJson(value) {
+  if (!value) return null;
+  try {
+    const parsed = JSON.parse(value);
+    if (parsed && typeof parsed === 'object') return parsed;
+  } catch {
+    // A malformed previous read model must never block a fresh update.
+  }
+  return null;
+}
+
+function sameTrackIdentity(left, right) {
+  const leftIsrc = normalizedIsrc(left?.isrc);
+  const rightIsrc = normalizedIsrc(right?.isrc);
+  if (leftIsrc && rightIsrc) return leftIsrc === rightIsrc;
+  const leftSpotifyId = String(left?.spotify_id || '').trim();
+  const rightSpotifyId = String(right?.spotify_id || '').trim();
+  return Boolean(leftSpotifyId && rightSpotifyId && leftSpotifyId === rightSpotifyId);
+}
+
+export function preserveReadModelTrackMetadata(queue, previousQueue) {
+  if (!queue?.tracks?.length || !previousQueue?.tracks?.length) return queue;
+  const previousByPosition = new Map(previousQueue.tracks.map((track, index) => [
+    integer(track?.position) ?? index,
+    track,
+  ]));
+  let changed = false;
+  const tracks = queue.tracks.map((track, index) => {
+    const position = integer(track?.position) ?? index;
+    const previous = previousByPosition.get(position);
+    if (!previous || !sameTrackIdentity(track, previous)) return track;
+    const title = track.title || previous.title || null;
+    const artist = track.artist || previous.artist || null;
+    const albumName = track.album_name || previous.album_name || null;
+    const thumbnailUrl = track.thumbnail_url || previous.thumbnail_url || null;
+    if (title === track.title
+      && artist === track.artist
+      && albumName === track.album_name
+      && thumbnailUrl === track.thumbnail_url) return track;
+    changed = true;
+    return {
+      ...track,
+      title,
+      artist,
+      album_name: albumName,
+      thumbnail_url: thumbnailUrl,
+    };
+  });
+  return changed ? { ...queue, tracks } : queue;
+}
+
 async function hydrateQueueMetadataFromSource(env, readModel) {
   const db = env?.BUDDIES_DB;
   const queue = readModel?.queue?.value;
@@ -144,9 +195,29 @@ async function hydrateQueueMetadataFromSource(env, readModel) {
     return hydratedQueue === queue
       ? readModel
       : { ...readModel, queue: { ...readModel.queue, value: hydratedQueue } };
-  } catch {
+  } catch (error) {
+    console.error('minute read-model metadata hydration failed', error);
     return readModel;
   }
+}
+
+async function preservePreviousQueueMetadata(env, readModel) {
+  const queue = readModel?.queue || {};
+  const queueValue = queue.value;
+  const channelId = integer(readModel?.channel?.channel_id);
+  if (!env?.MINUTE_DB || channelId == null || !queueValue?.tracks?.length) return readModel;
+  const previous = await env.MINUTE_DB.prepare(`SELECT queue_id,start_time,queue_json
+    FROM sh_queue_read_model_current
+    WHERE channel_id=?
+    LIMIT 1`).bind(channelId).first();
+  if (!previous) return readModel;
+  if (integer(previous.queue_id) !== integer(queue.queue_id)
+    || timestamp(previous.start_time) !== timestamp(queue.start_time)) return readModel;
+  const previousQueue = queueValueFromJson(previous.queue_json);
+  const preservedQueue = preserveReadModelTrackMetadata(queueValue, previousQueue);
+  return preservedQueue === queueValue
+    ? readModel
+    : { ...readModel, queue: { ...queue, value: preservedQueue } };
 }
 
 export async function ensureMinuteFactReadModelSchema(env) {
@@ -173,10 +244,11 @@ export async function saveMinuteFactQueueReceipt(env, jobId) {
 export async function saveMinuteFactReadModels(env, readModel, _jobId) {
   await ensureMinuteFactReadModelSchema(env);
   const hydratedReadModel = await hydrateQueueMetadataFromSource(env, readModel);
-  if (!hydratedReadModel || typeof hydratedReadModel !== 'object') throw new Error('minute fact read model payload is missing');
-  const channel = hydratedReadModel.channel || {};
-  const queue = hydratedReadModel.queue || {};
-  const collector = hydratedReadModel.collector || {};
+  const stableReadModel = await preservePreviousQueueMetadata(env, hydratedReadModel);
+  if (!stableReadModel || typeof stableReadModel !== 'object') throw new Error('minute fact read model payload is missing');
+  const channel = stableReadModel.channel || {};
+  const queue = stableReadModel.queue || {};
+  const collector = stableReadModel.collector || {};
   const channelId = integer(channel.channel_id);
   const observedAt = integer(channel.observed_at);
   if (channelId == null || observedAt == null) throw new Error('channel read model identity is missing');
