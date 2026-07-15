@@ -1,4 +1,4 @@
-export const API_CONTRACT_VERSION = 2;
+export const API_CONTRACT_VERSION = 3;
 
 export const API_GROUPS = Object.freeze({
   status: Object.freeze([
@@ -33,26 +33,36 @@ export const COMPATIBILITY_ENDPOINTS = Object.freeze([
   {
     path: '/api/health/collector',
     successor: '/api/health',
+    behavior: 'redirect',
+    status: 308,
     description: 'Explicit compatibility alias for primary collector health',
   },
   {
     path: '/api/history-current',
     successor: '/api/minute-facts/current',
+    behavior: 'redirect',
+    status: 308,
     description: 'Compatibility alias for the current minute-facts view',
   },
   {
     path: '/api/history-migrated',
     successor: '/api/minute-facts',
+    behavior: 'redirect',
+    status: 308,
     description: 'Compatibility alias for paginated minute facts',
   },
   {
     path: '/api/history-raw',
     successor: '/api/history?mode=raw',
+    behavior: 'response',
+    status: 200,
     description: 'Compatibility route for legacy-source raw history',
   },
   {
     path: '/api/official-history',
     successor: '/api/history?mode=broadcasts',
+    behavior: 'response',
+    status: 200,
     description: 'Compatibility route for official broadcast summaries',
   },
 ]);
