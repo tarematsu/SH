@@ -1,9 +1,31 @@
+import { BLOCKED_API_PATHS } from '../lib/api-contract.js';
+
 const inFlight = new Map();
+const blockedApiPaths = new Set(BLOCKED_API_PATHS);
+
+function normalizedPathname(value) {
+  const pathname = String(value || '/');
+  return pathname.length > 1 ? pathname.replace(/\/+$/, '') : pathname;
+}
+
+export function isBlockedApiPath(pathname) {
+  return blockedApiPaths.has(normalizedPathname(pathname));
+}
+
+function notFoundResponse() {
+  return Response.json({ ok: false, error: 'not found' }, {
+    status: 404,
+    headers: {
+      'cache-control': 'no-store',
+      'x-content-type-options': 'nosniff',
+    },
+  });
+}
 
 function cachePolicy(url) {
   if (url.pathname === '/api/dashboard') return { ttl: 60, browser: 30 };
   if (url.pathname === '/api/dashboard-history') return { ttl: 300, browser: 60 };
-  if (url.pathname === '/api/history-current') return { ttl: 60, browser: 30 };
+  if (url.pathname === '/api/minute-facts/current') return { ttl: 60, browser: 30 };
   if (url.pathname === '/api/track-history') return { ttl: 900, browser: 300 };
   if (url.pathname === '/api/like-ranking') return { ttl: 900, browser: 300 };
   if (url.pathname === '/api/broadcast-series') return { ttl: 3600, browser: 300 };
@@ -42,9 +64,10 @@ function tagged(response, state) {
 
 export async function onRequest(context) {
   const { request } = context;
+  const url = new URL(request.url);
+  if (isBlockedApiPath(url.pathname)) return notFoundResponse();
   if (request.method !== 'GET' || request.headers.has('authorization')) return context.next();
 
-  const url = new URL(request.url);
   const policy = cachePolicy(url);
   if (!policy) return context.next();
 
@@ -76,6 +99,5 @@ export async function onRequest(context) {
     inFlight.set(key, task);
   }
 
-  const response = await task;
-  return tagged(response, coalesced ? 'COALESCED' : 'MISS');
+  return tagged(await task, coalesced ? 'COALESCED' : 'MISS');
 }
