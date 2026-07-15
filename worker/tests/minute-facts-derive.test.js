@@ -44,7 +44,7 @@ test('retry delay grows exponentially and is capped at one hour', () => {
 test('derive cron claims the batch once, then writes and completes each job', async () => {
   const calls = [];
   const result = await runMinuteFactDeriveCron(
-    { FACTS_DB: {} },
+    { MINUTE_DB: {} },
     {
       now: () => 1_000,
       claim: async (_env, options) => {
@@ -83,7 +83,7 @@ test('derive cron returns budget-stranded jobs to the queue', async () => {
   const released = [];
   let clock = 1_000;
   const result = await runMinuteFactDeriveCron(
-    { FACTS_DB: {}, DERIVE_RUN_BUDGET_MS: 5_000 },
+    { MINUTE_DB: {}, DERIVE_RUN_BUDGET_MS: 5_000 },
     {
       // First job processes at t=1000; the budget deadline is 1000+5000-1000
       // guard = 5000, so the second job is skipped once the clock passes it.
@@ -106,7 +106,7 @@ test('derive cron reschedules failed jobs without failing the cron event', async
   const pending = [job(9, 3)];
   const failures = [];
   const result = await runMinuteFactDeriveCron(
-    { FACTS_DB: {}, DERIVE_MAX_JOBS: 1 },
+    { MINUTE_DB: {}, DERIVE_MAX_JOBS: 1 },
     {
       now: () => 5_000,
       claim: async () => pending.length ? [pending.shift()] : [],

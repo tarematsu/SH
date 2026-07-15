@@ -60,7 +60,7 @@ function boundedEnv(env, signal) {
   return new Proxy(env || {}, {
     get(target, property, receiver) {
       if (property === '__COLLECTION_ABORT_SIGNAL') return signal;
-      if (property === 'DB' || property === 'FACTS_DB') return withAbortableMinuteFactD1(Reflect.get(target, property, receiver), signal);
+      if (property === 'DB' || property === 'MINUTE_DB') return withAbortableMinuteFactD1(Reflect.get(target, property, receiver), signal);
       return Reflect.get(target, property, receiver);
     },
   });

@@ -306,8 +306,8 @@ export function decorateQueueResponse(payload, queueContext) {
 }
 
 export async function onRequestGet(context) {
-  if (!context.env?.FACTS_DB) {
-    return new Response(JSON.stringify({ ok: false, error: 'FACTS_DB binding missing' }), {
+  if (!context.env?.MINUTE_DB) {
+    return new Response(JSON.stringify({ ok: false, error: 'MINUTE_DB binding missing' }), {
       status: 500,
       headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' },
     });
@@ -321,7 +321,7 @@ export async function onRequestGet(context) {
     unchanged: false,
     contextPromise: null,
   };
-  const predictionPromise = loadPredictionState(context.env.FACTS_DB).catch((error) => {
+  const predictionPromise = loadPredictionState(context.env.MINUTE_DB).catch((error) => {
     console.error(error);
     return null;
   });
@@ -329,16 +329,16 @@ export async function onRequestGet(context) {
   const includeHistory = url.searchParams.get('history') !== '0';
   try {
     const [facts, predictionState] = await Promise.all([
-      loadFactsDashboard(context.env.FACTS_DB, { since, includeHistory }),
+      loadFactsDashboard(context.env.MINUTE_DB, { since, includeHistory }),
       predictionPromise,
     ]);
     if (!factsAreFresh(facts.latest)) {
-      return new Response(JSON.stringify({ ok: false, error: 'FACTS_DB telemetry is stale' }), {
+      return new Response(JSON.stringify({ ok: false, error: 'MINUTE_DB telemetry is stale' }), {
         status: 503,
         headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' },
       });
     }
-    const models = await loadPublicReadModels(context.env.FACTS_DB, facts.latest.channel_id);
+    const models = await loadPublicReadModels(context.env.MINUTE_DB, facts.latest.channel_id);
     const presentation = presentationFromRow(models.presentation);
     const channel = presentation.channel || presentation;
     const station = channel.current_station || presentation.current_station || {};
@@ -367,8 +367,8 @@ export async function onRequestGet(context) {
     const memberRange = range(16);
     const listensRange = range(9);
     const [previousMembers, previousListens] = await Promise.all([
-      loadFactsBaseline(context.env.FACTS_DB, 'total_member_count', facts.latest.host_id, memberRange.previousStart, memberRange.currentStart),
-      loadFactsBaseline(context.env.FACTS_DB, 'total_listens', facts.latest.host_id, listensRange.previousStart, listensRange.currentStart),
+      loadFactsBaseline(context.env.MINUTE_DB, 'total_member_count', facts.latest.host_id, memberRange.previousStart, memberRange.currentStart),
+      loadFactsBaseline(context.env.MINUTE_DB, 'total_listens', facts.latest.host_id, listensRange.previousStart, listensRange.currentStart),
     ]);
     const current = num(latest.current_stream_count ?? streaming.current_stream_count ?? latest.total_listens);
     const { goalPrediction, goalPredictions } = dashboardGoalPredictions({

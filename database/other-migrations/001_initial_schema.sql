@@ -2,7 +2,7 @@
 -- exclusive to sh-monitor-other and site that have no write dependency on
 -- sh-monitor-buddies' own collector tables. Applied by
 -- worker/scripts/provision-other-db.mjs, mirroring how
--- database/facts-migrations/001_initial_schema.sql provisions FACTS_DB.
+-- database/facts-migrations/001_initial_schema.sql provisions MINUTE_DB.
 
 CREATE TABLE IF NOT EXISTS sh_cloud_host_monitor_state (
   id TEXT PRIMARY KEY,

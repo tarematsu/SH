@@ -191,7 +191,7 @@ export async function shouldProbeSolo(env, config, state, now = Date.now()) {
 
 async function account(env, config, auth, accountId) {
   if (!accountId) return null;
-  const channel = await env.FACTS_DB.prepare(`SELECT channel_id FROM sh_minute_facts
+  const channel = await env.MINUTE_DB.prepare(`SELECT channel_id FROM sh_minute_facts
     ORDER BY minute_at DESC,id DESC LIMIT 1`).first();
   const channelId = finite(channel?.channel_id) || 318;
   const payload = await stationRequest(
@@ -356,7 +356,7 @@ async function probeSolo(env, config, auth, now, recoveredState = null) {
       method: 'POST',
       body: '{}',
     }),
-    env.FACTS_DB.prepare(`SELECT station_id FROM sh_queue_read_model_current
+    env.MINUTE_DB.prepare(`SELECT station_id FROM sh_queue_read_model_current
       ORDER BY observed_at DESC LIMIT 1`).first(),
   ]);
   const stationIdentity = identity(station);
@@ -457,7 +457,7 @@ async function probeSolo(env, config, auth, now, recoveredState = null) {
 }
 
 export async function runCloudHostMonitor(env) {
-  if (!env.FACTS_DB || !env.OTHER_DB) return;
+  if (!env.MINUTE_DB || !env.OTHER_DB) return;
   const config = cfg(env);
   const now = Date.now();
   try {

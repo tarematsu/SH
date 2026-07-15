@@ -30,7 +30,7 @@ test('minute comment task is persisted before the fact receipt can be saved', as
       return statements.map(() => ({ success: true }));
     },
   };
-  const result = await saveMinuteCommentTask({ FACTS_DB: db }, {
+  const result = await saveMinuteCommentTask({ MINUTE_DB: db }, {
     jobId: 'minute-fact:10:120000',
     payload: {
       observedAt: 123_456,
@@ -49,7 +49,7 @@ test('minute comment task is persisted before the fact receipt can be saved', as
 test('comment task collects with source DB and requeues an idempotent correction', async () => {
   const calls = [];
   let corrected = null;
-  const env = { BUDDIES_DB: {}, FACTS_DB: {} };
+  const env = { BUDDIES_DB: {}, MINUTE_DB: {} };
   const summary = await runMinuteCommentTasks(env, {
     now: () => 200_000,
     claim: async () => [{
@@ -98,7 +98,7 @@ test('comment task collects with source DB and requeues an idempotent correction
 
 test('comment task failures stay in the task queue and do not reject the minute run', async () => {
   let failed = null;
-  const summary = await runMinuteCommentTasks({ BUDDIES_DB: {}, FACTS_DB: {} }, {
+  const summary = await runMinuteCommentTasks({ BUDDIES_DB: {}, MINUTE_DB: {} }, {
     claim: async () => [{
       task_id: 'task-1',
       station_id: 5,

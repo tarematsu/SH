@@ -26,6 +26,9 @@
     "HEALTH_ALERT_STALE_MS": 3600000,
     "PUBLIC_HEALTH_CACHE_MS": 60000,
     "REQUEST_TIMEOUT_MS": 8000,
+    "CRON_STAGGER_OTHER_MS": 25000,
+    "COLLECTOR_PRIORITY_WAIT_MS": 15000,
+    "COLLECTOR_PRIORITY_POLL_MS": 1000,
     "DATA_MAINTENANCE_ENABLED": true,
     "SNAPSHOT_RETENTION_ENABLED": true,
     "SNAPSHOT_RETENTION_MS": 2592000000,
@@ -36,7 +39,7 @@
   "triggers": { "crons": ["* * * * *"] },
   "d1_databases": [
     { "binding": "BUDDIES_DB", "database_name": "stationhead-buddies", "database_id": "f361aae0-05f0-42bc-8784-77100e80133d" },
-    { "binding": "FACTS_DB", "database_name": "stationhead-minute", "database_id": "43c12c1e-886d-4496-9c37-61bc8a15bbd7" },
+    { "binding": "MINUTE_DB", "database_name": "stationhead-minute", "database_id": "43c12c1e-886d-4496-9c37-61bc8a15bbd7" },
     { "binding": "OTHER_DB", "database_name": "stationhead-other", "database_id": "21e70e92-6725-4e62-809e-8aadb088cc11" }
   ]
 }

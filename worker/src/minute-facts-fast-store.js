@@ -119,8 +119,8 @@ async function writeCurrentBite(db, input) {
 }
 
 export async function saveOptimizedLiveMinuteFact(env, input) {
-  const db = env?.FACTS_DB;
-  if (!db) return { skipped: true, reason: 'facts-db-binding-missing' };
+  const db = env?.MINUTE_DB;
+  if (!db) return { skipped: true, reason: 'minute-db-binding-missing' };
   const snapshot = input.snapshot || {};
   const queue = input.queue || null;
   const observedAt = integer(input.observedAt) ?? Date.now();

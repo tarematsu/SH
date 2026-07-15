@@ -53,7 +53,7 @@ test('minute worker has dedicated name, source bindings and one routing cron', (
   assert.equal(config.name, 'sh-monitor-minute');
   assert.equal(config.main, 'src/minute-entry.js');
   assert.deepEqual(config.triggers.crons, [MINUTE_FACT_WORKER_CRON]);
-  assert.deepEqual(config.d1_databases.map(({ binding }) => binding), ['BUDDIES_DB', 'FACTS_DB']);
+  assert.deepEqual(config.d1_databases.map(({ binding }) => binding), ['BUDDIES_DB', 'MINUTE_DB']);
   assert.deepEqual(config.d1_databases.map(({ database_name }) => database_name), [
     'stationhead-buddies',
     'stationhead-minute',
@@ -63,7 +63,7 @@ test('minute worker has dedicated name, source bindings and one routing cron', (
 test('minute stagger applies only to shared source database jobs', () => {
   assert.equal(minuteStaggerApplies({ cron: MINUTE_FACT_DERIVE_CRON }), false);
   assert.equal(minuteStaggerApplies({ cron: MINUTE_FACT_REBUILD_CRON }), true);
-  assert.equal(minuteStaggerApplies({ cron: MINUTE_FACT_WORKER_CRON, scheduledTime: 2 * 60_000 }), false);
+  assert.equal(minuteStaggerApplies({ cron: MINUTE_FACT_WORKER_CRON, scheduledTime: 2 * 60_000 }), true);
   assert.equal(minuteStaggerApplies({ cron: MINUTE_FACT_WORKER_CRON, scheduledTime: 7 * 60_000 }), true);
   assert.equal(minuteStaggerApplies({ cron: MINUTE_FACT_WORKER_CRON, scheduledTime: 9 * 60_000 }), true);
 });
@@ -80,7 +80,7 @@ test('minute health includes only active derive, recovery and rebuild jobs', () 
 test('minute worker /health responses are cached across repeated requests', async () => {
   let reads = 0;
   const env = {
-    FACTS_DB: {
+    MINUTE_DB: {
       prepare(sql) {
         return {
           bind() {

@@ -23,7 +23,7 @@ export function shouldRunScheduledMaintenance(now = Date.now(), env = {}) {
 }
 
 export function minuteFactsCutoverEnabled(env = {}) {
-  return Boolean(env?.FACTS_DB);
+  return Boolean(env?.MINUTE_DB);
 }
 
 export function legacyMigrationEnabled() {
@@ -32,7 +32,7 @@ export function legacyMigrationEnabled() {
 
 export async function runScheduledMaintenance(env, now = Date.now()) {
   const sourceDb = env?.BUDDIES_DB;
-  if (!sourceDb || !env?.FACTS_DB || !env?.OTHER_DB) {
+  if (!sourceDb || !env?.MINUTE_DB || !env?.OTHER_DB) {
     return { skipped: true, reason: 'db-binding-missing' };
   }
   if (!dataMaintenanceEnabled(env)) {

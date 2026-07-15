@@ -80,12 +80,12 @@ function outboxDb() {
   };
 }
 
-test('producer awaits durable Queue acceptance without touching FACTS_DB', async () => {
+test('producer awaits durable Queue acceptance without touching MINUTE_DB', async () => {
   let accepted = false;
   let sent;
   const env = {
-    FACTS_DB: new Proxy({}, {
-      get() { throw new Error('FACTS_DB must not be touched by producer'); },
+    MINUTE_DB: new Proxy({}, {
+      get() { throw new Error('MINUTE_DB must not be touched by producer'); },
     }),
     MINUTE_FACT_QUEUE: {
       async send(body, options) {
@@ -171,7 +171,7 @@ test('consumer enqueues once and acknowledges duplicate at-least-once delivery',
   const first = queueMessage(body);
   const duplicate = queueMessage(body, 2);
   let calls = 0;
-  const result = await consumeMinuteFactBatch({ messages: [first, duplicate] }, { FACTS_DB: {} }, {
+  const result = await consumeMinuteFactBatch({ messages: [first, duplicate] }, { MINUTE_DB: {} }, {
     enqueue: async (_env, payload) => {
       calls += 1;
       assert.equal(payload.snapshot.channel_id, 10);
@@ -231,8 +231,8 @@ test('minute worker exposes the Queue consumer handler through the health wrappe
   assert.equal(typeof minuteApp.queue, 'function');
 });
 
-test('delegated metadata enrichment uses BUDDIES_DB and cannot fail the Queue job', async () => {
-  const env = { BUDDIES_DB: {}, FACTS_DB: {} };
+test('delegated metadata enrichment uses MINUTE_DB and cannot fail the Queue job', async () => {
+  const env = { BUDDIES_DB: {}, MINUTE_DB: {} };
   let receivedEnv = null;
   let receivedQueue = null;
   let receivedObservedAt = null;
@@ -247,8 +247,8 @@ test('delegated metadata enrichment uses BUDDIES_DB and cannot fail the Queue jo
       return 1;
     },
   });
-  assert.strictEqual(receivedEnv.DB, env.BUDDIES_DB);
-  assert.strictEqual(receivedEnv.FACTS_DB, env.FACTS_DB);
+  assert.strictEqual(receivedEnv.DB, env.MINUTE_DB);
+  assert.strictEqual(receivedEnv.MINUTE_DB, env.MINUTE_DB);
   assert.equal(receivedQueue.tracks[0].spotify_id, 'track-1');
   assert.equal(receivedObservedAt, 123_456);
 
@@ -295,9 +295,9 @@ test('producer stores queue tracks once and consumer restores the read model val
   assert.equal(parsed.read_model.channel.presentation.description, 'channel details');
 });
 
-test('consumer read model writes channel, queue, and collector state to FACTS_DB', async () => {
+test('consumer read model writes channel, queue, and collector state to MINUTE_DB', async () => {
   const batches = [];
-  const FACTS_DB = {
+  const MINUTE_DB = {
     prepare(sql) {
       return {
         sql,
@@ -310,7 +310,7 @@ test('consumer read model writes channel, queue, and collector state to FACTS_DB
       return statements.map(() => ({ success: true }));
     },
   };
-  await saveMinuteFactReadModels({ FACTS_DB }, {
+  await saveMinuteFactReadModels({ MINUTE_DB }, {
     channel: { channel_id: 10, observed_at: 123_456, presentation: { channel_name: 'Buddies' } },
     queue: { station_id: 5, queue_id: 9, start_time: 100, is_paused: false, value: { tracks: [] } },
     collector: {
@@ -348,7 +348,7 @@ test('minute worker hydrates queue metadata from BUDDIES_DB instead of the prima
     },
   };
   const batches = [];
-  const FACTS_DB = {
+  const MINUTE_DB = {
     prepare(sql) {
       return {
         sql,
@@ -362,7 +362,7 @@ test('minute worker hydrates queue metadata from BUDDIES_DB instead of the prima
     },
   };
 
-  await saveMinuteFactReadModels({ BUDDIES_DB, FACTS_DB }, {
+  await saveMinuteFactReadModels({ BUDDIES_DB, MINUTE_DB }, {
     channel: { channel_id: 10, observed_at: 123_456, presentation: {} },
     queue: {
       station_id: 5,

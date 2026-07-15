@@ -321,8 +321,8 @@ export async function loadTrackHistoryData(db, fromTs, toTs, maxGroupedRows, inc
 }
 
 export async function handleTrackHistory({ request, env, waitUntil }) {
-  const db = env.FACTS_DB || env.DB;
-  if (!db) return out({ ok: false, error: 'FACTS_DB binding missing' }, 500);
+  const db = env.MINUTE_DB || env.DB;
+  if (!db) return out({ ok: false, error: 'MINUTE_DB binding missing' }, 500);
   const url = new URL(request.url);
   try {
     if (url.searchParams.get('latest') === '1') {
@@ -388,7 +388,7 @@ export async function handleTrackHistory({ request, env, waitUntil }) {
       excluded_play_count_dates: completed.excludedDates,
       excluded_play_count_date_count: completed.excludedDates.length,
       metadata_refresh_scheduled: metadataRefreshScheduled,
-      historical_recovery: env.FACTS_DB
+      historical_recovery: env.MINUTE_DB
         ? 'facts_downstream_archive_with_wall_clock_pause_mapping'
         : 'channel_snapshots_with_wall_clock_pause_mapping',
       method: 'queue_checkpoint_terminal_active_span_and_namespaced_like_reachability_utc_sql_preaggregate',

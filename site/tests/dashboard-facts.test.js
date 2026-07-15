@@ -52,7 +52,7 @@ test('facts telemetry overrides DB metrics while retaining presentation fields',
   assert.equal(merged.online_member_count, 167);
 });
 
-test('main dashboard prefers fresh FACTS_DB metrics and history over conflicting DB values', async () => {
+test('main dashboard prefers fresh MINUTE_DB metrics and history over conflicting DB values', async () => {
   const now = Date.now();
   const db = new FakeD1Database()
     .route('first', 'FROM sh_channel_snapshots AS snapshots ORDER BY', {
@@ -107,7 +107,7 @@ test('main dashboard prefers fresh FACTS_DB metrics and history over conflicting
 
   const response = await dashboardGet({
     request: new Request('https://skrzk.test/api/dashboard'),
-    env: { DB: db, FACTS_DB: facts },
+    env: { DB: db, MINUTE_DB: facts },
   });
   const payload = await responseJson(response);
   assert.equal(response.status, 200);
@@ -122,7 +122,7 @@ test('main dashboard prefers fresh FACTS_DB metrics and history over conflicting
   assert.equal(db.callsMatching(/HISTORY_24H_SQL|snapshots\.observed_at >=/).length, 0);
 });
 
-test('dashboard history and recovery select FACTS_DB when it is bound', async () => {
+test('dashboard history and recovery select MINUTE_DB when it is bound', async () => {
   const now = Date.now();
   const facts = new FakeD1Database()
     .route('first', 'FROM sh_minute_facts AS f\nLEFT JOIN sh_minute_fact_context', { observed_at: now - 1_000 })
@@ -131,8 +131,8 @@ test('dashboard history and recovery select FACTS_DB when it is bound', async ()
   const forbiddenDb = {
     prepare() { throw new Error('legacy DB must not be queried'); },
   };
-  const history = await responseJson(await dashboardHistoryGet({ env: { DB: forbiddenDb, FACTS_DB: facts } }));
-  const recovery = await responseJson(await dashboardRecoveryGet({ env: { DB: forbiddenDb, FACTS_DB: facts } }));
+  const history = await responseJson(await dashboardHistoryGet({ env: { DB: forbiddenDb, MINUTE_DB: facts } }));
+  const recovery = await responseJson(await dashboardRecoveryGet({ env: { DB: forbiddenDb, MINUTE_DB: facts } }));
   assert.equal(history.ok, true);
   assert.equal(history.storage_source, 'facts-db');
   assert.equal(history.history[0].online_member_count, 12);
@@ -150,7 +150,7 @@ test('dashboard history does not fall back to the private buddies DB', async () 
   const db = new FakeD1Database().route('all', 'FROM sh_channel_snapshots', {
     results: [{ observed_at: 200, online_member_count: 9 }],
   });
-  const payload = await responseJson(await dashboardHistoryGet({ env: { DB: db, FACTS_DB: facts } }));
+  const payload = await responseJson(await dashboardHistoryGet({ env: { DB: db, MINUTE_DB: facts } }));
   assert.equal(payload.ok, false);
   assert.equal(db.calls.length, 0);
 });

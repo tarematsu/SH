@@ -479,7 +479,7 @@ async function secondaryPlaybackResponse(db, otherDb, alias, generatedAt, includ
 }
 
 export async function onRequestGet({ request, env }) {
-  const db = env.FACTS_DB;
+  const db = env.MINUTE_DB;
   const otherDb = env.OTHER_DB;
 
   try {
@@ -489,7 +489,7 @@ export async function onRequestGet({ request, env }) {
       if (!otherDb) return playbackJson({ ok: false, error: 'OTHER_DB binding missing' }, 500, 'no-store');
       return await secondaryPlaybackResponse(db, otherDb, channelAlias, generatedAt, requestedRawPayload(request));
     }
-    if (!db) return playbackJson({ ok: false, error: 'FACTS_DB binding missing' }, 500, 'no-store');
+    if (!db) return playbackJson({ ok: false, error: 'MINUTE_DB binding missing' }, 500, 'no-store');
 
     const latest = await db.prepare(`SELECT f.observed_at,f.channel_id,f.is_broadcasting,
       c.station_id,c.broadcast_start_time,h.stationhead_account_id AS host_account_id,

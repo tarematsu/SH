@@ -1,4 +1,4 @@
-import { applyCronStagger } from './cron-stagger.js';
+import { applyCronStagger, waitForCollectorCompletion } from './cron-stagger.js';
 import { runBuddiesFactsSync } from './buddies-facts-sync.js';
 import { sanitizeFailureDetail } from './collector-failure.js';
 import { configFromEnv } from './collector-config.js';
@@ -36,9 +36,7 @@ function scheduledMinute(controller = {}) {
 export function minuteStaggerApplies(controller = {}) {
   const cron = String(controller.cron || '');
   if (cron === MINUTE_FACT_REBUILD_CRON) return true;
-  if (cron !== MINUTE_FACT_WORKER_CRON) return false;
-  const minute = scheduledMinute(controller);
-  return minute != null && (minute % 10 === 7 || minute % 10 === 9);
+  return cron === MINUTE_FACT_WORKER_CRON;
 }
 
 function enabled(value) {
@@ -60,11 +58,11 @@ function withSourceDatabase(env, binding) {
 }
 
 export async function runCommittedMetadataEnrichment(env, jobs, dependencies = {}) {
-  const sourceEnv = withSourceDatabase(env, 'BUDDIES_DB');
-  if (!env?.BUDDIES_DB || !sourceEnv?.DB) {
+  const sourceEnv = withSourceDatabase(env, 'MINUTE_DB');
+  if (!env?.MINUTE_DB || !sourceEnv?.DB) {
     console.warn(JSON.stringify({
       event: 'minute_track_metadata_enrichment_skipped',
-      reason: 'buddies-db-binding-missing',
+      reason: 'minute-db-binding-missing',
       jobs: jobs.length,
     }));
     return;
@@ -100,10 +98,10 @@ async function runTracked(env, task, action) {
   const startedAt = Date.now();
   try {
     const result = await action();
-    if (env?.FACTS_DB) await recordMinuteFactRuntimeState(env, task, result, { startedAt });
+    if (env?.MINUTE_DB) await recordMinuteFactRuntimeState(env, task, result, { startedAt });
     return result;
   } catch (error) {
-    if (env?.FACTS_DB) await recordMinuteFactRuntimeState(env, task, { error }, { startedAt, success: false }).catch(() => {});
+    if (env?.MINUTE_DB) await recordMinuteFactRuntimeState(env, task, { error }, { startedAt, success: false }).catch(() => {});
     throw error;
   }
 }
@@ -188,6 +186,8 @@ const rawApp = {
   },
   async scheduled(controller, env, ctx) {
     if (minuteStaggerApplies(controller)) await applyCronStagger(env, 'minute');
+    const collector = await waitForCollectorCompletion(env, controller?.scheduledTime);
+    if (!collector.ready) return { skipped: true, reason: collector.reason, targetMinute: collector.targetMinute };
     return runMinuteScheduled(controller, env, { ctx });
   },
   async fetch(request, env) {

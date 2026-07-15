@@ -21,8 +21,8 @@ function boundedInteger(value, fallback, min, max) {
 }
 
 export async function onRequestGet({ request, env }) {
-  const db = env.FACTS_DB;
-  if (!db) return json({ ok: false, error: 'FACTS_DB binding missing' }, 500);
+  const db = env.MINUTE_DB;
+  if (!db) return json({ ok: false, error: 'MINUTE_DB binding missing' }, 500);
   try {
     const url = new URL(request.url);
     const offset = boundedInteger(url.searchParams.get('offset'), 11, 0, 200);

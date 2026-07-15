@@ -33,7 +33,7 @@ FROM sh_queue_read_model_current ORDER BY observed_at DESC LIMIT 1`;
 export async function loadOfficialProbeContext(env) {
   const [session, station] = await Promise.all([
     env.OTHER_DB.prepare(OFFICIAL_PROBE_CONTEXT_SQL).first(),
-    env.FACTS_DB.prepare(OFFICIAL_BUDDIES_STATION_SQL).first(),
+    env.MINUTE_DB.prepare(OFFICIAL_BUDDIES_STATION_SQL).first(),
   ]);
   return { ...session, buddies_station_id: station?.buddies_station_id ?? null };
 }

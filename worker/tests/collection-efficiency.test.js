@@ -100,10 +100,10 @@ test('scheduled maintenance is due only on its configured interval boundary', ()
   assert.equal(shouldRunScheduledMaintenance(15 * 60_000, { DATA_MAINTENANCE_INTERVAL_MS: 15 * 60_000 }), true);
 });
 
-test('minute facts cutover requires only the FACTS binding', () => {
+test('minute facts cutover requires only the MINUTE binding', () => {
   assert.equal(minuteFactsCutoverEnabled({ DB: {} }), false);
-  assert.equal(minuteFactsCutoverEnabled({ FACTS_DB: {} }), true);
-  assert.equal(minuteFactsCutoverEnabled({ DB: {}, FACTS_DB: {} }), true);
+  assert.equal(minuteFactsCutoverEnabled({ MINUTE_DB: {} }), true);
+  assert.equal(minuteFactsCutoverEnabled({ DB: {}, MINUTE_DB: {} }), true);
 });
 
 test('scheduled maintenance legacy migration entry point remains disabled', async () => {
@@ -114,9 +114,9 @@ test('scheduled maintenance writes durable daily rollups to OTHER_DB', async () 
   const sqls = [];
   const result = await runScheduledMaintenance({
     BUDDIES_DB: noSourceDataDb(sqls),
-    FACTS_DB: new Proxy({}, {
+    MINUTE_DB: new Proxy({}, {
       get() {
-        throw new Error('FACTS_DB must not be touched by scheduled maintenance');
+        throw new Error('MINUTE_DB must not be touched by scheduled maintenance');
       },
     }),
     OTHER_DB: noSourceDataDb(),

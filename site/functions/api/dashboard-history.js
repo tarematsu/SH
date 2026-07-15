@@ -10,10 +10,10 @@ const json = (data, status = 200) => new Response(JSON.stringify(data), {
 });
 
 export async function onRequestGet({ env }) {
-  if (!env.FACTS_DB) return json({ ok: false, error: 'FACTS_DB binding missing' }, 500);
+  if (!env.MINUTE_DB) return json({ ok: false, error: 'MINUTE_DB binding missing' }, 500);
   try {
-    const facts = await loadFactsDashboard(env.FACTS_DB);
-    if (!factsAreFresh(facts.latest)) return json({ ok: false, error: 'FACTS_DB telemetry is stale' }, 503);
+    const facts = await loadFactsDashboard(env.MINUTE_DB);
+    if (!factsAreFresh(facts.latest)) return json({ ok: false, error: 'MINUTE_DB telemetry is stale' }, 503);
     const result = { results: facts.history };
     return json({
       ok: true,

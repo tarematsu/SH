@@ -142,7 +142,7 @@ wrangler([
 ]);
 
 writeFileSync(metadataPath, `${JSON.stringify({
-  binding: 'FACTS_DB',
+  binding: 'MINUTE_DB',
   database_name: databaseName,
   database_id: databaseId,
   schema: 'database/facts-migrations/008_buddies_downstream_archive.sql',

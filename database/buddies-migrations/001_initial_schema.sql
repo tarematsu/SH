@@ -1,5 +1,5 @@
 -- Storage owned exclusively by sh-monitor-buddies.
--- Other Workers and Pages must consume the FACTS_DB read model instead.
+-- Other Workers and Pages must consume the MINUTE_DB read model instead.
 
 CREATE TABLE IF NOT EXISTS sh_channel_snapshots (
   id INTEGER PRIMARY KEY AUTOINCREMENT,

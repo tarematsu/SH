@@ -46,7 +46,7 @@ test('playback endpoint rejects a missing D1 binding without cacheable output', 
   const response = await playbackGet({ env: {} });
   assert.equal(response.status, 500);
   assert.equal(response.headers.get('cache-control'), 'no-store');
-  assert.deepEqual(await responseJson(response), { ok: false, error: 'FACTS_DB binding missing' });
+  assert.deepEqual(await responseJson(response), { ok: false, error: 'MINUTE_DB binding missing' });
 });
 
 test('playback endpoint maps a live queue into current-track state and cache headers', async () => {
@@ -104,7 +104,7 @@ test('playback endpoint maps a live queue into current-track state and cache hea
         start_time: row.queue_start_time,
       }))),
     });
-  const response = await playbackGet({ env: { FACTS_DB: db } });
+  const response = await playbackGet({ env: { MINUTE_DB: db } });
   const body = await responseJson(response);
 
   assert.equal(response.status, 200);
@@ -124,7 +124,7 @@ test('playback endpoint maps a live queue into current-track state and cache hea
 test('buddies and buddy46 expose the same core playback envelope when empty', async () => {
   const primaryResponse = await playbackGet({
     request: new Request('https://skrzk.test/api/playback?channel=buddies'),
-    env: { FACTS_DB: new FakeD1Database().route('first', 'FROM sh_minute_facts f', null) },
+    env: { MINUTE_DB: new FakeD1Database().route('first', 'FROM sh_minute_facts f', null) },
   });
   const secondaryDb = new FakeD1Database()
     .route('first', 'sh_collector_status', null)

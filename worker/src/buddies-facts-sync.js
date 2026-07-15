@@ -140,29 +140,29 @@ async function readRows(sourceDb, syncKey, state, cutoff, limit) {
 
 async function syncOne(env, syncKey, now, limit) {
   const sourceDb = env?.DB || env?.BUDDIES_DB;
-  const factsDb = env?.FACTS_DB;
-  if (!sourceDb || !factsDb) return { syncKey, skipped: true, reason: 'db-binding-missing' };
-  const state = await loadState(factsDb, syncKey);
+  const minuteDb = env?.MINUTE_DB;
+  if (!sourceDb || !minuteDb) return { syncKey, skipped: true, reason: 'db-binding-missing' };
+  const state = await loadState(minuteDb, syncKey);
   if (!state) return { syncKey, skipped: true, reason: 'state-missing' };
   const result = await readRows(sourceDb, syncKey, state, sourceCutoff(now, env), limit);
   const rows = result.results || [];
   if (!rows.length) {
-    await factsDb.prepare(`UPDATE sh_buddies_sync_state SET
+    await minuteDb.prepare(`UPDATE sh_buddies_sync_state SET
         last_run_at=?,last_success_at=?,last_error=NULL,updated_at=? WHERE sync_key=?`)
       .bind(now, now, now, syncKey).run();
     return { syncKey, skipped: false, rows: 0, caught_up: true };
   }
   const statements = rows.map((row) => syncKey === 'queue-items'
-    ? queueItemStatement(factsDb, row)
+    ? queueItemStatement(minuteDb, row)
     : syncKey === 'track-likes'
-      ? likeStatement(factsDb, row)
-      : metadataStatement(factsDb, row));
-  await factsDb.batch(statements);
+      ? likeStatement(minuteDb, row)
+      : metadataStatement(minuteDb, row));
+  await minuteDb.batch(statements);
   const last = rows.at(-1);
   const lastAt = integer(last.observed_at ?? last.fetched_at) || 0;
   const lastId = integer(last.id) || 0;
   const lastText = text(last.spotify_id);
-  await saveState(factsDb, syncKey, {
+  await saveState(minuteDb, syncKey, {
     cursorObservedAt: lastAt,
     cursorSourceId: lastId,
     cursorSourceText: lastText,
@@ -182,8 +182,8 @@ export async function runBuddiesFactsSync(env, options = {}) {
       results.push(await syncOne(env, syncKey, now, limit));
     } catch (error) {
       const detail = sanitizeFailureDetail(error?.message || error);
-      if (env?.FACTS_DB) {
-        await env.FACTS_DB.prepare(`UPDATE sh_buddies_sync_state SET
+      if (env?.MINUTE_DB) {
+        await env.MINUTE_DB.prepare(`UPDATE sh_buddies_sync_state SET
             last_run_at=?,last_error=?,updated_at=? WHERE sync_key=?`)
           .bind(now, detail.slice(0, 800), now, syncKey).run().catch(() => {});
       }

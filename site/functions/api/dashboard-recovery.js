@@ -32,12 +32,12 @@ function json(data, status = 200, cache = CACHE_CONTROL) {
 }
 
 export async function onRequestGet({ env }) {
-  if (!env.FACTS_DB) {
-    return json({ ok: false, error: 'FACTS_DB binding missing' }, 500, 'no-store');
+  if (!env.MINUTE_DB) {
+    return json({ ok: false, error: 'MINUTE_DB binding missing' }, 500, 'no-store');
   }
 
   try {
-    const result = await env.FACTS_DB.prepare(FACTS_RECOVERY_SQL).all();
+    const result = await env.MINUTE_DB.prepare(FACTS_RECOVERY_SQL).all();
 
     const rows = result.results || [];
     const latestObservedAt = Number(rows.at(-1)?.observed_at || 0) || null;

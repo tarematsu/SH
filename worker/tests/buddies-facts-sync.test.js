@@ -64,7 +64,7 @@ test('buddies sync drains compact source tables with independent durable cursors
   const updates = [];
   const result = await runBuddiesFactsSync({
     DB: source,
-    FACTS_DB: makeFacts(states, batches, updates),
+    MINUTE_DB: makeFacts(states, batches, updates),
     BUDDIES_SYNC_SOURCE_LAG_MS: 0,
   }, { now, limit: 10 });
 

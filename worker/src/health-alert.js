@@ -67,7 +67,7 @@ export function hasCollectorRecovered(state, health) {
 
 async function loadCollectorOnly(env) {
   const collectorId = text(env.COLLECTOR_ID) || 'cloudflare-worker';
-  const row = await env.FACTS_DB.prepare(`SELECT last_run_at,last_success_at,last_error_present
+  const row = await env.MINUTE_DB.prepare(`SELECT last_run_at,last_success_at,last_error_present
     FROM sh_collector_read_model WHERE collector_id=?`).bind(collectorId).first();
   return {
     ...row,
@@ -124,7 +124,7 @@ async function loadState(env) {
 }
 
 export async function getCollectorHealthView(env, now = Date.now()) {
-  if (!env.FACTS_DB || !env.OTHER_DB) return { collector_health_ok: false, collector_health_setup_required: true };
+  if (!env.MINUTE_DB || !env.OTHER_DB) return { collector_health_ok: false, collector_health_setup_required: true };
   const cfg = healthAlertConfig(env);
   const state = await loadState(env);
   const health = evaluateCollectorHealth(state, now, cfg.staleMs);

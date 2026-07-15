@@ -1,7 +1,7 @@
 import './fetch-guard.js';
 import { scheduleBuddyPlayback, scheduledTimestamp } from './buddy-playback-scheduler.js';
 import { recordOtherCronFailure, recordOtherCronSuccess } from './buddy-health.js';
-import { applyCronStagger } from './cron-stagger.js';
+import { applyCronStagger, waitForCollectorCompletion } from './cron-stagger.js';
 import { runCloudHostMonitor } from './cloud-host-monitor.js';
 import { withScheduledD1Optimizations } from './d1-scheduled-optimizer.js';
 import { reconcileOfficialAnnouncements } from './official-news-reconcile.js';
@@ -30,16 +30,23 @@ export async function runOfficialNewsWithReconcile(
 
 export async function runOtherScheduled(controller, env, ctx, dependencies = {}) {
   const now = scheduledTimestamp(controller);
+  const collectorGate = waitForCollectorCompletion(env, now);
   let maintenance;
   const runMaintenance = () => {
-    maintenance = Promise.resolve(
-      (dependencies.maintenance || runScheduledMaintenance)(env, now),
-    );
+    if (!env?.BUDDIES_DB?.prepare) {
+      maintenance = Promise.resolve((dependencies.maintenance || runScheduledMaintenance)(env, now));
+      return maintenance;
+    }
+    maintenance = Promise.resolve(collectorGate).then((collector) => {
+      if (!collector.ready) return { skipped: true, reason: collector.reason, targetMinute: collector.targetMinute };
+      return (dependencies.maintenance || runScheduledMaintenance)(env, now);
+    });
     return maintenance;
   };
-  const runRetention = () => Promise.resolve(maintenance).then(() => (
-    dependencies.snapshotRetention || pruneOldSnapshotsSafely
-  )(env, now));
+  const runRetention = () => Promise.resolve(maintenance).then((maintenanceResult) => {
+    if (maintenanceResult?.reason === 'collector-not-ready') return maintenanceResult;
+    return (dependencies.snapshotRetention || pruneOldSnapshotsSafely)(env, now);
+  });
   const tasks = [
     (dependencies.buddy || scheduleBuddyPlayback)(env, ctx, now),
     (dependencies.host || runCloudHostMonitor)(env),

@@ -104,10 +104,10 @@ export function publicCollectorHealth(state, now, staleAfterMs) {
 export async function onRequestGet(context) {
   const now = Date.now();
   try {
-    if (!context.env.FACTS_DB) throw new Error('FACTS_DB binding missing');
+    if (!context.env.MINUTE_DB) throw new Error('MINUTE_DB binding missing');
     const [snapshotCount, state] = await Promise.all([
-      cachedSnapshotCount(context.env.FACTS_DB, now),
-      loadCollectorState(context.env.FACTS_DB),
+      cachedSnapshotCount(context.env.MINUTE_DB, now),
+      loadCollectorState(context.env.MINUTE_DB),
     ]);
     const staleAfterMs = healthStaleMs(context.env);
     const health = publicCollectorHealth(state, now, staleAfterMs);

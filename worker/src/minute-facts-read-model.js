@@ -76,21 +76,21 @@ async function hydrateQueueMetadataFromSource(env, readModel) {
 }
 
 export async function ensureMinuteFactReadModelSchema(env) {
-  if (!env?.FACTS_DB) throw new Error('minute fact read model FACTS_DB binding is missing');
-  if (schemaReady.has(env.FACTS_DB)) return false;
-  await env.FACTS_DB.batch([
-    env.FACTS_DB.prepare(MINUTE_FACT_QUEUE_RECEIPT_SCHEMA_SQL),
-    env.FACTS_DB.prepare(CHANNEL_READ_MODEL_SCHEMA_SQL),
-    env.FACTS_DB.prepare(QUEUE_READ_MODEL_SCHEMA_SQL),
-    env.FACTS_DB.prepare(COLLECTOR_READ_MODEL_SCHEMA_SQL),
+  if (!env?.MINUTE_DB) throw new Error('minute fact read model MINUTE_DB binding is missing');
+  if (schemaReady.has(env.MINUTE_DB)) return false;
+  await env.MINUTE_DB.batch([
+    env.MINUTE_DB.prepare(MINUTE_FACT_QUEUE_RECEIPT_SCHEMA_SQL),
+    env.MINUTE_DB.prepare(CHANNEL_READ_MODEL_SCHEMA_SQL),
+    env.MINUTE_DB.prepare(QUEUE_READ_MODEL_SCHEMA_SQL),
+    env.MINUTE_DB.prepare(COLLECTOR_READ_MODEL_SCHEMA_SQL),
   ]);
-  schemaReady.add(env.FACTS_DB);
+  schemaReady.add(env.MINUTE_DB);
   return true;
 }
 
 export async function hasMinuteFactQueueReceipt(env, jobId) {
   await ensureMinuteFactReadModelSchema(env);
-  const row = await env.FACTS_DB.prepare(
+  const row = await env.MINUTE_DB.prepare(
     'SELECT job_id FROM sh_minute_fact_queue_receipts WHERE job_id=? LIMIT 1',
   ).bind(String(jobId)).first();
   return Boolean(row);
@@ -98,7 +98,7 @@ export async function hasMinuteFactQueueReceipt(env, jobId) {
 
 export async function saveMinuteFactQueueReceipt(env, jobId) {
   await ensureMinuteFactReadModelSchema(env);
-  await env.FACTS_DB.prepare(
+  await env.MINUTE_DB.prepare(
     'INSERT OR IGNORE INTO sh_minute_fact_queue_receipts(job_id,received_at) VALUES(?,?)',
   ).bind(String(jobId), Date.now()).run();
 }
@@ -116,13 +116,13 @@ export async function saveMinuteFactReadModels(env, readModel, _jobId) {
   const collectorId = String(collector.collector_id || '').trim();
   if (!collectorId) throw new Error('collector read model identity is missing');
 
-  await env.FACTS_DB.batch([
-    env.FACTS_DB.prepare(`INSERT INTO sh_channel_read_model(channel_id,observed_at,presentation_json)
+  await env.MINUTE_DB.batch([
+    env.MINUTE_DB.prepare(`INSERT INTO sh_channel_read_model(channel_id,observed_at,presentation_json)
       VALUES(?,?,?) ON CONFLICT(channel_id) DO UPDATE SET
         observed_at=excluded.observed_at,presentation_json=excluded.presentation_json
       WHERE excluded.observed_at>=sh_channel_read_model.observed_at`)
       .bind(channelId, observedAt, JSON.stringify(channel.presentation || {})),
-    env.FACTS_DB.prepare(`INSERT INTO sh_queue_read_model_current(
+    env.MINUTE_DB.prepare(`INSERT INTO sh_queue_read_model_current(
         channel_id,observed_at,station_id,queue_id,start_time,is_paused,queue_json
       ) VALUES(?,?,?,?,?,?,?) ON CONFLICT(channel_id) DO UPDATE SET
         observed_at=excluded.observed_at,station_id=excluded.station_id,queue_id=excluded.queue_id,
@@ -137,7 +137,7 @@ export async function saveMinuteFactReadModels(env, readModel, _jobId) {
         booleanCode(queue.is_paused),
         JSON.stringify(queue.value || null),
       ),
-    env.FACTS_DB.prepare(`INSERT INTO sh_collector_read_model(
+    env.MINUTE_DB.prepare(`INSERT INTO sh_collector_read_model(
         collector_id,last_run_at,last_success_at,last_error_present,updated_at
       ) VALUES(?,?,?,?,?) ON CONFLICT(collector_id) DO UPDATE SET
         last_run_at=excluded.last_run_at,last_success_at=excluded.last_success_at,

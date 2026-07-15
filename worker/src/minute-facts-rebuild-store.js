@@ -154,8 +154,8 @@ async function inferHistoricalPlayback(db, input) {
 }
 
 export async function saveReconstructedMinuteFact(env, input) {
-  const db = env?.FACTS_DB;
-  if (!db) return { skipped: true, reason: 'facts-db-binding-missing' };
+  const db = env?.MINUTE_DB;
+  if (!db) return { skipped: true, reason: 'minute-db-binding-missing' };
   const snapshot = input.snapshot || {};
   const queue = input.queue || null;
   const rebuild = input.rebuild || {};

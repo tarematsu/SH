@@ -1,5 +1,5 @@
 -- Public read model populated by the minute worker's Queue consumer.
--- The buddies collector never binds to or writes FACTS_DB directly.
+-- The buddies collector never binds to or writes MINUTE_DB directly.
 
 CREATE TABLE IF NOT EXISTS sh_minute_fact_queue_receipts (
   job_id TEXT PRIMARY KEY,

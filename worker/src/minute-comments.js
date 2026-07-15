@@ -52,13 +52,13 @@ function withSourceDatabase(env, binding) {
 }
 
 async function ensureMinuteCommentTaskSchema(env) {
-  if (!env?.FACTS_DB) throw new Error('minute comment task FACTS_DB binding is missing');
-  if (schemaReady.has(env.FACTS_DB)) return false;
-  await env.FACTS_DB.batch([
-    env.FACTS_DB.prepare(MINUTE_COMMENT_TASK_SCHEMA_SQL),
-    env.FACTS_DB.prepare(MINUTE_COMMENT_TASK_INDEX_SQL),
+  if (!env?.MINUTE_DB) throw new Error('minute comment task MINUTE_DB binding is missing');
+  if (schemaReady.has(env.MINUTE_DB)) return false;
+  await env.MINUTE_DB.batch([
+    env.MINUTE_DB.prepare(MINUTE_COMMENT_TASK_SCHEMA_SQL),
+    env.MINUTE_DB.prepare(MINUTE_COMMENT_TASK_INDEX_SQL),
   ]);
-  schemaReady.add(env.FACTS_DB);
+  schemaReady.add(env.MINUTE_DB);
   return true;
 }
 
@@ -76,7 +76,7 @@ export async function saveMinuteCommentTask(env, job) {
   const observedAt = integer(payload.observedAt) ?? Date.now();
   const stationId = integer(payload.snapshot?.station_id);
   const now = Date.now();
-  const result = await env.FACTS_DB.prepare(`INSERT OR IGNORE INTO sh_minute_comment_tasks(
+  const result = await env.MINUTE_DB.prepare(`INSERT OR IGNORE INTO sh_minute_comment_tasks(
       task_id,source_job_id,channel_id,station_id,minute_at,observed_at,payload_json,
       status,attempts,next_attempt_at,lease_until,last_error,created_at,updated_at,completed_at
     ) VALUES(?,?,?,?,?,?,?,'pending',0,0,NULL,NULL,?,?,NULL)`)
@@ -106,12 +106,12 @@ export async function claimMinuteCommentTasks(env, options = {}) {
   const now = integer(options.now) ?? Date.now();
   const limit = positive(options.limit, DEFAULT_TASK_LIMIT, 5);
   const leaseMs = positive(options.leaseMs, DEFAULT_LEASE_MS, 10 * 60_000);
-  await env.FACTS_DB.prepare(`UPDATE sh_minute_comment_tasks SET
+  await env.MINUTE_DB.prepare(`UPDATE sh_minute_comment_tasks SET
       status='pending',lease_until=NULL,updated_at=?
     WHERE status='processing' AND COALESCE(lease_until,0)<?`)
     .bind(now, now)
     .run();
-  const result = await env.FACTS_DB.prepare(`UPDATE sh_minute_comment_tasks SET
+  const result = await env.MINUTE_DB.prepare(`UPDATE sh_minute_comment_tasks SET
       status='processing',attempts=attempts+1,lease_until=?,updated_at=?
     WHERE task_id IN (
       SELECT task_id FROM sh_minute_comment_tasks
@@ -126,7 +126,7 @@ export async function claimMinuteCommentTasks(env, options = {}) {
 }
 
 export async function completeMinuteCommentTask(env, taskId, now = Date.now()) {
-  await env.FACTS_DB.prepare(`UPDATE sh_minute_comment_tasks SET
+  await env.MINUTE_DB.prepare(`UPDATE sh_minute_comment_tasks SET
       status='done',lease_until=NULL,completed_at=?,updated_at=?,last_error=NULL
     WHERE task_id=? AND status='processing'`)
     .bind(now, now, taskId)
@@ -143,7 +143,7 @@ export async function failMinuteCommentTask(env, task, error, options = {}) {
   const maxAttempts = positive(options.maxAttempts, DEFAULT_MAX_ATTEMPTS, 20);
   const attempts = integer(task?.attempts) || 1;
   const terminal = attempts >= maxAttempts;
-  await env.FACTS_DB.prepare(`UPDATE sh_minute_comment_tasks SET
+  await env.MINUTE_DB.prepare(`UPDATE sh_minute_comment_tasks SET
       status=?,next_attempt_at=?,lease_until=NULL,last_error=?,updated_at=?
     WHERE task_id=? AND status='processing'`)
     .bind(
@@ -166,7 +166,7 @@ function parsePayload(task) {
 }
 
 export async function runMinuteCommentTasks(env, options = {}) {
-  if (!env?.FACTS_DB || !env?.BUDDIES_DB) {
+  if (!env?.MINUTE_DB || !env?.BUDDIES_DB) {
     return { skipped: true, reason: 'binding-missing', claimed: 0, completed: 0, failed: 0 };
   }
   const nowFn = options.now || Date.now;

@@ -14,7 +14,7 @@ const compactMigrationPath = path.resolve(repositoryRoot, 'database/facts-migrat
 const predictionMigrationPath = path.resolve(repositoryRoot, 'database/facts-migrations/006_stream_goal_prediction_state.sql');
 const cleanupMigrationPath = path.resolve(repositoryRoot, 'database/facts-migrations/007_remove_unused_runtime_tables.sql');
 const downstreamArchiveMigrationPath = path.resolve(repositoryRoot, 'database/facts-migrations/008_buddies_downstream_archive.sql');
-const factsBinding = 'FACTS_DB';
+const factsBinding = 'MINUTE_DB';
 const minuteConfigPath = path.resolve(workerRoot, 'wrangler.minute.jsonc');
 
 function run(args) {

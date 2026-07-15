@@ -91,7 +91,7 @@ test('official probe context loads worker session and Buddies station from their
         };
       },
     },
-    FACTS_DB: {
+    MINUTE_DB: {
       prepare(sql) {
         prepares += 1;
         assert.match(sql, /sh_queue_read_model_current/);

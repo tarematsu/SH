@@ -1,4 +1,4 @@
--- Prediction state is derived from FACTS_DB and is now owned by that DB.
+-- Prediction state is derived from MINUTE_DB and is now owned by that DB.
 -- It is regenerated from minute facts, so no cross-database copy is needed.
 DROP TABLE IF EXISTS sh_stream_goal_prediction_state;
 

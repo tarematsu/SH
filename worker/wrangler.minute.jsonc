@@ -22,6 +22,9 @@
     "REBUILD_MAX_CARRY_MINUTES": 5,
     "BUDDIES_SYNC_BATCH_SIZE": 100,
     "BUDDIES_SYNC_SOURCE_LAG_MS": 300000,
+    "CRON_STAGGER_MINUTE_MS": 12000,
+    "COLLECTOR_PRIORITY_WAIT_MS": 12000,
+    "COLLECTOR_PRIORITY_POLL_MS": 1000,
     "MINUTE_FACT_PENDING_ALERT_MS": 900000,
     "MINUTE_FACT_DEAD_REQUEUE_LIMIT": 20,
     "MINUTE_FACT_AUTO_REQUEUE_DEAD": false
@@ -29,7 +32,7 @@
   "triggers": { "crons": ["* * * * *"] },
   "d1_databases": [
     { "binding": "BUDDIES_DB", "database_name": "stationhead-buddies", "database_id": "f361aae0-05f0-42bc-8784-77100e80133d" },
-    { "binding": "FACTS_DB", "database_name": "stationhead-minute", "database_id": "43c12c1e-886d-4496-9c37-61bc8a15bbd7" }
+    { "binding": "MINUTE_DB", "database_name": "stationhead-minute", "database_id": "43c12c1e-886d-4496-9c37-61bc8a15bbd7" }
   ],
   "queues": {
     "consumers": [

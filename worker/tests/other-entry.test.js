@@ -125,7 +125,7 @@ test('other worker Wrangler configuration includes the shared buddies D1 binding
   assert.equal(config.main, 'src/other-entry.js');
   assert.deepEqual(config.triggers?.crons, ['* * * * *']);
   assert.equal(config.vars?.PUBLIC_HEALTH_CACHE_MS, 60_000);
-  assert.deepEqual(config.d1_databases.map(({ binding }) => binding), ['BUDDIES_DB', 'FACTS_DB', 'OTHER_DB']);
+  assert.deepEqual(config.d1_databases.map(({ binding }) => binding), ['BUDDIES_DB', 'MINUTE_DB', 'OTHER_DB']);
   assert.equal(config.d1_databases.some(({ database_name }) => database_name === 'stationhead-buddies'), true);
 });
 
@@ -213,7 +213,7 @@ test('other worker owns the public health endpoint', async () => {
     };
   }
 
-  const env = { FACTS_DB: dbFor('facts'), OTHER_DB: dbFor('other') };
+  const env = { MINUTE_DB: dbFor('minute'), OTHER_DB: dbFor('other') };
   const response = await otherApp.fetch(new Request('https://other.test/health'), env, {});
   const payload = await response.json();
 
@@ -228,7 +228,7 @@ test('other worker owns the public health endpoint', async () => {
 test('other health reports a missing OTHER_DB binding as unavailable JSON', async () => {
   const app = createOtherHealthApp();
   const response = await app.fetch(new Request('https://other.test/health'), {
-    FACTS_DB: healthyPrimaryDb(),
+    MINUTE_DB: healthyPrimaryDb(),
   }, {});
   const payload = await response.json();
 
@@ -242,7 +242,7 @@ test('other health reports a missing OTHER_DB binding as unavailable JSON', asyn
 test('other health reports OTHER_DB query failures instead of masking them', async () => {
   const app = createOtherHealthApp();
   const response = await app.fetch(new Request('https://other.test/health'), {
-    FACTS_DB: healthyPrimaryDb(),
+    MINUTE_DB: healthyPrimaryDb(),
     OTHER_DB: {
       prepare() {
         return {
@@ -261,13 +261,13 @@ test('other health reports OTHER_DB query failures instead of masking them', asy
   assert.equal(payload.cloud_host_setup_required, true);
 });
 
-test('other health reports FACTS_DB failures as unavailable JSON', async () => {
+test('other health reports MINUTE_DB failures as unavailable JSON', async () => {
   const app = createOtherHealthApp();
   const originalConsoleError = console.error;
   console.error = () => {};
   try {
     const response = await app.fetch(new Request('https://other.test/health'), {
-      FACTS_DB: {
+      MINUTE_DB: {
         prepare() { throw new Error('primary D1 unavailable'); },
       },
       OTHER_DB: healthyOtherDb(),
@@ -285,7 +285,7 @@ test('other health reports FACTS_DB failures as unavailable JSON', async () => {
 test('other health is unavailable while an owned monitor has an active error', async () => {
   const app = createOtherHealthApp();
   const response = await app.fetch(new Request('https://other.test/health'), {
-    FACTS_DB: healthyPrimaryDb(),
+    MINUTE_DB: healthyPrimaryDb(),
     OTHER_DB: {
       prepare(sql) {
         return {
@@ -316,7 +316,7 @@ test('other health detects a stopped cron heartbeat', async () => {
   const now = Date.now();
   const app = createOtherHealthApp();
   const response = await app.fetch(new Request('https://other.test/health'), {
-    FACTS_DB: healthyPrimaryDb(),
+    MINUTE_DB: healthyPrimaryDb(),
     OTHER_CRON_STALE_MS: 120_000,
     OTHER_DB: taskHealthDb(now, {
       'other-cron': { status: 'ok', last_attempt_at: now - 180_000, last_success_at: now - 180_000 },
@@ -334,7 +334,7 @@ test('other health exposes buddy playback failures', async () => {
   const now = Date.now();
   const app = createOtherHealthApp();
   const response = await app.fetch(new Request('https://other.test/health'), {
-    FACTS_DB: healthyPrimaryDb(),
+    MINUTE_DB: healthyPrimaryDb(),
     OTHER_DB: taskHealthDb(now, {
       'other-cron': { status: 'ok', last_attempt_at: now, last_success_at: now },
       'buddy46-playback': { status: 'error', last_attempt_at: now, last_error: 'playback failed' },

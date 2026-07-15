@@ -171,9 +171,9 @@ const LATEST_LIVE_FACT_SQL = `SELECT id,source_code,minute_at,observed_at,receiv
 
 async function loadLatestFacts(env, limit = 1440) {
   const [rowsResult, latestAny, latestLive] = await Promise.all([
-    env.FACTS_DB.prepare(minuteFactsRowsSql({ latest: true })).bind(limit).all(),
-    env.FACTS_DB.prepare(LATEST_FACT_SQL).first(),
-    env.FACTS_DB.prepare(LATEST_LIVE_FACT_SQL).first(),
+    env.MINUTE_DB.prepare(minuteFactsRowsSql({ latest: true })).bind(limit).all(),
+    env.MINUTE_DB.prepare(LATEST_FACT_SQL).first(),
+    env.MINUTE_DB.prepare(LATEST_LIVE_FACT_SQL).first(),
   ]);
   const rows = (rowsResult.results || []).map(decodeFactRow).reverse();
   return {
@@ -190,7 +190,7 @@ async function loadLatestFacts(env, limit = 1440) {
 }
 
 export async function onRequestGet({ request, env }) {
-  if (!env.FACTS_DB) return json({ ok: false, error: 'FACTS_DB binding missing' }, 500);
+  if (!env.MINUTE_DB) return json({ ok: false, error: 'MINUTE_DB binding missing' }, 500);
   const url = new URL(request.url);
   if (url.searchParams.get('latest') === '1') {
     try {
@@ -240,14 +240,14 @@ export async function onRequestGet({ request, env }) {
 
   try {
     const [rowsResult, stats, migration] = await Promise.all([
-      env.FACTS_DB.prepare(minuteFactsRowsSql({
+      env.MINUTE_DB.prepare(minuteFactsRowsSql({
         source: Boolean(source),
         host: Boolean(host),
         track: Boolean(track),
         cursor: Boolean(cursor),
       })).bind(...binds).all(),
-      env.FACTS_DB.prepare(minuteFactsStatsSql()).first(),
-      env.FACTS_DB.prepare(migrationStateSql()).first(),
+      env.MINUTE_DB.prepare(minuteFactsStatsSql()).first(),
+      env.MINUTE_DB.prepare(migrationStateSql()).first(),
     ]);
     const allRows = rowsResult.results || [];
     const hasMore = allRows.length > limit;

@@ -351,8 +351,8 @@ export async function onRequestGet({ request, env }) {
     const listensRange = jstDayRange(Date.now(), 9);
     const memberRange = jstDayRange(Date.now(), 16);
 
-    const factsPromise = env.FACTS_DB
-      ? loadFactsDashboard(env.FACTS_DB, { since, includeHistory }).catch((error) => {
+    const factsPromise = env.MINUTE_DB
+      ? loadFactsDashboard(env.MINUTE_DB, { since, includeHistory }).catch((error) => {
         console.error(JSON.stringify({ event: 'dashboard_facts_read_failed', error: String(error?.message || error) }));
         return null;
       })
@@ -386,8 +386,8 @@ export async function onRequestGet({ request, env }) {
     let previousListens;
     if (facts) {
       [previousMembers, previousListens] = await Promise.all([
-        loadFactsBaseline(env.FACTS_DB, 'total_member_count', facts.latest?.host_id, memberRange.previousStart, memberRange.currentStart),
-        loadFactsBaseline(env.FACTS_DB, 'total_listens', facts.latest?.host_id, listensRange.previousStart, listensRange.currentStart),
+        loadFactsBaseline(env.MINUTE_DB, 'total_member_count', facts.latest?.host_id, memberRange.previousStart, memberRange.currentStart),
+        loadFactsBaseline(env.MINUTE_DB, 'total_listens', facts.latest?.host_id, listensRange.previousStart, listensRange.currentStart),
       ]).catch(async (error) => {
         console.error(JSON.stringify({ event: 'dashboard_facts_baseline_failed', error: String(error?.message || error) }));
         return Promise.all([
