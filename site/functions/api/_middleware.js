@@ -1,9 +1,65 @@
 const inFlight = new Map();
 
+const BLOCKED_API_PATHS = new Set([
+  '/api/dashboard-legacy',
+  '/api/history-legacy',
+  '/api/ingest',
+  '/api/ingest-core',
+  '/api/ingest-legacy',
+  '/api/host-ingest',
+  '/api/host-ingest-core',
+  '/api/host-ingest-legacy',
+]);
+
+const COMPATIBILITY_SUCCESSORS = Object.freeze({
+  '/api/history-current': '/api/minute-facts/current',
+  '/api/history-migrated': '/api/minute-facts',
+  '/api/history-raw': '/api/history?mode=raw',
+  '/api/official-history': '/api/history?mode=broadcasts',
+});
+
+function normalizedPathname(value) {
+  const pathname = String(value || '/');
+  return pathname.length > 1 ? pathname.replace(/\/+$/, '') : pathname;
+}
+
+export function isBlockedApiPath(pathname) {
+  return BLOCKED_API_PATHS.has(normalizedPathname(pathname));
+}
+
+export function apiSuccessor(pathname) {
+  return COMPATIBILITY_SUCCESSORS[normalizedPathname(pathname)] || null;
+}
+
+function notFoundResponse() {
+  return Response.json({ ok: false, error: 'not found' }, {
+    status: 404,
+    headers: {
+      'cache-control': 'no-store',
+      'x-content-type-options': 'nosniff',
+    },
+  });
+}
+
+function compatibilityResponse(response, successor) {
+  if (!successor) return response;
+  const headers = new Headers(response.headers);
+  headers.set('deprecation', 'true');
+  headers.set('link', `<${successor}>; rel="successor-version"`);
+  headers.set('x-api-successor', successor);
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  });
+}
+
 function cachePolicy(url) {
   if (url.pathname === '/api/dashboard') return { ttl: 60, browser: 30 };
   if (url.pathname === '/api/dashboard-history') return { ttl: 300, browser: 60 };
-  if (url.pathname === '/api/history-current') return { ttl: 60, browser: 30 };
+  if (url.pathname === '/api/history-current' || url.pathname === '/api/minute-facts/current') {
+    return { ttl: 60, browser: 30 };
+  }
   if (url.pathname === '/api/track-history') return { ttl: 900, browser: 300 };
   if (url.pathname === '/api/like-ranking') return { ttl: 900, browser: 300 };
   if (url.pathname === '/api/broadcast-series') return { ttl: 3600, browser: 300 };
@@ -42,16 +98,21 @@ function tagged(response, state) {
 
 export async function onRequest(context) {
   const { request } = context;
-  if (request.method !== 'GET' || request.headers.has('authorization')) return context.next();
-
   const url = new URL(request.url);
+  if (isBlockedApiPath(url.pathname)) return notFoundResponse();
+
+  const successor = apiSuccessor(url.pathname);
+  if (request.method !== 'GET' || request.headers.has('authorization')) {
+    return compatibilityResponse(await context.next(), successor);
+  }
+
   const policy = cachePolicy(url);
-  if (!policy) return context.next();
+  if (!policy) return compatibilityResponse(await context.next(), successor);
 
   const cache = caches.default;
   const cacheKey = canonicalRequest(request);
   const hit = await cache.match(cacheKey);
-  if (hit) return tagged(hit, 'HIT');
+  if (hit) return compatibilityResponse(tagged(hit, 'HIT'), successor);
 
   const key = cacheKey.url;
   let task = inFlight.get(key);
@@ -77,5 +138,5 @@ export async function onRequest(context) {
   }
 
   const response = await task;
-  return tagged(response, coalesced ? 'COALESCED' : 'MISS');
+  return compatibilityResponse(tagged(response, coalesced ? 'COALESCED' : 'MISS'), successor);
 }
