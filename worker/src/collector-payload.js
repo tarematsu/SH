@@ -236,7 +236,6 @@ export function extractQueue(channel, stationId) {
     tracks: queueTracks.map((item, position) => {
       const track = item?.track || item;
       const artist = track?.artist || track?.artists?.[0] || {};
-      const album = track?.album || {};
       const queueTrackId = item?.id ?? null;
       const stationheadTrackId = track?.id ?? null;
       const spotifyId = track?.spotify_id ?? null;
@@ -267,7 +266,6 @@ export function extractQueue(channel, stationId) {
         queue_track_id: queueTrackId,
         stationhead_track_id: stationheadTrackId,
         spotify_id: spotifyId,
-        apple_music_id: track?.apple_music_id ?? null,
         deezer_id: deezerId,
         isrc,
         duration_ms: durationMs,
@@ -277,12 +275,6 @@ export function extractQueue(channel, stationId) {
         artist: boundedText(
           typeof artist === 'string' ? artist : (artist?.name ?? track?.artist_name),
           500,
-        ),
-        album_name: boundedText(album?.name ?? track?.album_name, 500),
-        thumbnail_url: boundedText(
-          track?.image_url ?? track?.artwork_url ?? track?.album_art_url
-            ?? album?.image_url ?? album?.artwork_url,
-          2_048,
         ),
       };
     }),

@@ -87,7 +87,6 @@ test('extractQueue emits a compact queue that the minute job can reuse directly'
     queue_track_id: 3,
     stationhead_track_id: 7,
     spotify_id: 'spotify-7',
-    apple_music_id: null,
     deezer_id: null,
     isrc: null,
     duration_ms: 180_000,
@@ -95,8 +94,6 @@ test('extractQueue emits a compact queue that the minute job can reuse directly'
     bite_count: null,
     title: 'Song',
     artist: 'Artist',
-    album_name: 'Album',
-    thumbnail_url: 'https://example.com/album.jpg',
   });
 });
 
