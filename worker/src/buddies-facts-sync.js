@@ -161,23 +161,29 @@ async function syncOne(env, syncKey, now, limit) {
   return { syncKey, skipped: false, rows: rows.length, caught_up: rows.length < limit };
 }
 
+async function syncOneSafely(env, syncKey, now, limit) {
+  try {
+    return await syncOne(env, syncKey, now, limit);
+  } catch (error) {
+    const detail = sanitizeFailureDetail(error?.message || error);
+    if (env?.MINUTE_DB) {
+      await env.MINUTE_DB.prepare(`UPDATE sh_buddies_sync_state SET
+          last_run_at=?,last_error=?,updated_at=? WHERE sync_key=?`)
+        .bind(now, detail.slice(0, 800), now, syncKey).run().catch(() => {});
+    }
+    return { syncKey, skipped: true, reason: 'sync-error', error: detail };
+  }
+}
+
 export async function runBuddiesFactsSync(env, options = {}) {
   const now = integer(options.now) || Date.now();
   const limit = positive(options.limit ?? env?.BUDDIES_SYNC_BATCH_SIZE, DEFAULT_BATCH_SIZE, MAX_BATCH_SIZE);
-  const results = [];
-  for (const syncKey of SYNC_KEYS) {
-    try {
-      results.push(await syncOne(env, syncKey, now, limit));
-    } catch (error) {
-      const detail = sanitizeFailureDetail(error?.message || error);
-      if (env?.MINUTE_DB) {
-        await env.MINUTE_DB.prepare(`UPDATE sh_buddies_sync_state SET
-            last_run_at=?,last_error=?,updated_at=? WHERE sync_key=?`)
-          .bind(now, detail.slice(0, 800), now, syncKey).run().catch(() => {});
-      }
-      results.push({ syncKey, skipped: true, reason: 'sync-error', error: detail });
-    }
-  }
+  // Likes and metadata have independent cursors and target tables. Overlap
+  // their source reads and D1 batches so a slow table does not delay the
+  // other one; each task still records its own failure and cursor.
+  const results = await Promise.all(
+    SYNC_KEYS.map((syncKey) => syncOneSafely(env, syncKey, now, limit)),
+  );
   return {
     skipped: results.every((result) => result.skipped && result.reason === 'db-binding-missing'),
     failed: results.some((result) => result.reason === 'sync-error'),
