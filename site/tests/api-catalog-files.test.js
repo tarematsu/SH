@@ -24,13 +24,24 @@ test('documented canonical Pages APIs have Function files', () => {
   }
 });
 
-test('retired APIs are neither active nor implemented as route files', () => {
+test('retired APIs are not advertised as active groups', () => {
   const catalog = apiCatalog(0);
   const active = new Set(Object.values(catalog.groups).flat().map(({ path }) => path));
   assert.equal(catalog.public_write_api, false);
   for (const route of catalog.retired) {
     assert.equal(active.has(route.path), false, `${route.path} must not be active`);
     assert.equal(route.status, 404);
-    assert.equal(routeExists(route.path), false, `${route.path} route file must be removed`);
+  }
+});
+
+test('former compatibility route files are physically removed', () => {
+  for (const path of [
+    '/api/health/collector',
+    '/api/history-current',
+    '/api/history-migrated',
+    '/api/history-raw',
+    '/api/official-history',
+  ]) {
+    assert.equal(routeExists(path), false, `${path} route file must be removed`);
   }
 });
