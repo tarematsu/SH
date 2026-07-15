@@ -1,9 +1,10 @@
-import { payloadFingerprint, payloadHashFingerprint } from './ingest-claim.js';
+import { payloadHash } from './ingest-claim.js';
 import { bool, num, rawJson, text } from './api-utils.js';
 
 const SNAPSHOT_CHECKPOINT_MS = 5 * 60_000;
 const QUEUE_STRUCTURAL_PAYLOAD = Symbol.for('stationhead.queue.structural-payload');
 const SNAPSHOT_HASH_CACHE_LIMIT = 16;
+const SNAPSHOT_SIGNATURE_LENGTH = 23;
 const snapshotHashCache = new Map();
 
 export function resetSnapshotHashCacheForTests() {
@@ -86,6 +87,69 @@ function snapshotHashPayload(data, reportedStreamCount, compactRaw) {
   };
 }
 
+function snapshotSignatureMatches(signature, payload) {
+  if (!signature || signature.length !== SNAPSHOT_SIGNATURE_LENGTH) return false;
+  const metadata = payload?.metadata || {};
+  const images = metadata.images || {};
+  const currentStation = metadata.current_station || {};
+  const owner = currentStation.owner || {};
+  return signature[0] === payload?.channel_id
+    && signature[1] === payload?.station_id
+    && signature[2] === payload?.is_launched
+    && signature[3] === payload?.is_broadcasting
+    && signature[4] === payload?.chat_status
+    && signature[5] === payload?.listener_count
+    && signature[6] === payload?.online_member_count
+    && signature[7] === payload?.total_member_count
+    && signature[8] === payload?.guest_count
+    && signature[9] === payload?.cumulative_listener_count
+    && signature[10] === payload?.reported_stream_count
+    && signature[11] === payload?.stream_goal
+    && signature[12] === payload?.host_account_id
+    && signature[13] === payload?.host_handle
+    && signature[14] === payload?.broadcast_start_time
+    && signature[15] === metadata.description
+    && signature[16] === metadata.artist_name
+    && signature[17] === metadata.accent_color
+    && signature[18] === images.medium?.url
+    && signature[19] === images.logo?.medium?.url
+    && signature[20] === currentStation.status
+    && signature[21] === owner.thumbnail?.url
+    && signature[22] === owner.medium?.url;
+}
+
+function captureSnapshotSignature(payload) {
+  const metadata = payload?.metadata || {};
+  const images = metadata.images || {};
+  const currentStation = metadata.current_station || {};
+  const owner = currentStation.owner || {};
+  return [
+    payload?.channel_id,
+    payload?.station_id,
+    payload?.is_launched,
+    payload?.is_broadcasting,
+    payload?.chat_status,
+    payload?.listener_count,
+    payload?.online_member_count,
+    payload?.total_member_count,
+    payload?.guest_count,
+    payload?.cumulative_listener_count,
+    payload?.reported_stream_count,
+    payload?.stream_goal,
+    payload?.host_account_id,
+    payload?.host_handle,
+    payload?.broadcast_start_time,
+    metadata.description,
+    metadata.artist_name,
+    metadata.accent_color,
+    images.medium?.url,
+    images.logo?.medium?.url,
+    currentStation.status,
+    owner.thumbnail?.url,
+    owner.medium?.url,
+  ];
+}
+
 export function reportedStreamCount(data) {
   const value = num(data?.current_stream_count);
   return value != null && value >= 0 ? value : null;
@@ -100,13 +164,13 @@ export async function saveLeanSnapshot(db, observedAt, data) {
   const streamCount = reportedStreamCount(data);
   const compactPayload = snapshotRawPayload(data);
   const hashPayload = snapshotHashPayload(data, streamCount, compactPayload);
-  const hashFingerprint = payloadFingerprint(hashPayload);
   const hashCache = snapshotHashCacheFor(channelKey);
-  const hash = hashCache.fingerprint === hashFingerprint
-    ? hashCache.hash
-    : await payloadHashFingerprint(hashFingerprint);
-  hashCache.fingerprint = hashFingerprint;
-  hashCache.hash = hash;
+  const cacheHit = snapshotSignatureMatches(hashCache.signature, hashPayload);
+  const hash = cacheHit ? hashCache.hash : await payloadHash(hashPayload);
+  if (!cacheHit) {
+    hashCache.signature = captureSnapshotSignature(hashPayload);
+    hashCache.hash = hash;
+  }
   if (current?.payload_hash === hash
       && observedAt - Number(current.last_snapshot_at || 0) < SNAPSHOT_CHECKPOINT_MS) {
     return {
