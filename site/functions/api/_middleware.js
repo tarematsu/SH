@@ -1,7 +1,4 @@
-import {
-  API_SUCCESSORS,
-  BLOCKED_API_PATHS,
-} from '../lib/api-contract.js';
+import { BLOCKED_API_PATHS } from '../lib/api-contract.js';
 
 const inFlight = new Map();
 const blockedApiPaths = new Set(BLOCKED_API_PATHS);
@@ -15,10 +12,6 @@ export function isBlockedApiPath(pathname) {
   return blockedApiPaths.has(normalizedPathname(pathname));
 }
 
-export function apiSuccessor(pathname) {
-  return API_SUCCESSORS[normalizedPathname(pathname)] || null;
-}
-
 function notFoundResponse() {
   return Response.json({ ok: false, error: 'not found' }, {
     status: 404,
@@ -29,25 +22,10 @@ function notFoundResponse() {
   });
 }
 
-function compatibilityResponse(response, successor) {
-  if (!successor) return response;
-  const headers = new Headers(response.headers);
-  headers.set('deprecation', 'true');
-  headers.set('link', `<${successor}>; rel="successor-version"`);
-  headers.set('x-api-successor', successor);
-  return new Response(response.body, {
-    status: response.status,
-    statusText: response.statusText,
-    headers,
-  });
-}
-
 function cachePolicy(url) {
   if (url.pathname === '/api/dashboard') return { ttl: 60, browser: 30 };
   if (url.pathname === '/api/dashboard-history') return { ttl: 300, browser: 60 };
-  if (url.pathname === '/api/history-current' || url.pathname === '/api/minute-facts/current') {
-    return { ttl: 60, browser: 30 };
-  }
+  if (url.pathname === '/api/minute-facts/current') return { ttl: 60, browser: 30 };
   if (url.pathname === '/api/track-history') return { ttl: 900, browser: 300 };
   if (url.pathname === '/api/like-ranking') return { ttl: 900, browser: 300 };
   if (url.pathname === '/api/broadcast-series') return { ttl: 3600, browser: 300 };
@@ -88,19 +66,15 @@ export async function onRequest(context) {
   const { request } = context;
   const url = new URL(request.url);
   if (isBlockedApiPath(url.pathname)) return notFoundResponse();
-
-  const successor = apiSuccessor(url.pathname);
-  if (request.method !== 'GET' || request.headers.has('authorization')) {
-    return compatibilityResponse(await context.next(), successor);
-  }
+  if (request.method !== 'GET' || request.headers.has('authorization')) return context.next();
 
   const policy = cachePolicy(url);
-  if (!policy) return compatibilityResponse(await context.next(), successor);
+  if (!policy) return context.next();
 
   const cache = caches.default;
   const cacheKey = canonicalRequest(request);
   const hit = await cache.match(cacheKey);
-  if (hit) return compatibilityResponse(tagged(hit, 'HIT'), successor);
+  if (hit) return tagged(hit, 'HIT');
 
   const key = cacheKey.url;
   let task = inFlight.get(key);
@@ -125,6 +99,5 @@ export async function onRequest(context) {
     inFlight.set(key, task);
   }
 
-  const response = await task;
-  return compatibilityResponse(tagged(response, coalesced ? 'COALESCED' : 'MISS'), successor);
+  return tagged(await task, coalesced ? 'COALESCED' : 'MISS');
 }
