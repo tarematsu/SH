@@ -6,9 +6,9 @@ import {
   minuteFactsRowsSql,
   minuteFactsStatsSql,
   migrationStateSql,
-} from '../functions/api/history-migrated.js';
+} from '../functions/api/minute-facts/index.js';
 
-test('history confirmation reads Stationhead-DB minute facts and normalized catalogs', () => {
+test('minute facts history reads the normalized facts and catalogs', () => {
   const sql = minuteFactsRowsSql();
   assert.match(sql, /FROM sh_minute_facts f/);
   assert.match(sql, /LEFT JOIN sh_tracks/);
@@ -21,7 +21,7 @@ test('history confirmation reads Stationhead-DB minute facts and normalized cata
   assert.doesNotMatch(sql, /sh_legacy_snapshots/);
 });
 
-test('history separates cumulative listeners from Stationhead total streams', () => {
+test('minute facts separates cumulative listeners from Stationhead total streams', () => {
   const sql = minuteFactsRowsSql();
   assert.match(sql, /CASE WHEN f\.source_code=1 THEN f\.reported_total_listens ELSE NULL END/);
   assert.match(sql, /AS cumulative_listener_count/);
