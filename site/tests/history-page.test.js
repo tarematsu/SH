@@ -62,12 +62,13 @@ test('history restores one visible chart canvas and leaves 24-hour charts on the
   assert.match(historyClient, /function drawBroadcastChart/);
 });
 
-test('track history defaults to a week instead of an often-empty single snapshot day', () => {
+test('track history defaults to yesterday as a single day', () => {
   assert.match(historyPage, /id="trackWeekMode" type="checkbox" checked/);
-  assert.match(historyEntry, /trackWeekMode\.checked = true/);
+  assert.match(historyEntry, /trackDate\.value = yesterday/);
+  assert.match(historyEntry, /trackWeekMode\.checked = false/);
   assert.match(historyClient, /if \(el\('trackWeekMode'\)\.checked\)/);
-  assert.match(historyClient, /el\('from'\)\.value = mondayOf/);
-  assert.match(historyClient, /el\('to'\)\.value = sundayOf/);
+  assert.match(historyClient, /el\('from'\)\.value = el\('trackDate'\)\.value/);
+  assert.match(historyClient, /el\('to'\)\.value = el\('trackDate'\)\.value/);
 });
 
 test('history visual tokens and panel sizing match the main dashboard', () => {

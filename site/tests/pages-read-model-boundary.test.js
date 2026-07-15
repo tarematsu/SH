@@ -46,11 +46,10 @@ test('queue read-model presentation fields survive playback normalization', () =
     queue_json: JSON.stringify([{ title: 'Song', artist: 'Artist', thumbnail_url: 'https://example.test/a.jpg' }]),
   });
   assert.deepEqual(normalizePlaybackTrack(queue[0], 0, { currentIndex: -1, progressMs: 0 }), {
-    spotify_id: null,
-    duration_ms: 0,
     title: 'Song',
     artist: 'Artist',
     thumbnail_url: 'https://example.test/a.jpg',
+    duration_ms: 0,
   });
 });
 

@@ -21,9 +21,27 @@ function formatNumber(value) {
   return number == null ? '—' : integer.format(number);
 }
 
+function renderBites(payload) {
+  const node = byId('trackBites');
+  if (!node) return;
+  const queue = Array.isArray(payload?.queue) ? payload.queue : [];
+  const statusIndex = Number(payload?.queue_status?.current_index);
+  const current = queue.find((track) => track?.is_current)
+    || (Number.isInteger(statusIndex) && statusIndex >= 0 ? queue[statusIndex] : null);
+  const count = finite(current?.bite_count);
+  if (count == null) {
+    node.hidden = true;
+    node.textContent = '';
+    return;
+  }
+  node.textContent = `♡ ${integer.format(count)}`;
+  node.hidden = false;
+}
+
 function renderLatest(payload) {
   const latest = payload?.latest || {};
   setText('totalStreams', formatNumber(latest.current_stream_count ?? latest.total_stream_count));
+  renderBites(payload);
 }
 
 function renderDelta(id, label, value) {
