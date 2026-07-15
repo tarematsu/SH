@@ -103,6 +103,14 @@ function listDatabases() {
   return parseJsonOutput(wrangler(['d1', 'list', '--json']));
 }
 
+function executeCommand(sql) {
+  return wrangler([
+    'd1', 'execute', databaseName,
+    '--remote', '--yes',
+    '--command', sql,
+  ]);
+}
+
 function tableColumnNames(databaseName, table) {
   const output = wrangler([
     'd1', 'execute', databaseName,
@@ -186,13 +194,24 @@ if (tableColumnNames(databaseName, 'sh_facts_storage_repairs').size === 0) {
   ]);
 }
 
-for (const migrationPath of [counterReadIndexMigrationPath, runtimeTablesMigrationPath]) {
-  wrangler([
-    'd1', 'execute', databaseName,
-    '--remote', '--yes',
-    '--file', migrationPath,
-  ]);
+wrangler([
+  'd1', 'execute', databaseName,
+  '--remote', '--yes',
+  '--file', counterReadIndexMigrationPath,
+]);
+
+const inboxColumns = tableColumnNames(databaseName, 'sh_minute_fact_jobs');
+if (inboxColumns.size > 0 && !inboxColumns.has('job_kind')) {
+  executeCommand("ALTER TABLE sh_minute_fact_jobs ADD COLUMN job_kind TEXT NOT NULL DEFAULT 'live'");
 }
+if (inboxColumns.size > 0 && !inboxColumns.has('job_priority')) {
+  executeCommand('ALTER TABLE sh_minute_fact_jobs ADD COLUMN job_priority INTEGER NOT NULL DEFAULT 100');
+}
+wrangler([
+  'd1', 'execute', databaseName,
+  '--remote', '--yes',
+  '--file', runtimeTablesMigrationPath,
+]);
 
 writeFileSync(metadataPath, `${JSON.stringify({
   binding: 'MINUTE_DB',
