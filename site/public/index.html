@@ -62,7 +62,7 @@
           <div class="track-copy">
             <strong id="trackTitle">曲情報を取得中...</strong>
             <span id="trackArtist" class="subtle"></span>
-            <div class="time-row"><span id="trackTime">-</span><span id="spotifyHint" hidden>Spotifyで開く</span></div>
+            <div class="time-row"><span id="trackTime">-</span><span id="trackBites" hidden></span><span id="spotifyHint" hidden>Spotifyで開く</span></div>
             <div class="progress" aria-hidden="true"><i id="trackBar"></i></div>
           </div>
         </a>
@@ -106,6 +106,7 @@
 
     <p id="statusMessage" class="status-message" role="status" hidden></p>
   </main>
+  <script type="module" src="/dashboard-bites.js"></script>
   <script type="module" src="/dashboard-metrics.js"></script>
 </body>
 </html>
