@@ -6,12 +6,14 @@ const historyPage = readFileSync(new URL('../public/history/index.html', import.
 const historyEntry = readFileSync(new URL('../public/history/history-main.js', import.meta.url), 'utf8');
 const historyClient = readFileSync(new URL('../public/history/history-lite.js', import.meta.url), 'utf8');
 const historyStyles = readFileSync(new URL('../public/history/history-lite.css', import.meta.url), 'utf8');
+const mainStyles = readFileSync(new URL('../public/app-lite.css', import.meta.url), 'utf8');
 const likesPage = readFileSync(new URL('../public/history/likes/index.html', import.meta.url), 'utf8');
 const likesClient = readFileSync(new URL('../public/history/history-likes.js', import.meta.url), 'utf8');
+const likeApi = readFileSync(new URL('../functions/api/like-ranking.js', import.meta.url), 'utf8');
 const middleware = readFileSync(new URL('../functions/api/_middleware.js', import.meta.url), 'utf8');
 
 test('history removes the current tab and keeps every archive mode', () => {
-  for (const mode of ['daily', 'weekly', 'ranking', 'monthly', 'tracks', 'broadcasts']) {
+  for (const mode of ['daily', 'weekly', 'monthly', 'ranking', 'tracks', 'broadcasts']) {
     assert.match(historyPage, new RegExp(`data-mode="${mode}"`));
   }
   assert.doesNotMatch(historyPage, /data-mode="current"/);
@@ -19,6 +21,11 @@ test('history removes the current tab and keeps every archive mode', () => {
   assert.match(historyPage, /href="\/history\/likes\/">いいね<\/a>/);
   assert.equal((historyPage.match(/<link rel="stylesheet"/g) || []).length, 1);
   assert.equal((historyPage.match(/<script /g) || []).length, 1);
+});
+
+test('monthly tab appears before leaderboard on both history pages', () => {
+  assert.ok(historyPage.indexOf('data-mode="monthly"') < historyPage.indexOf('data-mode="ranking"'));
+  assert.ok(likesPage.indexOf('/history/#monthly') < likesPage.indexOf('/history/#ranking'));
 });
 
 test('history defaults invalid and retired hashes to weekly', () => {
@@ -55,14 +62,34 @@ test('history restores one visible chart canvas and leaves 24-hour charts on the
   assert.match(historyClient, /function drawBroadcastChart/);
 });
 
-test('history page uses compact main-dashboard controls', () => {
-  assert.match(historyPage, /class="date-range"/);
-  assert.match(historyPage, />更新<\/button>/);
-  assert.match(historyStyles, /body \{[^}]*radial-gradient/);
-  assert.match(historyStyles, /--radius:\s*20px/);
-  assert.match(historyStyles, /\.controls \{[^}]*grid-template-columns/);
-  assert.match(historyStyles, /\.date-range \{[^}]*grid-template-columns/);
-  assert.match(historyStyles, /\.range-presets \{[^}]*repeat\(4/);
+test('track history defaults to a week instead of an often-empty single snapshot day', () => {
+  assert.match(historyPage, /id="trackWeekMode" type="checkbox" checked/);
+  assert.match(historyEntry, /trackWeekMode\.checked = true/);
+  assert.match(historyClient, /if \(el\('trackWeekMode'\)\.checked\)/);
+  assert.match(historyClient, /el\('from'\)\.value = mondayOf/);
+  assert.match(historyClient, /el\('to'\)\.value = sundayOf/);
+});
+
+test('history visual tokens and panel sizing match the main dashboard', () => {
+  for (const declaration of [
+    '--bg: #f6f8fb',
+    '--panel: #ffffff',
+    '--panel-2: #f1f4f8',
+    '--line: #d9e1eb',
+    '--text: #172033',
+    '--muted: #667287',
+    '--accent: #d93f79',
+    '--comment: #168b73',
+    '--radius: 20px',
+  ]) {
+    assert.match(mainStyles, new RegExp(declaration.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+    assert.match(historyStyles, new RegExp(declaration.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+  }
+  assert.match(historyStyles, /\.top-card \{[^}]*padding:\s*20px/);
+  assert.match(historyStyles, /\.button \{[^}]*min-height:\s*44px/);
+  assert.match(historyStyles, /\.chart-panel \{[^}]*padding:\s*18px/);
+  assert.match(historyStyles, /\.data-panel \{[^}]*padding:\s*18px/);
+  assert.match(historyStyles, /\.summary-cards article \{[^}]*padding:\s*17px/);
 });
 
 test('history client preserves summary, ranking, tracks and broadcast endpoints', () => {
@@ -91,15 +118,15 @@ test('history tables render newest summary rows first and paginate only in the b
   assert.match(historyClient, /exportCsv/);
 });
 
-test('likes tab shows latest like counts beside this week play counts', () => {
+test('likes tab filters to Sakurazaka artists or JP-prefixed ISRC tracks', () => {
   assert.match(likesPage, /aria-current="page" href="\/history\/likes\/">いいね<\/a>/);
   assert.match(likesPage, /最新いいね/);
   assert.match(likesPage, /今週再生/);
-  assert.doesNotMatch(likesPage, /期間内いいね合計|1回平均|順位基準/);
   assert.match(likesClient, /\/api\/like-ranking\?limit=500/);
   assert.match(likesClient, /\/api\/track-history\?/);
-  assert.match(likesClient, /latest_like_count/);
-  assert.match(likesClient, /week_play_count/);
+  assert.match(likeApi, /artist,''\)\) LIKE '櫻坂%'/);
+  assert.match(likeApi, /isrc,''\)\)\) LIKE 'JP%'/);
+  assert.match(likeApi, /artist_starts_sakurazaka_or_isrc_starts_jp/);
 });
 
 test('edge middleware shares track-history and like-ranking D1 reads', () => {
