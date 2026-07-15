@@ -54,6 +54,10 @@ const runtimeTablesMigrationPath = resolve(
   repositoryRoot,
   'database/facts-migrations/013_minute_runtime_tables.sql',
 );
+const trackMetadataBackfillMigrationPath = resolve(
+  repositoryRoot,
+  'database/facts-migrations/014_backfill_track_metadata.sql',
+);
 const metadataPath = resolve(repositoryRoot, 'database/facts-db.json');
 const databaseName = process.env.FACTS_DATABASE_NAME || 'stationhead-minute';
 
@@ -212,11 +216,16 @@ wrangler([
   '--remote', '--yes',
   '--file', runtimeTablesMigrationPath,
 ]);
+wrangler([
+  'd1', 'execute', databaseName,
+  '--remote', '--yes',
+  '--file', trackMetadataBackfillMigrationPath,
+]);
 
 writeFileSync(metadataPath, `${JSON.stringify({
   binding: 'MINUTE_DB',
   database_name: databaseName,
   database_id: databaseId,
-  schema: 'database/facts-migrations/013_minute_runtime_tables.sql',
+  schema: 'database/facts-migrations/014_backfill_track_metadata.sql',
 }, null, 2)}\n`);
 console.log(JSON.stringify({ ok: true, database_name: databaseName, database_id: databaseId }));

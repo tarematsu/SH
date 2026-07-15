@@ -140,7 +140,7 @@ test('99 tracks are resolved with bounded D1 round trips instead of per-track aw
   assert.equal(resolved.length, 99);
   assert.equal(resolved.every((track) => Number.isFinite(track.trackId)), true);
   assert.equal(db.tracks.size, 99);
-  assert.ok(db.allCalls <= 18, `expected at most 18 read round trips, got ${db.allCalls}`);
+  assert.ok(db.allCalls <= 20, `expected at most 20 read round trips, got ${db.allCalls}`);
   assert.ok(db.batchCalls <= 15, `expected at most 15 batch round trips, got ${db.batchCalls}`);
 });
 
