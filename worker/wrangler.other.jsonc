@@ -39,7 +39,16 @@
     "SNAPSHOT_RETENTION_BATCH_SIZE": 1000,
     "SNAPSHOT_RETENTION_MAX_BATCHES": 5
   },
-  "triggers": { "crons": ["* * * * *"] },
+  "triggers": {
+    "crons": [
+      "*/5 * * * *",
+      "0 */3 * * *",
+      "10,40 * * * *",
+      "20 * * * *",
+      "30 * * * *",
+      "50 * * * *"
+    ]
+  },
   "d1_databases": [
     { "binding": "BUDDIES_DB", "database_name": "stationhead-buddies", "database_id": "f361aae0-05f0-42bc-8784-77100e80133d" },
     { "binding": "MINUTE_DB", "database_name": "stationhead-minute", "database_id": "43c12c1e-886d-4496-9c37-61bc8a15bbd7" },
