@@ -1,15 +1,15 @@
 (() => {
   'use strict';
 
-  const DAY_MS = 86_400_000;
-  const CACHE_PREFIX = 'sh.like-ranking.v1:';
+  const CACHE_PREFIX = 'sh.like-ranking.v2:';
   const CACHE_MS = 10 * 60_000;
   const number = new Intl.NumberFormat('ja-JP', { maximumFractionDigits: 1 });
   const dateTime = new Intl.DateTimeFormat('ja-JP', {
     year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit',
   });
+  const shortDate = new Intl.DateTimeFormat('ja-JP', { month: 'numeric', day: 'numeric' });
 
-  const state = { rows: [], summary: {}, controller: null };
+  const state = { rows: [], summary: {}, weekRows: [], controller: null, weekFrom: '', weekTo: '' };
   const el = (id) => document.getElementById(id);
   const finite = (value) => {
     if (value === null || value === undefined || value === '') return null;
@@ -19,30 +19,15 @@
   const fmt = (value) => finite(value) == null ? '—' : number.format(Number(value));
   const todayUtc = () => new Date().toISOString().slice(0, 10);
 
-  function dateDaysAgo(days) {
-    return new Date(Date.now() - days * DAY_MS).toISOString().slice(0, 10);
+  function mondayUtc(value = todayUtc()) {
+    const date = new Date(`${value}T00:00:00Z`);
+    date.setUTCDate(date.getUTCDate() - ((date.getUTCDay() + 6) % 7));
+    return date.toISOString().slice(0, 10);
   }
 
   function setNotice(text, error = false) {
     el('notice').textContent = text;
     el('notice').classList.toggle('error', error);
-  }
-
-  function applyPreset(days) {
-    el('to').value = todayUtc();
-    el('from').value = days === 'all' ? '2024-05-01' : dateDaysAgo(Number(days));
-    document.querySelectorAll('#rangePresets button').forEach((button) => {
-      button.classList.toggle('active', button.dataset.days === String(days));
-    });
-  }
-
-  function requestUrl() {
-    return `/api/like-ranking?${new URLSearchParams({
-      from: el('from').value,
-      to: el('to').value,
-      sort: el('sort').value,
-      limit: '500',
-    })}`;
   }
 
   function readCache(url) {
@@ -58,8 +43,80 @@
     try {
       sessionStorage.setItem(`${CACHE_PREFIX}${url}`, JSON.stringify({ at: Date.now(), data }));
     } catch {
-      // Ranking remains available when session storage is unavailable.
+      // The page remains usable without browser storage.
     }
+  }
+
+  async function fetchJson(url, signal, force) {
+    if (force) sessionStorage.removeItem(`${CACHE_PREFIX}${url}`);
+    const cached = force ? null : readCache(url);
+    if (cached) return { data: cached, cached: true };
+    const response = await fetch(url, { signal, headers: { accept: 'application/json' } });
+    const data = await response.json();
+    if (!response.ok || !data?.ok) throw new Error(data?.error || `API ${response.status}`);
+    writeCache(url, data);
+    return { data, cached: false };
+  }
+
+  function normalizeText(value) {
+    return String(value || '').normalize('NFKC').trim().toLowerCase().replace(/\s+/g, ' ');
+  }
+
+  function identityKeys(row) {
+    const keys = [];
+    const spotify = normalizeText(row?.spotify_id);
+    const isrc = normalizeText(row?.isrc);
+    const title = normalizeText(row?.title || row?.display_title || row?.raw_title);
+    const artist = normalizeText(row?.artist || row?.raw_artist);
+    const stationhead = normalizeText(row?.stationhead_track_id);
+    if (spotify) keys.push(`spotify:${spotify}`);
+    if (isrc) keys.push(`isrc:${isrc}`);
+    if (title) keys.push(`title:${title}|${artist}`);
+    if (stationhead) keys.push(`stationhead:${stationhead}`);
+    return [...new Set(keys)];
+  }
+
+  function attachWeeklyPlays(likeRows, weekRows) {
+    const parent = new Map();
+    const ensure = (key) => { if (!parent.has(key)) parent.set(key, key); };
+    const find = (key) => {
+      ensure(key);
+      let root = key;
+      while (parent.get(root) !== root) root = parent.get(root);
+      let current = key;
+      while (parent.get(current) !== current) {
+        const next = parent.get(current);
+        parent.set(current, root);
+        current = next;
+      }
+      return root;
+    };
+    const union = (left, right) => {
+      const leftRoot = find(left);
+      const rightRoot = find(right);
+      if (leftRoot !== rightRoot) parent.set(rightRoot, leftRoot);
+    };
+
+    for (const row of [...likeRows, ...weekRows]) {
+      const keys = identityKeys(row);
+      if (!keys.length) continue;
+      keys.forEach(ensure);
+      for (let index = 1; index < keys.length; index += 1) union(keys[0], keys[index]);
+    }
+
+    const totals = new Map();
+    for (const row of weekRows) {
+      if (row?.period_complete === false || row?.play_count_excluded === true) continue;
+      const key = identityKeys(row)[0];
+      if (!key) continue;
+      const root = find(key);
+      totals.set(root, (totals.get(root) || 0) + (finite(row.play_count) || 0));
+    }
+
+    return likeRows.map((row) => {
+      const key = identityKeys(row)[0];
+      return { ...row, week_play_count: key ? totals.get(find(key)) || 0 : 0 };
+    });
   }
 
   function trackName(row) {
@@ -70,37 +127,36 @@
     return row.artist || '—';
   }
 
-  function rankingValue(row) {
-    if (el('sort').value === 'peak') return finite(row.peak_like_count) || 0;
-    if (el('sort').value === 'average') return finite(row.average_like_count) || 0;
-    return finite(row.total_like_count) || 0;
-  }
-
-  function rankingLabel(row) {
-    if (el('sort').value === 'peak') return `${fmt(row.peak_like_count)} いいね`;
-    if (el('sort').value === 'average') return `平均 ${fmt(row.average_like_count)}`;
-    return `${fmt(row.total_like_count)} いいね`;
-  }
-
   function renderSummary() {
-    el('totalLikes').textContent = fmt(state.summary.total_like_count || 0);
     el('trackCount').textContent = fmt(state.summary.track_count || 0);
-    el('occurrenceCount').textContent = fmt(state.summary.occurrence_count || 0);
-    el('peakLikes').textContent = fmt(state.summary.peak_like_count || 0);
+    el('maxLikes').textContent = fmt(state.summary.max_like_count || 0);
+    el('weekPlays').textContent = fmt(state.summary.week_play_count || 0);
+    el('latestAt').textContent = state.summary.latest_observed_at
+      ? shortDate.format(new Date(Number(state.summary.latest_observed_at)))
+      : '—';
+  }
+
+  function metric(label, value) {
+    const box = document.createElement('span');
+    box.append(document.createTextNode(label));
+    const strong = document.createElement('b');
+    strong.textContent = value;
+    box.appendChild(strong);
+    return box;
   }
 
   function renderRanking() {
     const list = el('rankingList');
     list.replaceChildren();
-    const rows = state.rows.slice(0, 30);
-    const maximum = Math.max(1, ...rows.map(rankingValue));
+    const rows = state.rows.slice(0, 50);
     if (!rows.length) {
       const empty = document.createElement('li');
       empty.className = 'empty-ranking';
-      empty.textContent = '表示できるいいねデータがありません。';
+      empty.textContent = 'データがありません。';
       list.appendChild(empty);
       return;
     }
+
     const fragment = document.createDocumentFragment();
     for (const row of rows) {
       const item = document.createElement('li');
@@ -116,19 +172,19 @@
       heading.className = 'like-rank-heading';
       const title = document.createElement('span');
       title.textContent = trackName(row);
-      const value = document.createElement('b');
-      value.textContent = rankingLabel(row);
-      heading.append(title, value);
+      heading.appendChild(title);
+      const artist = document.createElement('small');
+      artist.textContent = artistName(row);
+      content.append(heading, artist);
 
-      const meta = document.createElement('small');
-      meta.textContent = `${artistName(row)} · ${fmt(row.occurrence_count)}回再生 · 最高${fmt(row.peak_like_count)}`;
-      const bar = document.createElement('div');
-      bar.className = 'like-rank-bar';
-      const fill = document.createElement('i');
-      fill.style.width = `${Math.max(2, rankingValue(row) / maximum * 100)}%`;
-      bar.appendChild(fill);
-      content.append(heading, meta, bar);
-      item.append(rank, content);
+      const metrics = document.createElement('div');
+      metrics.className = 'like-rank-metrics';
+      metrics.append(
+        metric('最新いいね', fmt(row.latest_like_count)),
+        metric('今週再生', `${fmt(row.week_play_count)}回`),
+      );
+
+      item.append(rank, content, metrics);
       fragment.appendChild(item);
     }
     list.appendChild(fragment);
@@ -141,12 +197,13 @@
       const row = document.createElement('tr');
       row.className = 'empty-row';
       const cell = document.createElement('td');
-      cell.colSpan = 8;
-      cell.textContent = '表示できるいいねデータがありません。';
+      cell.colSpan = 6;
+      cell.textContent = 'データがありません。';
       row.appendChild(cell);
       body.appendChild(row);
       return;
     }
+
     const fragment = document.createDocumentFragment();
     for (const item of state.rows) {
       const row = document.createElement('tr');
@@ -154,10 +211,8 @@
         item.rank,
         trackName(item),
         artistName(item),
-        fmt(item.total_like_count),
-        fmt(item.peak_like_count),
-        fmt(item.average_like_count),
-        fmt(item.occurrence_count),
+        fmt(item.latest_like_count),
+        `${fmt(item.week_play_count)}回`,
         item.latest_observed_at ? dateTime.format(new Date(Number(item.latest_observed_at))) : '—',
       ];
       for (const value of values) {
@@ -180,31 +235,45 @@
     state.controller?.abort();
     const controller = new AbortController();
     state.controller = controller;
-    const url = requestUrl();
     el('load').disabled = true;
-    setNotice('いいねランキングを読み込み中…');
+    setNotice('読み込み中…');
+
+    const weekFrom = mondayUtc();
+    const weekTo = todayUtc();
+    state.weekFrom = weekFrom;
+    state.weekTo = weekTo;
+    const likeUrl = '/api/like-ranking?limit=500';
+    const trackUrl = `/api/track-history?${new URLSearchParams({ from: weekFrom, to: weekTo, limit: '5000' })}`;
+
     try {
-      if (force) sessionStorage.removeItem(`${CACHE_PREFIX}${url}`);
-      let data = force ? null : readCache(url);
-      const cached = Boolean(data);
-      if (!data) {
-        const response = await fetch(url, { signal: controller.signal, headers: { accept: 'application/json' } });
-        data = await response.json();
-        if (!response.ok || !data?.ok) throw new Error(data?.error || `API ${response.status}`);
-        writeCache(url, data);
-      }
+      const [likeResult, trackResult] = await Promise.all([
+        fetchJson(likeUrl, controller.signal, force),
+        fetchJson(trackUrl, controller.signal, force),
+      ]);
       if (controller.signal.aborted) return;
-      state.rows = Array.isArray(data.rows) ? data.rows : [];
-      state.summary = data.summary || {};
+
+      const likeRows = Array.isArray(likeResult.data.rows) ? likeResult.data.rows : [];
+      const weekRows = Array.isArray(trackResult.data.rows) ? trackResult.data.rows : [];
+      state.rows = attachWeeklyPlays(likeRows, weekRows);
+      state.weekRows = weekRows;
+      const weekPlayCount = weekRows.reduce((sum, row) => {
+        if (row?.period_complete === false || row?.play_count_excluded === true) return sum;
+        return sum + (finite(row.play_count) || 0);
+      }, 0);
+      state.summary = {
+        ...(likeResult.data.summary || {}),
+        week_play_count: weekPlayCount,
+      };
       render();
-      const setup = data.setup_required ? ' · FACTS DBのカウンターテーブル未準備' : '';
-      setNotice(`${data.from}〜${data.to} · ${fmt(state.rows.length)}曲を表示${cached ? ' · キャッシュ' : ''}${setup}`);
+      const cached = likeResult.cached && trackResult.cached ? ' · キャッシュ' : '';
+      setNotice(`${fmt(state.rows.length)}曲 · 今週 ${weekFrom.replaceAll('-', '/')}〜${weekTo.replaceAll('-', '/')}${cached}`);
     } catch (error) {
       if (error?.name === 'AbortError') return;
       state.rows = [];
+      state.weekRows = [];
       state.summary = {};
       render();
-      setNotice(`いいねランキングを取得できませんでした: ${error.message}`, true);
+      setNotice(`取得失敗: ${error.message}`, true);
     } finally {
       if (state.controller === controller) state.controller = null;
       el('load').disabled = false;
@@ -212,41 +281,27 @@
   }
 
   function exportCsv() {
-    const header = ['順位', '曲名', 'アーティスト', '合計いいね', '1回最高', '1回平均', '再生発生数', '最終観測'];
+    const header = ['順位', '曲名', 'アーティスト', '最新いいね', '今週再生', '最終観測'];
     const lines = [header, ...state.rows.map((row) => [
       row.rank,
       trackName(row),
       artistName(row),
-      row.total_like_count,
-      row.peak_like_count,
-      row.average_like_count,
-      row.occurrence_count,
+      row.latest_like_count,
+      row.week_play_count,
       row.latest_observed_at ? new Date(Number(row.latest_observed_at)).toISOString() : '',
     ])].map((line) => line.map((value) => `"${String(value ?? '').replaceAll('"', '""')}"`).join(','));
     const blob = new Blob([`\uFEFF${lines.join('\n')}`], { type: 'text/csv;charset=utf-8' });
     const link = document.createElement('a');
     link.href = URL.createObjectURL(blob);
-    link.download = `sh-like-ranking-${el('from').value}-${el('to').value}.csv`;
+    link.download = `sh-like-ranking-${state.weekFrom}-${state.weekTo}.csv`;
     link.click();
     URL.revokeObjectURL(link.href);
   }
 
-  function start() {
-    applyPreset('30');
-    document.querySelectorAll('#rangePresets button').forEach((button) => {
-      button.addEventListener('click', () => {
-        applyPreset(button.dataset.days);
-        load();
-      });
-    });
-    el('sort').addEventListener('change', () => load());
-    el('load').addEventListener('click', () => load({ force: true }));
-    el('csv').addEventListener('click', exportCsv);
-    document.addEventListener('visibilitychange', () => {
-      if (document.hidden) state.controller?.abort();
-    });
-    load();
-  }
-
-  start();
+  el('load').addEventListener('click', () => load({ force: true }));
+  el('csv').addEventListener('click', exportCsv);
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) state.controller?.abort();
+  });
+  load();
 })();
