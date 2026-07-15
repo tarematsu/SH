@@ -176,12 +176,22 @@ export async function runMinuteScheduledWithCollectorPriority(
   const stagger = dependencies.applyStagger || applyCronStagger;
   const waitForCollector = dependencies.waitForCollector || waitForCollectorCompletion;
   if (minuteStaggerApplies(controller)) await stagger(env, 'minute');
-  const collector = await waitForCollector(env, controller?.scheduledTime);
+
+  let collector;
+  let collectorError = null;
+  try {
+    collector = await waitForCollector(env, controller?.scheduledTime);
+  } catch (error) {
+    collectorError = sanitizeFailureDetail(error?.message || error);
+    collector = { ready: false, reason: 'collector-check-failed', targetMinute: null };
+  }
+
   if (!collector.ready) {
     console.warn(JSON.stringify({
       event: 'minute_collector_priority_wait_expired',
       reason: collector.reason || 'collector-not-ready',
       target_minute: collector.targetMinute ?? null,
+      error: collectorError,
     }));
   }
   return runMinuteScheduled(controller, env, {
