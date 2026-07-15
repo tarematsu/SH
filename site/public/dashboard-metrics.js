@@ -1,4 +1,3 @@
-const DAY_MS = 86_400_000;
 const DASHBOARD_CACHE_KEY = 'sh.dashboard-lite.v1';
 const integer = new Intl.NumberFormat('ja-JP');
 const nativeFetch = window.fetch.bind(window);
@@ -41,41 +40,24 @@ function renderDelta(id, label, value) {
   node.hidden = false;
 }
 
-function utcDate(offsetDays) {
-  const start = new Date();
-  start.setUTCHours(0, 0, 0, 0);
-  return new Date(start.getTime() + offsetDays * DAY_MS).toISOString().slice(0, 10);
-}
-
-function renderDailyChanges(data, yesterday, dayBeforeYesterday) {
-  const rows = new Map((Array.isArray(data?.rows) ? data.rows : [])
-    .map((row) => [String(row?.period_key || ''), row]));
-  const yesterdayRow = rows.get(yesterday);
-  const dayBeforeRow = rows.get(dayBeforeYesterday);
-  renderDelta('membersYesterdayDelta', '昨日', yesterdayRow?.member_growth);
-  renderDelta('membersDayBeforeDelta', '一昨日', dayBeforeRow?.member_growth);
-  renderDelta('streamsYesterdayDelta', '昨日', yesterdayRow?.stream_growth);
-  renderDelta('streamsDayBeforeDelta', '一昨日', dayBeforeRow?.stream_growth);
+function renderDailyChanges(data) {
+  renderDelta('membersYesterdayDelta', '昨日', data?.yesterday?.member_growth);
+  renderDelta('membersDayBeforeDelta', '一昨日', data?.day_before_yesterday?.member_growth);
+  renderDelta('streamsYesterdayDelta', '昨日', data?.yesterday?.stream_growth);
+  renderDelta('streamsDayBeforeDelta', '一昨日', data?.day_before_yesterday?.stream_growth);
 }
 
 async function loadDailyChanges() {
-  const yesterday = utcDate(-1);
-  const dayBeforeYesterday = utcDate(-2);
-  const params = new URLSearchParams({
-    mode: 'daily',
-    from: dayBeforeYesterday,
-    to: yesterday,
-  });
   try {
-    const response = await nativeFetch(`/api/history?${params}`, {
+    const response = await nativeFetch('/api/dashboard-daily-changes', {
       headers: { accept: 'application/json' },
     });
     const data = await response.json();
-    if (!response.ok || !data?.ok) throw new Error(data?.error || `history API ${response.status}`);
-    renderDailyChanges(data, yesterday, dayBeforeYesterday);
+    if (!response.ok || !data?.ok) throw new Error(data?.error || `daily changes API ${response.status}`);
+    renderDailyChanges(data);
   } catch (error) {
     console.error('dashboard UTC daily metrics failed to load', error);
-    renderDailyChanges(null, yesterday, dayBeforeYesterday);
+    renderDailyChanges(null);
   }
 }
 
