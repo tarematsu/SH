@@ -14,7 +14,7 @@ function positiveMinutes(value, fallbackMs) {
   return Math.max(1, Math.round(safe / 60_000));
 }
 
-function productionTask(now, env = {}) {
+export function otherProductionTask(now, env = {}) {
   const absoluteMinute = Math.floor(now / 60_000);
   const buddyMinutes = positiveMinutes(env.BUDDY_PLAYBACK_INTERVAL_MS, 3 * 60 * 60_000);
   const predictionMinutes = positiveMinutes(env.STREAM_GOAL_PREDICTION_INTERVAL_MS, 30 * 60_000);
@@ -65,9 +65,10 @@ export async function runOfficialNewsWithReconcile(env, now, probe = null, recon
   const activeProbe = probe || (await import('./official-news-probe.js')).runOfficialNewsMonitor;
   const activeReconcile = reconcile || (await import('./official-news-reconcile.js')).reconcileOfficialAnnouncements;
   const { officialNewsConfig } = await import('./official-news-utils.js');
-  // Extra D1 operations are acceptable here; avoid the scheduled D1 Proxy and
-  // its SQL classification/traps on every statement.
-  const result = await activeProbe(env, officialNewsConfig(env), now);
+  // Keep the historical injected-test isolation without restoring the costly
+  // D1 statement Proxy on production calls.
+  const probeEnv = probe ? Object.create(env || null) : env;
+  const result = await activeProbe(probeEnv, officialNewsConfig(env), now);
   await activeReconcile(env, now);
   return result;
 }
@@ -89,7 +90,7 @@ export async function runOtherScheduled(controller, env, ctx, dependencies = {})
     return results.map((result) => result.value);
   }
 
-  const name = productionTask(scheduledTimestamp(controller), env);
+  const name = otherProductionTask(scheduledTimestamp(controller), env);
   return [await invokeTask(name, controller, env, ctx, dependencies)];
 }
 
