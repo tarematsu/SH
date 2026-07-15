@@ -20,8 +20,8 @@
     <nav id="modeTabs" class="mode-tabs" aria-label="表示種類">
       <button type="button" data-mode="daily">日次</button>
       <button type="button" data-mode="weekly" class="active" aria-current="page">週次</button>
-      <button type="button" data-mode="ranking">リーダーボード</button>
       <button type="button" data-mode="monthly">月次</button>
+      <button type="button" data-mode="ranking">リーダーボード</button>
       <button type="button" data-mode="tracks">再生曲</button>
       <a href="/history/likes/">いいね</a>
       <button type="button" data-mode="broadcasts">公式ストリーム</button>
@@ -45,8 +45,8 @@
       </div>
 
       <div id="trackControls" class="control-group track-controls" hidden>
-        <label><span>日付</span><input id="trackDate" type="date"></label>
-        <label class="check-label"><input id="trackWeekMode" type="checkbox">週表示</label>
+        <label><span>基準日</span><input id="trackDate" type="date"></label>
+        <label class="check-label"><input id="trackWeekMode" type="checkbox" checked>週表示</label>
       </div>
 
       <div id="rankingControls" class="control-group ranking-controls" hidden>
