@@ -34,14 +34,17 @@ test('retired APIs are not advertised as active groups', () => {
   }
 });
 
-test('former compatibility route files are physically removed', () => {
+test('standalone compatibility route files are physically removed', () => {
   for (const path of [
     '/api/health/collector',
     '/api/history-current',
     '/api/history-migrated',
-    '/api/history-raw',
     '/api/official-history',
   ]) {
     assert.equal(routeExists(path), false, `${path} route file must be removed`);
   }
+});
+
+test('raw history implementation remains available to canonical history mode', () => {
+  assert.equal(routeExists('/api/history-raw'), true);
 });
