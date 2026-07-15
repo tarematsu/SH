@@ -1,6 +1,10 @@
 import { fetchSpotifyMetadataBatch } from './spotify-metadata.js';
 import { bestText, looksLikeId } from './track-history-text.js';
 
+function normalizedSpotifyId(value) {
+  return String(value || '').trim() || null;
+}
+
 function normalizedIsrc(value) {
   return String(value || '').trim().toUpperCase() || null;
 }
@@ -8,7 +12,7 @@ function normalizedIsrc(value) {
 export function metadataIdentityBySpotifyId(rows = []) {
   const identities = new Map();
   for (const row of rows) {
-    const spotifyId = String(row?.spotify_id || '').trim();
+    const spotifyId = normalizedSpotifyId(row?.spotify_id);
     if (!spotifyId) continue;
     const isrc = normalizedIsrc(row?.isrc);
     if (isrc || !identities.has(spotifyId)) identities.set(spotifyId, isrc);
@@ -54,8 +58,9 @@ function unresolvedSpotifyIds(rows, limit = 20) {
   for (const row of rows) {
     const title = bestText(row.title, row.raw_title, row.display_title);
     const artist = bestText(row.artist, row.raw_artist);
-    if ((!title || looksLikeId(title) || !artist || looksLikeId(artist)) && row.spotify_id) {
-      ids.add(row.spotify_id);
+    const spotifyId = normalizedSpotifyId(row?.spotify_id);
+    if ((!title || looksLikeId(title) || !artist || looksLikeId(artist)) && spotifyId) {
+      ids.add(spotifyId);
       if (ids.size >= limit) break;
     }
   }
@@ -89,7 +94,7 @@ export async function enrichMissingRows(rows, env) {
   return {
     persisted,
     rows: rows.map((row) => {
-      const value = resolved.get(row.spotify_id);
+      const value = resolved.get(normalizedSpotifyId(row?.spotify_id));
       if (!value) return row;
       return {
         ...row,
