@@ -114,7 +114,7 @@ test('minute worker has no every-minute Stationhead comment cron', async () => {
   const config = JSON.parse(readFileSync(new URL('../wrangler.minute.jsonc', import.meta.url), 'utf8'));
   const source = readFileSync(new URL('../src/minute-entry.js', import.meta.url), 'utf8');
   assert.equal(config.name, 'sh-monitor-minute');
-  assert.equal(config.main, 'src/minute-production-entry.js');
+  assert.equal(config.main, 'src/minute-entry.js');
   assert.deepEqual(config.triggers.crons, [
     MINUTE_FACT_DERIVE_CRON,
     MINUTE_FACT_MAINTENANCE_CRON,
@@ -124,7 +124,6 @@ test('minute worker has no every-minute Stationhead comment cron', async () => {
   assert.doesNotMatch(source, /minute-comments\.js|runMinuteCommentTasks/);
   assert.deepEqual(config.d1_databases.map(({ binding }) => binding), ['BUDDIES_DB', 'MINUTE_DB']);
   assert.equal(config.vars.MINUTE_FACT_AUTO_REQUEUE_DEAD, true);
-  assert.equal(config.vars.MINUTE_FACT_API_STALE_MS, 300_000);
   assert.equal(config.vars.REBUILD_RECENT_GUARD_MS, 300_000);
 
   assert.deepEqual(await runMinuteScheduled({ cron: '* * * * *' }, {}, {}), {

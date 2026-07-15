@@ -4,7 +4,8 @@
   "compatibility_date": "2026-06-23",
   "pages_build_output_dir": "./public",
   "vars": {
-    "HEALTH_ALERT_STALE_MS": 3600000
+    "HEALTH_ALERT_STALE_MS": 3600000,
+    "MINUTE_FACT_API_STALE_MS": 300000
   },
   "d1_databases": [
     {
