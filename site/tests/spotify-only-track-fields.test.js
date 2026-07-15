@@ -25,7 +25,7 @@ test('queue structural payload keeps Spotify fields and ignores non-Spotify IDs'
   assert.equal('apple_music_id' in payload.tracks[0], false);
 });
 
-test('playback track output omits non-Spotify IDs even when present in old rows', () => {
+test('public playback output exposes metadata and omits provider IDs from old rows', () => {
   const track = normalizePlaybackTrack({
     observed_at: 100,
     station_id: 1,
@@ -41,7 +41,9 @@ test('playback track output omits non-Spotify IDs even when present in old rows'
     artist: 'Artist',
   }, 0, { currentIndex: 0, progressMs: 123 });
 
-  assert.equal(track.spotify_id, 'sp1');
+  assert.equal(track.title, 'Song');
+  assert.equal(track.artist, 'Artist');
+  assert.equal('spotify_id' in track, false);
   assert.equal('apple_music_id' in track, false);
 });
 
