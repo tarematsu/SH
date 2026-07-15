@@ -34,8 +34,18 @@
 
     <section class="metrics" aria-label="現在の指標">
       <article class="metric featured"><span>オンライン</span><div class="metric-value"><strong id="online">-</strong><small>人</small></div></article>
-      <article class="metric"><span>ユニーク参加者</span><div class="metric-value"><strong id="members">-</strong></div><div id="membersDelta" class="delta" hidden></div></article>
-      <article class="metric"><span>延べ参加者</span><div class="metric-value"><strong id="totalListens">-</strong></div><div id="listensDelta" class="delta" hidden></div></article>
+      <article class="metric">
+        <span>総メンバー数</span>
+        <div class="metric-value"><strong id="members">-</strong></div>
+        <div id="membersYesterdayDelta" class="delta" hidden></div>
+        <div id="membersDayBeforeDelta" class="delta" hidden></div>
+      </article>
+      <article class="metric">
+        <span>総再生数</span>
+        <div class="metric-value"><strong id="totalStreams">-</strong></div>
+        <div id="streamsYesterdayDelta" class="delta" hidden></div>
+        <div id="streamsDayBeforeDelta" class="delta" hidden></div>
+      </article>
     </section>
 
     <section class="primary-grid">
@@ -96,6 +106,6 @@
 
     <p id="statusMessage" class="status-message" role="status" hidden></p>
   </main>
-  <script type="module" src="/app-main.js"></script>
+  <script type="module" src="/dashboard-metrics.js"></script>
 </body>
 </html>
