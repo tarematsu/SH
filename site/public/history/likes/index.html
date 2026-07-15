@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#f6f8fb">
+  <meta name="color-scheme" content="light">
+  <meta name="robots" content="noindex,nofollow,noarchive,nosnippet,noimageindex">
+  <title>Buddies いいねランキング</title>
+  <link rel="stylesheet" href="/history/history-lite.css">
+</head>
+<body>
+  <a class="skip-link" href="#likesContent">本文へ移動</a>
+  <main id="likesContent" class="shell">
+    <header class="top-card">
+      <div>
+        <p class="kicker">BUDDIES DATA ARCHIVE</p>
+        <h1>いいねランキング</h1>
+        <p class="subtle">Stationhead の like / bite カウンターを曲ごとに集計します。</p>
+      </div>
+      <a class="button" href="/">現在の状況へ</a>
+    </header>
+
+    <nav class="mode-tabs" aria-label="表示種類">
+      <a href="/history/#current">現在</a>
+      <a href="/history/#daily">日次</a>
+      <a href="/history/#weekly">週次</a>
+      <a href="/history/#ranking">リーダーボード</a>
+      <a href="/history/#monthly">月次</a>
+      <a href="/history/#tracks">再生曲</a>
+      <a class="active" aria-current="page" href="/history/likes/">いいね</a>
+      <a href="/history/#broadcasts">公式ストリーム</a>
+    </nav>
+
+    <section class="guide" aria-live="polite">
+      <div><p class="kicker">LIKE / BITE</p><h2>曲別いいね数ランキング</h2></div>
+      <p>各再生発生の最終カウンターを曲ごとに合計します。同じ値を繰り返し保存した観測は数えません。</p>
+    </section>
+
+    <section class="controls card">
+      <div class="control-group">
+        <div id="rangePresets" class="range-presets" aria-label="期間プリセット">
+          <button type="button" data-days="7">7日</button>
+          <button type="button" data-days="30" class="active">30日</button>
+          <button type="button" data-days="90">3か月</button>
+          <button type="button" data-days="365">1年</button>
+          <button type="button" data-days="all">全期間</button>
+        </div>
+        <label>開始<input id="from" type="date"></label>
+        <label>終了<input id="to" type="date"></label>
+        <label>順位基準<select id="sort"><option value="total">合計いいね</option><option value="peak">1回の最高</option><option value="average">1回平均</option></select></label>
+      </div>
+      <button id="load" class="button primary" type="button">表示を更新</button>
+    </section>
+
+    <p id="notice" class="notice" role="status">読み込み中…</p>
+
+    <section class="summary-cards" aria-label="いいね集計概要">
+      <article><span>期間内いいね合計</span><strong id="totalLikes">-</strong></article>
+      <article><span>対象曲数</span><strong id="trackCount">-</strong></article>
+      <article><span>再生発生数</span><strong id="occurrenceCount">-</strong></article>
+      <article><span>1回の最高</span><strong id="peakLikes">-</strong></article>
+    </section>
+
+    <section class="card data-panel">
+      <div class="section-head"><div><p class="kicker">TOP TRACKS</p><h2>上位ランキング</h2></div></div>
+      <ol id="rankingList" class="like-ranking"></ol>
+    </section>
+
+    <section class="card data-panel">
+      <div class="section-head">
+        <div><p class="kicker">DATA</p><h2>いいね数一覧</h2></div>
+        <button id="csv" class="button" type="button">CSV</button>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>順位</th><th>曲名</th><th>アーティスト</th><th>合計いいね</th><th>1回最高</th><th>1回平均</th><th>再生発生数</th><th>最終観測</th></tr></thead>
+          <tbody id="tbody"></tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+  <script src="/history/history-likes.js" defer></script>
+</body>
+</html>
