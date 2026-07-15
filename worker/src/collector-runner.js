@@ -1,8 +1,6 @@
 import { jwtExpiryMs } from './shared.js';
 import {
   asCollectorFailure,
-  clearCollectorFailure,
-  sanitizeFailureDetail,
 } from './collector-failure.js';
 import { buildCollectionPlan } from './collector-plan.js';
 import { configFromEnv, shJson } from './collector-config.js';
@@ -17,7 +15,7 @@ import {
   validateChannelPayload,
 } from './collector-payload.js';
 import { ingest } from './collector-ingest.js';
-import { loadCollectorState, saveCollectorState } from './collector-state.js';
+import { loadCollectorState, saveCollectorStateAndClearFailure } from './collector-state.js';
 import { handoffMinuteFactJob } from './minute-facts-queue.js';
 
 const SLOW_STAGE_THRESHOLD_MS = 1_000;
@@ -245,18 +243,12 @@ export async function collectOnce(env, source = 'manual') {
 
     throwIfCollectionAborted(activeEnv, 'd1_write_collector_state');
     stage = 'd1_write_collector_state';
-    await timedStage(stage, () => saveCollectorState(activeEnv, state, {
+    await timedStage(stage, () => saveCollectorStateAndClearFailure(activeEnv, state, {
       lastRunAt: observedAt,
       lastSuccessAt: Date.now(),
       lastError: null,
       tokenExpiresAt: state.tokenExpiresAt || jwtExpiryMs(state.authToken),
     }));
-    await clearCollectorFailure(activeEnv).catch((error) => {
-      console.warn(JSON.stringify({
-        event: 'collector_failure_clear_failed',
-        error: sanitizeFailureDetail(error?.message || error),
-      }));
-    });
 
     return {
       ok: true,

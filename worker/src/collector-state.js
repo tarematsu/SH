@@ -51,8 +51,12 @@ export async function loadCollectorState(env) {
 
 export async function saveCollectorState(env, state, patch = {}) {
   Object.assign(state, patch);
+  await collectorStateStatement(env.DB, state).run();
+}
+
+function collectorStateStatement(db, state) {
   const now = Date.now();
-  await env.DB.prepare(`
+  return db.prepare(`
     INSERT INTO sh_worker_collector_state (
       id, auth_token, device_uid, token_expires_at, last_run_at, last_success_at,
       last_error, last_channel_id, last_station_id, updated_at
@@ -77,5 +81,40 @@ export async function saveCollectorState(env, state, patch = {}) {
     state.channelId || null,
     state.stationId || null,
     now,
-  ).run();
+  );
+}
+
+async function clearFailureBestEffort(db) {
+  try {
+    await db.prepare('DELETE FROM sh_collector_failure_state WHERE id=?')
+      .bind('stationhead').run();
+  } catch (error) {
+    console.warn(JSON.stringify({
+      event: 'collector_failure_clear_failed',
+      error: String(error?.message || error).slice(0, 500),
+    }));
+  }
+}
+
+// The successful collector path always clears the incident state immediately
+// after saving the new run state. Keep both writes in one D1 round trip so a
+// normal tick does not pay for two sequential network calls.
+export async function saveCollectorStateAndClearFailure(env, state, patch = {}) {
+  Object.assign(state, patch);
+  if (typeof env?.DB?.batch !== 'function') {
+    await saveCollectorState(env, state);
+    await clearFailureBestEffort(env.DB);
+    return;
+  }
+  try {
+    await env.DB.batch([
+      collectorStateStatement(env.DB, state),
+      env.DB.prepare('DELETE FROM sh_collector_failure_state WHERE id=?').bind('stationhead'),
+    ]);
+  } catch (error) {
+    // Preserve the old success semantics if only the best-effort incident
+    // cleanup failed: the collector state must still be committed.
+    await collectorStateStatement(env.DB, state).run();
+    await clearFailureBestEffort(env.DB);
+  }
 }
