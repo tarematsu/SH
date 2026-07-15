@@ -15,6 +15,7 @@ const BINDING = 'OTHER_DB';
 // Both configs need this binding: sh-monitor-other writes the tables in
 // database/other-migrations, and site reads/writes several of the same
 // tables (host-ingest, dashboard, history summaries) directly.
+// Shared track metadata is consolidated into stationhead-buddies below.
 const configPaths = [
   resolve(workerRoot, 'wrangler.other.jsonc'),
   resolve(repositoryRoot, 'site/wrangler.jsonc'),
