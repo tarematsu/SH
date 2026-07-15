@@ -25,34 +25,35 @@ function rankingDatabase() {
       spotify_id TEXT
     );
     INSERT INTO sh_tracks VALUES
-      (1,'ISRC-A','spotify-a','Song A','Artist A'),
-      (2,'ISRC-B','spotify-b','Song B','Artist B');
+      (1,'USAAA0000001','spotify-a','Song A','櫻坂46'),
+      (2,'JPZZZ0000002','spotify-b','Song B','Other Artist'),
+      (3,'USAAA0000003','spotify-c','Song C','Other Artist');
     INSERT INTO sh_track_counter_current VALUES
       ('a:old-high',500,100,'a',1,NULL,NULL),
-      ('a:middle',2000,20,'a',1,NULL,NULL),
-      ('a:latest',2100,5,'legacy-a',NULL,'isrc-a',NULL),
+      ('a:latest',2100,5,'a',1,NULL,NULL),
       ('b:latest',2500,25,'b',2,NULL,NULL),
-      ('zero:latest',2600,0,'zero',NULL,NULL,NULL);
+      ('c:latest',2700,99,'c',3,NULL,NULL),
+      ('zero:latest',2800,0,'zero',NULL,'JPZERO000000',NULL);
   `);
   return db;
 }
 
-test('like ranking keeps only the latest like or bite count for each resolved track', () => {
+test('like ranking keeps Sakurazaka artists and JP-prefixed ISRC tracks only', () => {
   const db = rankingDatabase();
   const rows = db.prepare(likeRankingSql()).all(500);
   assert.equal(rows.length, 2);
-  assert.equal(rows[0].title, 'Song B');
-  assert.equal(rows[0].latest_like_count, 25);
-  assert.equal(rows[0].latest_observed_at, 2500);
-  assert.equal(rows[1].title, 'Song A');
-  assert.equal(rows[1].latest_like_count, 5);
-  assert.equal(rows[1].latest_observed_at, 2100);
+  assert.deepEqual(rows.map((row) => row.title), ['Song B', 'Song A']);
+  assert.ok(rows.every((row) => row.artist.startsWith('櫻坂') || row.isrc.startsWith('JP')));
+  assert.ok(!rows.some((row) => row.title === 'Song C'));
 });
 
-test('older high counters are not accumulated into the latest ranking', () => {
+test('like ranking keeps only the latest like or bite count for each eligible track', () => {
   const db = rankingDatabase();
   const rows = db.prepare(likeRankingSql()).all(500);
+  assert.equal(rows[0].latest_like_count, 25);
+  assert.equal(rows[0].latest_observed_at, 2500);
   assert.equal(rows[1].latest_like_count, 5);
+  assert.equal(rows[1].latest_observed_at, 2100);
   assert.equal(rows[0].ranking_track_count, 2);
   assert.equal(rows[0].ranking_max_like_count, 25);
   assert.equal(rows[0].ranking_latest_observed_at, 2500);

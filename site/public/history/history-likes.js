@@ -255,7 +255,7 @@
       const weekRows = Array.isArray(trackResult.data.rows) ? trackResult.data.rows : [];
       state.rows = attachWeeklyPlays(likeRows, weekRows);
       state.weekRows = weekRows;
-      const weekPlayCount = weekRows.reduce((sum, row) => sum + (finite(row.play_count) || 0), 0);
+      const weekPlayCount = state.rows.reduce((sum, row) => sum + (finite(row.week_play_count) || 0), 0);
       state.summary = {
         ...(likeResult.data.summary || {}),
         week_play_count: weekPlayCount,

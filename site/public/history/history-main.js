@@ -5,4 +5,7 @@ if (!VALID_MODES.has(requestedMode)) {
   history.replaceState(null, '', '#weekly');
 }
 
+const trackWeekMode = document.getElementById('trackWeekMode');
+if (trackWeekMode) trackWeekMode.checked = true;
+
 await import('/history/history-lite.js');

@@ -28,6 +28,11 @@ export const LIKE_RANKING_SQL = `WITH resolved AS (
    AND c.spotify_id IS NOT NULL AND TRIM(c.spotify_id)<>''
    AND by_spotify.spotify_id=TRIM(c.spotify_id)
   WHERE c.count_value>=0
+), eligible AS (
+  SELECT *
+  FROM resolved
+  WHERE TRIM(COALESCE(artist,'')) LIKE '櫻坂%'
+     OR UPPER(TRIM(COALESCE(isrc,''))) LIKE 'JP%'
 ), identified AS (
   SELECT *,
     CASE
@@ -36,7 +41,7 @@ export const LIKE_RANKING_SQL = `WITH resolved AS (
       WHEN spotify_id IS NOT NULL AND TRIM(spotify_id)<>'' THEN 'spotify:'||TRIM(spotify_id)
       ELSE 'key:'||track_key
     END AS track_identity
-  FROM resolved
+  FROM eligible
 ), latest_ranked AS (
   SELECT *,
     ROW_NUMBER() OVER (
@@ -100,6 +105,7 @@ export async function onRequestGet({ request, env }) {
       mode: 'likes',
       generated_at: Date.now(),
       limit,
+      filter: 'artist_starts_sakurazaka_or_isrc_starts_jp',
       counter_name: 'like/bite',
       source: 'stationhead-minute.sh_track_counter_current',
       ...ranking,
