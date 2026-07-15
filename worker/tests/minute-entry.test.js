@@ -9,6 +9,7 @@ import minuteApp, {
   MINUTE_FACT_WORKER_CRON,
   minuteStaggerApplies,
   runMinuteScheduled,
+  runMinuteScheduledWithCollectorPriority,
 } from '../src/minute-entry.js';
 
 test('minute worker routes derive and rebuild through the buddies source only', async () => {
@@ -29,6 +30,7 @@ test('minute worker routes derive and rebuild through the buddies source only', 
   }), 'rebuild');
   assert.equal(Object.hasOwn(env, 'DB'), false);
 });
+
 test('single minute-worker cron runs derive and rebuild in separate slots', async () => {
   const calls = [];
   const env = { BUDDIES_DB: { name: 'buddies' } };
@@ -41,11 +43,33 @@ test('single minute-worker cron runs derive and rebuild in separate slots', asyn
   assert.deepEqual(await run(9), { skipped: true, reason: 'not-due', minute: 9 });
   assert.deepEqual(calls, ['derive:buddies', 'rebuild:buddies']);
 });
+
 test('minute worker retries a bounded set of dead jobs in its recovery slot', async () => {
-  const result = await runMinuteScheduled({ cron: MINUTE_FACT_WORKER_CRON, scheduledTime: MINUTE_FACT_RECOVERY_MINUTE * 60_000 }, { MINUTE_FACT_AUTO_REQUEUE_DEAD: true }, {
-    requeueDead: async (_env, options) => ({ requeued: options.limit }),
-  });
-  assert.deepEqual(result, { requeued: undefined });
+  const result = await runMinuteScheduled(
+    { cron: MINUTE_FACT_WORKER_CRON, scheduledTime: MINUTE_FACT_RECOVERY_MINUTE * 60_000 },
+    { MINUTE_FACT_AUTO_REQUEUE_DEAD: true, MINUTE_FACT_DEAD_REQUEUE_LIMIT: 20 },
+    { requeueDead: async (_env, options) => ({ requeued: options.limit }) },
+  );
+  assert.deepEqual(result, { requeued: 20 });
+});
+
+test('collector priority timeout does not suppress durable derive work', async () => {
+  const calls = [];
+  const result = await runMinuteScheduledWithCollectorPriority(
+    { cron: MINUTE_FACT_WORKER_CRON, scheduledTime: 2 * 60_000 },
+    { BUDDIES_DB: { name: 'buddies' } },
+    {},
+    {
+      applyStagger: async () => { calls.push('stagger'); return 0; },
+      waitForCollector: async () => ({ ready: false, reason: 'collector-not-ready', targetMinute: 120_000 }),
+      runComments: async () => { calls.push('comments'); return { skipped: false }; },
+      runSync: async () => { calls.push('sync'); return { rows: 0 }; },
+      runDerive: async () => { calls.push('derive'); return 'derive'; },
+    },
+  );
+
+  assert.equal(result, 'derive');
+  assert.deepEqual(calls, ['stagger', 'comments', 'derive']);
 });
 
 test('minute worker has dedicated name, source bindings and one routing cron', () => {
@@ -58,6 +82,8 @@ test('minute worker has dedicated name, source bindings and one routing cron', (
     'stationhead-buddies',
     'stationhead-minute',
   ]);
+  assert.equal(config.vars.MINUTE_FACT_AUTO_REQUEUE_DEAD, true);
+  assert.equal(config.vars.REBUILD_RECENT_GUARD_MS, 300_000);
 });
 
 test('minute stagger applies only to shared source database jobs', () => {
@@ -110,4 +136,3 @@ test('minute worker /health responses are cached across repeated requests', asyn
   assert.equal(second.headers.get('x-health-cache'), 'hit');
   assert.equal(reads, 1);
 });
-
