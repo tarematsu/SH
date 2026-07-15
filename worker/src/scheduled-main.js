@@ -26,6 +26,17 @@ export function runPrimaryScheduled(
   });
 }
 
+function withFetchAbortSignal(env, runtimeEnv) {
+  const signal = runtimeEnv?.__COLLECTION_ABORT_SIGNAL || null;
+  if (!signal) return env;
+  const active = Object.create(env || null);
+  Object.defineProperty(active, '__COLLECTION_FETCH_ABORT_SIGNAL', {
+    value: signal,
+    enumerable: false,
+  });
+  return active;
+}
+
 export async function runPrimaryCycle(
   controller,
   collectionEnv,
@@ -35,18 +46,19 @@ export async function runPrimaryCycle(
 ) {
   const runPrimary = options.runPrimary || runPrimaryScheduled;
   const scheduled = options.scheduled || runOptimizedScheduled;
-  // The watchdog still limits the awaited cron and retains the D1 lease on
-  // timeout, but the collector receives the raw environment. This avoids a
-  // Proxy around every D1 prepare/bind/run. An in-flight D1 call may finish
-  // after timeout, which is safe because all persistence paths are idempotent.
-  const stageBoundaryScheduled = (activeController, _runtimeEnv, activeCtx) => (
-    scheduled(activeController, collectionEnv, activeCtx)
+  // Preserve the watchdog signal for Stationhead HTTP, but keep it out of the
+  // collector's D1 wrapper path. An in-flight D1 operation may finish after a
+  // timeout; the primary lease and idempotent writes prevent overlap/data loss.
+  const rawD1Scheduled = (activeController, runtimeEnv, activeCtx) => scheduled(
+    activeController,
+    withFetchAbortSignal(collectionEnv, runtimeEnv),
+    activeCtx,
   );
   return runPrimary(
     controller,
     collectionEnv,
     ctx,
-    stageBoundaryScheduled,
+    rawD1Scheduled,
     options.timeoutOverride ?? null,
     {
       auxiliaryRunners: options.auxiliaryRunners || NO_AUXILIARY_RUNNERS,
