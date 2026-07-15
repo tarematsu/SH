@@ -1,7 +1,7 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "sh-monitor-minute",
-  "main": "src/minute-entry.js",
+  "main": "src/minute-production-entry.js",
   "compatibility_date": "2026-06-24",
   "workers_dev": true,
   "observability": { "enabled": true },
@@ -25,6 +25,7 @@
     "MINUTE_FACT_PENDING_ALERT_MS": 900000,
     "MINUTE_FACT_DEAD_REQUEUE_LIMIT": 20,
     "MINUTE_FACT_AUTO_REQUEUE_DEAD": true,
+    "MINUTE_FACT_API_STALE_MS": 300000,
     "PUBLIC_HEALTH_CACHE_MS": 60000
   },
   "triggers": {
