@@ -14,8 +14,8 @@ test('three production Workers stay within the account-wide Free cron limit', ()
   ];
   const counts = configs.map((value) => value.triggers?.crons?.length || 0);
 
-  assert.deepEqual(counts, [1, 3, 1]);
-  assert.equal(counts.reduce((sum, count) => sum + count, 0), 5);
+  assert.deepEqual(counts, [1, 2, 1]);
+  assert.equal(counts.reduce((sum, count) => sum + count, 0), 4);
 });
 
 test('other cron health threshold tolerates a delayed five-minute tick', () => {

@@ -2,6 +2,7 @@ import { jwtExpiryMs } from './shared.js';
 import {
   asCollectorFailure,
 } from './collector-failure.js';
+import { collectOptionalComments } from './collector-comments.js';
 import { buildCollectionPlan } from './collector-plan.js';
 import { configFromEnv, shJson } from './collector-config.js';
 import {
@@ -239,13 +240,23 @@ export async function collectOnce(env, source = 'manual') {
       metadataPlanned = initialPlan.metadataDue || queueResult?.structure_changed === true;
     }
 
-    const commentResult = {
+    let commentResult = {
       commentsSaved: 0,
       commentTotal: null,
       commentTotalKnown: false,
       degraded: false,
       errorStage: null,
     };
+    if (initialPlan.comments) {
+      stage = 'sh_chat_history';
+      commentResult = await measure(stage, () => collectOptionalComments(
+        activeEnv,
+        state,
+        config,
+        observedAt,
+      ));
+    }
+
     const factSnapshot = minuteFactSnapshot(snapshot);
     const factQueue = minuteFactQueue(queue);
     const presentation = readModelPresentation(snapshot);
@@ -264,7 +275,7 @@ export async function collectOnce(env, source = 'manual') {
       comments: commentResult,
     }, {
       enrichTrackMetadata: metadataPlanned,
-      collectComments: initialPlan.comments,
+      collectComments: false,
       readModelPresentationOnly: true,
       readModel: {
         channel: {
@@ -303,7 +314,7 @@ export async function collectOnce(env, source = 'manual') {
       comments_saved: commentResult.commentsSaved,
       comments_degraded: commentResult.degraded,
       comments_error_stage: commentResult.errorStage,
-      comments_deferred: Boolean(initialPlan.comments),
+      comments_deferred: false,
       queue_tracks: queue?.tracks?.length || 0,
       queue_inspected: Boolean(queueResult?.queue_inspected),
       queue_structure_changed: Boolean(queueResult?.structure_changed),
