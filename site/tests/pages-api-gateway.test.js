@@ -98,6 +98,16 @@ function otherDb() {
   };
 }
 
+async function withFixedNow(action) {
+  const realDateNow = Date.now;
+  Date.now = () => NOW;
+  try {
+    return await action();
+  } finally {
+    Date.now = realDateNow;
+  }
+}
+
 test('Pages API catalog exposes the public gateway without Worker URLs', async () => {
   const catalog = apiCatalog(NOW);
   assert.equal(catalog.gateway, 'cloudflare-pages');
@@ -129,10 +139,10 @@ test('Pages minute health reads all active tasks and rejects unhealthy task stat
   assert.equal(unhealthy.ok, false);
   assert.equal(unhealthy.dead_count, 1);
 
-  const response = await minuteHealthRequest({
+  const response = await withFixedNow(() => minuteHealthRequest({
     request: new Request('https://example.com/api/health/minute'),
     env: { MINUTE_DB: minuteDb(rows) },
-  });
+  }));
   assert.equal(response.status, 200);
   assert.equal(response.headers.get('cache-control'), 'no-store');
 });
@@ -152,18 +162,12 @@ test('Pages other health reads scheduler, buddy, official news and cloud host st
   assert.equal(payload.components.official_news.upcoming_count, 2);
   assert.equal(payload.components.cloud_host.profile_phase, 'idle');
 
-  const realDateNow = Date.now;
-  Date.now = () => NOW;
-  try {
-    const response = await otherHealthRequest({
-      request: new Request('https://example.com/api/health/other'),
-      env,
-    });
-    assert.equal(response.status, 200);
-    assert.equal((await response.json()).gateway, 'cloudflare-pages');
-  } finally {
-    Date.now = realDateNow;
-  }
+  const response = await withFixedNow(() => otherHealthRequest({
+    request: new Request('https://example.com/api/health/other'),
+    env,
+  }));
+  assert.equal(response.status, 200);
+  assert.equal((await response.json()).gateway, 'cloudflare-pages');
 });
 
 test('all scheduled Workers disable workers.dev and preview URLs', () => {
