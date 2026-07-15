@@ -28,37 +28,36 @@ function rankingDatabase() {
       (1,'ISRC-A','spotify-a','Song A','Artist A'),
       (2,'ISRC-B','spotify-b','Song B','Artist B');
     INSERT INTO sh_track_counter_current VALUES
-      ('a:1',1000,10,'a',1,NULL,NULL),
-      ('a:2',2000,20,'a',1,NULL,NULL),
-      ('a:3',2100,5,'legacy-a',NULL,'isrc-a',NULL),
-      ('b:1',2500,25,'b',2,NULL,NULL),
-      ('outside',500,100,'a',1,NULL,NULL),
-      ('zero',2200,0,'zero',NULL,NULL,NULL);
+      ('a:old-high',500,100,'a',1,NULL,NULL),
+      ('a:middle',2000,20,'a',1,NULL,NULL),
+      ('a:latest',2100,5,'legacy-a',NULL,'isrc-a',NULL),
+      ('b:latest',2500,25,'b',2,NULL,NULL),
+      ('zero:latest',2600,0,'zero',NULL,NULL,NULL);
   `);
   return db;
 }
 
-test('like ranking sums final like/bite counters once per occurrence and resolves track identity', () => {
+test('like ranking keeps only the latest like or bite count for each resolved track', () => {
   const db = rankingDatabase();
-  const rows = db.prepare(likeRankingSql('total')).all(900, 3000, 500);
+  const rows = db.prepare(likeRankingSql()).all(500);
   assert.equal(rows.length, 2);
-  assert.equal(rows[0].title, 'Song A');
-  assert.equal(rows[0].total_like_count, 35);
-  assert.equal(rows[0].peak_like_count, 20);
-  assert.equal(rows[0].occurrence_count, 3);
-  assert.equal(rows[0].period_like_count, 60);
-  assert.equal(rows[0].period_occurrence_count, 4);
-  assert.equal(rows[0].period_track_count, 2);
-  assert.equal(rows[0].period_peak_like_count, 25);
+  assert.equal(rows[0].title, 'Song B');
+  assert.equal(rows[0].latest_like_count, 25);
+  assert.equal(rows[0].latest_observed_at, 2500);
+  assert.equal(rows[1].title, 'Song A');
+  assert.equal(rows[1].latest_like_count, 5);
+  assert.equal(rows[1].latest_observed_at, 2100);
 });
 
-test('like ranking can order by highest single-play counter without changing totals', () => {
+test('older high counters are not accumulated into the latest ranking', () => {
   const db = rankingDatabase();
-  const rows = db.prepare(likeRankingSql('peak')).all(900, 3000, 500);
-  assert.equal(rows[0].title, 'Song B');
-  assert.equal(rows[0].peak_like_count, 25);
-  assert.equal(rows[1].title, 'Song A');
-  assert.equal(rows[1].total_like_count, 35);
+  const rows = db.prepare(likeRankingSql()).all(500);
+  assert.equal(rows[1].latest_like_count, 5);
+  assert.equal(rows[0].ranking_track_count, 2);
+  assert.equal(rows[0].ranking_max_like_count, 25);
+  assert.equal(rows[0].ranking_latest_observed_at, 2500);
+  assert.ok(!Object.hasOwn(rows[0], 'total_like_count'));
+  assert.ok(!Object.hasOwn(rows[0], 'average_like_count'));
 });
 
 test('FACTS schema publishes an observed-time index for cached ranking reads', () => {
