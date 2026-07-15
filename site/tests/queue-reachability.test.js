@@ -100,13 +100,13 @@ test('rapid pause and resume transitions are never throttled away', async () => 
   assert.deepEqual(rows.map((row) => row.is_paused), [0, 1, 0]);
 });
 
-test('the exact two minute boundary writes a new checkpoint', async () => {
+test('the exact one minute boundary writes a new checkpoint', async () => {
   const db = sqliteD1();
   const start = 1_700_000_000_000;
   const data = { station_id: 10, queue_id: 20, start_time: 30, is_paused: false };
 
   assert.equal((await saveQueueReachability(db, start, data)).inserted, true);
-  assert.equal((await saveQueueReachability(db, start + 60_000, data)).inserted, false);
+  assert.equal((await saveQueueReachability(db, start + 30_000, data)).inserted, false);
   assert.equal((await saveQueueReachability(db, start + QUEUE_REACHABILITY_CHECKPOINT_MS, data)).inserted, true);
 
   const row = db.sqlite.prepare('SELECT COUNT(*) AS count FROM sh_queue_snapshots').get();

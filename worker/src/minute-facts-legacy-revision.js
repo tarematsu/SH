@@ -98,12 +98,16 @@ export async function updatePlaybackState(db, input) {
   if (delayed) return { ...previous, delayed: true };
 
   const revisionChanged = Number(previous?.revision_id || 0) !== Number(revisionId || 0);
-  let pausedTotal = revisionChanged ? 0 : Number(previous?.paused_total_ms || 0);
-  let pauseStartedAt = revisionChanged ? (paused ? observedAt : null) : integer(previous?.pause_started_at);
-  const wasPaused = revisionChanged ? false : Number(previous?.is_paused || 0) === 1;
+  const sameQueueInstance = Boolean(previous)
+    && Number(previous.session_id || 0) === Number(sessionId || 0)
+    && Number(previous.queue_start_time || 0) === Number(queueStartTime || 0);
+  const resetPauseState = revisionChanged && !sameQueueInstance;
+  let pausedTotal = resetPauseState ? 0 : Number(previous?.paused_total_ms || 0);
+  let pauseStartedAt = resetPauseState ? (paused ? observedAt : null) : integer(previous?.pause_started_at);
+  const wasPaused = resetPauseState ? false : Number(previous?.is_paused || 0) === 1;
 
-  if (!revisionChanged && !wasPaused && paused) pauseStartedAt = observedAt;
-  if (!revisionChanged && wasPaused && !paused) {
+  if (!resetPauseState && !wasPaused && paused) pauseStartedAt = observedAt;
+  if (!resetPauseState && wasPaused && !paused) {
     if (pauseStartedAt != null) pausedTotal += Math.max(0, observedAt - pauseStartedAt);
     pauseStartedAt = null;
   }
