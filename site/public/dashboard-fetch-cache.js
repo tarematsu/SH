@@ -1,5 +1,6 @@
 (() => {
   const nativeFetch = window.fetch.bind(window);
+  const HIDDEN_CACHE_MAX_AGE_MS = 120_000;
   const state = {
     latestObservedAt: 0,
     queueRevision: '',
@@ -7,6 +8,7 @@
     queue: [],
     queueStatus: null,
     lastPayload: null,
+    cachedAt: 0,
   };
 
   function dashboardUrl(input) {
@@ -92,11 +94,12 @@
     if (payload.queue_revision && hasUsableQueue()) state.queueRevision = String(payload.queue_revision);
     if (!hasUsableQueue()) state.queueRevision = '';
     state.lastPayload = structuredClone(payload);
+    state.cachedAt = Date.now();
     return payload;
   }
 
   function cachedResponse() {
-    if (!state.lastPayload) return null;
+    if (!state.lastPayload || Date.now() - state.cachedAt > HIDDEN_CACHE_MAX_AGE_MS) return null;
     return new Response(JSON.stringify(structuredClone(state.lastPayload)), {
       status: 200,
       headers: {
