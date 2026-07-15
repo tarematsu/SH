@@ -107,17 +107,6 @@ function tableColumnNames(databaseName, table) {
   return new Set(rows.map((row) => String(row.name)));
 }
 
-function hasRepairMarker(databaseName, repairKey) {
-  const output = wrangler([
-    'd1', 'execute', databaseName,
-    '--remote', '--yes', '--json',
-    '--command', `SELECT 1 FROM sh_facts_storage_repairs WHERE repair_key='${repairKey}' LIMIT 1`,
-  ]);
-  const parsed = parseJsonOutput(output);
-  const containers = Array.isArray(parsed) ? parsed : [parsed];
-  return containers.some((container) => Array.isArray(container?.results) && container.results.length > 0);
-}
-
 let database = listDatabases().find((item) => item.name === databaseName);
 if (!database) {
   wrangler(['d1', 'create', databaseName]);
@@ -196,8 +185,7 @@ if (tableColumnNames(databaseName, 'sh_minute_fact_context_v2').size === 0) {
   ]);
 }
 
-const repairTableExists = tableColumnNames(databaseName, 'sh_facts_storage_repairs').size > 0;
-if (!repairTableExists || !hasRepairMarker(databaseName, '011_repair_counter_current')) {
+if (tableColumnNames(databaseName, 'sh_facts_storage_repairs').size === 0) {
   console.log('Applying counter-current repair migration...');
   wrangler([
     'd1', 'execute', databaseName,
