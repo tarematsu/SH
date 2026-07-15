@@ -6,6 +6,7 @@ import {
   onRequestGet as currentMinuteFacts,
 } from '../functions/api/minute-facts/current.js';
 import { onRequestGet as legacyCurrent } from '../functions/api/history-current.js';
+import { onRequestGet as legacyMigrated } from '../functions/api/history-migrated.js';
 
 function minuteDb() {
   return {
@@ -50,22 +51,32 @@ test('current minute-facts route always requests the latest view', () => {
   assert.equal(request.method, 'GET');
 });
 
-test('canonical and legacy current routes share the same implementation', async () => {
-  const env = { MINUTE_DB: minuteDb() };
+test('canonical current route returns the latest minute facts response', async () => {
   const canonical = await currentMinuteFacts({
     request: new Request('https://example.com/api/minute-facts/current'),
-    env,
+    env: { MINUTE_DB: minuteDb() },
   });
-  const legacy = await legacyCurrent({
-    request: new Request('https://example.com/api/history-current?latest=0'),
-    env,
-  });
-  const canonicalBody = await canonical.json();
-  const legacyBody = await legacy.json();
+  const body = await canonical.json();
 
   assert.equal(canonical.status, 200);
-  assert.equal(legacy.status, 200);
-  assert.equal(canonicalBody.mode, 'current');
-  assert.equal(canonicalBody.limit, 1440);
-  assert.deepEqual(legacyBody, canonicalBody);
+  assert.equal(body.mode, 'current');
+  assert.equal(body.limit, 1440);
+  assert.equal(body.rows.length, 1);
+});
+
+test('legacy minute-facts routes redirect to canonical URLs and preserve query parameters', async () => {
+  const current = await legacyCurrent({
+    request: new Request('https://example.com/api/history-current?latest=0&v=1'),
+  });
+  assert.equal(current.status, 308);
+  assert.equal(current.headers.get('location'), '/api/minute-facts/current?latest=0&v=1');
+  assert.equal(current.headers.get('deprecation'), 'true');
+  assert.equal(current.headers.get('x-api-successor'), '/api/minute-facts/current');
+
+  const migrated = await legacyMigrated({
+    request: new Request('https://example.com/api/history-migrated?from=2026-07-01&limit=50'),
+  });
+  assert.equal(migrated.status, 308);
+  assert.equal(migrated.headers.get('location'), '/api/minute-facts?from=2026-07-01&limit=50');
+  assert.equal(migrated.headers.get('x-api-successor'), '/api/minute-facts');
 });
