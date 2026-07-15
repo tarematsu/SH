@@ -104,18 +104,20 @@ export function withAbortableD1(db, signal, stage = 'd1') {
 
 function withCollectionSignal(env, signal) {
   const db = withAbortableD1(env?.DB, signal, 'stationhead-buddies');
-  return new Proxy(env || {}, {
-    get(target, property, receiver) {
-      if (property === '__COLLECTION_ABORT_SIGNAL') return signal;
-      if (property === 'DB') return db;
-      return Reflect.get(target, property, receiver);
+  if (!signal && db === env?.DB) return env;
+
+  const activeEnv = Object.create(env || null);
+  Object.defineProperties(activeEnv, {
+    __COLLECTION_ABORT_SIGNAL: {
+      value: signal,
+      enumerable: false,
     },
-    has(target, property) {
-      return property === '__COLLECTION_ABORT_SIGNAL'
-        || property === 'DB'
-        || Reflect.has(target, property);
+    DB: {
+      value: db,
+      enumerable: false,
     },
   });
+  return activeEnv;
 }
 
 async function timedStage(
