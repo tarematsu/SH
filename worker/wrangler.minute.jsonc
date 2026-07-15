@@ -27,9 +27,18 @@
     "COLLECTOR_PRIORITY_POLL_MS": 1000,
     "MINUTE_FACT_PENDING_ALERT_MS": 900000,
     "MINUTE_FACT_DEAD_REQUEUE_LIMIT": 20,
-    "MINUTE_FACT_AUTO_REQUEUE_DEAD": true
+    "MINUTE_FACT_AUTO_REQUEUE_DEAD": true,
+    "PUBLIC_HEALTH_CACHE_MS": 60000
   },
-  "triggers": { "crons": ["* * * * *"] },
+  "triggers": {
+    "crons": [
+      "* * * * *",
+      "*/2 * * * *",
+      "5,15,25,35,45,55 * * * *",
+      "7,17,27,37,47,57 * * * *",
+      "9,19,29,39,49,59 * * * *"
+    ]
+  },
   "d1_databases": [
     { "binding": "BUDDIES_DB", "database_name": "stationhead-buddies", "database_id": "f361aae0-05f0-42bc-8784-77100e80133d" },
     { "binding": "MINUTE_DB", "database_name": "stationhead-minute", "database_id": "43c12c1e-886d-4496-9c37-61bc8a15bbd7" }
