@@ -13,7 +13,7 @@ const pageSize = Number.isFinite(configuredPageSize)
 const apply = String(process.env.TRACK_METADATA_APPLY || '').toLowerCase() === 'true';
 const dropSource = String(process.env.TRACK_METADATA_DROP_SOURCE || '').toLowerCase() === 'true';
 const columns = [
-  'spotify_id', 'title', 'artist', 'display_title', 'thumbnail_url',
+  'spotify_id', 'isrc', 'title', 'artist', 'display_title', 'thumbnail_url',
   'spotify_url', 'source', 'fetched_at', 'raw_json',
 ];
 
@@ -80,6 +80,7 @@ function sourcePage(offset) {
 function writePage(database, rows, directory, page) {
   const statements = rows.map((row) => `INSERT INTO sh_track_metadata(${columns.join(',')}) VALUES(${columns.map((column) => quote(row[column])).join(',')})
 ON CONFLICT(spotify_id) DO UPDATE SET
+  isrc=COALESCE(sh_track_metadata.isrc,excluded.isrc),
   title=COALESCE(sh_track_metadata.title,excluded.title),
   artist=COALESCE(sh_track_metadata.artist,excluded.artist),
   display_title=COALESCE(sh_track_metadata.display_title,excluded.display_title),
