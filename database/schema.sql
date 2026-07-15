@@ -142,6 +142,7 @@ CREATE INDEX IF NOT EXISTS idx_sh_sh_realtime_metrics_time ON sh_realtime_metric
 
 CREATE TABLE IF NOT EXISTS sh_track_metadata (
   spotify_id TEXT PRIMARY KEY,
+  isrc TEXT,
   title TEXT,
   artist TEXT,
   display_title TEXT,
@@ -152,6 +153,9 @@ CREATE TABLE IF NOT EXISTS sh_track_metadata (
   raw_json TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_sh_track_metadata_fetched_at ON sh_track_metadata(fetched_at DESC);
+CREATE INDEX IF NOT EXISTS idx_sh_track_metadata_isrc_fetched
+  ON sh_track_metadata(isrc, fetched_at DESC)
+  WHERE isrc IS NOT NULL AND isrc <> '';
 
 CREATE TABLE IF NOT EXISTS sh_collector_heartbeats (
   collector_id TEXT PRIMARY KEY,
