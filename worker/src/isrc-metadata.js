@@ -49,6 +49,24 @@ export async function fetchIsrcMetadata(isrc, config = {}) {
   return musicBrainzRecordingMetadata(payload, normalized);
 }
 
+async function persistIsrcMetadata(db, row) {
+  await db.prepare(`INSERT INTO sh_isrc_metadata(isrc,title,artist,source,fetched_at,raw_json)
+    VALUES(?,?,?,?,?,?) ON CONFLICT(isrc) DO UPDATE SET
+      title=COALESCE(excluded.title,sh_isrc_metadata.title),
+      artist=COALESCE(excluded.artist,sh_isrc_metadata.artist),
+      source=excluded.source,
+      fetched_at=MAX(excluded.fetched_at,sh_isrc_metadata.fetched_at),
+      raw_json=COALESCE(excluded.raw_json,sh_isrc_metadata.raw_json)`)
+    .bind(row.isrc, row.title, row.artist, row.source, row.fetched_at, row.raw_json).run();
+  if (!row.title || !row.artist) return;
+  await db.prepare(`UPDATE sh_tracks SET
+      title=CASE WHEN title IS NULL OR TRIM(title)='' OR title=spotify_id THEN ? ELSE title END,
+      artist=CASE WHEN artist IS NULL OR TRIM(artist)='' OR artist=spotify_id
+        OR artist GLOB 'JP[A-Z0-9]*' THEN ? ELSE artist END
+    WHERE UPPER(REPLACE(isrc,'-',''))=?`)
+    .bind(row.title, row.artist, row.isrc).run();
+}
+
 export async function enrichIsrcTracks(env, queue, config = {}, dependencies = {}) {
   const db = env?.MINUTE_DB || env?.DB;
   if (!db) return { saved: 0, attempted: 0 };
@@ -81,14 +99,7 @@ export async function enrichIsrcTracks(env, queue, config = {}, dependencies = {
       fetched_at: now,
       raw_json: null,
     };
-    await db.prepare(`INSERT INTO sh_isrc_metadata(isrc,title,artist,source,fetched_at,raw_json)
-      VALUES(?,?,?,?,?,?) ON CONFLICT(isrc) DO UPDATE SET
-        title=COALESCE(excluded.title,sh_isrc_metadata.title),
-        artist=COALESCE(excluded.artist,sh_isrc_metadata.artist),
-        source=excluded.source,
-        fetched_at=MAX(excluded.fetched_at,sh_isrc_metadata.fetched_at),
-        raw_json=COALESCE(excluded.raw_json,sh_isrc_metadata.raw_json)`)
-      .bind(row.isrc, row.title, row.artist, row.source, row.fetched_at, row.raw_json).run();
+    await persistIsrcMetadata(db, row);
     if (metadata) saved += 1;
   }
   return { saved, attempted: retryable.length };
