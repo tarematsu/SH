@@ -57,21 +57,21 @@ export function computePlayback(queue, now = Date.now()) {
 
 export function normalizePlaybackTrack(track, index, playback) {
   const fallback = metadataFallback(track.metadata_raw_json);
-  const title = String(track.title || fallback.title || '').trim();
+  const title = String(track.title || fallback.title || '').trim() || null;
   const rawArtist = String(track.artist || fallback.artist || '').trim();
-  const artist = rawArtist && !/^JP[A-Z0-9]{8,}$/i.test(rawArtist)
+  const artist = (rawArtist && !/^JP[A-Z0-9]{8,}$/i.test(rawArtist)
     ? rawArtist
-    : inferArtistFromDisplayTitle(track.display_title || fallback.title, title || fallback.title);
+    : inferArtistFromDisplayTitle(track.display_title || fallback.title, title || fallback.title)) || null;
+  const thumbnailUrl = String(track.thumbnail_url || '').trim() || null;
   const spotifyId = String(track.spotify_id || '').trim() || null;
   const durationMs = Math.max(0, num(track.duration_ms) || 0);
   const isCurrent = index === playback.currentIndex;
   const output = {
-    spotify_id: spotifyId,
+    title,
+    artist,
+    thumbnail_url: thumbnailUrl,
     duration_ms: durationMs,
   };
-  if (title && title !== spotifyId) output.title = title;
-  if (artist) output.artist = artist;
-  if (track.thumbnail_url) output.thumbnail_url = track.thumbnail_url;
   if (track.spotify_url && track.spotify_url !== (spotifyId ? `https://open.spotify.com/track/${spotifyId}` : null)) {
     output.spotify_url = track.spotify_url;
   }
