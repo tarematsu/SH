@@ -1,9 +1,15 @@
 const ORIGINAL_D1_STATEMENT = Symbol('original-d1-statement');
+const REWRITE_CACHE_LIMIT = 16;
+const rewriteCache = new Map();
 
 export function rewriteThrottledSql(value) {
   let sql = String(value || '');
 
-  if (sql.includes('INSERT INTO sh_worker_collector_state') && !sql.includes('sh_worker_collector_state.last_success_at')) {
+  if (!sql.includes('INSERT INTO sh_worker_collector_state')) return sql;
+  const cached = rewriteCache.get(sql);
+  if (cached !== undefined) return cached;
+
+  if (!sql.includes('sh_worker_collector_state.last_success_at')) {
     sql = sql.replace(
       'updated_at=excluded.updated_at',
       `updated_at=excluded.updated_at
@@ -18,6 +24,11 @@ export function rewriteThrottledSql(value) {
     );
   }
 
+  if (rewriteCache.size >= REWRITE_CACHE_LIMIT) {
+    const oldest = rewriteCache.keys().next().value;
+    if (oldest !== undefined) rewriteCache.delete(oldest);
+  }
+  rewriteCache.set(String(value || ''), sql);
   return sql;
 }
 

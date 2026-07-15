@@ -5,6 +5,7 @@ const HEARTBEAT_INTERVAL_MS = 10 * 60_000;
 const FAILURE_CLEAR_TTL_MS = 10 * 60_000;
 const COLLECTOR_STATE_TTL_MS = 5 * 60_000;
 const COLLECTOR_STATE_WRITE_INTERVAL_MS = 5 * 60_000;
+const STATEMENT_KIND_CACHE_LIMIT = 16;
 const RAW_STATEMENT = Symbol('raw-d1-statement');
 const STATEMENT_META = Symbol('d1-statement-meta');
 const optimizerStates = new WeakMap();
@@ -56,6 +57,7 @@ function stateFor(db) {
       collectorStateExpiresAt: 0,
       collectorStatePersistedAt: 0,
       collectorStateSignature: null,
+      statementKindCache: new Map(),
     };
     optimizerStates.set(db, state);
   }
@@ -101,6 +103,18 @@ function cachedCollectorStateResult(kind, row) {
 
 function isCollectorStateRead(kind) {
   return kind === 'collector-state-read' || kind === 'collector-state-health-read';
+}
+
+function cachedStatementKind(shared, sql) {
+  const cached = shared.statementKindCache.get(sql);
+  if (cached !== undefined) return cached;
+  const kind = statementKind(sql);
+  if (shared.statementKindCache.size >= STATEMENT_KIND_CACHE_LIMIT) {
+    const oldest = shared.statementKindCache.keys().next().value;
+    if (oldest !== undefined) shared.statementKindCache.delete(oldest);
+  }
+  shared.statementKindCache.set(sql, kind);
+  return kind;
 }
 
 export function withDuplicateVelocityReadRemoved(env, nowFn = Date.now) {
@@ -202,7 +216,9 @@ export function withDuplicateVelocityReadRemoved(env, nowFn = Date.now) {
       if (property === 'prepare') {
         return (sql) => {
           const rewritten = rewriteDuplicateVelocityRead(sql, chatEnabled);
-          const kind = statementKind(rewritten);
+          const kind = rewritten.includes('sh_collector_') || rewritten.includes('sh_worker_collector_state')
+            ? cachedStatementKind(shared, rewritten)
+            : null;
           const statement = target.prepare(rewritten);
           if (kind === null && rewritten === String(sql || '')) return statement;
           return wrapStatement(statement, {
