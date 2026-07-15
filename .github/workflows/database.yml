@@ -27,6 +27,11 @@ on:
           - other-db
           - buddies-db
           - metadata-consolidation
+      drop_source_metadata:
+        description: Delete the legacy OTHER_DB metadata table after verification
+        required: true
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -98,7 +103,7 @@ jobs:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN || secrets.CLOUDFLARE_BUILDS_API_TOKEN || secrets.CF_API_TOKEN }}
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID || secrets.CF_ACCOUNT_ID }}
       TRACK_METADATA_APPLY: 'true'
-      TRACK_METADATA_DROP_SOURCE: 'true'
+      TRACK_METADATA_DROP_SOURCE: ${{ inputs.drop_source_metadata }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
