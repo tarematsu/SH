@@ -108,21 +108,22 @@ async function withFixedNow(action) {
   }
 }
 
-test('Pages API catalog exposes the public gateway without Worker URLs', async () => {
+test('Pages API catalog exposes only canonical routes without Worker URLs', async () => {
   const catalog = apiCatalog(NOW);
   assert.equal(catalog.gateway, 'cloudflare-pages');
   assert.equal(catalog.contract_version, 2);
   assert.equal(catalog.worker_urls_public, false);
+  assert.equal('compatibility' in catalog, false);
   const paths = Object.values(catalog.groups).flat().map(({ path }) => path);
   assert.ok(paths.includes('/api/health'));
-  assert.equal(paths.includes('/api/health/collector'), false);
   assert.ok(paths.includes('/api/health/minute'));
   assert.ok(paths.includes('/api/health/other'));
+  assert.ok(paths.includes('/api/minute-facts'));
+  assert.ok(paths.includes('/api/minute-facts/current'));
   assert.ok(paths.includes('/api/minute-facts/latest'));
+  assert.equal(paths.includes('/api/health/collector'), false);
+  assert.equal(paths.includes('/api/history-current'), false);
   assert.equal(new Set(paths).size, paths.length);
-
-  const compatibility = new Map(catalog.compatibility.map(({ path, successor }) => [path, successor]));
-  assert.equal(compatibility.get('/api/health/collector'), '/api/health');
 
   const response = await catalogRequest({ request: new Request('https://example.com/api') });
   assert.equal(response.status, 200);
@@ -195,9 +196,11 @@ test('all scheduled Workers disable workers.dev and preview URLs', () => {
 
   for (const path of [
     '../functions/api/index.js',
-    '../functions/api/health/collector.js',
+    '../functions/api/health.js',
     '../functions/api/health/minute.js',
     '../functions/api/health/other.js',
+    '../functions/api/minute-facts/index.js',
+    '../functions/api/minute-facts/current.js',
     '../functions/api/minute-facts/latest.js',
   ]) {
     assert.equal(existsSync(new URL(path, import.meta.url)), true, `${path} must exist`);
