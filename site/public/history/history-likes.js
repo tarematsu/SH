@@ -106,7 +106,6 @@
 
     const totals = new Map();
     for (const row of weekRows) {
-      if (row?.period_complete === false || row?.play_count_excluded === true) continue;
       const key = identityKeys(row)[0];
       if (!key) continue;
       const root = find(key);
@@ -256,10 +255,7 @@
       const weekRows = Array.isArray(trackResult.data.rows) ? trackResult.data.rows : [];
       state.rows = attachWeeklyPlays(likeRows, weekRows);
       state.weekRows = weekRows;
-      const weekPlayCount = weekRows.reduce((sum, row) => {
-        if (row?.period_complete === false || row?.play_count_excluded === true) return sum;
-        return sum + (finite(row.play_count) || 0);
-      }, 0);
+      const weekPlayCount = weekRows.reduce((sum, row) => sum + (finite(row.play_count) || 0), 0);
       state.summary = {
         ...(likeResult.data.summary || {}),
         week_play_count: weekPlayCount,
