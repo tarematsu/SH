@@ -17,9 +17,6 @@ const columns = [
   'spotify_url', 'source', 'fetched_at', 'raw_json',
 ];
 
-if (!process.env.CLOUDFLARE_API_TOKEN) {
-  throw new Error('CLOUDFLARE_API_TOKEN is required');
-}
 if (dropSource && !apply) {
   throw new Error('TRACK_METADATA_DROP_SOURCE=true requires TRACK_METADATA_APPLY=true');
 }
@@ -92,7 +89,7 @@ ON CONFLICT(spotify_id) DO UPDATE SET
   fetched_at=MAX(sh_track_metadata.fetched_at,excluded.fetched_at),
   raw_json=COALESCE(sh_track_metadata.raw_json,excluded.raw_json);`);
   const sqlPath = join(directory, `track-metadata-${page}.sql`);
-  writeFileSync(sqlPath, `BEGIN;\n${statements.join('\n')}\nCOMMIT;\n`, 'utf8');
+  writeFileSync(sqlPath, `${statements.join('\n')}\n`, 'utf8');
   wrangler([
     'd1', 'execute', targetDatabase,
     '--remote', '--yes', '--file', sqlPath,
