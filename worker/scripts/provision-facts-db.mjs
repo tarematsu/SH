@@ -38,6 +38,10 @@ const completionMigrationPath = resolve(
   repositoryRoot,
   'database/facts-migrations/009_mark_legacy_migration_complete.sql',
 );
+const storageRedesignMigrationPath = resolve(
+  repositoryRoot,
+  'database/facts-migrations/010_sparse_context_and_counter_log.sql',
+);
 const metadataPath = resolve(repositoryRoot, 'database/facts-db.json');
 const databaseName = process.env.FACTS_DATABASE_NAME || 'stationhead-minute';
 
@@ -150,10 +154,19 @@ wrangler([
   '--file', completionMigrationPath,
 ]);
 
+if (tableColumnNames(databaseName, 'sh_minute_fact_context_v2').size === 0) {
+  console.log('Applying sparse member/context and canonical counter-log migration...');
+  wrangler([
+    'd1', 'execute', databaseName,
+    '--remote', '--yes',
+    '--file', storageRedesignMigrationPath,
+  ]);
+}
+
 writeFileSync(metadataPath, `${JSON.stringify({
   binding: 'MINUTE_DB',
   database_name: databaseName,
   database_id: databaseId,
-  schema: 'database/facts-migrations/009_mark_legacy_migration_complete.sql',
+  schema: 'database/facts-migrations/010_sparse_context_and_counter_log.sql',
 }, null, 2)}\n`);
 console.log(JSON.stringify({ ok: true, database_name: databaseName, database_id: databaseId }));

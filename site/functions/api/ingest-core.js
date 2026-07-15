@@ -84,7 +84,7 @@ export function latestLikesSql(count) {
   ) SELECT track_key,observed_at,like_count FROM ranked WHERE row_rank=1`;
 }
 
-export function planLikeObservations(tracks, latestRows, observedAt) {
+export function planLikeObservations(tracks, latestRows, _observedAt) {
   const latest = new Map((latestRows || []).map((row) => [String(row.track_key), row]));
   const unique = new Map();
   for (const track of Array.isArray(tracks) ? tracks : []) {
@@ -94,9 +94,7 @@ export function planLikeObservations(tracks, latestRows, observedAt) {
   return [...unique.entries()]
     .filter(([trackKey, track]) => {
       const previous = latest.get(trackKey);
-      return !previous
-        || num(previous.like_count) !== num(track.bite_count)
-        || observedAt - (num(previous.observed_at) ?? 0) >= CHECKPOINT_MS;
+      return !previous || num(previous.like_count) !== num(track.bite_count);
     })
     .map(([trackKey, track]) => ({ trackKey, track }));
 }

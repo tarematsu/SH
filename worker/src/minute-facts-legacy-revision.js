@@ -30,6 +30,10 @@ export async function createRevision(db, oldDb, input) {
   const { channelId, stationId, sessionId, queue, observedAt, receivedAt } = input;
   const payload = queueStructurePayload(queue);
   const structuralHash = await queueStructuralHash(queue);
+  const revisionKey = [
+    channelId, sessionId || 0, integer(queue?.queue_id) || 0,
+    timestampMs(queue?.start_time) || 0, structuralHash,
+  ].join(':');
   const current = await db.prepare(`SELECT p.*,r.structural_hash,r.session_id AS revision_session_id
     FROM sh_playback_current p LEFT JOIN sh_queue_revisions r ON r.id=p.revision_id
     WHERE p.channel_id=?`).bind(channelId).first();
@@ -40,18 +44,23 @@ export async function createRevision(db, oldDb, input) {
     && Number(current.queue_start_time || 0) === Number(queueStart || 0);
   if (sameRevision) return { revisionId: Number(current.revision_id), created: false, current };
 
+  const existing = await db.prepare(`SELECT id,status FROM sh_queue_revisions
+    WHERE revision_key=? LIMIT 1`).bind(revisionKey).first();
+  if (existing?.id != null && existing.status === 'complete') {
+    return { revisionId: Number(existing.id), created: false, current: null };
+  }
+
   const tracks = payload.tracks;
-  await db.prepare(`INSERT OR IGNORE INTO sh_queue_revisions(
+  if (existing?.id == null) await db.prepare(`INSERT OR IGNORE INTO sh_queue_revisions(
       session_id,channel_id,station_id,queue_id,queue_start_time,effective_at,received_at,
-      structural_hash,item_count,status,source,source_priority
-    ) VALUES(?,?,?,?,?,?,?,?,?,'pending','live_collector',100)`)
+      structural_hash,revision_key,item_count,status,source,source_priority
+    ) VALUES(?,?,?,?,?,?,?,?,? ,?,'pending','live_collector',100)`)
     .bind(
       sessionId, channelId, stationId, integer(queue?.queue_id), queueStart,
-      observedAt, receivedAt, structuralHash, tracks.length,
+      observedAt, receivedAt, structuralHash, revisionKey, tracks.length,
     ).run();
-  const revision = await db.prepare(`SELECT id,status FROM sh_queue_revisions
-    WHERE channel_id=? AND effective_at=? AND structural_hash=?`)
-    .bind(channelId, observedAt, structuralHash).first();
+  const revision = existing || await db.prepare(`SELECT id,status FROM sh_queue_revisions
+    WHERE revision_key=? LIMIT 1`).bind(revisionKey).first();
   const revisionId = Number(revision?.id);
   if (!Number.isFinite(revisionId)) throw new Error('failed to create queue revision');
 
@@ -145,17 +154,29 @@ export async function writeCurrentBite(db, input) {
     WHERE revision_id=? AND position=?`).bind(revisionId, position).first();
   const trackId = integer(item?.track_id);
   if (trackId == null) return biteCount;
-  const latest = await db.prepare(`SELECT bite_count FROM sh_track_bite_observations
-    WHERE channel_id=? AND track_id=? ORDER BY observed_at DESC,id DESC LIMIT 1`)
-    .bind(channelId, trackId).first();
-  if (integer(latest?.bite_count) !== biteCount) {
-    await db.prepare(`INSERT OR IGNORE INTO sh_track_bite_observations(
-        observed_at,channel_id,station_id,revision_id,track_id,queue_position,bite_count,source
-      ) VALUES(?,?,?,?,?,?,?,'live_collector')`).bind(
-      observedAt, channelId, stationId, revisionId, trackId, position, biteCount,
+  const occurrenceKey = `revision:${revisionId}:${position}`;
+  const trackKey = String(
+    sourceTrack?.queue_track_id
+      ?? sourceTrack?.stationhead_track_id
+      ?? sourceTrack?.spotify_id
+      ?? sourceTrack?.isrc
+      ?? `track:${trackId}`,
+  );
+  const latest = await db.prepare(`SELECT count_value FROM sh_track_counter_changes
+    WHERE occurrence_key=? ORDER BY observed_at DESC,id DESC LIMIT 1`)
+    .bind(occurrenceKey).first();
+  if (integer(latest?.count_value) !== biteCount) {
+    await db.prepare(`INSERT OR IGNORE INTO sh_track_counter_changes(
+      observed_at,occurrence_key,channel_id,station_id,queue_id,queue_start_time,
+        queue_position,queue_track_id,stationhead_track_id,spotify_id,apple_music_id,isrc,
+        queue_revision_id,track_id,track_key,count_value,source,source_record_id
+      ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).bind(
+      observedAt, occurrenceKey, channelId, stationId, queue?.queue_id,
+      timestampMs(queue?.start_time), position, sourceTrack?.queue_track_id,
+      sourceTrack?.stationhead_track_id, sourceTrack?.spotify_id, sourceTrack?.apple_music_id,
+      sourceTrack?.isrc, revisionId, trackId, trackKey,
+      biteCount, 'live_collector', `live:${channelId}:${revisionId}:${position}:${observedAt}:${biteCount}`,
     ).run();
   }
-  await db.prepare(`UPDATE sh_queue_revision_items SET bite_count=?
-    WHERE revision_id=? AND position=?`).bind(biteCount, revisionId, position).run();
   return biteCount;
 }

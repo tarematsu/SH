@@ -3,7 +3,9 @@ import { sanitizeFailureDetail } from './collector-failure.js';
 const DEFAULT_BATCH_SIZE = 100;
 const MAX_BATCH_SIZE = 500;
 const DEFAULT_SOURCE_LAG_MS = 5 * 60_000;
-const SYNC_KEYS = Object.freeze(['queue-items', 'track-likes', 'track-metadata']);
+// Queue structure is canonicalized by the minute worker into revisions/items.
+// Copying source-shaped queue rows here would recreate a second queue history.
+const SYNC_KEYS = Object.freeze(['track-likes', 'track-metadata']);
 
 function integer(value) {
   const parsed = Number(value);
@@ -44,7 +46,11 @@ async function loadState(db, syncKey) {
 }
 
 async function saveState(db, syncKey, values = {}) {
-  await db.prepare(`UPDATE sh_buddies_sync_state SET
+  await saveStateStatement(db, syncKey, values).run();
+}
+
+function saveStateStatement(db, syncKey, values = {}) {
+  return db.prepare(`UPDATE sh_buddies_sync_state SET
       cursor_observed_at=?,cursor_source_id=?,cursor_source_text=?,
       rows_processed=rows_processed+?,last_run_at=?,last_success_at=?,last_error=?,updated_at=?
     WHERE sync_key=?`).bind(
@@ -57,49 +63,33 @@ async function saveState(db, syncKey, values = {}) {
     values.lastError ?? null,
     Date.now(),
     syncKey,
-  ).run();
-}
-
-function queueItemStatement(db, row) {
-  return db.prepare(`INSERT INTO sh_queue_item_observations(
-      source_id,observed_at,station_id,queue_id,start_time,position,
-      queue_track_id,stationhead_track_id,spotify_id,apple_music_id,deezer_id,
-      isrc,duration_ms,preview_url,bite_count
-    ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-    ON CONFLICT(source_id) DO UPDATE SET
-      observed_at=excluded.observed_at,station_id=excluded.station_id,
-      queue_id=excluded.queue_id,start_time=excluded.start_time,
-      position=excluded.position,queue_track_id=excluded.queue_track_id,
-      stationhead_track_id=excluded.stationhead_track_id,spotify_id=excluded.spotify_id,
-      apple_music_id=excluded.apple_music_id,deezer_id=excluded.deezer_id,
-      isrc=excluded.isrc,duration_ms=excluded.duration_ms,
-      preview_url=excluded.preview_url,bite_count=excluded.bite_count`).bind(
-    integer(row.id), integer(row.observed_at), integer(row.station_id), integer(row.queue_id),
-    integer(row.start_time), integer(row.position), integer(row.queue_track_id),
-    integer(row.stationhead_track_id), text(row.spotify_id), text(row.apple_music_id),
-    text(row.deezer_id), text(row.isrc), integer(row.duration_ms), text(row.preview_url),
-    integer(row.bite_count),
   );
 }
 
 function likeStatement(db, row) {
-  return db.prepare(`INSERT INTO sh_track_like_observations(
-      source_id,observed_at,station_id,queue_id,start_time,position,
+  const stationId = integer(row.station_id);
+  const queueId = integer(row.queue_id);
+  const startTime = integer(row.start_time);
+  const position = integer(row.position);
+  const trackKey = text(row.track_key) || text(row.spotify_id) || text(row.isrc)
+    || `source:${integer(row.id) || 0}`;
+  const occurrenceKey = `${stationId ?? 0}:${queueId ?? 0}:${startTime ?? 0}:${position ?? trackKey}`;
+  const count = integer(row.like_count);
+  const sourceRecordId = `buddies-like:${integer(row.id) || 0}`;
+  return db.prepare(`INSERT INTO sh_track_counter_changes(
+      observed_at,occurrence_key,station_id,queue_id,queue_start_time,queue_position,
       queue_track_id,stationhead_track_id,spotify_id,apple_music_id,isrc,
-      track_key,like_count,source
-    ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-    ON CONFLICT(source_id) DO UPDATE SET
-      observed_at=excluded.observed_at,station_id=excluded.station_id,
-      queue_id=excluded.queue_id,start_time=excluded.start_time,
-      position=excluded.position,queue_track_id=excluded.queue_track_id,
-      stationhead_track_id=excluded.stationhead_track_id,spotify_id=excluded.spotify_id,
-      apple_music_id=excluded.apple_music_id,isrc=excluded.isrc,
-      track_key=excluded.track_key,like_count=excluded.like_count,
-      source=excluded.source`).bind(
-    integer(row.id), integer(row.observed_at), integer(row.station_id), integer(row.queue_id),
-    integer(row.start_time), integer(row.position), integer(row.queue_track_id),
-    integer(row.stationhead_track_id), text(row.spotify_id), text(row.apple_music_id),
-    text(row.isrc), text(row.track_key), integer(row.like_count), text(row.source) || 'buddies-buffer',
+      track_key,count_value,source,source_record_id
+    ) SELECT ?,?,?,?,?,?,?,?,?,?,?,?,?,?,?
+    WHERE ? IS NOT NULL AND NOT EXISTS(
+      SELECT 1 FROM sh_track_counter_changes
+      WHERE occurrence_key=? AND count_value=?
+    )`).bind(
+    integer(row.observed_at), occurrenceKey, stationId, queueId, startTime, position,
+    integer(row.queue_track_id), integer(row.stationhead_track_id), text(row.spotify_id),
+    text(row.apple_music_id), text(row.isrc), trackKey, count,
+    text(row.source) || 'buddies-buffer', sourceRecordId,
+    count, occurrenceKey, count,
   );
 }
 
@@ -131,7 +121,7 @@ async function readRows(sourceDb, syncKey, state, cutoff, limit) {
       ) ORDER BY fetched_at ASC,spotify_id ASC LIMIT ?`)
       .bind(cutoff, current.observedAt, current.observedAt, current.sourceText, limit).all();
   }
-  const table = syncKey === 'queue-items' ? 'sh_queue_items' : 'sh_track_like_observations';
+  const table = 'sh_track_like_observations';
   return sourceDb.prepare(`SELECT * FROM ${table}
     WHERE observed_at<? AND (observed_at>? OR (observed_at=? AND id>?))
     ORDER BY observed_at ASC,id ASC LIMIT ?`)
@@ -152,24 +142,22 @@ async function syncOne(env, syncKey, now, limit) {
       .bind(now, now, now, syncKey).run();
     return { syncKey, skipped: false, rows: 0, caught_up: true };
   }
-  const statements = rows.map((row) => syncKey === 'queue-items'
-    ? queueItemStatement(minuteDb, row)
-    : syncKey === 'track-likes'
-      ? likeStatement(minuteDb, row)
-      : metadataStatement(minuteDb, row));
-  await minuteDb.batch(statements);
+  const statements = rows.map((row) => syncKey === 'track-likes'
+    ? likeStatement(minuteDb, row)
+    : metadataStatement(minuteDb, row));
   const last = rows.at(-1);
   const lastAt = integer(last.observed_at ?? last.fetched_at) || 0;
   const lastId = integer(last.id) || 0;
   const lastText = text(last.spotify_id);
-  await saveState(minuteDb, syncKey, {
+  statements.push(saveStateStatement(minuteDb, syncKey, {
     cursorObservedAt: lastAt,
     cursorSourceId: lastId,
     cursorSourceText: lastText,
     rowsProcessed: rows.length,
     lastRunAt: now,
     lastSuccessAt: now,
-  });
+  }));
+  await minuteDb.batch(statements);
   return { syncKey, skipped: false, rows: rows.length, caught_up: rows.length < limit };
 }
 

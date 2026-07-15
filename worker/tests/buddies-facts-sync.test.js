@@ -7,6 +7,7 @@ function makeSource(rowsByTable) {
   return {
     prepare(sql) {
       return {
+        sql,
         params: [],
         bind(...params) { this.params = params; return this; },
         async all() {
@@ -30,6 +31,7 @@ function makeFacts(states, batches, updates) {
   return {
     prepare(sql) {
       return {
+        sql,
         params: [],
         bind(...params) { this.params = params; return this; },
         async first() {
@@ -51,12 +53,10 @@ function makeFacts(states, batches, updates) {
 test('buddies sync drains compact source tables with independent durable cursors', async () => {
   const now = 10_000_000;
   const source = makeSource({
-    sh_queue_items: [{ id: 1, observed_at: 1_000, position: 0, station_id: 2 }],
     sh_track_like_observations: [{ id: 2, observed_at: 2_000, track_key: 'spotify:t', like_count: 4 }],
     sh_track_metadata: [{ spotify_id: 't', fetched_at: 3_000, title: 'Song' }],
   });
   const states = {
-    'queue-items': { sync_key: 'queue-items' },
     'track-likes': { sync_key: 'track-likes' },
     'track-metadata': { sync_key: 'track-metadata' },
   };
@@ -69,10 +69,9 @@ test('buddies sync drains compact source tables with independent durable cursors
   }, { now, limit: 10 });
 
   assert.equal(result.failed, false);
-  assert.equal(result.rows, 3);
-  assert.equal(batches.length, 3);
-  assert.equal(updates.length, 3);
-  assert.deepEqual(updates.map(({ params }) => params.at(-1)), [
-    'queue-items', 'track-likes', 'track-metadata',
-  ]);
+  assert.equal(result.rows, 2);
+  assert.equal(batches.length, 2);
+  assert.equal(updates.length, 0);
+  assert.equal(batches[0].some((sql) => sql.includes('UPDATE sh_buddies_sync_state')), true);
+  assert.equal(batches[1].some((sql) => sql.includes('UPDATE sh_buddies_sync_state')), true);
 });

@@ -96,7 +96,7 @@ test('main dashboard prefers fresh MINUTE_DB metrics and history over conflictin
       }),
     })
     .route('first', 'FROM sh_queue_read_model_current', null)
-    .route('first', 'f.total_member_count AS total_member_count', {
+    .route('first', 'FROM sh_total_member_daily d', {
       observed_at: now - 86_400_000,
       total_member_count: 30_500,
     })

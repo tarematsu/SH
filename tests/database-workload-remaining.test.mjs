@@ -25,11 +25,11 @@ test('unchanged queue items only write when their stored state changes', () => {
   assert.equal(queueItemsToWrite([track], existing, observedAt + 3_600_000, 7).length, 0);
 });
 
-test('hourly queue checkpoints preserve like observations without rewriting queue state', () => {
+test('unchanged like counts are not written again during queue checkpoints', () => {
   const observedAt = 10_000_000;
   const track = { position: 0, queue_track_id: 11, bite_count: 5, raw: { stable: true } };
   const latest = [{ track_key: '11', observed_at: observedAt - 3_600_000, like_count: 5 }];
-  assert.equal(planLikeObservations([track], latest, observedAt).length, 1);
+  assert.equal(planLikeObservations([track], latest, observedAt).length, 0);
 });
 
 test('unchanged queue payload skips all item and like inspection between checkpoints', () => {

@@ -48,7 +48,10 @@ export function rawHistorySql(cursor) {
     ELSE COALESCE(f.reported_current_stream_count,f.reported_total_listens) END AS total_stream_count,
   t.title AS track_title,t.artist AS artist_name,c.track_bite_count AS likes,
   f.comment_count AS comment_velocity,h.current_handle AS host_handle,
-  f.total_member_count,NULL AS source_note,
+  COALESCE((SELECT d.last_total_member_count FROM sh_total_member_daily d
+    WHERE d.channel_id=f.channel_id AND d.day_at=(f.observed_at/86400000)*86400000
+    ORDER BY d.last_observed_at DESC,d.host_key LIMIT 1),f.total_member_count)
+    AS total_member_count,NULL AS source_note,
   f.quality_score_code/100.0 AS quality_score,f.quality_flags,
   f.minute_at,f.source_record_id
 FROM sh_minute_facts f

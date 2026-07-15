@@ -83,7 +83,12 @@ export function minuteFactsRowsSql(options = {}) {
     f.id,f.channel_id,c.station_id,f.minute_at,f.observed_at,f.received_at,
     f.source_code,f.source_priority,f.source_record_id,fc.collector_id,
     f.broadcast_session_id,f.is_broadcasting,c.broadcast_start_time,
-    f.listener_count,f.online_member_count,f.total_member_count,f.guest_count,
+    f.listener_count,f.online_member_count,
+    COALESCE((SELECT d.last_total_member_count FROM sh_total_member_daily d
+      WHERE d.channel_id=f.channel_id AND d.day_at=(f.observed_at/86400000)*86400000
+        AND d.host_key IN (0,COALESCE(c.host_id,0))
+      ORDER BY d.host_key DESC,d.last_observed_at DESC LIMIT 1),f.total_member_count)
+      AS total_member_count,f.guest_count,
     CASE WHEN f.source_code=1 THEN f.reported_total_listens ELSE NULL END
       AS cumulative_listener_count,
     CASE WHEN f.source_code=1 THEN f.reported_current_stream_count

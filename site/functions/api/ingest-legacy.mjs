@@ -185,8 +185,7 @@ async function saveLikeObservations(db, observedAt, data) {
     `).bind(stationId, trackKey).first();
 
     const changed = !latest || num(latest.like_count) !== likeCount;
-    const checkpoint = !latest || observedAt - num(latest.observed_at) >= 3600000;
-    if (!changed && !checkpoint) continue;
+    if (!changed) continue;
 
     await db.prepare(`
       INSERT OR IGNORE INTO sh_track_like_observations (

@@ -129,10 +129,10 @@ export function queueRevisionItemStatement(db, revisionId, track, biteCount) {
       stationhead_track_id=excluded.stationhead_track_id,isrc=excluded.isrc,
       spotify_id=excluded.spotify_id,deezer_id=excluded.deezer_id,
       duration_ms=excluded.duration_ms,playback_offset_ms=excluded.playback_offset_ms,
-      schedule_valid=excluded.schedule_valid,bite_count=excluded.bite_count`).bind(
+      schedule_valid=excluded.schedule_valid`).bind(
     revisionId, track.position, track.trackId, track.queue_track_id, track.stationhead_track_id,
     track.isrc, track.spotify_id, track.deezer_id, track.duration_ms,
-    track.playbackOffset, track.scheduleValid ? 1 : 0, biteCount,
+    track.playbackOffset, track.scheduleValid ? 1 : 0,
   );
 }
 
@@ -223,7 +223,8 @@ export function minuteFactStatement(db, fact) {
     fact.channel_id, fact.minute_at, fact.observed_at, fact.received_at,
     fact.source_code, fact.source_priority, fact.source_record_id, collectorCode,
     fact.broadcast_session_id, fact.is_broadcasting,
-    fact.listener_count, fact.online_member_count, fact.total_member_count, fact.guest_count,
+    fact.listener_count, fact.online_member_count,
+    fact.store_total_member_count ? fact.total_member_count : null, fact.guest_count,
     fact.reported_total_listens, fact.reported_current_stream_count, fact.is_paused,
     fact.track_detection_code, trackConfidenceCode, fact.schedule_valid,
     fact.comment_count, fact.comment_total, fact.comments_degraded,
@@ -242,9 +243,7 @@ export function minuteFactStatement(db, fact) {
 }
 
 const CONTEXT_COLUMNS = [
-  'station_id', 'host_id', 'broadcast_start_time', 'queue_revision_id', 'queue_id',
-  'queue_start_time', 'queue_track_count', 'queue_available', 'track_id',
-  'queue_position', 'track_bite_count',
+  'queue_revision_id', 'queue_available', 'queue_position',
 ];
 
 const WINNER_CONDITION = `
@@ -253,17 +252,10 @@ const WINNER_CONDITION = `
   OR (? = f.source_priority AND ? = f.quality_score_code AND ? >= f.observed_at)`;
 
 function contextPresent(fact) {
-  return fact.station_id != null
-    || fact.host_id != null
-    || fact.broadcast_start_time != null
-    || fact.queue_revision_id != null
-    || fact.queue_id != null
-    || fact.queue_start_time != null
-    || fact.queue_track_count != null
+  return fact.queue_revision_id != null
     || Number(fact.queue_available || 0) !== 0
-    || fact.track_id != null
     || fact.queue_position != null
-    || fact.track_bite_count != null;
+    || fact.broadcast_session_id == null;
 }
 
 function compactScoreCode(fact) {
@@ -271,11 +263,27 @@ function compactScoreCode(fact) {
 }
 
 export function minuteFactContextUpsertStatement(db, fact) {
-  const values = CONTEXT_COLUMNS.map((column) => fact[column]);
-  return db.prepare(`INSERT INTO sh_minute_fact_context(
-      fact_id,${CONTEXT_COLUMNS.join(',')}
+  const values = [
+    fact.station_id, fact.station_id,
+    fact.host_id, fact.host_id,
+    fact.broadcast_start_time, fact.broadcast_start_time,
+    fact.queue_revision_id, fact.queue_available, fact.queue_position,
+  ];
+  return db.prepare(`INSERT INTO sh_minute_fact_context_v2(
+      fact_id,station_id_override,host_id_override,broadcast_start_time_override,
+      queue_revision_id,queue_available,queue_position
     )
-    SELECT f.id,${CONTEXT_COLUMNS.map((column) => `?`).join(',')}
+    SELECT f.id,
+      CASE WHEN f.broadcast_session_id IS NULL OR ? IS NOT
+        (SELECT station_id FROM sh_broadcast_sessions s WHERE s.id=f.broadcast_session_id)
+        THEN ? END,
+      CASE WHEN f.broadcast_session_id IS NULL OR ? IS NOT
+        (SELECT host_id FROM sh_broadcast_sessions s WHERE s.id=f.broadcast_session_id)
+        THEN ? END,
+      CASE WHEN f.broadcast_session_id IS NULL OR ? IS NOT
+        (SELECT broadcast_start_time FROM sh_broadcast_sessions s WHERE s.id=f.broadcast_session_id)
+        THEN ? END,
+      ?,?,?
     FROM sh_minute_facts f
     WHERE f.channel_id=? AND f.minute_at=?
       AND (${WINNER_CONDITION})
@@ -296,7 +304,7 @@ export function minuteFactContextUpsertStatement(db, fact) {
 }
 
 export function minuteFactContextDeleteStatement(db, fact) {
-  return db.prepare(`DELETE FROM sh_minute_fact_context
+  return db.prepare(`DELETE FROM sh_minute_fact_context_v2
     WHERE fact_id=(
       SELECT f.id FROM sh_minute_facts f
       WHERE f.channel_id=? AND f.minute_at=?
@@ -315,9 +323,41 @@ export function minuteFactContextDeleteStatement(db, fact) {
   );
 }
 
+export function totalMemberDailyStatement(db, fact) {
+  const count = integer(fact.total_member_count);
+  if (count == null || count < 0) return db.prepare('SELECT 1 WHERE 0');
+  const observedAt = integer(fact.observed_at);
+  const dayAt = Math.floor(observedAt / 86400000) * 86400000;
+  const rawHostId = integer(fact.host_id);
+  const hostId = rawHostId != null && rawHostId > 0 ? rawHostId : null;
+  const hostKey = hostId ?? 0;
+  return db.prepare(`INSERT INTO sh_total_member_daily(
+      channel_id,day_at,host_key,host_id,first_observed_at,last_observed_at,
+      first_total_member_count,last_total_member_count,min_total_member_count,
+      max_total_member_count,source_code,source_priority,quality_score_code
+    ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)
+    ON CONFLICT(channel_id,day_at,host_key) DO UPDATE SET
+      last_observed_at=excluded.last_observed_at,
+      last_total_member_count=excluded.last_total_member_count,
+      min_total_member_count=MIN(sh_total_member_daily.min_total_member_count,excluded.min_total_member_count),
+      max_total_member_count=MAX(sh_total_member_daily.max_total_member_count,excluded.max_total_member_count),
+      source_code=excluded.source_code,source_priority=excluded.source_priority,
+      quality_score_code=excluded.quality_score_code
+    WHERE excluded.last_observed_at>=sh_total_member_daily.last_observed_at
+      AND (excluded.last_total_member_count IS NOT sh_total_member_daily.last_total_member_count
+        OR excluded.source_priority>sh_total_member_daily.source_priority
+        OR (excluded.source_priority=sh_total_member_daily.source_priority
+          AND excluded.quality_score_code>sh_total_member_daily.quality_score_code))`).bind(
+    fact.channel_id, dayAt, hostKey, hostId, observedAt, observedAt,
+    count, count, count, count, fact.source_code, fact.source_priority,
+    compactScoreCode(fact),
+  );
+}
+
 export function minuteFactStatements(db, fact) {
   return [
     minuteFactStatement(db, fact),
+    totalMemberDailyStatement(db, fact),
     minuteFactContextUpsertStatement(db, fact),
     minuteFactContextDeleteStatement(db, fact),
   ];

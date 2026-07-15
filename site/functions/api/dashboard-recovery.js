@@ -7,7 +7,10 @@ export const FACTS_RECOVERY_SQL = `WITH latest AS (
   SELECT channel_id,MAX(minute_at) AS latest_at FROM sh_minute_facts
 ), ranked AS (
   SELECT f.id,f.minute_at,f.observed_at,f.listener_count,f.online_member_count,
-    f.total_member_count,f.reported_total_listens AS total_listens,
+    COALESCE((SELECT d.last_total_member_count FROM sh_total_member_daily d
+      WHERE d.channel_id=f.channel_id AND d.day_at=(f.observed_at/86400000)*86400000
+      ORDER BY d.last_observed_at DESC,d.host_key LIMIT 1),f.total_member_count)
+      AS total_member_count,f.reported_total_listens AS total_listens,
     f.reported_current_stream_count AS current_stream_count,
     ROW_NUMBER() OVER (
       PARTITION BY CAST(f.minute_at/300000 AS INTEGER)

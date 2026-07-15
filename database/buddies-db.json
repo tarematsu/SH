@@ -3,5 +3,5 @@
   "database_name": "stationhead-buddies",
   "database_id": "f361aae0-05f0-42bc-8784-77100e80133d",
   "migrations_dir": "database/buddies-migrations",
-  "schema": "database/buddies-migrations/003_compact_sent_minute_fact_outbox.sql"
+  "schema": "database/buddies-migrations/004_change_only_like_history.sql"
 }

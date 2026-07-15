@@ -19,7 +19,11 @@ function commentVelocitySql(alias = 'f') {
 export const FACTS_LATEST_SQL = `SELECT
   f.id,f.minute_at,f.observed_at,f.channel_id,
   f.is_broadcasting,f.listener_count,f.online_member_count,
-  f.total_member_count,f.guest_count,
+  COALESCE((SELECT d.last_total_member_count FROM sh_total_member_daily d
+    WHERE d.channel_id=f.channel_id AND d.day_at=(f.observed_at/86400000)*86400000
+      AND d.host_key IN (0,COALESCE(c.host_id,0))
+    ORDER BY d.host_key DESC,d.last_observed_at DESC LIMIT 1),f.total_member_count)
+    AS total_member_count,f.guest_count,
   f.reported_total_listens AS total_listens,
   f.reported_current_stream_count AS current_stream_count,
   f.is_paused,${commentVelocitySql('f')} AS comment_velocity,
@@ -38,7 +42,10 @@ function factsHistorySql(whereClause) {
     SELECT channel_id FROM sh_minute_facts WHERE source_code=1 ORDER BY minute_at DESC,id DESC LIMIT 1
   ), points AS (
     SELECT f.id,f.minute_at,f.observed_at,f.listener_count,f.online_member_count,
-      f.total_member_count,f.reported_total_listens AS total_listens,
+      COALESCE((SELECT d.last_total_member_count FROM sh_total_member_daily d
+        WHERE d.channel_id=f.channel_id AND d.day_at=(f.observed_at/86400000)*86400000
+        ORDER BY d.last_observed_at DESC,d.host_key LIMIT 1),f.total_member_count)
+        AS total_member_count,f.reported_total_listens AS total_listens,
       f.reported_current_stream_count AS current_stream_count,
       ${commentVelocitySql('f')} AS comment_velocity
     FROM sh_minute_facts AS f
@@ -148,6 +155,17 @@ export async function loadFactsBaseline(db, metricColumn, hostId, start, end) {
     total_listens: 'reported_total_listens',
   }[metricColumn];
   if (!column) throw new Error(`unsupported facts metric: ${metricColumn}`);
+  if (metricColumn === 'total_member_count') {
+    const row = await db.prepare(`SELECT d.last_observed_at AS observed_at,
+        d.last_total_member_count AS total_member_count
+      FROM sh_total_member_daily d
+      WHERE d.day_at>=? AND d.day_at<?
+        AND (? IS NULL OR d.host_key IN (0,?))
+      ORDER BY d.last_observed_at DESC,d.day_at DESC LIMIT 1`)
+      .bind(start, end, hostId ?? null, hostId ?? 0)
+      .first();
+    return row || null;
+  }
   const row = await db.prepare(`SELECT f.observed_at,f.${column} AS ${metricColumn}
     FROM sh_minute_facts AS f
     LEFT JOIN sh_minute_fact_context AS c ON c.fact_id=f.id
