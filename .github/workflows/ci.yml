@@ -103,7 +103,7 @@ jobs:
   worker:
     name: Worker checks
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
     defaults:
       run:
         working-directory: worker
@@ -118,6 +118,26 @@ jobs:
       - run: npm run check
       - name: Check minute Worker bundle
         run: npm run check:minute-bundle
+      - name: Diagnose failed Cloudflare minute build
+        if: github.event.pull_request.number == 363
+        continue-on-error: true
+        working-directory: ${{ github.workspace }}
+        env:
+          CLOUDFLARE_ACCOUNT_ID: '0500f25c2f74e7e76c94a8bcb6c7008b'
+          CLOUDFLARE_BUILDS_API_TOKEN: ${{ secrets.CLOUDFLARE_BUILDS_API_TOKEN || secrets.CLOUDFLARE_API_TOKEN || secrets.CF_API_TOKEN }}
+          CLOUDFLARE_WORKER_NAME: sh-monitor-minute
+          TARGET_SHA: 4c893b218dbff4feb77a729b8cda51cf4b6a8875
+          TARGET_BRANCH: agent/reduce-buddies-cron-cpu
+          CLOUDFLARE_BUILD_TIMEOUT_MINUTES: 5
+        run: node .github/scripts/cloudflare-build-diagnostics.mjs
+      - name: Upload minute build diagnostics
+        if: github.event.pull_request.number == 363 && always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: minute-build-diagnostics
+          path: .cloudflare-build-diagnostics/
+          if-no-files-found: warn
+          retention-days: 2
       - run: npm test
 
   audit:
