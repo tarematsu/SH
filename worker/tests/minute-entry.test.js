@@ -72,6 +72,29 @@ test('collector priority timeout does not suppress durable derive work', async (
   assert.deepEqual(calls, ['stagger', 'comments', 'derive']);
 });
 
+test('collector state read failures do not suppress dead-job recovery', async () => {
+  const calls = [];
+  const result = await runMinuteScheduledWithCollectorPriority(
+    { cron: MINUTE_FACT_WORKER_CRON, scheduledTime: MINUTE_FACT_RECOVERY_MINUTE * 60_000 },
+    {
+      BUDDIES_DB: { name: 'buddies' },
+      MINUTE_FACT_AUTO_REQUEUE_DEAD: true,
+      MINUTE_FACT_DEAD_REQUEUE_LIMIT: 20,
+    },
+    {},
+    {
+      applyStagger: async () => { calls.push('stagger'); return 0; },
+      waitForCollector: async () => { throw new Error('D1 collector state unavailable'); },
+      runComments: async () => { calls.push('comments'); return { skipped: false }; },
+      runSync: async () => { calls.push('sync'); return { rows: 0 }; },
+      requeueDead: async (_env, options) => { calls.push('recovery'); return { requeued: options.limit }; },
+    },
+  );
+
+  assert.deepEqual(result, { requeued: 20 });
+  assert.deepEqual(calls, ['stagger', 'comments', 'recovery']);
+});
+
 test('minute worker has dedicated name, source bindings and one routing cron', () => {
   const config = JSON.parse(readFileSync(new URL('../wrangler.minute.jsonc', import.meta.url), 'utf8'));
   assert.equal(config.name, 'sh-monitor-minute');
