@@ -74,7 +74,23 @@ jobs:
       - run: npm ci --no-audit --no-fund
       - run: npm run check
       - name: Run Pages integration tests
-        run: npm run test:integration
+        shell: bash
+        run: |
+          set +e
+          npm run test:integration > pages-integration-tests.log 2>&1
+          status=$?
+          if [ "$status" -ne 0 ]; then
+            tail -n 200 pages-integration-tests.log
+          fi
+          exit "$status"
+      - name: Upload Pages integration failure log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pages-integration-test-failure
+          path: site/pages-integration-tests.log
+          if-no-files-found: ignore
+          retention-days: 7
       - name: Run local D1 tests
         run: npm run test:d1
       - name: Verify production migration command is skipped in CI
