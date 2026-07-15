@@ -12,7 +12,15 @@ const MAX_BATCH_SIZE = 5000;
 const DEFAULT_MAX_BATCHES = 5;
 const MAX_MAX_BATCHES = 100;
 const STATE_ID = 'snapshot-retention-v1';
-const TABLES = ['sh_channel_snapshots', 'sh_queue_snapshots'];
+const TABLES = [
+  { name: 'sh_channel_snapshots', timeColumn: 'observed_at', keyColumn: 'id' },
+  { name: 'sh_queue_snapshots', timeColumn: 'observed_at', keyColumn: 'id' },
+  { name: 'sh_queue_items', timeColumn: 'observed_at', keyColumn: 'id' },
+  { name: 'sh_track_like_observations', timeColumn: 'observed_at', keyColumn: 'id' },
+  { name: 'sh_track_metadata', timeColumn: 'fetched_at', keyColumn: 'rowid' },
+  { name: 'sh_ingest_claims', timeColumn: 'observed_at', keyColumn: 'rowid' },
+  { name: 'sh_ingest_conflicts', timeColumn: 'observed_at', keyColumn: 'id' },
+];
 
 function retentionMs(env = {}) {
   const configured = Number(env.SNAPSHOT_RETENTION_MS ?? DEFAULT_RETENTION_MS);
@@ -55,8 +63,9 @@ export function shouldRunSnapshotRetention(lastCleanupAt, now = Date.now(), env 
 async function pruneTable(db, table, cutoff, size, batches) {
   let totalDeleted = 0;
   for (let batch = 0; batch < batches; batch += 1) {
-    const result = await db.prepare(`DELETE FROM ${table} WHERE id IN (
-        SELECT id FROM ${table} WHERE observed_at<? ORDER BY observed_at ASC LIMIT ?
+    const result = await db.prepare(`DELETE FROM ${table.name} WHERE ${table.keyColumn} IN (
+        SELECT ${table.keyColumn} FROM ${table.name}
+        WHERE ${table.timeColumn}<? ORDER BY ${table.timeColumn} ASC LIMIT ?
       )`).bind(cutoff, size).run();
     const changes = Number(result?.meta?.changes || 0);
     totalDeleted += changes;
@@ -79,7 +88,7 @@ export async function pruneOldSnapshots(env, now = Date.now()) {
   const cutoff = now - retentionMs(env);
   const deleted = {};
   for (const table of TABLES) {
-    deleted[table] = await pruneTable(
+    deleted[table.name] = await pruneTable(
       db,
       table,
       cutoff,

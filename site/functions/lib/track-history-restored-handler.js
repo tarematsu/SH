@@ -321,11 +321,12 @@ export async function loadTrackHistoryData(db, fromTs, toTs, maxGroupedRows, inc
 }
 
 export async function handleTrackHistory({ request, env, waitUntil }) {
-  if (!env.DB) return out({ ok: false, error: 'DB binding missing' }, 500);
+  const db = env.FACTS_DB || env.DB;
+  if (!db) return out({ ok: false, error: 'FACTS_DB binding missing' }, 500);
   const url = new URL(request.url);
   try {
     if (url.searchParams.get('latest') === '1') {
-      const latest = await env.DB.prepare(`SELECT strftime('%Y-%m-%d', MAX(observed_at) / 1000, 'unixepoch') AS play_date
+      const latest = await db.prepare(`SELECT strftime('%Y-%m-%d', MAX(observed_at) / 1000, 'unixepoch') AS play_date
         FROM sh_queue_snapshots WHERE COALESCE(is_paused, 0) = 0`).first();
       return out({ ok: true, latest_date: latest?.play_date || null, timezone: 'UTC' });
     }
@@ -350,7 +351,7 @@ export async function handleTrackHistory({ request, env, waitUntil }) {
 
     const maxGroupedRows = Math.min(limit * 8, 40000);
     const { result, likeRows } = await loadTrackHistoryData(
-      env.DB,
+      db,
       fromTs,
       toTs,
       maxGroupedRows,
@@ -366,7 +367,7 @@ export async function handleTrackHistory({ request, env, waitUntil }) {
     const rows = completed.rows;
     const metadataRefreshScheduled = typeof waitUntil === 'function';
     if (metadataRefreshScheduled) {
-      waitUntil(refreshMissingMetadata(groupedRows, env).catch((error) => {
+      waitUntil(refreshMissingMetadata(groupedRows, { ...env, DB: db }).catch((error) => {
         console.error('track metadata background refresh failed', error);
       }));
     }
@@ -387,7 +388,9 @@ export async function handleTrackHistory({ request, env, waitUntil }) {
       excluded_play_count_dates: completed.excludedDates,
       excluded_play_count_date_count: completed.excludedDates.length,
       metadata_refresh_scheduled: metadataRefreshScheduled,
-      historical_recovery: 'channel_snapshots_with_wall_clock_pause_mapping',
+      historical_recovery: env.FACTS_DB
+        ? 'facts_downstream_archive_with_wall_clock_pause_mapping'
+        : 'channel_snapshots_with_wall_clock_pause_mapping',
       method: 'queue_checkpoint_terminal_active_span_and_namespaced_like_reachability_utc_sql_preaggregate',
     });
   } catch (error) {

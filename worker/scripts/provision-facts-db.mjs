@@ -30,6 +30,10 @@ const cleanupMigrationPath = resolve(
   repositoryRoot,
   'database/facts-migrations/007_remove_unused_runtime_tables.sql',
 );
+const downstreamArchiveMigrationPath = resolve(
+  repositoryRoot,
+  'database/facts-migrations/008_buddies_downstream_archive.sql',
+);
 const metadataPath = resolve(repositoryRoot, 'database/facts-db.json');
 const databaseName = process.env.FACTS_DATABASE_NAME || 'stationhead-minute';
 
@@ -131,11 +135,16 @@ wrangler([
   '--remote', '--yes',
   '--file', cleanupMigrationPath,
 ]);
+wrangler([
+  'd1', 'execute', databaseName,
+  '--remote', '--yes',
+  '--file', downstreamArchiveMigrationPath,
+]);
 
 writeFileSync(metadataPath, `${JSON.stringify({
   binding: 'FACTS_DB',
   database_name: databaseName,
   database_id: databaseId,
-  schema: 'database/facts-migrations/007_remove_unused_runtime_tables.sql',
+  schema: 'database/facts-migrations/008_buddies_downstream_archive.sql',
 }, null, 2)}\n`);
 console.log(JSON.stringify({ ok: true, database_name: databaseName, database_id: databaseId }));

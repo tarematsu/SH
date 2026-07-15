@@ -13,6 +13,7 @@ const schemaPath = path.resolve(repositoryRoot, 'database/facts-migrations/001_i
 const compactMigrationPath = path.resolve(repositoryRoot, 'database/facts-migrations/003_compact_minute_facts.sql');
 const predictionMigrationPath = path.resolve(repositoryRoot, 'database/facts-migrations/006_stream_goal_prediction_state.sql');
 const cleanupMigrationPath = path.resolve(repositoryRoot, 'database/facts-migrations/007_remove_unused_runtime_tables.sql');
+const downstreamArchiveMigrationPath = path.resolve(repositoryRoot, 'database/facts-migrations/008_buddies_downstream_archive.sql');
 const factsBinding = 'FACTS_DB';
 const minuteConfigPath = path.resolve(workerRoot, 'wrangler.minute.jsonc');
 
@@ -51,6 +52,11 @@ test('minute facts D1 schema applies and exposes required tables', { timeout: 60
       '--local', '--persist-to', stateDirectory,
       '--file', cleanupMigrationPath,
     ]);
+    run([
+      'd1', 'execute', factsBinding,
+      '--local', '--persist-to', stateDirectory,
+      '--file', downstreamArchiveMigrationPath,
+    ]);
     const requiredTables = [
       'sh_minute_facts',
       'sh_minute_fact_context',
@@ -67,6 +73,10 @@ test('minute facts D1 schema applies and exposes required tables', { timeout: 60
       'sh_track_bite_observations',
       'sh_migration_state',
       'sh_stream_goal_prediction_state',
+      'sh_buddies_sync_state',
+      'sh_queue_item_observations',
+      'sh_track_like_observations',
+      'sh_track_metadata',
     ];
     const tables = run([
       'd1', 'execute', factsBinding,
@@ -95,6 +105,14 @@ test('minute facts D1 schema applies and exposes required tables', { timeout: 60
     assert.match(compactIndexes, /idx_sh_minute_facts_source_record/);
     assert.match(compactIndexes, /idx_sh_minute_facts_time/);
     assert.doesNotMatch(compactIndexes, /host_time|track_time|session_time/);
+    const views = run([
+      'd1', 'execute', factsBinding,
+      '--local', '--persist-to', stateDirectory,
+      '--command', "SELECT name FROM sqlite_master WHERE type='view' ORDER BY name;",
+    ]);
+    for (const view of ['sh_channel_snapshots', 'sh_queue_current', 'sh_queue_items', 'sh_queue_snapshots', 'sh_track_like_current']) {
+      assert.match(views, new RegExp(`\\b${view}\\b`));
+    }
   } finally {
     rmSync(stateDirectory, { recursive: true, force: true });
   }

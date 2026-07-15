@@ -1,4 +1,5 @@
 import { applyCronStagger } from './cron-stagger.js';
+import { runBuddiesFactsSync } from './buddies-facts-sync.js';
 import { sanitizeFailureDetail } from './collector-failure.js';
 import { configFromEnv } from './collector-config.js';
 import { ingest } from './collector-ingest.js';
@@ -20,7 +21,7 @@ export const MINUTE_FACT_DERIVE_CRON = '*/2 * * * *';
 export const MINUTE_FACT_REBUILD_CRON = '7,17,27,37,47,57 * * * *';
 export const MINUTE_FACT_WORKER_CRON = '* * * * *';
 export const MINUTE_FACT_RECOVERY_MINUTE = 5;
-const ACTIVE_HEALTH_TASKS = new Set(['comments', 'derive', 'recovery', 'rebuild']);
+const ACTIVE_HEALTH_TASKS = new Set(['comments', 'derive', 'recovery', 'rebuild', 'sync']);
 
 export function activeMinuteHealthTasks(tasks = []) {
   return tasks.filter((task) => ACTIVE_HEALTH_TASKS.has(String(task?.task_name || '')));
@@ -136,12 +137,22 @@ async function runOptionalCommentTasks(env, dependencies) {
   }
 }
 
+function runSync(env, dependencies) {
+  return (dependencies.runSync || runBuddiesFactsSync)(
+    withSourceDatabase(env, 'BUDDIES_DB'),
+    dependencies.sync || {},
+  );
+}
+
 export async function runMinuteScheduled(controller = {}, env, dependencies = {}) {
   const cron = String(controller.cron || '');
   if (cron === MINUTE_FACT_DERIVE_CRON) return runTracked(env, 'derive', () => runDerive(env, dependencies));
   if (cron === MINUTE_FACT_REBUILD_CRON) return runTracked(env, 'rebuild', () => runRebuild(env, dependencies));
   if (cron === MINUTE_FACT_WORKER_CRON) {
     await runTracked(env, 'comments', () => runOptionalCommentTasks(env, dependencies));
+    if (env?.BUDDIES_DB || env?.DB) {
+      await runTracked(env, 'sync', () => runSync(env, dependencies));
+    }
     const minute = scheduledMinute(controller);
     if (minute == null) return { skipped: true, reason: 'scheduled-time-missing' };
     if (minute % 10 === MINUTE_FACT_RECOVERY_MINUTE) {

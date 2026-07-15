@@ -55,9 +55,14 @@ test('retention deletes old raw snapshots in the shared BUDDIES_DB', async () =>
     deleted: {
       sh_channel_snapshots: 3,
       sh_queue_snapshots: 2,
+      sh_queue_items: 0,
+      sh_track_like_observations: 0,
+      sh_track_metadata: 0,
+      sh_ingest_claims: 0,
+      sh_ingest_conflicts: 0,
     },
   });
-  assert.equal(db.calls.filter((sql) => sql.startsWith('DELETE FROM')).length, 2);
+  assert.equal(db.calls.filter((sql) => sql.startsWith('DELETE FROM')).length, 7);
   assert.equal(db.calls.filter((sql) => sql.includes('INSERT INTO sh_data_maintenance_state')).length, 1);
 });
 

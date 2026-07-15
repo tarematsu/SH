@@ -13,6 +13,7 @@ const databases = [
     files: [
       'database/buddies-migrations/001_initial_schema.sql',
       'database/buddies-migrations/002_minute_fact_outbox.sql',
+      'database/buddies-migrations/003_compact_sent_minute_fact_outbox.sql',
     ],
     requiredTables: [
       'sh_channel_snapshots',

@@ -30,13 +30,23 @@ export async function runOfficialNewsWithReconcile(
 
 export async function runOtherScheduled(controller, env, ctx, dependencies = {}) {
   const now = scheduledTimestamp(controller);
+  let maintenance;
+  const runMaintenance = () => {
+    maintenance = Promise.resolve(
+      (dependencies.maintenance || runScheduledMaintenance)(env, now),
+    );
+    return maintenance;
+  };
+  const runRetention = () => Promise.resolve(maintenance).then(() => (
+    dependencies.snapshotRetention || pruneOldSnapshotsSafely
+  )(env, now));
   const tasks = [
     (dependencies.buddy || scheduleBuddyPlayback)(env, ctx, now),
     (dependencies.host || runCloudHostMonitor)(env),
     (dependencies.prediction || runStreamGoalPrediction)(env, now),
-    (dependencies.maintenance || runScheduledMaintenance)(env, now),
+    runMaintenance(),
     (dependencies.officialNews || runOfficialNewsWithReconcile)(env, now),
-    (dependencies.snapshotRetention || pruneOldSnapshotsSafely)(env, now),
+    runRetention(),
   ];
   const results = await Promise.allSettled(tasks);
   const failures = results.filter((result) => result.status === 'rejected');

@@ -110,24 +110,21 @@ test('scheduled maintenance legacy migration entry point remains disabled', asyn
   assert.equal(scheduledLegacyMigrationEnabled(), false);
 });
 
-test('scheduled maintenance skips archive rollups owned outside other', async () => {
+test('scheduled maintenance writes durable daily rollups to OTHER_DB', async () => {
   const sqls = [];
   const result = await runScheduledMaintenance({
-    DB: noSourceDataDb(sqls),
+    BUDDIES_DB: noSourceDataDb(sqls),
     FACTS_DB: new Proxy({}, {
       get() {
         throw new Error('FACTS_DB must not be touched by scheduled maintenance');
       },
     }),
-    OTHER_DB: new Proxy({}, {
-      get() {
-        throw new Error('OTHER_DB must not be touched when there is no source data to roll up');
-      },
-    }),
+    OTHER_DB: noSourceDataDb(),
   }, 3_600_000);
 
-  assert.equal(result.skipped, true);
-  assert.equal(result.reason, 'archive-maintenance-disabled');
+  assert.equal(result.skipped, false);
+  assert.equal(result.reason, 'completed');
+  assert.equal(result.rollup.reason, 'no-source-data');
   assert.equal(result.legacyBackfill.reason, LEGACY_MIGRATION_DISABLED_REASON);
   assert.equal(result.minuteFactsBackfill.reason, LEGACY_MIGRATION_DISABLED_REASON);
   assert.equal(sqls.some((sql) => sql.includes('sh_legacy_')), false);

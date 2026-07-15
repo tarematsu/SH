@@ -31,7 +31,10 @@ export function legacyMigrationEnabled() {
 }
 
 export async function runScheduledMaintenance(env, now = Date.now()) {
-  if (!env?.FACTS_DB || !env?.OTHER_DB) return { skipped: true, reason: 'db-binding-missing' };
+  const sourceDb = env?.BUDDIES_DB;
+  if (!sourceDb || !env?.FACTS_DB || !env?.OTHER_DB) {
+    return { skipped: true, reason: 'db-binding-missing' };
+  }
   if (!dataMaintenanceEnabled(env)) {
     return { skipped: true, reason: 'disabled' };
   }
@@ -39,10 +42,13 @@ export async function runScheduledMaintenance(env, now = Date.now()) {
     return { skipped: true, reason: 'not-due' };
   }
 
+  const rollup = await runRollupMaintenanceSafely(sourceDb, env.OTHER_DB, now);
   return {
-    skipped: true,
-    reason: 'archive-maintenance-disabled',
+    skipped: false,
+    reason: 'completed',
+    rollup,
     legacyBackfill: { skipped: true, reason: LEGACY_MIGRATION_DISABLED_REASON },
     minuteFactsBackfill: { skipped: true, reason: LEGACY_MIGRATION_DISABLED_REASON },
   };
 }
+import { runRollupMaintenanceSafely } from './rollup-maintenance.js';
