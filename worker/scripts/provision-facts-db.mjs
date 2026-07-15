@@ -46,6 +46,10 @@ const counterRepairMigrationPath = resolve(
   repositoryRoot,
   'database/facts-migrations/011_repair_counter_current.sql',
 );
+const runtimeTablesMigrationPath = resolve(
+  repositoryRoot,
+  'database/facts-migrations/012_minute_runtime_tables.sql',
+);
 const metadataPath = resolve(repositoryRoot, 'database/facts-db.json');
 const databaseName = process.env.FACTS_DATABASE_NAME || 'stationhead-minute';
 
@@ -194,10 +198,16 @@ if (tableColumnNames(databaseName, 'sh_facts_storage_repairs').size === 0) {
   ]);
 }
 
+wrangler([
+  'd1', 'execute', databaseName,
+  '--remote', '--yes',
+  '--file', runtimeTablesMigrationPath,
+]);
+
 writeFileSync(metadataPath, `${JSON.stringify({
   binding: 'MINUTE_DB',
   database_name: databaseName,
   database_id: databaseId,
-  schema: 'database/facts-migrations/011_repair_counter_current.sql',
+  schema: 'database/facts-migrations/012_minute_runtime_tables.sql',
 }, null, 2)}\n`);
 console.log(JSON.stringify({ ok: true, database_name: databaseName, database_id: databaseId }));
