@@ -19,7 +19,7 @@ test('main page references only existing local static assets', async () => {
     .map((value) => value.split(/[?#]/, 1)[0])
     .filter(Boolean);
 
-  assert.ok(references.length >= 4, 'the dashboard should reference its CSS and JavaScript assets');
+  assert.ok(references.length >= 3, 'the dashboard should reference its CSS, JavaScript and history page');
   for (const reference of new Set(references)) {
     await assert.doesNotReject(
       access(path.join(publicRoot, reference.replace(/^\//, ''))),
@@ -28,71 +28,67 @@ test('main page references only existing local static assets', async () => {
   }
 });
 
-test('dashboard HTML keeps accessibility, privacy and live-state anchors', async () => {
+test('dashboard HTML keeps accessibility, privacy and all public sections', async () => {
   const html = await text('public/index.html');
   assert.match(html, /<html lang="ja">/);
   assert.match(html, /name="viewport"/);
   assert.match(html, /noindex,nofollow/);
   assert.match(html, /id="channelName"/);
   assert.match(html, /id="updated"/);
-  assert.match(html, /rel="noopener"/);
-});
-
-test('browser application remains wired to the dashboard API and resilient refresh flow', async () => {
-  const html = await text('public/index.html');
-  const appState = await text('public/app-state.js');
-  const appPlayback = await text('public/app-playback.js');
-  const app = await text('public/app.js');
-  assert.match(html, /\/app-state\.js/);
-  assert.match(html, /\/app-playback\.js/);
-  assert.match(html, /\/app\.js/);
-  assert.ok(
-    html.indexOf('/app-state.js') < html.indexOf('/app-playback.js')
-      && html.indexOf('/app-playback.js') < html.indexOf('/app.js'),
-    'split app modules must load before the refresh entrypoint',
-  );
-  assert.match(app, /fetch\(['"]\/api\/dashboard\?history=0['"]/);
-  assert.match(app, /\/api\/dashboard-history/);
-  assert.match(app, /AbortController/);
-  assert.match(app, /refreshInFlight/);
-  assert.match(app, /Number\.isFinite\(countValue\)/);
-  assert.match(app, /goal && count != null/);
-  assert.match(appState, /escapeText/);
-  assert.match(appPlayback, /renderNowDisplay/);
-  assert.match(app, /if \(!document\.hidden\) refresh\(\)/);
-});
-
-test('dashboard chart renderer preserves ETA and comment velocity overlays', async () => {
-  const html = await text('public/index.html');
-  const app = await text('public/app.js');
-  const guards = await text('public/dashboard-display-guards.js');
-  const chart = await text('public/app-chart.js');
-  assert.match(html, /\/dashboard-display-guards\.js/);
-  assert.doesNotMatch(html, /\/comment-velocity-chart\.js/);
-  assert.match(guards, /lastGoalPrediction/);
-  assert.match(chart, /commentVelocityValues/);
-  assert.match(chart, /commentVelocityMax/);
-  assert.match(chart, /drawCommentVelocityBars/);
+  assert.match(html, /id="online"/);
+  assert.match(html, /id="members"/);
+  assert.match(html, /id="totalListens"/);
+  assert.match(html, /id="nowPlayingLink"/);
+  assert.match(html, /id="queue"/);
+  assert.match(html, /id="streamCount"/);
   assert.match(html, /id="goalMilestones"/);
-  assert.match(app, /data\.goal_predictions/);
+  assert.match(html, /id="chart"/);
+  assert.match(html, /\/history\/index\.html/);
+  assert.match(html, /rel="noopener noreferrer"/);
 });
 
-test('dashboard fetch cache does not request queue-unchanged deltas without a local queue', async () => {
-  const source = await text('public/dashboard-fetch-cache.js');
-  assert.match(source, /function hasUsableQueue/);
-  assert.match(source, /if \(state\.queueRevision && hasUsableQueue\(\)\)/);
-  assert.match(source, /payload\.queue_unchanged = false/);
+test('mobile dashboard uses one stylesheet and one script', async () => {
+  const html = await text('public/index.html');
+  assert.match(html, /\/app-lite\.css/);
+  assert.match(html, /\/app-lite\.js/);
+  assert.equal((html.match(/<link rel="stylesheet"/g) || []).length, 1);
+  assert.equal((html.match(/<script /g) || []).length, 1);
+  assert.doesNotMatch(html, /\/dashboard-optimized\.js/);
+  assert.doesNotMatch(html, /\/app-state\.js/);
+  assert.doesNotMatch(html, /\/design-system\.css/);
 });
 
-test('dashboard fetch cache preserves a compatible last goal prediction on delta payloads', async () => {
-  const source = await text('public/dashboard-fetch-cache.js');
-  assert.match(source, /function mergeGoalPrediction/);
-  assert.match(source, /function sameGoal/);
-  assert.match(source, /function alreadyReachedGoal/);
-  assert.match(source, /state\.lastPayload\?\.goal_prediction/);
-  assert.match(source, /payload\.goal_prediction = structuredClone\(previous\)/);
+test('dashboard client uses shared cache keys and avoids per-viewer D1 history deltas', async () => {
+  const source = await text('public/app-lite.js');
+  assert.match(source, /const DASHBOARD_URL = '\/api\/dashboard\?history=0'/);
+  assert.match(source, /const HISTORY_URL = '\/api\/dashboard-history'/);
+  assert.doesNotMatch(source, /searchParams\.set\(['"]since/);
+  assert.doesNotMatch(source, /searchParams\.set\(['"]queue_revision/);
+  assert.match(source, /mergeLatestIntoHistory/);
+  assert.match(source, /localStorage\.setItem/);
+  assert.match(source, /document\.hidden/);
+  assert.match(source, /AbortController/);
+  assert.match(source, /60_000/);
 });
 
+test('dashboard client preserves playback, queue expansion, goals and chart details', async () => {
+  const source = await text('public/app-lite.js');
+  assert.match(source, /function playbackView/);
+  assert.match(source, /\/api\/dashboard-queue\?offset=/);
+  assert.match(source, /goal_predictions/);
+  assert.match(source, /comment_velocity/);
+  assert.match(source, /function selectChartPoint/);
+  assert.match(source, /function spotifyUrl/);
+});
+
+test('edge middleware shares initial dashboard history between viewers', async () => {
+  const source = await text('functions/api/_middleware.js');
+  assert.match(source, /url\.pathname === '\/api\/dashboard-history'/);
+  assert.match(source, /ttl: 300, browser: 60/);
+  assert.match(source, /cache\.match/);
+  assert.match(source, /cache\.put/);
+  assert.match(source, /inFlight/);
+});
 
 test('Pages configuration binds the expected D1 database and output directory', async () => {
   const config = JSON.parse((await text('wrangler.jsonc')).replace(/^\s*\/\/.*$/gm, ''));
