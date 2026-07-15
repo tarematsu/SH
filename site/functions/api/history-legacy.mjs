@@ -30,21 +30,6 @@ function addDays(ts, days) {
   return ts + days * 86400000;
 }
 
-function encodeCursor(row) {
-  if (!row) return null;
-  return btoa(`${row.observed_at}:${row.id}`);
-}
-
-function decodeCursor(value) {
-  if (!value) return null;
-  try {
-    const [ts, id] = atob(value).split(':').map(Number);
-    return Number.isFinite(ts) && Number.isFinite(id) ? { ts, id } : null;
-  } catch {
-    return null;
-  }
-}
-
 function safeText(value, max = 100) {
   return String(value || '').trim().slice(0, max);
 }
@@ -360,82 +345,6 @@ export async function onRequestGet({ request, env }) {
       return json({ ok: false, error: 'from must not be after to' }, 400, { 'cache-control': 'no-store' });
     }
     if (mode === 'ranking') return loadRanking(url, env);
-    if (mode === 'broadcasts') {
-      const fromTs = parseDateStart(from, '2024-06-01');
-      const toTs = addDays(parseDateStart(to, new Date().toISOString().slice(0, 10)), 1);
-      const [result, diagnostic] = await Promise.all([
-        env.OTHER_DB.prepare(`SELECT
-          source_note AS event_name,
-          MIN(observed_at) AS started_at,
-          MAX(observed_at) AS ended_at,
-          MIN(observed_jst) AS started_jst,
-          MAX(observed_jst) AS ended_jst,
-          COUNT(*) AS sample_count,
-          ROUND(AVG(listener_count), 1) AS listener_avg,
-          MAX(listener_count) AS listener_max,
-          MAX(likes) AS likes_max,
-          COUNT(DISTINCT CASE WHEN track_title IS NOT NULL AND track_title<>'' THEN track_title END) AS distinct_tracks,
-          host_handle
-        FROM sh_legacy_history_rows
-        WHERE observed_at>=? AND observed_at<? AND host_handle='sakurazaka46jp' AND source_note IS NOT NULL
-        GROUP BY source_note,host_handle
-        ORDER BY started_at ASC`).bind(fromTs, toTs).all(),
-        env.OTHER_DB.prepare(`SELECT
-          COUNT(*) AS imported_rows,
-          COUNT(DISTINCT source_note) AS imported_events,
-          MIN(observed_jst) AS first_observed_jst,
-          MAX(observed_jst) AS last_observed_jst
-        FROM sh_legacy_history_rows
-        WHERE host_handle='sakurazaka46jp' AND source_note IS NOT NULL`).first(),
-      ]);
-      const rows = result.results || [];
-      const importedRows = Number(diagnostic?.imported_rows || 0);
-      return json({
-        ok: true,
-        mode,
-        from,
-        to,
-        rows,
-        setup_required: importedRows === 0,
-        diagnostic: {
-          imported_rows: importedRows,
-          imported_events: Number(diagnostic?.imported_events || 0),
-          first_observed_jst: diagnostic?.first_observed_jst || null,
-          last_observed_jst: diagnostic?.last_observed_jst || null,
-        },
-      }, 200, {
-        'cache-control': 'public, max-age=30, s-maxage=60',
-      });
-    }
-    if (mode === 'raw') {
-      const fromTs = parseDateStart(from, '2024-06-01');
-      const requestedToTs = addDays(parseDateStart(to, new Date().toISOString().slice(0, 10)), 1);
-      const toTs = Math.min(requestedToTs, addDays(fromTs, 31));
-      const limit = Math.min(Math.max(Number(url.searchParams.get('limit')) || 200, 20), 500);
-      const cursor = decodeCursor(url.searchParams.get('cursor'));
-      let sql = `SELECT id,observed_at,observed_jst,listener_count,total_stream_count,
-track_title,artist_name,likes,comment_velocity,host_handle,total_member_count,
-source_note,quality_score,quality_flags
-FROM sh_legacy_history_rows
-WHERE observed_at>=? AND observed_at<?`;
-      const binds = [fromTs, toTs];
-      if (cursor) {
-        sql += ' AND (observed_at>? OR (observed_at=? AND id>?))';
-        binds.push(cursor.ts, cursor.ts, cursor.id);
-      }
-      sql += ' ORDER BY observed_at ASC,id ASC LIMIT ?';
-      binds.push(limit + 1);
-      const result = await env.OTHER_DB.prepare(sql).bind(...binds).all();
-      const allRows = result.results || [];
-      const hasMore = allRows.length > limit;
-      const rows = hasMore ? allRows.slice(0, limit) : allRows;
-      const nextCursor = hasMore ? encodeCursor(rows.at(-1)) : null;
-      return json(
-        { ok: true, mode, from, to, rows, has_more: hasMore, next_cursor: nextCursor },
-        200,
-        { 'cache-control': 'private, max-age=60' },
-      );
-    }
     const summary = await loadSummaryWithLive(env, mode, from, to);
     return json({ ok: true, mode, from, to, ...summary }, 200, {
       'cache-control': 'public, max-age=30, s-maxage=60, stale-while-revalidate=120',

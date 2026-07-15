@@ -34,6 +34,10 @@ const downstreamArchiveMigrationPath = resolve(
   repositoryRoot,
   'database/facts-migrations/008_buddies_downstream_archive.sql',
 );
+const completionMigrationPath = resolve(
+  repositoryRoot,
+  'database/facts-migrations/009_mark_legacy_migration_complete.sql',
+);
 const metadataPath = resolve(repositoryRoot, 'database/facts-db.json');
 const databaseName = process.env.FACTS_DATABASE_NAME || 'stationhead-minute';
 
@@ -140,11 +144,16 @@ wrangler([
   '--remote', '--yes',
   '--file', downstreamArchiveMigrationPath,
 ]);
+wrangler([
+  'd1', 'execute', databaseName,
+  '--remote', '--yes',
+  '--file', completionMigrationPath,
+]);
 
 writeFileSync(metadataPath, `${JSON.stringify({
   binding: 'MINUTE_DB',
   database_name: databaseName,
   database_id: databaseId,
-  schema: 'database/facts-migrations/008_buddies_downstream_archive.sql',
+  schema: 'database/facts-migrations/009_mark_legacy_migration_complete.sql',
 }, null, 2)}\n`);
 console.log(JSON.stringify({ ok: true, database_name: databaseName, database_id: databaseId }));

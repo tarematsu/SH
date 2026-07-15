@@ -1,5 +1,7 @@
 const CACHE_CONTROL = 'public, max-age=20, s-maxage=30, stale-while-revalidate=90';
-const STALE_AFTER_MS = 10 * 60 * 1000;
+import { FACTS_FRESH_MS } from '../lib/dashboard-facts.js';
+
+const STALE_AFTER_MS = FACTS_FRESH_MS;
 
 export const FACTS_RECOVERY_SQL = `WITH latest AS (
   SELECT channel_id,MAX(minute_at) AS latest_at FROM sh_minute_facts
@@ -19,6 +21,11 @@ export const FACTS_RECOVERY_SQL = `WITH latest AS (
 SELECT observed_at,listener_count,online_member_count,total_member_count,
   total_listens,current_stream_count
 FROM ranked WHERE rn=1 ORDER BY observed_at ASC LIMIT 300`;
+
+export const COLLECTOR_LATEST_SQL = `SELECT observed_at
+FROM sh_channel_snapshots
+ORDER BY observed_at DESC,id DESC
+LIMIT 1`;
 
 function json(data, status = 200, cache = CACHE_CONTROL) {
   return new Response(JSON.stringify(data), {
@@ -42,12 +49,26 @@ export async function onRequestGet({ env }) {
     const rows = result.results || [];
     const latestObservedAt = Number(rows.at(-1)?.observed_at || 0) || null;
     const generatedAt = Date.now();
+    let collectorLatestObservedAt = null;
+    if (env.DB) {
+      try {
+        const collectorLatest = await env.DB.prepare(COLLECTOR_LATEST_SQL).first();
+        collectorLatestObservedAt = Number(collectorLatest?.observed_at || 0) || null;
+      } catch (error) {
+        if (!/no such table|no such view/i.test(String(error?.message || ''))) throw error;
+      }
+    }
+    const readModelStale = !latestObservedAt || generatedAt - latestObservedAt > STALE_AFTER_MS;
+    const collectorStale = !collectorLatestObservedAt
+      || generatedAt - collectorLatestObservedAt > STALE_AFTER_MS;
     return json({
       ok: true,
       generated_at: generatedAt,
       storage_source: 'facts-db',
       latest_observed_at: latestObservedAt,
-      stale: !latestObservedAt || generatedAt - latestObservedAt > STALE_AFTER_MS,
+      stale: collectorStale,
+      read_model_stale: readModelStale,
+      collector_latest_observed_at: collectorLatestObservedAt,
       rows,
     });
   } catch (error) {

@@ -14,6 +14,7 @@ const compactMigrationPath = path.resolve(repositoryRoot, 'database/facts-migrat
 const predictionMigrationPath = path.resolve(repositoryRoot, 'database/facts-migrations/006_stream_goal_prediction_state.sql');
 const cleanupMigrationPath = path.resolve(repositoryRoot, 'database/facts-migrations/007_remove_unused_runtime_tables.sql');
 const downstreamArchiveMigrationPath = path.resolve(repositoryRoot, 'database/facts-migrations/008_buddies_downstream_archive.sql');
+const completionMigrationPath = path.resolve(repositoryRoot, 'database/facts-migrations/009_mark_legacy_migration_complete.sql');
 const factsBinding = 'MINUTE_DB';
 const minuteConfigPath = path.resolve(workerRoot, 'wrangler.minute.jsonc');
 
@@ -56,6 +57,11 @@ test('minute facts D1 schema applies and exposes required tables', { timeout: 60
       'd1', 'execute', factsBinding,
       '--local', '--persist-to', stateDirectory,
       '--file', downstreamArchiveMigrationPath,
+    ]);
+    run([
+      'd1', 'execute', factsBinding,
+      '--local', '--persist-to', stateDirectory,
+      '--file', completionMigrationPath,
     ]);
     const requiredTables = [
       'sh_minute_facts',

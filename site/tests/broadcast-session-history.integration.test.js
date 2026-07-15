@@ -3,184 +3,59 @@ import test from 'node:test';
 import { DatabaseSync } from 'node:sqlite';
 
 import {
-  BROADCAST_SESSION_GAP_MS,
-  broadcastSummarySql,
+  BROADCAST_SUMMARY_SQL,
   parseBroadcastSummaryRows,
 } from '../functions/api/history.js';
 
-function createHistoryDatabase() {
+test('broadcast history reads the compact official summary table', () => {
   const db = new DatabaseSync(':memory:');
-  db.exec(`CREATE TABLE sh_legacy_history_rows (
-    id INTEGER PRIMARY KEY,
-    observed_at INTEGER NOT NULL,
-    observed_jst TEXT NOT NULL,
-    listener_count INTEGER,
-    total_stream_count INTEGER,
-    track_title TEXT,
-    artist_name TEXT,
-    likes INTEGER,
-    comment_velocity REAL,
-    host_handle TEXT,
-    total_member_count INTEGER,
-    source_note TEXT,
-    quality_score REAL,
-    quality_flags TEXT
+  db.exec(`CREATE TABLE sh_official_broadcast_summary (
+    host_handle TEXT NOT NULL,
+    event_name TEXT NOT NULL,
+    started_at INTEGER,
+    ended_at INTEGER,
+    started_jst TEXT,
+    ended_jst TEXT,
+    sample_count INTEGER NOT NULL DEFAULT 0,
+    listener_avg REAL,
+    listener_max INTEGER,
+    likes_max INTEGER,
+    distinct_tracks INTEGER,
+    PRIMARY KEY(host_handle,event_name)
   )`);
-  return db;
-}
-
-function insertRow(db, row) {
-  db.prepare(`INSERT INTO sh_legacy_history_rows(
-    id,observed_at,observed_jst,listener_count,track_title,artist_name,
-    likes,host_handle,source_note
-  ) VALUES(?,?,?,?,?,?,?,?,?)`).run(
-    row.id,
-    row.observed_at,
-    new Date(row.observed_at).toISOString(),
-    row.listener_count,
-    row.track_title,
-    row.artist_name,
-    row.likes,
-    row.host_handle,
-    row.source_note,
+  db.prepare(`INSERT INTO sh_official_broadcast_summary VALUES(?,?,?,?,?,?,?,?,?,?,?)`).run(
+    'sakurazaka46jp', 'Event A', 1000, 2000, '2025-01-01 09:00:01',
+    '2025-01-01 09:00:02', 2, 110, 120, 12, 2,
   );
-}
 
-test('repeated event labels are split into time-separated broadcast sessions', () => {
-  const db = createHistoryDatabase();
-  const start = Date.parse('2025-01-01T00:00:00Z');
-  insertRow(db, {
-    id: 1,
-    observed_at: start,
-    listener_count: 100,
-    track_title: 'Same title',
-    artist_name: 'Artist A',
-    likes: 10,
-    host_handle: ' Sakurazaka46JP ',
-    source_note: ' Repeat Event ',
-  });
-  insertRow(db, {
-    id: 2,
-    observed_at: start + 60_000,
-    listener_count: 120,
-    track_title: 'Same title',
-    artist_name: 'Artist B',
-    likes: 12,
-    host_handle: 'sakurazaka46jp',
-    source_note: 'Repeat Event',
-  });
-  const secondStart = start + BROADCAST_SESSION_GAP_MS + 120_000;
-  insertRow(db, {
-    id: 3,
-    observed_at: secondStart,
-    listener_count: 200,
-    track_title: 'Third song',
-    artist_name: 'Artist C',
-    likes: 20,
-    host_handle: 'SAKURAZAKA46JP',
-    source_note: 'repeat event',
-  });
-  insertRow(db, {
-    id: 4,
-    observed_at: secondStart + 60_000,
-    listener_count: 220,
-    track_title: 'Third song',
-    artist_name: 'Artist C',
-    likes: 25,
-    host_handle: 'sakurazaka46jp',
-    source_note: 'Repeat Event',
-  });
-  insertRow(db, {
-    id: 5,
-    observed_at: secondStart + 120_000,
-    listener_count: 999,
-    track_title: 'Ignored',
-    artist_name: 'Ignored',
-    likes: 999,
-    host_handle: 'sakurazaka46jp',
-    source_note: '   ',
-  });
-
-  const rows = db.prepare(broadcastSummarySql('sh_legacy_history_rows')).all(
-    start - 1,
-    secondStart + 180_000,
-    BROADCAST_SESSION_GAP_MS,
-  );
+  const rows = db.prepare(BROADCAST_SUMMARY_SQL).all(0, 3000, 0, 3000);
   const parsed = parseBroadcastSummaryRows(rows);
 
   assert.equal(parsed.setupRequired, false);
-  assert.equal(parsed.rows.length, 2);
-  assert.equal(parsed.rows[0].started_at, start);
-  assert.equal(parsed.rows[0].ended_at, start + 60_000);
-  assert.equal(parsed.rows[0].sample_count, 2);
-  assert.equal(parsed.rows[0].listener_avg, 110);
-  assert.equal(parsed.rows[0].likes_max, 12);
-  assert.equal(parsed.rows[0].distinct_tracks, 2);
-  assert.equal(parsed.rows[1].started_at, secondStart);
-  assert.equal(parsed.rows[1].sample_count, 2);
-  assert.equal(parsed.rows[1].distinct_tracks, 1);
-});
-
-test('an intervening event splits repeated labels even inside the time gap', () => {
-  const db = createHistoryDatabase();
-  const start = Date.parse('2025-01-01T00:00:00Z');
-  const rows = [
-    { id: 1, offset: 0, source_note: 'Event A', listener_count: 100 },
-    { id: 2, offset: 60_000, source_note: 'Event A', listener_count: 110 },
-    { id: 3, offset: 120_000, source_note: 'Event B', listener_count: 200 },
-    { id: 4, offset: 180_000, source_note: 'Event B', listener_count: 210 },
-    { id: 5, offset: 240_000, source_note: 'Event A', listener_count: 300 },
-    { id: 6, offset: 300_000, source_note: 'Event A', listener_count: 310 },
-  ];
-  for (const row of rows) {
-    insertRow(db, {
-      id: row.id,
-      observed_at: start + row.offset,
-      listener_count: row.listener_count,
-      track_title: `Song ${row.id}`,
-      artist_name: 'Artist',
-      likes: row.id,
-      host_handle: 'sakurazaka46jp',
-      source_note: row.source_note,
-    });
-  }
-
-  const result = db.prepare(broadcastSummarySql('sh_legacy_history_rows')).all(
-    start - 1,
-    start + 360_000,
-    BROADCAST_SESSION_GAP_MS,
-  );
-  const parsed = parseBroadcastSummaryRows(result);
-
-  assert.equal(parsed.rows.length, 3);
-  assert.deepEqual(parsed.rows.map((row) => row.event_name), ['Event A', 'Event B', 'Event A']);
-  assert.deepEqual(parsed.rows.map((row) => row.sample_count), [2, 2, 2]);
-  assert.deepEqual(parsed.rows.map((row) => row.listener_avg), [105, 205, 305]);
-  assert.equal(parsed.rows[0].ended_at, start + 60_000);
-  assert.equal(parsed.rows[2].started_at, start + 240_000);
-});
-
-test('an empty requested range reports existing setup without inventing a broadcast', () => {
-  const db = createHistoryDatabase();
-  const start = Date.parse('2025-01-01T00:00:00Z');
-  insertRow(db, {
-    id: 1,
-    observed_at: start,
-    listener_count: 100,
-    track_title: 'Song',
-    artist_name: 'Artist',
-    likes: 10,
+  assert.deepEqual(parsed.rows, [{
+    event_name: 'Event A',
+    started_at: 1000,
+    ended_at: 2000,
+    started_jst: '2025-01-01 09:00:01',
+    ended_jst: '2025-01-01 09:00:02',
+    sample_count: 2,
+    listener_avg: 110,
+    listener_max: 120,
+    likes_max: 12,
+    distinct_tracks: 2,
     host_handle: 'sakurazaka46jp',
-    source_note: 'Existing Event',
-  });
+  }]);
+});
 
-  const rows = db.prepare(broadcastSummarySql('sh_legacy_history_rows')).all(
-    start + 86_400_000,
-    start + 2 * 86_400_000,
-    BROADCAST_SESSION_GAP_MS,
-  );
-  const parsed = parseBroadcastSummaryRows(rows);
-
-  assert.equal(parsed.rows.length, 0);
-  assert.equal(parsed.setupRequired, false);
+test('an empty range reports whether the compact summary is provisioned', () => {
+  const db = new DatabaseSync(':memory:');
+  db.exec(`CREATE TABLE sh_official_broadcast_summary (
+    host_handle TEXT NOT NULL,event_name TEXT NOT NULL,started_at INTEGER,
+    ended_at INTEGER,started_jst TEXT,ended_jst TEXT,sample_count INTEGER,
+    listener_avg REAL,listener_max INTEGER,likes_max INTEGER,distinct_tracks INTEGER,
+    PRIMARY KEY(host_handle,event_name)
+  )`);
+  const parsed = parseBroadcastSummaryRows(db.prepare(BROADCAST_SUMMARY_SQL).all(0, 100, 0, 100));
+  assert.deepEqual(parsed.rows, []);
+  assert.equal(parsed.setupRequired, true);
 });

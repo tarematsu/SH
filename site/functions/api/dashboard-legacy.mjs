@@ -434,7 +434,7 @@ export async function onRequestGet({ request, env }) {
     return json({
       ok: true,
       generated_at: generatedAt,
-      metrics_source: facts ? 'facts-db' : 'legacy-db',
+      metrics_source: facts ? 'facts-db' : 'buddies-db',
       delta: !initial,
       history_deferred: initial && !includeHistory,
       latest_observed_at: latest?.observed_at || since,

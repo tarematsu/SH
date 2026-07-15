@@ -82,33 +82,26 @@ test('comment velocity is counted and written by one SQL statement', () => {
 
 test('broadcast summary reports empty range and setup state in one query', () => {
   const db = new DatabaseSync(':memory:');
-  db.exec(`CREATE TABLE sh_legacy_snapshots (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    canonical_key TEXT NOT NULL UNIQUE, source_id TEXT NOT NULL, source_row INTEGER NOT NULL,
-    observed_at INTEGER NOT NULL, observed_jst TEXT, listener_count INTEGER,
-    total_stream_count INTEGER, track_title TEXT, artist_name TEXT, likes INTEGER,
-    comment_velocity REAL, host_handle TEXT, total_member_count INTEGER, source_note TEXT,
-    quality_score REAL NOT NULL, quality_flags TEXT NOT NULL, raw_json TEXT NOT NULL,
-    imported_at INTEGER NOT NULL
+  db.exec(`CREATE TABLE sh_official_broadcast_summary (
+    host_handle TEXT NOT NULL,event_name TEXT NOT NULL,started_at INTEGER,
+    ended_at INTEGER,started_jst TEXT,ended_jst TEXT,sample_count INTEGER,
+    listener_avg REAL,listener_max INTEGER,likes_max INTEGER,distinct_tracks INTEGER,
+    PRIMARY KEY(host_handle,event_name)
   )`);
-  db.exec(readFileSync(
-    new URL('../database/migrations/101_add_lightweight_legacy_history.sql', import.meta.url),
-    'utf8',
-  ));
 
-  const empty = parseBroadcastSummaryRows(db.prepare(BROADCAST_SUMMARY_SQL).all(0, 100));
+  const empty = parseBroadcastSummaryRows(db.prepare(BROADCAST_SUMMARY_SQL).all(0, 100, 0, 100));
   assert.deepEqual(empty.rows, []);
   assert.equal(empty.setupRequired, true);
 
-  db.prepare(`INSERT INTO sh_legacy_snapshots
-    (id,canonical_key,source_id,source_row,observed_at,observed_jst,listener_count,likes,track_title,host_handle,source_note,quality_score,quality_flags,raw_json,imported_at)
-    VALUES (1,'k1','s',1,1000,'2026-07-01 00:00:01',25,3,'Song','sakurazaka46jp','Event A',1,'[]','{}',0)`).run();
+  db.prepare(`INSERT INTO sh_official_broadcast_summary
+    (host_handle,event_name,started_at,ended_at,started_jst,ended_jst,sample_count,listener_avg,listener_max,likes_max,distinct_tracks)
+    VALUES ('sakurazaka46jp','Event A',1000,2000,'2026-07-01 00:00:01','2026-07-01 00:00:02',2,25,25,3,1)`).run();
 
-  const outside = parseBroadcastSummaryRows(db.prepare(BROADCAST_SUMMARY_SQL).all(0, 100));
+  const outside = parseBroadcastSummaryRows(db.prepare(BROADCAST_SUMMARY_SQL).all(0, 100, 0, 100));
   assert.deepEqual(outside.rows, []);
   assert.equal(outside.setupRequired, false);
 
-  const inside = parseBroadcastSummaryRows(db.prepare(BROADCAST_SUMMARY_SQL).all(0, 2000));
+  const inside = parseBroadcastSummaryRows(db.prepare(BROADCAST_SUMMARY_SQL).all(0, 2000, 0, 2000));
   assert.equal(inside.setupRequired, false);
   assert.equal(inside.rows.length, 1);
   assert.equal(inside.rows[0].event_name, 'Event A');

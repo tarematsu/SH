@@ -1,10 +1,7 @@
--- Archive gap completion: only source-only summary periods and official broadcast summaries.
--- Generated from the local Stationhead-DB backup after target-key comparison.
-CREATE VIEW IF NOT EXISTS sh_legacy_history_rows AS
-SELECT id,observed_at,observed_jst,listener_count,total_stream_count,
-  track_title,artist_name,likes,comment_velocity,host_handle,total_member_count,
-  source_note,quality_score,quality_flags
-FROM sh_legacy_snapshots;
+-- Archive gap completion: only source-only summary periods and official
+-- broadcast summaries. The raw legacy snapshot table was retired after the
+-- minute-facts cutover; broadcast boundaries are retained in the compact
+-- summary table below.
 CREATE TABLE IF NOT EXISTS sh_official_broadcast_summary (
   host_handle TEXT NOT NULL, event_name TEXT NOT NULL, started_at INTEGER, ended_at INTEGER,
   started_jst TEXT, ended_jst TEXT, sample_count INTEGER NOT NULL DEFAULT 0,

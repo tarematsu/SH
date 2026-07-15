@@ -61,28 +61,19 @@ test('one SQLite query selects nearest boundary evidence', () => {
       id INTEGER PRIMARY KEY,observed_at INTEGER,current_stream_count INTEGER,
       total_listens INTEGER,total_member_count INTEGER
     );
-    CREATE TABLE sh_legacy_snapshots(
-      id INTEGER PRIMARY KEY,observed_at INTEGER,total_stream_count INTEGER,
-      total_member_count INTEGER
-    );
   `);
   const bounds = expectedPeriodBounds('daily', '2026-06-30');
   db.prepare('INSERT INTO sh_channel_snapshots VALUES(?,?,?,?,?)')
     .run(1, bounds.start - 10 * 60000, 100, null, 10);
   db.prepare('INSERT INTO sh_channel_snapshots VALUES(?,?,?,?,?)')
     .run(2, bounds.end + 10 * 60000, 160, null, 16);
-  db.prepare('INSERT INTO sh_legacy_snapshots VALUES(?,?,?,?)')
-    .run(1, bounds.start + 2 * 60000, 110, 11);
-  db.prepare('INSERT INTO sh_legacy_snapshots VALUES(?,?,?,?)')
-    .run(2, bounds.end - 2 * 60000, 150, 15);
-
-  const rows = db.prepare(periodBoundaryEvidenceSql(true)).all(JSON.stringify([{
+  const rows = db.prepare(periodBoundaryEvidenceSql()).all(JSON.stringify([{
     period_key: '2026-06-30', period_start: bounds.start, period_end: bounds.end,
   }]));
-  assert.equal(rows[0].boundary_start_at, bounds.start + 2 * 60000);
-  assert.equal(rows[0].boundary_end_at, bounds.end - 2 * 60000);
-  assert.equal(rows[0].stream_start, 110);
-  assert.equal(rows[0].stream_end, 150);
+  assert.equal(rows[0].boundary_start_at, bounds.start - 10 * 60000);
+  assert.equal(rows[0].boundary_end_at, bounds.end + 10 * 60000);
+  assert.equal(rows[0].stream_start, 100);
+  assert.equal(rows[0].stream_end, 160);
 });
 
 test('old daily summary endpoints are replaced by UTC boundary evidence', () => {

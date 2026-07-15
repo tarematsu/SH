@@ -51,38 +51,34 @@ export function resetBroadcastSeriesCache() {
   seriesCache.clear();
 }
 
-export const LEGACY_SERIES_SQL = `WITH base AS (
-  SELECT source_note AS event_name,observed_at,listener_count,
-    MIN(observed_at) OVER (PARTITION BY source_note) AS started_at
-FROM sh_legacy_snapshots
-  WHERE observed_at>=? AND observed_at<?
-    AND host_handle='sakurazaka46jp'
-    AND source_note IS NOT NULL AND source_note<>''
-), minute_points AS (
-  SELECT
-    'legacy:' || event_name AS series_key,
-    event_name,started_at,
-    CAST((observed_at - started_at) / 60000 AS INTEGER) AS elapsed_minute,
-    ROUND(AVG(listener_count), 1) AS listener_count,
-    COUNT(*) AS source_samples
-  FROM base
-  WHERE listener_count IS NOT NULL
-  GROUP BY event_name,started_at,elapsed_minute
+export const LEGACY_SERIES_SQL = `SELECT event_name,started_at,ended_at
+FROM sh_official_broadcast_summary
+WHERE host_handle='sakurazaka46jp' AND started_at>=? AND started_at<?
+ORDER BY started_at ASC`;
+
+export const MINUTE_SERIES_SQL = `WITH minute_points AS (
+  SELECT CAST((f.minute_at-?)/60000 AS INTEGER) AS elapsed_minute,
+    ROUND(AVG(f.listener_count),1) AS listener_count,COUNT(*) AS source_samples
+  FROM sh_minute_facts f
+  LEFT JOIN sh_minute_fact_context c ON c.fact_id=f.id
+  LEFT JOIN sh_hosts h ON h.id=c.host_id
+  WHERE f.source_code IN (3,4)
+    AND f.minute_at>=? AND f.minute_at<?
+    AND lower(COALESCE(h.current_handle,''))='sakurazaka46jp'
+    AND f.listener_count IS NOT NULL
+  GROUP BY elapsed_minute
 ), ranked AS (
-  SELECT *,ROW_NUMBER() OVER (ORDER BY started_at ASC,elapsed_minute ASC) AS point_rank,
+  SELECT *,ROW_NUMBER() OVER (ORDER BY elapsed_minute ASC) AS point_rank,
     COUNT(*) OVER () AS total_points
   FROM minute_points
 ), ordered AS (
-  SELECT series_key,event_name,started_at,elapsed_minute,listener_count,source_samples,total_points
+  SELECT elapsed_minute,listener_count,source_samples,total_points
   FROM ranked WHERE point_rank<=${MAX_POINTS}
-  ORDER BY started_at ASC,elapsed_minute ASC
+  ORDER BY elapsed_minute ASC
 )
-SELECT series_key,event_name,started_at,
-  json_group_array(json_array(elapsed_minute,listener_count,source_samples)) AS points_json,
-  COUNT(*) AS point_count,MAX(total_points) AS total_points
-FROM ordered
-GROUP BY series_key,event_name,started_at
-ORDER BY started_at ASC`;
+SELECT json_group_array(json_array(elapsed_minute,listener_count,source_samples)) AS points_json,
+  COUNT(*) AS point_count,COALESCE(MAX(total_points),0) AS total_points
+FROM ordered`;
 
 export const FAILSAFE_SERIES_SQL = `WITH minute_points AS (
   SELECT
@@ -176,16 +172,26 @@ export function trimSeries(seriesRows, limit = MAX_POINTS) {
   return { series: result, pointCount: limit - remaining, truncated: sourceTruncated || originalPoints > limit };
 }
 
-// IMPORTED_SERIES_SQL (sh_legacy_snapshots) and FAILSAFE_SERIES_SQL
-// (sh_official_news_*) live in different D1 databases, so they can no
-// longer share a single db.batch() call and are run independently.
-export async function loadBroadcastSeriesRows(legacyDb, otherDb, fromTs, toTs) {
+// Official event boundaries remain in OTHER_DB; historical points are rebuilt
+// from the compact legacy facts in MINUTE_DB. The raw legacy table is not read.
+export async function loadBroadcastSeriesRows(minuteDb, otherDb, fromTs, toTs) {
   let legacyRows = [];
-  try {
-    const legacyResult = await legacyDb.prepare(LEGACY_SERIES_SQL).bind(fromTs, toTs).all();
-    legacyRows = legacyResult.results || [];
-  } catch (error) {
-    if (!/no such table|no such view/i.test(String(error?.message || ''))) throw error;
+  const summaryResult = await otherDb.prepare(LEGACY_SERIES_SQL).bind(fromTs, toTs).all();
+  const summaries = summaryResult.results || [];
+  for (const summary of summaries) {
+    const start = Number(summary.started_at || 0);
+    const end = Number(summary.ended_at || start) + 60_000;
+    const pointsResult = await minuteDb.prepare(MINUTE_SERIES_SQL)
+      .bind(start, start, end).all();
+    const points = pointsResult.results?.[0] || {};
+    legacyRows.push({
+      series_key: `legacy:${summary.event_name}`,
+      event_name: summary.event_name,
+      started_at: summary.started_at,
+      points_json: points.points_json || '[]',
+      point_count: points.point_count || 0,
+      total_points: points.total_points || 0,
+    });
   }
   let failSafeRows = [];
   try {
@@ -203,7 +209,7 @@ export async function loadBroadcastSeriesRows(legacyDb, otherDb, fromTs, toTs) {
 async function loadBroadcastSeries(env, from, to) {
   const fromTs = parseDateStart(from);
   const toTs = addDays(parseDateStart(to), 1);
-  const { legacy, failSafe } = await loadBroadcastSeriesRows(env.OTHER_DB, env.OTHER_DB, fromTs, toTs);
+  const { legacy, failSafe } = await loadBroadcastSeriesRows(env.MINUTE_DB, env.OTHER_DB, fromTs, toTs);
   const trimmed = trimSeries(legacy.concat(failSafe));
   let failSafeEventCount = 0;
   for (const item of trimmed.series) {
@@ -218,7 +224,7 @@ async function loadBroadcastSeries(env, from, to) {
 }
 
 export async function onRequestGet({ request, env }) {
-  if (!env.OTHER_DB) return json({ ok: false, error: 'OTHER_DB binding missing' }, 500);
+  if (!env.OTHER_DB || !env.MINUTE_DB) return json({ ok: false, error: 'history database bindings missing' }, 500);
   try {
     const url = new URL(request.url);
     const today = todayUtcString();

@@ -29,7 +29,7 @@ test('facts dashboard SQL preserves the main-page response contract', () => {
 
 test('facts freshness rejects missing and delayed telemetry', () => {
   assert.equal(factsAreFresh({ observed_at: 940_000 }, 1_000_000), true);
-  assert.equal(factsAreFresh({ observed_at: 700_000 }, 1_000_000), false);
+  assert.equal(factsAreFresh({ observed_at: 399_999 }, 1_000_000), false);
   assert.equal(factsAreFresh(null, 1_000_000), false);
 });
 
@@ -131,8 +131,11 @@ test('dashboard history and recovery select MINUTE_DB when it is bound', async (
   const forbiddenDb = {
     prepare() { throw new Error('legacy DB must not be queried'); },
   };
+  const collectorDb = new FakeD1Database().route('first', 'FROM sh_channel_snapshots', {
+    observed_at: now - 1_000,
+  });
   const history = await responseJson(await dashboardHistoryGet({ env: { DB: forbiddenDb, MINUTE_DB: facts } }));
-  const recovery = await responseJson(await dashboardRecoveryGet({ env: { DB: forbiddenDb, MINUTE_DB: facts } }));
+  const recovery = await responseJson(await dashboardRecoveryGet({ env: { DB: collectorDb, MINUTE_DB: facts } }));
   assert.equal(history.ok, true);
   assert.equal(history.storage_source, 'facts-db');
   assert.equal(history.history[0].online_member_count, 12);

@@ -77,7 +77,14 @@ for (const configPath of configPaths) {
 const migrationFiles = readdirSync(migrationsDir)
   .filter((name) => name.endsWith('.sql'))
   .sort();
+const retiredMigrationFiles = new Set([
+  // Historical creation migrations must not recreate the archive after the
+  // final retirement migration has removed it.
+  '005_legacy_history_tables.sql',
+  '006_legacy_snapshot_stream_count.sql',
+]);
 for (const migrationFile of migrationFiles) {
+  if (retiredMigrationFiles.has(migrationFile)) continue;
   try {
     wrangler([
       'd1', 'execute', databaseName,
@@ -85,11 +92,6 @@ for (const migrationFile of migrationFiles) {
       '--file', resolve(migrationsDir, migrationFile),
     ]);
   } catch (error) {
-    const details = `${error.stderr || ''}\n${error.stdout || ''}`;
-    if (migrationFile === '006_legacy_snapshot_stream_count.sql'
-        && /duplicate column name:\s*total_stream_count/i.test(details)) {
-      continue;
-    }
     throw error;
   }
 }

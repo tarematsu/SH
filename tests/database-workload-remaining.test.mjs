@@ -11,9 +11,7 @@ import { hostCommentsToWrite } from '../site/functions/api/host-ingest.js';
 import {
   LEGACY_SERIES_SQL,
   cachedBroadcastSeries,
-  decodeSeriesRows,
   resetBroadcastSeriesCache,
-  trimSeries,
 } from '../site/functions/api/broadcast-series.js';
 import { cachedSnapshotCount, resetSnapshotCountCache } from '../site/functions/api/health.js';
 import { compactProbePayload, officialCommentsToWrite } from '../worker/src/official-news-index.js';
@@ -52,23 +50,18 @@ test('comment filters only return new or changed rows', () => {
 
 test('broadcast series calculates event starts in one filtered scan', () => {
   const db = new DatabaseSync(':memory:');
-  db.exec(`CREATE TABLE sh_legacy_snapshots(id INTEGER PRIMARY KEY,observed_at INTEGER NOT NULL,host_handle TEXT,source_note TEXT,listener_count INTEGER)`);
-  const insert = db.prepare('INSERT INTO sh_legacy_snapshots VALUES(?,?,?,?,?)');
-  insert.run(1, 1000, 'sakurazaka46jp', 'event-a', null);
-  insert.run(2, 2000, 'sakurazaka46jp', 'event-a', 10);
-  insert.run(3, 3000, 'sakurazaka46jp', 'event-a', 20);
-  insert.run(4, 61000, 'sakurazaka46jp', 'event-a', 30);
-  insert.run(5, 121000, 'sakurazaka46jp', 'event-b', 40);
+  db.exec(`CREATE TABLE sh_official_broadcast_summary(
+    host_handle TEXT NOT NULL,event_name TEXT NOT NULL,started_at INTEGER,
+    ended_at INTEGER,PRIMARY KEY(host_handle,event_name)
+  )`);
+  const insert = db.prepare('INSERT INTO sh_official_broadcast_summary VALUES(?,?,?,?)');
+  insert.run('sakurazaka46jp', 'event-a', 1000, 61000);
+  insert.run('sakurazaka46jp', 'event-b', 121000, 181000);
   const rows = db.prepare(LEGACY_SERIES_SQL).all(0, 200000);
   assert.equal(rows.length, 2);
-  const decoded = decodeSeriesRows(rows, 'historical_import');
-  assert.deepEqual(decoded[0].samples.map((point) => [point.elapsed, point.listener]), [[0, 15], [1, 30]]);
-  assert.equal(decoded[0].started_at, 1000);
-  assert.equal(decoded[0].samples.reduce((sum, point) => sum + point.sourceSamples, 0), 3);
-  assert.equal(decoded[0].sourceTruncated, false);
-  const trimmed = trimSeries(decoded, 2);
-  assert.equal(trimmed.pointCount, 2);
-  assert.equal(trimmed.truncated, true);
+  assert.equal(rows[0].event_name, 'event-a');
+  assert.equal(rows[0].started_at, 1000);
+  assert.equal(rows[0].ended_at, 61000);
 });
 
 test('broadcast series cache coalesces concurrent heavy queries', async () => {

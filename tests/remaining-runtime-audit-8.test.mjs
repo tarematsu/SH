@@ -12,12 +12,13 @@ test('live summary SQL aggregates rows inside D1', () => {
   assert.doesNotMatch(sql, /LIMIT 100000/);
 });
 
-test('active history endpoint keeps the legacy 100k-row path detached', () => {
+test('active history endpoint has no retired raw archive path', () => {
   const history = readFileSync(new URL('../site/functions/api/history.js', import.meta.url), 'utf8');
   const legacy = readFileSync(new URL('../site/functions/api/history-legacy.mjs', import.meta.url), 'utf8');
 
   assert.doesNotMatch(history, /history-legacy\.mjs/);
-  assert.match(legacy, /LIMIT 100000/);
+  assert.doesNotMatch(legacy, /sh_legacy_(?:history_rows|snapshots)/);
+  assert.match(legacy, /export async function loadRanking/);
 });
 
 test('history chart interactions reuse prepared models', () => {

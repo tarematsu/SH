@@ -11,6 +11,7 @@ import {
   PREDICTION_24H_SQL,
   publicLatest,
   compactQueueStatus,
+  onRequestGet as dashboardFromBuddiesDb,
 } from './dashboard-legacy.mjs';
 import { LATEST_QUEUE_WITH_ITEMS_SQL, parseLatestQueueRows } from '../lib/latest-queue.js';
 import { num } from '../lib/api-utils.js';
@@ -333,8 +334,21 @@ export async function onRequestGet(context) {
       predictionPromise,
     ]);
     if (!factsAreFresh(facts.latest)) {
-      return new Response(JSON.stringify({ ok: false, error: 'MINUTE_DB telemetry is stale' }), {
-        status: 503,
+      // The buddies Worker is the real-time source.  A delayed minute read
+      // model must not blank the dashboard while the collector is healthy.
+      // dashboard-legacy.mjs is only used here as a DB-backed live fallback;
+      // history APIs remain owned by MINUTE_DB.
+      const fallback = await dashboardFromBuddiesDb(context);
+      if (!fallback.ok) return fallback;
+      const fallbackPayload = await fallback.json();
+      return new Response(JSON.stringify({
+        ...fallbackPayload,
+        storage_source: 'buddies-db',
+        stale: true,
+        stale_reason: 'minute-facts-read-model-lag',
+        facts_latest_observed_at: Number(facts.latest?.observed_at || 0) || null,
+      }), {
+        status: 200,
         headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' },
       });
     }

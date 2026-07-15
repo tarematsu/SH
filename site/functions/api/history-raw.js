@@ -40,25 +40,35 @@ export function decodeRawHistoryCursor(value) {
   }
 }
 
-export function rawHistorySql(source, cursor) {
-  let sql = `SELECT id,observed_at,observed_jst,listener_count,total_stream_count,
-track_title,artist_name,likes,comment_velocity,host_handle,total_member_count,
-source_note,quality_score,quality_flags
-FROM ${source}
-WHERE observed_at>=? AND observed_at<?`;
-  if (cursor) sql += ' AND (observed_at>? OR (observed_at=? AND id>?))';
-  return `${sql} ORDER BY observed_at ASC,id ASC LIMIT ?`;
+export function rawHistorySql(cursor) {
+  let sql = `SELECT f.id,f.observed_at,
+  strftime('%Y-%m-%d %H:%M:%S',f.observed_at/1000,'unixepoch','+9 hours') AS observed_jst,
+  f.listener_count,
+  CASE WHEN f.source_code=1 THEN f.reported_current_stream_count
+    ELSE COALESCE(f.reported_current_stream_count,f.reported_total_listens) END AS total_stream_count,
+  t.title AS track_title,t.artist AS artist_name,c.track_bite_count AS likes,
+  f.comment_count AS comment_velocity,h.current_handle AS host_handle,
+  f.total_member_count,NULL AS source_note,
+  f.quality_score_code/100.0 AS quality_score,f.quality_flags,
+  f.minute_at,f.source_record_id
+FROM sh_minute_facts f
+LEFT JOIN sh_minute_fact_context c ON c.fact_id=f.id
+LEFT JOIN sh_tracks t ON t.id=c.track_id
+LEFT JOIN sh_hosts h ON h.id=c.host_id
+WHERE f.source_code IN (3,4) AND f.minute_at>=? AND f.minute_at<?`;
+  if (cursor) sql += ' AND (f.minute_at>? OR (f.minute_at=? AND f.id>?))';
+  return `${sql} ORDER BY f.minute_at ASC,f.id ASC LIMIT ?`;
 }
 
-async function loadRows(db, source, fromTs, toTs, cursor, limit) {
+async function loadRows(db, fromTs, toTs, cursor, limit) {
   const binds = [fromTs, toTs];
   if (cursor) binds.push(cursor.timestamp, cursor.timestamp, cursor.id);
   binds.push(limit + 1);
-  return db.prepare(rawHistorySql(source, cursor)).bind(...binds).all();
+  return db.prepare(rawHistorySql(cursor)).bind(...binds).all();
 }
 
 export async function onRequestGet({ request, env }) {
-  if (!env.OTHER_DB) return json({ ok: false, error: 'OTHER_DB binding missing' }, 500);
+  if (!env.MINUTE_DB) return json({ ok: false, error: 'MINUTE_DB binding missing' }, 500);
   const url = new URL(request.url);
   const from = url.searchParams.get('from') || '2024-06-01';
   const to = url.searchParams.get('to') || todayJstString();
@@ -84,12 +94,11 @@ export async function onRequestGet({ request, env }) {
 
   try {
     let result;
-    let source = 'lightweight';
     try {
-      result = await loadRows(env.OTHER_DB, 'sh_legacy_history_rows', fromTs, toTs, cursor, limit);
+      result = await loadRows(env.MINUTE_DB, fromTs, toTs, cursor, limit);
     } catch (error) {
       if (!/no such table|no such view/i.test(String(error?.message || ''))) throw error;
-      return json({ ok: false, error: 'raw history is no longer available from Pages' }, 410);
+      return json({ ok: false, error: 'minute facts history is not available from Pages' }, 503);
     }
     const allRows = result.results || [];
     const hasMore = allRows.length > limit;
@@ -102,7 +111,7 @@ export async function onRequestGet({ request, env }) {
       rows,
       has_more: hasMore,
       next_cursor: hasMore ? encodeCursor(rows.at(-1)) : null,
-      storage_source: source,
+      storage_source: 'stationhead-minute.sh_minute_facts',
     });
   } catch (error) {
     return json({ ok: false, error: error?.message || 'raw history error' }, 500);

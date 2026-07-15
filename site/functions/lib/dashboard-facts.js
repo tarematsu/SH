@@ -1,4 +1,9 @@
-const FACTS_FRESH_MS = 3 * 60 * 1000;
+// Minute facts are a downstream read model.  The buddies collector is the
+// real-time source and can legitimately be ahead while the minute worker is
+// draining its backlog.  Keep the dashboard threshold aligned with the
+// recovery endpoint so a normal downstream lag is not rendered as a stopped
+// collector.
+export const FACTS_FRESH_MS = 10 * 60 * 1000;
 
 function commentVelocitySql(alias = 'f') {
   return `COALESCE((

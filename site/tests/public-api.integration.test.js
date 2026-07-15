@@ -243,6 +243,9 @@ test('broadcast series rejects impossible dates before querying D1', async () =>
       OTHER_DB: {
         prepare() { throw new Error('D1 should not be queried'); },
       },
+      MINUTE_DB: {
+        prepare() { throw new Error('D1 should not be queried'); },
+      },
   };
   const response = await broadcastSeriesGet({
     request: new Request('https://skrzk.test/api/broadcast-series?from=2026-02-30&to=2026-03-01'),

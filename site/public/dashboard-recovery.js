@@ -22,7 +22,7 @@
       head.insertAdjacentElement('afterend', status);
     }
 
-    if (!data.stale) {
+    if (!data.stale && !data.read_model_stale) {
       status.remove();
       return;
     }
@@ -31,10 +31,13 @@
     const date = Number.isFinite(observedAt)
       ? new Date(observedAt).toLocaleString('ja-JP', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })
       : '不明';
-    status.textContent = `現在の収集が停止しています。最後に取得できた24時間を表示中（最終取得 ${date}）`;
+    status.textContent = data.stale
+      ? `現在のデータ収集が停止しています。最後に取得できた24時間を表示中（最終取得 ${date}）`
+      : `リアルタイム収集は継続中ですが、履歴DBへの反映が遅れています（履歴の最終取得 ${date}）`;
 
     const updated = document.getElementById('updated');
-    if (updated && !updated.textContent.includes('取得停止中')) updated.textContent += '・取得停止中';
+    const marker = data.stale ? '取得停止中' : '履歴反映遅延中';
+    if (updated && !updated.textContent.includes(marker)) updated.textContent += `・${marker}`;
   }
 
   let recoveryWaits = 0;

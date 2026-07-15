@@ -70,9 +70,9 @@ test('boundary SQL accepts observations inside expanded weekly and monthly windo
   insert.run(3, monthly.start - 86400000, 200, null, 20);
   insert.run(4, monthly.end + 86400000, 260, null, 26);
 
-  const weeklyRows = db.prepare(periodBoundaryEvidenceSql(false, WEEKLY_BOUNDARY_TOLERANCE_MS))
+  const weeklyRows = db.prepare(periodBoundaryEvidenceSql(WEEKLY_BOUNDARY_TOLERANCE_MS))
     .all(JSON.stringify([{ period_key: '2026-07-06', period_start: weekly.start, period_end: weekly.end }]));
-  const monthlyRows = db.prepare(periodBoundaryEvidenceSql(false, MONTHLY_BOUNDARY_TOLERANCE_MS))
+  const monthlyRows = db.prepare(periodBoundaryEvidenceSql(MONTHLY_BOUNDARY_TOLERANCE_MS))
     .all(JSON.stringify([{ period_key: '2026-05', period_start: monthly.start, period_end: monthly.end }]));
   assert.equal(weeklyRows[0].stream_start, 100);
   assert.equal(weeklyRows[0].stream_end, 160);

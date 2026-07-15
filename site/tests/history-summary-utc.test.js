@@ -29,7 +29,7 @@ test('summary period boundaries and range starts use UTC', () => {
 });
 
 test('boundary evidence reads only current snapshots', () => {
-  const sql = periodBoundaryEvidenceSql(false);
+  const sql = periodBoundaryEvidenceSql();
   assert.match(sql, /sh_channel_snapshots/);
   assert.doesNotMatch(sql, /sh_legacy_snapshots/);
 });
