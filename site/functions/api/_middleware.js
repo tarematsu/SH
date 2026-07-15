@@ -1,22 +1,10 @@
+import {
+  API_SUCCESSORS,
+  BLOCKED_API_PATHS,
+} from '../lib/api-contract.js';
+
 const inFlight = new Map();
-
-const BLOCKED_API_PATHS = new Set([
-  '/api/dashboard-legacy',
-  '/api/history-legacy',
-  '/api/ingest',
-  '/api/ingest-core',
-  '/api/ingest-legacy',
-  '/api/host-ingest',
-  '/api/host-ingest-core',
-  '/api/host-ingest-legacy',
-]);
-
-const COMPATIBILITY_SUCCESSORS = Object.freeze({
-  '/api/history-current': '/api/minute-facts/current',
-  '/api/history-migrated': '/api/minute-facts',
-  '/api/history-raw': '/api/history?mode=raw',
-  '/api/official-history': '/api/history?mode=broadcasts',
-});
+const blockedApiPaths = new Set(BLOCKED_API_PATHS);
 
 function normalizedPathname(value) {
   const pathname = String(value || '/');
@@ -24,11 +12,11 @@ function normalizedPathname(value) {
 }
 
 export function isBlockedApiPath(pathname) {
-  return BLOCKED_API_PATHS.has(normalizedPathname(pathname));
+  return blockedApiPaths.has(normalizedPathname(pathname));
 }
 
 export function apiSuccessor(pathname) {
-  return COMPATIBILITY_SUCCESSORS[normalizedPathname(pathname)] || null;
+  return API_SUCCESSORS[normalizedPathname(pathname)] || null;
 }
 
 function notFoundResponse() {
