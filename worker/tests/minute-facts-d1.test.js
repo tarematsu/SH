@@ -81,6 +81,13 @@ test('minute facts D1 schema applies and exposes required tables', { timeout: 60
       '--local', '--persist-to', stateDirectory,
       '--file', counterRepairMigrationPath,
     ]);
+    // Provisioning replays the historical archive migrations on every run;
+    // this must remain safe after the source-shaped names become views.
+    run([
+      'd1', 'execute', factsBinding,
+      '--local', '--persist-to', stateDirectory,
+      '--file', downstreamArchiveMigrationPath,
+    ]);
     const requiredTables = [
       'sh_minute_facts',
       'sh_minute_fact_context_v2',

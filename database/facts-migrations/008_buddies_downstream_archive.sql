@@ -59,10 +59,9 @@ CREATE TABLE IF NOT EXISTS sh_track_like_observations (
   like_count INTEGER NOT NULL,
   source TEXT NOT NULL DEFAULT 'buddies-buffer'
 );
-CREATE INDEX IF NOT EXISTS idx_sh_track_like_observations_station_track_time
-  ON sh_track_like_observations(station_id,track_key,observed_at DESC);
-CREATE INDEX IF NOT EXISTS idx_sh_track_like_observations_time
-  ON sh_track_like_observations(observed_at DESC,source_id DESC);
+-- The source-shaped like name may be a compatibility view after the facts
+-- counter-log cutover, so its physical indexes are owned by the source DB and
+-- the canonical counter tables instead of this replayed migration.
 
 CREATE TABLE IF NOT EXISTS sh_track_metadata (
   spotify_id TEXT PRIMARY KEY,
