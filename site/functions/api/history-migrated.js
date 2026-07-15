@@ -1,2 +1,5 @@
-// Compatibility alias. New callers and imports should use /api/minute-facts.
-export * from './minute-facts/index.js';
+import { compatibilityRedirect } from '../lib/api-compatibility.js';
+
+export async function onRequestGet({ request }) {
+  return compatibilityRedirect(request, '/api/minute-facts');
+}
