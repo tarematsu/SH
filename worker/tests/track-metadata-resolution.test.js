@@ -128,7 +128,7 @@ test('track resolution fills incomplete MINUTE metadata from the legacy source',
   assert.equal(buddiesDb.metadataQueries, 1);
 });
 
-test('track metadata backfill migration is wired into FACTS provisioning', () => {
+test('track metadata migration creates both Spotify and ISRC repair paths', () => {
   const migration = readFileSync(
     new URL('../../database/facts-migrations/014_backfill_track_metadata.sql', import.meta.url),
     'utf8',
@@ -139,9 +139,10 @@ test('track metadata backfill migration is wired into FACTS provisioning', () =>
     'utf8',
   ));
 
+  assert.match(migration, /CREATE TABLE IF NOT EXISTS sh_isrc_metadata/);
   assert.match(migration, /UPDATE sh_tracks/);
   assert.match(migration, /FROM sh_track_metadata/);
-  assert.match(migration, /metadata\.spotify_id = sh_tracks\.spotify_id/);
+  assert.match(migration, /FROM sh_isrc_metadata/);
   assert.match(provision, /014_backfill_track_metadata\.sql/);
   assert.equal(metadata.schema, 'database/facts-migrations/014_backfill_track_metadata.sql');
 });
