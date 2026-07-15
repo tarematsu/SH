@@ -67,7 +67,9 @@ export async function officialNewsProbeDue(env, now = Date.now()) {
 export async function selectOtherProductionTask(controller, env, dependencies = {}) {
   const now = scheduledTimestamp(controller);
   const scheduled = otherProductionTask(now, env);
-  if (scheduled === 'officialNews') return scheduled;
+  // Active-event probing may replace an ordinary host poll, but must not starve
+  // prediction, maintenance, retention, or the three-hour buddy46 collection.
+  if (scheduled !== 'host') return scheduled;
   const due = dependencies.officialNewsDue || officialNewsProbeDue;
   return await due(env, now) ? 'officialNews' : scheduled;
 }
