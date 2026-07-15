@@ -56,7 +56,7 @@ test('secondary playback migration stores only one current row per channel', () 
   assert.doesNotMatch(migration, /AUTOINCREMENT|history|snapshot/i);
 });
 
-test('secondary playback exposes current progress and upcoming tracks', () => {
+test('secondary playback exposes current progress and track metadata without Spotify IDs', () => {
   const payload = secondaryPlaybackPayload(playbackRow(), 350_000);
 
   assert.equal(payload.channel_alias, 'buddy46');
@@ -65,7 +65,35 @@ test('secondary playback exposes current progress and upcoming tracks', () => {
   assert.equal(payload.queue_status.current_index, 0);
   assert.equal(payload.queue_status.progress_ms, 50_000);
   assert.equal(payload.queue[0].is_current, true);
-  assert.equal(payload.queue[1].title, 'Song 2');
+  assert.deepEqual(
+    {
+      title: payload.queue[1].title,
+      artist: payload.queue[1].artist,
+      thumbnail_url: payload.queue[1].thumbnail_url,
+    },
+    {
+      title: 'Song 2',
+      artist: 'Artist',
+      thumbnail_url: 'cover-2',
+    },
+  );
+  assert.equal('spotify_id' in payload.queue[0], false);
+  assert.equal('spotify_id' in payload.queue[1], false);
+});
+
+test('secondary playback keeps metadata keys stable when values are unavailable', () => {
+  const payload = secondaryPlaybackPayload(playbackRow({
+    queue_json: JSON.stringify([{
+      position: 0,
+      spotify_id: 'sp1',
+      duration_ms: 180_000,
+    }]),
+  }), 350_000);
+
+  assert.equal(payload.queue[0].title, null);
+  assert.equal(payload.queue[0].artist, null);
+  assert.equal(payload.queue[0].thumbnail_url, null);
+  assert.equal('spotify_id' in payload.queue[0], false);
 });
 
 test('paused secondary playback freezes progress at the playback change timestamp', () => {
