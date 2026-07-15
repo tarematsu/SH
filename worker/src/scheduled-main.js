@@ -1,4 +1,3 @@
-import { withDuplicateVelocityReadRemoved } from './d1-read-optimizer.js';
 import { runOptimizedScheduled } from './optimized-index.js';
 import {
   PrimaryCollectionTimeoutError,
@@ -50,7 +49,10 @@ export async function runPrimaryCycle(
 
 export default {
   async scheduled(controller, env, ctx) {
-    return runPrimaryCycle(controller, withDuplicateVelocityReadRemoved(env), env, ctx);
+    // D1 reads/writes are intentionally allowed to repeat. Avoiding the generic
+    // statement-rewrite/cache Proxy removes traps, SQL classification and JSON
+    // signatures from every collector D1 call.
+    return runPrimaryCycle(controller, env, env, ctx);
   },
 
   fetch() {
