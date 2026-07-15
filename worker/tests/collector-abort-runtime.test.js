@@ -7,7 +7,10 @@ import {
 } from '../src/collector-runner.js';
 import {
   PrimaryCollectionTimeoutError,
+  COLLECTION_ABORT_SIGNAL,
+  COLLECTION_DEADLINE_AT,
   runPrimaryScheduled,
+  withCollectionRuntime,
 } from '../src/main-scheduler.js';
 
 function context() {
@@ -17,6 +20,37 @@ function context() {
     waitUntil(task) { tasks.push(Promise.resolve(task)); },
   };
 }
+
+test('collection runtime inherits bindings without sharing request metadata', () => {
+  const baseEnv = {
+    DB: { name: 'buddies' },
+    CHANNEL_ALIAS: 'buddies',
+    MINUTE_FACT_QUEUE: { send() {} },
+  };
+  const firstController = new AbortController();
+  const secondController = new AbortController();
+  const firstDeadline = 123;
+  const secondDeadline = 456;
+  const first = withCollectionRuntime(baseEnv, firstController.signal, firstDeadline);
+  const second = withCollectionRuntime(baseEnv, secondController.signal, secondDeadline);
+
+  assert.notEqual(first, baseEnv);
+  assert.equal(first.DB, baseEnv.DB);
+  assert.equal(first.CHANNEL_ALIAS, baseEnv.CHANNEL_ALIAS);
+  assert.equal(first.MINUTE_FACT_QUEUE, baseEnv.MINUTE_FACT_QUEUE);
+  assert.equal(first[COLLECTION_ABORT_SIGNAL], firstController.signal);
+  assert.equal(first[COLLECTION_DEADLINE_AT], firstDeadline);
+  assert.equal(COLLECTION_ABORT_SIGNAL in first, true);
+  assert.equal(COLLECTION_DEADLINE_AT in first, true);
+  assert.equal(Object.hasOwn(baseEnv, COLLECTION_ABORT_SIGNAL), false);
+  assert.equal(Object.hasOwn(baseEnv, COLLECTION_DEADLINE_AT), false);
+  assert.equal(second[COLLECTION_ABORT_SIGNAL], secondController.signal);
+  assert.equal(second[COLLECTION_DEADLINE_AT], secondDeadline);
+
+  firstController.abort(new Error('first request only'));
+  assert.equal(first[COLLECTION_ABORT_SIGNAL].aborted, true);
+  assert.equal(second[COLLECTION_ABORT_SIGNAL].aborted, false);
+});
 
 test('primary watchdog aborts the request-scoped collection signal', async () => {
   const ctx = context();

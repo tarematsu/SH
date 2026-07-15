@@ -28,18 +28,18 @@ export class PrimaryCollectionTimeoutError extends Error {
 }
 
 export function withCollectionRuntime(env = {}, signal = null, deadlineAt = null) {
-  return new Proxy(env, {
-    get(target, property, receiver) {
-      if (property === COLLECTION_ABORT_SIGNAL) return signal;
-      if (property === COLLECTION_DEADLINE_AT) return deadlineAt;
-      return Reflect.get(target, property, receiver);
+  const runtimeEnv = Object.create(env || null);
+  Object.defineProperties(runtimeEnv, {
+    [COLLECTION_ABORT_SIGNAL]: {
+      value: signal,
+      enumerable: false,
     },
-    has(target, property) {
-      return property === COLLECTION_ABORT_SIGNAL
-        || property === COLLECTION_DEADLINE_AT
-        || Reflect.has(target, property);
+    [COLLECTION_DEADLINE_AT]: {
+      value: deadlineAt,
+      enumerable: false,
     },
   });
+  return runtimeEnv;
 }
 
 function startAuxiliaryOnce(flight, env, includeFailureOnly, runners = NO_AUXILIARY_RUNNERS) {
