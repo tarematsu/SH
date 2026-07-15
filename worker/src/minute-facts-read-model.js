@@ -206,10 +206,12 @@ async function preservePreviousQueueMetadata(env, readModel) {
   const queueValue = queue.value;
   const channelId = integer(readModel?.channel?.channel_id);
   if (!env?.MINUTE_DB || channelId == null || !queueValue?.tracks?.length) return readModel;
-  const previous = await env.MINUTE_DB.prepare(`SELECT queue_id,start_time,queue_json
+  const statement = env.MINUTE_DB.prepare(`SELECT queue_id,start_time,queue_json
     FROM sh_queue_read_model_current
     WHERE channel_id=?
-    LIMIT 1`).bind(channelId).first();
+    LIMIT 1`).bind(channelId);
+  if (typeof statement?.first !== 'function') return readModel;
+  const previous = await statement.first();
   if (!previous) return readModel;
   if (integer(previous.queue_id) !== integer(queue.queue_id)
     || timestamp(previous.start_time) !== timestamp(queue.start_time)) return readModel;
