@@ -1,14 +1,13 @@
-export const MINUTE_COMMENT_CRON = '* * * * *';
 export const MINUTE_FACT_DERIVE_CRON = '*/2 * * * *';
 export const MINUTE_FACT_MAINTENANCE_CRON = '5,7,9,15,17,19,25,27,29,35,37,39,45,47,49,55,57,59 * * * *';
 // Legacy direct routes remain supported for manual invocation and rollback.
 export const MINUTE_FACT_RECOVERY_CRON = '5,15,25,35,45,55 * * * *';
 export const MINUTE_FACT_REBUILD_CRON = '7,17,27,37,47,57 * * * *';
 export const MINUTE_FACT_SYNC_CRON = '9,19,29,39,49,59 * * * *';
-export const MINUTE_FACT_WORKER_CRON = MINUTE_COMMENT_CRON;
+export const MINUTE_FACT_WORKER_CRON = MINUTE_FACT_DERIVE_CRON;
 export const MINUTE_FACT_RECOVERY_MINUTE = 5;
 
-const ACTIVE_HEALTH_TASKS = new Set(['comments', 'derive', 'recovery', 'rebuild', 'sync']);
+const ACTIVE_HEALTH_TASKS = new Set(['derive', 'recovery', 'rebuild', 'sync']);
 let healthCache = null;
 
 function sanitizeFailureDetail(value) {
@@ -135,20 +134,6 @@ async function runRebuild(env, dependencies) {
   return runner(withSourceDatabase(env, 'BUDDIES_DB'), dependencies.rebuild || {});
 }
 
-async function runOptionalCommentTasks(env, dependencies) {
-  try {
-    const runner = dependencies.runComments
-      || (await import('./minute-comments.js')).runMinuteCommentTasks;
-    return await runner(env, dependencies.comments || {});
-  } catch (error) {
-    console.warn(JSON.stringify({
-      event: 'minute_comment_tasks_failed',
-      error: sanitizeFailureDetail(error),
-    }));
-    return { skipped: true, reason: 'task-runner-failed', failed: 1 };
-  }
-}
-
 async function runSync(env, dependencies) {
   const runner = dependencies.runSync
     || (await import('./buddies-facts-sync.js')).runBuddiesFactsSync;
@@ -166,9 +151,6 @@ async function runRecovery(env, dependencies) {
 
 export async function runMinuteScheduled(controller = {}, env, dependencies = {}) {
   const cron = String(controller.cron || '');
-  if (cron === MINUTE_COMMENT_CRON) {
-    return runTracked(env, 'comments', () => runOptionalCommentTasks(env, dependencies), dependencies);
-  }
   if (cron === MINUTE_FACT_DERIVE_CRON) {
     return runTracked(env, 'derive', () => runDerive(env, dependencies), dependencies);
   }
@@ -238,11 +220,12 @@ async function consumeQueue(batch, env, ctx) {
   const metadataJobs = [];
   const newJobIds = new Set();
   const result = await consumeMinuteFactBatch(batch, env, {
-    // The inbox UNIQUE(channel_id, minute_at), read-model UPSERTs and comment
-    // task INSERT OR IGNORE already make duplicate delivery idempotent. Skip
-    // the receipt SELECT/INSERT pair and allow harmless repeat writes instead.
     hasReceipt: async () => false,
     saveReceipt: async () => {},
+    // Old Queue messages may still carry collectComments=true during rollout.
+    // The buddies collector now owns Stationhead comment collection, so minute
+    // must never create a follow-up task that would call production1 again.
+    saveCommentTask: async () => ({ created: false, skipped: true }),
     enqueue: async (activeEnv, payload, options) => {
       const accepted = await enqueueMinuteFactJob(activeEnv, payload, options);
       if (accepted?.enqueued) {
