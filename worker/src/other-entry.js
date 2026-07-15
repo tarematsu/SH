@@ -3,6 +3,18 @@ import './fetch-guard.js';
 export const OTHER_WORKER_CRON = '*/5 * * * *';
 
 const PRODUCTION_TASK_KEYS = ['buddy', 'host', 'prediction', 'maintenance', 'officialNews', 'snapshotRetention'];
+const OFFICIAL_NEWS_DUE_SQL = `SELECT 1 AS due FROM sh_official_news_announcements
+  WHERE scheduled_at IS NOT NULL AND (
+    (status='scheduled' AND scheduled_at>=? AND scheduled_at<=?) OR status='active'
+  ) LIMIT 1`;
+const OTHER_CRON_SUCCESS_SQL = `INSERT INTO sh_collector_status (
+    collector_id,status,last_attempt_at,last_success_at,last_error,
+    failure_code,failure_stage,failure_summary,failure_hint,tracks,changed,updated_at
+  ) VALUES ('other-cron','ok',?,?,NULL,NULL,NULL,NULL,NULL,NULL,NULL,?)
+  ON CONFLICT(collector_id) DO UPDATE SET
+    status='ok',last_attempt_at=excluded.last_attempt_at,last_success_at=excluded.last_success_at,
+    last_error=NULL,failure_code=NULL,failure_stage=NULL,failure_summary=NULL,failure_hint=NULL,
+    updated_at=excluded.updated_at`;
 let loadedHealthApp = null;
 
 export function scheduledTimestamp(controller, fallback = Date.now()) {
@@ -16,6 +28,11 @@ function positiveMinutes(value, fallbackMs) {
   return Math.max(1, Math.round(safe / 60_000));
 }
 
+function positiveMs(value, fallback) {
+  const number = Number(value);
+  return Number.isFinite(number) && number > 0 ? number : fallback;
+}
+
 export function otherProductionTask(now, env = {}) {
   const absoluteMinute = Math.floor(now / 60_000);
   const minute = ((absoluteMinute % 60) + 60) % 60;
@@ -27,6 +44,32 @@ export function otherProductionTask(now, env = {}) {
   if (minute === 30) return 'maintenance';
   if (minute === 50) return 'snapshotRetention';
   return 'host';
+}
+
+export async function officialNewsProbeDue(env, now = Date.now()) {
+  if (!env?.OTHER_DB?.prepare) return false;
+  const earlyMs = positiveMs(env.OFFICIAL_NEWS_EARLY_WINDOW_MS, 10 * 60_000);
+  const lateMs = positiveMs(env.OFFICIAL_NEWS_LATE_WINDOW_MS, 90 * 60_000);
+  try {
+    const row = await env.OTHER_DB.prepare(OFFICIAL_NEWS_DUE_SQL)
+      .bind(now - lateMs, now + earlyMs)
+      .first();
+    return Boolean(row?.due);
+  } catch (error) {
+    console.warn(JSON.stringify({
+      event: 'official_news_due_check_failed',
+      error: String(error?.message || error).slice(0, 500),
+    }));
+    return false;
+  }
+}
+
+export async function selectOtherProductionTask(controller, env, dependencies = {}) {
+  const now = scheduledTimestamp(controller);
+  const scheduled = otherProductionTask(now, env);
+  if (scheduled === 'officialNews') return scheduled;
+  const due = dependencies.officialNewsDue || officialNewsProbeDue;
+  return await due(env, now) ? 'officialNews' : scheduled;
 }
 
 export function otherStaggerApplies(controller = {}, env = {}) {
@@ -97,7 +140,7 @@ export async function runOtherScheduled(controller, env, ctx, dependencies = {})
   if (String(controller.cron || '') !== OTHER_WORKER_CRON) {
     return [{ skipped: true, reason: 'unsupported-other-cron', cron: String(controller.cron || '') }];
   }
-  const name = otherProductionTask(scheduledTimestamp(controller), env);
+  const name = await selectOtherProductionTask(controller, env, dependencies);
   return [await invokeTask(name, controller, env, ctx, dependencies)];
 }
 
@@ -106,13 +149,25 @@ async function healthApp() {
   return loadedHealthApp;
 }
 
+async function recordOtherCronSuccessFast(env, at = Date.now()) {
+  if (!env?.OTHER_DB?.prepare) return false;
+  try {
+    await env.OTHER_DB.prepare(OTHER_CRON_SUCCESS_SQL).bind(at, at, at).run();
+    return true;
+  } catch (error) {
+    if (!/no such table/i.test(String(error?.message || error))) throw error;
+    return (await import('./buddy-health.js')).recordOtherCronSuccess(env, at);
+  }
+}
+
+async function recordOtherCronFailureLazy(env, error) {
+  return (await import('./buddy-health.js')).recordOtherCronFailure(env, error);
+}
+
 export async function runOtherCron(controller, env, ctx, options = {}) {
   const health = options.healthApp || loadedHealthApp;
-  const healthModule = (!options.recordSuccess || !options.recordFailure)
-    ? await import('./buddy-health.js')
-    : null;
-  const recordSuccess = options.recordSuccess || healthModule.recordOtherCronSuccess;
-  const recordFailure = options.recordFailure || healthModule.recordOtherCronFailure;
+  const recordSuccess = options.recordSuccess || recordOtherCronSuccessFast;
+  const recordFailure = options.recordFailure || recordOtherCronFailureLazy;
   try {
     const injectedBroadRun = Boolean(
       options.stagger
