@@ -1,4 +1,4 @@
-import { onRequestGet as minuteFactsResponse } from '../history-migrated.js';
+import { onRequestGet as minuteFactsResponse } from './index.js';
 
 export function currentMinuteFactsRequest(request) {
   const url = new URL(request.url);
