@@ -56,13 +56,31 @@ if (!process.env.CLOUDFLARE_ACCOUNT_ID) {
   console.warn('CLOUDFLARE_ACCOUNT_ID is not set; Wrangler will infer the account from the API token.');
 }
 
+function retryableWranglerError(error) {
+  const detail = [error?.message, error?.stdout, error?.stderr].filter(Boolean).join(' ');
+  return /(?:429|502|503|504|temporarily unavailable|database .* unavailable|ECONNRESET|ETIMEDOUT|network)/i.test(detail);
+}
+
+function waitBeforeRetry() {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 2000);
+}
+
 function wrangler(args) {
-  return execFileSync(process.execPath, [wranglerScript, ...args], {
-    cwd: workerRoot,
-    env: process.env,
-    encoding: 'utf8',
-    stdio: ['ignore', 'pipe', 'inherit'],
-  });
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      return execFileSync(process.execPath, [wranglerScript, ...args], {
+        cwd: workerRoot,
+        env: process.env,
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'inherit'],
+      });
+    } catch (error) {
+      if (attempt === 2 || !retryableWranglerError(error)) throw error;
+      console.warn(`Wrangler transient failure; retrying (${attempt + 1}/2)...`);
+      waitBeforeRetry();
+    }
+  }
+  throw new Error('Wrangler operation failed without an error');
 }
 
 function parseJsonOutput(output) {
