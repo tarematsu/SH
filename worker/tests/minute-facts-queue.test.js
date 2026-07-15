@@ -52,7 +52,7 @@ function outboxDb() {
           if (sql.includes('DELETE FROM sh_minute_fact_outbox')) return { meta: { changes: 0 } };
           if (sql.includes("SET\n          status='sent'")) {
             const [sentAt, lastAttemptAt, jobId] = this.params;
-            Object.assign(rows.get(jobId), { status: 'sent', sent_at: sentAt, last_attempt_at: lastAttemptAt, attempts: rows.get(jobId).attempts + 1 });
+            Object.assign(rows.get(jobId), { status: 'sent', payload_json: '{}', sent_at: sentAt, last_attempt_at: lastAttemptAt, attempts: rows.get(jobId).attempts + 1 });
             return { meta: { changes: 1 } };
           }
           if (sql.includes('attempts=attempts+1')) {
@@ -152,11 +152,14 @@ test('outbox keeps a failed Queue delivery pending and retries it on the next co
   assert.equal(first.enqueued, false);
   assert.equal(first.outbox_pending, true);
   assert.equal([...DB.rows.values()][0].status, 'pending');
+  const originalPayload = [...DB.rows.values()][0].payload_json;
+  assert.notEqual(originalPayload, '{}');
 
   const second = await handoffMinuteFactJob(env, input);
   assert.equal(second.enqueued, true);
   assert.equal(second.outbox_pending, false);
   assert.equal([...DB.rows.values()][0].status, 'sent');
+  assert.equal([...DB.rows.values()][0].payload_json, '{}');
   assert.equal(attempts, 2);
   assert.equal(DB.calls.some((sql) => sql.includes('CREATE TABLE')), false);
   assert.equal(DB.calls.some((sql) => sql.includes('SELECT COUNT(*) AS count')), false);
