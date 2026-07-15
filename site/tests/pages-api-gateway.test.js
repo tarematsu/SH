@@ -111,13 +111,18 @@ async function withFixedNow(action) {
 test('Pages API catalog exposes the public gateway without Worker URLs', async () => {
   const catalog = apiCatalog(NOW);
   assert.equal(catalog.gateway, 'cloudflare-pages');
+  assert.equal(catalog.contract_version, 2);
   assert.equal(catalog.worker_urls_public, false);
   const paths = Object.values(catalog.groups).flat().map(({ path }) => path);
-  assert.ok(paths.includes('/api/health/collector'));
+  assert.ok(paths.includes('/api/health'));
+  assert.equal(paths.includes('/api/health/collector'), false);
   assert.ok(paths.includes('/api/health/minute'));
   assert.ok(paths.includes('/api/health/other'));
   assert.ok(paths.includes('/api/minute-facts/latest'));
   assert.equal(new Set(paths).size, paths.length);
+
+  const compatibility = new Map(catalog.compatibility.map(({ path, successor }) => [path, successor]));
+  assert.equal(compatibility.get('/api/health/collector'), '/api/health');
 
   const response = await catalogRequest({ request: new Request('https://example.com/api') });
   assert.equal(response.status, 200);
