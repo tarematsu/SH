@@ -14,6 +14,8 @@ on:
 
 permissions:
   contents: read
+  pull-requests: write
+  issues: write
 
 concurrency:
   group: ci-${{ github.event.pull_request.number || github.ref }}
@@ -130,14 +132,15 @@ jobs:
           TARGET_BRANCH: agent/reduce-buddies-cron-cpu
           CLOUDFLARE_BUILD_TIMEOUT_MINUTES: 5
         run: node .github/scripts/cloudflare-build-diagnostics.mjs
-      - name: Upload minute build diagnostics
+      - name: Post minute build diagnostics
         if: github.event.pull_request.number == 363 && always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: minute-build-diagnostics
-          path: .cloudflare-build-diagnostics/
-          if-no-files-found: warn
-          retention-days: 2
+        working-directory: ${{ github.workspace }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ -f .cloudflare-build-diagnostics/comment.md ]; then
+            gh pr comment 363 --body-file .cloudflare-build-diagnostics/comment.md
+          fi
       - run: npm test
 
   audit:
