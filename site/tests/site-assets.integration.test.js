@@ -47,6 +47,18 @@ test('dashboard HTML keeps accessibility, privacy and all public sections', asyn
   assert.match(html, /rel="noopener noreferrer"/);
 });
 
+test('dashboard declares and implements a light white-base theme', async () => {
+  const html = await text('public/index.html');
+  const css = await text('public/app-lite.css');
+  assert.match(html, /name="theme-color" content="#f6f8fb"/);
+  assert.match(html, /name="color-scheme" content="light"/);
+  assert.match(css, /color-scheme:\s*light/);
+  assert.match(css, /--bg:\s*#f6f8fb/);
+  assert.match(css, /--panel:\s*#ffffff/);
+  assert.match(css, /body \{[^}]*background:\s*var\(--bg\)/);
+  assert.match(css, /#chart \{[^}]*background-color:\s*#fff/);
+});
+
 test('mobile dashboard uses one stylesheet and one script', async () => {
   const html = await text('public/index.html');
   assert.match(html, /\/app-lite\.css/);
