@@ -5,6 +5,7 @@ on:
     branches:
       - main
     paths:
+      - '.github/workflows/database.yml'
       - 'database/facts-migrations/**'
       - 'worker/scripts/provision-facts-db.mjs'
       - 'worker/scripts/verify-facts-live.mjs'
