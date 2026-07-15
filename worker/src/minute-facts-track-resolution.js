@@ -47,22 +47,44 @@ export async function batchRun(db, statements, chunkSize = D1_BATCH_SIZE) {
   }
 }
 
-async function loadTrackMetadata(oldDb, tracks) {
-  if (!oldDb) return new Map();
-  const ids = unique((tracks || []).map((track) => text(track?.spotify_id)));
-  if (!ids.length) return new Map();
-  const metadata = new Map();
+function mergeTrackMetadata(metadata, row) {
+  const spotifyId = text(row?.spotify_id);
+  if (!spotifyId) return;
+  const existing = metadata.get(spotifyId) || {};
+  metadata.set(spotifyId, {
+    spotify_id: spotifyId,
+    title: text(existing.title) || text(row?.title),
+    artist: text(existing.artist) || text(row?.artist),
+  });
+}
+
+async function loadTrackMetadataFromDb(db, ids, metadata) {
+  if (!db || !ids.length) return metadata;
   for (const part of chunks(ids)) {
     const placeholders = part.map(() => '?').join(',');
     try {
-      const result = await oldDb.prepare(`SELECT spotify_id,title,artist FROM sh_track_metadata
+      const result = await db.prepare(`SELECT spotify_id,title,artist FROM sh_track_metadata
         WHERE spotify_id IN (${placeholders})`).bind(...part).all();
-      for (const row of result.results || []) metadata.set(String(row.spotify_id), row);
+      for (const row of result.results || []) mergeTrackMetadata(metadata, row);
     } catch {
       return metadata;
     }
   }
   return metadata;
+}
+
+async function loadTrackMetadata(db, fallbackDb, tracks) {
+  const ids = unique((tracks || []).map((track) => text(track?.spotify_id)));
+  if (!ids.length) return new Map();
+
+  const metadata = await loadTrackMetadataFromDb(db, ids, new Map());
+  if (!fallbackDb || fallbackDb === db) return metadata;
+
+  const incomplete = ids.filter((spotifyId) => {
+    const row = metadata.get(spotifyId);
+    return !text(row?.title) || !text(row?.artist);
+  });
+  return loadTrackMetadataFromDb(fallbackDb, incomplete, metadata);
 }
 
 async function loadAliasMap(db, descriptors) {
@@ -127,7 +149,7 @@ function assignKnownTrackIds(descriptors, maps) {
 }
 
 export async function resolveTracksBulk(db, oldDb, tracks, observedAt, context = {}) {
-  const metadata = await timedStage('load_track_metadata', context, () => loadTrackMetadata(oldDb, tracks));
+  const metadata = await timedStage('load_track_metadata', context, () => loadTrackMetadata(db, oldDb, tracks));
   const descriptors = (tracks || []).map((track, index) => buildTrackDescriptor(
     track,
     metadata.get(String(track?.spotify_id || '')) || {},
