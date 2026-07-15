@@ -45,51 +45,105 @@ function numberFromCell(cell) {
   return Number.isFinite(value) ? value : -1;
 }
 
+function metric(label, value) {
+  const box = document.createElement('span');
+  box.append(document.createTextNode(label));
+  const strong = document.createElement('b');
+  strong.textContent = value;
+  box.appendChild(strong);
+  return box;
+}
+
 let applyingTrackRanking = false;
 
-function rankTrackTable() {
-  if (location.hash !== '#tracks' || applyingTrackRanking) return;
+function renderTrackRanking() {
+  const panel = document.querySelector('.data-panel');
+  const tableWrap = panel?.querySelector('.table-wrap');
   const head = document.querySelector('#thead tr');
   const body = document.getElementById('tbody');
-  if (!head || !body || body.dataset.ranked === '1') return;
-  const labels = [...head.cells].map((cell) => cell.textContent.trim());
-  const likeIndex = labels.indexOf('いいね数');
-  const playIndex = labels.indexOf('再生回数');
-  if (likeIndex < 0 || playIndex < 0) return;
+  let list = document.getElementById('trackRankingList');
 
-  const rows = [...body.rows].filter((row) => !row.classList.contains('daily-total-row'));
-  rows.sort((left, right) => {
-    const likes = numberFromCell(right.cells[likeIndex]) - numberFromCell(left.cells[likeIndex]);
-    if (likes) return likes;
-    const plays = numberFromCell(right.cells[playIndex]) - numberFromCell(left.cells[playIndex]);
-    if (plays) return plays;
-    return String(left.cells[1]?.textContent || '').localeCompare(String(right.cells[1]?.textContent || ''), 'ja');
-  });
+  if (location.hash !== '#tracks') {
+    if (tableWrap) tableWrap.hidden = false;
+    if (list) list.hidden = true;
+    return;
+  }
+  if (!panel || !tableWrap || !head || !body || applyingTrackRanking) return;
+
+  const labels = [...head.cells].map((cell) => cell.textContent.trim());
+  const titleIndex = labels.indexOf('曲名');
+  const artistIndex = labels.indexOf('アーティスト');
+  const playIndex = labels.indexOf('再生回数');
+  const likeIndex = labels.indexOf('いいね数');
+  if ([titleIndex, artistIndex, playIndex, likeIndex].some((index) => index < 0)) return;
+
+  const rows = [...body.rows]
+    .filter((row) => !row.classList.contains('daily-total-row') && !row.classList.contains('empty-row'))
+    .sort((left, right) => {
+      const plays = numberFromCell(right.cells[playIndex]) - numberFromCell(left.cells[playIndex]);
+      if (plays) return plays;
+      const likes = numberFromCell(right.cells[likeIndex]) - numberFromCell(left.cells[likeIndex]);
+      if (likes) return likes;
+      return String(left.cells[titleIndex]?.textContent || '').localeCompare(String(right.cells[titleIndex]?.textContent || ''), 'ja');
+    });
 
   applyingTrackRanking = true;
-  const rankHead = document.createElement('th');
-  rankHead.scope = 'col';
-  rankHead.textContent = '順位';
-  head.prepend(rankHead);
-  rows.forEach((row, index) => {
-    const cell = document.createElement('td');
-    cell.className = 'track-rank';
-    cell.textContent = `${index + 1}位`;
-    row.prepend(cell);
-  });
-  body.replaceChildren(...rows);
-  body.dataset.ranked = '1';
+  if (!list) {
+    list = document.createElement('ol');
+    list.id = 'trackRankingList';
+    list.className = 'like-ranking';
+    tableWrap.before(list);
+  }
+  list.replaceChildren();
+  list.hidden = false;
+  tableWrap.hidden = true;
+
+  if (!rows.length) {
+    const empty = document.createElement('li');
+    empty.className = 'empty-ranking';
+    empty.textContent = 'この日の再生曲データがありません。';
+    list.appendChild(empty);
+  } else {
+    const fragment = document.createDocumentFragment();
+    rows.forEach((row, index) => {
+      const item = document.createElement('li');
+      item.className = 'like-rank-item';
+
+      const rank = document.createElement('strong');
+      rank.className = 'like-rank-number';
+      rank.textContent = String(index + 1);
+
+      const content = document.createElement('div');
+      content.className = 'like-rank-content';
+      const heading = document.createElement('div');
+      heading.className = 'like-rank-heading';
+      const title = document.createElement('span');
+      title.textContent = row.cells[titleIndex]?.textContent || '曲名不明';
+      heading.appendChild(title);
+      const artist = document.createElement('small');
+      artist.textContent = row.cells[artistIndex]?.textContent || '—';
+      content.append(heading, artist);
+
+      const metrics = document.createElement('div');
+      metrics.className = 'like-rank-metrics';
+      metrics.append(
+        metric('再生回数', row.cells[playIndex]?.textContent || '—'),
+        metric('いいね数', row.cells[likeIndex]?.textContent || '—'),
+      );
+
+      item.append(rank, content, metrics);
+      fragment.appendChild(item);
+    });
+    list.appendChild(fragment);
+  }
+
   const title = document.getElementById('tableTitle');
-  if (title) title.textContent = '再生曲 いいね数ランキング';
+  if (title) title.textContent = '1日の再生数ランキング';
   applyingTrackRanking = false;
 }
 
-const observer = new MutationObserver((records) => {
-  const body = document.getElementById('tbody');
-  if (!body || applyingTrackRanking) return;
-  if (records.some((record) => record.target === body)) delete body.dataset.ranked;
-  if (location.hash !== '#tracks') delete body.dataset.ranked;
-  queueMicrotask(rankTrackTable);
+const observer = new MutationObserver(() => {
+  if (!applyingTrackRanking) queueMicrotask(renderTrackRanking);
 });
 observer.observe(document.documentElement, { childList: true, subtree: true });
-window.addEventListener('hashchange', () => queueMicrotask(rankTrackTable));
+window.addEventListener('hashchange', () => queueMicrotask(renderTrackRanking));
