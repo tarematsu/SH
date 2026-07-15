@@ -69,17 +69,20 @@ test('dashboard removes the external web button and playback trend', async () =>
 test('dashboard displays total streams and two completed UTC-day changes', async () => {
   const html = await text('public/index.html');
   const source = await text('public/dashboard-metrics.js');
+  const endpoint = await text('functions/api/dashboard-daily-changes.js');
   assert.match(html, />総メンバー数</);
   assert.match(html, />総再生数</);
   assert.doesNotMatch(html, /ユニーク参加者|延べ参加者|totalListens|listensDelta/);
   assert.match(source, /current_stream_count/);
-  assert.match(source, /setUTCHours\(0, 0, 0, 0\)/);
-  assert.match(source, /mode: 'daily'/);
+  assert.match(source, /\/api\/dashboard-daily-changes/);
   assert.match(source, /member_growth/);
   assert.match(source, /stream_growth/);
   assert.match(source, /'昨日'/);
   assert.match(source, /'一昨日'/);
-  assert.doesNotMatch(source, /total_listens/);
+  assert.match(endpoint, /reported_current_stream_count/);
+  assert.match(endpoint, /sh_total_member_daily/);
+  assert.match(endpoint, /Math\.floor\(now \/ DAY_MS\) \* DAY_MS/);
+  assert.doesNotMatch(`${source}\n${endpoint}`, /total_listens/);
 });
 
 test('dashboard declares and implements a light white-base theme', async () => {
