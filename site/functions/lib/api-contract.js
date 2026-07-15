@@ -29,45 +29,12 @@ export const API_GROUPS = Object.freeze({
   ]),
 });
 
-export const COMPATIBILITY_ENDPOINTS = Object.freeze([
-  {
-    path: '/api/health/collector',
-    successor: '/api/health',
-    behavior: 'redirect',
-    status: 308,
-    description: 'Explicit compatibility alias for primary collector health',
-  },
-  {
-    path: '/api/history-current',
-    successor: '/api/minute-facts/current',
-    behavior: 'redirect',
-    status: 308,
-    description: 'Compatibility alias for the current minute-facts view',
-  },
-  {
-    path: '/api/history-migrated',
-    successor: '/api/minute-facts',
-    behavior: 'redirect',
-    status: 308,
-    description: 'Compatibility alias for paginated minute facts',
-  },
-  {
-    path: '/api/history-raw',
-    successor: '/api/history?mode=raw',
-    behavior: 'response',
-    status: 200,
-    description: 'Compatibility route for legacy-source raw history',
-  },
-  {
-    path: '/api/official-history',
-    successor: '/api/history?mode=broadcasts',
-    behavior: 'response',
-    status: 200,
-    description: 'Compatibility route for official broadcast summaries',
-  },
-]);
-
 export const RETIRED_ENDPOINTS = Object.freeze([
+  { path: '/api/health/collector', status: 404, description: 'Use /api/health' },
+  { path: '/api/history-current', status: 404, description: 'Use /api/minute-facts/current' },
+  { path: '/api/history-migrated', status: 404, description: 'Use /api/minute-facts' },
+  { path: '/api/history-raw', status: 404, description: 'Use /api/history?mode=raw' },
+  { path: '/api/official-history', status: 404, description: 'Use /api/history?mode=broadcasts' },
   { path: '/api/ingest', status: 404, description: 'Public Pages ingestion is disabled' },
   { path: '/api/host-ingest', status: 404, description: 'Public Pages host ingestion is disabled' },
 ]);
@@ -85,10 +52,6 @@ export const BLOCKED_API_PATHS = Object.freeze([
   ...RETIRED_ENDPOINTS.map(({ path }) => path),
   ...INTERNAL_API_PATHS,
 ]);
-
-export const API_SUCCESSORS = Object.freeze(Object.fromEntries(
-  COMPATIBILITY_ENDPOINTS.map(({ path, successor }) => [path, successor]),
-));
 
 export function canonicalApiPaths() {
   return Object.values(API_GROUPS).flat().map(({ path }) => path);
