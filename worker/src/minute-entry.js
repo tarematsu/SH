@@ -230,20 +230,33 @@ export async function runMinuteScheduledWithCollectorPriority(
 }
 
 async function consumeQueue(batch, env, ctx) {
-  const [{ consumeMinuteFactBatch }, { saveMinuteFactReadModels }] = await Promise.all([
+  const [{ consumeMinuteFactBatch }, { saveMinuteFactReadModels }, { enqueueMinuteFactJob }] = await Promise.all([
     import('./minute-facts-queue.js'),
     import('./minute-facts-read-model.js'),
+    import('./minute-facts-inbox.js'),
   ]);
   const metadataJobs = [];
+  const newJobIds = new Set();
   const result = await consumeMinuteFactBatch(batch, env, {
     // The inbox UNIQUE(channel_id, minute_at), read-model UPSERTs and comment
     // task INSERT OR IGNORE already make duplicate delivery idempotent. Skip
     // the receipt SELECT/INSERT pair and allow harmless repeat writes instead.
     hasReceipt: async () => false,
     saveReceipt: async () => {},
+    enqueue: async (activeEnv, payload, options) => {
+      const accepted = await enqueueMinuteFactJob(activeEnv, payload, options);
+      if (accepted?.enqueued) {
+        newJobIds.add(`minute-fact:${accepted.channel_id}:${accepted.minute_at}`);
+      }
+      return accepted;
+    },
     saveReadModels: saveMinuteFactReadModels,
     onCommitted(job) {
-      if (job.options.enrichTrackMetadata && job.payload.queue?.tracks?.length) metadataJobs.push(job);
+      if (newJobIds.has(job.jobId)
+          && job.options.enrichTrackMetadata
+          && job.payload.queue?.tracks?.length) {
+        metadataJobs.push(job);
+      }
     },
   });
   if (metadataJobs.length) {
