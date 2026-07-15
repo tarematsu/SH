@@ -30,7 +30,7 @@ CanvasRenderingContext2D.prototype.stroke = function strokeWithDailyPoints(...ar
   this.globalAlpha = Math.max(.65, this.globalAlpha || 1);
   this.fillStyle = this.strokeStyle;
   for (const [x, y] of state.moves) {
-    this.beginPath();
+    originalBeginPath.call(this);
     this.arc(x, y, 3, 0, Math.PI * 2);
     this.fill();
   }
@@ -40,12 +40,15 @@ CanvasRenderingContext2D.prototype.stroke = function strokeWithDailyPoints(...ar
 
 function numberFromCell(cell) {
   const text = String(cell?.textContent || '').replace(/[^0-9.-]/g, '');
+  if (!text) return -1;
   const value = Number(text);
   return Number.isFinite(value) ? value : -1;
 }
 
+let applyingTrackRanking = false;
+
 function rankTrackTable() {
-  if (location.hash !== '#tracks') return;
+  if (location.hash !== '#tracks' || applyingTrackRanking) return;
   const head = document.querySelector('#thead tr');
   const body = document.getElementById('tbody');
   if (!head || !body || body.dataset.ranked === '1') return;
@@ -63,6 +66,7 @@ function rankTrackTable() {
     return String(left.cells[1]?.textContent || '').localeCompare(String(right.cells[1]?.textContent || ''), 'ja');
   });
 
+  applyingTrackRanking = true;
   const rankHead = document.createElement('th');
   rankHead.scope = 'col';
   rankHead.textContent = '順位';
@@ -77,11 +81,14 @@ function rankTrackTable() {
   body.dataset.ranked = '1';
   const title = document.getElementById('tableTitle');
   if (title) title.textContent = '再生曲 いいね数ランキング';
+  applyingTrackRanking = false;
 }
 
-const observer = new MutationObserver(() => {
+const observer = new MutationObserver((records) => {
   const body = document.getElementById('tbody');
-  if (body && location.hash !== '#tracks') delete body.dataset.ranked;
+  if (!body || applyingTrackRanking) return;
+  if (records.some((record) => record.target === body)) delete body.dataset.ranked;
+  if (location.hash !== '#tracks') delete body.dataset.ranked;
   queueMicrotask(rankTrackTable);
 });
 observer.observe(document.documentElement, { childList: true, subtree: true });
