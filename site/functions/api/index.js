@@ -1,7 +1,6 @@
 import {
   API_CONTRACT_VERSION,
   API_GROUPS,
-  COMPATIBILITY_ENDPOINTS,
   RETIRED_ENDPOINTS,
 } from '../lib/api-contract.js';
 
@@ -16,7 +15,6 @@ export function apiCatalog(now = Date.now()) {
     generated_at: now,
     generated_at_iso: new Date(now).toISOString(),
     groups: API_GROUPS,
-    compatibility: COMPATIBILITY_ENDPOINTS,
     retired: RETIRED_ENDPOINTS,
   };
 }
