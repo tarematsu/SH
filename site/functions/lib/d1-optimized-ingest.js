@@ -15,6 +15,25 @@ const QUERY_CHUNK = 80;
 export const D1_BATCH_STATEMENT_LIMIT = 40;
 export const D1_BATCH_VARIABLE_LIMIT = 90;
 export const D1_SINGLE_STATEMENT_VARIABLE_LIMIT = 90;
+const QUEUE_HASH_CACHE_LIMIT = 16;
+const queueHashCache = new Map();
+
+export function resetQueueHashCacheForTests() {
+  queueHashCache.clear();
+}
+
+function queueHashCacheFor(stationId) {
+  const key = String(stationId ?? 0);
+  const existing = queueHashCache.get(key);
+  if (existing) return existing;
+  if (queueHashCache.size >= QUEUE_HASH_CACHE_LIMIT) {
+    const oldest = queueHashCache.keys().next().value;
+    if (oldest !== undefined) queueHashCache.delete(oldest);
+  }
+  const value = {};
+  queueHashCache.set(key, value);
+  return value;
+}
 
 export { saveLeanSnapshot };
 export { splitD1Batches } from './d1-batch.js';
@@ -361,7 +380,6 @@ export async function saveLeanQueue(db, observedAt, body) {
   // from structuralPayload later in this function.
   const data = body?.data ?? {};
   const structuralPayload = queueStructuralPayload(data);
-  const structuralHash = await payloadHash(structuralPayload);
   const tracks = Array.isArray(data?.tracks) ? data.tracks : [];
   const likeAnalysis = analyzeQueueLikes(tracks);
   const completeLikes = likeAnalysis.complete;
@@ -375,15 +393,30 @@ export async function saveLeanQueue(db, observedAt, body) {
         SELECT MAX(snapshot.observed_at) FROM sh_queue_snapshots snapshot
         WHERE snapshot.station_id IS current.station_id
       ),0) AS latest_reachability_at
-    FROM sh_queue_current current WHERE current.station_id IS ?`).bind(stationId).first();
+      FROM sh_queue_current current WHERE current.station_id IS ?`).bind(stationId).first();
+  const cache = queueHashCacheFor(stationId);
+  const structuralFingerprint = JSON.stringify(structuralPayload);
+  const structuralHash = cache.structuralFingerprint === structuralFingerprint
+    && cache.structuralHash === current?.structural_hash
+    ? cache.structuralHash
+    : await payloadHash(structuralPayload);
   const currentWatermark = Math.max(
     num(current?.observed_at) ?? 0,
     num(current?.latest_reachability_at) ?? 0,
   );
   const staleCurrent = currentWatermark > 0 && observedAt < currentWatermark;
+  const likesFingerprint = completeLikes ? JSON.stringify(likeAnalysis.payload) : null;
   const likesHash = completeLikes
-    ? await payloadHash(likeAnalysis.payload)
+    ? cache.likesFingerprint === likesFingerprint && cache.likesHash === current?.likes_hash
+      ? cache.likesHash
+      : await payloadHash(likeAnalysis.payload)
     : text(current?.likes_hash);
+  cache.structuralFingerprint = structuralFingerprint;
+  cache.structuralHash = structuralHash;
+  if (completeLikes) {
+    cache.likesFingerprint = likesFingerprint;
+    cache.likesHash = likesHash;
+  }
   const structureChanged = current?.structural_hash !== structuralHash;
   const likesChanged = completeLikes && current?.likes_hash !== likesHash;
   if (!structureChanged && !likesChanged) {
