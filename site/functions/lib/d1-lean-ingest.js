@@ -4,6 +4,27 @@ import { bool, num, rawJson, text } from './api-utils.js';
 const SNAPSHOT_CHECKPOINT_MS = 5 * 60_000;
 
 function snapshotRawPayload(data) {
+  const presentation = data?.presentation;
+  if (presentation && typeof presentation === 'object') {
+    const currentStation = presentation.current_station || {};
+    const owner = currentStation.owner || {};
+    return {
+      description: text(presentation.description || currentStation.status),
+      artist_name: text(presentation.artist_name),
+      accent_color: text(presentation.accent_color),
+      images: {
+        medium: { url: text(presentation.images?.medium?.url) },
+        logo: { medium: { url: text(presentation.images?.logo?.medium?.url) } },
+      },
+      current_station: {
+        status: text(currentStation.status),
+        owner: {
+          thumbnail: { url: text(owner.thumbnail?.url) },
+          medium: { url: text(owner.medium?.url) },
+        },
+      },
+    };
+  }
   const raw = data?.raw || {};
   const station = raw.current_station || {};
   const owner = station.owner || {};

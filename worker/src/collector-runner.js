@@ -210,6 +210,7 @@ export async function collectOnce(env, source = 'manual') {
     };
     const factSnapshot = minuteFactSnapshot(snapshot);
     const factQueue = minuteFactQueue(queue);
+    const presentation = readModelPresentation(snapshot, factSnapshot);
     stage = 'd1_outbox_minute_fact';
     const minuteFactJob = await timedStage(stage, () => handoffMinuteFactJob(activeEnv, {
       observedAt,
@@ -219,11 +220,11 @@ export async function collectOnce(env, source = 'manual') {
     }, {
       enrichTrackMetadata: metadataPlanned,
       collectComments: initialPlan.comments,
-      readModel: {
+        readModel: {
         channel: {
           channel_id: state.channelId,
           observed_at: observedAt,
-          presentation: readModelPresentation(snapshot),
+          presentation,
         },
         queue: {
           station_id: factQueue?.station_id ?? state.stationId,

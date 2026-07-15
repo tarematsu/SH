@@ -6,6 +6,7 @@ import {
   extractQueue,
   minuteFactQueue,
   minuteFactSnapshot,
+  normalizeSnapshot,
   readModelPresentation,
 } from '../src/collector-payload.js';
 
@@ -13,6 +14,26 @@ test('minuteFactSnapshot strips the embedded raw channel payload', () => {
   const snapshot = { channel_id: 10, listener_count: 42, raw: { huge: 'channel payload' } };
   assert.deepEqual(minuteFactSnapshot(snapshot), { channel_id: 10, listener_count: 42 });
   assert.equal(minuteFactSnapshot(null), null);
+});
+
+test('normalizeSnapshot keeps only compact presentation data for downstream work', () => {
+  const snapshot = normalizeSnapshot({
+    id: 10,
+    alias: 'buddies',
+    description: 'Channel',
+    images: { medium: { url: 'https://example.com/channel.jpg' } },
+    current_station: {
+      id: 20,
+      status: 'Live',
+      streaming_party: { stream_goal: 100, current_stream_count: 25 },
+      owner: { thumbnail: { url: 'https://example.com/thumb.jpg' } },
+    },
+  }, { channelId: 10, stationId: 20 }, { channelAlias: 'buddies' });
+
+  assert.equal('raw' in snapshot, false);
+  assert.equal(minuteFactSnapshot(snapshot).presentation, undefined);
+  assert.equal(readModelPresentation(snapshot).description, 'Channel');
+  assert.equal(readModelPresentation(snapshot).current_station.streaming_party.current_stream_count, 25);
 });
 
 test('minuteFactQueue strips the queue raw payload and each track raw payload', () => {

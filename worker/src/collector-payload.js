@@ -33,6 +33,8 @@ export function normalizeSnapshot(channel, state, config) {
   const host = station?.broadcast?.broadcasters?.find((item) => item?.is_host)
     || station?.broadcast?.broadcasters?.[0]
     || null;
+  const owner = station?.owner || channel?.owner || channel?.account || channel?.creator || {};
+  const images = channel?.images || {};
   return {
     channel_id: firstDefined(channel?.id, state.channelId),
     channel_alias: channel?.alias || config.channelAlias,
@@ -51,18 +53,41 @@ export function normalizeSnapshot(channel, state, config) {
     host_account_id: firstDefined(host?.account_id, host?.account?.id),
     host_handle: host?.account?.handle ?? null,
     broadcast_start_time: station?.broadcast?.start_time ?? null,
-    raw: channel,
+    presentation: {
+      description: boundedText(channel?.description ?? channel?.channel_description, 2_000),
+      artist_name: boundedText(channel?.artist_name, 500),
+      accent_color: boundedText(channel?.accent_color, 100),
+      images: {
+        medium: {
+          url: boundedText(
+            images?.medium?.url ?? channel?.image_url ?? channel?.channel_image_url ?? channel?.avatar_url,
+            2_048,
+          ),
+        },
+        logo: { medium: { url: boundedText(images?.logo?.medium?.url, 2_048) } },
+      },
+      current_station: {
+        status: boundedText(station?.status, 2_000),
+        streaming_party: {
+          stream_goal: party?.stream_goal ?? null,
+          current_stream_count: party?.current_stream_count ?? null,
+        },
+        owner: {
+          thumbnail: { url: boundedText(owner?.thumbnail?.url, 2_048) },
+          medium: { url: boundedText(owner?.medium?.url, 2_048) },
+        },
+      },
+    },
   };
 }
 
 // The minute-fact job pipeline (worker/src/minute-facts-*.js) never reads
-// `raw` - it embeds the full upstream API response and, for queue tracks,
-// duplicates it a second time (queue.raw plus per-track raw). Stripping it
-// before the payload is JSON.stringify'd into sh_minute_fact_jobs avoids
-// serializing/deserializing several times more data than the job needs.
+// the full upstream `raw` or the read-model-only `presentation`. Stripping
+// them before the payload is JSON.stringify'd into sh_minute_fact_jobs keeps
+// the durable handoff focused on fact fields.
 export function minuteFactSnapshot(snapshot) {
   if (!snapshot) return snapshot;
-  const { raw, ...rest } = snapshot;
+  const { raw, presentation, ...rest } = snapshot;
   return rest;
 }
 
@@ -71,13 +96,12 @@ function boundedText(value, maximum = 500) {
   return parsed ? parsed.slice(0, maximum) : null;
 }
 
-export function readModelPresentation(snapshot) {
+export function readModelPresentation(snapshot, compactSnapshot = null) {
   const raw = snapshot?.raw || {};
   const station = raw?.current_station || {};
   const owner = station?.owner || raw?.owner || raw?.account || raw?.creator || {};
   const images = raw?.images || {};
-  return {
-    ...minuteFactSnapshot(snapshot),
+  const presentation = snapshot?.presentation || {
     description: boundedText(raw?.description ?? raw?.channel_description, 2_000),
     artist_name: boundedText(raw?.artist_name, 500),
     accent_color: boundedText(raw?.accent_color, 100),
@@ -96,6 +120,10 @@ export function readModelPresentation(snapshot) {
         medium: { url: boundedText(owner?.medium?.url, 2_048) },
       },
     },
+  };
+  return {
+    ...(compactSnapshot || minuteFactSnapshot(snapshot)),
+    ...presentation,
   };
 }
 
