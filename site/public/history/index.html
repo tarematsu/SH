@@ -18,9 +18,8 @@
     </header>
 
     <nav id="modeTabs" class="mode-tabs" aria-label="表示種類">
-      <button type="button" data-mode="current" class="active" aria-current="page">現在</button>
       <button type="button" data-mode="daily">日次</button>
-      <button type="button" data-mode="weekly">週次</button>
+      <button type="button" data-mode="weekly" class="active" aria-current="page">週次</button>
       <button type="button" data-mode="ranking">リーダーボード</button>
       <button type="button" data-mode="monthly">月次</button>
       <button type="button" data-mode="tracks">再生曲</button>
@@ -28,12 +27,9 @@
       <button type="button" data-mode="broadcasts">公式ストリーム</button>
     </nav>
 
-    <section id="guide" class="guide" aria-live="polite">
-      <div><p class="kicker">CURRENT</p><h2 id="guideTitle">現在のデータ</h2></div>
-      <p id="guideText" hidden></p>
-    </section>
+    <div id="guide" hidden aria-hidden="true"><p class="kicker"></p><h2 id="guideTitle"></h2><p id="guideText"></p></div>
 
-    <section id="controls" class="controls card" hidden>
+    <section id="controls" class="controls card">
       <div id="standardControls" class="control-group standard-controls">
         <div id="rangePresets" class="range-presets" aria-label="期間プリセット">
           <button type="button" data-days="30">30日</button>
@@ -64,30 +60,26 @@
     <p id="notice" class="notice" role="status">読み込み中…</p>
 
     <section id="summaryCards" class="summary-cards" aria-label="集計概要">
-      <article><span id="periodLabel">表示件数</span><strong id="periods">-</strong></article>
-      <article><span id="maxLabel">最新リスナー</span><strong id="maxListener">-</strong></article>
-      <article><span id="streamLabel">最新総再生数</span><strong id="streamGrowth">-</strong></article>
-      <article><span id="memberLabel">最新メンバー</span><strong id="memberGrowth">-</strong></article>
+      <article><span id="periodLabel">期間数</span><strong id="periods">-</strong></article>
+      <article><span id="maxLabel">平均同接</span><strong id="maxListener">-</strong></article>
+      <article><span id="streamLabel">再生数増加</span><strong id="streamGrowth">-</strong></article>
+      <article><span id="memberLabel">メンバー増加</span><strong id="memberGrowth">-</strong></article>
     </section>
 
     <section id="chartPanel" class="card chart-panel">
       <div class="section-head chart-head">
-        <div><p class="kicker">TREND</p><h2 id="chartTitle">オンライン・コメント勢い（24時間）</h2></div>
-        <div id="audienceLegend" class="chart-legend audience-legend"><span><i class="online-dot"></i>オンライン</span><span><i class="comment-dot"></i>コメント勢い</span></div>
-        <div id="chartLegend" class="chart-legend" aria-label="グラフ凡例" hidden></div>
+        <div><p class="kicker">TREND</p><h2 id="chartTitle">主要指標の推移</h2></div>
+        <div id="chartLegend" class="chart-legend" aria-label="グラフ凡例"></div>
       </div>
-      <canvas id="audienceChart" width="960" height="360" aria-label="直近24時間のオンライン人数とコメント勢い"></canvas>
-      <canvas id="chart" width="960" height="360" aria-label="履歴推移グラフ" hidden></canvas>
-      <div id="audienceAxis" class="chart-axis"><span>-</span><span>-</span></div>
-      <div id="legacyChartAxis" class="chart-axis" hidden><span id="chartStartDate">-</span><span id="chartEndDate">-</span></div>
-      <div id="audienceDetail" class="chart-detail" hidden></div>
-      <div id="chartDetail" class="chart-detail" hidden></div>
-      <p id="chartFoot" class="chart-foot" hidden></p>
+      <canvas id="chart" width="960" height="360" aria-label="履歴推移グラフ"></canvas>
+      <div class="chart-axis"><span id="chartStartDate">-</span><span id="chartEndDate">-</span></div>
+      <div id="chartDetail" class="chart-detail">グラフをタッチすると、その時点の詳細を表示します。</div>
+      <p id="chartFoot" class="chart-foot"></p>
     </section>
 
     <section class="card data-panel">
       <div class="section-head">
-        <div><p class="kicker">DATA</p><h2 id="tableTitle">直近1440件</h2></div>
+        <div><p class="kicker">DATA</p><h2 id="tableTitle">週次集計一覧</h2></div>
         <button id="csv" class="button" type="button">CSV</button>
       </div>
       <div class="table-wrap"><table><thead id="thead"></thead><tbody id="tbody"></tbody></table></div>
@@ -99,7 +91,6 @@
       <div class="table-wrap"><table><thead id="rankingWeeklyThead"></thead><tbody id="rankingWeeklyTbody"></tbody></table></div>
     </section>
   </main>
-  <!-- history-main.js imports the consolidated runtime: src="/history/history-lite.js" -->
   <script type="module" src="/history/history-main.js"></script>
 </body>
 </html>
