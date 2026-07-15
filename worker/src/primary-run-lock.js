@@ -22,14 +22,6 @@ export const PRIMARY_RUN_LOCK_SCHEMA_SQL = `CREATE TABLE IF NOT EXISTS sh_primar
   lease_until INTEGER NOT NULL
 )`;
 
-let primaryRunLockSchemaReady = false;
-
-async function ensurePrimaryRunLockSchema(db) {
-  if (primaryRunLockSchemaReady) return;
-  await db.prepare(PRIMARY_RUN_LOCK_SCHEMA_SQL).run();
-  primaryRunLockSchemaReady = true;
-}
-
 const CLAIM_SQL = `INSERT INTO sh_primary_run_lock (scope,holder_id,claimed_at,lease_until)
   VALUES (?,?,?,?)
   ON CONFLICT(scope) DO UPDATE SET
@@ -56,6 +48,10 @@ function noSuchTable(error) {
   return /no such table/i.test(String(error?.message || ''));
 }
 
+// The lock table is owned by the buddies D1 migrations. Do not run schema DDL
+// on fresh isolates: a missing migration already fails open below, preserving
+// collection availability without charging the normal cron path for CREATE TABLE.
+//
 // Fails open (treats the run as claimed) on any error or when disabled or
 // when there's no DB binding at all, so a lock-table problem can never block
 // the primary collection cycle itself -- the worst case reverts to today's
@@ -64,7 +60,6 @@ export async function claimPrimaryRunLock(env, holderId, now = Date.now()) {
   if (!env?.DB) return true;
   if (!primaryRunLockEnabled(env)) return true;
   try {
-    await ensurePrimaryRunLockSchema(env.DB);
     const leaseUntil = now + ttlMs(env);
     const row = await env.DB.prepare(CLAIM_SQL)
       .bind(SCOPE, holderId, now, leaseUntil, now)
