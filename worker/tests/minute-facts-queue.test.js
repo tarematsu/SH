@@ -295,6 +295,20 @@ test('producer stores queue tracks once and consumer restores the read model val
   assert.equal(parsed.read_model.channel.presentation.description, 'channel details');
 });
 
+test('producer can reuse collector presentation without rescanning snapshot fields', () => {
+  const message = minuteFactQueueMessage(input, {
+    readModelPresentationOnly: true,
+    readModel: {
+      channel: {
+        presentation: { listener_count: 42, description: 'channel details' },
+      },
+    },
+  });
+
+  assert.equal(message.read_model.channel.presentation.listener_count, 42);
+  assert.equal(message.read_model.channel.presentation.description, 'channel details');
+});
+
 test('consumer read model writes channel, queue, and collector state to MINUTE_DB', async () => {
   const batches = [];
   const MINUTE_DB = {

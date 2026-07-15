@@ -99,6 +99,9 @@ function boundedText(value, maximum = 500) {
 }
 
 export function readModelPresentation(snapshot) {
+  if (snapshot?.presentation && typeof snapshot.presentation === 'object' && !Array.isArray(snapshot.presentation)) {
+    return snapshot.presentation;
+  }
   const raw = snapshot?.raw || {};
   const station = raw?.current_station || {};
   const owner = station?.owner || raw?.owner || raw?.account || raw?.creator || {};

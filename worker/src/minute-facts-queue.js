@@ -70,17 +70,19 @@ function objectValue(value) {
   return value && typeof value === 'object' && !Array.isArray(value) ? value : null;
 }
 
-function compactReadModel(readModel, payload) {
+function compactReadModel(readModel, payload, presentationAlreadyCompact = false) {
   if (!readModel || typeof readModel !== 'object') return null;
   const snapshot = objectValue(payload.snapshot);
   const channel = objectValue(readModel.channel);
   const presentation = objectValue(channel?.presentation);
-  const compactPresentation = snapshot && presentation
+  const compactPresentation = presentationAlreadyCompact
+    ? presentation
+    : snapshot && presentation
     ? Object.fromEntries(
       Object.entries(presentation).filter(([key]) => !Object.hasOwn(snapshot, key)),
     )
     : presentation;
-  const channelChanged = presentation && compactPresentation
+  const channelChanged = !presentationAlreadyCompact && presentation && compactPresentation
     && Object.keys(compactPresentation).length !== Object.keys(presentation).length;
   const queue = objectValue(readModel.queue);
   const queueChanged = queue && payload.queue && Object.hasOwn(queue, 'value');
@@ -125,7 +127,7 @@ export function minuteFactQueueMessage(input = {}, options = {}) {
     channel_id: channelId,
     minute_at: minuteAt,
     payload,
-    read_model: compactReadModel(options.readModel, payload),
+    read_model: compactReadModel(options.readModel, payload, options.readModelPresentationOnly === true),
     options: {
       jobKind: options.jobKind || (payload.rebuild ? 'rebuild' : 'live'),
       jobPriority: options.jobPriority ?? (payload.rebuild ? 20 : 100),

@@ -256,7 +256,8 @@ export async function collectOnce(env, source = 'manual') {
     }, {
       enrichTrackMetadata: metadataPlanned,
       collectComments: initialPlan.comments,
-        readModel: {
+      readModelPresentationOnly: true,
+      readModel: {
         channel: {
           channel_id: state.channelId,
           observed_at: observedAt,

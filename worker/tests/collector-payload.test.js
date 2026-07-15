@@ -32,6 +32,7 @@ test('normalizeSnapshot keeps only compact presentation data for downstream work
 
   assert.equal('raw' in snapshot, false);
   assert.equal(minuteFactSnapshot(snapshot).presentation, undefined);
+  assert.strictEqual(readModelPresentation(snapshot), snapshot.presentation);
   assert.equal(readModelPresentation(snapshot).description, 'Channel');
   assert.equal(readModelPresentation(snapshot).current_station.streaming_party.current_stream_count, 25);
 });
