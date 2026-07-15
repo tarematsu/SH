@@ -1,6 +1,8 @@
 import { firstDefined } from './collector-config.js';
 
 const COMPACT_QUEUE_MARKER = Symbol('compact-queue');
+const QUEUE_STRUCTURAL_PAYLOAD = Symbol.for('stationhead.queue.structural-payload');
+const QUEUE_LIKE_ANALYSIS = Symbol.for('stationhead.queue.like-analysis');
 
 export function validateChannelPayload(channel, expectedAlias) {
   if (!channel || typeof channel !== 'object' || Array.isArray(channel)) {
@@ -98,6 +100,39 @@ function boundedText(value, maximum = 500) {
   return parsed ? parsed.slice(0, maximum) : null;
 }
 
+function normalizedNumber(value) {
+  if (value === undefined || value === null || value === '') return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function normalizedText(value) {
+  return value === undefined || value === null ? null : String(value);
+}
+
+function normalizedBoolean(value) {
+  if (value === undefined || value === null) return null;
+  if (typeof value === 'boolean') return value ? 1 : 0;
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase();
+    if (['true', '1', 'yes', 'on'].includes(normalized)) return 1;
+    if (['false', '0', 'no', 'off', ''].includes(normalized)) return 0;
+    return null;
+  }
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value)) return null;
+    return value === 0 ? 0 : 1;
+  }
+  return null;
+}
+
+function likeTrackKey(track) {
+  const isrc = normalizedText(track?.isrc)?.trim().toUpperCase();
+  if (isrc) return `isrc:${isrc}`;
+  const spotifyId = normalizedText(track?.spotify_id)?.trim();
+  return spotifyId ? `spotify:${spotifyId}` : null;
+}
+
 export function readModelPresentation(snapshot) {
   if (snapshot?.presentation && typeof snapshot.presentation === 'object' && !Array.isArray(snapshot.presentation)) {
     return snapshot.presentation;
@@ -189,6 +224,10 @@ export function extractQueue(channel, stationId) {
   const queue = station?.queue || channel?.queue || null;
   if (!queue) return null;
   const queueTracks = queue?.queue_tracks || queue?.tracks || [];
+  const structuralTracks = [];
+  const likeValues = new Map();
+  let identifiableLikes = 0;
+  let completeLikes = true;
   const compactQueue = {
     station_id: firstDefined(queue?.station_id, station?.id, stationId),
     queue_id: queue?.id ?? null,
@@ -198,17 +237,42 @@ export function extractQueue(channel, stationId) {
       const track = item?.track || item;
       const artist = track?.artist || track?.artists?.[0] || {};
       const album = track?.album || {};
+      const queueTrackId = item?.id ?? null;
+      const stationheadTrackId = track?.id ?? null;
+      const spotifyId = track?.spotify_id ?? null;
+      const deezerId = track?.deezer_id ?? null;
+      const isrc = track?.isrc ?? null;
+      const durationMs = track?.duration ?? null;
+      const previewUrl = track?.preview ?? null;
+      const biteCount = track?.bite_count ?? null;
+      structuralTracks.push({
+        position,
+        queue_track_id: normalizedNumber(queueTrackId),
+        stationhead_track_id: normalizedNumber(stationheadTrackId),
+        spotify_id: normalizedText(spotifyId),
+        deezer_id: normalizedText(deezerId),
+        isrc: normalizedText(isrc),
+        duration_ms: normalizedNumber(durationMs),
+        preview_url: normalizedText(previewUrl),
+      });
+      const trackKey = likeTrackKey({ isrc, spotify_id: spotifyId });
+      if (trackKey) {
+        identifiableLikes += 1;
+        const likeCount = normalizedNumber(biteCount);
+        if (likeCount == null) completeLikes = false;
+        else likeValues.set(trackKey, likeCount);
+      }
       return {
         position,
-        queue_track_id: item?.id ?? null,
-        stationhead_track_id: track?.id ?? null,
-        spotify_id: track?.spotify_id ?? null,
+        queue_track_id: queueTrackId,
+        stationhead_track_id: stationheadTrackId,
+        spotify_id: spotifyId,
         apple_music_id: track?.apple_music_id ?? null,
-        deezer_id: track?.deezer_id ?? null,
-        isrc: track?.isrc ?? null,
-        duration_ms: track?.duration ?? null,
-        preview_url: track?.preview ?? null,
-        bite_count: track?.bite_count ?? null,
+        deezer_id: deezerId,
+        isrc,
+        duration_ms: durationMs,
+        preview_url: previewUrl,
+        bite_count: biteCount,
         title: boundedText(track?.title ?? track?.name, 500),
         artist: boundedText(
           typeof artist === 'string' ? artist : (artist?.name ?? track?.artist_name),
@@ -223,6 +287,23 @@ export function extractQueue(channel, stationId) {
       };
     }),
   };
-  Object.defineProperty(compactQueue, COMPACT_QUEUE_MARKER, { value: true });
+  const likeAnalysis = {
+    complete: identifiableLikes === 0 || completeLikes,
+    payload: [...likeValues.entries()]
+      .map(([trackKey, likeCount]) => ({ track_key: trackKey, like_count: likeCount }))
+      .sort((left, right) => left.track_key.localeCompare(right.track_key)),
+  };
+  const structuralPayload = {
+    station_id: normalizedNumber(compactQueue.station_id),
+    queue_id: normalizedNumber(compactQueue.queue_id),
+    start_time: normalizedNumber(compactQueue.start_time),
+    is_paused: normalizedBoolean(compactQueue.is_paused),
+    tracks: structuralTracks,
+  };
+  Object.defineProperties(compactQueue, {
+    [COMPACT_QUEUE_MARKER]: { value: true },
+    [QUEUE_STRUCTURAL_PAYLOAD]: { value: structuralPayload },
+  });
+  Object.defineProperty(compactQueue.tracks, QUEUE_LIKE_ANALYSIS, { value: likeAnalysis });
   return compactQueue;
 }

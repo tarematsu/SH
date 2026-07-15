@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
+import { extractQueue } from '../../worker/src/collector-payload.js';
+
 import {
   planLikeObservations,
   queueItemsToWriteLean,
@@ -8,6 +10,7 @@ import {
 } from '../functions/lib/d1-lean-ingest.js';
 import {
   D1_BATCH_VARIABLE_LIMIT,
+  analyzeQueueLikes,
   hasCompleteLikeSnapshot,
   queueLikesPayload,
   resetQueueHashCacheForTests,
@@ -87,6 +90,33 @@ test('ISRC and Spotify fallback tracks determine like snapshot completeness', ()
     { isrc: 'JPAAA0000001', bite_count: 1 },
     { spotify_id: 'spotify-fallback' },
   ]), false);
+});
+
+test('collector compact queues reuse canonical structural and like analyses', () => {
+  const queue = extractQueue({
+    current_station: {
+      id: 5,
+      queue: {
+        id: 9,
+        start_time: 100,
+        is_paused: false,
+        queue_tracks: [{
+          id: 3,
+          track: {
+            id: 7,
+            spotify_id: 'spotify-7',
+            isrc: 'jpabc1234567',
+            duration: '180000',
+            bite_count: '4',
+          },
+        }],
+      },
+    },
+  }, 5);
+  const plainQueue = JSON.parse(JSON.stringify(queue));
+
+  assert.deepEqual(queueStructuralPayload(queue), queueStructuralPayload(plainQueue));
+  assert.deepEqual(analyzeQueueLikes(queue.tracks), analyzeQueueLikes(plainQueue.tracks));
 });
 
 test('structural-only queue changes do not reconcile current likes', async () => {

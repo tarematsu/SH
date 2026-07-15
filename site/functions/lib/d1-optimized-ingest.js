@@ -12,6 +12,7 @@ import {
 import { claimWrite, payloadHash, sourceIdentity } from './ingest-claim.js';
 
 const QUERY_CHUNK = 80;
+const QUEUE_LIKE_ANALYSIS = Symbol.for('stationhead.queue.like-analysis');
 export const D1_BATCH_STATEMENT_LIMIT = 40;
 export const D1_BATCH_VARIABLE_LIMIT = 90;
 export const D1_SINGLE_STATEMENT_VARIABLE_LIMIT = 90;
@@ -67,6 +68,7 @@ export function queueLikesPayload(tracks) {
 }
 
 export function analyzeQueueLikes(tracks) {
+  if (tracks?.[QUEUE_LIKE_ANALYSIS]) return tracks[QUEUE_LIKE_ANALYSIS];
   const unique = new Map();
   let identifiable = 0;
   let complete = true;

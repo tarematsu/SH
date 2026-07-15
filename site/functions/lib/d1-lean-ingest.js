@@ -2,6 +2,7 @@ import { payloadHash } from './ingest-claim.js';
 import { bool, num, rawJson, text } from './api-utils.js';
 
 const SNAPSHOT_CHECKPOINT_MS = 5 * 60_000;
+const QUEUE_STRUCTURAL_PAYLOAD = Symbol.for('stationhead.queue.structural-payload');
 
 function snapshotRawPayload(data) {
   const presentation = data?.presentation;
@@ -137,6 +138,7 @@ export async function saveLeanSnapshot(db, observedAt, data) {
 }
 
 export function queueStructuralPayload(data) {
+  if (data?.[QUEUE_STRUCTURAL_PAYLOAD]) return data[QUEUE_STRUCTURAL_PAYLOAD];
   return {
     station_id: num(data?.station_id),
     queue_id: num(data?.queue_id),
