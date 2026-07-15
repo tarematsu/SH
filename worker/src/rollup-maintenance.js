@@ -1,10 +1,20 @@
 import {
+  DAY_MS,
+  jstDayStartUtc,
   previousJstDay,
   utcMonthlyRange,
   utcWeeklyRange,
 } from '../../site/functions/lib/time-buckets.js';
 
 const STATE_ID = 'rollup-retention-v1';
+const STREAM_REPAIR_STATE_ID = 'rollup-stream-repair-2026-07';
+const STREAM_REPAIR_KEYS = Object.freeze(['2026-07-11', '2026-07-12', '2026-07-13']);
+const STREAM_VALUE_SQL = `COALESCE(
+  CASE WHEN validated_stream_count IS NOT NULL AND validated_stream_count>=0
+    AND validated_stream_count IS NOT total_listens THEN validated_stream_count END,
+  CASE WHEN current_stream_count IS NOT NULL AND current_stream_count>=0
+    AND current_stream_count IS NOT total_listens THEN current_stream_count END
+)`;
 
 function finite(value) {
   if (value == null || value === '') return null;
@@ -57,16 +67,16 @@ async function rollupDaily(db, otherDb, period, now) {
     .bind(period.start, period.end).first();
   if (!aggregate || Number(aggregate.sample_count || 0) < 1) return false;
   const first = await db.prepare(`SELECT
-      (SELECT validated_stream_count FROM sh_channel_snapshots
-       WHERE observed_at>=? AND observed_at<? AND validated_stream_count IS NOT NULL
+      (SELECT ${STREAM_VALUE_SQL} FROM sh_channel_snapshots
+       WHERE observed_at>=? AND observed_at<? AND ${STREAM_VALUE_SQL} IS NOT NULL
        ORDER BY observed_at ASC,id ASC LIMIT 1) AS stream_start,
       (SELECT total_member_count FROM sh_channel_snapshots
        WHERE observed_at>=? AND observed_at<? AND total_member_count IS NOT NULL
        ORDER BY observed_at ASC,id ASC LIMIT 1) AS member_start`)
     .bind(period.start, period.end, period.start, period.end).first();
   const last = await db.prepare(`SELECT
-      (SELECT validated_stream_count FROM sh_channel_snapshots
-       WHERE observed_at>=? AND observed_at<? AND validated_stream_count IS NOT NULL
+      (SELECT ${STREAM_VALUE_SQL} FROM sh_channel_snapshots
+       WHERE observed_at>=? AND observed_at<? AND ${STREAM_VALUE_SQL} IS NOT NULL
        ORDER BY observed_at DESC,id DESC LIMIT 1) AS stream_end,
       (SELECT total_member_count FROM sh_channel_snapshots
        WHERE observed_at>=? AND observed_at<? AND total_member_count IS NOT NULL
@@ -115,19 +125,59 @@ async function rollupFromDaily(otherDb, table, range, now) {
   return upsertSummary(otherDb, table, range.key, aggregate, first, last, host?.primary_host, now);
 }
 
+function jstPeriod(dayKey) {
+  const start = jstDayStartUtc(dayKey);
+  return { key: dayKey, start, end: start + DAY_MS };
+}
+
+async function repairContaminatedSummaries(db, otherDb, now) {
+  const state = await db.prepare(`SELECT last_rollup_key FROM sh_data_maintenance_state WHERE id=?`)
+    .bind(STREAM_REPAIR_STATE_ID).first();
+  if (state?.last_rollup_key === STREAM_REPAIR_KEYS.at(-1)) {
+    return { skipped: true, reason: 'already-repaired' };
+  }
+
+  const repairedDays = [];
+  for (const key of STREAM_REPAIR_KEYS) {
+    if (await rollupDaily(db, otherDb, jstPeriod(key), now)) repairedDays.push(key);
+  }
+  if (repairedDays.length !== STREAM_REPAIR_KEYS.length) {
+    return { skipped: true, reason: 'repair-source-data-missing', repairedDays };
+  }
+
+  const weeks = new Map();
+  const months = new Map();
+  for (const key of repairedDays) {
+    const week = utcWeeklyRange(key);
+    const month = utcMonthlyRange(key);
+    weeks.set(week.key, week);
+    months.set(month.key, month);
+  }
+  for (const range of weeks.values()) await rollupFromDaily(otherDb, 'sh_weekly_summary', range, now);
+  for (const range of months.values()) await rollupFromDaily(otherDb, 'sh_monthly_summary', range, now);
+
+  await db.prepare(`INSERT INTO sh_data_maintenance_state(
+      id,last_rollup_key,last_cleanup_at,legacy_backfill_id,updated_at
+    ) VALUES(?,?,0,0,?) ON CONFLICT(id) DO UPDATE SET
+      last_rollup_key=excluded.last_rollup_key,updated_at=excluded.updated_at`)
+    .bind(STREAM_REPAIR_STATE_ID, STREAM_REPAIR_KEYS.at(-1), now).run();
+  return { skipped: false, repairedDays, repairedWeeks: [...weeks.keys()], repairedMonths: [...months.keys()] };
+}
+
 // sh_channel_snapshots/sh_data_maintenance_state stay on `db` (buddies'
 // database); the daily/weekly/monthly summary tables this produces live on
 // `otherDb` since they're read exclusively by sh-monitor-other/site.
 export async function runRollupMaintenance(db, otherDb, now = Date.now()) {
   if (!db || !otherDb) return { skipped: true, reason: 'db-binding-missing' };
+  const summaryRepair = await repairContaminatedSummaries(db, otherDb, now);
   const period = previousJstDay(now);
   const state = await db.prepare(`SELECT last_rollup_key FROM sh_data_maintenance_state WHERE id=?`)
     .bind(STATE_ID).first();
   if (state?.last_rollup_key === period.key) {
-    return { skipped: true, reason: 'already-rolled-up', periodKey: period.key };
+    return { skipped: true, reason: 'already-rolled-up', periodKey: period.key, summaryRepair };
   }
   const dailyWritten = await rollupDaily(db, otherDb, period, now);
-  if (!dailyWritten) return { skipped: true, reason: 'no-source-data', periodKey: period.key };
+  if (!dailyWritten) return { skipped: true, reason: 'no-source-data', periodKey: period.key, summaryRepair };
   await rollupFromDaily(otherDb, 'sh_weekly_summary', utcWeeklyRange(period.key), now);
   await rollupFromDaily(otherDb, 'sh_monthly_summary', utcMonthlyRange(period.key), now);
   await db.prepare(`INSERT INTO sh_data_maintenance_state(
@@ -139,6 +189,7 @@ export async function runRollupMaintenance(db, otherDb, now = Date.now()) {
     skipped: false,
     rolledUp: true,
     periodKey: period.key,
+    summaryRepair,
     legacyBackfill: { skipped: true, reason: 'legacy-migration-disabled' },
   };
 }
