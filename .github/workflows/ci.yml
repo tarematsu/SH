@@ -61,20 +61,25 @@ jobs:
     name: Pages checks
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    defaults:
-      run:
-        working-directory: site
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
           cache: npm
-          cache-dependency-path: site/package-lock.json
+          cache-dependency-path: |
+            site/package-lock.json
+            worker/package-lock.json
+      - name: Install Worker dependencies used by Pages integration tests
+        run: npm ci --no-audit --no-fund
+        working-directory: worker
       - run: npm ci --no-audit --no-fund
+        working-directory: site
       - run: npm run check
+        working-directory: site
       - name: Run Pages integration tests
         shell: bash
+        working-directory: site
         run: |
           set +e
           npm run test:integration > pages-integration-tests.log 2>&1
@@ -93,8 +98,10 @@ jobs:
           retention-days: 7
       - name: Run local D1 tests
         run: npm run test:d1
+        working-directory: site
       - name: Verify production migration command is skipped in CI
         run: npm run db:migrate
+        working-directory: site
 
   worker:
     name: Worker checks
