@@ -1,5 +1,3 @@
-import { attachMinuteFactQueueMetadata } from './collector-payload.js';
-
 export const MINUTE_FACT_QUEUE_RECEIPT_SCHEMA_SQL = `CREATE TABLE IF NOT EXISTS sh_minute_fact_queue_receipts (
   job_id TEXT PRIMARY KEY,
   received_at INTEGER NOT NULL
@@ -47,24 +45,102 @@ function booleanCode(value) {
   return 1;
 }
 
+function normalizedIsrc(value) {
+  return String(value || '').trim().toUpperCase();
+}
+
+function boundedText(value, maximum) {
+  const text = String(value || '').trim();
+  return text ? text.slice(0, maximum) : null;
+}
+
+function mergeMetadataRow(current, row) {
+  if (!current) return { ...row };
+  return {
+    ...current,
+    title: current.title || row.title || null,
+    artist: current.artist || row.artist || null,
+    album_name: current.album_name || row.album_name || null,
+    thumbnail_url: current.thumbnail_url || row.thumbnail_url || null,
+  };
+}
+
+export function attachReadModelTrackMetadata(queue, rows = []) {
+  if (!queue?.tracks?.length || !rows?.length) return queue;
+
+  const byIsrc = new Map();
+  const bySpotifyId = new Map();
+  for (const row of rows) {
+    const isrc = normalizedIsrc(row?.isrc);
+    const spotifyId = String(row?.spotify_id || '').trim();
+    if (isrc) byIsrc.set(isrc, mergeMetadataRow(byIsrc.get(isrc), row));
+    if (spotifyId) bySpotifyId.set(spotifyId, mergeMetadataRow(bySpotifyId.get(spotifyId), row));
+  }
+
+  let changed = false;
+  const tracks = queue.tracks.map((track) => {
+    const isrc = normalizedIsrc(track?.isrc);
+    const spotifyId = String(track?.spotify_id || '').trim();
+    const preferred = isrc ? byIsrc.get(isrc) : null;
+    const fallback = spotifyId ? bySpotifyId.get(spotifyId) : null;
+    if (!preferred && !fallback) return track;
+
+    const title = track.title || boundedText(preferred?.title || fallback?.title, 500);
+    const artist = track.artist || boundedText(preferred?.artist || fallback?.artist, 500);
+    const albumName = track.album_name || boundedText(preferred?.album_name || fallback?.album_name, 500);
+    const thumbnailUrl = track.thumbnail_url
+      || boundedText(preferred?.thumbnail_url || fallback?.thumbnail_url, 2_048);
+    if (title === track.title
+      && artist === track.artist
+      && albumName === track.album_name
+      && thumbnailUrl === track.thumbnail_url) return track;
+
+    changed = true;
+    return {
+      ...track,
+      title,
+      artist,
+      album_name: albumName,
+      thumbnail_url: thumbnailUrl,
+    };
+  });
+
+  return changed ? { ...queue, tracks } : queue;
+}
+
 async function hydrateQueueMetadataFromSource(env, readModel) {
   const db = env?.BUDDIES_DB;
   const queue = readModel?.queue?.value;
   if (!db || !queue?.tracks?.length) return readModel;
+
+  const incomplete = queue.tracks.filter((track) => (
+    !track?.title || !track?.artist || !track?.thumbnail_url
+  ));
   const spotifyIds = [...new Set(
-    queue.tracks
-      .filter((track) => track?.spotify_id
-        && (!track.title || !track.artist || !track.thumbnail_url))
-      .map((track) => String(track.spotify_id).trim())
-      .filter(Boolean),
+    incomplete.map((track) => String(track?.spotify_id || '').trim()).filter(Boolean),
   )].slice(0, 80);
-  if (!spotifyIds.length) return readModel;
+  const isrcs = [...new Set(
+    incomplete.map((track) => normalizedIsrc(track?.isrc)).filter(Boolean),
+  )].slice(0, 80);
+  if (!spotifyIds.length && !isrcs.length) return readModel;
+
   try {
-    const placeholders = spotifyIds.map(() => '?').join(',');
-    const result = await db.prepare(`SELECT spotify_id,title,artist,thumbnail_url
-      FROM sh_track_metadata WHERE spotify_id IN (${placeholders})`)
-      .bind(...spotifyIds).all();
-    const hydratedQueue = attachMinuteFactQueueMetadata(queue, result.results || []);
+    const clauses = [];
+    const bindings = [];
+    if (isrcs.length) {
+      clauses.push(`isrc IN (${isrcs.map(() => '?').join(',')})`);
+      bindings.push(...isrcs);
+    }
+    if (spotifyIds.length) {
+      clauses.push(`spotify_id IN (${spotifyIds.map(() => '?').join(',')})`);
+      bindings.push(...spotifyIds);
+    }
+    const result = await db.prepare(`SELECT spotify_id,isrc,title,artist,thumbnail_url,fetched_at
+      FROM sh_track_metadata
+      WHERE ${clauses.join(' OR ')}
+      ORDER BY fetched_at DESC`)
+      .bind(...bindings).all();
+    const hydratedQueue = attachReadModelTrackMetadata(queue, result.results || []);
     return hydratedQueue === queue
       ? readModel
       : { ...readModel, queue: { ...readModel.queue, value: hydratedQueue } };
