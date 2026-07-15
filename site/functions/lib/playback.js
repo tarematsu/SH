@@ -63,6 +63,7 @@ export function normalizePlaybackTrack(track, index, playback) {
     ? rawArtist
     : inferArtistFromDisplayTitle(track.display_title || fallback.title, title || fallback.title)) || null;
   const thumbnailUrl = String(track.thumbnail_url || '').trim() || null;
+  const spotifyId = String(track.spotify_id || '').trim() || null;
   const durationMs = Math.max(0, num(track.duration_ms) || 0);
   const isCurrent = index === playback.currentIndex;
   const output = {
@@ -71,7 +72,9 @@ export function normalizePlaybackTrack(track, index, playback) {
     thumbnail_url: thumbnailUrl,
     duration_ms: durationMs,
   };
-  if (track.spotify_url) output.spotify_url = track.spotify_url;
+  if (track.spotify_url && track.spotify_url !== (spotifyId ? `https://open.spotify.com/track/${spotifyId}` : null)) {
+    output.spotify_url = track.spotify_url;
+  }
   if (isCurrent) {
     const biteCount = num(track.bite_count);
     if (biteCount != null) output.bite_count = biteCount;
