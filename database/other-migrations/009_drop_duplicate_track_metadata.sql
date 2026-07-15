@@ -1,3 +1,4 @@
--- The one-time copy into stationhead-buddies is performed by
--- consolidate-track-metadata.mjs before this cleanup migration is applied.
-DROP TABLE IF EXISTS sh_track_metadata;
+-- Track metadata consolidation is an explicit, verification-first operation.
+-- Do not drop the legacy cache from a routine schema apply before the copy
+-- has been confirmed against the live BUDDIES_DB.
+SELECT 1;

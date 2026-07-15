@@ -26,6 +26,7 @@ on:
           - facts-db
           - other-db
           - buddies-db
+          - metadata-consolidation
 
 permissions:
   contents: read
@@ -84,6 +85,30 @@ jobs:
       - run: npm ci --no-audit --no-fund
       - name: Create or update database
         run: node scripts/provision-other-db.mjs
+
+  metadata-consolidation:
+    name: Consolidate shared track metadata
+    if: inputs.operation == 'metadata-consolidation'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: worker
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN || secrets.CLOUDFLARE_BUILDS_API_TOKEN || secrets.CF_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID || secrets.CF_ACCOUNT_ID }}
+      TRACK_METADATA_APPLY: 'true'
+      TRACK_METADATA_DROP_SOURCE: 'true'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: worker/package-lock.json
+      - run: npm ci --no-audit --no-fund
+      - name: Copy and verify shared metadata
+        run: node scripts/consolidate-track-metadata.mjs
 
   buddies-db:
     name: Provision or update stationhead-buddies

@@ -7,15 +7,14 @@ const repositoryRoot = resolve(workerRoot, '..');
 const wranglerScript = resolve(workerRoot, 'node_modules/wrangler/bin/wrangler.js');
 const migrationsDir = resolve(repositoryRoot, 'database/other-migrations');
 const metadataPath = resolve(repositoryRoot, 'database/other-db.json');
-const metadataCleanupScript = resolve(workerRoot, 'scripts/consolidate-track-metadata.mjs');
-const metadataDropMigration = '009_drop_duplicate_track_metadata.sql';
 const databaseName = process.env.OTHER_DATABASE_NAME || 'stationhead-other';
 const BINDING = 'OTHER_DB';
 
 // Both configs need this binding: sh-monitor-other writes the tables in
 // database/other-migrations, and site reads/writes several of the same
 // tables (host-ingest, dashboard, history summaries) directly.
-// Shared track metadata is consolidated into stationhead-buddies below.
+// Shared track metadata is consolidated by the explicit metadata-consolidation
+// workflow after the target database has been verified.
 const configPaths = [
   resolve(workerRoot, 'wrangler.other.jsonc'),
   resolve(repositoryRoot, 'site/wrangler.jsonc'),
@@ -78,7 +77,7 @@ for (const configPath of configPaths) {
 const migrationFiles = readdirSync(migrationsDir)
   .filter((name) => name.endsWith('.sql'))
   .sort();
-for (const migrationFile of migrationFiles.filter((name) => name !== metadataDropMigration)) {
+for (const migrationFile of migrationFiles) {
   try {
     wrangler([
       'd1', 'execute', databaseName,
@@ -94,29 +93,6 @@ for (const migrationFile of migrationFiles.filter((name) => name !== metadataDro
     throw error;
   }
 }
-
-// Copy the old OTHER_DB cache into its new shared owner before dropping the
-// duplicate table. The consolidation script is idempotent and skips cleanly
-// when this database was provisioned without the legacy table.
-try {
-  execFileSync(process.execPath, [metadataCleanupScript], {
-    cwd: workerRoot,
-    env: {
-      ...process.env,
-      TRACK_METADATA_APPLY: 'true',
-      TRACK_METADATA_DROP_SOURCE: 'true',
-    },
-    stdio: 'inherit',
-  });
-} catch (error) {
-  throw new Error(`Track metadata consolidation failed: ${error?.message || error}`);
-}
-
-wrangler([
-  'd1', 'execute', databaseName,
-  '--remote', '--yes',
-  '--file', resolve(migrationsDir, metadataDropMigration),
-]);
 
 writeFileSync(metadataPath, `${JSON.stringify({
   binding: BINDING,
