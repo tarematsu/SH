@@ -2,7 +2,7 @@
 
 All public HTTP APIs are owned by Cloudflare Pages under `/api`.
 
-The scheduled Workers (`sh-monitor-buddies`, `sh-monitor-minute`, and `sh-monitor-other`) have `workers_dev` and preview URLs disabled. They remain responsible for cron and Queue execution only.
+The scheduled Workers (`sh-monitor-buddies`, `sh-monitor-minute`, and `sh-monitor-other`) have public Worker URLs disabled. They remain responsible for cron and Queue execution only.
 
 Use `GET /api` for the machine-readable endpoint catalog. Canonical monitoring and minute-facts routes include:
 
@@ -11,16 +11,10 @@ Use `GET /api` for the machine-readable endpoint catalog. Canonical monitoring a
 - `GET /api/minute-facts/current`
 - `GET /api/minute-facts/latest`
 
-Exact compatibility aliases use HTTP 308 redirects:
+The former collector-health and history compatibility paths are retired and return HTTP 404. Callers must use the canonical routes listed by `GET /api`.
 
-- `/api/health/collector` → `/api/health`
-- `/api/history-current` → `/api/minute-facts/current`
-- `/api/history-migrated` → `/api/minute-facts`
+The canonical groups, retired endpoints, and internal paths are defined once in `site/functions/lib/api-contract.js`. Both the API catalog and `_middleware.js` consume that contract.
 
-`history-raw` and `official-history` retain their compatibility response implementations because they are not exact aliases. All compatibility responses include `Deprecation`, `Link`, and `X-API-Successor` headers.
+Public Pages ingestion is disabled. `/api/ingest` and `/api/host-ingest` return 404.
 
-The canonical groups, compatibility behavior, successors, retired endpoints, and internal blocked paths are defined once in `site/functions/lib/api-contract.js`. Both the API catalog and `_middleware.js` consume that contract so route documentation and enforcement cannot drift independently.
-
-Public Pages ingestion is disabled. `/api/ingest` and `/api/host-ingest` return 404, and `_middleware.js` also blocks implementation filenames such as `ingest-core`, `ingest-legacy`, `dashboard-legacy`, and `history-legacy` from becoming accidental APIs.
-
-Do not add public HTTP routes to Worker entrypoints. Add new public read endpoints to `site/functions/api`, register them in the shared API contract, and bind their data sources in `site/wrangler.jsonc`. Keep reusable implementation modules outside the public route surface or explicitly register their paths as internal and blocked.
+Do not add public HTTP routes to Worker entrypoints. Add new public read endpoints to `site/functions/api`, register them in the shared API contract, and bind their data sources in `site/wrangler.jsonc`.
