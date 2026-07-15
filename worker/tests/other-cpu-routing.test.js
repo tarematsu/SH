@@ -28,6 +28,17 @@ test('ordinary host slot remains host when no announcement is due', async () => 
   assert.equal(task, 'host');
 });
 
+test('active news does not starve a scheduled prediction slot', async () => {
+  let checked = false;
+  const task = await selectOtherProductionTask(
+    { cron: OTHER_WORKER_CRON, scheduledTime: BASE + 10 * 60_000 },
+    {},
+    { officialNewsDue: async () => { checked = true; return true; } },
+  );
+  assert.equal(task, 'prediction');
+  assert.equal(checked, false);
+});
+
 test('scheduled official-news refresh does not need a preliminary D1 due read', async () => {
   let checked = false;
   const task = await selectOtherProductionTask(
