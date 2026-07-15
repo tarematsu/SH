@@ -39,7 +39,11 @@ test('dashboard HTML keeps accessibility, privacy and all public sections', asyn
   assert.match(html, /id="updated"/);
   assert.match(html, /id="online"/);
   assert.match(html, /id="members"/);
-  assert.match(html, /id="totalListens"/);
+  assert.match(html, /id="totalStreams"/);
+  assert.match(html, /id="membersYesterdayDelta"/);
+  assert.match(html, /id="membersDayBeforeDelta"/);
+  assert.match(html, /id="streamsYesterdayDelta"/);
+  assert.match(html, /id="streamsDayBeforeDelta"/);
   assert.match(html, /id="nowPlayingLink"/);
   assert.match(html, /id="queue"/);
   assert.match(html, /id="streamCount"/);
@@ -62,6 +66,22 @@ test('dashboard removes the external web button and playback trend', async () =>
   assert.doesNotMatch(shell, /再生数/);
 });
 
+test('dashboard displays total streams and two completed UTC-day changes', async () => {
+  const html = await text('public/index.html');
+  const source = await text('public/dashboard-metrics.js');
+  assert.match(html, />総メンバー数</);
+  assert.match(html, />総再生数</);
+  assert.doesNotMatch(html, /ユニーク参加者|延べ参加者|totalListens|listensDelta/);
+  assert.match(source, /current_stream_count/);
+  assert.match(source, /setUTCHours\(0, 0, 0, 0\)/);
+  assert.match(source, /mode: 'daily'/);
+  assert.match(source, /member_growth/);
+  assert.match(source, /stream_growth/);
+  assert.match(source, /'昨日'/);
+  assert.match(source, /'一昨日'/);
+  assert.doesNotMatch(source, /total_listens/);
+});
+
 test('dashboard declares and implements a light white-base theme', async () => {
   const html = await text('public/index.html');
   const css = await text('public/app-lite.css');
@@ -76,12 +96,12 @@ test('dashboard declares and implements a light white-base theme', async () => {
 
 test('mobile dashboard keeps one stylesheet and one entry script', async () => {
   const html = await text('public/index.html');
-  const shell = await text('public/app-main.js');
+  const entry = await text('public/dashboard-metrics.js');
   assert.match(html, /\/app-lite\.css/);
-  assert.match(html, /type="module" src="\/app-main\.js"/);
+  assert.match(html, /type="module" src="\/dashboard-metrics\.js"/);
   assert.equal((html.match(/<link rel="stylesheet"/g) || []).length, 1);
   assert.equal((html.match(/<script /g) || []).length, 1);
-  assert.match(shell, /import\('\/app-lite\.js'\)/);
+  assert.match(entry, /import\('\/app-main\.js'\)/);
   assert.doesNotMatch(html, /\/dashboard-optimized\.js/);
   assert.doesNotMatch(html, /\/app-state\.js/);
   assert.doesNotMatch(html, /\/design-system\.css/);
