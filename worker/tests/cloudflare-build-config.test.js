@@ -11,6 +11,9 @@ import {
 
 test('connected Worker names map to their Wrangler configs', () => {
   assert.equal(cloudflareBuildConfig('sh-monitor-buddies'), 'wrangler.jsonc');
+  assert.equal(cloudflareBuildConfig('sh-ingest-channel'), 'wrangler.ingest.jsonc');
+  assert.equal(cloudflareBuildConfig('sh-comments'), 'wrangler.comments.jsonc');
+  assert.equal(cloudflareBuildConfig('sh-read-model'), 'wrangler.read-model.jsonc');
   assert.equal(cloudflareBuildConfig('sh-monitor-other'), 'wrangler.other.jsonc');
   assert.equal(cloudflareBuildConfig('sh-monitor-minute'), 'wrangler.minute.jsonc');
   assert.equal(cloudflareBuildConfig('unknown-worker'), null);
