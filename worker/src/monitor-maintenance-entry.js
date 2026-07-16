@@ -12,7 +12,7 @@ async function collectorGate(env, now, dependencies = {}) {
 
 function assertMaintenanceSucceeded(kind, result) {
   const reason = String(result?.reason || '');
-  if (reason === 'maintenance-error' || reason === 'retention-error') {
+  if (reason === 'maintenance-error' || reason === 'retention-error' || reason === 'db-binding-missing') {
     throw new Error(`${kind} failed: ${result?.error || reason}`);
   }
   return result;
@@ -36,7 +36,9 @@ export async function runMonitorMaintenanceCron(controller, env, dependencies = 
   }
 
   if (cron === ROLLUP_MAINTENANCE_CRON) {
-    if (!env?.BUDDIES_DB || !env?.OTHER_DB) return { skipped: true, reason: 'db-binding-missing' };
+    if (!env?.BUDDIES_DB || !env?.OTHER_DB) {
+      return assertMaintenanceSucceeded('rollup maintenance', { skipped: true, reason: 'db-binding-missing' });
+    }
     const runRollup = dependencies.runRollup
       || (await import('./rollup-maintenance.js')).runRollupMaintenanceSafely;
     return assertMaintenanceSucceeded('rollup maintenance', await runRollup(env.BUDDIES_DB, env.OTHER_DB, now));
