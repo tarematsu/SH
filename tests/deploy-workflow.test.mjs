@@ -18,17 +18,12 @@ const splitDeployWorkflow = readFileSync(
   new URL('../.github/workflows/deploy-split-pipeline.yml', import.meta.url),
   'utf8',
 );
-const buildWatchSync = readFileSync(
-  new URL('../worker/scripts/sync-cloudflare-build-watch-paths.mjs', import.meta.url),
-  'utf8',
-);
 const workerPackage = JSON.parse(readFileSync(
   new URL('../worker/package.json', import.meta.url),
   'utf8',
 ));
 
 const selectorName = 'select-worker-deploys.mjs';
-const watchSyncName = 'sync-cloudflare-build-watch-paths.mjs';
 
 test('manual deploy keeps all Cloudflare targets available', () => {
   const fallback = 'secrets.CLOUDFLARE_BUILDS_API_TOKEN || secrets.CLOUDFLARE_API_TOKEN || secrets.CF_API_TOKEN';
@@ -48,26 +43,17 @@ test('manual deploy keeps all Cloudflare targets available', () => {
 test('automatic deploys select affected Workers instead of redeploying the topology', () => {
   for (const workflow of [splitDeployWorkflow, prDiagnosticsWorkflow]) {
     assert.match(workflow, new RegExp(selectorName.replace('.', '\\.')));
-    assert.match(workflow, new RegExp(watchSyncName.replace('.', '\\.')));
     assert.match(workflow, /site\/functions\/\*\*/);
     assert.match(workflow, /packages\/sh-shared\/\*\*/);
     assert.match(workflow, /DEPLOY_COMMANDS/);
     assert.match(workflow, /npm run "\$command"/);
+    assert.doesNotMatch(workflow, /sync-cloudflare-build-watch-paths/);
   }
 
   assert.match(splitDeployWorkflow, /workflow_dispatch/);
   assert.match(splitDeployWorkflow, /select-worker-deploys\.mjs --all/);
   assert.match(prDiagnosticsWorkflow, /github\.event\.pull_request\.base\.sha/);
   assert.match(prDiagnosticsWorkflow, /fromJSON\(needs\.select-workers\.outputs\.diagnostics\)/);
-});
-
-test('connected build synchronization patches exact include paths', () => {
-  assert.match(buildWatchSync, /connectedWorkerBuildWatchConfig/);
-  assert.match(buildWatchSync, /\/builds\/workers\/\$\{encodeURIComponent\(tag\)\}\/triggers/);
-  assert.match(buildWatchSync, /\/builds\/triggers\/\$\{encodeURIComponent\(triggerUuid\)\}/);
-  assert.match(buildWatchSync, /path_includes: pathIncludes/);
-  assert.match(buildWatchSync, /path_excludes: \[\]/);
-  assert.match(buildWatchSync, /Build watch paths did not persist/);
 });
 
 test('minute cutover scripts remain available for explicit topology operations', () => {
