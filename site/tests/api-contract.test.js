@@ -8,6 +8,8 @@ import {
   INTERNAL_API_PATHS,
   RETIRED_ENDPOINTS,
   canonicalApiPaths,
+  materializedResponseCadenceSeconds,
+  materializedResponseMaximumAge,
 } from '../functions/lib/api-contract.js';
 import { apiCatalog } from '../functions/api/index.js';
 import { isBlockedApiPath } from '../functions/api/_middleware.js';
@@ -63,4 +65,24 @@ test('GET /api catalog is generated from the same contract', () => {
   assert.deepEqual(catalog.retired, RETIRED_ENDPOINTS);
   assert.equal(catalog.worker_urls_public, false);
   assert.equal(catalog.public_write_api, false);
+});
+
+test('materialized response freshness follows each model cadence', () => {
+  const minute = 60_000;
+  assert.equal(materializedResponseCadenceSeconds('minute-facts-current'), 5 * 60);
+  assert.equal(materializedResponseCadenceSeconds('track-likes'), 30 * 60);
+  assert.equal(materializedResponseCadenceSeconds('host-history:summary'), 24 * 60 * 60);
+  assert.equal(materializedResponseCadenceSeconds('unknown'), 5 * 60);
+
+  assert.equal(materializedResponseMaximumAge('minute-facts-current'), 15 * minute);
+  assert.equal(materializedResponseMaximumAge('track-likes'), 35 * minute);
+  assert.equal(materializedResponseMaximumAge('host-history:summary'), (24 * 60 + 5) * minute);
+  assert.equal(
+    materializedResponseMaximumAge('track-likes', { PAGES_RESPONSE_MAX_AGE_MS: 20 * minute }),
+    35 * minute,
+  );
+  assert.equal(
+    materializedResponseMaximumAge('track-likes', { PAGES_RESPONSE_MAX_AGE_MS: 40 * minute }),
+    40 * minute,
+  );
 });
