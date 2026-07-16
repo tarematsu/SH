@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - "worker/**"
+      - "packages/sh-shared/**"
       - ".github/workflows/cloudflare-pr-diagnostics.yml"
       - ".github/scripts/cloudflare-build-diagnostics.mjs"
 
@@ -17,13 +18,46 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  select-workers:
+    name: Select affected Workers
+    runs-on: ubuntu-latest
+    outputs:
+      workers: ${{ steps.targets.outputs.workers }}
+      commands: ${{ steps.targets.outputs.commands }}
+      diagnostics: ${{ steps.targets.outputs.diagnostics }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Select deploy targets from the import graph
+        id: targets
+        shell: bash
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          git diff --name-only "$BASE_SHA" "$HEAD_SHA" | tee changed-files.txt
+          selection="$(node worker/scripts/select-worker-deploys.mjs < changed-files.txt)"
+          echo "$selection" | jq .
+          echo "workers=$(jq -c '.workers' <<<"$selection")" >> "$GITHUB_OUTPUT"
+          echo "commands=$(jq -c '.commands' <<<"$selection")" >> "$GITHUB_OUTPUT"
+          echo "diagnostics=$(jq -c '.diagnostics' <<<"$selection")" >> "$GITHUB_OUTPUT"
+
   prepare-workers:
-    name: Prepare split Worker topology
+    name: Deploy affected Workers
+    needs: select-workers
+    if: needs.select-workers.outputs.workers != '[]'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
       CLOUDFLARE_ACCOUNT_ID: "0500f25c2f74e7e76c94a8bcb6c7008b"
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_BUILDS_API_TOKEN || secrets.CLOUDFLARE_API_TOKEN || secrets.CF_API_TOKEN }}
+      DEPLOY_COMMANDS: ${{ needs.select-workers.outputs.commands }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -48,35 +82,24 @@ jobs:
           do
             npx wrangler queues create "$queue" >/dev/null 2>&1 || true
           done
-      - name: Deploy minute pipeline and rename read-model consumer
-        run: npm run deploy:minute
+      - name: Deploy selected Workers in dependency order
+        shell: bash
         working-directory: worker
-      - name: Deploy comments chain before producer switch
-        run: npm run deploy:comments
-        working-directory: worker
-      - name: Switch channel ingest to ordered comments handoff
-        run: npm run deploy:ingest
-        working-directory: worker
-      - name: Deploy Pages materializer
-        run: npm run deploy:pages-read-model
-        working-directory: worker
-      - name: Deploy maintenance monitor
-        run: npm run deploy:monitor-maintenance
-        working-directory: worker
-      - name: Reduce other monitor after replacements are live
-        run: npm run deploy:other
-        working-directory: worker
+        run: |
+          set -euo pipefail
+          while IFS= read -r command; do
+            echo "Deploying $command"
+            npm run "$command"
+          done < <(jq -r '.[]' <<<"$DEPLOY_COMMANDS")
 
   diagnose:
     name: Diagnose ${{ matrix.worker }}
-    needs: prepare-workers
+    needs: [select-workers, prepare-workers]
+    if: needs.prepare-workers.result == 'success' && needs.select-workers.outputs.diagnostics != '[]'
     strategy:
       fail-fast: false
       matrix:
-        worker:
-          - sh-monitor-buddies
-          - sh-monitor-other
-          - sh-minute-maintenance
+        worker: ${{ fromJSON(needs.select-workers.outputs.diagnostics) }}
     runs-on: ubuntu-latest
     timeout-minutes: 25
     env:
