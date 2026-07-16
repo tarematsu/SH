@@ -10,10 +10,16 @@ export function firstDefined(...values) {
   return values.find((value) => value !== undefined && value !== null);
 }
 
+function boundedNonNegativeInteger(value, fallback, maximum) {
+  const parsed = Number(value ?? fallback);
+  if (!Number.isFinite(parsed) || parsed < 0) return fallback;
+  return Math.min(Math.trunc(parsed), maximum);
+}
+
 export function configFromEnv(env) {
   return {
     channelAlias: env.CHANNEL_ALIAS || 'buddies',
-    chatLimit: Math.min(numberValue(env.CHAT_LIMIT, 100), 100),
+    chatLimit: boundedNonNegativeInteger(env.CHAT_LIMIT, 100, 100),
     appVersion: env.STATIONHEAD_APP_VERSION || env.SH_APP_VERSION || '1.0.0',
     collectorId: env.COLLECTOR_ID || 'cloudflare-worker',
     metadataLimit: Math.min(numberValue(env.METADATA_LIMIT, 3), 10),
