@@ -1,17 +1,13 @@
 import { collectOnce } from './collector-runner.js';
-import {
-  extractIds,
-  extractQueue,
-  minuteFactQueue,
-  normalizeSnapshot,
-  readModelPresentation,
-  validateChannelPayload,
-} from './collector-payload.js';
-import { collectorStateFromAuthState } from './collector-state.js';
+import { parseMinuteFactQueueMessage } from './minute-facts-queue.js';
 
 function integer(value) {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? Math.trunc(parsed) : null;
+}
+
+function objectValue(value) {
+  return value && typeof value === 'object' && !Array.isArray(value) ? value : null;
 }
 
 export function commentsTaskForMinuteFact(commentTask, body) {
@@ -26,9 +22,52 @@ export function commentsTaskForMinuteFact(commentTask, body) {
   };
 }
 
-function activeIngestEnv(env, message, channel, commentTask) {
+export function readModelEnvelopeForMinuteFact(rawMessage, body) {
+  const parsed = parseMinuteFactQueueMessage(body);
+  const compact = objectValue(body?.read_model);
+  if (!compact) throw new Error('minute fact read model is missing');
+
+  const observedAt = integer(rawMessage?.observed_at) ?? integer(parsed.payload?.observedAt) ?? Date.now();
+  const compactChannel = objectValue(compact.channel) || {};
+  const compactQueue = objectValue(compact.queue);
+  const compactCollector = objectValue(compact.collector) || {};
+  const queue = compactQueue && !Object.hasOwn(compactQueue, 'value')
+    ? { ...compactQueue, value: parsed.payload.queue ?? null }
+    : compactQueue;
+  const readModel = {
+    ...compact,
+    channel: { ...compactChannel, observed_at: observedAt },
+    queue,
+    collector: {
+      ...compactCollector,
+      last_run_at: observedAt,
+      last_success_at: observedAt,
+      updated_at: observedAt,
+    },
+  };
+
+  return {
+    message_type: 'stationhead-read-model',
+    message_version: 1,
+    observed_at: observedAt,
+    job_id: `read-model:${parsed.channel_id}:${observedAt}`,
+    read_model: readModel,
+    comment_task: {
+      observed_at: observedAt,
+      station_id: integer(parsed.payload?.snapshot?.station_id),
+      auth: rawMessage?.auth || {},
+    },
+  };
+}
+
+function activeIngestEnv(env, message, channel, envelopes) {
   const active = Object.create(env || null);
   const commentsQueue = env?.COMMENTS_QUEUE;
+  const commentTask = {
+    observed_at: integer(message?.observed_at),
+    station_id: null,
+    auth: message?.auth || {},
+  };
   Object.defineProperties(active, {
     __shAuthState: { value: message.auth || {}, enumerable: false },
     __RAW_CHANNEL_PAYLOAD: { value: channel, enumerable: false },
@@ -38,6 +77,8 @@ function activeIngestEnv(env, message, channel, commentTask) {
       value: commentsQueue?.send ? {
         send(body, options) {
           if (body && typeof body === 'object') {
+            const envelope = readModelEnvelopeForMinuteFact(message, body);
+            envelopes.set(String(body.job_id || ''), envelope);
             return commentsQueue.send(commentsTaskForMinuteFact(commentTask, body), options);
           }
           return commentsQueue.send(body, options);
@@ -48,47 +89,26 @@ function activeIngestEnv(env, message, channel, commentTask) {
   return active;
 }
 
-function readModelEnvelope(env, message, channel) {
-  const state = collectorStateFromAuthState(message.auth, env);
-  validateChannelPayload(channel, message.channel_alias || env.CHANNEL_ALIAS || 'buddies');
-  extractIds(channel, state);
-  const snapshot = normalizeSnapshot(channel, state, {
-    channelAlias: message.channel_alias || env.CHANNEL_ALIAS || 'buddies',
-    collectorId: env.COLLECTOR_ID || 'cloudflare-worker',
-  });
-  const queue = minuteFactQueue(extractQueue(channel, state.stationId));
-  return {
-    message_type: 'stationhead-read-model',
-    message_version: 1,
-    observed_at: Number(message.observed_at),
-    job_id: `read-model:${state.channelId}:${Number(message.observed_at)}`,
-    read_model: {
-      channel: {
-        channel_id: state.channelId,
-        observed_at: Number(message.observed_at),
-        presentation: readModelPresentation(snapshot),
-      },
-      queue: {
-        station_id: queue?.station_id ?? state.stationId,
-        queue_id: queue?.queue_id ?? null,
-        start_time: queue?.start_time ?? null,
-        is_paused: queue?.is_paused ?? null,
-        value: queue,
-      },
-      collector: {
-        collector_id: env.COLLECTOR_ID || 'cloudflare-worker',
-        last_run_at: Number(message.observed_at),
-        last_success_at: Number(message.observed_at),
-        last_error_present: false,
-        updated_at: Number(message.observed_at),
-      },
-    },
-    comment_task: {
-      observed_at: Number(message.observed_at),
-      station_id: state.stationId,
-      auth: message.auth || {},
-    },
-  };
+async function currentReadModelEnvelope(env, message, result, envelopes) {
+  const channelId = integer(result?.channel_id);
+  const minuteAt = integer(result?.minute_fact_job_minute_at);
+  const jobId = channelId != null && minuteAt != null ? `minute-fact:${channelId}:${minuteAt}` : null;
+  if (!jobId) throw new Error('current minute fact identity is missing');
+  const captured = envelopes.get(jobId);
+  if (captured) return captured;
+
+  const row = await env.DB.prepare(`SELECT payload_json
+    FROM sh_minute_fact_outbox
+    WHERE job_id=? AND status='pending'
+    LIMIT 1`).bind(jobId).first();
+  if (!row?.payload_json) throw new Error(`current minute fact read model is unavailable: ${jobId}`);
+  let body;
+  try {
+    body = JSON.parse(String(row.payload_json));
+  } catch (error) {
+    throw new Error(`invalid current minute fact outbox JSON: ${error?.message || error}`);
+  }
+  return readModelEnvelopeForMinuteFact(message, body);
 }
 
 export async function ingestRawCollection(env, message) {
@@ -101,9 +121,10 @@ export async function ingestRawCollection(env, message) {
   } catch (error) {
     throw new Error(`invalid raw channel JSON: ${error?.message || error}`);
   }
-  const envelope = readModelEnvelope(env, message, channel);
-  const active = activeIngestEnv(env, message, channel, envelope.comment_task);
+  const envelopes = new Map();
+  const active = activeIngestEnv(env, message, channel, envelopes);
   const result = await collectOnce(active, 'raw-collection-queue');
+  const envelope = await currentReadModelEnvelope(env, message, result, envelopes);
   await env.READ_MODEL_QUEUE.send(envelope, { contentType: 'json' });
   return result;
 }
