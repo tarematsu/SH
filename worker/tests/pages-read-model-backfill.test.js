@@ -91,16 +91,12 @@ test('track history backfill clamps its final window to the archive epoch', () =
   assert.equal(trackHistoryRefreshRanges(now, { next_to: EPOCH }).backfill, null);
 });
 
-test('playback variants are hourly while ordinary API variants remain five-minute', () => {
-  const hourly = Date.UTC(2026, 6, 16, 12, 0);
+test('playback is not materialized while ordinary API variants remain five-minute', () => {
   const fivePast = Date.UTC(2026, 6, 16, 12, 5);
   const playback = MATERIALIZED_API_VARIANTS.filter((variant) => variant.key.startsWith('playback:'));
-  const ordinary = MATERIALIZED_API_VARIANTS.filter((variant) => !variant.key.startsWith('playback:'));
 
-  assert.equal(playback.length, 2);
-  assert.equal(playback.every((variant) => materializedVariantDue(variant, hourly)), true);
-  assert.equal(playback.some((variant) => materializedVariantDue(variant, fivePast)), false);
-  assert.equal(ordinary.every((variant) => materializedVariantDue(variant, fivePast)), true);
+  assert.equal(playback.length, 0);
+  assert.equal(MATERIALIZED_API_VARIANTS.every((variant) => materializedVariantDue(variant, fivePast)), true);
 });
 
 test('hourly refresh stores all completed default API responses as generation-safe chunks', async () => {
@@ -132,7 +128,7 @@ test('hourly refresh stores all completed default API responses as generation-sa
     && call.sql.includes('CREATE TABLE IF NOT EXISTS sh_pages_response_manifest')));
 });
 
-test('five-minute refresh defers both playback variants', async () => {
+test('five-minute refresh renders every remaining materialized variant', async () => {
   const db = new FakeDb();
   const now = Date.UTC(2026, 6, 16, 12, 5);
   const result = await refreshFastPagesReadModels({
@@ -143,9 +139,9 @@ test('five-minute refresh defers both playback variants', async () => {
     render: async (variant) => Response.json({ ok: true, model_key: variant.key }),
   });
 
-  assert.equal(result.deferred, 2);
+  assert.equal(result.deferred, 0);
   assert.equal(result.responses.some((item) => item.key.startsWith('playback:')), false);
-  assert.equal(result.responses.length, MATERIALIZED_API_VARIANTS.length - 2);
+  assert.equal(result.responses.length, MATERIALIZED_API_VARIANTS.length);
 });
 
 test('fast refresh preserves the previous generation when one API render fails', async () => {
