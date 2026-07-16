@@ -91,8 +91,9 @@ test('track history backfill clamps its final window to the archive epoch', () =
   assert.equal(trackHistoryRefreshRanges(now, { next_to: EPOCH }).backfill, null);
 });
 
-test('current APIs render on demand while historical variants remain materialized every five minutes', () => {
+test('current APIs render on demand while historical variants refresh every fifteen minutes', () => {
   const fivePast = Date.UTC(2026, 6, 16, 12, 5);
+  const fifteenPast = Date.UTC(2026, 6, 16, 12, 15);
   const materializedKeys = new Set(MATERIALIZED_API_VARIANTS.map((variant) => variant.key));
 
   assert.equal(materializedKeys.has('dashboard'), false);
@@ -101,7 +102,11 @@ test('current APIs render on demand while historical variants remain materialize
   assert.equal([...materializedKeys].some((key) => key.startsWith('playback:')), false);
   assert.equal(materializedKeys.has('track-history'), true);
   assert.equal(materializedKeys.has('history:weekly'), true);
-  assert.equal(MATERIALIZED_API_VARIANTS.every((variant) => materializedVariantDue(variant, fivePast)), true);
+  assert.deepEqual(
+    MATERIALIZED_API_VARIANTS.filter((variant) => materializedVariantDue(variant, fivePast)).map((variant) => variant.key),
+    ['minute-facts-current'],
+  );
+  assert.equal(MATERIALIZED_API_VARIANTS.every((variant) => materializedVariantDue(variant, fifteenPast)), true);
 });
 
 test('hourly refresh stores all completed default API responses as generation-safe chunks', async () => {
@@ -133,7 +138,7 @@ test('hourly refresh stores all completed default API responses as generation-sa
     && call.sql.includes('CREATE TABLE IF NOT EXISTS sh_pages_response_manifest')));
 });
 
-test('five-minute refresh renders every remaining materialized variant', async () => {
+test('five-minute refresh renders only the current minute-facts variant', async () => {
   const db = new FakeDb();
   const now = Date.UTC(2026, 6, 16, 12, 5);
   const result = await refreshFastPagesReadModels({
@@ -144,12 +149,12 @@ test('five-minute refresh renders every remaining materialized variant', async (
     render: async (variant) => Response.json({ ok: true, model_key: variant.key }),
   });
 
-  assert.equal(result.deferred, 0);
+  assert.equal(result.deferred, MATERIALIZED_API_VARIANTS.length - 1);
   assert.equal(result.responses.some((item) => item.key.startsWith('playback:')), false);
   assert.equal(result.responses.some((item) => item.key === 'dashboard'), false);
   assert.equal(result.responses.some((item) => item.key === 'dashboard-queue'), false);
   assert.equal(result.responses.some((item) => item.key === 'comment-velocity'), false);
-  assert.equal(result.responses.length, MATERIALIZED_API_VARIANTS.length);
+  assert.deepEqual(result.responses.map((item) => item.key), ['minute-facts-current']);
 });
 
 test('fast refresh preserves the previous generation when one API render fails', async () => {
