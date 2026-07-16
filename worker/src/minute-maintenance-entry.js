@@ -1,5 +1,5 @@
 import minuteWorker, { runMinuteScheduledWithCollectorPriority } from './minute-entry.js';
-import { pendingMinuteDeriveTriggers } from './minute-derive-queue.js';
+import { pendingMinuteDeriveTriggers } from './minute-derive-trigger.js';
 
 export const MINUTE_DERIVE_DISPATCH_CRON = '* * * * *';
 
