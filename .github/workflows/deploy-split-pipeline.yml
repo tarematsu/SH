@@ -12,6 +12,7 @@ on:
       - 'worker/src/minute-derive-entry.js'
       - 'worker/src/minute-maintenance-entry.js'
       - 'worker/src/minute-derive-queue.js'
+      - 'worker/src/minute-derive-trigger.js'
       - 'worker/src/minute-facts-*.js'
       - 'worker/src/collector-config.js'
       - 'worker/wrangler.jsonc'
@@ -67,7 +68,7 @@ jobs:
         run: npm run deploy:minute-derive
         working-directory: worker
       - name: Detach legacy minute Queue consumer
-        run: npx wrangler queues consumer remove stationhead-buddies-facts sh-monitor-minute || true
+        run: npm run detach:minute-consumer
         working-directory: worker
       - name: Deploy maintenance-only minute Worker
         run: npm run deploy:minute-maintenance
