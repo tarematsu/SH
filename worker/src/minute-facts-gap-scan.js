@@ -7,6 +7,10 @@ const DEFAULT_MAX_JOBS = 4;
 const DEFAULT_RECENT_GUARD_MS = 5 * MINUTE_MS;
 const DEFAULT_MAX_CARRY_MINUTES = 360;
 const MAX_WINDOW_MINUTES = 1_440;
+const PREVIOUS_CHANNEL_CHUNK_SIZE = 80;
+const SNAPSHOT_COLUMNS = `id,observed_at,channel_id,channel_alias,channel_name,station_id,
+  is_launched,is_broadcasting,chat_status,listener_count,online_member_count,total_member_count,
+  guest_count,total_listens,stream_goal,current_stream_count,host_account_id,host_handle,broadcast_start_time`;
 
 export const GAP_SCAN_STATE_KEY = 'minute-facts-gap-scan-v1';
 export const GAP_SCAN_STATE_SQL = `CREATE TABLE IF NOT EXISTS sh_minute_fact_gap_scan_state (
@@ -101,11 +105,12 @@ export function buildExpectedMinuteCandidates(rows = [], options = {}) {
     .filter((row) => row.observed_at != null && row.channel_id != null)
     .sort((a, b) => a.observed_at - b.observed_at || a.id - b.id);
   const byKey = new Map();
+  const previousByChannel = new Map();
   let sourceGapMinutes = 0;
-  let previous = null;
 
   for (const row of sorted) {
     const currentMinute = minuteBucket(row.observed_at);
+    const previous = previousByChannel.get(row.channel_id);
     if (previous && sameBroadcast(previous, row)) {
       const previousMinute = minuteBucket(previous.observed_at);
       const gapMinutes = Math.max(0, Math.round((currentMinute - previousMinute) / MINUTE_MS) - 1);
@@ -123,11 +128,13 @@ export function buildExpectedMinuteCandidates(rows = [], options = {}) {
     if (currentMinute >= from && currentMinute < to) {
       byKey.set(`${row.channel_id}:${currentMinute}`, candidate(row, currentMinute, 'exact'));
     }
-    previous = row;
+    previousByChannel.set(row.channel_id, row);
   }
 
   return {
-    candidates: [...byKey.values()].sort((a, b) => a.minuteAt - b.minuteAt),
+    candidates: [...byKey.values()].sort((a, b) => (
+      a.minuteAt - b.minuteAt || a.snapshot.channel_id - b.snapshot.channel_id
+    )),
     sourceGapMinutes,
   };
 }
@@ -150,20 +157,36 @@ async function sourceBounds(env, cutoff) {
     FROM sh_channel_snapshots WHERE observed_at<?`).bind(cutoff).first();
 }
 
-async function loadSnapshots(env, from, to) {
-  const previous = await env.DB.prepare(`SELECT id,observed_at,channel_id,channel_alias,channel_name,station_id,
-      is_launched,is_broadcasting,chat_status,listener_count,online_member_count,total_member_count,
-      guest_count,total_listens,stream_goal,current_stream_count,host_account_id,host_handle,broadcast_start_time
-    FROM sh_channel_snapshots WHERE observed_at<? ORDER BY observed_at DESC,id DESC LIMIT 1`)
-    .bind(from).first();
-  const result = await env.DB.prepare(`SELECT id,observed_at,channel_id,channel_alias,channel_name,station_id,
-      is_launched,is_broadcasting,chat_status,listener_count,online_member_count,total_member_count,
-      guest_count,total_listens,stream_goal,current_stream_count,host_account_id,host_handle,broadcast_start_time
+export async function loadGapScanSnapshots(env, from, to) {
+  const result = await env.DB.prepare(`SELECT ${SNAPSHOT_COLUMNS}
     FROM sh_channel_snapshots WHERE observed_at>=? AND observed_at<?
     ORDER BY observed_at ASC,id ASC LIMIT 2001`).bind(from, to).all();
   const rows = result.results || [];
   if (rows.length > 2000) throw new Error('minute fact gap scan snapshot window exceeded 2000 rows');
-  return previous ? [previous, ...rows] : rows;
+
+  const channelIds = [...new Set(rows.map((row) => integer(row.channel_id)).filter((value) => value != null))];
+  if (!channelIds.length) return rows;
+
+  const previousRows = [];
+  for (let offset = 0; offset < channelIds.length; offset += PREVIOUS_CHANNEL_CHUNK_SIZE) {
+    const part = channelIds.slice(offset, offset + PREVIOUS_CHANNEL_CHUNK_SIZE);
+    const previous = await env.DB.prepare(`SELECT ${SNAPSHOT_COLUMNS}
+      FROM (
+        SELECT ${SNAPSHOT_COLUMNS},
+          ROW_NUMBER() OVER (
+            PARTITION BY channel_id ORDER BY observed_at DESC,id DESC
+          ) AS row_rank
+        FROM sh_channel_snapshots
+        WHERE observed_at<? AND channel_id IN (${part.map(() => '?').join(',')})
+      )
+      WHERE row_rank=1
+      ORDER BY observed_at ASC,id ASC`).bind(from, ...part).all();
+    previousRows.push(...(previous.results || []));
+  }
+
+  return [...previousRows, ...rows].sort((left, right) => (
+    Number(left.observed_at) - Number(right.observed_at) || Number(left.id) - Number(right.id)
+  ));
 }
 
 async function existingKeys(env, candidates) {
@@ -242,7 +265,7 @@ export async function runMinuteFactsGapScan(env, dependencies = {}) {
   const from = Math.max(earliest, to - windowMinutes * MINUTE_MS);
 
   try {
-    const rows = await loadSnapshots(env, from, to);
+    const rows = await loadGapScanSnapshots(env, from, to);
     const built = buildExpectedMinuteCandidates(rows, { from, to, maxCarryMinutes });
     const existing = await existingKeys(env, built.candidates);
     const missing = built.candidates.filter((item) => !existing.has(`${item.snapshot.channel_id}:${item.minuteAt}`));
@@ -293,7 +316,8 @@ export async function runMinuteFactsGapScan(env, dependencies = {}) {
       source_gap_minutes: built.sourceGapMinutes,
       attempted_jobs: attempted.length,
       enqueued,
-      remaining_missing: Math.max(0, missing.length - enqueued),
+      unattempted_missing: Math.max(0, missing.length - attempted.length),
+      remaining_missing: missing.length,
       window_blocked: missing.length > 0,
       next_to: nextTo,
     };
