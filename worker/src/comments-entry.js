@@ -86,7 +86,11 @@ export async function processCommentsTask(env, task, dependencies = {}) {
   if (task?.message_type !== 'stationhead-comments-task' || ![1, 2].includes(version)) {
     throw new Error('unsupported comments task');
   }
-  if (version === 2 && !task.minute_fact) throw new Error('comments task minute_fact is missing');
+  if (version === 2) {
+    if (!task.minute_fact) throw new Error('comments task minute_fact is missing');
+    const parse = dependencies.parseMinuteFact || parseMinuteFactQueueMessage;
+    parse(task.minute_fact);
+  }
 
   const state = collectorStateFromAuthState(task.auth, env);
   state.stationId = Number(task.station_id || state.stationId) || null;
@@ -125,6 +129,14 @@ export default {
         await scheduleMetadata(env, ctx, result);
         message.ack();
       } catch (error) {
+        if (error?.code === 'MINUTE_FACT_QUEUE_INVALID_MESSAGE') {
+          console.error(JSON.stringify({
+            event: 'comments_task_invalid_minute_fact',
+            error: String(error?.message || error).slice(0, 800),
+          }));
+          message.ack();
+          continue;
+        }
         const attempts = positiveInteger(message.attempts, 1, 100);
         const maximum = positiveInteger(env.COMMENT_CHAIN_MAX_ATTEMPTS, 3, 8);
         const chained = Boolean(message.body?.minute_fact);
