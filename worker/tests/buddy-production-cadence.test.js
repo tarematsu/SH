@@ -7,9 +7,9 @@ import {
   runOtherScheduled,
 } from '../src/other-entry.js';
 
-test('buddy46 and public API responses refresh beside the selected task every five minutes', async () => {
+async function runAt(minute) {
   const calls = [];
-  const scheduledTime = Date.UTC(2026, 0, 1, 0, 5, 0);
+  const scheduledTime = Date.UTC(2026, 0, 1, 0, minute, 0);
   const results = await runOtherScheduled(
     { cron: OTHER_WORKER_CRON, scheduledTime },
     { BUDDY_PLAYBACK_INTERVAL_MS: 300_000 },
@@ -30,16 +30,27 @@ test('buddy46 and public API responses refresh beside the selected task every fi
       officialNewsDue: async () => false,
     },
   );
+  return { calls, results, scheduledTime };
+}
 
-  assert.deepEqual(results, ['buddy-done', 'pages-done', 'host-done']);
-  assert.deepEqual(calls, [
-    ['buddy', scheduledTime],
-    ['pages', scheduledTime],
+test('buddy46 runs every five minutes while Pages materialization runs every fifteen minutes', async () => {
+  const fivePast = await runAt(5);
+  assert.deepEqual(fivePast.results, ['buddy-done', 'host-done']);
+  assert.deepEqual(fivePast.calls, [
+    ['buddy', fivePast.scheduledTime],
+    ['host'],
+  ]);
+
+  const fifteenPast = await runAt(15);
+  assert.deepEqual(fifteenPast.results, ['buddy-done', 'pages-done', 'host-done']);
+  assert.deepEqual(fifteenPast.calls, [
+    ['buddy', fifteenPast.scheduledTime],
+    ['pages', fifteenPast.scheduledTime],
     ['host'],
   ]);
 });
 
-test('other-worker production config uses five-minute buddy and API cadence', () => {
+test('other-worker production config uses five-minute buddy cadence', () => {
   const config = JSON.parse(readFileSync(new URL('../wrangler.other.jsonc', import.meta.url), 'utf8'));
   assert.equal(config.vars.BUDDY_PLAYBACK_INTERVAL_MS, 300_000);
   assert.deepEqual(config.triggers.crons, [OTHER_WORKER_CRON]);
