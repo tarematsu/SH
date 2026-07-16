@@ -54,14 +54,12 @@ export const BLOCKED_API_PATHS = Object.freeze([
 ]);
 
 export const API_EDGE_TTL_SECONDS = 300;
-export const PLAYBACK_EDGE_TTL_SECONDS = 3600;
+export const PLAYBACK_EDGE_TTL_SECONDS = 300;
 export const API_BROWSER_TTL_SECONDS = 30;
 export const MATERIALIZED_RESPONSE_MAX_AGE_MS = 15 * 60_000;
 export const PLAYBACK_RESPONSE_MAX_AGE_MS = 2 * 60 * 60_000;
 
 export const MATERIALIZED_API_VARIANTS = Object.freeze([
-  Object.freeze({ key: 'playback:buddies', url: '/api/playback?channel=buddies', cadence_minutes: 60 }),
-  Object.freeze({ key: 'playback:buddy46', url: '/api/playback?channel=buddy46', cadence_minutes: 60 }),
   Object.freeze({ key: 'dashboard', url: '/api/dashboard', cadence_minutes: 5 }),
   Object.freeze({ key: 'dashboard-history', url: '/api/dashboard-history', cadence_minutes: 5 }),
   Object.freeze({ key: 'dashboard-queue', url: '/api/dashboard-queue', cadence_minutes: 5 }),
@@ -100,12 +98,7 @@ export function materializedApiKey(input) {
   const url = input instanceof URL ? input : new URL(input);
   const pathname = normalizedPathname(url.pathname);
 
-  if (pathname === '/api/playback' && onlyParameters(url, ['channel'])) {
-    const channel = normalizedChannel(url);
-    if (channel === 'buddies') return 'playback:buddies';
-    if (channel === 'buddy46') return 'playback:buddy46';
-    return null;
-  }
+  if (pathname === '/api/playback') return null;
   if (pathname === '/api/dashboard' && onlyParameters(url)) return 'dashboard';
   if (pathname === '/api/dashboard-history' && onlyParameters(url)) return 'dashboard-history';
   if (pathname === '/api/dashboard-queue' && onlyParameters(url, ['offset', 'limit'])) {
