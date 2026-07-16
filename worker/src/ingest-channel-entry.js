@@ -9,6 +9,23 @@ import {
 } from './collector-payload.js';
 import { collectorStateFromAuthState } from './collector-state.js';
 
+function integer(value) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? Math.trunc(parsed) : null;
+}
+
+export function commentsTaskForMinuteFact(commentTask, body) {
+  const compact = { ...body, read_model: null };
+  return {
+    message_type: 'stationhead-comments-task',
+    message_version: 2,
+    auth: commentTask?.auth || {},
+    observed_at: integer(body?.payload?.observedAt) ?? integer(commentTask?.observed_at) ?? Date.now(),
+    station_id: integer(body?.payload?.snapshot?.station_id) ?? integer(commentTask?.station_id),
+    minute_fact: compact,
+  };
+}
+
 function activeIngestEnv(env, message, channel, commentTask) {
   const active = Object.create(env || null);
   const commentsQueue = env?.COMMENTS_QUEUE;
@@ -21,13 +38,7 @@ function activeIngestEnv(env, message, channel, commentTask) {
       value: commentsQueue?.send ? {
         send(body, options) {
           if (body && typeof body === 'object') {
-            const compact = { ...body, read_model: null };
-            return commentsQueue.send({
-              message_type: 'stationhead-comments-task',
-              message_version: 2,
-              ...commentTask,
-              minute_fact: compact,
-            }, options);
+            return commentsQueue.send(commentsTaskForMinuteFact(commentTask, body), options);
           }
           return commentsQueue.send(body, options);
         },
