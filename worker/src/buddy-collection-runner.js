@@ -1,9 +1,9 @@
-import { collectBuddyRawPlayback as collectStationPlayback } from './buddy-raw-playback.js';
+import { collectBuddyPlayback } from './buddy-playback.js';
 import { collectBuddyPlaybackReady } from './buddy-runtime.js';
 
 export function createBuddyCollectionDependencies(_env = {}, dependencies = {}) {
   const baseFetch = dependencies.fetch || fetch;
-  const baseCollect = dependencies.collect || collectStationPlayback;
+  const baseCollect = dependencies.collect || collectBuddyPlayback;
 
   return {
     ...dependencies,
