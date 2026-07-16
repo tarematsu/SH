@@ -30,7 +30,8 @@ test('derive config applies bounded defaults', () => {
     maxAttempts: 8,
     runBudgetMs: 50_000,
   });
-  assert.equal(deriveConfig({ DERIVE_MAX_JOBS: 999 }).maxJobs, 20);
+  assert.equal(deriveConfig({ DERIVE_MAX_JOBS: 999 }).maxJobs, 999);
+  assert.equal(deriveConfig({ DERIVE_MAX_JOBS: 9_999 }).maxJobs, 1_000);
   assert.equal(deriveConfig({ DERIVE_JOB_TIMEOUT_MS: 99_999 }).jobTimeoutMs, 20_000);
 });
 
@@ -49,7 +50,7 @@ test('derive cron claims the batch once, then writes and completes each job', as
       now: () => 1_000,
       claim: async (_env, options) => {
         calls.push(['claim', options.limit, options.leaseMs]);
-        return [job(1), job(2)];
+        return calls.length === 1 ? [job(1), job(2)] : [];
       },
       write: async (env, payload) => {
         calls.push(['write', env.MINUTE_FACT_TIMEOUT_MS, payload.observedAt]);
@@ -69,14 +70,40 @@ test('derive cron claims the batch once, then writes and completes each job', as
 
   assert.equal(result.processed, 2);
   assert.equal(result.failed, 0);
-  // A single claim leases the whole batch (limit == maxJobs), no re-claim loop.
   assert.deepEqual(calls, [
     ['claim', 8, 60_000],
     ['write', 18_000, 120_001],
     ['complete', 1],
     ['write', 18_000, 120_002],
     ['complete', 2],
+    ['claim', 6, 60_000],
   ]);
+});
+
+test('derive cron drains up to 1000 jobs through bounded 20-job claims', async () => {
+  const pending = Array.from({ length: 1_000 }, (_, index) => job(index + 1));
+  const claimSizes = [];
+  const completed = [];
+  const result = await runMinuteFactDeriveCron(
+    { MINUTE_DB: {}, DERIVE_MAX_JOBS: 1_000 },
+    {
+      now: () => 1_000,
+      claim: async (_env, options) => {
+        claimSizes.push(options.limit);
+        return pending.splice(0, options.limit);
+      },
+      write: async () => {},
+      complete: async (_env, id) => { completed.push(id); },
+      fail: async () => { throw new Error('unexpected fail'); },
+      release: async () => { throw new Error('unexpected release'); },
+      stats: async () => ({ pending_count: pending.length, processing_count: 0, dead_count: 0 }),
+    },
+  );
+
+  assert.equal(result.processed, 1_000);
+  assert.equal(completed.length, 1_000);
+  assert.equal(claimSizes.length, 50);
+  assert.ok(claimSizes.every((size) => size === 20));
 });
 
 test('derive cron returns budget-stranded jobs to the queue', async () => {
@@ -85,8 +112,6 @@ test('derive cron returns budget-stranded jobs to the queue', async () => {
   const result = await runMinuteFactDeriveCron(
     { MINUTE_DB: {}, DERIVE_RUN_BUDGET_MS: 5_000 },
     {
-      // First job processes at t=1000; the budget deadline is 1000+5000-1000
-      // guard = 5000, so the second job is skipped once the clock passes it.
       now: () => clock,
       claim: async () => [job(1), job(2)],
       write: async () => { clock = 6_000; },
