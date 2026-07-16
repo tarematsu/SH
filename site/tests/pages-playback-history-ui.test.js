@@ -17,9 +17,18 @@ test('main page renders the current track bite count from the existing dashboard
   assert.doesNotMatch(dashboardClient, /fetch\(['"]\/api\/playback/);
 });
 
-test('track history uses the database that owns queue snapshots', () => {
-  assert.match(trackEndpoint, /MINUTE_DB:\s*null/);
-  assert.match(trackEndpoint, /handleTrackHistory/);
+test('main page labels member and stream deltas with their actual dates', () => {
+  assert.match(dashboardClient, /formatPeriodLabel\(data\?\.yesterday\?\.period_key, '昨日'\)/);
+  assert.match(dashboardClient, /formatPeriodLabel\(data\?\.day_before_yesterday\?\.period_key, '一昨日'\)/);
+  assert.match(dashboardClient, /`\$\{Number\(match\[2\]\)\}月\$\{Number\(match\[3\]\)\}日`/);
+  assert.match(dashboardClient, /streamsYesterdayDelta', yesterdayLabel/);
+  assert.match(dashboardClient, /streamsDayBeforeDelta', dayBeforeLabel/);
+});
+
+test('track history reads only the materialized MINUTE_DB read model', () => {
+  assert.match(trackEndpoint, /FROM sh_pages_track_history_read_model/);
+  assert.match(trackEndpoint, /FROM sh_pages_payload_read_model/);
+  assert.doesNotMatch(trackEndpoint, /handleTrackHistory|sh_queue_items|sh_queue_snapshots|sh_channel_snapshots/);
 });
 
 test('track history defaults to yesterday as a single day', () => {
