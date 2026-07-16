@@ -1,32 +1,21 @@
-const PLAYBACK_EDGE_TTL_SECONDS = 300;
-const PLAYBACK_BROWSER_TTL_SECONDS = 30;
+import {
+  API_BROWSER_TTL_SECONDS,
+  API_EDGE_TTL_SECONDS,
+  PLAYBACK_EDGE_TTL_SECONDS,
+  apiCacheTtlSeconds,
+  canonicalApiCacheRequest,
+  edgeCacheableApiRequest,
+  materializedApiKey,
+  materializedResponseMaximumAge,
+} from './lib/api-contract.js';
+
+const MATERIALIZED_RETRY_TTL_SECONDS = 30;
 const inFlight = new Map();
 
-function primaryPlaybackRequest(request) {
-  if (request.method !== 'GET' || request.headers.has('authorization')) return false;
-  const url = new URL(request.url);
-  if (url.pathname !== '/api/playback' || url.searchParams.has('raw')) return false;
-  const channel = String(url.searchParams.get('channel') || 'buddies').trim().toLowerCase();
-  return channel === 'buddies';
-}
-
-function canonicalRequest(request) {
-  const url = new URL(request.url);
-  url.searchParams.delete('v');
-  const sorted = [...url.searchParams.entries()].sort(([aKey, aValue], [bKey, bValue]) =>
-    aKey.localeCompare(bKey) || aValue.localeCompare(bValue));
-  url.search = '';
-  for (const [key, value] of sorted) url.searchParams.append(key, value);
-  return new Request(url.toString(), {
-    method: 'GET',
-    headers: { accept: 'application/json' },
-  });
-}
-
-function tagged(response, state) {
+function tagged(response, cacheState) {
   const clone = response.clone();
   const headers = new Headers(clone.headers);
-  headers.set('x-playback-cache', state);
+  headers.set('x-edge-cache', cacheState);
   return new Response(clone.body, {
     status: clone.status,
     statusText: clone.statusText,
@@ -34,12 +23,95 @@ function tagged(response, state) {
   });
 }
 
+function safeHeaders(value) {
+  try {
+    const parsed = JSON.parse(value || '{}');
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? parsed
+      : {};
+  } catch {
+    return {};
+  }
+}
+
+function materializedCadenceSeconds(modelKey) {
+  return String(modelKey || '').startsWith('playback:')
+    ? PLAYBACK_EDGE_TTL_SECONDS
+    : API_EDGE_TTL_SECONDS;
+}
+
+async function materializedResponse(context, modelKey, now = Date.now()) {
+  if (!modelKey || !context.env?.MINUTE_DB) return null;
+  const db = context.env.MINUTE_DB;
+  try {
+    const manifest = await db.prepare(`SELECT generation,status,headers_json,chunk_count,updated_at
+      FROM sh_pages_response_manifest
+      WHERE model_key=?
+      LIMIT 1`).bind(modelKey).first();
+    if (!manifest?.generation || Number(manifest.chunk_count) <= 0) return null;
+    if (now - Number(manifest.updated_at || 0) > materializedResponseMaximumAge(modelKey, context.env)) {
+      return null;
+    }
+
+    const result = await db.prepare(`SELECT payload_chunk
+      FROM sh_pages_response_chunks
+      WHERE model_key=? AND generation=?
+      ORDER BY chunk_index ASC`).bind(modelKey, manifest.generation).all();
+    const rows = result.results || [];
+    if (rows.length !== Number(manifest.chunk_count)) return null;
+
+    const headers = new Headers(safeHeaders(manifest.headers_json));
+    headers.set('x-api-source', 'worker-materialized');
+    headers.set('x-materialized-at', String(manifest.updated_at));
+    headers.set('x-materialized-cadence-seconds', String(materializedCadenceSeconds(modelKey)));
+    return new Response(rows.map((row) => String(row.payload_chunk || '')).join(''), {
+      status: Number(manifest.status) || 200,
+      headers,
+    });
+  } catch (error) {
+    if (/no such table/i.test(String(error?.message || error))) return null;
+    console.error(error);
+    return null;
+  }
+}
+
+function responseCacheTtl(origin, requestedTtl, modelKey, usedMaterialized, now) {
+  if (!usedMaterialized) {
+    return modelKey ? MATERIALIZED_RETRY_TTL_SECONDS : requestedTtl;
+  }
+  const updatedAt = Number(origin.headers.get('x-materialized-at'));
+  const cadenceSeconds = Number(origin.headers.get('x-materialized-cadence-seconds'));
+  if (!Number.isFinite(updatedAt) || !Number.isFinite(cadenceSeconds) || cadenceSeconds <= 0) {
+    return MATERIALIZED_RETRY_TTL_SECONDS;
+  }
+  const remainingSeconds = Math.floor((updatedAt + cadenceSeconds * 1000 - now) / 1000);
+  if (remainingSeconds <= 0) return MATERIALIZED_RETRY_TTL_SECONDS;
+  return Math.max(1, Math.min(requestedTtl, remainingSeconds));
+}
+
+function sharedResponse(origin, ttlSeconds) {
+  const headers = new Headers(origin.headers);
+  if (origin.ok) {
+    const browserTtl = Math.min(API_BROWSER_TTL_SECONDS, ttlSeconds);
+    headers.set(
+      'cache-control',
+      `public, max-age=${browserTtl}, s-maxage=${ttlSeconds}, stale-while-revalidate=${ttlSeconds * 2}`,
+    );
+  }
+  headers.set('vary', 'accept-encoding');
+  return new Response(origin.body, {
+    status: origin.status,
+    statusText: origin.statusText,
+    headers,
+  });
+}
+
 export async function onRequest(context) {
   const { request } = context;
-  if (!primaryPlaybackRequest(request)) return context.next();
+  if (!edgeCacheableApiRequest(request)) return context.next();
 
   const cache = caches.default;
-  const cacheKey = canonicalRequest(request);
+  const cacheKey = canonicalApiCacheRequest(request);
   const hit = await cache.match(cacheKey);
   if (hit) return tagged(hit, 'HIT');
 
@@ -48,20 +120,18 @@ export async function onRequest(context) {
   const coalesced = Boolean(task);
   if (!task) {
     task = (async () => {
-      const origin = await context.next();
-      const headers = new Headers(origin.headers);
-      if (origin.ok) {
-        headers.set(
-          'cache-control',
-          `public, max-age=${PLAYBACK_BROWSER_TTL_SECONDS}, s-maxage=${PLAYBACK_EDGE_TTL_SECONDS}, stale-while-revalidate=${PLAYBACK_EDGE_TTL_SECONDS * 2}`,
-        );
-      }
-      headers.set('vary', 'accept-encoding');
-      const shared = new Response(origin.body, {
-        status: origin.status,
-        statusText: origin.statusText,
-        headers,
-      });
+      const now = Date.now();
+      const modelKey = materializedApiKey(new URL(request.url));
+      const prebuilt = await materializedResponse(context, modelKey, now);
+      const origin = prebuilt || await context.next();
+      const ttlSeconds = responseCacheTtl(
+        origin,
+        apiCacheTtlSeconds(request),
+        modelKey,
+        Boolean(prebuilt),
+        now,
+      );
+      const shared = sharedResponse(origin, ttlSeconds);
       if (shared.ok) context.waitUntil(cache.put(cacheKey, shared.clone()));
       return shared;
     })().finally(() => inFlight.delete(key));

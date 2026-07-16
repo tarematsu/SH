@@ -68,8 +68,8 @@ export async function selectOtherProductionTask(controller, env, dependencies = 
   const now = scheduledTimestamp(controller);
   const scheduled = otherProductionTask(now, env);
   // Active-event probing may replace an ordinary host poll, but must not starve
-  // prediction, maintenance, or retention. Buddy playback runs beside whichever
-  // workload is selected for every five-minute production tick.
+  // prediction, maintenance, or retention. Buddy playback and public API
+  // materialization run beside whichever workload is selected every five minutes.
   if (scheduled !== 'host') return scheduled;
   const due = dependencies.officialNewsDue || officialNewsProbeDue;
   return await due(env, now) ? 'officialNews' : scheduled;
@@ -86,6 +86,7 @@ function hasInjectedTaskSet(dependencies = {}) {
 
 async function defaultRunner(name) {
   if (name === 'buddy') return (await import('./buddy-playback-scheduler.js')).scheduleBuddyPlayback;
+  if (name === 'pages') return (await import('./pages-read-model-refresh.js')).refreshFastPagesReadModels;
   if (name === 'host') return (await import('./cloud-host-monitor.js')).runCloudHostMonitor;
   if (name === 'prediction') return (await import('./stream-goal-prediction.js')).runStreamGoalPrediction;
   if (name === 'maintenance') return (await import('./scheduled-maintenance.js')).runScheduledMaintenance;
@@ -137,8 +138,7 @@ export async function runOfficialNewsWithReconcile(env, now, probe = null, recon
 export async function runOtherScheduled(controller, env, ctx, dependencies = {}) {
   if (hasInjectedTaskSet(dependencies) && String(controller.cron || '') !== OTHER_WORKER_CRON) {
     // Preserve the broad injected mode used by integration tests and manual
-    // diagnostics. Production uses buddy playback plus one selected workload
-    // per five-minute tick.
+    // diagnostics. Production adds the five-minute API materializer separately.
     const collectorGate = env?.BUDDIES_DB?.prepare
       ? (dependencies.waitForCollector
         ? dependencies.waitForCollector(env, scheduledTimestamp(controller))
@@ -152,8 +152,16 @@ export async function runOtherScheduled(controller, env, ctx, dependencies = {})
   }
   const selected = await selectOtherProductionTask(controller, env, dependencies);
   const companion = selected === 'buddy' ? 'host' : selected;
+  const names = [];
   const buddyAvailable = Boolean(env?.OTHER_DB?.prepare || typeof dependencies.buddy === 'function');
-  return invokeTaskSet(buddyAvailable ? ['buddy', companion] : [companion], controller, env, ctx, dependencies);
+  const pagesAvailable = Boolean(
+    (env?.BUDDIES_DB?.prepare && env?.MINUTE_DB?.prepare && env?.OTHER_DB?.prepare)
+      || typeof dependencies.pages === 'function'
+  );
+  if (buddyAvailable) names.push('buddy');
+  if (pagesAvailable) names.push('pages');
+  names.push(companion);
+  return invokeTaskSet(names, controller, env, ctx, dependencies);
 }
 
 async function healthApp() {

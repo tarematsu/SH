@@ -16,15 +16,133 @@ function fakeCache() {
   };
 }
 
-async function cachedRequest(url, next, waits) {
+function sharedTtl(response) {
+  const match = /(?:^|,\s*)s-maxage=(\d+)/.exec(response.headers.get('cache-control') || '');
+  return match ? Number(match[1]) : null;
+}
+
+class MaterializedDb {
+  constructor({ updatedAt = Date.now() } = {}) {
+    this.updatedAt = updatedAt;
+    this.calls = [];
+  }
+
+  prepare(sql) {
+    const db = this;
+    return {
+      params: [],
+      bind(...params) {
+        this.params = params;
+        return this;
+      },
+      async first() {
+        db.calls.push({ method: 'first', sql, params: this.params });
+        if (!sql.includes('sh_pages_response_manifest')) return null;
+        return {
+          generation: `generation:${this.params[0]}`,
+          status: 200,
+          headers_json: JSON.stringify({ 'content-type': 'application/json; charset=utf-8' }),
+          chunk_count: 1,
+          updated_at: db.updatedAt,
+        };
+      },
+      async all() {
+        db.calls.push({ method: 'all', sql, params: this.params });
+        if (!sql.includes('sh_pages_response_chunks')) return { results: [] };
+        return { results: [{
+          payload_chunk: JSON.stringify({ ok: true, model_key: this.params[0] }),
+        }] };
+      },
+    };
+  }
+}
+
+async function cachedRequest(url, next, waits, env = {}) {
   return onRequest({
     request: new Request(url),
+    env,
     next,
     waitUntil(promise) { waits.push(promise); },
   });
 }
 
-test('buddies playback JSON is built once per five-minute edge-cache window', async () => {
+test('buddies and buddy46 playback are served from hourly cron payloads', async () => {
+  const previousCaches = globalThis.caches;
+  globalThis.caches = { default: fakeCache() };
+  let liveBuilds = 0;
+  const waits = [];
+  const db = new MaterializedDb();
+  const next = async () => Response.json({ ok: true, build: ++liveBuilds });
+
+  try {
+    const buddies = await cachedRequest(
+      'https://skrzk.test/api/playback?channel=buddies',
+      next,
+      waits,
+      { MINUTE_DB: db },
+    );
+    assert.equal(buddies.headers.get('x-edge-cache'), 'MISS');
+    assert.equal(buddies.headers.get('x-api-source'), 'worker-materialized');
+    assert.ok(sharedTtl(buddies) >= 3598 && sharedTtl(buddies) <= 3600);
+    assert.deepEqual(await buddies.json(), { ok: true, model_key: 'playback:buddies' });
+    await Promise.all(waits.splice(0));
+
+    const buddiesHit = await cachedRequest(
+      'https://skrzk.test/api/playback?v=2',
+      next,
+      waits,
+      { MINUTE_DB: db },
+    );
+    assert.equal(buddiesHit.headers.get('x-edge-cache'), 'HIT');
+    assert.deepEqual(await buddiesHit.json(), { ok: true, model_key: 'playback:buddies' });
+
+    const buddy46 = await cachedRequest(
+      'https://skrzk.test/api/playback?channel=buddy46',
+      next,
+      waits,
+      { MINUTE_DB: db },
+    );
+    assert.equal(buddy46.headers.get('x-edge-cache'), 'MISS');
+    assert.equal(buddy46.headers.get('x-api-source'), 'worker-materialized');
+    assert.ok(sharedTtl(buddy46) >= 3598 && sharedTtl(buddy46) <= 3600);
+    assert.deepEqual(await buddy46.json(), { ok: true, model_key: 'playback:buddy46' });
+    assert.equal(liveBuilds, 0);
+  } finally {
+    globalThis.caches = previousCaches;
+  }
+});
+
+test('playback edge cache expires with the materialized hour instead of extending stale JSON', async () => {
+  const previousCaches = globalThis.caches;
+  globalThis.caches = { default: fakeCache() };
+  const waits = [];
+  const next = async () => Response.json({ ok: true, source: 'live' });
+
+  try {
+    const nearlyExpired = await cachedRequest(
+      'https://skrzk.test/api/playback?channel=buddies',
+      next,
+      waits,
+      { MINUTE_DB: new MaterializedDb({ updatedAt: Date.now() - 3_590_000 }) },
+    );
+    assert.ok(sharedTtl(nearlyExpired) >= 1 && sharedTtl(nearlyExpired) <= 10);
+    await nearlyExpired.arrayBuffer();
+
+    globalThis.caches = { default: fakeCache() };
+    const expiredGeneration = await cachedRequest(
+      'https://skrzk.test/api/playback?channel=buddies',
+      next,
+      waits,
+      { MINUTE_DB: new MaterializedDb({ updatedAt: Date.now() - 3_700_000 }) },
+    );
+    assert.equal(sharedTtl(expiredGeneration), 30);
+    await expiredGeneration.arrayBuffer();
+  } finally {
+    globalThis.caches = previousCaches;
+  }
+});
+
+test('non-playback public APIs are coalesced and cached for five minutes', async () => {
   const previousCaches = globalThis.caches;
   globalThis.caches = { default: fakeCache() };
   let builds = 0;
@@ -32,14 +150,14 @@ test('buddies playback JSON is built once per five-minute edge-cache window', as
   const next = async () => Response.json({ ok: true, build: ++builds });
 
   try {
-    const first = await cachedRequest('https://skrzk.test/api/playback?channel=buddies', next, waits);
-    assert.equal(first.headers.get('x-playback-cache'), 'MISS');
-    assert.match(first.headers.get('cache-control'), /s-maxage=300/);
+    const first = await cachedRequest('https://skrzk.test/api/broadcast-series?id=7', next, waits);
+    assert.equal(first.headers.get('x-edge-cache'), 'MISS');
+    assert.equal(sharedTtl(first), 300);
     assert.deepEqual(await first.json(), { ok: true, build: 1 });
     await Promise.all(waits.splice(0));
 
-    const second = await cachedRequest('https://skrzk.test/api/playback?channel=buddies', next, waits);
-    assert.equal(second.headers.get('x-playback-cache'), 'HIT');
+    const second = await cachedRequest('https://skrzk.test/api/broadcast-series?id=7&v=9', next, waits);
+    assert.equal(second.headers.get('x-edge-cache'), 'HIT');
     assert.deepEqual(await second.json(), { ok: true, build: 1 });
     assert.equal(builds, 1);
   } finally {
@@ -47,7 +165,7 @@ test('buddies playback JSON is built once per five-minute edge-cache window', as
   }
 });
 
-test('default playback aliases to buddies but buddy46 and raw requests bypass the cache', async () => {
+test('health, freshness, recovery, and raw requests remain immediate', async () => {
   const previousCaches = globalThis.caches;
   globalThis.caches = { default: fakeCache() };
   let builds = 0;
@@ -55,24 +173,18 @@ test('default playback aliases to buddies but buddy46 and raw requests bypass th
   const next = async () => Response.json({ ok: true, build: ++builds });
 
   try {
-    const defaultResponse = await cachedRequest('https://skrzk.test/api/playback', next, waits);
-    assert.equal(defaultResponse.headers.get('x-playback-cache'), 'MISS');
-    await defaultResponse.arrayBuffer();
-    await Promise.all(waits.splice(0));
-
-    const defaultHit = await cachedRequest('https://skrzk.test/api/playback?v=2', next, waits);
-    assert.equal(defaultHit.headers.get('x-playback-cache'), 'HIT');
-    await defaultHit.arrayBuffer();
-
-    const buddy46 = await cachedRequest('https://skrzk.test/api/playback?channel=buddy46', next, waits);
-    assert.equal(buddy46.headers.get('x-playback-cache'), null);
-    await buddy46.arrayBuffer();
-
-    const raw = await cachedRequest('https://skrzk.test/api/playback?channel=buddies&raw=1', next, waits);
-    assert.equal(raw.headers.get('x-playback-cache'), null);
-    await raw.arrayBuffer();
-
-    assert.equal(builds, 3);
+    for (const url of [
+      'https://skrzk.test/api/health',
+      'https://skrzk.test/api/minute-facts/latest',
+      'https://skrzk.test/api/dashboard-recovery',
+      'https://skrzk.test/api/history?mode=raw',
+      'https://skrzk.test/api/playback?raw=1',
+    ]) {
+      const response = await cachedRequest(url, next, waits);
+      assert.equal(response.headers.get('x-edge-cache'), null);
+      await response.arrayBuffer();
+    }
+    assert.equal(builds, 5);
   } finally {
     globalThis.caches = previousCaches;
   }

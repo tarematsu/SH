@@ -53,6 +53,148 @@ export const BLOCKED_API_PATHS = Object.freeze([
   ...INTERNAL_API_PATHS,
 ]);
 
+export const API_EDGE_TTL_SECONDS = 300;
+export const PLAYBACK_EDGE_TTL_SECONDS = 3600;
+export const API_BROWSER_TTL_SECONDS = 30;
+export const MATERIALIZED_RESPONSE_MAX_AGE_MS = 15 * 60_000;
+export const PLAYBACK_RESPONSE_MAX_AGE_MS = 2 * 60 * 60_000;
+
+export const MATERIALIZED_API_VARIANTS = Object.freeze([
+  Object.freeze({ key: 'playback:buddies', url: '/api/playback?channel=buddies', cadence_minutes: 60 }),
+  Object.freeze({ key: 'playback:buddy46', url: '/api/playback?channel=buddy46', cadence_minutes: 60 }),
+  Object.freeze({ key: 'dashboard', url: '/api/dashboard', cadence_minutes: 5 }),
+  Object.freeze({ key: 'dashboard-history', url: '/api/dashboard-history', cadence_minutes: 5 }),
+  Object.freeze({ key: 'dashboard-queue', url: '/api/dashboard-queue', cadence_minutes: 5 }),
+  Object.freeze({ key: 'comment-velocity', url: '/api/comment-velocity', cadence_minutes: 5 }),
+  Object.freeze({ key: 'track-likes', url: '/api/track-likes', cadence_minutes: 5 }),
+  Object.freeze({ key: 'like-ranking', url: '/api/like-ranking', cadence_minutes: 5 }),
+  Object.freeze({ key: 'minute-facts-current', url: '/api/minute-facts/current', cadence_minutes: 5 }),
+  Object.freeze({ key: 'history:daily', url: '/api/history?mode=daily', cadence_minutes: 5 }),
+  Object.freeze({ key: 'history:weekly', url: '/api/history?mode=weekly', cadence_minutes: 5 }),
+  Object.freeze({ key: 'history:monthly', url: '/api/history?mode=monthly', cadence_minutes: 5 }),
+  Object.freeze({ key: 'history:broadcasts', url: '/api/history?mode=broadcasts', cadence_minutes: 5 }),
+  Object.freeze({ key: 'track-history', url: '/api/track-history', cadence_minutes: 5 }),
+  Object.freeze({ key: 'host-history:summary', url: '/api/host-history?mode=summary', cadence_minutes: 5 }),
+]);
+
+const blockedApiPaths = new Set(BLOCKED_API_PATHS);
+
+function normalizedPathname(value) {
+  const pathname = String(value || '/');
+  return pathname.length > 1 ? pathname.replace(/\/+$/, '') : pathname;
+}
+
+function onlyParameters(url, allowed = []) {
+  const keys = new Set(allowed);
+  for (const key of url.searchParams.keys()) {
+    if (key !== 'v' && !keys.has(key)) return false;
+  }
+  return true;
+}
+
+function normalizedChannel(url) {
+  return String(url.searchParams.get('channel') || 'buddies').trim().toLowerCase();
+}
+
+export function materializedApiKey(input) {
+  const url = input instanceof URL ? input : new URL(input);
+  const pathname = normalizedPathname(url.pathname);
+
+  if (pathname === '/api/playback' && onlyParameters(url, ['channel'])) {
+    const channel = normalizedChannel(url);
+    if (channel === 'buddies') return 'playback:buddies';
+    if (channel === 'buddy46') return 'playback:buddy46';
+    return null;
+  }
+  if (pathname === '/api/dashboard' && onlyParameters(url)) return 'dashboard';
+  if (pathname === '/api/dashboard-history' && onlyParameters(url)) return 'dashboard-history';
+  if (pathname === '/api/dashboard-queue' && onlyParameters(url, ['offset', 'limit'])) {
+    const offset = url.searchParams.get('offset');
+    const limit = url.searchParams.get('limit');
+    return (offset == null || Number(offset) === 11) && (limit == null || Number(limit) === 20)
+      ? 'dashboard-queue'
+      : null;
+  }
+  if (pathname === '/api/comment-velocity' && onlyParameters(url)) return 'comment-velocity';
+  if (pathname === '/api/track-likes' && onlyParameters(url)) return 'track-likes';
+  if (pathname === '/api/like-ranking' && onlyParameters(url, ['limit'])) {
+    const limit = url.searchParams.get('limit');
+    return limit == null || Number(limit) === 200 ? 'like-ranking' : null;
+  }
+  if (pathname === '/api/minute-facts/current' && onlyParameters(url)) return 'minute-facts-current';
+  if (pathname === '/api/history' && onlyParameters(url, ['mode'])) {
+    const mode = String(url.searchParams.get('mode') || 'weekly').trim().toLowerCase();
+    return ['daily', 'weekly', 'monthly', 'broadcasts'].includes(mode) ? `history:${mode}` : null;
+  }
+  if (pathname === '/api/track-history' && onlyParameters(url)) return 'track-history';
+  if (pathname === '/api/host-history' && onlyParameters(url, ['mode'])) {
+    const mode = String(url.searchParams.get('mode') || 'summary').trim().toLowerCase();
+    return mode === 'summary' ? 'host-history:summary' : null;
+  }
+  return null;
+}
+
+export function edgeCacheableApiRequest(request) {
+  if (request.method !== 'GET' || request.headers.has('authorization')) return false;
+  const url = new URL(request.url);
+  const pathname = normalizedPathname(url.pathname);
+  if (!pathname.startsWith('/api/') || blockedApiPaths.has(pathname)) return false;
+  if (pathname.startsWith('/api/health')) return false;
+  if (pathname === '/api/minute-facts/latest' || pathname === '/api/dashboard-recovery') return false;
+  if (url.searchParams.has('raw') || url.searchParams.get('mode') === 'raw') return false;
+  return true;
+}
+
+export function apiCacheTtlSeconds(request) {
+  return normalizedPathname(new URL(request.url).pathname) === '/api/playback'
+    ? PLAYBACK_EDGE_TTL_SECONDS
+    : API_EDGE_TTL_SECONDS;
+}
+
+export function materializedResponseMaximumAge(modelKey, env = {}) {
+  const playback = String(modelKey || '').startsWith('playback:');
+  const configured = Number(playback
+    ? env.PLAYBACK_RESPONSE_MAX_AGE_MS
+    : env.PAGES_RESPONSE_MAX_AGE_MS);
+  const fallback = playback ? PLAYBACK_RESPONSE_MAX_AGE_MS : MATERIALIZED_RESPONSE_MAX_AGE_MS;
+  const minimum = (playback ? PLAYBACK_EDGE_TTL_SECONDS : API_EDGE_TTL_SECONDS) * 1000;
+  return Number.isFinite(configured) && configured >= minimum ? configured : fallback;
+}
+
+export function canonicalApiCacheRequest(request) {
+  const url = new URL(request.url);
+  const pathname = normalizedPathname(url.pathname);
+  url.searchParams.delete('v');
+
+  if (pathname === '/api/playback' && normalizedChannel(url) === 'buddies') {
+    url.searchParams.delete('channel');
+  }
+  if (pathname === '/api/history'
+      && String(url.searchParams.get('mode') || 'weekly').trim().toLowerCase() === 'weekly') {
+    url.searchParams.delete('mode');
+  }
+  if (pathname === '/api/host-history'
+      && String(url.searchParams.get('mode') || 'summary').trim().toLowerCase() === 'summary') {
+    url.searchParams.delete('mode');
+  }
+  if (pathname === '/api/dashboard-queue') {
+    if (Number(url.searchParams.get('offset')) === 11) url.searchParams.delete('offset');
+    if (Number(url.searchParams.get('limit')) === 20) url.searchParams.delete('limit');
+  }
+  if (pathname === '/api/like-ranking' && Number(url.searchParams.get('limit')) === 200) {
+    url.searchParams.delete('limit');
+  }
+
+  const sorted = [...url.searchParams.entries()].sort(([aKey, aValue], [bKey, bValue]) =>
+    aKey.localeCompare(bKey) || aValue.localeCompare(bValue));
+  url.search = '';
+  for (const [key, value] of sorted) url.searchParams.append(key, value);
+  return new Request(url.toString(), {
+    method: 'GET',
+    headers: { accept: 'application/json' },
+  });
+}
+
 export function canonicalApiPaths() {
   return Object.values(API_GROUPS).flat().map(({ path }) => path);
 }
