@@ -166,7 +166,6 @@ export function readModelPresentation(snapshot) {
 
 export function minuteFactQueue(queue) {
   if (!queue) return queue;
-  if (queue[COMPACT_QUEUE_MARKER]) return queue;
   const { raw, tracks, ...rest } = queue;
   const compactTracks = Array.isArray(tracks) ? tracks : [];
   const alreadyCompact = !raw && compactTracks.every((track) => (
@@ -184,15 +183,17 @@ export function minuteFactQueue(queue) {
       const album = source?.album || {};
       return {
         ...track,
-        title: boundedText(source?.title ?? source?.name, 500),
+        title: boundedText(track?.title ?? source?.title ?? source?.name, 500),
         artist: boundedText(
-          typeof artist === 'string' ? artist : (artist?.name ?? source?.artist_name),
+          track?.artist ?? (typeof artist === 'string' ? artist : (artist?.name ?? source?.artist_name)),
           500,
         ),
-        album_name: boundedText(album?.name ?? source?.album_name, 500),
+        album_name: boundedText(track?.album_name ?? album?.name ?? source?.album_name, 500),
         thumbnail_url: boundedText(
-          source?.image_url ?? source?.artwork_url ?? source?.album_art_url
-            ?? album?.image_url ?? album?.artwork_url,
+          track?.thumbnail_url ?? source?.thumbnail_url ?? source?.image_url
+            ?? source?.artwork_url ?? source?.album_art_url
+            ?? album?.thumbnail_url ?? album?.image_url ?? album?.artwork_url
+            ?? album?.images?.[0]?.url,
           2_048,
         ),
       };
@@ -238,6 +239,7 @@ export function extractQueue(channel, stationId) {
     const item = queueTracks[position];
     const track = item?.track || item;
     const artist = track?.artist || track?.artists?.[0] || {};
+    const album = track?.album || {};
     const queueTrackId = item?.id ?? null;
     const stationheadTrackId = track?.id ?? null;
     const spotifyId = track?.spotify_id ?? null;
@@ -280,6 +282,14 @@ export function extractQueue(channel, stationId) {
       artist: boundedText(
         typeof artist === 'string' ? artist : (artist?.name ?? track?.artist_name),
         500,
+      ),
+      album_name: boundedText(album?.name ?? track?.album_name, 500),
+      thumbnail_url: boundedText(
+        track?.thumbnail_url ?? track?.image_url ?? track?.artwork_url ?? track?.album_art_url
+          ?? album?.thumbnail_url ?? album?.image_url ?? album?.artwork_url
+          ?? album?.images?.[0]?.url
+          ?? item?.thumbnail_url ?? item?.image_url ?? item?.artwork_url ?? item?.album_art_url,
+        2_048,
       ),
     };
   }
