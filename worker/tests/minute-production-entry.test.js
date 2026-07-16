@@ -13,6 +13,21 @@ function queueMessage(body, calls) {
   };
 }
 
+function minuteDb(changes = () => 1) {
+  let calls = 0;
+  return {
+    prepare() {
+      return {
+        bind() { return this; },
+        async run() {
+          calls += 1;
+          return { meta: { changes: changes(calls) } };
+        },
+      };
+    },
+  };
+}
+
 test('production minute consumer acknowledges split-pipeline messages without read-model writes', async () => {
   const body = minuteFactQueueMessage({
     observedAt: 123_456,
@@ -60,21 +75,10 @@ test('production minute consumer enriches one accepted job only once within a du
   const messageCalls = [];
   const tasks = [];
   const enrichedJobs = [];
-  let inserts = 0;
   const result = await consumeMinuteQueue({
     messages: [queueMessage(body, messageCalls), queueMessage(body, messageCalls)],
   }, {
-    MINUTE_DB: {
-      prepare() {
-        return {
-          bind() { return this; },
-          async run() {
-            inserts += 1;
-            return { meta: { changes: inserts === 1 ? 1 : 0 } };
-          },
-        };
-      },
-    },
+    MINUTE_DB: minuteDb((call) => (call === 1 ? 1 : 0)),
   }, {
     waitUntil(task) { tasks.push(task); },
   }, {
@@ -92,6 +96,51 @@ test('production minute consumer enriches one accepted job only once within a du
     invalid: 0,
   });
   assert.deepEqual(messageCalls, ['ack', 'ack']);
+  assert.equal(enrichedJobs.length, 1);
+  assert.equal(enrichedJobs[0].jobId, 'minute-fact:10:120000');
+});
+
+test('production minute consumer preserves metadata work after a legacy read-model failure', async () => {
+  const body = minuteFactQueueMessage({
+    observedAt: 123_456,
+    snapshot: { channel_id: 10, station_id: 5 },
+    queue: { station_id: 5, queue_id: 20, tracks: [{ spotify_id: 'track-1' }] },
+  }, {
+    enrichTrackMetadata: true,
+    readModel: {
+      channel: { channel_id: 10, observed_at: 123_456, presentation: {} },
+      queue: { station_id: 5, queue_id: 20, value: { tracks: [] } },
+      collector: { collector_id: 'cloudflare-worker' },
+    },
+  });
+
+  const messageCalls = [];
+  const tasks = [];
+  const enrichedJobs = [];
+  const result = await consumeMinuteQueue({
+    messages: [queueMessage(body, messageCalls)],
+  }, {
+    MINUTE_DB: minuteDb(),
+  }, {
+    waitUntil(task) { tasks.push(task); },
+  }, {
+    async saveMinuteFactReadModels() {
+      throw new Error('legacy read model unavailable');
+    },
+    async runCommittedMetadataEnrichment(_env, jobs) {
+      enrichedJobs.push(...jobs);
+    },
+  });
+  await Promise.all(tasks);
+
+  assert.deepEqual(result, {
+    received: 1,
+    enqueued: 0,
+    duplicates: 0,
+    retried: 1,
+    invalid: 0,
+  });
+  assert.deepEqual(messageCalls, ['retry']);
   assert.equal(enrichedJobs.length, 1);
   assert.equal(enrichedJobs[0].jobId, 'minute-fact:10:120000');
 });
