@@ -15,6 +15,27 @@ function retryDelaySeconds(attempts) {
   return Math.min(60, 5 * (2 ** exponent));
 }
 
+function metadataJob(forwarding) {
+  const message = forwarding?.message;
+  if (!forwarding?.forwarded
+      || !message?.options?.enrichTrackMetadata
+      || !message?.payload?.queue?.tracks?.length) return null;
+  return {
+    jobId: forwarding.job_id,
+    payload: message.payload,
+    options: message.options,
+  };
+}
+
+async function scheduleMetadata(env, ctx, forwarding) {
+  const job = metadataJob(forwarding);
+  if (!job) return;
+  const { runCommittedMetadataEnrichment } = await import('./minute-entry.js');
+  const task = runCommittedMetadataEnrichment(env, [job]);
+  if (typeof ctx?.waitUntil === 'function') ctx.waitUntil(task);
+  else void task;
+}
+
 export async function forwardMinuteFact(env, task, comments = {}, dependencies = {}) {
   if (!task?.minute_fact) return { forwarded: false };
   if (!env?.MINUTE_FACT_QUEUE?.send && !dependencies.sendMinuteFact) {
@@ -52,7 +73,12 @@ export async function forwardMinuteFact(env, task, comments = {}, dependencies =
   const send = dependencies.sendMinuteFact
     || ((body) => env.MINUTE_FACT_QUEUE.send(body, { contentType: 'json' }));
   await send(message);
-  return { forwarded: true, job_id: parsed.job_id, comments: finalComments };
+  return {
+    forwarded: true,
+    job_id: parsed.job_id,
+    comments: finalComments,
+    message,
+  };
 }
 
 export async function processCommentsTask(env, task, dependencies = {}) {
@@ -92,10 +118,11 @@ export async function processCommentsTask(env, task, dependencies = {}) {
 }
 
 export default {
-  async queue(batch, env) {
+  async queue(batch, env, ctx) {
     for (const message of batch.messages || []) {
       try {
-        await processCommentsTask(env, message.body);
+        const result = await processCommentsTask(env, message.body);
+        await scheduleMetadata(env, ctx, result);
         message.ack();
       } catch (error) {
         const attempts = positiveInteger(message.attempts, 1, 100);
@@ -103,11 +130,12 @@ export default {
         const chained = Boolean(message.body?.minute_fact);
         if (chained && attempts >= maximum) {
           try {
-            await forwardMinuteFact(env, message.body, {
+            const forwarding = await forwardMinuteFact(env, message.body, {
               commentsSaved: 0,
               degraded: true,
               errorStage: String(error?.errorStage || error?.message || 'unknown').slice(0, 120),
             });
+            await scheduleMetadata(env, ctx, forwarding);
             console.warn(JSON.stringify({
               event: 'comments_task_degraded_forward',
               attempts,
