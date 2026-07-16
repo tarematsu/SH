@@ -30,6 +30,18 @@ test('connected deploy decision keeps conservative fallbacks', () => {
     connectedDeployDecision('sh-monitor-buddies', null, null).deploy,
     true,
   );
+  assert.deepEqual(
+    connectedDeployDecision(
+      'sh-monitor-buddies',
+      ['worker/src/other-monitor-entry.js'],
+      null,
+    ),
+    {
+      deploy: true,
+      reason: 'worker-selection-unavailable',
+      workerName: 'sh-monitor-buddies',
+    },
+  );
   assert.equal(
     connectedDeployDecision('', ['worker/src/other-monitor-entry.js'], ['sh-monitor-other']).deploy,
     true,
