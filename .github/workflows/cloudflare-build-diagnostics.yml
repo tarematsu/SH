@@ -11,6 +11,7 @@ on:
       - 'worker/wrangler.jsonc'
       - 'worker/wrangler.other.jsonc'
       - 'worker/wrangler.minute.jsonc'
+      - 'packages/sh-shared/**'
   workflow_dispatch:
 
 permissions:
@@ -47,7 +48,7 @@ jobs:
             files="$(git diff --name-only '${{ github.event.before }}' '${{ github.sha }}')"
             printf '%s\n' "$files"
 
-            if grep -Eq '^worker/src/|^worker/scripts/|^worker/(package\.json|package-lock\.json)$' <<<"$files"; then
+            if grep -Eq '^worker/src/|^worker/scripts/|^worker/(package\.json|package-lock\.json)$|^packages/sh-shared/' <<<"$files"; then
               add_worker 'sh-monitor-buddies'
               add_worker 'sh-monitor-other'
               add_worker 'sh-minute-maintenance'
