@@ -3,7 +3,7 @@ import { LATEST_QUEUE_WITH_ITEMS_SQL, parseLatestQueueRows } from './latest-queu
 import { computePlayback, normalizePlaybackTrack } from './playback.js';
 import { hostIdentity, queueRevision, stateFromQueue } from './queue-state.js';
 
-export const PLAYBACK_FALLBACK_SNAPSHOT_SQL = `SELECT
+export const CANONICAL_PLAYBACK_SNAPSHOT_SQL = `SELECT
   observed_at,channel_id,station_id,is_broadcasting,host_account_id,host_handle
 FROM sh_channel_snapshots
 ORDER BY observed_at DESC,id DESC
@@ -25,16 +25,10 @@ function text(value) {
   return parsed || null;
 }
 
-function freshness(payload) {
-  return Math.max(
-    integer(payload?.latest_observed_at) || 0,
-    integer(payload?.queue_observed_at) || 0,
-  );
-}
-
-export async function loadDashboardAlignedPlaybackPayload(db, generatedAt = Date.now()) {
+export async function loadCanonicalPlaybackPayload(db, generatedAt = Date.now()) {
+  if (!db) return null;
   const [snapshot, queueResult] = await Promise.all([
-    db.prepare(PLAYBACK_FALLBACK_SNAPSHOT_SQL).first(),
+    db.prepare(CANONICAL_PLAYBACK_SNAPSHOT_SQL).first(),
     db.prepare(LATEST_QUEUE_WITH_ITEMS_SQL).all(),
   ]);
   const { latestQueue, queue } = parseLatestQueueRows(queueResult.results || []);
@@ -89,11 +83,4 @@ export async function loadDashboardAlignedPlaybackPayload(db, generatedAt = Date
     },
     queue: normalizedQueue,
   };
-}
-
-export async function preferDashboardAlignedPlayback(db, primaryPayload, generatedAt = Date.now()) {
-  if (!primaryPayload?.stale) return primaryPayload;
-  const fallback = await loadDashboardAlignedPlaybackPayload(db, generatedAt);
-  if (!fallback) return primaryPayload;
-  return freshness(fallback) > freshness(primaryPayload) ? fallback : primaryPayload;
 }
