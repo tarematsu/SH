@@ -2,10 +2,25 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
+import { processCommentsTask } from '../src/comments-entry.js';
 import { collectRawChannel } from '../src/raw-collector-entry.js';
 
 function config(name) {
   return JSON.parse(readFileSync(new URL(`../${name}`, import.meta.url), 'utf8'));
+}
+
+function commentsTask() {
+  return {
+    message_type: 'stationhead-comments-task',
+    message_version: 1,
+    observed_at: 1_784_000_000_000,
+    station_id: 123,
+    auth: {
+      authToken: 'token',
+      deviceUid: 'device',
+      tokenExpiresAt: 9_999_999_999_999,
+    },
+  };
 }
 
 test('split pipeline has one producer and one consumer for each queue boundary', () => {
@@ -50,4 +65,24 @@ test('raw collector forwards the response body without parsing it', async () => 
   assert.equal(sent[0].body, body);
   assert.equal(sent[0].message_type, 'stationhead-raw-channel');
   assert.equal(sent[0].channel_alias, 'buddies');
+});
+
+test('comments task succeeds only after comments are durably handled', async () => {
+  const result = await processCommentsTask({}, commentsTask(), {
+    collectComments: async () => ({ commentsSaved: 4, degraded: false, errorStage: null }),
+  });
+  assert.equal(result.commentsSaved, 4);
+});
+
+test('comments task throws on degraded collection so Queue retries it', async () => {
+  await assert.rejects(
+    processCommentsTask({}, commentsTask(), {
+      collectComments: async () => ({
+        commentsSaved: 0,
+        degraded: true,
+        errorStage: 'd1_write_comments',
+      }),
+    }),
+    /comment collection degraded at d1_write_comments/,
+  );
 });
