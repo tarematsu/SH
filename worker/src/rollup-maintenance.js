@@ -7,8 +7,8 @@ import {
 } from '../../site/functions/lib/time-buckets.js';
 
 const STATE_ID = 'rollup-retention-v1';
-const STREAM_REPAIR_STATE_ID = 'rollup-stream-repair-2026-07-v2';
-const STREAM_REPAIR_KEYS = Object.freeze(['2026-07-11', '2026-07-12', '2026-07-13']);
+const STREAM_REPAIR_STATE_ID = 'rollup-stream-repair-2026-07-v3';
+const STREAM_REPAIR_KEYS = Object.freeze(['2026-07-10', '2026-07-11', '2026-07-12', '2026-07-13']);
 const STREAM_VALUE_SQL = `COALESCE(
   CASE WHEN validated_stream_count IS NOT NULL AND validated_stream_count>=0
     AND validated_stream_count IS NOT total_listens THEN validated_stream_count END,
