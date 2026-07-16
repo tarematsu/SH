@@ -31,6 +31,14 @@ function safeHeaders(value) {
   }
 }
 
+function materializedMaximumAge(env = {}) {
+  const configured = Number(env.PAGES_RESPONSE_MAX_AGE_MS);
+  if (!Number.isFinite(configured) || configured < API_EDGE_TTL_SECONDS * 1000) {
+    return MATERIALIZED_RESPONSE_MAX_AGE_MS;
+  }
+  return configured;
+}
+
 async function materializedResponse(context, modelKey, now = Date.now()) {
   if (!modelKey || !context.env?.MINUTE_DB) return null;
   const db = context.env.MINUTE_DB;
@@ -40,11 +48,7 @@ async function materializedResponse(context, modelKey, now = Date.now()) {
       WHERE model_key=?
       LIMIT 1`).bind(modelKey).first();
     if (!manifest?.generation || Number(manifest.chunk_count) <= 0) return null;
-    const maximumAge = Math.max(
-      API_EDGE_TTL_SECONDS * 1000,
-      Number(context.env.PAGES_RESPONSE_MAX_AGE_MS || MATERIALIZED_RESPONSE_MAX_AGE_MS),
-    );
-    if (now - Number(manifest.updated_at || 0) > maximumAge) return null;
+    if (now - Number(manifest.updated_at || 0) > materializedMaximumAge(context.env)) return null;
 
     const result = await db.prepare(`SELECT payload_chunk
       FROM sh_pages_response_chunks
