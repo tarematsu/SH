@@ -70,13 +70,19 @@ test('GET /api catalog is generated from the same contract', () => {
 test('materialized response freshness follows each model cadence', () => {
   const minute = 60_000;
   assert.equal(materializedResponseCadenceSeconds('minute-facts-current'), 5 * 60);
+  assert.equal(materializedResponseCadenceSeconds('dashboard-history'), 15 * 60);
   assert.equal(materializedResponseCadenceSeconds('track-likes'), 30 * 60);
   assert.equal(materializedResponseCadenceSeconds('host-history:summary'), 24 * 60 * 60);
   assert.equal(materializedResponseCadenceSeconds('unknown'), 5 * 60);
 
   assert.equal(materializedResponseMaximumAge('minute-facts-current'), 15 * minute);
+  assert.equal(materializedResponseMaximumAge('dashboard-history'), 20 * minute);
   assert.equal(materializedResponseMaximumAge('track-likes'), 35 * minute);
   assert.equal(materializedResponseMaximumAge('host-history:summary'), (24 * 60 + 5) * minute);
+  assert.equal(
+    materializedResponseMaximumAge('dashboard-history', { PAGES_RESPONSE_MAX_AGE_MS: 15 * minute }),
+    20 * minute,
+  );
   assert.equal(
     materializedResponseMaximumAge('track-likes', { PAGES_RESPONSE_MAX_AGE_MS: 20 * minute }),
     35 * minute,
