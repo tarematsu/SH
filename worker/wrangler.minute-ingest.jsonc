@@ -1,0 +1,27 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "sh-minute-ingest",
+  "main": "src/minute-production-entry.js",
+  "compatibility_date": "2026-06-24",
+  "workers_dev": false,
+  "preview_urls": false,
+  "logpush": true,
+  "observability": { "enabled": true },
+  "d1_databases": [
+    { "binding": "MINUTE_DB", "database_name": "stationhead-minute", "database_id": "43c12c1e-886d-4496-9c37-61bc8a15bbd7" }
+  ],
+  "queues": {
+    "consumers": [
+      {
+        "queue": "stationhead-buddies-facts",
+        "max_batch_size": 1,
+        "max_batch_timeout": 1,
+        "max_retries": 8,
+        "dead_letter_queue": "stationhead-buddies-facts-dlq"
+      }
+    ],
+    "producers": [
+      { "binding": "MINUTE_DERIVE_QUEUE", "queue": "stationhead-minute-derive" }
+    ]
+  }
+}

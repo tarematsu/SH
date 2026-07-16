@@ -1,4 +1,4 @@
-name: Deploy split buddies pipeline
+name: Deploy split Stationhead pipeline
 
 on:
   push:
@@ -8,11 +8,20 @@ on:
       - 'worker/src/ingest-channel-entry.js'
       - 'worker/src/comments-entry.js'
       - 'worker/src/read-model-entry.js'
+      - 'worker/src/minute-production-entry.js'
+      - 'worker/src/minute-derive-entry.js'
+      - 'worker/src/minute-maintenance-entry.js'
+      - 'worker/src/minute-derive-queue.js'
+      - 'worker/src/minute-derive-trigger.js'
+      - 'worker/src/minute-facts-*.js'
       - 'worker/src/collector-config.js'
       - 'worker/wrangler.jsonc'
       - 'worker/wrangler.ingest.jsonc'
       - 'worker/wrangler.comments.jsonc'
       - 'worker/wrangler.read-model.jsonc'
+      - 'worker/wrangler.minute.jsonc'
+      - 'worker/wrangler.minute-ingest.jsonc'
+      - 'worker/wrangler.minute-derive.jsonc'
       - 'worker/package.json'
       - 'worker/package-lock.json'
       - '.github/workflows/deploy-split-pipeline.yml'
@@ -22,14 +31,14 @@ permissions:
   contents: read
 
 concurrency:
-  group: deploy-split-buddies-pipeline
+  group: deploy-split-stationhead-pipeline
   cancel-in-progress: false
 
 jobs:
   deploy:
     name: Deploy split pipeline
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
     env:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_BUILDS_API_TOKEN || secrets.CLOUDFLARE_API_TOKEN || secrets.CF_API_TOKEN }}
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID || secrets.CF_ACCOUNT_ID }}
@@ -49,19 +58,33 @@ jobs:
           for queue in \
             stationhead-raw-collection stationhead-raw-collection-dlq \
             stationhead-comments stationhead-comments-dlq \
-            stationhead-read-model stationhead-read-model-dlq
+            stationhead-read-model stationhead-read-model-dlq \
+            stationhead-buddies-facts stationhead-buddies-facts-dlq \
+            stationhead-minute-derive stationhead-minute-derive-dlq
           do
             npx wrangler queues create "$queue" >/dev/null 2>&1 || true
           done
-      - name: Deploy ingest consumer
-        run: npm run deploy:ingest
+      - name: Deploy one-job derive consumer
+        run: npm run deploy:minute-derive
         working-directory: worker
-      - name: Deploy comments consumer
+      - name: Detach legacy minute Queue consumer
+        run: npm run detach:minute-consumer
+        working-directory: worker
+      - name: Deploy maintenance-only minute Worker
+        run: npm run deploy:minute-maintenance
+        working-directory: worker
+      - name: Deploy minute ingest consumer
+        run: npm run deploy:minute-ingest
+        working-directory: worker
+      - name: Deploy comments chain
         run: npm run deploy:comments
         working-directory: worker
       - name: Deploy read-model consumer
         run: npm run deploy:read-model
         working-directory: worker
-      - name: Switch buddies producer last
+      - name: Deploy channel ingest producer
+        run: npm run deploy:ingest
+        working-directory: worker
+      - name: Switch raw collector producer last
         run: npm run deploy:buddies
         working-directory: worker

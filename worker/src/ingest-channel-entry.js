@@ -9,24 +9,40 @@ import {
 } from './collector-payload.js';
 import { collectorStateFromAuthState } from './collector-state.js';
 
-function activeIngestEnv(env, message, channel) {
+function integer(value) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? Math.trunc(parsed) : null;
+}
+
+export function commentsTaskForMinuteFact(commentTask, body) {
+  const compact = { ...body, read_model: null };
+  return {
+    message_type: 'stationhead-comments-task',
+    message_version: 2,
+    auth: commentTask?.auth || {},
+    observed_at: integer(body?.payload?.observedAt) ?? integer(commentTask?.observed_at) ?? Date.now(),
+    station_id: integer(body?.payload?.snapshot?.station_id) ?? integer(commentTask?.station_id),
+    minute_fact: compact,
+  };
+}
+
+function activeIngestEnv(env, message, channel, commentTask) {
   const active = Object.create(env || null);
-  const minuteQueue = env?.MINUTE_FACT_QUEUE;
+  const commentsQueue = env?.COMMENTS_QUEUE;
   Object.defineProperties(active, {
     __shAuthState: { value: message.auth || {}, enumerable: false },
     __RAW_CHANNEL_PAYLOAD: { value: channel, enumerable: false },
     CHAT_LIMIT: { value: 0, enumerable: true },
     MINUTE_FACT_QUEUE: {
       enumerable: false,
-      value: minuteQueue?.send ? {
+      value: commentsQueue?.send ? {
         send(body, options) {
           if (body && typeof body === 'object') {
-            const compact = { ...body, read_model: null };
-            return minuteQueue.send(compact, options);
+            return commentsQueue.send(commentsTaskForMinuteFact(commentTask, body), options);
           }
-          return minuteQueue.send(body, options);
+          return commentsQueue.send(body, options);
         },
-      } : minuteQueue,
+      } : commentsQueue,
     },
   });
   return active;
@@ -86,16 +102,9 @@ export async function ingestRawCollection(env, message) {
     throw new Error(`invalid raw channel JSON: ${error?.message || error}`);
   }
   const envelope = readModelEnvelope(env, message, channel);
-  const active = activeIngestEnv(env, message, channel);
+  const active = activeIngestEnv(env, message, channel, envelope.comment_task);
   const result = await collectOnce(active, 'raw-collection-queue');
-  await Promise.all([
-    env.READ_MODEL_QUEUE.send(envelope, { contentType: 'json' }),
-    env.COMMENTS_QUEUE.send({
-      message_type: 'stationhead-comments-task',
-      message_version: 1,
-      ...envelope.comment_task,
-    }, { contentType: 'json' }),
-  ]);
+  await env.READ_MODEL_QUEUE.send(envelope, { contentType: 'json' });
   return result;
 }
 

@@ -10,6 +10,7 @@
   "vars": {
     "CHANNEL_ALIAS": "buddies",
     "CHAT_LIMIT": 50,
+    "COMMENT_CHAIN_MAX_ATTEMPTS": 3,
     "SH_APP_VERSION": "1.0.0",
     "COLLECTOR_ID": "cloudflare-worker",
     "REQUEST_TIMEOUT_MS": 8000
@@ -19,6 +20,11 @@
       "binding": "DB",
       "database_name": "stationhead-buddies",
       "database_id": "f361aae0-05f0-42bc-8784-77100e80133d"
+    },
+    {
+      "binding": "MINUTE_DB",
+      "database_name": "stationhead-minute",
+      "database_id": "43c12c1e-886d-4496-9c37-61bc8a15bbd7"
     }
   ],
   "queues": {
@@ -30,6 +36,9 @@
         "max_retries": 8,
         "dead_letter_queue": "stationhead-comments-dlq"
       }
+    ],
+    "producers": [
+      { "binding": "MINUTE_FACT_QUEUE", "queue": "stationhead-buddies-facts" }
     ]
   }
 }
