@@ -9,6 +9,7 @@ on:
       - 'worker/wrangler*.jsonc'
       - 'worker/package.json'
       - 'worker/package-lock.json'
+      - 'packages/sh-shared/**'
       - '.github/workflows/deploy-split-pipeline.yml'
   workflow_dispatch:
 
@@ -20,13 +21,47 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  select-workers:
+    name: Select affected Workers
+    runs-on: ubuntu-latest
+    outputs:
+      workers: ${{ steps.targets.outputs.workers }}
+      commands: ${{ steps.targets.outputs.commands }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Select deploy targets from the import graph
+        id: targets
+        shell: bash
+        env:
+          BEFORE_SHA: ${{ github.event.before || '' }}
+          HEAD_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          if [[ '${{ github.event_name }}' == 'workflow_dispatch' || -z "$BEFORE_SHA" || "$BEFORE_SHA" =~ ^0+$ ]]; then
+            selection="$(node worker/scripts/select-worker-deploys.mjs --all)"
+          else
+            git diff --name-only "$BEFORE_SHA" "$HEAD_SHA" | tee changed-files.txt
+            selection="$(node worker/scripts/select-worker-deploys.mjs < changed-files.txt)"
+          fi
+          echo "$selection" | jq .
+          echo "workers=$(jq -c '.workers' <<<"$selection")" >> "$GITHUB_OUTPUT"
+          echo "commands=$(jq -c '.commands' <<<"$selection")" >> "$GITHUB_OUTPUT"
+
   deploy:
-    name: Deploy split pipeline
+    name: Deploy affected Workers
+    needs: select-workers
+    if: needs.select-workers.outputs.workers != '[]'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_BUILDS_API_TOKEN || secrets.CLOUDFLARE_API_TOKEN || secrets.CF_API_TOKEN }}
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID || secrets.CF_ACCOUNT_ID }}
+      DEPLOY_COMMANDS: ${{ needs.select-workers.outputs.commands }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -49,24 +84,12 @@ jobs:
           do
             npx wrangler queues create "$queue" >/dev/null 2>&1 || true
           done
-      - name: Deploy minute pipeline
-        run: npm run deploy:minute
+      - name: Deploy selected Workers in dependency order
+        shell: bash
         working-directory: worker
-      - name: Deploy comments chain
-        run: npm run deploy:comments
-        working-directory: worker
-      - name: Deploy channel ingest producer
-        run: npm run deploy:ingest
-        working-directory: worker
-      - name: Switch raw collector producer last
-        run: npm run deploy:buddies
-        working-directory: worker
-      - name: Deploy Pages read-model Worker
-        run: npm run deploy:pages-read-model
-        working-directory: worker
-      - name: Deploy maintenance monitor
-        run: npm run deploy:monitor-maintenance
-        working-directory: worker
-      - name: Reduce other monitor after replacements are live
-        run: npm run deploy:other
-        working-directory: worker
+        run: |
+          set -euo pipefail
+          while IFS= read -r command; do
+            echo "Deploying $command"
+            npm run "$command"
+          done < <(jq -r '.[]' <<<"$DEPLOY_COMMANDS")
