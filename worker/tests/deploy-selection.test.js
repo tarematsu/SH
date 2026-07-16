@@ -44,6 +44,17 @@ test('Wrangler config changes map directly to their Worker', () => {
   assert.deepEqual(result.commands, ['deploy:pages-read-model']);
 });
 
+test('deploy script-only package changes do not redeploy runtime Workers', () => {
+  const result = select(['worker/package.json']);
+  assert.deepEqual(result.workers, []);
+  assert.deepEqual(result.commands, []);
+});
+
+test('lockfile changes conservatively redeploy every Worker', () => {
+  const result = select(['worker/package-lock.json']);
+  assert.equal(result.workers.length, 10);
+});
+
 test('tests and verification scripts do not redeploy runtime Workers', () => {
   const result = select([
     'worker/tests/optional-comments.test.js',
