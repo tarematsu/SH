@@ -7,7 +7,13 @@ import { FakeD1Database, responseJson } from './helpers/fake-d1.js';
 test('buddy playback falls back to the legacy current row before clock migration', async () => {
   const now = Date.now();
   const db = new FakeD1Database()
-    .route('first', 'sh_collector_status', null)
+    .route('first', 'sh_collector_status', {
+      status: 'ok',
+      last_attempt_at: now - 500,
+      last_success_at: now - 500,
+      last_error: null,
+      tracks: 1,
+    })
     .route('first', (sql) => sql.includes('sh_buddy_playback_clock'), () => {
       throw new Error('no such table: sh_buddy_playback_clock');
     })
