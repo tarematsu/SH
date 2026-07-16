@@ -9,6 +9,8 @@ const CONFIG_BY_WORKER = Object.freeze({
   'sh-read-model': 'wrangler.read-model.jsonc',
   'sh-monitor-other': 'wrangler.other.jsonc',
   'sh-monitor-minute': 'wrangler.minute.jsonc',
+  'sh-minute-derive': 'wrangler.minute-derive.jsonc',
+  'sh-minute-ingest': 'wrangler.minute-ingest.jsonc',
 });
 
 export function cloudflareBuildConfig(workerName) {
