@@ -1,10 +1,10 @@
 import {
   API_BROWSER_TTL_SECONDS,
-  API_EDGE_TTL_SECONDS,
-  MATERIALIZED_RESPONSE_MAX_AGE_MS,
+  apiCacheTtlSeconds,
   canonicalApiCacheRequest,
   edgeCacheableApiRequest,
   materializedApiKey,
+  materializedResponseMaximumAge,
 } from './lib/api-contract.js';
 
 const inFlight = new Map();
@@ -31,14 +31,6 @@ function safeHeaders(value) {
   }
 }
 
-function materializedMaximumAge(env = {}) {
-  const configured = Number(env.PAGES_RESPONSE_MAX_AGE_MS);
-  if (!Number.isFinite(configured) || configured < API_EDGE_TTL_SECONDS * 1000) {
-    return MATERIALIZED_RESPONSE_MAX_AGE_MS;
-  }
-  return configured;
-}
-
 async function materializedResponse(context, modelKey, now = Date.now()) {
   if (!modelKey || !context.env?.MINUTE_DB) return null;
   const db = context.env.MINUTE_DB;
@@ -48,7 +40,9 @@ async function materializedResponse(context, modelKey, now = Date.now()) {
       WHERE model_key=?
       LIMIT 1`).bind(modelKey).first();
     if (!manifest?.generation || Number(manifest.chunk_count) <= 0) return null;
-    if (now - Number(manifest.updated_at || 0) > materializedMaximumAge(context.env)) return null;
+    if (now - Number(manifest.updated_at || 0) > materializedResponseMaximumAge(modelKey, context.env)) {
+      return null;
+    }
 
     const result = await db.prepare(`SELECT payload_chunk
       FROM sh_pages_response_chunks
@@ -71,12 +65,12 @@ async function materializedResponse(context, modelKey, now = Date.now()) {
   }
 }
 
-function sharedResponse(origin) {
+function sharedResponse(origin, ttlSeconds) {
   const headers = new Headers(origin.headers);
   if (origin.ok) {
     headers.set(
       'cache-control',
-      `public, max-age=${API_BROWSER_TTL_SECONDS}, s-maxage=${API_EDGE_TTL_SECONDS}, stale-while-revalidate=${API_EDGE_TTL_SECONDS * 2}`,
+      `public, max-age=${API_BROWSER_TTL_SECONDS}, s-maxage=${ttlSeconds}, stale-while-revalidate=${ttlSeconds * 2}`,
     );
   }
   headers.set('vary', 'accept-encoding');
@@ -104,7 +98,7 @@ export async function onRequest(context) {
       const modelKey = materializedApiKey(new URL(request.url));
       const prebuilt = await materializedResponse(context, modelKey);
       const origin = prebuilt || await context.next();
-      const shared = sharedResponse(origin);
+      const shared = sharedResponse(origin, apiCacheTtlSeconds(request));
       if (shared.ok) context.waitUntil(cache.put(cacheKey, shared.clone()));
       return shared;
     })().finally(() => inFlight.delete(key));
