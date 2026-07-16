@@ -1,0 +1,16 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "sh-pages-read-model",
+  "main": "src/pages-read-model-entry.js",
+  "compatibility_date": "2026-06-24",
+  "workers_dev": false,
+  "preview_urls": false,
+  "logpush": true,
+  "observability": { "enabled": true },
+  "triggers": { "crons": ["*/15 * * * *", "31 * * * *"] },
+  "d1_databases": [
+    { "binding": "BUDDIES_DB", "database_name": "stationhead-buddies", "database_id": "f361aae0-05f0-42bc-8784-77100e80133d" },
+    { "binding": "MINUTE_DB", "database_name": "stationhead-minute", "database_id": "43c12c1e-886d-4496-9c37-61bc8a15bbd7" },
+    { "binding": "OTHER_DB", "database_name": "stationhead-other", "database_id": "21e70e92-6725-4e62-809e-8aadb088cc11" }
+  ]
+}
