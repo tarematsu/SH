@@ -55,6 +55,7 @@ function metric(label, value) {
 }
 
 let applyingTrackRanking = false;
+let trackRankingRenderQueued = false;
 
 function renderTrackRanking() {
   const panel = document.querySelector('.data-panel');
@@ -88,62 +89,74 @@ function renderTrackRanking() {
     });
 
   applyingTrackRanking = true;
-  if (!list) {
-    list = document.createElement('ol');
-    list.id = 'trackRankingList';
-    list.className = 'like-ranking';
-    tableWrap.before(list);
+  try {
+    if (!list) {
+      list = document.createElement('ol');
+      list.id = 'trackRankingList';
+      list.className = 'like-ranking';
+      tableWrap.before(list);
+    }
+    list.replaceChildren();
+    list.hidden = false;
+    tableWrap.hidden = true;
+
+    if (!rows.length) {
+      const empty = document.createElement('li');
+      empty.className = 'empty-ranking';
+      empty.textContent = 'この日の再生曲データがありません。';
+      list.appendChild(empty);
+    } else {
+      const fragment = document.createDocumentFragment();
+      rows.forEach((row, index) => {
+        const item = document.createElement('li');
+        item.className = 'like-rank-item';
+
+        const rank = document.createElement('strong');
+        rank.className = 'like-rank-number';
+        rank.textContent = String(index + 1);
+
+        const content = document.createElement('div');
+        content.className = 'like-rank-content';
+        const heading = document.createElement('div');
+        heading.className = 'like-rank-heading';
+        const title = document.createElement('span');
+        title.textContent = row.cells[titleIndex]?.textContent || '曲名不明';
+        heading.appendChild(title);
+        const artist = document.createElement('small');
+        artist.textContent = row.cells[artistIndex]?.textContent || '—';
+        content.append(heading, artist);
+
+        const metrics = document.createElement('div');
+        metrics.className = 'like-rank-metrics';
+        metrics.append(
+          metric('再生回数', row.cells[playIndex]?.textContent || '—'),
+          metric('いいね数', row.cells[likeIndex]?.textContent || '—'),
+        );
+
+        item.append(rank, content, metrics);
+        fragment.appendChild(item);
+      });
+      list.appendChild(fragment);
+    }
+
+    const title = document.getElementById('tableTitle');
+    if (title) title.textContent = '1日の再生数ランキング';
+  } finally {
+    applyingTrackRanking = false;
   }
-  list.replaceChildren();
-  list.hidden = false;
-  tableWrap.hidden = true;
-
-  if (!rows.length) {
-    const empty = document.createElement('li');
-    empty.className = 'empty-ranking';
-    empty.textContent = 'この日の再生曲データがありません。';
-    list.appendChild(empty);
-  } else {
-    const fragment = document.createDocumentFragment();
-    rows.forEach((row, index) => {
-      const item = document.createElement('li');
-      item.className = 'like-rank-item';
-
-      const rank = document.createElement('strong');
-      rank.className = 'like-rank-number';
-      rank.textContent = String(index + 1);
-
-      const content = document.createElement('div');
-      content.className = 'like-rank-content';
-      const heading = document.createElement('div');
-      heading.className = 'like-rank-heading';
-      const title = document.createElement('span');
-      title.textContent = row.cells[titleIndex]?.textContent || '曲名不明';
-      heading.appendChild(title);
-      const artist = document.createElement('small');
-      artist.textContent = row.cells[artistIndex]?.textContent || '—';
-      content.append(heading, artist);
-
-      const metrics = document.createElement('div');
-      metrics.className = 'like-rank-metrics';
-      metrics.append(
-        metric('再生回数', row.cells[playIndex]?.textContent || '—'),
-        metric('いいね数', row.cells[likeIndex]?.textContent || '—'),
-      );
-
-      item.append(rank, content, metrics);
-      fragment.appendChild(item);
-    });
-    list.appendChild(fragment);
-  }
-
-  const title = document.getElementById('tableTitle');
-  if (title) title.textContent = '1日の再生数ランキング';
-  applyingTrackRanking = false;
 }
 
-const observer = new MutationObserver(() => {
-  if (!applyingTrackRanking) queueMicrotask(renderTrackRanking);
-});
-observer.observe(document.documentElement, { childList: true, subtree: true });
-window.addEventListener('hashchange', () => queueMicrotask(renderTrackRanking));
+function scheduleTrackRanking() {
+  if (trackRankingRenderQueued) return;
+  trackRankingRenderQueued = true;
+  queueMicrotask(() => {
+    trackRankingRenderQueued = false;
+    renderTrackRanking();
+  });
+}
+
+const observer = new MutationObserver(scheduleTrackRanking);
+for (const target of [document.getElementById('thead'), document.getElementById('tbody')]) {
+  if (target) observer.observe(target, { childList: true, subtree: true });
+}
+window.addEventListener('hashchange', scheduleTrackRanking);

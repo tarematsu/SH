@@ -5,6 +5,7 @@ import test from 'node:test';
 const historyPage = readFileSync(new URL('../public/history/index.html', import.meta.url), 'utf8');
 const historyEntry = readFileSync(new URL('../public/history/history-main.js', import.meta.url), 'utf8');
 const historyClient = readFileSync(new URL('../public/history/history-lite.js', import.meta.url), 'utf8');
+const historyFixes = readFileSync(new URL('../public/history/history-page-fixes.js', import.meta.url), 'utf8');
 const historyStyles = readFileSync(new URL('../public/history/history-lite.css', import.meta.url), 'utf8');
 const mainStyles = readFileSync(new URL('../public/app-lite.css', import.meta.url), 'utf8');
 const likesPage = readFileSync(new URL('../public/history/likes/index.html', import.meta.url), 'utf8');
@@ -12,7 +13,7 @@ const likesClient = readFileSync(new URL('../public/history/history-likes.js', i
 const likeApi = readFileSync(new URL('../functions/api/like-ranking.js', import.meta.url), 'utf8');
 const middleware = readFileSync(new URL('../functions/api/_middleware.js', import.meta.url), 'utf8');
 
- test('history removes the current tab and keeps every archive mode', () => {
+test('history removes the current tab and keeps every archive mode', () => {
   for (const mode of ['daily', 'weekly', 'monthly', 'ranking', 'tracks', 'broadcasts']) {
     assert.match(historyPage, new RegExp(`data-mode="${mode}"`));
   }
@@ -69,6 +70,20 @@ test('track history defaults to yesterday as a single day', () => {
   assert.match(historyClient, /if \(el\('trackWeekMode'\)\.checked\)/);
   assert.match(historyClient, /el\('from'\)\.value = el\('trackDate'\)\.value/);
   assert.match(historyClient, /el\('to'\)\.value = el\('trackDate'\)\.value/);
+});
+
+test('track ranking observer cannot observe its own generated list', () => {
+  assert.doesNotMatch(historyFixes, /observer\.observe\(document\.documentElement/);
+  assert.match(
+    historyFixes,
+    /\[document\.getElementById\('thead'\), document\.getElementById\('tbody'\)\]/,
+  );
+  assert.match(historyFixes, /observer\.observe\(target, \{ childList: true, subtree: true \}\)/);
+  assert.match(historyFixes, /let trackRankingRenderQueued = false/);
+  assert.match(historyFixes, /if \(trackRankingRenderQueued\) return/);
+  assert.match(historyFixes, /window\.addEventListener\('hashchange', scheduleTrackRanking\)/);
+  assert.match(historyFixes, /applyingTrackRanking = true;\s*try \{/s);
+  assert.match(historyFixes, /finally \{\s*applyingTrackRanking = false;\s*\}/s);
 });
 
 test('history visual tokens and panel sizing match the main dashboard', () => {
