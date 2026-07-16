@@ -95,7 +95,10 @@ export async function updatePlaybackState(db, input) {
     .bind(channelId).first();
   const paused = bool(isPaused) === 1;
   const delayed = previous && observedAt < Number(previous.last_observed_at || 0);
-  if (delayed) return { ...previous, delayed: true };
+  // A delayed payload cannot safely reuse a position calculated for a later
+  // observation. The caller may also be resolving a different revision, which
+  // would turn that stale position into a confidently wrong track.
+  if (delayed) return { ...previous, current_position: null, delayed: true };
 
   const revisionChanged = Number(previous?.revision_id || 0) !== Number(revisionId || 0);
   const sameQueueInstance = Boolean(previous)
