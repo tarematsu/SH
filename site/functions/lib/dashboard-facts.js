@@ -67,9 +67,60 @@ function factsHistorySql(whereClause) {
   FROM ranked WHERE rn=1 ORDER BY observed_at ASC LIMIT 300`;
 }
 
-export const FACTS_HISTORY_24H_SQL = factsHistorySql(
-  "f.minute_at >= (unixepoch('now','-24 hours')*1000)",
-);
+function factsHistory24hSql() {
+  return `WITH latest_channel AS (
+    SELECT channel_id FROM sh_minute_facts WHERE source_code=1 ORDER BY minute_at DESC,id DESC LIMIT 1
+  ), bounds AS (
+    SELECT unixepoch('now','-24 hours')*1000 AS from_at
+  ), daily_ranked AS (
+    SELECT d.channel_id,d.day_at,d.last_total_member_count,
+      ROW_NUMBER() OVER (
+        PARTITION BY d.channel_id,d.day_at
+        ORDER BY d.last_observed_at DESC,d.host_key ASC
+      ) AS daily_rank
+    FROM sh_total_member_daily AS d
+    WHERE d.channel_id=(SELECT channel_id FROM latest_channel)
+      AND d.day_at>=((SELECT from_at FROM bounds)/86400000)*86400000
+  ), comment_points AS (
+    SELECT f.id,f.channel_id,f.minute_at,f.observed_at,
+      f.listener_count,f.online_member_count,f.total_member_count,
+      f.reported_total_listens AS total_listens,
+      COALESCE(SUM(COALESCE(f.comment_count,0)) OVER (
+        PARTITION BY f.channel_id
+        ORDER BY f.minute_at
+        RANGE BETWEEN 60000 PRECEDING AND CURRENT ROW
+      ),0) AS comment_velocity
+    FROM sh_minute_facts AS f
+    WHERE f.source_code=1
+      AND f.channel_id=(SELECT channel_id FROM latest_channel)
+      AND f.minute_at>=(SELECT from_at FROM bounds)-60000
+  ), points AS (
+    SELECT f.id,f.minute_at,f.observed_at,f.listener_count,f.online_member_count,
+      COALESCE(d.last_total_member_count,f.total_member_count) AS total_member_count,
+      f.total_listens,f.comment_velocity
+    FROM comment_points AS f
+    LEFT JOIN daily_ranked AS d
+      ON d.channel_id=f.channel_id
+        AND d.day_at=(f.observed_at/86400000)*86400000
+        AND d.daily_rank=1
+    WHERE f.minute_at>=(SELECT from_at FROM bounds)
+  ), ranked AS (
+    SELECT *,
+      MAX(comment_velocity) OVER (
+        PARTITION BY CAST(minute_at/300000 AS INTEGER)
+      ) AS comment_velocity_max,
+      ROW_NUMBER() OVER (
+        PARTITION BY CAST(minute_at/300000 AS INTEGER)
+        ORDER BY minute_at DESC,id DESC
+      ) AS rn
+    FROM points
+  )
+  SELECT observed_at,listener_count,online_member_count,total_member_count,
+    total_listens,comment_velocity_max AS comment_velocity
+  FROM ranked WHERE rn=1 ORDER BY observed_at ASC LIMIT 300`;
+}
+
+export const FACTS_HISTORY_24H_SQL = factsHistory24hSql();
 export const FACTS_HISTORY_SINCE_SQL = factsHistorySql('f.observed_at>?');
 
 export const FACTS_PREDICTION_24H_SQL = `WITH latest_channel AS (
