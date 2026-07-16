@@ -252,10 +252,10 @@ function emptyPayload(generatedAt, state = null) {
     ok: true,
     channel_alias: 'buddies',
     generated_at: generatedAt,
-    latest_observed_at: integer(state?.latest_observed_at),
+    latest_observed_at: integer(state?.latest_observed_at ?? state?.observed_at),
     queue_observed_at: integer(state?.last_observed_at),
     changed_at: integer(state?.pause_started_at),
-    station_id: integer(state?.queue_station_id ?? state?.fact_station_id),
+    station_id: integer(state?.queue_station_id ?? state?.fact_station_id ?? state?.station_id),
     is_broadcasting: storedBoolean(state?.is_broadcasting),
     host_account_id: integer(state?.host_account_id),
     host_handle: text(state?.host_handle),
@@ -282,35 +282,48 @@ export async function loadPrimaryPlaybackPayload(db, generatedAt = Date.now()) {
       ? Promise.resolve(null)
       : db.prepare(QUEUE_READ_MODEL_SQL).bind(channelId).first(),
   ]);
+  const effectiveState = {
+    ...state,
+    latest_observed_at: state.latest_observed_at ?? state.observed_at,
+    fact_station_id: state.fact_station_id ?? state.station_id,
+    queue_station_id: state.queue_station_id ?? queueRow?.station_id,
+    queue_id: state.queue_id ?? queueRow?.queue_id,
+    queue_start_time: state.queue_start_time ?? queueRow?.start_time,
+    is_paused: state.is_paused ?? queueRow?.is_paused,
+    paused_total_ms: state.paused_total_ms ?? 0,
+    pause_started_at: state.pause_started_at
+      ?? (storedBoolean(queueRow?.is_paused) ? queueRow?.observed_at : null),
+    last_observed_at: state.last_observed_at ?? queueRow?.observed_at,
+  };
   const items = itemsResult.results || [];
   const metadataRows = await loadMetadata(db, [
     ...items,
-    ...displayRows(queueRow, state),
+    ...displayRows(queueRow, effectiveState),
   ]);
-  const rows = buildPrimaryPlaybackRows(items, queueRow, state, metadataRows);
-  if (!rows.length) return emptyPayload(generatedAt, state);
+  const rows = buildPrimaryPlaybackRows(items, queueRow, effectiveState, metadataRows);
+  if (!rows.length) return emptyPayload(generatedAt, effectiveState);
 
-  const playback = computePrimaryPlayback(rows, state, generatedAt);
-  const latestObservedAt = integer(state.latest_observed_at);
-  const queueObservedAt = integer(state.last_observed_at ?? queueRow?.observed_at);
+  const playback = computePrimaryPlayback(rows, effectiveState, generatedAt);
+  const latestObservedAt = integer(effectiveState.latest_observed_at);
+  const queueObservedAt = integer(effectiveState.last_observed_at);
   const freshestAt = Math.max(latestObservedAt || 0, queueObservedAt || 0) || null;
   const stale = freshestAt == null || generatedAt - freshestAt > FACTS_FRESH_MS;
-  const paused = storedBoolean(state.is_paused ?? queueRow?.is_paused);
-  const broadcasting = storedBoolean(state.is_broadcasting);
+  const paused = storedBoolean(effectiveState.is_paused);
+  const broadcasting = storedBoolean(effectiveState.is_broadcasting);
   const playing = !stale && broadcasting && !paused && !playback.ended && playback.currentIndex >= 0;
   const latestQueue = {
-    station_id: integer(state.queue_station_id ?? state.fact_station_id ?? queueRow?.station_id),
-    queue_id: integer(state.queue_id ?? queueRow?.queue_id),
-    start_time: integer(state.queue_start_time ?? queueRow?.start_time),
+    station_id: integer(effectiveState.queue_station_id ?? effectiveState.fact_station_id),
+    queue_id: integer(effectiveState.queue_id),
+    start_time: integer(effectiveState.queue_start_time),
     is_paused: paused ? 1 : 0,
     observed_at: queueObservedAt,
-    structural_hash: state.structural_hash || '',
+    structural_hash: effectiveState.structural_hash || '',
     likes_hash: '',
   };
   const latest = {
     station_id: latestQueue.station_id,
-    host_account_id: integer(state.host_account_id),
-    host_handle: text(state.host_handle),
+    host_account_id: integer(effectiveState.host_account_id),
+    host_handle: text(effectiveState.host_handle),
   };
   const revision = queueRevision(stateFromQueue(latestQueue, rows), hostIdentity(latest));
   const queue = rows.map((track, index) => normalizePlaybackTrack(track, index, playback));
@@ -331,7 +344,7 @@ export async function loadPrimaryPlaybackPayload(db, generatedAt = Date.now()) {
     generated_at: generatedAt,
     latest_observed_at: latestObservedAt,
     queue_observed_at: queueObservedAt,
-    changed_at: integer(state.pause_started_at),
+    changed_at: integer(effectiveState.pause_started_at),
     station_id: latestQueue.station_id,
     is_broadcasting: broadcasting,
     host_account_id: latest.host_account_id,
