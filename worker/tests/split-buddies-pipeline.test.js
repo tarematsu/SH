@@ -64,6 +64,8 @@ test('split pipeline has one owner for each queue boundary', () => {
   const minuteIngestSource = readFileSync(new URL('../src/minute-production-entry.js', import.meta.url), 'utf8');
   const commentsSource = readFileSync(new URL('../src/comments-entry.js', import.meta.url), 'utf8');
   assert.doesNotMatch(minuteIngestSource, /runCommittedMetadataEnrichment/);
+  assert.doesNotMatch(minuteIngestSource, /minute-derive-queue\.js/);
+  assert.match(minuteIngestSource, /minute-derive-trigger\.js/);
   assert.match(commentsSource, /runCommittedMetadataEnrichment/);
 });
 
