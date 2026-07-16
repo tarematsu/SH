@@ -55,7 +55,8 @@ for (let attempt = 1; attempt <= attempts; attempt += 1) {
         COUNT(*) AS fact_count,
         MAX(observed_at) AS last_observed_at,
         MAX(minute_at) AS last_minute_at,
-        SUM(CASE WHEN source_code=1 THEN 1 ELSE 0 END) AS live_fact_count
+        SUM(CASE WHEN source_code=1 THEN 1 ELSE 0 END) AS live_fact_count,
+        (SELECT COUNT(*) FROM pragma_table_info('sh_tracks') WHERE name='isrc') AS sh_tracks_isrc_column_count
       FROM sh_minute_facts`,
     ]));
     const row = firstResult(payload) || {};
@@ -68,10 +69,11 @@ for (let attempt = 1; attempt <= attempts; attempt += 1) {
       live_fact_count: Number(row.live_fact_count || 0),
       last_observed_at: Number(row.last_observed_at || 0) || null,
       last_minute_at: Number(row.last_minute_at || 0) || null,
+      sh_tracks_isrc_present: Number(row.sh_tracks_isrc_column_count || 0) > 0,
       checked_at: new Date(now).toISOString(),
     };
     const recent = last.last_observed_at != null && now - last.last_observed_at <= freshnessMs;
-    if (last.live_fact_count > 0 && recent) {
+    if (last.live_fact_count > 0 && recent && last.sh_tracks_isrc_present) {
       last.result = 'success';
       writeStatus(last);
       console.log(JSON.stringify(last));
@@ -90,5 +92,5 @@ for (let attempt = 1; attempt <= attempts; attempt += 1) {
   if (attempt < attempts) await sleep(delayMs);
 }
 
-writeStatus({ ...last, result: last?.result === 'query-failed' ? 'query-failed' : 'live-fact-not-observed' });
+writeStatus({ ...last, result: last?.result === 'query-failed' ? 'query-failed' : 'live-fact-or-schema-not-ready' });
 throw new Error(`Live minute fact verification failed: ${JSON.stringify(last)}`);
