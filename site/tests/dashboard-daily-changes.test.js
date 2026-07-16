@@ -58,5 +58,5 @@ test('daily changes endpoint returns the completed Worker payload unchanged', as
   assert.equal(response.status, 200);
   assert.deepEqual(payload, expected);
   assert.equal(db.calls.length, 1);
-  assert.equal(db.calls[0].method, 'first');
+  assert.match(db.calls[0].sql, /FROM sh_pages_payload_read_model/);
 });
