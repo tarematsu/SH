@@ -15,6 +15,7 @@ on:
       - 'worker/src/minute-derive-trigger.js'
       - 'worker/src/minute-facts-*.js'
       - 'worker/src/collector-config.js'
+      - 'worker/scripts/retire-legacy-minute-maintenance.mjs'
       - 'worker/wrangler.jsonc'
       - 'worker/wrangler.ingest.jsonc'
       - 'worker/wrangler.comments.jsonc'
@@ -70,8 +71,11 @@ jobs:
       - name: Detach legacy minute Queue consumer
         run: npm run detach:minute-consumer
         working-directory: worker
-      - name: Deploy maintenance-only minute Worker
+      - name: Deploy renamed maintenance Worker
         run: npm run deploy:minute-maintenance
+        working-directory: worker
+      - name: Retire legacy maintenance Worker
+        run: npm run retire:legacy-minute-maintenance
         working-directory: worker
       - name: Deploy minute ingest consumer
         run: npm run deploy:minute-ingest
