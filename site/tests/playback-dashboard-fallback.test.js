@@ -58,7 +58,7 @@ function queueRow(overrides = {}) {
   };
 }
 
-test('canonical playback uses the same buddies DB queue source as dashboard?history=0', async () => {
+test('canonical playback uses the same Pages DB queue source as dashboard?history=0', async () => {
   const now = 1_800_000_000_000;
   const db = new CanonicalPlaybackDb({
     snapshot: {
@@ -103,7 +103,7 @@ test('canonical playback uses the same buddies DB queue source as dashboard?hist
   ].sort());
 });
 
-test('canonical playback returns null when the dashboard queue source is empty', async () => {
+test('canonical playback returns null only when its Pages DB state is unavailable', async () => {
   const db = new CanonicalPlaybackDb({ snapshot: null, queueRows: [] });
   assert.equal(await loadCanonicalPlaybackPayload(db, 200), null);
   assert.equal(db.calls.length, 2);
