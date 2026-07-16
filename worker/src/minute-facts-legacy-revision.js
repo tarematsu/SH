@@ -174,10 +174,10 @@ export async function writeCurrentBite(db, input) {
         queue_position,queue_track_id,stationhead_track_id,spotify_id,apple_music_id,isrc,
         queue_revision_id,track_id,track_key,count_value,source,source_record_id
       ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).bind(
-      observedAt, occurrenceKey, channelId, stationId, queue?.queue_id,
-      timestampMs(queue?.start_time), position, sourceTrack?.queue_track_id,
-      sourceTrack?.stationhead_track_id, sourceTrack?.spotify_id, sourceTrack?.apple_music_id,
-      sourceTrack?.isrc, revisionId, trackId, trackKey,
+      integer(observedAt), occurrenceKey, integer(channelId), integer(stationId), integer(queue?.queue_id),
+      timestampMs(queue?.start_time), integer(position), integer(sourceTrack?.queue_track_id),
+      integer(sourceTrack?.stationhead_track_id), text(sourceTrack?.spotify_id), text(sourceTrack?.apple_music_id),
+      text(sourceTrack?.isrc), integer(revisionId), trackId, trackKey,
       biteCount, 'live_collector', `live:${channelId}:${revisionId}:${position}:${observedAt}:${biteCount}`,
     ).run();
   }
