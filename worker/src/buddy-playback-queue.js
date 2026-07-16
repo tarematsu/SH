@@ -17,6 +17,11 @@ function booleanValue(value, fallback = false) {
   return Boolean(value);
 }
 
+function text(value, maximum = 500) {
+  const parsed = String(value ?? '').trim();
+  return parsed ? parsed.slice(0, maximum) : null;
+}
+
 function handleMatches(value, expectedAlias) {
   return String(value || '').trim().toLowerCase() === String(expectedAlias || '').trim().toLowerCase();
 }
@@ -67,13 +72,14 @@ function trackThumbnail(item, track) {
     track?.artwork_url,
     track?.album?.thumbnail_url,
     track?.album?.image_url,
+    track?.album?.artwork_url,
     track?.album?.images?.[0]?.url,
     item?.thumbnail_url,
     item?.image_url,
     item?.album_art_url,
     item?.artwork_url,
   ];
-  return String(candidates.find((value) => String(value || '').trim()) || '').trim() || null;
+  return text(candidates.find((value) => String(value || '').trim()), 2_048);
 }
 
 export function extractBuddyPlayback(channel, alias = DEFAULT_ALIAS, maxTracks = DEFAULT_MAX_TRACKS) {
@@ -89,15 +95,22 @@ export function extractBuddyPlayback(channel, alias = DEFAULT_ALIAS, maxTracks =
   }
   const tracks = rawTracks.slice(0, maxTracks).map((item, index) => {
     const track = item?.track || item || {};
+    const artist = track?.artist || track?.artists?.[0] || {};
+    const album = track?.album || {};
     return {
       position: finiteNumber(item?.position, index),
       queue_track_id: finiteNumber(item?.id),
       stationhead_track_id: finiteNumber(track?.id),
-      spotify_id: String(track?.spotify_id || '').trim() || null,
-      deezer_id: String(track?.deezer_id || '').trim() || null,
-      isrc: String(track?.isrc || '').trim() || null,
-      duration_ms: Math.max(0, finiteNumber(track?.duration, 0)),
-      preview_url: track?.preview || null,
+      spotify_id: text(track?.spotify_id),
+      deezer_id: text(track?.deezer_id),
+      isrc: text(track?.isrc),
+      duration_ms: Math.max(0, finiteNumber(track?.duration_ms ?? track?.duration, 0)),
+      preview_url: text(track?.preview_url ?? track?.preview, 2_048),
+      title: text(track?.title ?? track?.name),
+      artist: text(
+        typeof artist === 'string' ? artist : (artist?.name ?? track?.artist_name),
+      ),
+      album_name: text(album?.name ?? track?.album_name),
       thumbnail_url: trackThumbnail(item, track),
     };
   });
@@ -109,7 +122,7 @@ export function extractBuddyPlayback(channel, alias = DEFAULT_ALIAS, maxTracks =
     is_paused: booleanValue(queue?.is_paused),
     is_broadcasting: booleanValue(station?.is_broadcasting ?? channel?.is_broadcasting),
     host_account_id: finiteNumber(host?.account_id ?? host?.account?.id),
-    host_handle: String(host?.account?.handle || '').trim() || null,
+    host_handle: text(host?.account?.handle),
     tracks,
   };
 }

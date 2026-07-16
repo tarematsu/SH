@@ -1,12 +1,16 @@
 import { num, stripAppleMusicFields } from './api-utils.js';
-import { computePlayback, normalizePlaybackTrack } from './playback.js';
+import { normalizePlaybackTrack } from './playback.js';
 
 const SECONDARY_STALE_MS = 4 * 60 * 60_000;
+const BUDDY_METADATA_TABLE = 'sh_buddy_track_metadata';
 
-export const SECONDARY_PLAYBACK_SQL = `SELECT channel_alias,station_id,queue_id,start_time,
-  is_paused,is_broadcasting,host_account_id,host_handle,state_hash,queue_json,
-  checked_at,changed_at
-FROM sh_playback_channel_current WHERE channel_alias=? LIMIT 1`;
+export const SECONDARY_PLAYBACK_SQL = `SELECT p.channel_alias,p.station_id,p.queue_id,p.start_time,
+  p.is_paused,p.is_broadcasting,p.host_account_id,p.host_handle,p.state_hash,p.queue_json,
+  p.checked_at,p.changed_at,c.paused_total_ms,c.pause_started_at,
+  c.observed_at AS clock_observed_at
+FROM sh_playback_channel_current p
+LEFT JOIN sh_buddy_playback_clock c ON c.channel_alias=p.channel_alias
+WHERE p.channel_alias=? LIMIT 1`;
 
 function storedBoolean(value) {
   if (value === true || value === 1) return true;
@@ -26,9 +30,21 @@ function rawQueue(payload) {
 function firstText(...values) {
   for (const value of values) {
     const text = String(value || '').trim();
-    if (text) return text;
+    if (text && text !== '[object Object]') return text;
   }
   return null;
+}
+
+function normalizedIsrc(value) {
+  return String(value || '').trim().toUpperCase();
+}
+
+function trackArtist(track) {
+  const artist = track?.artist || track?.artists?.[0] || null;
+  return firstText(
+    typeof artist === 'string' ? artist : artist?.name,
+    track?.artist_name,
+  );
 }
 
 function trackThumbnail(item, track) {
@@ -39,6 +55,7 @@ function trackThumbnail(item, track) {
     track?.artwork_url,
     track?.album?.thumbnail_url,
     track?.album?.image_url,
+    track?.album?.artwork_url,
     track?.album?.images?.[0]?.url,
     item?.thumbnail_url,
     item?.image_url,
@@ -47,9 +64,17 @@ function trackThumbnail(item, track) {
   );
 }
 
-function applyMetadata(row, metadata = new Map()) {
+function metadataForTrack(metadata, row) {
+  const isrc = normalizedIsrc(row?.isrc);
   const spotifyId = String(row?.spotify_id || '').trim();
-  const meta = spotifyId ? metadata.get(spotifyId) : null;
+  return (isrc ? metadata.get(`isrc:${isrc}`) : null)
+    || (spotifyId ? metadata.get(`spotify:${spotifyId}`) : null)
+    || (spotifyId ? metadata.get(spotifyId) : null)
+    || null;
+}
+
+function applyMetadata(row, metadata = new Map()) {
+  const meta = metadataForTrack(metadata, row);
   if (!meta) return row;
   return {
     ...row,
@@ -68,29 +93,130 @@ function rawTrackToPlaybackRow(item, index, startTime) {
   const spotifyId = String(track.spotify_id || item?.spotify_id || '').trim() || null;
   return stripAppleMusicFields({
     start_time: startTime,
-    position: index,
+    position: num(item?.position) ?? index,
     spotify_id: spotifyId,
+    isrc: normalizedIsrc(track?.isrc ?? item?.isrc) || null,
     duration_ms: num(track?.duration_ms ?? track?.duration),
     bite_count: num(track?.bite_count ?? item?.bite_count),
-    title: track?.title || track?.name || null,
-    artist: track?.artist || track?.artist_name || null,
+    title: firstText(track?.title, track?.name),
+    artist: trackArtist(track),
+    album_name: firstText(track?.album?.name, track?.album_name),
     display_title: track?.display_title || null,
     thumbnail_url: trackThumbnail(item, track),
     spotify_url: track?.spotify_url || null,
   });
 }
 
-function visiblePlaybackState(rows, playbackAt, stale, paused = false) {
-  const computed = computePlayback(rows, playbackAt);
-  const ended = !paused
-    && computed.queueEndAt != null
-    && playbackAt >= computed.queueEndAt
-    && rows.length > 0;
-  const playback = ended
-    ? { ...computed, currentIndex: -1, progressMs: 0, anchorAt: null }
-    : computed;
+function queueTracksFromParsed(parsed) {
+  if (Array.isArray(parsed)) return parsed;
+  const queue = rawQueue(parsed);
+  if (Array.isArray(queue?.queue_tracks)) return queue.queue_tracks;
+  if (Array.isArray(queue?.tracks)) return queue.tracks;
+  return [];
+}
+
+export async function loadSecondaryPlaybackMetadata(db, row) {
+  const parsed = parseQueueJson(row?.queue_json);
+  const tracks = queueTracksFromParsed(parsed);
+  const spotifyIds = [];
+  const isrcs = [];
+  for (const item of tracks) {
+    const track = item?.track || item || {};
+    const spotifyId = String(track?.spotify_id ?? item?.spotify_id ?? '').trim();
+    const isrc = normalizedIsrc(track?.isrc ?? item?.isrc);
+    if (spotifyId) spotifyIds.push(spotifyId);
+    if (isrc) isrcs.push(isrc);
+  }
+  const uniqueSpotifyIds = [...new Set(spotifyIds)].slice(0, 100);
+  const uniqueIsrcs = [...new Set(isrcs)].slice(0, 100);
+  if (!uniqueSpotifyIds.length && !uniqueIsrcs.length) return new Map();
+
+  const clauses = [];
+  const bindings = [];
+  if (uniqueSpotifyIds.length) {
+    clauses.push(`spotify_id IN (${uniqueSpotifyIds.map(() => '?').join(',')})`);
+    bindings.push(...uniqueSpotifyIds);
+  }
+  if (uniqueIsrcs.length) {
+    clauses.push(`isrc IN (${uniqueIsrcs.map(() => '?').join(',')})`);
+    bindings.push(...uniqueIsrcs);
+  }
+
+  let result;
+  try {
+    result = await db.prepare(`SELECT spotify_id,isrc,title,artist,display_title,
+        thumbnail_url,spotify_url,fetched_at,raw_json
+      FROM ${BUDDY_METADATA_TABLE}
+      WHERE ${clauses.join(' OR ')}
+      ORDER BY fetched_at DESC`).bind(...bindings).all();
+  } catch (error) {
+    if (/no such table:\s*sh_buddy_track_metadata/i.test(String(error?.message || error))) return new Map();
+    throw error;
+  }
+
+  const metadata = new Map();
+  for (const value of result.results || []) {
+    const spotifyId = String(value?.spotify_id || '').trim();
+    const isrc = normalizedIsrc(value?.isrc);
+    if (spotifyId) {
+      if (!metadata.has(spotifyId)) metadata.set(spotifyId, value);
+      if (!metadata.has(`spotify:${spotifyId}`)) metadata.set(`spotify:${spotifyId}`, value);
+    }
+    if (isrc && !metadata.has(`isrc:${isrc}`)) metadata.set(`isrc:${isrc}`, value);
+  }
+  return metadata;
+}
+
+function computeSecondaryPlayback(rows, row, generatedAt, paused) {
+  if (!rows.length) {
+    return { currentIndex: -1, progressMs: 0, anchorAt: null, queueEndAt: null, ended: false };
+  }
+  const startTime = num(row?.start_time);
+  if (startTime == null) {
+    return { currentIndex: 0, progressMs: 0, anchorAt: generatedAt, queueEndAt: null, ended: false };
+  }
+
+  const pausedTotalMs = Math.max(0, num(row?.paused_total_ms) || 0);
+  const pauseStartedAt = num(row?.pause_started_at);
+  const effectiveAt = paused
+    ? pauseStartedAt ?? num(row?.changed_at) ?? num(row?.checked_at) ?? generatedAt
+    : generatedAt;
+  const elapsedMs = Math.max(0, effectiveAt - startTime - pausedTotalMs);
+  let cursor = 0;
+  let totalDurationMs = 0;
+  let currentIndex = -1;
+  let progressMs = 0;
+
+  for (let index = 0; index < rows.length; index += 1) {
+    const durationMs = Math.max(0, num(rows[index]?.duration_ms) || 0);
+    if (currentIndex < 0 && (elapsedMs < cursor + durationMs || index === rows.length - 1)) {
+      currentIndex = index;
+      progressMs = Math.max(0, Math.min(durationMs, elapsedMs - cursor));
+    }
+    cursor += durationMs;
+    totalDurationMs += durationMs;
+  }
+
+  if (totalDurationMs <= 0) {
+    return { currentIndex: 0, progressMs: 0, anchorAt: effectiveAt, queueEndAt: null, ended: false };
+  }
+  const ended = !paused && elapsedMs >= totalDurationMs;
+  if (ended) {
+    return { currentIndex: -1, progressMs: 0, anchorAt: null, queueEndAt: generatedAt, ended: true };
+  }
   return {
-    ended,
+    currentIndex,
+    progressMs,
+    anchorAt: effectiveAt - progressMs,
+    queueEndAt: paused ? null : generatedAt + Math.max(0, totalDurationMs - elapsedMs),
+    ended: false,
+  };
+}
+
+function visiblePlaybackState(rows, row, generatedAt, stale, paused) {
+  const playback = computeSecondaryPlayback(rows, row, generatedAt, paused);
+  return {
+    ended: playback.ended,
     visiblePlayback: stale
       ? { ...playback, currentIndex: -1, progressMs: 0, anchorAt: null }
       : playback,
@@ -149,9 +275,8 @@ function secondaryRawPlaybackPayload(row, rawPayload, generatedAt, options) {
   const rows = sourceTracks
     .map((track, index) => rawTrackToPlaybackRow(track, index, startTime))
     .map((track) => applyMetadata(track, options.metadata));
-  const playbackAt = paused ? changedAt ?? checkedAt ?? generatedAt : generatedAt;
   const stale = checkedAt == null || generatedAt - checkedAt > SECONDARY_STALE_MS;
-  const { ended, visiblePlayback } = visiblePlaybackState(rows, playbackAt, stale, paused);
+  const { ended, visiblePlayback } = visiblePlaybackState(rows, row, generatedAt, stale, paused);
   const queue = rows.map((track, index) => normalizePlaybackTrack(track, index, visiblePlayback));
   const playing = !stale && broadcasting && !paused && !ended && visiblePlayback.currentIndex >= 0;
   const payload = {
@@ -201,9 +326,8 @@ export function secondaryPlaybackPayload(row, generatedAt = Date.now(), options 
   }), options.metadata || new Map()));
   const paused = storedBoolean(row.is_paused);
   const broadcasting = storedBoolean(row.is_broadcasting);
-  const playbackAt = paused ? changedAt ?? checkedAt ?? generatedAt : generatedAt;
   const stale = queueCorrupt || checkedAt == null || generatedAt - checkedAt > SECONDARY_STALE_MS;
-  const { ended, visiblePlayback } = visiblePlaybackState(rows, playbackAt, stale, paused);
+  const { ended, visiblePlayback } = visiblePlaybackState(rows, row, generatedAt, stale, paused);
   const queue = rows.map((track, index) => stripAppleMusicFields(
     normalizePlaybackTrack(track, index, visiblePlayback),
   ));

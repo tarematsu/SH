@@ -3,6 +3,7 @@ import { currentIndex } from './buddy-playback-queue.js';
 
 const METADATA_FAILURE_RETRY_MS = 15 * 60_000;
 const METADATA_FAILURE_CACHE_MAX = 256;
+const BUDDY_METADATA_TABLE = 'sh_buddy_track_metadata';
 
 const metadataFailureUntil = new Map();
 
@@ -71,8 +72,8 @@ async function loadTrackMetadata(db, tracks) {
     bindings.push(...isrcs);
   }
   const result = await db.prepare(`SELECT spotify_id,isrc,title,artist,display_title,
-      thumbnail_url,spotify_url,fetched_at
-    FROM sh_track_metadata WHERE ${clauses.join(' OR ')}
+      thumbnail_url,spotify_url,fetched_at,raw_json
+    FROM ${BUDDY_METADATA_TABLE} WHERE ${clauses.join(' OR ')}
     ORDER BY fetched_at DESC`)
     .bind(...bindings).all();
   return indexMetadataRows(result.results || []);
@@ -80,14 +81,18 @@ async function loadTrackMetadata(db, tracks) {
 
 async function saveTrackMetadata(db, rows) {
   if (!rows.length) return;
-  await db.batch(rows.map((row) => db.prepare(`INSERT INTO sh_track_metadata (
+  await db.batch(rows.map((row) => db.prepare(`INSERT INTO ${BUDDY_METADATA_TABLE} (
       spotify_id,isrc,title,artist,display_title,thumbnail_url,spotify_url,source,fetched_at,raw_json
     ) VALUES (?,?,?,?,?,?,?,?,?,?) ON CONFLICT(spotify_id) DO UPDATE SET
-      isrc=COALESCE(excluded.isrc,sh_track_metadata.isrc),
-      title=excluded.title,artist=excluded.artist,display_title=excluded.display_title,
-      thumbnail_url=COALESCE(excluded.thumbnail_url,sh_track_metadata.thumbnail_url),
-      spotify_url=excluded.spotify_url,source=excluded.source,
-      fetched_at=excluded.fetched_at,raw_json=excluded.raw_json`)
+      isrc=COALESCE(excluded.isrc,${BUDDY_METADATA_TABLE}.isrc),
+      title=COALESCE(excluded.title,${BUDDY_METADATA_TABLE}.title),
+      artist=COALESCE(excluded.artist,${BUDDY_METADATA_TABLE}.artist),
+      display_title=COALESCE(excluded.display_title,${BUDDY_METADATA_TABLE}.display_title),
+      thumbnail_url=COALESCE(excluded.thumbnail_url,${BUDDY_METADATA_TABLE}.thumbnail_url),
+      spotify_url=COALESCE(excluded.spotify_url,${BUDDY_METADATA_TABLE}.spotify_url),
+      source=COALESCE(excluded.source,${BUDDY_METADATA_TABLE}.source),
+      fetched_at=MAX(excluded.fetched_at,${BUDDY_METADATA_TABLE}.fetched_at),
+      raw_json=CASE WHEN excluded.raw_json IS NOT NULL THEN excluded.raw_json ELSE ${BUDDY_METADATA_TABLE}.raw_json END`)
     .bind(
       row.spotify_id,
       normalizedIsrc(row.isrc) || null,
@@ -106,16 +111,15 @@ function buddyMetadataNeedsRefresh(row, track, now) {
   const spotifyId = String(track?.spotify_id || '').trim();
   if (!spotifyId) return false;
   if (metadataNeedsRefresh(row, spotifyId, now)) return true;
-  return !row?.thumbnail_url && !track?.thumbnail_url;
+  return !row?.title
+    || !row?.artist
+    || (!row?.thumbnail_url && !track?.thumbnail_url);
 }
 
 export async function enrichQueueMetadata(env, queue, now, config, fetchMetadata = fetchTrackMetadata) {
+  if (!env?.OTHER_DB) throw new Error('OTHER_DB binding is missing for buddy playback metadata');
   const tracks = queue.tracks.filter((track) => track?.spotify_id || track?.isrc);
-  // Primary track metadata is shared by the primary collector, Pages, and
-  // buddy playback. Keep OTHER_DB as a one-release compatibility fallback so
-  // an older deployment can still serve cached metadata during cutover.
-  const metadataDb = env.BUDDIES_DB || env.OTHER_DB;
-  const metadata = await loadTrackMetadata(metadataDb, tracks);
+  const metadata = await loadTrackMetadata(env.OTHER_DB, tracks);
   if (!tracks.some((track) => track.spotify_id) || config.metadataLimit <= 0) return metadata;
 
   const index = currentIndex(queue, now);
@@ -155,22 +159,26 @@ export async function enrichQueueMetadata(env, queue, now, config, fetchMetadata
     }
     if (isrc) metadata.set(`isrc:${isrc}`, row);
   }
-  await saveTrackMetadata(metadataDb, fetched);
+  await saveTrackMetadata(env.OTHER_DB, fetched);
   return metadata;
 }
 
 export function attachBuddyMetadata(queue, metadata) {
   return queue.tracks.map((track) => {
     const row = metadataForTrack(metadata, track);
-    const title = String(row?.title || '').trim() || null;
-    const artist = String(row?.artist || '').trim() || null;
+    const title = String(track?.title || row?.title || '').trim() || null;
+    const artist = String(track?.artist || row?.artist || '').trim() || null;
     return {
       ...track,
       title,
       artist,
-      display_title: row?.display_title || (title && artist ? `${title} — ${artist}` : title),
-      thumbnail_url: row?.thumbnail_url || track.thumbnail_url || null,
-      spotify_url: row?.spotify_url
+      album_name: String(track?.album_name || '').trim() || null,
+      display_title: track?.display_title
+        || row?.display_title
+        || (title && artist ? `${title} — ${artist}` : title),
+      thumbnail_url: track?.thumbnail_url || row?.thumbnail_url || null,
+      spotify_url: track?.spotify_url
+        || row?.spotify_url
         || (track.spotify_id ? `https://open.spotify.com/track/${track.spotify_id}` : null),
     };
   });

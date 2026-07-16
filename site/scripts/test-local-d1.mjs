@@ -36,6 +36,7 @@ const databases = [
       'database/other-migrations/008_retire_unowned_state.sql',
       'database/other-migrations/009_drop_duplicate_track_metadata.sql',
       'database/other-migrations/010_drop_legacy_snapshots.sql',
+      'database/other-migrations/011_buddy_playback_canonical.sql',
     ],
     requiredTables: [
       'sh_host_broadcast_sessions',
@@ -43,6 +44,9 @@ const databases = [
       'sh_daily_summary',
       'sh_weekly_summary',
       'sh_monthly_summary',
+      'sh_playback_channel_current',
+      'sh_buddy_playback_clock',
+      'sh_buddy_track_metadata',
     ],
   },
 ];

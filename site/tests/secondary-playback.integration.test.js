@@ -10,7 +10,7 @@ import {
 import { FakeD1Database, responseJson } from './helpers/fake-d1.js';
 
 const migration = readFileSync(
-  new URL('../../database/migrations/127_add_secondary_playback_current.sql', import.meta.url),
+  new URL('../../database/other-migrations/011_buddy_playback_canonical.sql', import.meta.url),
   'utf8',
 );
 
@@ -27,10 +27,13 @@ function playbackRow(overrides = {}) {
     state_hash: 'hash',
     checked_at: 340_000,
     changed_at: 300_000,
+    paused_total_ms: 0,
+    pause_started_at: null,
     queue_json: JSON.stringify([
       {
         position: 0,
         spotify_id: 'sp1',
+        isrc: 'JPX1',
         duration_ms: 180_000,
         title: 'Song 1',
         artist: 'Artist',
@@ -39,6 +42,7 @@ function playbackRow(overrides = {}) {
       {
         position: 1,
         spotify_id: 'sp2',
+        isrc: 'JPX2',
         duration_ms: 200_000,
         title: 'Song 2',
         artist: 'Artist',
@@ -49,11 +53,11 @@ function playbackRow(overrides = {}) {
   };
 }
 
-test('secondary playback migration stores only one current row per channel', () => {
-  assert.match(migration, /CREATE TABLE IF NOT EXISTS sh_playback_channel_current/);
+test('secondary playback migration owns clock and metadata tables in OTHER_DB', () => {
+  assert.match(migration, /CREATE TABLE IF NOT EXISTS sh_buddy_playback_clock/);
+  assert.match(migration, /CREATE TABLE IF NOT EXISTS sh_buddy_track_metadata/);
   assert.match(migration, /channel_alias TEXT PRIMARY KEY/);
-  assert.match(migration, /queue_json TEXT NOT NULL/);
-  assert.doesNotMatch(migration, /AUTOINCREMENT|history|snapshot/i);
+  assert.doesNotMatch(migration, /MINUTE_DB|BUDDIES_DB/);
 });
 
 test('secondary playback exposes current progress and track metadata without Spotify IDs', () => {
@@ -81,6 +85,46 @@ test('secondary playback exposes current progress and track metadata without Spo
   assert.equal('spotify_id' in payload.queue[1], false);
 });
 
+test('secondary endpoint repairs sparse queue metadata from OTHER_DB only', async () => {
+  const db = new FakeD1Database()
+    .route('first', 'sh_collector_status', null)
+    .route('first', 'sh_playback_channel_current', playbackRow({
+      queue_json: JSON.stringify([{
+        position: 0,
+        spotify_id: 'sp1',
+        isrc: 'JPX1',
+        duration_ms: 180_000,
+        title: null,
+        artist: null,
+        thumbnail_url: null,
+      }]),
+    }))
+    .route('all', 'sh_buddy_track_metadata', {
+      results: [{
+        spotify_id: 'sp1',
+        isrc: 'JPX1',
+        title: 'Repaired Song',
+        artist: 'Repaired Artist',
+        display_title: 'Repaired Song — Repaired Artist',
+        thumbnail_url: 'https://example.invalid/repaired.jpg',
+        fetched_at: 345_000,
+        raw_json: null,
+      }],
+    });
+
+  const response = await playbackGet({
+    request: new Request('https://skrzk.test/api/playback?channel=buddy46'),
+    env: { OTHER_DB: db },
+  });
+  const payload = await responseJson(response);
+
+  assert.equal(response.status, 200);
+  assert.equal(payload.queue[0].title, 'Repaired Song');
+  assert.equal(payload.queue[0].artist, 'Repaired Artist');
+  assert.equal(payload.queue[0].thumbnail_url, 'https://example.invalid/repaired.jpg');
+  assert.ok(db.callsMatching(/sh_buddy_track_metadata/, 'all').length > 0);
+});
+
 test('secondary playback keeps metadata keys stable when values are unavailable', () => {
   const payload = secondaryPlaybackPayload(playbackRow({
     queue_json: JSON.stringify([{
@@ -96,10 +140,23 @@ test('secondary playback keeps metadata keys stable when values are unavailable'
   assert.equal('spotify_id' in payload.queue[0], false);
 });
 
-test('paused secondary playback freezes progress at the playback change timestamp', () => {
+test('completed buddy pauses are subtracted after playback resumes', () => {
+  const payload = secondaryPlaybackPayload(playbackRow({
+    start_time: 300_000,
+    paused_total_ms: 120_000,
+    checked_at: 499_000,
+  }), 500_000);
+
+  assert.equal(payload.playing, true);
+  assert.equal(payload.queue_status.current_index, 0);
+  assert.equal(payload.queue_status.progress_ms, 80_000);
+});
+
+test('paused secondary playback freezes progress at pause_started_at', () => {
   const payload = secondaryPlaybackPayload(playbackRow({
     is_paused: 1,
     changed_at: 330_000,
+    pause_started_at: 330_000,
     checked_at: 890_000,
   }), 900_000);
 
@@ -166,7 +223,8 @@ test('secondary stale endpoint uses the same absent-current marker as buddies', 
       last_attempt_at: Date.now(),
       last_success_at: Date.now(),
     })
-    .route('first', 'sh_playback_channel_current', playbackRow({ checked_at: 1 }));
+    .route('first', 'sh_playback_channel_current', playbackRow({ checked_at: 1 }))
+    .route('all', 'sh_buddy_track_metadata', { results: [] });
   const response = await playbackGet({
     request: new Request('https://skrzk.test/api/playback?channel=buddy46'),
     env: { OTHER_DB: db },
