@@ -9,14 +9,15 @@ function queueMessage(body, calls) {
     body,
     attempts: 1,
     ack() { calls.push('ack'); },
-    retry() { calls.push('retry'); },
+    retry(options) { calls.push(['retry', options]); },
   };
 }
 
-function minuteDb(changes = () => 1) {
+function minuteDb(changes = () => 1, sqlCalls = []) {
   let calls = 0;
   return {
-    prepare() {
+    prepare(sql) {
+      sqlCalls.push(sql);
       return {
         bind() { return this; },
         async run() {
@@ -28,27 +29,27 @@ function minuteDb(changes = () => 1) {
   };
 }
 
-test('production minute consumer acknowledges split-pipeline messages without read-model writes', async () => {
+function splitMessage(options = {}) {
   const body = minuteFactQueueMessage({
     observedAt: 123_456,
     snapshot: { channel_id: 10, station_id: 5 },
-    queue: { station_id: 5, queue_id: 20, tracks: [] },
-  });
+    queue: { station_id: 5, queue_id: 20, tracks: options.tracks || [] },
+    comments: { commentCount: 3, commentTotal: 12, commentTotalKnown: true },
+  }, options);
   body.read_model = null;
+  return body;
+}
 
+test('minute ingest writes one inbox row and durably hands off one derive trigger', async () => {
   const messageCalls = [];
   const sqlCalls = [];
+  const triggers = [];
   const result = await consumeMinuteQueue({
-    messages: [queueMessage(body, messageCalls)],
+    messages: [queueMessage(splitMessage(), messageCalls)],
   }, {
-    MINUTE_DB: {
-      prepare(sql) {
-        sqlCalls.push(sql);
-        return {
-          bind() { return this; },
-          async run() { return { meta: { changes: 1 } }; },
-        };
-      },
+    MINUTE_DB: minuteDb(() => 1, sqlCalls),
+    MINUTE_DERIVE_QUEUE: {
+      async send(body) { triggers.push(body); },
     },
   }, {});
 
@@ -60,25 +61,32 @@ test('production minute consumer acknowledges split-pipeline messages without re
     invalid: 0,
   });
   assert.deepEqual(messageCalls, ['ack']);
-  assert.equal(sqlCalls.length, 1);
-  assert.match(sqlCalls[0], /INSERT INTO sh_minute_fact_jobs/);
+  assert.equal(sqlCalls.filter((sql) => /INSERT INTO sh_minute_fact_jobs/.test(sql)).length, 1);
+  assert.deepEqual(triggers, [{
+    message_type: 'minute-fact-derive',
+    message_version: 1,
+    job_id: 'minute-fact:10:120000',
+    channel_id: 10,
+    minute_at: 120_000,
+  }]);
 });
 
-test('production minute consumer enriches one accepted job only once within a duplicate batch', async () => {
-  const body = minuteFactQueueMessage({
-    observedAt: 123_456,
-    snapshot: { channel_id: 10, station_id: 5 },
-    queue: { station_id: 5, queue_id: 20, tracks: [{ spotify_id: 'track-1' }] },
-  }, { enrichTrackMetadata: true });
-  body.read_model = null;
-
+test('duplicate inbox delivery resends the derive trigger but enriches metadata once', async () => {
+  const body = splitMessage({
+    enrichTrackMetadata: true,
+    tracks: [{ spotify_id: 'track-1' }],
+  });
   const messageCalls = [];
+  const triggers = [];
   const tasks = [];
   const enrichedJobs = [];
   const result = await consumeMinuteQueue({
     messages: [queueMessage(body, messageCalls), queueMessage(body, messageCalls)],
   }, {
     MINUTE_DB: minuteDb((call) => (call === 1 ? 1 : 0)),
+    MINUTE_DERIVE_QUEUE: {
+      async send(trigger) { triggers.push(trigger); },
+    },
   }, {
     waitUntil(task) { tasks.push(task); },
   }, {
@@ -96,11 +104,12 @@ test('production minute consumer enriches one accepted job only once within a du
     invalid: 0,
   });
   assert.deepEqual(messageCalls, ['ack', 'ack']);
+  assert.equal(triggers.length, 2);
   assert.equal(enrichedJobs.length, 1);
   assert.equal(enrichedJobs[0].jobId, 'minute-fact:10:120000');
 });
 
-test('production minute consumer preserves metadata work after a legacy read-model failure', async () => {
+test('metadata survives a failure after inbox and derive handoff', async () => {
   const body = minuteFactQueueMessage({
     observedAt: 123_456,
     snapshot: { channel_id: 10, station_id: 5 },
@@ -113,7 +122,6 @@ test('production minute consumer preserves metadata work after a legacy read-mod
       collector: { collector_id: 'cloudflare-worker' },
     },
   });
-
   const messageCalls = [];
   const tasks = [];
   const enrichedJobs = [];
@@ -121,6 +129,7 @@ test('production minute consumer preserves metadata work after a legacy read-mod
     messages: [queueMessage(body, messageCalls)],
   }, {
     MINUTE_DB: minuteDb(),
+    MINUTE_DERIVE_QUEUE: { async send() {} },
   }, {
     waitUntil(task) { tasks.push(task); },
   }, {
@@ -133,14 +142,22 @@ test('production minute consumer preserves metadata work after a legacy read-mod
   });
   await Promise.all(tasks);
 
-  assert.deepEqual(result, {
-    received: 1,
-    enqueued: 0,
-    duplicates: 0,
-    retried: 1,
-    invalid: 0,
-  });
-  assert.deepEqual(messageCalls, ['retry']);
+  assert.equal(result.retried, 1);
+  assert.deepEqual(messageCalls, [['retry', { delaySeconds: 5 }]]);
   assert.equal(enrichedJobs.length, 1);
-  assert.equal(enrichedJobs[0].jobId, 'minute-fact:10:120000');
+});
+
+test('derive Queue failure retries the source message after the durable inbox insert', async () => {
+  const messageCalls = [];
+  const result = await consumeMinuteQueue({
+    messages: [queueMessage(splitMessage(), messageCalls)],
+  }, {
+    MINUTE_DB: minuteDb(),
+    MINUTE_DERIVE_QUEUE: {
+      async send() { throw new Error('derive queue unavailable'); },
+    },
+  }, {});
+
+  assert.equal(result.retried, 1);
+  assert.deepEqual(messageCalls, [['retry', { delaySeconds: 5 }]]);
 });
