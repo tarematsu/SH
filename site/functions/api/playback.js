@@ -4,6 +4,7 @@ import {
   loadBuddyCollectorStatus,
 } from '../lib/buddy-collector-status.js';
 import { computePlayback } from '../lib/playback.js';
+import { preferDashboardAlignedPlayback } from '../lib/primary-playback-fallback.js';
 import { loadPrimaryPlaybackPayload } from '../lib/primary-playback.js';
 import {
   emptySecondaryPayload,
@@ -221,7 +222,8 @@ export async function onRequestGet({ request, env }) {
     if (!env.MINUTE_DB) {
       return playbackJson({ ok: false, error: 'MINUTE_DB binding missing' }, 500, 'no-store');
     }
-    const payload = await loadPrimaryPlaybackPayload(env.MINUTE_DB, generatedAt);
+    const primary = await loadPrimaryPlaybackPayload(env.MINUTE_DB, generatedAt);
+    const payload = await preferDashboardAlignedPlayback(env.MINUTE_DB, primary, generatedAt);
     return playbackJson(payload, 200, CACHE_CONTROL);
   } catch (error) {
     console.error(error);
