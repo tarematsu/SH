@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 
+// This contract also triggers the read-only production schema verifier on PRs.
 const provisioner = await readFile(
   new URL('../worker/scripts/provision-facts-db.mjs', import.meta.url),
   'utf8',
