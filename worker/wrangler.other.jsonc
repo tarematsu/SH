@@ -1,7 +1,7 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "sh-monitor-other",
-  "main": "src/other-monitor-entry.js",
+  "main": "src/other-entry.js",
   "compatibility_date": "2026-06-24",
   "workers_dev": false,
   "preview_urls": false,
