@@ -42,7 +42,7 @@ test('retry delay grows exponentially and is capped at one hour', () => {
   assert.equal(minuteFactRetryDelayMs(99), 3_600_000);
 });
 
-test('derive cron claims the batch once, then writes and completes each job', async () => {
+test('derive cron claims one partial batch, then writes and completes each job', async () => {
   const calls = [];
   const result = await runMinuteFactDeriveCron(
     { MINUTE_DB: {} },
@@ -50,7 +50,7 @@ test('derive cron claims the batch once, then writes and completes each job', as
       now: () => 1_000,
       claim: async (_env, options) => {
         calls.push(['claim', options.limit, options.leaseMs]);
-        return calls.length === 1 ? [job(1), job(2)] : [];
+        return [job(1), job(2)];
       },
       write: async (env, payload) => {
         calls.push(['write', env.MINUTE_FACT_TIMEOUT_MS, payload.observedAt]);
@@ -76,7 +76,6 @@ test('derive cron claims the batch once, then writes and completes each job', as
     ['complete', 1],
     ['write', 18_000, 120_002],
     ['complete', 2],
-    ['claim', 6, 60_000],
   ]);
 });
 
