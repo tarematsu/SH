@@ -56,7 +56,8 @@ for (let attempt = 1; attempt <= attempts; attempt += 1) {
         MAX(observed_at) AS last_observed_at,
         MAX(minute_at) AS last_minute_at,
         SUM(CASE WHEN source_code=1 THEN 1 ELSE 0 END) AS live_fact_count,
-        (SELECT COUNT(*) FROM pragma_table_info('sh_tracks') WHERE name='isrc') AS sh_tracks_isrc_column_count
+        (SELECT COUNT(*) FROM pragma_table_info('sh_tracks') WHERE name='isrc') AS sh_tracks_isrc_column_count,
+        (SELECT COUNT(*) FROM pragma_table_info('sh_track_metadata') WHERE name='isrc') AS sh_track_metadata_isrc_column_count
       FROM sh_minute_facts`,
     ]));
     const row = firstResult(payload) || {};
@@ -70,10 +71,13 @@ for (let attempt = 1; attempt <= attempts; attempt += 1) {
       last_observed_at: Number(row.last_observed_at || 0) || null,
       last_minute_at: Number(row.last_minute_at || 0) || null,
       sh_tracks_isrc_present: Number(row.sh_tracks_isrc_column_count || 0) > 0,
+      sh_track_metadata_isrc_present: Number(row.sh_track_metadata_isrc_column_count || 0) > 0,
       checked_at: new Date(now).toISOString(),
     };
     const recent = last.last_observed_at != null && now - last.last_observed_at <= freshnessMs;
-    if (last.live_fact_count > 0 && recent && last.sh_tracks_isrc_present) {
+    const requiredSchemaPresent = last.sh_tracks_isrc_present
+      && last.sh_track_metadata_isrc_present;
+    if (last.live_fact_count > 0 && recent && requiredSchemaPresent) {
       last.result = 'success';
       writeStatus(last);
       console.log(JSON.stringify(last));
