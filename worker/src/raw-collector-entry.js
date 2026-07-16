@@ -126,7 +126,11 @@ export async function collectRawChannel(env, dependencies = {}) {
       collectorStationId: state.collectorStationId,
     },
   }, { contentType: 'json' });
-  console.log(JSON.stringify({ event: 'raw_collection_enqueued', observed_at: observedAt }));
+  console.log(JSON.stringify({
+    event: 'raw_collection_enqueued',
+    observed_at: observedAt,
+    payload_chars: body.length,
+  }));
 }
 
 export default {
