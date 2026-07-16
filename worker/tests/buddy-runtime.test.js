@@ -2,7 +2,9 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+  BUDDY_PLAYBACK_CLOCK_SCHEMA_SQL,
   BUDDY_PLAYBACK_SCHEMA_SQL,
+  BUDDY_TRACK_METADATA_SCHEMA_SQL,
   buddyAuthStateId,
   buddyHandleStationPath,
   collectBuddyPlaybackReady,
@@ -66,7 +68,11 @@ class FakeDb {
 
   async run(sql, params = []) {
     this.sql.push(sql);
-    if (sql === BUDDY_PLAYBACK_SCHEMA_SQL) return { meta: { changes: 0 } };
+    if ([
+      BUDDY_PLAYBACK_SCHEMA_SQL,
+      BUDDY_PLAYBACK_CLOCK_SCHEMA_SQL,
+      BUDDY_TRACK_METADATA_SCHEMA_SQL,
+    ].includes(sql)) return { meta: { changes: 0 } };
     if (sql.includes('INSERT OR IGNORE INTO sh_worker_auth_control')) {
       this.authControl.id = params[0];
       return { meta: { changes: 0 } };
@@ -94,14 +100,18 @@ class FakeDb {
   }
 }
 
-test('buddy runtime creates the current-state table once per isolate', async () => {
+test('buddy runtime creates playback, clock, and metadata tables once per isolate', async () => {
   resetBuddyRuntimeForTests();
   const db = new FakeDb();
   const env = { DB: db };
 
   assert.equal(await ensureBuddyPlaybackSchema(env), true);
   assert.equal(await ensureBuddyPlaybackSchema(env), false);
-  assert.deepEqual(db.sql, [BUDDY_PLAYBACK_SCHEMA_SQL]);
+  assert.deepEqual(db.sql, [
+    BUDDY_PLAYBACK_SCHEMA_SQL,
+    BUDDY_PLAYBACK_CLOCK_SCHEMA_SQL,
+    BUDDY_TRACK_METADATA_SCHEMA_SQL,
+  ]);
 });
 
 test('buddy runtime rejects a missing D1 binding', async () => {
