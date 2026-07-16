@@ -11,23 +11,42 @@ const verifier = await readFile(
   'utf8',
 );
 
-test('facts provisioner adds sh_tracks.isrc before metadata backfill', () => {
-  const columnCheck = "tableColumnNames(databaseName, 'sh_tracks')";
-  const alter = 'ALTER TABLE sh_tracks ADD COLUMN isrc TEXT';
-  const backfill = "'--file', trackMetadataBackfillMigrationPath";
+function position(source, value) {
+  const index = source.indexOf(value);
+  assert.notEqual(index, -1, `missing expected source fragment: ${value}`);
+  return index;
+}
+
+test('facts provisioner adds both required ISRC columns before reporting schema 016', () => {
+  const tracksColumnCheck = "tableColumnNames(databaseName, 'sh_tracks')";
+  const tracksAlter = 'ALTER TABLE sh_tracks ADD COLUMN isrc TEXT';
+  const metadataColumnCheck = "tableColumnNames(databaseName, 'sh_track_metadata')";
+  const metadataMigration = "'--file', trackMetadataIsrcMigrationPath";
+  const schemaMarker = "schema: 'database/facts-migrations/016_track_metadata_isrc.sql'";
 
   assert.match(provisioner, /!trackColumns\.has\('isrc'\)/);
   assert.match(provisioner, /sh_tracks\.isrc migration did not complete/);
-  assert.ok(provisioner.indexOf(columnCheck) < provisioner.indexOf(alter));
-  assert.ok(provisioner.indexOf(alter) < provisioner.indexOf(backfill));
+  assert.match(provisioner, /!trackMetadataColumns\.has\('isrc'\)/);
+  assert.match(provisioner, /sh_track_metadata\.isrc migration did not complete/);
+  assert.match(provisioner, /016_track_metadata_isrc\.sql/);
+
+  assert.ok(position(provisioner, tracksColumnCheck) < position(provisioner, tracksAlter));
+  assert.ok(position(provisioner, tracksAlter) < position(provisioner, metadataColumnCheck));
+  assert.ok(position(provisioner, metadataColumnCheck) < position(provisioner, metadataMigration));
+  assert.ok(position(provisioner, metadataMigration) < position(provisioner, schemaMarker));
 });
 
-test('live facts verification requires the production sh_tracks.isrc column', () => {
+test('live facts verification requires both production ISRC columns', () => {
   assert.match(verifier, /pragma_table_info\('sh_tracks'\)/);
-  assert.match(verifier, /name='isrc'/);
+  assert.match(verifier, /pragma_table_info\('sh_track_metadata'\)/);
   assert.match(verifier, /sh_tracks_isrc_present/);
+  assert.match(verifier, /sh_track_metadata_isrc_present/);
   assert.match(
     verifier,
-    /last\.live_fact_count > 0 && recent && last\.sh_tracks_isrc_present/,
+    /last\.sh_tracks_isrc_present\s*&&\s*last\.sh_track_metadata_isrc_present/,
+  );
+  assert.match(
+    verifier,
+    /last\.live_fact_count > 0 && recent && requiredSchemaPresent/,
   );
 });
