@@ -132,6 +132,11 @@ export function buildExpectedMinuteCandidates(rows = [], options = {}) {
   };
 }
 
+export function nextGapScanCursor({ from, to, earliest, cutoff, missingCount }) {
+  if (Number(missingCount) > 0) return to;
+  return from <= earliest ? cutoff : from;
+}
+
 async function ensureState(env) {
   await env.MINUTE_DB.prepare(GAP_SCAN_STATE_SQL).run();
   await env.MINUTE_DB.prepare(`INSERT OR IGNORE INTO sh_minute_fact_gap_scan_state(scan_key,updated_at)
@@ -155,8 +160,10 @@ async function loadSnapshots(env, from, to) {
       is_launched,is_broadcasting,chat_status,listener_count,online_member_count,total_member_count,
       guest_count,total_listens,stream_goal,current_stream_count,host_account_id,host_handle,broadcast_start_time
     FROM sh_channel_snapshots WHERE observed_at>=? AND observed_at<?
-    ORDER BY observed_at ASC,id ASC LIMIT 2000`).bind(from, to).all();
-  return previous ? [previous, ...(result.results || [])] : (result.results || []);
+    ORDER BY observed_at ASC,id ASC LIMIT 2001`).bind(from, to).all();
+  const rows = result.results || [];
+  if (rows.length > 2000) throw new Error('minute fact gap scan snapshot window exceeded 2000 rows');
+  return previous ? [previous, ...rows] : rows;
 }
 
 async function existingKeys(env, candidates) {
@@ -239,10 +246,10 @@ export async function runMinuteFactsGapScan(env, dependencies = {}) {
     const built = buildExpectedMinuteCandidates(rows, { from, to, maxCarryMinutes });
     const existing = await existingKeys(env, built.candidates);
     const missing = built.candidates.filter((item) => !existing.has(`${item.snapshot.channel_id}:${item.minuteAt}`));
-    const comments = await commentCounts(env, missing.slice(0, maxJobs));
+    const attempted = missing.slice(0, maxJobs);
+    const comments = await commentCounts(env, attempted);
     let enqueued = 0;
-    for (const item of missing) {
-      if (enqueued >= maxJobs) break;
+    for (const item of attempted) {
       const queue = await loadHistoricalQueue(env, item);
       const commentCount = comments.get(`${item.snapshot.station_id}:${item.minuteAt}`);
       const accepted = await enqueueMinuteFactJob(env, {
@@ -261,7 +268,13 @@ export async function runMinuteFactsGapScan(env, dependencies = {}) {
       if (accepted?.enqueued) enqueued += 1;
     }
 
-    const nextTo = from <= earliest ? cutoff : from;
+    const nextTo = nextGapScanCursor({
+      from,
+      to,
+      earliest,
+      cutoff,
+      missingCount: missing.length,
+    });
     await env.MINUTE_DB.prepare(`UPDATE sh_minute_fact_gap_scan_state SET
       next_to=?,earliest_source_minute=?,last_from=?,last_to=?,expected_minutes=?,
       missing_minutes=?,source_gap_minutes=?,enqueued_jobs=enqueued_jobs+?,
@@ -278,8 +291,10 @@ export async function runMinuteFactsGapScan(env, dependencies = {}) {
       expected_minutes: built.candidates.length,
       missing_minutes: missing.length,
       source_gap_minutes: built.sourceGapMinutes,
+      attempted_jobs: attempted.length,
       enqueued,
       remaining_missing: Math.max(0, missing.length - enqueued),
+      window_blocked: missing.length > 0,
       next_to: nextTo,
     };
     console.log(JSON.stringify(summary));
