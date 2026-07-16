@@ -84,7 +84,9 @@ test('other connected build excludes retired Pages and maintenance workloads', (
   assert.equal(paths.includes('worker/src/pages-read-model-refresh.js'), false);
   assert.equal(paths.includes('worker/src/scheduled-maintenance.js'), false);
   assert.equal(paths.includes('worker/src/snapshot-retention.js'), false);
-  assert.equal(paths.some((path) => path.startsWith('site/functions/')), false);
+  assert.ok(paths.includes('site/functions/api/host-ingest.js'));
+  assert.ok(paths.includes('site/functions/api/ingest.js'));
+  assert.equal(paths.includes('site/functions/api/minute-facts/current.js'), false);
 });
 
 test('unresolved runtime source changes fall back to all Workers', () => {
