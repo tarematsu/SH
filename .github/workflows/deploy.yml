@@ -46,7 +46,7 @@ jobs:
     name: Monitor workers
     if: ${{ inputs.target == 'all' || inputs.target == 'monitor-workers' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -63,14 +63,26 @@ jobs:
           for queue in \
             stationhead-raw-collection stationhead-raw-collection-dlq \
             stationhead-comments stationhead-comments-dlq \
-            stationhead-read-model stationhead-read-model-dlq
+            stationhead-read-model stationhead-read-model-dlq \
+            stationhead-buddies-facts stationhead-buddies-facts-dlq \
+            stationhead-minute-derive stationhead-minute-derive-dlq
           do
             npx wrangler queues create "$queue" >/dev/null 2>&1 || true
           done
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_BUILDS_API_TOKEN || secrets.CLOUDFLARE_API_TOKEN || secrets.CF_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID || secrets.CF_ACCOUNT_ID }}
-      - run: npm run deploy:ingest
+      - run: npm run deploy:minute-maintenance
+        working-directory: worker
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_BUILDS_API_TOKEN || secrets.CLOUDFLARE_API_TOKEN || secrets.CF_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID || secrets.CF_ACCOUNT_ID }}
+      - run: npm run deploy:minute-derive
+        working-directory: worker
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_BUILDS_API_TOKEN || secrets.CLOUDFLARE_API_TOKEN || secrets.CF_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID || secrets.CF_ACCOUNT_ID }}
+      - run: npm run deploy:minute-ingest
         working-directory: worker
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_BUILDS_API_TOKEN || secrets.CLOUDFLARE_API_TOKEN || secrets.CF_API_TOKEN }}
@@ -81,6 +93,11 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_BUILDS_API_TOKEN || secrets.CLOUDFLARE_API_TOKEN || secrets.CF_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID || secrets.CF_ACCOUNT_ID }}
       - run: npm run deploy:read-model
+        working-directory: worker
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_BUILDS_API_TOKEN || secrets.CLOUDFLARE_API_TOKEN || secrets.CF_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID || secrets.CF_ACCOUNT_ID }}
+      - run: npm run deploy:ingest
         working-directory: worker
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_BUILDS_API_TOKEN || secrets.CLOUDFLARE_API_TOKEN || secrets.CF_API_TOKEN }}
@@ -97,10 +114,10 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID || secrets.CF_ACCOUNT_ID }}
 
   minute:
-    name: Minute facts worker
-    if: ${{ inputs.target == 'all' || inputs.target == 'minute-worker' }}
+    name: Minute facts workers
+    if: ${{ inputs.target == 'minute-worker' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -110,6 +127,19 @@ jobs:
           cache-dependency-path: worker/package-lock.json
       - run: npm ci --no-audit --no-fund
         working-directory: worker
+      - name: Ensure minute queues
+        working-directory: worker
+        shell: bash
+        run: |
+          for queue in \
+            stationhead-buddies-facts stationhead-buddies-facts-dlq \
+            stationhead-minute-derive stationhead-minute-derive-dlq
+          do
+            npx wrangler queues create "$queue" >/dev/null 2>&1 || true
+          done
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_BUILDS_API_TOKEN || secrets.CLOUDFLARE_API_TOKEN || secrets.CF_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID || secrets.CF_ACCOUNT_ID }}
       - run: npm run deploy:minute
         working-directory: worker
         env:
