@@ -129,9 +129,21 @@ async function runDerive(env, dependencies) {
 }
 
 async function runRebuild(env, dependencies) {
-  const runner = dependencies.runRebuild
-    || (await import('./minute-facts-backfill.js')).runMinuteFactsBackfill;
-  return runner(withSourceDatabase(env, 'BUDDIES_DB'), dependencies.rebuild || {});
+  const activeEnv = withSourceDatabase(env, 'BUDDIES_DB');
+  if (dependencies.runRebuild) return dependencies.runRebuild(activeEnv, dependencies.rebuild || {});
+  const [{ runMinuteFactsGapScan }, { runMinuteFactsBackfill }] = await Promise.all([
+    import('./minute-facts-gap-scan.js'),
+    import('./minute-facts-backfill.js'),
+  ]);
+  const gapScan = await runMinuteFactsGapScan(activeEnv, dependencies.gapScan || {});
+  const sequential = await runMinuteFactsBackfill(activeEnv, dependencies.rebuild || {});
+  return {
+    event: 'minute_fact_rebuild_cycle',
+    gapScan,
+    sequential,
+    processed: Number(gapScan?.enqueued || 0) + Number(sequential?.enqueued || 0),
+    failed: 0,
+  };
 }
 
 async function runSync(env, dependencies) {
