@@ -18,9 +18,9 @@ concurrency:
 
 jobs:
   prepare-queues:
-    name: Prepare pipeline queues
+    name: Prepare split minute boundary
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     env:
       CLOUDFLARE_ACCOUNT_ID: "0500f25c2f74e7e76c94a8bcb6c7008b"
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_BUILDS_API_TOKEN || secrets.CLOUDFLARE_API_TOKEN || secrets.CF_API_TOKEN }}
@@ -48,6 +48,12 @@ jobs:
           do
             npx wrangler queues create "$queue" >/dev/null 2>&1 || true
           done
+      - name: Deploy one-job derive consumer before legacy cutover
+        run: npm run deploy:minute-derive
+        working-directory: worker
+      - name: Deploy minute ingest consumer before legacy cutover
+        run: npm run deploy:minute-ingest
+        working-directory: worker
 
   diagnose:
     name: Diagnose ${{ matrix.worker }}
