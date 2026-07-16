@@ -15,6 +15,7 @@ const databases = [
       'database/buddies-migrations/002_minute_fact_outbox.sql',
       'database/buddies-migrations/003_compact_sent_minute_fact_outbox.sql',
       'database/buddies-migrations/004_change_only_like_history.sql',
+      'database/buddies-migrations/005_canonical_track_like_keys.sql',
     ],
     requiredTables: [
       'sh_channel_snapshots',
