@@ -180,6 +180,13 @@ function safeQueue(value) {
   }
 }
 
+async function playbackMetadataRows(env, spotifyIds, isrcs) {
+  const localRows = await loadReadModelTrackMetadata({ MINUTE_DB: env?.MINUTE_DB }, spotifyIds, isrcs);
+  if (!env?.BUDDIES_DB || env.BUDDIES_DB === env.MINUTE_DB) return localRows;
+  const sourceRows = await loadReadModelTrackMetadata({ MINUTE_DB: env.BUDDIES_DB }, spotifyIds, isrcs);
+  return [...localRows, ...sourceRows];
+}
+
 export async function repairPlaybackReadModels(env) {
   const db = env?.MINUTE_DB;
   if (!db) return { repaired: 0, skipped: true, reason: 'db-binding-missing' };
@@ -193,7 +200,7 @@ export async function repairPlaybackReadModels(env) {
     const spotifyIds = [...new Set(incomplete.map((track) => text(track.spotify_id)).filter(Boolean))];
     const isrcs = [...new Set(incomplete.map((track) => text(track.isrc)?.toUpperCase()).filter(Boolean))];
     if (!spotifyIds.length && !isrcs.length) continue;
-    const metadataRows = await loadReadModelTrackMetadata(env, spotifyIds, isrcs);
+    const metadataRows = await playbackMetadataRows(env, spotifyIds, isrcs);
     const hydrated = attachReadModelTrackMetadata(queue, metadataRows);
     if (hydrated === queue) continue;
     await db.prepare(`UPDATE sh_queue_read_model_current SET queue_json=? WHERE channel_id=?`)
