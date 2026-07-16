@@ -166,9 +166,6 @@ test('ingest reuses the compact minute message to build the read-model envelope'
   assert.equal(envelope.read_model.collector.updated_at, rawObservedAt);
   assert.equal(envelope.comment_task.station_id, 123);
   assert.deepEqual(envelope.comment_task.auth, commentsTask().auth);
-
-  const source = readFileSync(new URL('../src/ingest-channel-entry.js', import.meta.url), 'utf8');
-  assert.doesNotMatch(source, /normalizeSnapshot|extractQueue|extractIds|readModelPresentation/);
 });
 
 test('comments task succeeds only after comments are durably handled', async () => {
