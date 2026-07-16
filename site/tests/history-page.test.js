@@ -12,7 +12,7 @@ const likesClient = readFileSync(new URL('../public/history/history-likes.js', i
 const likeApi = readFileSync(new URL('../functions/api/like-ranking.js', import.meta.url), 'utf8');
 const middleware = readFileSync(new URL('../functions/api/_middleware.js', import.meta.url), 'utf8');
 
-test('history removes the current tab and keeps every archive mode', () => {
+ test('history removes the current tab and keeps every archive mode', () => {
   for (const mode of ['daily', 'weekly', 'monthly', 'ranking', 'tracks', 'broadcasts']) {
     assert.match(historyPage, new RegExp(`data-mode="${mode}"`));
   }
@@ -119,15 +119,15 @@ test('history tables render newest summary rows first and paginate only in the b
   assert.match(historyClient, /exportCsv/);
 });
 
-test('likes tab filters to Sakurazaka artists or JP-prefixed ISRC tracks', () => {
+test('likes tab reads the Worker-materialized Sakurazaka and JP ranking', () => {
   assert.match(likesPage, /aria-current="page" href="\/history\/likes\/">いいね<\/a>/);
   assert.match(likesPage, /最新いいね/);
   assert.match(likesPage, /今週再生/);
   assert.match(likesClient, /\/api\/like-ranking\?limit=500/);
   assert.match(likesClient, /\/api\/track-history\?/);
-  assert.match(likeApi, /artist,''\)\) LIKE '櫻坂%'/);
-  assert.match(likeApi, /isrc,''\)\)\) LIKE 'JP%'/);
-  assert.match(likeApi, /artist_starts_sakurazaka_or_isrc_starts_jp/);
+  assert.match(likeApi, /FROM sh_pages_payload_read_model/);
+  const handler = likeApi.slice(likeApi.indexOf('export async function onRequestGet'));
+  assert.doesNotMatch(handler, /sh_track_counter_current|ROW_NUMBER\(\) OVER|LIKE '櫻坂%'/);
 });
 
 test('edge middleware shares track-history and like-ranking D1 reads', () => {
