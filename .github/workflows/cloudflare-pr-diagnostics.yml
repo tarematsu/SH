@@ -51,7 +51,10 @@ jobs:
       - name: Deploy one-job derive consumer before legacy cutover
         run: npm run deploy:minute-derive
         working-directory: worker
-      - name: Remove legacy minute Queue consumer
+      - name: Detach legacy minute Queue consumer
+        run: npx wrangler queues consumer remove stationhead-buddies-facts sh-monitor-minute || true
+        working-directory: worker
+      - name: Deploy maintenance-only minute Worker
         run: npm run deploy:minute-maintenance
         working-directory: worker
       - name: Deploy minute ingest consumer after cutover
