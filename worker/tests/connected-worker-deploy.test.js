@@ -105,6 +105,34 @@ test('connected deploy guard uses the repository import graph', () => {
   assert.deepEqual(selected, ['sh-monitor-other']);
 });
 
+test('non-production connected build exits before diff resolution or Wrangler', async () => {
+  let spawned = false;
+  let fetched = false;
+  const result = await deployConnectedWorker({
+    workerName: 'sh-monitor-other',
+    branch: 'agent/test-fix',
+    productionBranch: 'main',
+    fetch: async () => {
+      fetched = true;
+      throw new Error('unexpected fetch');
+    },
+    spawnSync() {
+      spawned = true;
+      return { status: 0 };
+    },
+  });
+
+  assert.deepEqual(result, {
+    deploy: false,
+    reason: 'non-production-branch',
+    workerName: 'sh-monitor-other',
+    branch: 'agent/test-fix',
+    productionBranch: 'main',
+  });
+  assert.equal(fetched, false);
+  assert.equal(spawned, false);
+});
+
 test('unaffected connected build exits without invoking Wrangler', async () => {
   let spawned = false;
   const result = await deployConnectedWorker({
