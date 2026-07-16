@@ -23,6 +23,7 @@ export function configFromEnv(env) {
     ),
     requestTimeoutMs: Math.min(numberValue(env.REQUEST_TIMEOUT_MS, 15_000), 30_000),
     collectionSignal: env.__COLLECTION_ABORT_SIGNAL || env.__COLLECTION_FETCH_ABORT_SIGNAL || null,
+    rawChannelPayload: env.__RAW_CHANNEL_PAYLOAD || null,
   };
 }
 
@@ -42,6 +43,9 @@ export function shHeaders(state, config) {
 }
 
 export async function shJson(state, config, path) {
+  if (config.rawChannelPayload && String(path).startsWith('/channels/alias/')) {
+    return config.rawChannelPayload;
+  }
   const response = await fetch(`${API_BASE}${path}`, {
     headers: shHeaders(state, config),
     signal: combinedAbortSignal(config.collectionSignal, config.requestTimeoutMs),

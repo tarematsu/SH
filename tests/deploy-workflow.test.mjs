@@ -23,9 +23,12 @@ test('manual deploy keeps all Cloudflare targets available', () => {
   assert.doesNotMatch(deployWorkflow, /^\s{2}push:/m);
   assert.match(deployWorkflow, /wrangler pages deploy/);
   assert.match(deployWorkflow, /npm run deploy:buddies/);
+  assert.match(deployWorkflow, /npm run deploy:ingest/);
+  assert.match(deployWorkflow, /npm run deploy:comments/);
+  assert.match(deployWorkflow, /npm run deploy:read-model/);
   assert.match(deployWorkflow, /npm run deploy:other/);
   assert.match(deployWorkflow, /npm run deploy:minute/);
-  assert.equal(occurrences, 4);
+  assert.equal(occurrences, 8);
 });
 
 test('legacy Cloudflare minute deploy typo routes to the canonical script', () => {
@@ -33,7 +36,7 @@ test('legacy Cloudflare minute deploy typo routes to the canonical script', () =
   assert.match(workerPackage.scripts['deploy:minute'], /wrangler\.minute\.jsonc/);
 });
 
-test('Cloudflare Git diagnostics run automatically for all Worker builds', () => {
+test('Cloudflare Git diagnostics run automatically for connected Worker builds', () => {
   assert.match(diagnosticsWorkflow, /^\s{2}push:/m);
   assert.match(diagnosticsWorkflow, /branches: \[main\]/);
   assert.match(diagnosticsWorkflow, /sh-monitor-buddies/);

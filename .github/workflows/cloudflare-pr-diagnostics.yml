@@ -17,8 +17,39 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  prepare-queues:
+    name: Prepare pipeline queues
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      CLOUDFLARE_ACCOUNT_ID: "0500f25c2f74e7e76c94a8bcb6c7008b"
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_BUILDS_API_TOKEN || secrets.CLOUDFLARE_API_TOKEN || secrets.CF_API_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: worker/package-lock.json
+      - run: npm ci --no-audit --no-fund
+        working-directory: worker
+      - name: Ensure split pipeline queues exist
+        shell: bash
+        working-directory: worker
+        run: |
+          for queue in \
+            stationhead-raw-collection stationhead-raw-collection-dlq \
+            stationhead-comments stationhead-comments-dlq \
+            stationhead-read-model stationhead-read-model-dlq
+          do
+            npx wrangler queues create "$queue" >/dev/null 2>&1 || true
+          done
+
   diagnose:
     name: Diagnose ${{ matrix.worker }}
+    needs: prepare-queues
     strategy:
       fail-fast: false
       matrix:

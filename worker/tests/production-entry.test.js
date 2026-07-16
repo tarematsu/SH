@@ -7,7 +7,7 @@ import productionApp, {
   runProductionScheduled,
 } from '../src/production-entry.js';
 
-test('production cron delegates only to the primary collection app', async () => {
+ test('production cron delegates only to the primary collection app', async () => {
   const calls = [];
   const controller = { scheduledTime: 300_000, cron: '* * * * *' };
   const env = { marker: true };
@@ -28,7 +28,7 @@ test('production cron delegates only to the primary collection app', async () =>
   }), 'cron-done');
 });
 
-test('buddies worker exposes no HTTP control or health endpoints', async () => {
+test('legacy production entry exposes no HTTP control or health endpoints', async () => {
   const requests = [
     new Request('https://buddies.test/'),
     new Request('https://buddies.test/health'),
@@ -45,19 +45,18 @@ test('buddies worker exposes no HTTP control or health endpoints', async () => {
   assert.equal((await productionApp.fetch(new Request('https://buddies.test/favicon.ico'), {}, {})).status, 204);
 });
 
-test('buddies Wrangler configuration contains only primary-collector settings and bindings', () => {
+test('buddies Wrangler configuration is raw-collection only', () => {
   const config = JSON.parse(readFileSync(new URL('../wrangler.jsonc', import.meta.url), 'utf8'));
-  const source = readFileSync(new URL('../src/production-entry.js', import.meta.url), 'utf8');
-  assert.equal(config.main, 'src/production-entry.js');
-  assert.doesNotMatch(source, /fetch-guard/);
+  const source = readFileSync(new URL('../src/raw-collector-entry.js', import.meta.url), 'utf8');
+  assert.equal(config.main, 'src/raw-collector-entry.js');
   assert.deepEqual(config.triggers?.crons, ['* * * * *']);
   assert.deepEqual(config.d1_databases.map(({ binding }) => binding), ['DB']);
   assert.equal(config.d1_databases[0].database_name, 'stationhead-buddies');
-  assert.equal(config.d1_databases[0].database_id, 'f361aae0-05f0-42bc-8784-77100e80133d');
   assert.deepEqual(config.queues?.producers, [{
-    binding: 'MINUTE_FACT_QUEUE',
-    queue: 'stationhead-buddies-facts',
+    binding: 'RAW_COLLECTION_QUEUE',
+    queue: 'stationhead-raw-collection',
   }]);
+  assert.doesNotMatch(source, /JSON\.parse|response\.json|normalizeSnapshot|extractQueue|readModelPresentation/);
 
   const names = Object.keys(config.vars || {});
   for (const prefix of ['BUDDY_PLAYBACK_', 'HOST_', 'SOLO_', 'OFFICIAL_NEWS_', 'DERIVE_', 'HEALTH_ALERT_']) {

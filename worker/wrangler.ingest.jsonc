@@ -1,0 +1,41 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "sh-ingest-channel",
+  "main": "src/ingest-channel-entry.js",
+  "compatibility_date": "2026-06-24",
+  "workers_dev": false,
+  "preview_urls": false,
+  "logpush": true,
+  "observability": { "enabled": true },
+  "vars": {
+    "CHANNEL_ALIAS": "buddies",
+    "CHAT_LIMIT": 0,
+    "SH_APP_VERSION": "1.0.0",
+    "COLLECTOR_ID": "cloudflare-worker",
+    "METADATA_LIMIT": 1,
+    "REQUEST_TIMEOUT_MS": 8000
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "stationhead-buddies",
+      "database_id": "f361aae0-05f0-42bc-8784-77100e80133d"
+    }
+  ],
+  "queues": {
+    "consumers": [
+      {
+        "queue": "stationhead-raw-collection",
+        "max_batch_size": 1,
+        "max_batch_timeout": 1,
+        "max_retries": 8,
+        "dead_letter_queue": "stationhead-raw-collection-dlq"
+      }
+    ],
+    "producers": [
+      { "binding": "MINUTE_FACT_QUEUE", "queue": "stationhead-buddies-facts" },
+      { "binding": "COMMENTS_QUEUE", "queue": "stationhead-comments" },
+      { "binding": "READ_MODEL_QUEUE", "queue": "stationhead-read-model" }
+    ]
+  }
+}
