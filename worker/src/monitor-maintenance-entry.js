@@ -10,13 +10,22 @@ async function collectorGate(env, now, dependencies = {}) {
   return waitForCollector(env, now);
 }
 
+function assertMaintenanceSucceeded(kind, result) {
+  const reason = String(result?.reason || '');
+  if (reason === 'maintenance-error' || reason === 'retention-error' || reason === 'db-binding-missing') {
+    throw new Error(`${kind} failed: ${result?.error || reason}`);
+  }
+  return result;
+}
+
 export async function runMonitorMaintenanceCron(controller, env, dependencies = {}) {
   const cron = String(controller?.cron || '');
   if (cron !== ROLLUP_MAINTENANCE_CRON && cron !== SNAPSHOT_RETENTION_CRON) {
     return { skipped: true, reason: 'unsupported-monitor-maintenance-cron', cron };
   }
 
-  const now = Number(controller?.scheduledTime) || Date.now();
+  const nowValue = Number(controller?.scheduledTime);
+  const now = Number.isFinite(nowValue) && nowValue >= 0 ? nowValue : Date.now();
   const applyStagger = dependencies.applyStagger
     || (await import('./cron-stagger.js')).applyCronStagger;
   await applyStagger(env, 'other');
@@ -27,15 +36,17 @@ export async function runMonitorMaintenanceCron(controller, env, dependencies = 
   }
 
   if (cron === ROLLUP_MAINTENANCE_CRON) {
-    if (!env?.BUDDIES_DB || !env?.OTHER_DB) return { skipped: true, reason: 'db-binding-missing' };
+    if (!env?.BUDDIES_DB || !env?.OTHER_DB) {
+      return assertMaintenanceSucceeded('rollup maintenance', { skipped: true, reason: 'db-binding-missing' });
+    }
     const runRollup = dependencies.runRollup
       || (await import('./rollup-maintenance.js')).runRollupMaintenanceSafely;
-    return runRollup(env.BUDDIES_DB, env.OTHER_DB, now);
+    return assertMaintenanceSucceeded('rollup maintenance', await runRollup(env.BUDDIES_DB, env.OTHER_DB, now));
   }
 
   const pruneSnapshots = dependencies.pruneSnapshots
     || (await import('./snapshot-retention.js')).pruneOldSnapshotsSafely;
-  return pruneSnapshots(env, now);
+  return assertMaintenanceSucceeded('snapshot retention', await pruneSnapshots(env, now));
 }
 
 export default {
