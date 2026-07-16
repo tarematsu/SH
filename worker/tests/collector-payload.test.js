@@ -58,7 +58,7 @@ test('minuteFactQueue strips the queue raw payload and each track raw payload', 
   assert.equal(minuteFactQueue(null), null);
 });
 
-test('extractQueue emits a compact queue that the minute job can reuse directly', () => {
+test('extractQueue emits a compact queue that retains playback presentation', () => {
   const queue = extractQueue({
     current_station: {
       id: 5,
@@ -94,6 +94,8 @@ test('extractQueue emits a compact queue that the minute job can reuse directly'
     bite_count: null,
     title: 'Song',
     artist: 'Artist',
+    album_name: 'Album',
+    thumbnail_url: 'https://example.com/album.jpg',
   });
 });
 
