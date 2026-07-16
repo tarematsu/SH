@@ -42,24 +42,21 @@ test('daily dashboard SQL uses real stream counts without listener fallback', ()
   assert.doesNotMatch(UTC_DAILY_METRICS_SQL, /total_listens/);
 });
 
-test('daily changes endpoint returns yesterday and day-before-yesterday growth', async () => {
-  const db = new FakeD1Database().route('all', 'WITH latest_channel AS', ({ params }) => ({
-    results: [
-      { day_at: params[0], member_end: 200, stream_end: 2_000 },
-      { day_at: params[1], member_end: 207, stream_end: 2_040 },
-      { day_at: params[2], member_end: 218, stream_end: 2_095 },
-    ],
+test('daily changes endpoint returns the completed Worker payload unchanged', async () => {
+  const expected = {
+    ok: true,
+    timezone: 'UTC',
+    yesterday: { period_key: '2026-07-15', member_growth: 11, stream_growth: 55 },
+    day_before_yesterday: { period_key: '2026-07-14', member_growth: 7, stream_growth: 40 },
+  };
+  const db = new FakeD1Database().route('first', 'FROM sh_pages_payload_read_model', () => ({
+    payload_json: JSON.stringify(expected),
   }));
 
   const response = await onRequestGet({ env: { MINUTE_DB: db } });
   const payload = await responseJson(response);
   assert.equal(response.status, 200);
-  assert.equal(payload.ok, true);
-  assert.equal(payload.timezone, 'UTC');
-  assert.equal(payload.yesterday.member_growth, 11);
-  assert.equal(payload.yesterday.stream_growth, 55);
-  assert.equal(payload.day_before_yesterday.member_growth, 7);
-  assert.equal(payload.day_before_yesterday.stream_growth, 40);
+  assert.deepEqual(payload, expected);
   assert.equal(db.calls.length, 1);
-  assert.equal(db.calls[0].params.length, 3);
+  assert.match(db.calls[0].sql, /FROM sh_pages_payload_read_model/);
 });

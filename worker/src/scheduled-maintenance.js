@@ -48,12 +48,19 @@ export async function runScheduledMaintenance(env, now = Date.now()) {
     return { skipped: true, reason: 'not-due' };
   }
 
-  const { runRollupMaintenanceSafely } = await import('./rollup-maintenance.js');
-  const rollup = await runRollupMaintenanceSafely(sourceDb, env.OTHER_DB, now);
+  const [{ runRollupMaintenanceSafely }, { refreshPagesReadModels }] = await Promise.all([
+    import('./rollup-maintenance.js'),
+    import('./pages-read-model-refresh.js'),
+  ]);
+  const [rollup, pagesReadModels] = await Promise.all([
+    runRollupMaintenanceSafely(sourceDb, env.OTHER_DB, now),
+    refreshPagesReadModels(env, now),
+  ]);
   return {
     skipped: false,
     reason: 'completed',
     rollup,
+    pagesReadModels,
     legacyBackfill: { skipped: true, reason: LEGACY_MIGRATION_DISABLED_REASON },
     minuteFactsBackfill: { skipped: true, reason: LEGACY_MIGRATION_DISABLED_REASON },
   };

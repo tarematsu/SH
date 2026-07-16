@@ -21,6 +21,12 @@ function formatNumber(value) {
   return number == null ? '—' : integer.format(number);
 }
 
+function formatPeriodLabel(periodKey, fallback) {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(periodKey || ''));
+  if (!match) return fallback;
+  return `${Number(match[2])}月${Number(match[3])}日`;
+}
+
 function renderBites(payload) {
   const node = byId('trackBites');
   if (!node) return;
@@ -61,10 +67,12 @@ function renderDelta(id, label, value) {
 }
 
 function renderDailyChanges(data) {
-  renderDelta('membersYesterdayDelta', '昨日', data?.yesterday?.member_growth);
-  renderDelta('membersDayBeforeDelta', '一昨日', data?.day_before_yesterday?.member_growth);
-  renderDelta('streamsYesterdayDelta', '昨日', data?.yesterday?.stream_growth);
-  renderDelta('streamsDayBeforeDelta', '一昨日', data?.day_before_yesterday?.stream_growth);
+  const yesterdayLabel = formatPeriodLabel(data?.yesterday?.period_key, '昨日');
+  const dayBeforeLabel = formatPeriodLabel(data?.day_before_yesterday?.period_key, '一昨日');
+  renderDelta('membersYesterdayDelta', yesterdayLabel, data?.yesterday?.member_growth);
+  renderDelta('membersDayBeforeDelta', dayBeforeLabel, data?.day_before_yesterday?.member_growth);
+  renderDelta('streamsYesterdayDelta', yesterdayLabel, data?.yesterday?.stream_growth);
+  renderDelta('streamsDayBeforeDelta', dayBeforeLabel, data?.day_before_yesterday?.stream_growth);
 }
 
 async function loadDailyChanges() {

@@ -11,6 +11,8 @@ const json = (data, status = 200) => new Response(JSON.stringify(data), {
   headers: status === 200 ? JSON_HEADERS : { ...JSON_HEADERS, 'cache-control': 'no-store' },
 });
 
+// Worker-owned source query. Pages never executes this query; it reads the
+// completed payload from sh_pages_payload_read_model.
 export const UTC_DAILY_METRICS_SQL = `WITH latest_channel AS (
   SELECT channel_id
   FROM sh_minute_facts
@@ -95,17 +97,19 @@ export function dailyChangesFromRows(rows, starts) {
 
 export async function onRequestGet({ env }) {
   if (!env?.MINUTE_DB) return json({ ok: false, error: 'MINUTE_DB binding missing' }, 500);
-  const starts = utcDayStarts();
   try {
-    const result = await env.MINUTE_DB.prepare(UTC_DAILY_METRICS_SQL)
-      .bind(starts.threeDaysAgoStart, starts.dayBeforeYesterdayStart, starts.yesterdayStart)
-      .all();
-    return json({
-      ok: true,
-      ...dailyChangesFromRows(result.results || [], starts),
-    });
+    const row = await env.MINUTE_DB.prepare(`SELECT payload_json
+      FROM sh_pages_payload_read_model
+      WHERE model_key='dashboard-daily-changes'
+      LIMIT 1`).first();
+    if (!row?.payload_json) {
+      return json({ ok: true, timezone: 'UTC', setup_required: true, yesterday: {}, day_before_yesterday: {} });
+    }
+    return new Response(row.payload_json, { headers: JSON_HEADERS });
   } catch (error) {
-    console.error(error);
+    if (/no such table/i.test(String(error?.message || ''))) {
+      return json({ ok: true, timezone: 'UTC', setup_required: true, yesterday: {}, day_before_yesterday: {} });
+    }
     return json({ ok: false, error: error?.message || 'dashboard daily changes error' }, 500);
   }
 }
