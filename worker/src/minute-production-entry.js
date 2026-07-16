@@ -21,7 +21,7 @@ export async function consumeMinuteQueue(batch, env, _ctx, dependencies = {}) {
       return accepted;
     },
     // Rollout compatibility only. Current chained messages have read_model=null
-    // because sh-read-model is the sole owner of those writes.
+    // because sh-minute-read-model is the sole owner of those writes.
     saveReadModels: async (activeEnv, readModel, jobId) => {
       if (!readModel) return;
       const save = dependencies.saveMinuteFactReadModels
