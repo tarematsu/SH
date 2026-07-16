@@ -133,6 +133,10 @@ test('track metadata migration creates both Spotify and ISRC repair paths', () =
     new URL('../../database/facts-migrations/014_backfill_track_metadata.sql', import.meta.url),
     'utf8',
   );
+  const isrcMigration = readFileSync(
+    new URL('../../database/facts-migrations/016_track_metadata_isrc.sql', import.meta.url),
+    'utf8',
+  );
   const provision = readFileSync(new URL('../scripts/provision-facts-db.mjs', import.meta.url), 'utf8');
   const metadata = JSON.parse(readFileSync(
     new URL('../../database/facts-db.json', import.meta.url),
@@ -143,6 +147,8 @@ test('track metadata migration creates both Spotify and ISRC repair paths', () =
   assert.match(migration, /UPDATE sh_tracks/);
   assert.match(migration, /FROM sh_track_metadata/);
   assert.match(migration, /FROM sh_isrc_metadata/);
+  assert.match(isrcMigration, /ALTER TABLE sh_track_metadata ADD COLUMN isrc TEXT/);
+  assert.match(isrcMigration, /idx_sh_track_metadata_isrc/);
   assert.match(provision, /014_backfill_track_metadata\.sql/);
-  assert.equal(metadata.schema, 'database/facts-migrations/015_repair_track_history_queue_views.sql');
+  assert.equal(metadata.schema, 'database/facts-migrations/016_track_metadata_isrc.sql');
 });
