@@ -4,25 +4,9 @@ on:
   push:
     branches: [main]
     paths:
-      - 'worker/src/raw-collector-entry.js'
-      - 'worker/src/ingest-channel-entry.js'
-      - 'worker/src/comments-entry.js'
-      - 'worker/src/read-model-entry.js'
-      - 'worker/src/minute-production-entry.js'
-      - 'worker/src/minute-derive-entry.js'
-      - 'worker/src/minute-maintenance-entry.js'
-      - 'worker/src/minute-derive-queue.js'
-      - 'worker/src/minute-derive-trigger.js'
-      - 'worker/src/minute-facts-*.js'
-      - 'worker/src/collector-config.js'
-      - 'worker/scripts/retire-legacy-minute-maintenance.mjs'
-      - 'worker/wrangler.jsonc'
-      - 'worker/wrangler.ingest.jsonc'
-      - 'worker/wrangler.comments.jsonc'
-      - 'worker/wrangler.read-model.jsonc'
-      - 'worker/wrangler.minute.jsonc'
-      - 'worker/wrangler.minute-ingest.jsonc'
-      - 'worker/wrangler.minute-derive.jsonc'
+      - 'worker/src/**'
+      - 'worker/scripts/**'
+      - 'worker/wrangler*.jsonc'
       - 'worker/package.json'
       - 'worker/package-lock.json'
       - '.github/workflows/deploy-split-pipeline.yml'
@@ -39,7 +23,7 @@ jobs:
   deploy:
     name: Deploy split pipeline
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 30
     env:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_BUILDS_API_TOKEN || secrets.CLOUDFLARE_API_TOKEN || secrets.CF_API_TOKEN }}
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID || secrets.CF_ACCOUNT_ID }}
@@ -65,30 +49,24 @@ jobs:
           do
             npx wrangler queues create "$queue" >/dev/null 2>&1 || true
           done
-      - name: Deploy one-job derive consumer
-        run: npm run deploy:minute-derive
-        working-directory: worker
-      - name: Detach legacy minute Queue consumer
-        run: npm run detach:minute-consumer
-        working-directory: worker
-      - name: Deploy renamed maintenance Worker
-        run: npm run deploy:minute-maintenance
-        working-directory: worker
-      - name: Retire legacy maintenance Worker
-        run: npm run retire:legacy-minute-maintenance
-        working-directory: worker
-      - name: Deploy minute ingest consumer
-        run: npm run deploy:minute-ingest
+      - name: Deploy minute pipeline
+        run: npm run deploy:minute
         working-directory: worker
       - name: Deploy comments chain
         run: npm run deploy:comments
-        working-directory: worker
-      - name: Deploy read-model consumer
-        run: npm run deploy:read-model
         working-directory: worker
       - name: Deploy channel ingest producer
         run: npm run deploy:ingest
         working-directory: worker
       - name: Switch raw collector producer last
         run: npm run deploy:buddies
+        working-directory: worker
+      - name: Deploy Pages read-model Worker
+        run: npm run deploy:pages-read-model
+        working-directory: worker
+      - name: Deploy maintenance monitor
+        run: npm run deploy:monitor-maintenance
+        working-directory: worker
+      - name: Reduce other monitor after replacements are live
+        run: npm run deploy:other
         working-directory: worker
