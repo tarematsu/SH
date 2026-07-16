@@ -1,6 +1,9 @@
-import { runOfficialNewsWithReconcile } from './other-monitor-support.js';
+import {
+  officialNewsProbeDue,
+  runOfficialNewsWithReconcile,
+} from './other-monitor-support.js';
 
-export { runOfficialNewsWithReconcile };
+export { officialNewsProbeDue, runOfficialNewsWithReconcile };
 
 export const OTHER_WORKER_CRON = '*/5 * * * *';
 
@@ -35,6 +38,14 @@ export function otherProductionTask(now, env = {}) {
   if (minute === 30) return 'maintenance';
   if (minute === 50) return 'snapshotRetention';
   return 'host';
+}
+
+export async function selectOtherProductionTask(controller, env, dependencies = {}) {
+  const now = scheduledTimestamp(controller);
+  const scheduled = otherProductionTask(now, env);
+  if (scheduled !== 'host') return scheduled;
+  const due = dependencies.officialNewsDue || officialNewsProbeDue;
+  return await due(env, now) ? 'officialNews' : scheduled;
 }
 
 export function otherStaggerApplies(controller = {}, env = {}) {
@@ -81,7 +92,7 @@ export async function runOtherScheduled(controller, env, ctx, dependencies = {})
   }
 
   const now = scheduledTimestamp(controller);
-  const selected = otherProductionTask(now, env);
+  const selected = await selectOtherProductionTask(controller, env, dependencies);
   const companion = selected === 'buddy' ? 'host' : selected;
   const names = [];
   if (typeof dependencies.buddy === 'function') names.push('buddy');
