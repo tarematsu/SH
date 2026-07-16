@@ -15,6 +15,15 @@ function normalizedLines(value) {
     .filter(Boolean))];
 }
 
+function gitOutput(args, options = {}) {
+  const exec = options.execFileSync || execFileSync;
+  return String(exec('git', args, {
+    cwd: options.repositoryRoot || repositoryRoot,
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+  })).trim();
+}
+
 export function connectedDeployDecision(workerName, changedPaths, selectedWorkers) {
   const name = String(workerName || '').trim();
   if (!cloudflareBuildConfig(name)) {
@@ -35,9 +44,8 @@ export function connectedDeployDecision(workerName, changedPaths, selectedWorker
 }
 
 export function currentCommitChangedPaths(options = {}) {
-  const exec = options.execFileSync || execFileSync;
   try {
-    const output = exec('git', [
+    return normalizedLines(gitOutput([
       'diff-tree',
       '--no-commit-id',
       '--name-only',
@@ -45,12 +53,7 @@ export function currentCommitChangedPaths(options = {}) {
       '-r',
       '--root',
       'HEAD',
-    ], {
-      cwd: options.repositoryRoot || repositoryRoot,
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
-    return normalizedLines(output);
+    ], options));
   } catch (error) {
     console.warn(JSON.stringify({
       event: 'connected_worker_diff_unavailable',
@@ -58,6 +61,89 @@ export function currentCommitChangedPaths(options = {}) {
     }));
     return null;
   }
+}
+
+export function gitHubRepositorySlug(remoteUrl) {
+  const value = String(remoteUrl || '').trim();
+  const match = value.match(/github\.com[/:]([^/\s]+)\/([^/\s]+?)(?:\.git)?$/i);
+  return match ? `${match[1]}/${match[2]}` : null;
+}
+
+function connectedRepositorySlug(options = {}) {
+  if (options.repositorySlug) return String(options.repositorySlug).trim() || null;
+  try {
+    return gitHubRepositorySlug(gitOutput(['remote', 'get-url', 'origin'], options));
+  } catch {
+    return null;
+  }
+}
+
+function connectedCommitSha(options = {}) {
+  const configured = String(
+    options.commitSha
+    ?? process.env.WORKERS_CI_COMMIT_SHA
+    ?? '',
+  ).trim();
+  if (configured) return configured;
+  try {
+    return gitOutput(['rev-parse', 'HEAD'], options);
+  } catch {
+    return null;
+  }
+}
+
+export function connectedRepositoryIsShallow(options = {}) {
+  if (typeof options.shallow === 'boolean') return options.shallow;
+  try {
+    return gitOutput(['rev-parse', '--is-shallow-repository'], options) === 'true';
+  } catch {
+    return false;
+  }
+}
+
+export async function githubCommitChangedPaths(options = {}) {
+  const repositorySlug = connectedRepositorySlug(options);
+  const commitSha = connectedCommitSha(options);
+  const activeFetch = options.fetch || globalThis.fetch;
+  if (!repositorySlug || !commitSha || typeof activeFetch !== 'function') return null;
+
+  try {
+    const paths = [];
+    for (let page = 1; page <= 10; page += 1) {
+      const response = await activeFetch(
+        `https://api.github.com/repos/${repositorySlug}/commits/${encodeURIComponent(commitSha)}?per_page=100&page=${page}`,
+        {
+          headers: {
+            Accept: 'application/vnd.github+json',
+            'User-Agent': 'stationhead-connected-worker-build',
+          },
+          signal: AbortSignal.timeout(15_000),
+        },
+      );
+      if (!response.ok) throw new Error(`GitHub commit API returned HTTP ${response.status}`);
+      const payload = await response.json();
+      const files = Array.isArray(payload?.files) ? payload.files : [];
+      paths.push(...files.map(({ filename }) => filename));
+      if (files.length < 100) break;
+    }
+    return normalizedLines(paths.join('\n'));
+  } catch (error) {
+    console.warn(JSON.stringify({
+      event: 'connected_worker_github_diff_unavailable',
+      error: String(error?.message || error).slice(0, 500),
+    }));
+    return null;
+  }
+}
+
+export async function connectedCommitChangedPaths(options = {}) {
+  const localPaths = options.localPaths === undefined
+    ? currentCommitChangedPaths(options)
+    : options.localPaths;
+  const shallow = connectedRepositoryIsShallow(options);
+  if (!shallow && Array.isArray(localPaths) && localPaths.length > 0) return localPaths;
+  const remotePaths = await githubCommitChangedPaths(options);
+  return Array.isArray(remotePaths) && remotePaths.length > 0 ? remotePaths : localPaths;
 }
 
 export function affectedWorkersForPaths(changedPaths, options = {}) {
@@ -93,10 +179,10 @@ function runWrangler(args = [], options = {}) {
   if (Number(result.status) !== 0) process.exitCode = Number(result.status) || 1;
 }
 
-export function deployConnectedWorker(options = {}) {
+export async function deployConnectedWorker(options = {}) {
   const workerName = String(options.workerName ?? process.env.WRANGLER_CI_OVERRIDE_NAME ?? '').trim();
   const changedPaths = options.changedPaths === undefined
-    ? currentCommitChangedPaths(options)
+    ? await connectedCommitChangedPaths(options)
     : options.changedPaths;
   const selectedWorkers = options.selectedWorkers === undefined
     ? affectedWorkersForPaths(changedPaths, options)
@@ -116,5 +202,5 @@ export function deployConnectedWorker(options = {}) {
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
-  deployConnectedWorker();
+  await deployConnectedWorker();
 }
