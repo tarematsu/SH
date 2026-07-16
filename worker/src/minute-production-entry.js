@@ -1,7 +1,6 @@
-import { runCommittedMetadataEnrichment } from './minute-entry.js';
 import { enqueueMinuteDeriveTrigger } from './minute-derive-queue.js';
 
-export async function consumeMinuteQueue(batch, env, ctx, dependencies = {}) {
+export async function consumeMinuteQueue(batch, env, _ctx, dependencies = {}) {
   const [queueModule, inboxModule] = await Promise.all([
     dependencies.consumeMinuteFactBatch ? Promise.resolve(null) : import('./minute-facts-queue.js'),
     dependencies.enqueueMinuteFactJob ? Promise.resolve(null) : import('./minute-facts-inbox.js'),
@@ -9,22 +8,12 @@ export async function consumeMinuteQueue(batch, env, ctx, dependencies = {}) {
   const consumeMinuteFactBatch = dependencies.consumeMinuteFactBatch || queueModule.consumeMinuteFactBatch;
   const enqueueMinuteFactJob = dependencies.enqueueMinuteFactJob || inboxModule.enqueueMinuteFactJob;
   const enqueueDerive = dependencies.enqueueMinuteDeriveTrigger || enqueueMinuteDeriveTrigger;
-  const metadataJobs = [];
-  const result = await consumeMinuteFactBatch(batch, env, {
+  return consumeMinuteFactBatch(batch, env, {
     hasReceipt: async () => false,
     saveReceipt: async () => {},
     saveCommentTask: async () => ({ created: false, skipped: true }),
     enqueue: async (activeEnv, payload, options) => {
       const accepted = await enqueueMinuteFactJob(activeEnv, payload, options);
-      if (accepted?.enqueued
-          && options.enrichTrackMetadata
-          && payload.queue?.tracks?.length) {
-        metadataJobs.push({
-          jobId: `minute-fact:${accepted.channel_id}:${accepted.minute_at}`,
-          payload,
-          options,
-        });
-      }
       // Queue acceptance is the durable handoff to the one-job derive Worker.
       // Send on duplicate inbox delivery too, so a retry heals a crash between
       // the D1 insert and the original derive Queue send.
@@ -40,14 +29,6 @@ export async function consumeMinuteQueue(batch, env, ctx, dependencies = {}) {
       await save(activeEnv, readModel, jobId);
     },
   });
-
-  if (metadataJobs.length) {
-    const enrich = dependencies.runCommittedMetadataEnrichment || runCommittedMetadataEnrichment;
-    const task = enrich(env, metadataJobs);
-    if (typeof ctx?.waitUntil === 'function') ctx.waitUntil(task);
-    else void task;
-  }
-  return result;
 }
 
 export default {
