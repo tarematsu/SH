@@ -7,6 +7,7 @@ import { computePlayback } from '../lib/playback.js';
 import { loadPrimaryPlaybackPayload } from '../lib/primary-playback.js';
 import {
   emptySecondaryPayload,
+  loadSecondaryPlaybackMetadata,
   SECONDARY_PLAYBACK_SQL,
   secondaryPlaybackPayload,
 } from '../lib/secondary-playback.js';
@@ -91,10 +92,13 @@ async function secondaryPlaybackResponse(otherDb, alias, generatedAt, includeRaw
   const collector = await loadBuddyCollectorStatus(otherDb, alias);
   try {
     const row = await otherDb.prepare(SECONDARY_PLAYBACK_SQL).bind(alias).first();
+    const metadata = row
+      ? await loadSecondaryPlaybackMetadata(otherDb, row)
+      : new Map();
     const payload = row
       ? secondaryPlaybackPayload(row, generatedAt, {
           includeRawPayload,
-          metadata: new Map(),
+          metadata,
         })
       : emptySecondaryPayload(alias, generatedAt);
     return playbackJson(
