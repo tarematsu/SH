@@ -6,7 +6,7 @@
   "scripts": {
     "postinstall": "node scripts/select-cloudflare-build-config.mjs",
     "dev": "wrangler dev --test-scheduled",
-    "deploy": "wrangler deploy",
+    "deploy": "node scripts/deploy-connected-worker.mjs",
     "deploy:buddies": "wrangler deploy --config wrangler.jsonc",
     "deploy:ingest": "wrangler deploy --config wrangler.ingest.jsonc",
     "deploy:comments": "wrangler deploy --config wrangler.comments.jsonc",

@@ -24,10 +24,35 @@ test('minute derive changes redeploy only the derive consumer', () => {
   assert.deepEqual(result.commands, ['deploy:minute-derive']);
 });
 
+test('bundled site function changes redeploy only the Pages materializer', () => {
+  const result = select(['site/functions/api/minute-facts/current.js']);
+  assert.deepEqual(result.workers, ['sh-pages-read-model']);
+  assert.deepEqual(result.commands, ['deploy:pages-read-model']);
+  assert.deepEqual(result.diagnostics, []);
+});
+
+test('other monitor changes do not pull retired Pages or maintenance Workers back in', () => {
+  const result = select(['worker/src/other-monitor-support.js']);
+  assert.deepEqual(result.workers, ['sh-monitor-other']);
+  assert.deepEqual(result.commands, ['deploy:other']);
+  assert.deepEqual(result.diagnostics, ['sh-monitor-other']);
+});
+
 test('Wrangler config changes map directly to their Worker', () => {
   const result = select(['worker/wrangler.pages-read-model.jsonc']);
   assert.deepEqual(result.workers, ['sh-pages-read-model']);
   assert.deepEqual(result.commands, ['deploy:pages-read-model']);
+});
+
+test('deploy script-only package changes do not redeploy runtime Workers', () => {
+  const result = select(['worker/package.json']);
+  assert.deepEqual(result.workers, []);
+  assert.deepEqual(result.commands, []);
+});
+
+test('lockfile changes conservatively redeploy every Worker', () => {
+  const result = select(['worker/package-lock.json']);
+  assert.equal(result.workers.length, 10);
 });
 
 test('tests and verification scripts do not redeploy runtime Workers', () => {

@@ -108,7 +108,7 @@ if (changed.all) {
   for (const definition of definitions) selected.add(definition.name);
 } else {
   for (const changedPath of changed.paths) {
-    if (/^worker\/package(?:-lock)?\.json$/.test(changedPath)) {
+    if (changedPath === 'worker/package-lock.json') {
       for (const definition of definitions) selected.add(definition.name);
       continue;
     }

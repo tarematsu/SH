@@ -116,13 +116,9 @@ export function pagesPayloadRefreshPlan(now = Date.now()) {
 }
 
 export function dueFastMaterializedVariants(now = Date.now()) {
-  const utcMinute = new Date(Number(now)).getUTCMinutes();
-  return MATERIALIZED_API_VARIANTS.filter((variant) => {
-    if (!materializedVariantDue(variant, now)) return false;
-    // The hourly track-history source refresh runs at :31 and immediately
-    // republishes the response. Avoid rendering the old source one minute before it.
-    return variant.key !== TRACK_HISTORY_MODEL_KEY || utcMinute !== 30;
-  });
+  return MATERIALIZED_API_VARIANTS.filter((variant) => (
+    variant.key !== TRACK_HISTORY_MODEL_KEY && materializedVariantDue(variant, now)
+  ));
 }
 
 async function ensureSchema(db) {

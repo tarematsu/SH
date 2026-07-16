@@ -43,9 +43,11 @@ test('manual deploy keeps all Cloudflare targets available', () => {
 test('automatic deploys select affected Workers instead of redeploying the topology', () => {
   for (const workflow of [splitDeployWorkflow, prDiagnosticsWorkflow]) {
     assert.match(workflow, new RegExp(selectorName.replace('.', '\\.')));
+    assert.match(workflow, /site\/functions\/\*\*/);
     assert.match(workflow, /packages\/sh-shared\/\*\*/);
     assert.match(workflow, /DEPLOY_COMMANDS/);
     assert.match(workflow, /npm run "\$command"/);
+    assert.doesNotMatch(workflow, /sync-cloudflare-build-watch-paths/);
   }
 
   assert.match(splitDeployWorkflow, /workflow_dispatch/);

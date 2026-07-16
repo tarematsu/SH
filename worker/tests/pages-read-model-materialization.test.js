@@ -3,16 +3,9 @@ import test from 'node:test';
 
 import { MATERIALIZED_API_VARIANTS } from '../../site/functions/lib/api-contract.js';
 import {
-  dueFastMaterializedVariants,
-  materializedVariantDue,
-  pagesPayloadRefreshPlan,
   refreshFastPagesReadModels,
   refreshTrackHistoryPagesReadModel,
-  trackHistoryRefreshRanges,
 } from '../src/pages-read-model-refresh.js';
-
-const DAY_MS = 86_400_000;
-const EPOCH = Date.UTC(2024, 4, 1);
 
 class Statement {
   constructor(db, sql) {
@@ -57,63 +50,7 @@ class FakeDb {
   }
 }
 
-test('track history always refreshes the recent window and starts bounded backfill behind it', () => {
-  const now = Date.UTC(2026, 6, 16, 12);
-  const ranges = trackHistoryRefreshRanges(now);
-  const currentDay = Date.UTC(2026, 6, 16);
-
-  assert.deepEqual(ranges.recent, {
-    fromTs: currentDay - 35 * DAY_MS,
-    toTs: currentDay + DAY_MS,
-  });
-  assert.deepEqual(ranges.backfill, {
-    fromTs: currentDay - 42 * DAY_MS,
-    toTs: currentDay - 35 * DAY_MS,
-  });
-});
-
-test('track history backfill resumes from the durable cursor', () => {
-  const now = Date.UTC(2026, 6, 16, 12);
-  const nextTo = Date.UTC(2025, 0, 15);
-  const ranges = trackHistoryRefreshRanges(now, { next_to: nextTo });
-
-  assert.deepEqual(ranges.backfill, {
-    fromTs: nextTo - 7 * DAY_MS,
-    toTs: nextTo,
-  });
-});
-
-test('track history backfill clamps its final window to the archive epoch', () => {
-  const now = Date.UTC(2026, 6, 16, 12);
-  const ranges = trackHistoryRefreshRanges(now, { next_to: EPOCH + 3 * DAY_MS });
-
-  assert.deepEqual(ranges.backfill, {
-    fromTs: EPOCH,
-    toTs: EPOCH + 3 * DAY_MS,
-  });
-  assert.equal(trackHistoryRefreshRanges(now, { next_to: EPOCH }).backfill, null);
-});
-
-test('summary is daily while aggregate payloads follow their own cadence', () => {
-  const midnight = Date.UTC(2026, 6, 16, 0, 0);
-  const fivePast = Date.UTC(2026, 6, 16, 0, 5);
-  const quarterPast = Date.UTC(2026, 6, 16, 0, 15);
-  const halfPast = Date.UTC(2026, 6, 16, 0, 30);
-  const materialized = new Map(MATERIALIZED_API_VARIANTS.map((variant) => [variant.key, variant]));
-
-  assert.equal(materialized.get('host-history:summary').cadence_minutes, 1440);
-  assert.equal(materialized.get('track-likes').cadence_minutes, 30);
-  assert.equal(materialized.get('like-ranking').cadence_minutes, 30);
-  assert.equal(materializedVariantDue(materialized.get('host-history:summary'), midnight), true);
-  assert.equal(materializedVariantDue(materialized.get('host-history:summary'), quarterPast), false);
-  assert.equal(materializedVariantDue(materialized.get('track-likes'), halfPast), true);
-  assert.equal(materializedVariantDue(materialized.get('track-likes'), quarterPast), false);
-  assert.deepEqual(pagesPayloadRefreshPlan(fivePast), { daily: false, likes: false });
-  assert.deepEqual(pagesPayloadRefreshPlan(quarterPast), { daily: true, likes: false });
-  assert.deepEqual(pagesPayloadRefreshPlan(halfPast), { daily: true, likes: true });
-});
-
-test('midnight refresh stores every due response as generation-safe chunks', async () => {
+test('midnight fast refresh stores every due non-history response as generation-safe chunks', async () => {
   const db = new FakeDb();
   const env = { BUDDIES_DB: {}, MINUTE_DB: db, OTHER_DB: {} };
   const now = Date.UTC(2026, 6, 16, 0);
@@ -124,32 +61,33 @@ test('midnight refresh stores every due response as generation-safe chunks', asy
       generated_at: now,
     }),
   });
+  const expectedResponses = MATERIALIZED_API_VARIANTS.length - 1;
 
   assert.equal(result.skipped, false);
-  assert.equal(result.succeeded, MATERIALIZED_API_VARIANTS.length);
+  assert.equal(result.succeeded, expectedResponses);
   assert.equal(result.failed, 0);
-  assert.equal(result.responses.length, MATERIALIZED_API_VARIANTS.length);
+  assert.equal(result.responses.length, expectedResponses);
+  assert.equal(result.responses.some(({ key }) => key === 'track-history'), false);
   const manifestWrites = db.calls.filter((call) =>
     call.method === 'run' && call.sql.includes('INSERT INTO sh_pages_response_manifest'));
   const chunkWrites = db.calls.filter((call) =>
     call.method === 'run' && call.sql.includes('INSERT INTO sh_pages_response_chunks'));
   const oldGenerationDeletes = db.calls.filter((call) =>
     call.method === 'run' && call.sql.includes('generation<>'));
-  assert.equal(manifestWrites.length, MATERIALIZED_API_VARIANTS.length);
-  assert.equal(chunkWrites.length, MATERIALIZED_API_VARIANTS.length);
-  assert.equal(oldGenerationDeletes.length, MATERIALIZED_API_VARIANTS.length);
+  assert.equal(manifestWrites.length, expectedResponses);
+  assert.equal(chunkWrites.length, expectedResponses);
+  assert.equal(oldGenerationDeletes.length, expectedResponses);
   assert.ok(db.calls.some((call) => call.method === 'run'
     && call.sql.includes('CREATE TABLE IF NOT EXISTS sh_pages_response_manifest')));
 });
 
 test('five-minute refresh updates only the five-minute response', async () => {
   const db = new FakeDb();
-  const now = Date.UTC(2026, 6, 16, 12, 5);
   const result = await refreshFastPagesReadModels({
     BUDDIES_DB: {},
     MINUTE_DB: db,
     OTHER_DB: {},
-  }, now, {
+  }, Date.UTC(2026, 6, 16, 12, 5), {
     render: async (variant) => Response.json({ ok: true, model_key: variant.key }),
   });
 
@@ -161,14 +99,13 @@ test('five-minute refresh updates only the five-minute response', async () => {
   assert.equal(payloadWrites.length, 0);
 });
 
-test('quarter-hour refresh skips half-hour aggregate work', async () => {
+test('quarter-hour refresh skips half-hour and track-history work', async () => {
   const db = new FakeDb();
-  const now = Date.UTC(2026, 6, 16, 12, 15);
   const result = await refreshFastPagesReadModels({
     BUDDIES_DB: {},
     MINUTE_DB: db,
     OTHER_DB: {},
-  }, now, {
+  }, Date.UTC(2026, 6, 16, 12, 15), {
     render: async (variant) => Response.json({ ok: true, model_key: variant.key }),
   });
 
@@ -176,19 +113,10 @@ test('quarter-hour refresh skips half-hour aggregate work', async () => {
   assert.equal(keys.includes('track-likes'), false);
   assert.equal(keys.includes('like-ranking'), false);
   assert.equal(keys.includes('host-history:summary'), false);
+  assert.equal(keys.includes('track-history'), false);
   assert.equal(keys.includes('minute-facts-current'), true);
-  assert.equal(keys.includes('track-history'), true);
   assert.equal(result.daily.skipped, undefined);
   assert.deepEqual(result.likes, { skipped: true, reason: 'not-due' });
-});
-
-test('half-hour fast refresh defers track history to the immediate full refresh', () => {
-  const now = Date.UTC(2026, 6, 16, 12, 30);
-  const keys = dueFastMaterializedVariants(now).map(({ key }) => key);
-  assert.equal(keys.includes('track-history'), false);
-  assert.equal(keys.includes('track-likes'), true);
-  assert.equal(keys.includes('like-ranking'), true);
-  assert.equal(keys.includes('minute-facts-current'), true);
 });
 
 test('full history refresh republishes track history after updating its source table', async () => {
@@ -216,7 +144,7 @@ test('full history refresh republishes track history after updating its source t
 
 test('fast refresh preserves the previous generation when one API render fails', async () => {
   const db = new FakeDb();
-  const failedKey = 'track-history';
+  const failedKey = 'history:daily';
   const result = await refreshFastPagesReadModels({
     BUDDIES_DB: {},
     MINUTE_DB: db,
