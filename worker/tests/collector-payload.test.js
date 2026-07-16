@@ -97,6 +97,11 @@ test('extractQueue emits a compact queue that retains playback presentation', ()
     album_name: 'Album',
     thumbnail_url: 'https://example.com/album.jpg',
   });
+  Object.defineProperty(queue, 'tracks', {
+    configurable: true,
+    get() { throw new Error('compact tracks must not be inspected again'); },
+  });
+  assert.strictEqual(minuteFactQueue(queue), queue);
 });
 
 test('read models retain bounded channel and track presentation fields without raw payloads', () => {

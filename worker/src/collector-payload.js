@@ -166,6 +166,7 @@ export function readModelPresentation(snapshot) {
 
 export function minuteFactQueue(queue) {
   if (!queue) return queue;
+  if (queue[COMPACT_QUEUE_MARKER]) return queue;
   const { raw, tracks, ...rest } = queue;
   const compactTracks = Array.isArray(tracks) ? tracks : [];
   const alreadyCompact = !raw && compactTracks.every((track) => (
