@@ -14,6 +14,7 @@ import { attachCompactTrackLikes } from '../../site/functions/lib/track-likes.js
 
 const DAY_MS = 86_400_000;
 const TRACK_HISTORY_DAYS = 35;
+const TRACK_HISTORY_BACKFILL_DAYS = 7;
 const TRACK_HISTORY_EPOCH = Date.UTC(2024, 4, 1);
 const TRACK_HISTORY_LIMIT = 40_000;
 const LIKE_RANKING_LIMIT = 500;
@@ -49,6 +50,33 @@ function trackRowKey(row) {
     row.position ?? '',
     row.first_played_at ?? row.played_at ?? '',
   ].join('|');
+}
+
+function parsedPayload(row) {
+  try {
+    return row?.payload_json ? JSON.parse(row.payload_json) : null;
+  } catch {
+    return null;
+  }
+}
+
+export function trackHistoryRefreshRanges(now, backfillState = null) {
+  const currentDayStart = Math.floor(now / DAY_MS) * DAY_MS;
+  const recentFrom = currentDayStart - TRACK_HISTORY_DAYS * DAY_MS;
+  const recent = { fromTs: recentFrom, toTs: currentDayStart + DAY_MS };
+  const storedCursor = Number(backfillState?.next_to);
+  const backfillTo = Math.min(
+    Number.isFinite(storedCursor) ? storedCursor : recentFrom,
+    recentFrom,
+  );
+  if (backfillTo <= TRACK_HISTORY_EPOCH) return { recent, backfill: null };
+  return {
+    recent,
+    backfill: {
+      fromTs: Math.max(TRACK_HISTORY_EPOCH, backfillTo - TRACK_HISTORY_BACKFILL_DAYS * DAY_MS),
+      toTs: backfillTo,
+    },
+  };
 }
 
 async function ensureSchema(db) {
@@ -98,30 +126,24 @@ async function refreshLikeRanking(db, now) {
   return { rows: ranking.rows.length };
 }
 
-async function refreshTrackHistory(sourceDb, targetDb, now) {
-  const currentDayStart = Math.floor(now / DAY_MS) * DAY_MS;
-  const previousStatus = await payloadRow(targetDb, 'track-history-status');
-  const fromTs = previousStatus?.payload_json
-    ? currentDayStart - TRACK_HISTORY_DAYS * DAY_MS
-    : TRACK_HISTORY_EPOCH;
-  const toTs = currentDayStart + DAY_MS;
+async function materializeTrackHistoryRange(sourceDb, targetDb, range, now) {
   const { result, likeRows } = await loadTrackHistoryData(
     sourceDb,
-    fromTs,
-    toTs,
+    range.fromTs,
+    range.toTs,
     TRACK_HISTORY_LIMIT,
     true,
   );
   const groupedRows = result.results || [];
-  const sourceTruncated = groupedRows.length > TRACK_HISTORY_LIMIT;
-  const sourceRows = sourceTruncated ? groupedRows.slice(0, TRACK_HISTORY_LIMIT) : groupedRows;
-  const mergedRows = mergeTrackRows(sourceRows);
+  if (groupedRows.length > TRACK_HISTORY_LIMIT) {
+    throw new Error(`track history read-model range exceeded ${TRACK_HISTORY_LIMIT} grouped rows`);
+  }
+  const mergedRows = mergeTrackRows(groupedRows);
   const likedRows = attachCompactTrackLikes(mergedRows, likeRows);
-  const completed = applyTrackPeriodCompleteness(likedRows, sourceRows);
+  const completed = applyTrackPeriodCompleteness(likedRows, groupedRows);
   const rows = completed.rows;
-
-  const fromDay = dayText(fromTs);
-  const toDay = dayText(toTs - DAY_MS);
+  const fromDay = dayText(range.fromTs);
+  const toDay = dayText(range.toTs - DAY_MS);
   const statements = rows.map((row) => targetDb.prepare(`INSERT INTO sh_pages_track_history_read_model(
       row_key,play_date,first_played_at,row_json,updated_at
     ) VALUES(?,?,?,?,?) ON CONFLICT(row_key) DO UPDATE SET
@@ -139,23 +161,56 @@ async function refreshTrackHistory(sourceDb, targetDb, now) {
   for (let offset = 0; offset < statements.length; offset += 100) {
     await targetDb.batch(statements.slice(offset, offset + 100));
   }
-
   await targetDb.prepare(`DELETE FROM sh_pages_track_history_read_model
     WHERE play_date>=? AND play_date<=? AND updated_at<>?`)
     .bind(fromDay, toDay, now).run();
-
-  await savePayload(targetDb, 'track-history-status', {
-    ok: true,
+  return {
     from: fromDay,
     to: toDay,
-    row_count: rows.length,
-    source_row_count: sourceRows.reduce((sum, row) => sum + (Number(row.play_count) || 0), 0),
-    source_truncated: sourceTruncated,
-    excluded_play_count_dates: completed.excludedDates,
+    rows: rows.length,
+    groupedRows: groupedRows.length,
+    sourceRowCount: groupedRows.reduce((sum, row) => sum + (Number(row.play_count) || 0), 0),
+    excludedDates: completed.excludedDates,
+  };
+}
+
+async function refreshTrackHistory(sourceDb, targetDb, now) {
+  const backfillRow = await payloadRow(targetDb, 'track-history-backfill');
+  const ranges = trackHistoryRefreshRanges(now, parsedPayload(backfillRow));
+  const recent = await materializeTrackHistoryRange(sourceDb, targetDb, ranges.recent, now);
+  let backfill = null;
+  if (ranges.backfill) {
+    backfill = await materializeTrackHistoryRange(sourceDb, targetDb, ranges.backfill, now);
+    await savePayload(targetDb, 'track-history-backfill', {
+      next_to: ranges.backfill.fromTs,
+      completed: ranges.backfill.fromTs <= TRACK_HISTORY_EPOCH,
+      updated_at: now,
+    }, now);
+  } else {
+    await savePayload(targetDb, 'track-history-backfill', {
+      next_to: TRACK_HISTORY_EPOCH,
+      completed: true,
+      updated_at: now,
+    }, now);
+  }
+
+  const coverage = await targetDb.prepare(`SELECT MIN(play_date) AS earliest_date,MAX(play_date) AS latest_date
+    FROM sh_pages_track_history_read_model`).first();
+  await savePayload(targetDb, 'track-history-status', {
+    ok: true,
+    from: coverage?.earliest_date || recent.from,
+    to: coverage?.latest_date || recent.to,
+    row_count: recent.rows,
+    source_row_count: recent.sourceRowCount,
+    source_truncated: false,
+    excluded_play_count_dates: recent.excludedDates,
     grace_ms: TRACK_HISTORY_GRACE_MS,
+    backfill_completed: !ranges.backfill || ranges.backfill.fromTs <= TRACK_HISTORY_EPOCH,
+    backfill_from: backfill?.from || null,
+    backfill_to: backfill?.to || null,
     generated_at: now,
   }, now);
-  return { rows: rows.length, groupedRows: sourceRows.length, sourceTruncated };
+  return { recent, backfill };
 }
 
 export async function refreshPagesReadModels(env, now = Date.now()) {
