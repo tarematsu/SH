@@ -18,73 +18,9 @@ import {
   resolveTracksBulk,
   timedStage,
 } from './minute-facts-track-resolution.js';
-import { writeCurrentBite } from './minute-facts-legacy-revision.js';
+import { updatePlaybackState, writeCurrentBite } from './minute-facts-legacy-revision.js';
 
 export { buildTrackDescriptor, createOptimizedRevision, missingRevisionPositions, resolveTracksBulk };
-
-async function updatePlaybackState(db, input) {
-  const { channelId, sessionId, revisionId, queueStartTime, observedAt, isPaused } = input;
-  const previous = await db.prepare('SELECT * FROM sh_playback_current WHERE channel_id=?')
-    .bind(channelId).first();
-  const paused = bool(isPaused) === 1;
-  const delayed = previous && observedAt < Number(previous.last_observed_at || 0);
-  if (delayed) return { ...previous, delayed: true };
-
-  const revisionChanged = Number(previous?.revision_id || 0) !== Number(revisionId || 0);
-  let pausedTotal = revisionChanged ? 0 : Number(previous?.paused_total_ms || 0);
-  let pauseStartedAt = revisionChanged ? (paused ? observedAt : null) : integer(previous?.pause_started_at);
-  const wasPaused = revisionChanged ? false : Number(previous?.is_paused || 0) === 1;
-  if (!revisionChanged && !wasPaused && paused) pauseStartedAt = observedAt;
-  if (!revisionChanged && wasPaused && !paused) {
-    if (pauseStartedAt != null) pausedTotal += Math.max(0, observedAt - pauseStartedAt);
-    pauseStartedAt = null;
-  }
-  if (revisionChanged || wasPaused !== paused) {
-    await db.prepare(`INSERT OR IGNORE INTO sh_queue_state_events(
-      revision_id,observed_at,is_paused,source
-    ) VALUES(?,?,?,'live_collector')`).bind(revisionId, observedAt, paused ? 1 : 0).run();
-  }
-
-  const activePause = paused && pauseStartedAt != null ? Math.max(0, observedAt - pauseStartedAt) : 0;
-  const elapsed = queueStartTime == null
-    ? null
-    : Math.max(0, observedAt - queueStartTime - pausedTotal - activePause);
-  let currentPosition = null;
-  if (elapsed != null) {
-    const items = await db.prepare(`SELECT position,duration_ms,playback_offset_ms,schedule_valid
-      FROM sh_queue_revision_items WHERE revision_id=? ORDER BY position ASC`).bind(revisionId).all();
-    const match = (items.results || []).find((item) => Number(item.schedule_valid) === 1
-      && elapsed >= Number(item.playback_offset_ms)
-      && elapsed < Number(item.playback_offset_ms) + Number(item.duration_ms));
-    currentPosition = match?.position == null ? null : Number(match.position);
-  }
-
-  await db.prepare(`INSERT INTO sh_playback_current(
-      channel_id,session_id,revision_id,queue_start_time,is_paused,paused_total_ms,
-      pause_started_at,last_observed_at,current_position
-    ) VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(channel_id) DO UPDATE SET
-      session_id=excluded.session_id,revision_id=excluded.revision_id,
-      queue_start_time=excluded.queue_start_time,is_paused=excluded.is_paused,
-      paused_total_ms=excluded.paused_total_ms,pause_started_at=excluded.pause_started_at,
-      last_observed_at=excluded.last_observed_at,current_position=excluded.current_position
-    WHERE excluded.last_observed_at>=sh_playback_current.last_observed_at`).bind(
-    channelId,
-    sessionId,
-    revisionId,
-    queueStartTime,
-    paused ? 1 : 0,
-    pausedTotal,
-    pauseStartedAt,
-    observedAt,
-    currentPosition,
-  ).run();
-  return {
-    revision_id: revisionId,
-    is_paused: paused ? 1 : 0,
-    current_position: currentPosition,
-    delayed: false,
-  };
-}
 
 export async function saveOptimizedLiveMinuteFact(env, input) {
   const db = env?.MINUTE_DB;
