@@ -98,7 +98,8 @@ test('canonical migration deduplicates conflicting legacy keys before rewriting 
   insertObservation(db, [2, 1000, 7, 'spotify-b', null, 'JPABC1234567', 2, 20, 'legacy-b', 5, 'collector']);
 
   db.exec(canonicalTrackLikeMigration);
-  const rows = db.prepare('SELECT id,track_key,like_count FROM sh_track_like_observations ORDER BY id').all();
+  const rows = db.prepare('SELECT id,track_key,like_count FROM sh_track_like_observations ORDER BY id')
+    .all().map((row) => ({ ...row }));
 
   assert.deepEqual(rows, [{ id: 2, track_key: 'isrc:JPABC1234567', like_count: 5 }]);
 });
