@@ -9,6 +9,7 @@ on:
       - 'worker/wrangler*.jsonc'
       - 'worker/package.json'
       - 'worker/package-lock.json'
+      - 'site/functions/**'
       - 'packages/sh-shared/**'
       - '.github/workflows/deploy-split-pipeline.yml'
   workflow_dispatch:
