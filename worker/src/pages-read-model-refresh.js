@@ -14,6 +14,7 @@ import { attachCompactTrackLikes } from '../../site/functions/lib/track-likes.js
 
 const DAY_MS = 86_400_000;
 const TRACK_HISTORY_DAYS = 35;
+const TRACK_HISTORY_EPOCH = Date.UTC(2024, 4, 1);
 const TRACK_HISTORY_LIMIT = 40_000;
 const LIKE_RANKING_LIMIT = 500;
 
@@ -38,7 +39,7 @@ function dayText(timestamp) {
   return new Date(timestamp).toISOString().slice(0, 10);
 }
 
-function trackRowKey(row, index) {
+function trackRowKey(row) {
   return [
     row.play_date || '',
     row.stationhead_track_id ?? '',
@@ -46,7 +47,7 @@ function trackRowKey(row, index) {
     row.spotify_id || '',
     row.queue_track_id ?? '',
     row.position ?? '',
-    index,
+    row.first_played_at ?? row.played_at ?? '',
   ].join('|');
 }
 
@@ -59,6 +60,13 @@ async function savePayload(db, key, payload, now) {
     VALUES(?,?,?) ON CONFLICT(model_key) DO UPDATE SET
       payload_json=excluded.payload_json,updated_at=excluded.updated_at`)
     .bind(key, JSON.stringify(payload), now).run();
+}
+
+async function payloadRow(db, key) {
+  return db.prepare(`SELECT payload_json
+    FROM sh_pages_payload_read_model
+    WHERE model_key=?
+    LIMIT 1`).bind(key).first();
 }
 
 async function refreshDailyChanges(db, now) {
@@ -92,7 +100,10 @@ async function refreshLikeRanking(db, now) {
 
 async function refreshTrackHistory(sourceDb, targetDb, now) {
   const currentDayStart = Math.floor(now / DAY_MS) * DAY_MS;
-  const fromTs = currentDayStart - TRACK_HISTORY_DAYS * DAY_MS;
+  const previousStatus = await payloadRow(targetDb, 'track-history-status');
+  const fromTs = previousStatus?.payload_json
+    ? currentDayStart - TRACK_HISTORY_DAYS * DAY_MS
+    : TRACK_HISTORY_EPOCH;
   const toTs = currentDayStart + DAY_MS;
   const { result, likeRows } = await loadTrackHistoryData(
     sourceDb,
@@ -102,21 +113,24 @@ async function refreshTrackHistory(sourceDb, targetDb, now) {
     true,
   );
   const groupedRows = result.results || [];
-  const mergedRows = mergeTrackRows(groupedRows);
+  const sourceTruncated = groupedRows.length > TRACK_HISTORY_LIMIT;
+  const sourceRows = sourceTruncated ? groupedRows.slice(0, TRACK_HISTORY_LIMIT) : groupedRows;
+  const mergedRows = mergeTrackRows(sourceRows);
   const likedRows = attachCompactTrackLikes(mergedRows, likeRows);
-  const completed = applyTrackPeriodCompleteness(likedRows, groupedRows);
+  const completed = applyTrackPeriodCompleteness(likedRows, sourceRows);
   const rows = completed.rows;
 
   const fromDay = dayText(fromTs);
   const toDay = dayText(toTs - DAY_MS);
-  await targetDb.prepare(`DELETE FROM sh_pages_track_history_read_model
-    WHERE play_date>=? AND play_date<=?`).bind(fromDay, toDay).run();
-
-  const statements = rows.map((row, index) => targetDb.prepare(`INSERT INTO sh_pages_track_history_read_model(
+  const statements = rows.map((row) => targetDb.prepare(`INSERT INTO sh_pages_track_history_read_model(
       row_key,play_date,first_played_at,row_json,updated_at
-    ) VALUES(?,?,?,?,?)`)
+    ) VALUES(?,?,?,?,?) ON CONFLICT(row_key) DO UPDATE SET
+      play_date=excluded.play_date,
+      first_played_at=excluded.first_played_at,
+      row_json=excluded.row_json,
+      updated_at=excluded.updated_at`)
     .bind(
-      trackRowKey(row, index),
+      trackRowKey(row),
       row.play_date,
       Number(row.first_played_at || row.played_at || 0) || null,
       JSON.stringify(row),
@@ -126,17 +140,22 @@ async function refreshTrackHistory(sourceDb, targetDb, now) {
     await targetDb.batch(statements.slice(offset, offset + 100));
   }
 
+  await targetDb.prepare(`DELETE FROM sh_pages_track_history_read_model
+    WHERE play_date>=? AND play_date<=? AND updated_at<>?`)
+    .bind(fromDay, toDay, now).run();
+
   await savePayload(targetDb, 'track-history-status', {
     ok: true,
     from: fromDay,
     to: toDay,
     row_count: rows.length,
-    source_row_count: groupedRows.reduce((sum, row) => sum + (Number(row.play_count) || 0), 0),
+    source_row_count: sourceRows.reduce((sum, row) => sum + (Number(row.play_count) || 0), 0),
+    source_truncated: sourceTruncated,
     excluded_play_count_dates: completed.excludedDates,
     grace_ms: TRACK_HISTORY_GRACE_MS,
     generated_at: now,
   }, now);
-  return { rows: rows.length, groupedRows: groupedRows.length };
+  return { rows: rows.length, groupedRows: sourceRows.length, sourceTruncated };
 }
 
 export async function refreshPagesReadModels(env, now = Date.now()) {
