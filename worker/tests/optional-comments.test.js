@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
 import { collectOptionalComments } from '../src/index.js';
@@ -6,6 +7,10 @@ import { configFromEnv } from '../src/collector-config.js';
 
 const state = { stationId: 42 };
 const config = { chatLimit: 10 };
+
+function workerConfig(name) {
+  return JSON.parse(readFileSync(new URL(`../${name}`, import.meta.url), 'utf8'));
+}
 
 test('zero CHAT_LIMIT disables optional comment collection', async () => {
   const disabled = configFromEnv({ CHAT_LIMIT: 0 });
@@ -28,6 +33,16 @@ test('zero CHAT_LIMIT disables optional comment collection', async () => {
     errorStage: null,
   });
   assert.equal(requests, 0);
+});
+
+test('deployed split configs disable ingest comments and keep comments Worker collection enabled', () => {
+  const ingest = workerConfig('wrangler.ingest.jsonc');
+  const comments = workerConfig('wrangler.comments.jsonc');
+
+  assert.equal(ingest.name, 'sh-ingest-channel');
+  assert.equal(configFromEnv(ingest.vars).chatLimit, 0);
+  assert.equal(comments.name, 'sh-comments');
+  assert.equal(configFromEnv(comments.vars).chatLimit, 50);
 });
 
 test('comment API failures degrade only optional comment collection', async () => {
