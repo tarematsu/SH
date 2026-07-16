@@ -71,15 +71,13 @@ test('minute ingest writes one inbox row and durably hands off one derive trigge
   }]);
 });
 
-test('duplicate inbox delivery resends the derive trigger but enriches metadata once', async () => {
+test('duplicate inbox delivery resends the derive trigger without extra work', async () => {
   const body = splitMessage({
     enrichTrackMetadata: true,
     tracks: [{ spotify_id: 'track-1' }],
   });
   const messageCalls = [];
   const triggers = [];
-  const tasks = [];
-  const enrichedJobs = [];
   const result = await consumeMinuteQueue({
     messages: [queueMessage(body, messageCalls), queueMessage(body, messageCalls)],
   }, {
@@ -87,14 +85,7 @@ test('duplicate inbox delivery resends the derive trigger but enriches metadata 
     MINUTE_DERIVE_QUEUE: {
       async send(trigger) { triggers.push(trigger); },
     },
-  }, {
-    waitUntil(task) { tasks.push(task); },
-  }, {
-    async runCommittedMetadataEnrichment(_env, jobs) {
-      enrichedJobs.push(...jobs);
-    },
-  });
-  await Promise.all(tasks);
+  }, {});
 
   assert.deepEqual(result, {
     received: 2,
@@ -105,11 +96,9 @@ test('duplicate inbox delivery resends the derive trigger but enriches metadata 
   });
   assert.deepEqual(messageCalls, ['ack', 'ack']);
   assert.equal(triggers.length, 2);
-  assert.equal(enrichedJobs.length, 1);
-  assert.equal(enrichedJobs[0].jobId, 'minute-fact:10:120000');
 });
 
-test('metadata survives a failure after inbox and derive handoff', async () => {
+test('legacy read-model failure happens after inbox and derive handoff', async () => {
   const body = minuteFactQueueMessage({
     observedAt: 123_456,
     snapshot: { channel_id: 10, station_id: 5 },
@@ -123,28 +112,21 @@ test('metadata survives a failure after inbox and derive handoff', async () => {
     },
   });
   const messageCalls = [];
-  const tasks = [];
-  const enrichedJobs = [];
+  let triggers = 0;
   const result = await consumeMinuteQueue({
     messages: [queueMessage(body, messageCalls)],
   }, {
     MINUTE_DB: minuteDb(),
-    MINUTE_DERIVE_QUEUE: { async send() {} },
-  }, {
-    waitUntil(task) { tasks.push(task); },
-  }, {
+    MINUTE_DERIVE_QUEUE: { async send() { triggers += 1; } },
+  }, {}, {
     async saveMinuteFactReadModels() {
       throw new Error('legacy read model unavailable');
     },
-    async runCommittedMetadataEnrichment(_env, jobs) {
-      enrichedJobs.push(...jobs);
-    },
   });
-  await Promise.all(tasks);
 
   assert.equal(result.retried, 1);
   assert.deepEqual(messageCalls, [['retry', { delaySeconds: 5 }]]);
-  assert.equal(enrichedJobs.length, 1);
+  assert.equal(triggers, 1);
 });
 
 test('derive Queue failure retries the source message after the durable inbox insert', async () => {
