@@ -113,7 +113,7 @@ test('collector priority timeout skips only optional buddies synchronization', a
 test('maintenance worker owns dispatch and maintenance schedules without comment work', async () => {
   const config = JSON.parse(readFileSync(new URL('../wrangler.minute.jsonc', import.meta.url), 'utf8'));
   const source = readFileSync(new URL('../src/minute-maintenance-entry.js', import.meta.url), 'utf8');
-  assert.equal(config.name, 'sh-monitor-minute');
+  assert.equal(config.name, 'sh-minute-maintenance');
   assert.equal(config.main, 'src/minute-maintenance-entry.js');
   assert.deepEqual(config.triggers.crons, ['* * * * *', MINUTE_FACT_MAINTENANCE_CRON]);
   assert.equal(MINUTE_FACT_WORKER_CRON, MINUTE_FACT_DERIVE_CRON);
