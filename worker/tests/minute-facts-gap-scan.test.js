@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { buildExpectedMinuteCandidates } from '../src/minute-facts-gap-scan.js';
+import {
+  buildExpectedMinuteCandidates,
+  nextGapScanCursor,
+} from '../src/minute-facts-gap-scan.js';
 
 const MINUTE_MS = 60_000;
 
@@ -76,4 +79,31 @@ test('gap scanner reports but does not synthesize gaps above its safety limit', 
 
   assert.equal(result.sourceGapMinutes, 18);
   assert.deepEqual(result.candidates.map((item) => item.minuteAt), [MINUTE_MS, 20 * MINUTE_MS]);
+});
+
+test('gap scanner stays on a window while any missing minute remains', () => {
+  assert.equal(nextGapScanCursor({
+    from: 100,
+    to: 200,
+    earliest: 0,
+    cutoff: 1_000,
+    missingCount: 96,
+  }), 200);
+});
+
+test('gap scanner advances only after the current window is complete', () => {
+  assert.equal(nextGapScanCursor({
+    from: 100,
+    to: 200,
+    earliest: 0,
+    cutoff: 1_000,
+    missingCount: 0,
+  }), 100);
+  assert.equal(nextGapScanCursor({
+    from: 0,
+    to: 100,
+    earliest: 0,
+    cutoff: 1_000,
+    missingCount: 0,
+  }), 1_000);
 });
