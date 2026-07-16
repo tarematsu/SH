@@ -69,7 +69,7 @@ export async function selectOtherProductionTask(controller, env, dependencies = 
   const scheduled = otherProductionTask(now, env);
   // Active-event probing may replace an ordinary host poll, but must not starve
   // prediction, maintenance, or retention. Buddy playback and public API
-  // materialization run beside whichever workload is selected every five minutes.
+  // materialization run beside whichever workload is selected on their cadence.
   if (scheduled !== 'host') return scheduled;
   const due = dependencies.officialNewsDue || officialNewsProbeDue;
   return await due(env, now) ? 'officialNews' : scheduled;
@@ -138,7 +138,7 @@ export async function runOfficialNewsWithReconcile(env, now, probe = null, recon
 export async function runOtherScheduled(controller, env, ctx, dependencies = {}) {
   if (hasInjectedTaskSet(dependencies) && String(controller.cron || '') !== OTHER_WORKER_CRON) {
     // Preserve the broad injected mode used by integration tests and manual
-    // diagnostics. Production adds the five-minute API materializer separately.
+    // diagnostics. Production adds the API materializer separately.
     const collectorGate = env?.BUDDIES_DB?.prepare
       ? (dependencies.waitForCollector
         ? dependencies.waitForCollector(env, scheduledTimestamp(controller))
@@ -150,6 +150,7 @@ export async function runOtherScheduled(controller, env, ctx, dependencies = {})
   if (String(controller.cron || '') !== OTHER_WORKER_CRON) {
     return [{ skipped: true, reason: 'unsupported-other-cron', cron: String(controller.cron || '') }];
   }
+  const now = scheduledTimestamp(controller);
   const selected = await selectOtherProductionTask(controller, env, dependencies);
   const companion = selected === 'buddy' ? 'host' : selected;
   const names = [];
@@ -159,7 +160,7 @@ export async function runOtherScheduled(controller, env, ctx, dependencies = {})
       || typeof dependencies.pages === 'function'
   );
   if (buddyAvailable) names.push('buddy');
-  if (pagesAvailable) names.push('pages');
+  if (pagesAvailable && Math.floor(now / 60_000) % 15 === 0) names.push('pages');
   names.push(companion);
   return invokeTaskSet(names, controller, env, ctx, dependencies);
 }
