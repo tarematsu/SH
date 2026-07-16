@@ -1,9 +1,11 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { DatabaseSync } from 'node:sqlite';
 
-import { PLAYBACK_FEED_SQL, parsePlaybackFeedRows } from '../site/functions/api/playback.js';
 import { computePlayback } from '../site/functions/lib/playback.js';
+import {
+  buildPrimaryPlaybackRows,
+  computePrimaryPlayback,
+} from '../site/functions/lib/primary-playback.js';
 
 test('computePlayback returns current track progress and anchors', () => {
   const queue = [
@@ -33,47 +35,62 @@ test('computePlayback clamps to the last track when elapsed exceeds queue durati
   assert.equal(playback.queueEndAt, 31_000);
 });
 
-test('playback feed obtains the latest channel and its queue in one query', () => {
-  const db = new DatabaseSync(':memory:');
-  db.exec(`
-    CREATE TABLE sh_channel_snapshots (
-      id INTEGER PRIMARY KEY,observed_at INTEGER,station_id INTEGER,is_broadcasting INTEGER,
-      host_account_id INTEGER,host_handle TEXT,broadcast_start_time INTEGER
-    );
-    CREATE TABLE sh_queue_current (
-      station_id INTEGER PRIMARY KEY,queue_id INTEGER,start_time INTEGER,
-      structural_hash TEXT NOT NULL,likes_hash TEXT,is_paused INTEGER,
-      observed_at INTEGER NOT NULL,updated_at INTEGER NOT NULL
-    );
-    CREATE TABLE sh_queue_items (
-      id INTEGER PRIMARY KEY,observed_at INTEGER,station_id INTEGER,queue_id INTEGER,
-      start_time INTEGER,position INTEGER,queue_track_id INTEGER,stationhead_track_id INTEGER,
-      spotify_id TEXT,apple_music_id TEXT,deezer_id TEXT,isrc TEXT,duration_ms INTEGER,
-      preview_url TEXT,bite_count INTEGER
-    );
-    CREATE TABLE sh_track_metadata (
-      spotify_id TEXT PRIMARY KEY,title TEXT,artist TEXT,display_title TEXT,
-      thumbnail_url TEXT,spotify_url TEXT,fetched_at INTEGER,raw_json TEXT
-    );
-    INSERT INTO sh_channel_snapshots VALUES (1,1000,10,1,1,'old',500);
-    INSERT INTO sh_channel_snapshots VALUES (2,2000,20,1,2,'current',1500);
-    INSERT INTO sh_queue_current (station_id,queue_id,start_time,structural_hash,is_paused,observed_at,updated_at)
-      VALUES (10,101,10000,'hash-10',0,3000,3000);
-    INSERT INTO sh_queue_current (station_id,queue_id,start_time,structural_hash,is_paused,observed_at,updated_at)
-      VALUES (20,202,20000,'hash-20',0,2500,2500);
-    INSERT INTO sh_queue_items (
-      id,observed_at,station_id,queue_id,start_time,position,queue_track_id,
-      spotify_id,duration_ms
-    ) VALUES (1,2500,20,202,20000,0,1,'spotify-current',180000);
-    INSERT INTO sh_queue_items (
-      id,observed_at,station_id,queue_id,start_time,position,queue_track_id,
-      spotify_id,duration_ms
-    ) VALUES (2,3000,10,101,10000,0,2,'spotify-wrong',180000);
-  `);
+test('canonical playback subtracts completed pauses before choosing the current track', () => {
+  const rows = [
+    { playback_offset_ms: 0, duration_ms: 180_000 },
+    { playback_offset_ms: 180_000, duration_ms: 180_000 },
+  ];
+  const playback = computePrimaryPlayback(rows, {
+    queue_start_time: 1_000,
+    paused_total_ms: 120_000,
+    is_paused: 0,
+  }, 241_000);
 
-  const parsed = parsePlaybackFeedRows(db.prepare(PLAYBACK_FEED_SQL).all());
-  assert.equal(parsed.latest.station_id, 20);
-  assert.equal(parsed.latest.host_handle, 'current');
-  assert.equal(parsed.latestQueue.queue_id, 202);
-  assert.deepEqual(parsed.queue.map((row) => row.spotify_id), ['spotify-current']);
+  assert.equal(playback.currentIndex, 0);
+  assert.equal(playback.progressMs, 120_000);
+  assert.equal(playback.anchorAt, 121_000);
+  assert.equal(playback.ended, false);
+});
+
+test('primary playback merges live queue, canonical track, and metadata fields', () => {
+  const queueRow = {
+    queue_id: 9,
+    start_time: 1_000,
+    observed_at: 2_000,
+    queue_json: JSON.stringify({
+      tracks: [{
+        position: 0,
+        spotify_id: 'sp1',
+        isrc: 'JPX1',
+        title: 'Live Title',
+        thumbnail_url: 'https://img.example/live.jpg',
+      }],
+    }),
+  };
+  const rows = buildPrimaryPlaybackRows([{
+    position: 0,
+    spotify_id: 'sp1',
+    isrc: 'JPX1',
+    duration_ms: 180_000,
+    playback_offset_ms: 0,
+    schedule_valid: 1,
+    canonical_title: 'Canonical Title',
+    canonical_artist: 'Canonical Artist',
+  }], queueRow, {
+    queue_id: 9,
+    queue_start_time: 1_000,
+    last_observed_at: 2_000,
+  }, [{
+    spotify_id: 'sp1',
+    isrc: 'JPX1',
+    title: 'Metadata Title',
+    artist: 'Metadata Artist',
+    thumbnail_url: 'https://img.example/metadata.jpg',
+    fetched_at: 3_000,
+  }]);
+
+  assert.equal(rows[0].title, 'Live Title');
+  assert.equal(rows[0].artist, 'Metadata Artist');
+  assert.equal(rows[0].thumbnail_url, 'https://img.example/live.jpg');
+  assert.equal(rows[0].duration_ms, 180_000);
 });
