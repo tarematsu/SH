@@ -20,7 +20,7 @@ jobs:
   prepare-queues:
     name: Prepare split minute boundary
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     env:
       CLOUDFLARE_ACCOUNT_ID: "0500f25c2f74e7e76c94a8bcb6c7008b"
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_BUILDS_API_TOKEN || secrets.CLOUDFLARE_API_TOKEN || secrets.CF_API_TOKEN }}
@@ -52,13 +52,19 @@ jobs:
         run: npm run deploy:minute-derive
         working-directory: worker
       - name: Detach legacy minute Queue consumer
-        run: npx wrangler queues consumer remove stationhead-buddies-facts sh-monitor-minute || true
+        run: npm run detach:minute-consumer
         working-directory: worker
       - name: Deploy maintenance-only minute Worker
         run: npm run deploy:minute-maintenance
         working-directory: worker
       - name: Deploy minute ingest consumer after cutover
         run: npm run deploy:minute-ingest
+        working-directory: worker
+      - name: Deploy comments chain before producer switch
+        run: npm run deploy:comments
+        working-directory: worker
+      - name: Switch channel ingest to ordered comments handoff
+        run: npm run deploy:ingest
         working-directory: worker
 
   diagnose:
