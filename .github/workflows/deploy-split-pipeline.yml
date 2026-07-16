@@ -63,11 +63,14 @@ jobs:
           do
             npx wrangler queues create "$queue" >/dev/null 2>&1 || true
           done
-      - name: Remove the legacy minute consumer
-        run: npm run deploy:minute-maintenance
-        working-directory: worker
       - name: Deploy one-job derive consumer
         run: npm run deploy:minute-derive
+        working-directory: worker
+      - name: Detach legacy minute Queue consumer
+        run: npx wrangler queues consumer remove stationhead-buddies-facts sh-monitor-minute || true
+        working-directory: worker
+      - name: Deploy maintenance-only minute Worker
+        run: npm run deploy:minute-maintenance
         working-directory: worker
       - name: Deploy minute ingest consumer
         run: npm run deploy:minute-ingest
