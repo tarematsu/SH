@@ -22,15 +22,23 @@ export function scheduledTimestamp(controller, fallback = Date.now()) {
   return Number.isFinite(value) && value >= 0 ? value : fallback;
 }
 
+function positiveMinutes(value, fallbackMs) {
+  const milliseconds = Number(value ?? fallbackMs);
+  const safe = Number.isFinite(milliseconds) && milliseconds > 0 ? milliseconds : fallbackMs;
+  return Math.max(1, Math.round(safe / 60_000));
+}
+
 function positiveMs(value, fallback) {
   const number = Number(value);
   return Number.isFinite(number) && number > 0 ? number : fallback;
 }
 
-export function otherProductionTask(now, _env = {}) {
+export function otherProductionTask(now, env = {}) {
   const absoluteMinute = Math.floor(now / 60_000);
   const minute = ((absoluteMinute % 60) + 60) % 60;
+  const buddyMinutes = positiveMinutes(env.BUDDY_PLAYBACK_INTERVAL_MS, 3 * 60 * 60_000);
 
+  if (minute === 0 && absoluteMinute % buddyMinutes === 0) return 'buddy';
   if (minute === 10 || minute === 40) return 'prediction';
   if (minute === 20) return 'officialNews';
   if (minute === 30) return 'maintenance';
@@ -143,7 +151,8 @@ export async function runOtherScheduled(controller, env, ctx, dependencies = {})
     return [{ skipped: true, reason: 'unsupported-other-cron', cron: String(controller.cron || '') }];
   }
   const selected = await selectOtherProductionTask(controller, env, dependencies);
-  return invokeTaskSet(['buddy', selected], controller, env, ctx, dependencies);
+  const companion = selected === 'buddy' ? 'host' : selected;
+  return invokeTaskSet(['buddy', companion], controller, env, ctx, dependencies);
 }
 
 async function healthApp() {
