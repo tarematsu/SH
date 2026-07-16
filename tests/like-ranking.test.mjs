@@ -72,5 +72,5 @@ test('FACTS schema publishes an observed-time index for cached ranking reads', (
   ));
   assert.match(migration, /idx_sh_counter_current_observed_count/);
   assert.match(migration, /sh_track_counter_current\(observed_at DESC,count_value DESC\)/);
-  assert.equal(descriptor.schema, 'database/facts-migrations/014_backfill_track_metadata.sql');
+  assert.equal(descriptor.schema, 'database/facts-migrations/015_repair_track_history_queue_views.sql');
 });

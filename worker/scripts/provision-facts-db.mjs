@@ -58,6 +58,10 @@ const trackMetadataBackfillMigrationPath = resolve(
   repositoryRoot,
   'database/facts-migrations/014_backfill_track_metadata.sql',
 );
+const trackHistoryViewRepairMigrationPath = resolve(
+  repositoryRoot,
+  'database/facts-migrations/015_repair_track_history_queue_views.sql',
+);
 const metadataPath = resolve(repositoryRoot, 'database/facts-db.json');
 const databaseName = process.env.FACTS_DATABASE_NAME || 'stationhead-minute';
 
@@ -221,11 +225,16 @@ wrangler([
   '--remote', '--yes',
   '--file', trackMetadataBackfillMigrationPath,
 ]);
+wrangler([
+  'd1', 'execute', databaseName,
+  '--remote', '--yes',
+  '--file', trackHistoryViewRepairMigrationPath,
+]);
 
 writeFileSync(metadataPath, `${JSON.stringify({
   binding: 'MINUTE_DB',
   database_name: databaseName,
   database_id: databaseId,
-  schema: 'database/facts-migrations/014_backfill_track_metadata.sql',
+  schema: 'database/facts-migrations/015_repair_track_history_queue_views.sql',
 }, null, 2)}\n`);
 console.log(JSON.stringify({ ok: true, database_name: databaseName, database_id: databaseId }));
