@@ -2,9 +2,11 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+  BUDDY_PLAYBACK_CLOCK_UPSERT_SQL,
   BUDDY_PLAYBACK_TOUCH_SQL,
   BUDDY_PLAYBACK_UPSERT_SQL,
   attachBuddyMetadata,
+  buddyPlaybackClock,
   collectBuddyPlayback,
   extractBuddyPlayback,
   shouldRunBuddyPlayback,
@@ -62,13 +64,14 @@ class FakeDb {
       if (this.currentError) throw this.currentError;
       return this.current;
     }
-    if (kind === 'all' && sql.includes('sh_track_metadata')) return { results: this.metadata };
+    if (kind === 'all' && sql.includes('sh_buddy_track_metadata')) return { results: this.metadata };
     return { success: true, meta: { changes: 1 } };
   }
 }
 
 const metadataRow = {
   spotify_id: 'sp1',
+  isrc: 'JPX',
   title: 'Song',
   artist: 'Artist',
   display_title: 'Song — Artist',
@@ -107,7 +110,11 @@ const channel = {
 
 function expectedQueueJson(metadata = metadataRow) {
   const queue = extractBuddyPlayback(channel);
-  return JSON.stringify(attachBuddyMetadata(queue, new Map([['sp1', metadata]])));
+  return JSON.stringify(attachBuddyMetadata(queue, new Map([
+    ['sp1', metadata],
+    ['spotify:sp1', metadata],
+    ['isrc:JPX', metadata],
+  ])));
 }
 
 function currentDisplayState(overrides = {}) {
@@ -119,19 +126,48 @@ function currentDisplayState(overrides = {}) {
   };
 }
 
+function forbiddenDb() {
+  return {
+    prepare() {
+      throw new Error('BUDDIES_DB must not be used by buddy46 playback');
+    },
+  };
+}
+
 test('buddy playback runs only in five-minute buckets', () => {
   assert.equal(shouldRunBuddyPlayback(0, 300_000), true);
   assert.equal(shouldRunBuddyPlayback(240_000, 300_000), false);
   assert.equal(shouldRunBuddyPlayback(300_000, 300_000), true);
 });
 
-test('buddy playback extracts a compact queue without converting nulls to zero', () => {
-  const value = extractBuddyPlayback(channel);
+test('buddy playback extracts compact presentation without converting nulls to zero', () => {
+  const value = extractBuddyPlayback({
+    ...channel,
+    current_station: {
+      ...channel.current_station,
+      queue: {
+        ...channel.current_station.queue,
+        queue_tracks: [{
+          id: 1,
+          track: {
+            ...channel.current_station.queue.queue_tracks[0].track,
+            title: 'Source Song',
+            artist: { name: 'Source Artist' },
+            album: { name: 'Source Album', image_url: 'album-cover' },
+            image_url: null,
+          },
+        }],
+      },
+    },
+  });
   assert.equal(value.station_id, 46);
   assert.equal(value.queue_id, 99);
   assert.equal(value.is_broadcasting, true);
   assert.equal(value.tracks[0].spotify_id, 'sp1');
-  assert.equal(value.tracks[0].thumbnail_url, 'raw-cover');
+  assert.equal(value.tracks[0].title, 'Source Song');
+  assert.equal(value.tracks[0].artist, 'Source Artist');
+  assert.equal(value.tracks[0].album_name, 'Source Album');
+  assert.equal(value.tracks[0].thumbnail_url, 'album-cover');
   assert.equal('apple_music_id' in value.tracks[0], false);
   assert.equal('bite_count' in value.tracks[0], false);
 
@@ -150,11 +186,34 @@ test('buddy playback extracts a compact queue without converting nulls to zero',
   assert.equal(empty.is_broadcasting, false);
 });
 
-test('buddy metadata preserves raw thumbnail when Spotify metadata has not filled it yet', () => {
+test('buddy metadata preserves source fields when cached metadata is incomplete', () => {
   const queue = extractBuddyPlayback(channel);
   const [track] = attachBuddyMetadata(queue, new Map([['sp1', { ...metadataRow, thumbnail_url: null }]]));
+  assert.equal(track.title, 'Song');
+  assert.equal(track.artist, 'Artist');
   assert.equal(track.thumbnail_url, 'raw-cover');
   assert.equal(track.spotify_url, 'https://open.spotify.com/track/sp1');
+});
+
+test('buddy playback clock accumulates a completed pause for the same queue', () => {
+  const clock = buddyPlaybackClock({
+    queue_id: 99,
+    start_time: 300_000,
+    is_paused: 1,
+    clock_queue_id: 99,
+    clock_start_time: 300_000,
+    clock_is_paused: 1,
+    paused_total_ms: 20_000,
+    pause_started_at: 500_000,
+  }, {
+    queue_id: 99,
+    start_time: 300_000,
+    is_paused: false,
+  }, 560_000);
+
+  assert.equal(clock.is_paused, 0);
+  assert.equal(clock.paused_total_ms, 80_000);
+  assert.equal(clock.pause_started_at, null);
 });
 
 test('buddy playback rejects malformed channel payloads before replacing current state', () => {
@@ -168,9 +227,12 @@ test('buddy playback rejects malformed channel payloads before replacing current
   );
 });
 
-test('changed playback replaces the one current-state row with compact JSON', async () => {
+test('changed playback writes compact state, clock, and metadata only to OTHER_DB', async () => {
   const db = new FakeDb();
-  const result = await collectBuddyPlayback({ DB: db, OTHER_DB: db }, 600_000, {
+  const result = await collectBuddyPlayback({
+    OTHER_DB: db,
+    BUDDIES_DB: forbiddenDb(),
+  }, 600_000, {
     loadSession: async () => ({ authToken: 'token', deviceUid: 'device' }),
     fetchChannel: async () => channel,
     stateHash: async () => 'hash-new',
@@ -190,15 +252,17 @@ test('changed playback replaces the one current-state row with compact JSON', as
   assert.match(upsert.params[9], /Song/);
   assert.match(upsert.params[9], /cover/);
   assert.doesNotMatch(upsert.params[9], /metadata_raw_json|metadata_fetched_at|bite_count|oversized|apple_music_id/);
+  assert.ok(db.calls.find((call) => call.sql === BUDDY_PLAYBACK_CLOCK_UPSERT_SQL));
+  assert.ok(db.calls.find((call) => call.sql.includes('INSERT INTO sh_buddy_track_metadata')));
   assert.equal(db.calls.some((call) => call.sql === BUDDY_PLAYBACK_TOUCH_SQL), false);
 });
 
 test('buddy playback loads only the buddy46 auth state when no runtime session is injected', async () => {
-  const db = new FakeDb();
+  const db = new FakeDb({ metadata: [metadataRow] });
   let observedSession = null;
   await collectBuddyPlayback({
-    DB: db,
     OTHER_DB: db,
+    BUDDIES_DB: forbiddenDb(),
     STATIONHEAD_AUTH_TOKEN: 'Bearer buddies-token',
     STATIONHEAD_DEVICE_UID: 'buddies-device',
   }, 600_000, {
@@ -226,7 +290,7 @@ test('metadata-only refresh updates queue JSON without resetting playback change
     },
     metadata: [metadataRow],
   });
-  const result = await collectBuddyPlayback({ DB: db, OTHER_DB: db }, 600_000, {
+  const result = await collectBuddyPlayback({ OTHER_DB: db }, 600_000, {
     loadSession: async () => ({ authToken: 'token', deviceUid: 'device' }),
     fetchChannel: async () => channel,
     stateHash: async () => 'same',
@@ -251,7 +315,7 @@ test('broadcast-only changes update display state without moving the playback an
     },
     metadata: [metadataRow],
   });
-  const result = await collectBuddyPlayback({ DB: db, OTHER_DB: db }, 600_000, {
+  const result = await collectBuddyPlayback({ OTHER_DB: db }, 600_000, {
     loadSession: async () => ({ authToken: 'token', deviceUid: 'device' }),
     fetchChannel: async () => channel,
     stateHash: async () => 'same',
@@ -265,7 +329,7 @@ test('broadcast-only changes update display state without moving the playback an
   assert.equal(upsert.params[11], 123_000);
 });
 
-test('unchanged playback updates only checked_at', async () => {
+test('unchanged playback updates checked_at and persists its clock', async () => {
   const db = new FakeDb({
     current: {
       ...currentDisplayState(),
@@ -276,7 +340,7 @@ test('unchanged playback updates only checked_at', async () => {
     },
     metadata: [metadataRow],
   });
-  const result = await collectBuddyPlayback({ DB: db, OTHER_DB: db }, 600_000, {
+  const result = await collectBuddyPlayback({ OTHER_DB: db }, 600_000, {
     loadSession: async () => ({ authToken: 'token', deviceUid: 'device' }),
     fetchChannel: async () => channel,
     stateHash: async () => 'same',
@@ -284,13 +348,14 @@ test('unchanged playback updates only checked_at', async () => {
 
   assert.equal(result.changed, false);
   assert.ok(db.calls.find((call) => call.sql === BUDDY_PLAYBACK_TOUCH_SQL));
+  assert.ok(db.calls.find((call) => call.sql === BUDDY_PLAYBACK_CLOCK_UPSERT_SQL));
   assert.equal(db.calls.some((call) => call.sql === BUDDY_PLAYBACK_UPSERT_SQL), false);
 });
 
 test('missing current-state table skips collection before external requests', async () => {
   const db = new FakeDb({ currentError: new Error('no such table: sh_playback_channel_current') });
   let loadedSession = false;
-  const result = await collectBuddyPlayback({ DB: db, OTHER_DB: db }, 600_000, {
+  const result = await collectBuddyPlayback({ OTHER_DB: db }, 600_000, {
     loadSession: async () => {
       loadedSession = true;
       return { authToken: 'token', deviceUid: 'device' };
