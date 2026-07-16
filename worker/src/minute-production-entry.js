@@ -3,11 +3,13 @@ import minuteWorker, { runCommittedMetadataEnrichment } from './minute-entry.js'
 const EVERY_MINUTE_CRON = '* * * * *';
 const LEGACY_DERIVE_CRON = '*/2 * * * *';
 
-export async function consumeMinuteQueue(batch, env, ctx) {
-  const [{ consumeMinuteFactBatch }, { enqueueMinuteFactJob }] = await Promise.all([
-    import('./minute-facts-queue.js'),
-    import('./minute-facts-inbox.js'),
+export async function consumeMinuteQueue(batch, env, ctx, dependencies = {}) {
+  const [queueModule, inboxModule] = await Promise.all([
+    dependencies.consumeMinuteFactBatch ? Promise.resolve(null) : import('./minute-facts-queue.js'),
+    dependencies.enqueueMinuteFactJob ? Promise.resolve(null) : import('./minute-facts-inbox.js'),
   ]);
+  const consumeMinuteFactBatch = dependencies.consumeMinuteFactBatch || queueModule.consumeMinuteFactBatch;
+  const enqueueMinuteFactJob = dependencies.enqueueMinuteFactJob || inboxModule.enqueueMinuteFactJob;
   const metadataJobs = [];
   const newJobIds = new Set();
   const result = await consumeMinuteFactBatch(batch, env, {
@@ -34,7 +36,9 @@ export async function consumeMinuteQueue(batch, env, ctx) {
       await saveMinuteFactReadModels(activeEnv, readModel, jobId);
     },
     onCommitted(job) {
-      if (newJobIds.has(job.jobId)
+      // Consume the acceptance marker once. A duplicate copy later in the same
+      // Queue batch must not repeat metadata work for the one accepted inbox row.
+      if (newJobIds.delete(job.jobId)
           && job.options.enrichTrackMetadata
           && job.payload.queue?.tracks?.length) {
         metadataJobs.push(job);
@@ -42,7 +46,8 @@ export async function consumeMinuteQueue(batch, env, ctx) {
     },
   });
   if (metadataJobs.length) {
-    const task = runCommittedMetadataEnrichment(env, metadataJobs);
+    const enrich = dependencies.runCommittedMetadataEnrichment || runCommittedMetadataEnrichment;
+    const task = enrich(env, metadataJobs);
     if (typeof ctx?.waitUntil === 'function') ctx.waitUntil(task);
     else void task;
   }
