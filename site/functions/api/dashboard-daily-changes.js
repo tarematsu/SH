@@ -11,8 +11,8 @@ const json = (data, status = 200) => new Response(JSON.stringify(data), {
   headers: status === 200 ? JSON_HEADERS : { ...JSON_HEADERS, 'cache-control': 'no-store' },
 });
 
-// Worker-owned source query. Pages never executes this query; it reads the
-// completed payload from sh_pages_payload_read_model.
+// Kept for the Worker-owned legacy read-model refresh. The dashboard endpoint
+// now reads completed daily summaries directly from OTHER_DB.
 export const UTC_DAILY_METRICS_SQL = `WITH latest_channel AS (
   SELECT channel_id
   FROM sh_minute_facts
@@ -41,6 +41,11 @@ SELECT days.day_at,
    LIMIT 1) AS member_end
 FROM days
 ORDER BY days.day_at ASC`;
+
+export const DAILY_SUMMARY_SQL = `SELECT period_key,stream_growth,member_growth
+  FROM sh_daily_summary
+  WHERE period_key IN (?,?)
+  ORDER BY period_key ASC`;
 
 function finite(value) {
   if (value === null || value === undefined || value === '') return null;
@@ -95,20 +100,46 @@ export function dailyChangesFromRows(rows, starts) {
   };
 }
 
+export function summaryChangesFromRows(rows, starts) {
+  const byPeriod = new Map((Array.isArray(rows) ? rows : [])
+    .map((row) => [String(row?.period_key || ''), row])
+    .filter(([periodKey]) => periodKey));
+  const yesterdayKey = dayText(starts.yesterdayStart);
+  const dayBeforeKey = dayText(starts.dayBeforeYesterdayStart);
+  const yesterday = byPeriod.get(yesterdayKey);
+  const dayBeforeYesterday = byPeriod.get(dayBeforeKey);
+  return {
+    timezone: 'UTC',
+    current_day_start: starts.currentStart,
+    source: 'sh_daily_summary',
+    yesterday: {
+      period_key: yesterdayKey,
+      start_at: starts.yesterdayStart,
+      end_at: starts.currentStart,
+      member_growth: finite(yesterday?.member_growth),
+      stream_growth: finite(yesterday?.stream_growth),
+    },
+    day_before_yesterday: {
+      period_key: dayBeforeKey,
+      start_at: starts.dayBeforeYesterdayStart,
+      end_at: starts.yesterdayStart,
+      member_growth: finite(dayBeforeYesterday?.member_growth),
+      stream_growth: finite(dayBeforeYesterday?.stream_growth),
+    },
+  };
+}
+
 export async function onRequestGet({ env }) {
-  if (!env?.MINUTE_DB) return json({ ok: false, error: 'MINUTE_DB binding missing' }, 500);
+  if (!env?.OTHER_DB) return json({ ok: false, error: 'OTHER_DB binding missing' }, 500);
   try {
-    const row = await env.MINUTE_DB.prepare(`SELECT payload_json
-      FROM sh_pages_payload_read_model
-      WHERE model_key='dashboard-daily-changes'
-      LIMIT 1`).first();
-    if (!row?.payload_json) {
-      return json({ ok: true, timezone: 'UTC', setup_required: true, yesterday: {}, day_before_yesterday: {} });
-    }
-    return new Response(row.payload_json, { headers: JSON_HEADERS });
+    const starts = utcDayStarts();
+    const result = await env.OTHER_DB.prepare(DAILY_SUMMARY_SQL)
+      .bind(dayText(starts.dayBeforeYesterdayStart), dayText(starts.yesterdayStart))
+      .all();
+    return json({ ok: true, ...summaryChangesFromRows(result.results || [], starts) });
   } catch (error) {
     if (/no such table/i.test(String(error?.message || ''))) {
-      return json({ ok: true, timezone: 'UTC', setup_required: true, yesterday: {}, day_before_yesterday: {} });
+      return json({ ok: true, timezone: 'UTC', source: 'sh_daily_summary', setup_required: true, yesterday: {}, day_before_yesterday: {} });
     }
     return json({ ok: false, error: error?.message || 'dashboard daily changes error' }, 500);
   }
