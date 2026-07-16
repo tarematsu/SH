@@ -15,6 +15,7 @@ import { attachCompactTrackLikes } from '../../site/functions/lib/track-likes.js
 
 const DAY_MS = 86_400_000;
 const TRACK_HISTORY_DAYS = 35;
+const TRACK_HISTORY_HOURLY_DAYS = 3;
 const TRACK_HISTORY_BACKFILL_DAYS = 7;
 const TRACK_HISTORY_EPOCH = Date.UTC(2024, 4, 1);
 const TRACK_HISTORY_LIMIT = 40_000;
@@ -83,23 +84,53 @@ function parsedPayload(row) {
   }
 }
 
-export function trackHistoryRefreshRanges(now, backfillState = null) {
+function validTimestamp(value) {
+  const timestamp = Number(value);
+  return Number.isFinite(timestamp) && timestamp >= 0 ? timestamp : null;
+}
+
+export function trackHistoryRefreshRanges(now, backfillState = null, statusState = null) {
   const currentDayStart = Math.floor(now / DAY_MS) * DAY_MS;
-  const recentFrom = currentDayStart - TRACK_HISTORY_DAYS * DAY_MS;
-  const recent = { fromTs: recentFrom, toTs: currentDayStart + DAY_MS };
+  const fullRecentFrom = currentDayStart - TRACK_HISTORY_DAYS * DAY_MS;
+  const hourlyRecentFrom = currentDayStart - TRACK_HISTORY_HOURLY_DAYS * DAY_MS;
+  const toTs = currentDayStart + DAY_MS;
+  const previousFullAt = validTimestamp(
+    statusState?.full_reconciled_at ?? statusState?.generated_at,
+  );
+  const fullReconcile = previousFullAt == null || previousFullAt < currentDayStart;
+  const fullRecent = { fromTs: fullRecentFrom, toTs };
+  const recent = {
+    fromTs: fullReconcile ? fullRecentFrom : hourlyRecentFrom,
+    toTs,
+  };
   const storedCursor = Number(backfillState?.next_to);
   const backfillTo = Math.min(
-    Number.isFinite(storedCursor) ? storedCursor : recentFrom,
-    recentFrom,
+    Number.isFinite(storedCursor) ? storedCursor : fullRecentFrom,
+    fullRecentFrom,
   );
-  if (backfillTo <= TRACK_HISTORY_EPOCH) return { recent, backfill: null };
-  return {
-    recent,
-    backfill: {
+  const backfill = backfillTo <= TRACK_HISTORY_EPOCH
+    ? null
+    : {
       fromTs: Math.max(TRACK_HISTORY_EPOCH, backfillTo - TRACK_HISTORY_BACKFILL_DAYS * DAY_MS),
       toTs: backfillTo,
-    },
+    };
+  return {
+    recent,
+    fullRecent,
+    fullReconcile,
+    previousFullAt,
+    backfill,
   };
+}
+
+export function mergeTrackHistoryExcludedDates(previousDates, refreshedDates, range) {
+  const fromDay = dayText(range.fromTs);
+  const toDay = dayText(range.toTs - DAY_MS);
+  const retained = Array.isArray(previousDates)
+    ? previousDates.filter((date) => String(date) < fromDay || String(date) > toDay)
+    : [];
+  const refreshed = Array.isArray(refreshedDates) ? refreshedDates : [];
+  return [...new Set([...retained, ...refreshed].map(String).filter(Boolean))].sort();
 }
 
 export function materializedVariantDue(variant, now = Date.now()) {
@@ -371,8 +402,13 @@ async function materializeTrackHistoryRange(sourceDb, targetDb, range, now) {
 }
 
 async function refreshTrackHistory(sourceDb, targetDb, now) {
-  const backfillRow = await payloadRow(targetDb, 'track-history-backfill');
-  const ranges = trackHistoryRefreshRanges(now, parsedPayload(backfillRow));
+  const [backfillRow, statusRow] = await Promise.all([
+    payloadRow(targetDb, 'track-history-backfill'),
+    payloadRow(targetDb, 'track-history-status'),
+  ]);
+  const backfillState = parsedPayload(backfillRow);
+  const previousStatus = parsedPayload(statusRow) || {};
+  const ranges = trackHistoryRefreshRanges(now, backfillState, previousStatus);
   const recent = await materializeTrackHistoryRange(sourceDb, targetDb, ranges.recent, now);
   let backfill = null;
   if (ranges.backfill) {
@@ -390,23 +426,60 @@ async function refreshTrackHistory(sourceDb, targetDb, now) {
     }, now);
   }
 
-  const coverage = await targetDb.prepare(`SELECT MIN(play_date) AS earliest_date,MAX(play_date) AS latest_date
-    FROM sh_pages_track_history_read_model`).first();
+  const fullFromDay = dayText(ranges.fullRecent.fromTs);
+  const fullToDay = dayText(ranges.fullRecent.toTs - DAY_MS);
+  const coverage = await targetDb.prepare(`SELECT
+      MIN(play_date) AS earliest_date,
+      MAX(play_date) AS latest_date,
+      COALESCE(SUM(CASE WHEN play_date>=? AND play_date<=? THEN 1 ELSE 0 END),0) AS recent_row_count
+    FROM sh_pages_track_history_read_model`)
+    .bind(fullFromDay, fullToDay)
+    .first();
+  const previousSourceRowCount = Number(previousStatus.source_row_count);
+  const previousSourceRefreshedAt = validTimestamp(
+    previousStatus.source_row_count_refreshed_at
+      ?? previousStatus.full_reconciled_at
+      ?? previousStatus.generated_at,
+  );
+  const fullReconciledAt = ranges.fullReconcile ? now : ranges.previousFullAt;
+  const sourceRowCount = ranges.fullReconcile || !Number.isFinite(previousSourceRowCount)
+    ? recent.sourceRowCount
+    : previousSourceRowCount;
+  const sourceRowCountRefreshedAt = ranges.fullReconcile || previousSourceRefreshedAt == null
+    ? now
+    : previousSourceRefreshedAt;
+  const excludedDates = ranges.fullReconcile
+    ? recent.excludedDates
+    : mergeTrackHistoryExcludedDates(
+      previousStatus.excluded_play_count_dates,
+      recent.excludedDates,
+      ranges.recent,
+    );
   await savePayload(targetDb, 'track-history-status', {
     ok: true,
     from: coverage?.earliest_date || recent.from,
     to: coverage?.latest_date || recent.to,
-    row_count: recent.rows,
-    source_row_count: recent.sourceRowCount,
+    row_count: Math.max(0, Number(coverage?.recent_row_count || 0)),
+    source_row_count: sourceRowCount,
+    source_row_count_refreshed_at: sourceRowCountRefreshedAt,
     source_truncated: false,
-    excluded_play_count_dates: recent.excludedDates,
+    excluded_play_count_dates: excludedDates,
     grace_ms: TRACK_HISTORY_GRACE_MS,
     backfill_completed: !ranges.backfill || ranges.backfill.fromTs <= TRACK_HISTORY_EPOCH,
     backfill_from: backfill?.from || null,
     backfill_to: backfill?.to || null,
+    refresh_mode: ranges.fullReconcile ? 'full' : 'incremental',
+    refresh_from: recent.from,
+    refresh_to: recent.to,
+    full_reconciled_at: fullReconciledAt,
     generated_at: now,
   }, now);
-  return { recent, backfill };
+  return {
+    recent,
+    backfill,
+    refreshMode: ranges.fullReconcile ? 'full' : 'incremental',
+    fullReconciledAt,
+  };
 }
 
 function trackHistoryVariant() {
