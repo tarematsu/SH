@@ -6,6 +6,7 @@ import {
   missingRevisionPositions,
   resolveTracksBulk,
 } from '../src/minute-facts-fast-store.js';
+import { updatePlaybackState } from '../src/minute-facts-legacy-revision.js';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 
@@ -144,8 +145,97 @@ test('99 tracks are resolved with bounded D1 round trips instead of per-track aw
   assert.ok(db.batchCalls <= 15, `expected at most 15 batch round trips, got ${db.batchCalls}`);
 });
 
-test('optimized minute storage uses the canonical counter log for bite changes', () => {
+test('delayed playback payloads never reuse a later current position', async () => {
+  let writes = 0;
+  const db = {
+    prepare(sql) {
+      return {
+        bind() { return this; },
+        async first() {
+          assert.match(sql, /sh_playback_current/);
+          return {
+            revision_id: 9,
+            current_position: 12,
+            last_observed_at: 20_000,
+          };
+        },
+        async run() { writes += 1; },
+      };
+    },
+  };
+
+  const result = await updatePlaybackState(db, {
+    channelId: 10,
+    sessionId: 20,
+    revisionId: 8,
+    queueStartTime: 1_000,
+    observedAt: 19_000,
+    isPaused: false,
+  });
+
+  assert.equal(result.delayed, true);
+  assert.equal(result.current_position, null);
+  assert.equal(writes, 0);
+});
+
+test('revision changes within one queue preserve accumulated pause time', async () => {
+  let playbackParams = null;
+  const previous = {
+    session_id: 20,
+    revision_id: 7,
+    queue_start_time: 1_000,
+    is_paused: 0,
+    paused_total_ms: 5_000,
+    pause_started_at: null,
+    last_observed_at: 11_000,
+    current_position: 0,
+  };
+  const db = {
+    prepare(sql) {
+      const statement = {
+        params: [],
+        bind(...params) { this.params = params; return this; },
+        async first() {
+          if (sql.includes('SELECT * FROM sh_playback_current')) return previous;
+          throw new Error(`unexpected first: ${sql}`);
+        },
+        async all() {
+          assert.match(sql, /sh_queue_revision_items/);
+          return {
+            results: [{
+              position: 0,
+              duration_ms: 10_000,
+              playback_offset_ms: 0,
+              schedule_valid: 1,
+            }],
+          };
+        },
+        async run() {
+          if (sql.includes('INSERT INTO sh_playback_current')) playbackParams = this.params;
+          return { meta: { changes: 1 } };
+        },
+      };
+      return statement;
+    },
+  };
+
+  const result = await updatePlaybackState(db, {
+    channelId: 10,
+    sessionId: 20,
+    revisionId: 8,
+    queueStartTime: 1_000,
+    observedAt: 12_000,
+    isPaused: false,
+  });
+
+  assert.equal(result.current_position, 0);
+  assert.equal(playbackParams[5], 5_000);
+});
+
+test('optimized minute storage uses canonical playback and counter logic', () => {
   const source = readFileSync(path.resolve(import.meta.dirname, '../src/minute-facts-fast-store.js'), 'utf8');
+  assert.match(source, /updatePlaybackState, writeCurrentBite/);
+  assert.doesNotMatch(source, /async function updatePlaybackState/);
   assert.match(source, /writeCurrentBite/);
   assert.doesNotMatch(source, /sh_track_bite_observations/);
 });
