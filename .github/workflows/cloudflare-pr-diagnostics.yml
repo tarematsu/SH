@@ -42,7 +42,9 @@ jobs:
           for queue in \
             stationhead-raw-collection stationhead-raw-collection-dlq \
             stationhead-comments stationhead-comments-dlq \
-            stationhead-read-model stationhead-read-model-dlq
+            stationhead-read-model stationhead-read-model-dlq \
+            stationhead-buddies-facts stationhead-buddies-facts-dlq \
+            stationhead-minute-derive stationhead-minute-derive-dlq
           do
             npx wrangler queues create "$queue" >/dev/null 2>&1 || true
           done
