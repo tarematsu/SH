@@ -6,22 +6,6 @@ const JSON_HEADERS = {
 const json = (data, status = 200) => new Response(JSON.stringify(data), { status, headers: JSON_HEADERS });
 const JST_OFFSET_MS = 9 * 3_600_000;
 
-const RECOVERED_STREAM_SQL = `SELECT channel_id,
-  (observed_at/60000)*60000 AS minute_at,observed_at,id,
-  COALESCE(
-    CASE WHEN json_valid(raw_json)
-      AND json_type(raw_json,'$.current_stream_count') IN ('integer','real')
-      THEN CAST(json_extract(raw_json,'$.current_stream_count') AS INTEGER) END,
-    CASE WHEN json_valid(raw_json)
-      AND json_type(raw_json,'$.current_station.streaming_party.current_stream_count') IN ('integer','real')
-      THEN CAST(json_extract(raw_json,'$.current_station.streaming_party.current_stream_count') AS INTEGER) END,
-    CASE WHEN current_stream_count IS NOT NULL AND current_stream_count>=0
-      AND current_stream_count IS NOT total_listens THEN current_stream_count END
-  ) AS total_stream_count
-FROM sh_channel_snapshots
-WHERE observed_at>=? AND observed_at<?
-ORDER BY observed_at ASC,id ASC`;
-
 function validDateText(value) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(String(value || ''))) return false;
   const timestamp = Date.parse(`${value}T00:00:00+09:00`);
@@ -78,46 +62,14 @@ WHERE f.source_code IN (3,4) AND f.minute_at>=? AND f.minute_at<?`;
   return `${sql} ORDER BY f.minute_at ASC,f.id ASC LIMIT ?`;
 }
 
-export function recoveredStreamSql() {
-  return RECOVERED_STREAM_SQL;
-}
-
 function finiteStreamCount(value) {
   if (value == null || value === '') return null;
   const parsed = Number(value);
   return Number.isFinite(parsed) && parsed >= 0 ? Math.trunc(parsed) : null;
 }
 
-function recoveryKey(row) {
-  const channelId = Number(row?.channel_id);
-  const minuteAt = Number(row?.minute_at);
-  return Number.isFinite(channelId) && Number.isFinite(minuteAt) ? `${channelId}:${minuteAt}` : null;
-}
-
-export function mergeRecoveredStreamCounts(rows = [], snapshots = []) {
-  const latest = new Map();
-  for (const snapshot of snapshots) {
-    const key = recoveryKey(snapshot);
-    const streamCount = finiteStreamCount(snapshot?.total_stream_count);
-    if (!key || streamCount == null) continue;
-    const previous = latest.get(key);
-    const observedAt = Number(snapshot?.observed_at || 0);
-    const id = Number(snapshot?.id || 0);
-    if (!previous || observedAt > previous.observedAt
-        || (observedAt === previous.observedAt && id >= previous.id)) {
-      latest.set(key, { streamCount, observedAt, id });
-    }
-  }
-
-  let recoveredCount = 0;
-  const mergedRows = rows.map((row) => {
-    if (finiteStreamCount(row?.total_stream_count) != null) return row;
-    const recovered = latest.get(recoveryKey(row));
-    if (!recovered) return row;
-    recoveredCount += 1;
-    return { ...row, total_stream_count: recovered.streamCount };
-  });
-  return { rows: mergedRows, recoveredCount };
+export function countIncompleteStreamCounts(rows = []) {
+  return rows.reduce((count, row) => count + (finiteStreamCount(row?.total_stream_count) == null ? 1 : 0), 0);
 }
 
 async function loadRows(db, fromTs, toTs, cursor, limit) {
@@ -125,23 +77,6 @@ async function loadRows(db, fromTs, toTs, cursor, limit) {
   if (cursor) binds.push(cursor.timestamp, cursor.timestamp, cursor.id);
   binds.push(limit + 1);
   return db.prepare(rawHistorySql(cursor)).bind(...binds).all();
-}
-
-async function recoverMissingStreamCounts(env, rows) {
-  if (!env.DB || !rows.some((row) => finiteStreamCount(row?.total_stream_count) == null)) {
-    return { rows, recoveredCount: 0 };
-  }
-  const minutes = rows.map((row) => Number(row?.minute_at)).filter(Number.isFinite);
-  if (!minutes.length) return { rows, recoveredCount: 0 };
-  const fromTs = Math.min(...minutes);
-  const toTs = Math.max(...minutes) + 60_000;
-  try {
-    const result = await env.DB.prepare(RECOVERED_STREAM_SQL).bind(fromTs, toTs).all();
-    return mergeRecoveredStreamCounts(rows, result.results || []);
-  } catch (error) {
-    if (!/no such table|no such column|malformed json/i.test(String(error?.message || ''))) throw error;
-    return { rows, recoveredCount: 0 };
-  }
 }
 
 export async function onRequestGet({ request, env }) {
@@ -179,9 +114,7 @@ export async function onRequestGet({ request, env }) {
     }
     const allRows = result.results || [];
     const hasMore = allRows.length > limit;
-    const pageRows = hasMore ? allRows.slice(0, limit) : allRows;
-    const recovered = await recoverMissingStreamCounts(env, pageRows);
-    const rows = recovered.rows;
+    const rows = hasMore ? allRows.slice(0, limit) : allRows;
     return json({
       ok: true,
       mode: 'raw',
@@ -190,7 +123,7 @@ export async function onRequestGet({ request, env }) {
       rows,
       has_more: hasMore,
       next_cursor: hasMore ? encodeCursor(rows.at(-1)) : null,
-      recovered_stream_count: recovered.recoveredCount,
+      incomplete_stream_count: countIncompleteStreamCounts(rows),
       storage_source: 'stationhead-minute.sh_minute_facts',
     });
   } catch (error) {
