@@ -99,6 +99,12 @@ export function trackHistoryRefreshRanges(now, backfillState = null) {
   };
 }
 
+export function materializedVariantDue(variant, now = Date.now()) {
+  const cadenceMinutes = Math.max(1, Math.trunc(Number(variant?.cadence_minutes) || 5));
+  const absoluteMinute = Math.floor(Number(now) / 60_000);
+  return Number.isFinite(absoluteMinute) && absoluteMinute % cadenceMinutes === 0;
+}
+
 async function ensureSchema(db) {
   for (const sql of SCHEMA_SQL) await db.prepare(sql).run();
 }
@@ -220,7 +226,7 @@ async function saveResponse(db, modelKey, response, now) {
 }
 
 async function responseHandler(modelKey) {
-  if (modelKey === 'playback:buddies') return (await import('../../site/functions/api/playback.js')).onRequestGet;
+  if (modelKey.startsWith('playback:')) return (await import('../../site/functions/api/playback.js')).onRequestGet;
   if (modelKey === 'dashboard') return (await import('../../site/functions/api/dashboard.js')).onRequestGet;
   if (modelKey === 'dashboard-history') return (await import('../../site/functions/api/dashboard-history.js')).onRequestGet;
   if (modelKey === 'dashboard-queue') return (await import('../../site/functions/api/dashboard-queue.js')).onRequestGet;
@@ -256,8 +262,9 @@ export async function refreshFastPagesReadModels(env, now = Date.now(), dependen
     refreshLikeRanking(targetDb, now),
   ]);
 
+  const dueVariants = MATERIALIZED_API_VARIANTS.filter((variant) => materializedVariantDue(variant, now));
   const responses = [];
-  for (const variant of MATERIALIZED_API_VARIANTS) {
+  for (const variant of dueVariants) {
     try {
       const response = await renderVariant(variant, activeEnv, dependencies);
       const saved = await saveResponse(targetDb, variant.key, response, now);
@@ -276,6 +283,8 @@ export async function refreshFastPagesReadModels(env, now = Date.now(), dependen
     daily,
     likes,
     responses,
+    due: dueVariants.length,
+    deferred: MATERIALIZED_API_VARIANTS.length - dueVariants.length,
     succeeded: responses.filter((item) => item.ok).length,
     failed: responses.filter((item) => !item.ok).length,
   };
