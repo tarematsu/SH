@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
 
 import {
@@ -11,18 +12,24 @@ import {
   attachTrackLikes,
 } from '../site/functions/lib/track-likes.js';
 
+const canonicalTrackLikeMigration = readFileSync(
+  new URL('../database/buddies-migrations/005_canonical_track_like_keys.sql', import.meta.url),
+  'utf8',
+);
+
 function createDatabase() {
   const db = new DatabaseSync(':memory:');
   db.exec(`
     CREATE TABLE sh_track_like_observations (
       id INTEGER PRIMARY KEY,
       observed_at INTEGER NOT NULL,
+      station_id INTEGER,
       spotify_id TEXT,
       apple_music_id TEXT,
       isrc TEXT,
       stationhead_track_id INTEGER,
       queue_track_id INTEGER,
-      track_key TEXT,
+      track_key TEXT NOT NULL,
       like_count INTEGER,
       source TEXT
     );
@@ -53,16 +60,18 @@ function createDatabase() {
   return db;
 }
 
-test('like queries prefer ISRC and use Spotify only when ISRC is missing', () => {
+function insertObservation(db, values) {
+  db.prepare('INSERT INTO sh_track_like_observations VALUES(?,?,?,?,?,?,?,?,?,?,?)')
+    .run(...values);
+}
+
+test('like queries prefer canonical ISRC keys and use Spotify only when ISRC is missing', () => {
   const db = createDatabase();
-  db.prepare('INSERT INTO sh_track_like_observations VALUES(?,?,?,?,?,?,?,?,?,?)')
-    .run(1, 1000, 'spotify-old', null, 'jpabc1234567', 1, 10, 'old-key', 3, 'collector');
-  db.prepare('INSERT INTO sh_track_like_observations VALUES(?,?,?,?,?,?,?,?,?,?)')
-    .run(2, 2000, 'spotify-new', null, 'JPABC1234567', 2, 20, 'isrc:JPABC1234567', 5, 'collector');
-  db.prepare('INSERT INTO sh_track_like_observations VALUES(?,?,?,?,?,?,?,?,?,?)')
-    .run(3, 3000, 'spotify-fallback', null, null, 3, 30, 'spotify:spotify-fallback', 7, 'collector');
-  db.prepare('INSERT INTO sh_track_like_observations VALUES(?,?,?,?,?,?,?,?,?,?)')
-    .run(4, 4000, 'spotify-fallback', null, '', 4, 40, 'spotify:spotify-fallback', 9, 'collector');
+  insertObservation(db, [1, 1000, 1, 'spotify-old', null, 'jpabc1234567', 1, 10, 'old-key', 3, 'collector']);
+  insertObservation(db, [2, 2000, 1, 'spotify-new', null, 'JPABC1234567', 2, 20, 'isrc:JPABC1234567', 5, 'collector']);
+  insertObservation(db, [3, 3000, 1, 'spotify-fallback', null, null, 3, 30, 'spotify:spotify-fallback', 7, 'collector']);
+  insertObservation(db, [4, 4000, 1, 'spotify-fallback', null, '', 4, 40, 'spotify:spotify-fallback', 9, 'collector']);
+  db.exec(canonicalTrackLikeMigration);
 
   db.prepare('INSERT INTO sh_track_metadata VALUES(?,?,?)').run('spotify-new', 'Song', 'Artist');
   db.prepare('INSERT INTO sh_queue_items VALUES(?,?,?,?,?,?,?,?,?,?)')
@@ -79,6 +88,19 @@ test('like queries prefer ISRC and use Spotify only when ISRC is missing', () =>
   assert.equal(queue.length, 2);
   assert.equal(queue.find((row) => row.isrc)?.like_count, 11);
   assert.equal(queue.find((row) => !row.isrc)?.like_count, 13);
+  assert.match(TRACK_LIKE_REALTIME_SQL, /PARTITION BY play_date,track_key/);
+  assert.doesNotMatch(TRACK_LIKE_REALTIME_SQL, /UPPER\(TRIM\(isrc\)\)/);
+});
+
+test('canonical migration deduplicates conflicting legacy keys before rewriting them', () => {
+  const db = createDatabase();
+  insertObservation(db, [1, 1000, 7, 'spotify-a', null, 'jpabc1234567', 1, 10, 'legacy-a', 3, 'collector']);
+  insertObservation(db, [2, 1000, 7, 'spotify-b', null, 'JPABC1234567', 2, 20, 'legacy-b', 5, 'collector']);
+
+  db.exec(canonicalTrackLikeMigration);
+  const rows = db.prepare('SELECT id,track_key,like_count FROM sh_track_like_observations ORDER BY id').all();
+
+  assert.deepEqual(rows, [{ id: 2, track_key: 'isrc:JPABC1234567', like_count: 5 }]);
 });
 
 test('compaction keeps ISRC identities and Spotify fallbacks separately', () => {
