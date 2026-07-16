@@ -50,7 +50,7 @@ class FakeDb {
   }
 }
 
-test('midnight refresh stores every due response as generation-safe chunks', async () => {
+test('midnight fast refresh stores every due non-history response as generation-safe chunks', async () => {
   const db = new FakeDb();
   const env = { BUDDIES_DB: {}, MINUTE_DB: db, OTHER_DB: {} };
   const now = Date.UTC(2026, 6, 16, 0);
@@ -61,20 +61,22 @@ test('midnight refresh stores every due response as generation-safe chunks', asy
       generated_at: now,
     }),
   });
+  const expectedResponses = MATERIALIZED_API_VARIANTS.length - 1;
 
   assert.equal(result.skipped, false);
-  assert.equal(result.succeeded, MATERIALIZED_API_VARIANTS.length);
+  assert.equal(result.succeeded, expectedResponses);
   assert.equal(result.failed, 0);
-  assert.equal(result.responses.length, MATERIALIZED_API_VARIANTS.length);
+  assert.equal(result.responses.length, expectedResponses);
+  assert.equal(result.responses.some(({ key }) => key === 'track-history'), false);
   const manifestWrites = db.calls.filter((call) =>
     call.method === 'run' && call.sql.includes('INSERT INTO sh_pages_response_manifest'));
   const chunkWrites = db.calls.filter((call) =>
     call.method === 'run' && call.sql.includes('INSERT INTO sh_pages_response_chunks'));
   const oldGenerationDeletes = db.calls.filter((call) =>
     call.method === 'run' && call.sql.includes('generation<>'));
-  assert.equal(manifestWrites.length, MATERIALIZED_API_VARIANTS.length);
-  assert.equal(chunkWrites.length, MATERIALIZED_API_VARIANTS.length);
-  assert.equal(oldGenerationDeletes.length, MATERIALIZED_API_VARIANTS.length);
+  assert.equal(manifestWrites.length, expectedResponses);
+  assert.equal(chunkWrites.length, expectedResponses);
+  assert.equal(oldGenerationDeletes.length, expectedResponses);
   assert.ok(db.calls.some((call) => call.method === 'run'
     && call.sql.includes('CREATE TABLE IF NOT EXISTS sh_pages_response_manifest')));
 });
@@ -97,7 +99,7 @@ test('five-minute refresh updates only the five-minute response', async () => {
   assert.equal(payloadWrites.length, 0);
 });
 
-test('quarter-hour refresh skips half-hour and hourly aggregate work', async () => {
+test('quarter-hour refresh skips half-hour and track-history work', async () => {
   const db = new FakeDb();
   const result = await refreshFastPagesReadModels({
     BUDDIES_DB: {},
@@ -142,7 +144,7 @@ test('full history refresh republishes track history after updating its source t
 
 test('fast refresh preserves the previous generation when one API render fails', async () => {
   const db = new FakeDb();
-  const failedKey = 'track-history';
+  const failedKey = 'history:daily';
   const result = await refreshFastPagesReadModels({
     BUDDIES_DB: {},
     MINUTE_DB: db,
