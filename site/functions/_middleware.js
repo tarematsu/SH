@@ -1,5 +1,7 @@
 import {
   API_BROWSER_TTL_SECONDS,
+  API_EDGE_TTL_SECONDS,
+  PLAYBACK_EDGE_TTL_SECONDS,
   apiCacheTtlSeconds,
   canonicalApiCacheRequest,
   edgeCacheableApiRequest,
@@ -7,6 +9,7 @@ import {
   materializedResponseMaximumAge,
 } from './lib/api-contract.js';
 
+const MATERIALIZED_RETRY_TTL_SECONDS = 30;
 const inFlight = new Map();
 
 function tagged(response, cacheState) {
@@ -29,6 +32,12 @@ function safeHeaders(value) {
   } catch {
     return {};
   }
+}
+
+function materializedCadenceSeconds(modelKey) {
+  return String(modelKey || '').startsWith('playback:')
+    ? PLAYBACK_EDGE_TTL_SECONDS
+    : API_EDGE_TTL_SECONDS;
 }
 
 async function materializedResponse(context, modelKey, now = Date.now()) {
@@ -54,6 +63,7 @@ async function materializedResponse(context, modelKey, now = Date.now()) {
     const headers = new Headers(safeHeaders(manifest.headers_json));
     headers.set('x-api-source', 'worker-materialized');
     headers.set('x-materialized-at', String(manifest.updated_at));
+    headers.set('x-materialized-cadence-seconds', String(materializedCadenceSeconds(modelKey)));
     return new Response(rows.map((row) => String(row.payload_chunk || '')).join(''), {
       status: Number(manifest.status) || 200,
       headers,
@@ -65,12 +75,27 @@ async function materializedResponse(context, modelKey, now = Date.now()) {
   }
 }
 
+function responseCacheTtl(origin, requestedTtl, modelKey, usedMaterialized, now) {
+  if (!usedMaterialized) {
+    return modelKey ? MATERIALIZED_RETRY_TTL_SECONDS : requestedTtl;
+  }
+  const updatedAt = Number(origin.headers.get('x-materialized-at'));
+  const cadenceSeconds = Number(origin.headers.get('x-materialized-cadence-seconds'));
+  if (!Number.isFinite(updatedAt) || !Number.isFinite(cadenceSeconds) || cadenceSeconds <= 0) {
+    return MATERIALIZED_RETRY_TTL_SECONDS;
+  }
+  const remainingSeconds = Math.floor((updatedAt + cadenceSeconds * 1000 - now) / 1000);
+  if (remainingSeconds <= 0) return MATERIALIZED_RETRY_TTL_SECONDS;
+  return Math.max(1, Math.min(requestedTtl, remainingSeconds));
+}
+
 function sharedResponse(origin, ttlSeconds) {
   const headers = new Headers(origin.headers);
   if (origin.ok) {
+    const browserTtl = Math.min(API_BROWSER_TTL_SECONDS, ttlSeconds);
     headers.set(
       'cache-control',
-      `public, max-age=${API_BROWSER_TTL_SECONDS}, s-maxage=${ttlSeconds}, stale-while-revalidate=${ttlSeconds * 2}`,
+      `public, max-age=${browserTtl}, s-maxage=${ttlSeconds}, stale-while-revalidate=${ttlSeconds * 2}`,
     );
   }
   headers.set('vary', 'accept-encoding');
@@ -95,10 +120,18 @@ export async function onRequest(context) {
   const coalesced = Boolean(task);
   if (!task) {
     task = (async () => {
+      const now = Date.now();
       const modelKey = materializedApiKey(new URL(request.url));
-      const prebuilt = await materializedResponse(context, modelKey);
+      const prebuilt = await materializedResponse(context, modelKey, now);
       const origin = prebuilt || await context.next();
-      const shared = sharedResponse(origin, apiCacheTtlSeconds(request));
+      const ttlSeconds = responseCacheTtl(
+        origin,
+        apiCacheTtlSeconds(request),
+        modelKey,
+        Boolean(prebuilt),
+        now,
+      );
+      const shared = sharedResponse(origin, ttlSeconds);
       if (shared.ok) context.waitUntil(cache.put(cacheKey, shared.clone()));
       return shared;
     })().finally(() => inFlight.delete(key));
