@@ -3,7 +3,10 @@ import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
 import { processCommentsTask } from '../src/comments-entry.js';
-import { commentsTaskForMinuteFact } from '../src/ingest-channel-entry.js';
+import {
+  commentsTaskForMinuteFact,
+  readModelEnvelopeForMinuteFact,
+} from '../src/ingest-channel-entry.js';
 import { minuteFactQueueMessage } from '../src/minute-facts-queue.js';
 import { collectRawChannel } from '../src/raw-collector-entry.js';
 
@@ -106,6 +109,66 @@ test('outbox retries retain the minute payload timestamp and station identity', 
   assert.equal(task.station_id, 456);
   assert.deepEqual(task.auth, commentsTask().auth);
   assert.equal(task.minute_fact.read_model, null);
+});
+
+test('ingest reuses the compact minute message to build the read-model envelope', () => {
+  const rawObservedAt = 1_784_000_000_000;
+  const processingObservedAt = rawObservedAt + 12_345;
+  const queue = {
+    station_id: 123,
+    queue_id: 456,
+    start_time: processingObservedAt - 60_000,
+    is_paused: false,
+    tracks: [{ position: 0, spotify_id: 'track', title: 'Song', artist: 'Artist', album_name: null, thumbnail_url: null }],
+  };
+  const body = minuteFactQueueMessage({
+    observedAt: processingObservedAt,
+    snapshot: { channel_id: 10, station_id: 123, listener_count: 99 },
+    queue,
+  }, {
+    readModelPresentationOnly: true,
+    readModel: {
+      channel: {
+        channel_id: 10,
+        observed_at: processingObservedAt,
+        presentation: { description: 'kept' },
+      },
+      queue: {
+        station_id: 123,
+        queue_id: 456,
+        start_time: queue.start_time,
+        is_paused: false,
+        value: queue,
+      },
+      collector: {
+        collector_id: 'cloudflare-worker',
+        last_run_at: processingObservedAt,
+        last_success_at: processingObservedAt,
+        last_error_present: false,
+        updated_at: processingObservedAt,
+      },
+    },
+  });
+  assert.equal(Object.hasOwn(body.read_model.queue, 'value'), false);
+
+  const envelope = readModelEnvelopeForMinuteFact({
+    observed_at: rawObservedAt,
+    auth: commentsTask().auth,
+  }, body);
+
+  assert.equal(envelope.observed_at, rawObservedAt);
+  assert.equal(envelope.job_id, `read-model:10:${rawObservedAt}`);
+  assert.deepEqual(envelope.read_model.channel.presentation, { description: 'kept' });
+  assert.equal(envelope.read_model.channel.observed_at, rawObservedAt);
+  assert.equal(envelope.read_model.queue.value, queue);
+  assert.equal(envelope.read_model.collector.last_run_at, rawObservedAt);
+  assert.equal(envelope.read_model.collector.last_success_at, rawObservedAt);
+  assert.equal(envelope.read_model.collector.updated_at, rawObservedAt);
+  assert.equal(envelope.comment_task.station_id, 123);
+  assert.deepEqual(envelope.comment_task.auth, commentsTask().auth);
+
+  const source = readFileSync(new URL('../src/ingest-channel-entry.js', import.meta.url), 'utf8');
+  assert.doesNotMatch(source, /normalizeSnapshot|extractQueue|extractIds|readModelPresentation/);
 });
 
 test('comments task succeeds only after comments are durably handled', async () => {
