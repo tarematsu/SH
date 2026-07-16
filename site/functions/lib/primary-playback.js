@@ -19,12 +19,17 @@ SELECT latest_fact.channel_id,latest_fact.observed_at AS latest_observed_at,
   h.current_handle AS host_handle,
   p.session_id,p.revision_id,p.queue_start_time,p.is_paused,
   p.paused_total_ms,p.pause_started_at,p.last_observed_at,p.current_position,
-  r.station_id AS queue_station_id,r.queue_id,r.structural_hash,r.item_count
+  r.station_id AS queue_station_id,r.queue_id,r.structural_hash,r.item_count,
+  q.channel_id AS read_model_channel_id,q.observed_at AS read_model_observed_at,
+  q.station_id AS read_model_station_id,q.queue_id AS read_model_queue_id,
+  q.start_time AS read_model_start_time,q.is_paused AS read_model_is_paused,
+  q.queue_json AS read_model_queue_json
 FROM latest_fact
 LEFT JOIN sh_minute_fact_context c ON c.fact_id=latest_fact.id
 LEFT JOIN sh_hosts h ON h.id=c.host_id
 LEFT JOIN sh_playback_current p ON p.channel_id=latest_fact.channel_id
 LEFT JOIN sh_queue_revisions r ON r.id=p.revision_id
+LEFT JOIN sh_queue_read_model_current q ON q.channel_id=latest_fact.channel_id
 LIMIT 1`;
 
 export const PRIMARY_PLAYBACK_ITEMS_SQL = `SELECT i.position,i.queue_track_id,
@@ -128,6 +133,41 @@ function thumbnailFrom(track) {
       ?? track?.album?.image_url
       ?? track?.album?.images?.[0]?.url,
   );
+}
+
+function trackNeedsMetadata(track) {
+  const lookupAvailable = Boolean(text(track?.spotify_id) || normalizedIsrc(track?.isrc));
+  if (!lookupAvailable) return false;
+  return !text(track?.title) || !text(track?.artist) || !thumbnailFrom(track);
+}
+
+function displayRowsAreUsable(rows) {
+  return rows.length > 0 && rows.every((track) => num(track?.duration_ms) != null);
+}
+
+function embeddedQueueRow(state) {
+  const embeddedFields = [
+    'read_model_channel_id',
+    'read_model_observed_at',
+    'read_model_station_id',
+    'read_model_queue_id',
+    'read_model_start_time',
+    'read_model_is_paused',
+    'read_model_queue_json',
+  ];
+  if (!embeddedFields.some((field) => Object.prototype.hasOwnProperty.call(state || {}, field))) {
+    return undefined;
+  }
+  if (state?.read_model_channel_id == null && state?.read_model_queue_json == null) return null;
+  return {
+    channel_id: state.read_model_channel_id,
+    observed_at: state.read_model_observed_at,
+    station_id: state.read_model_station_id,
+    queue_id: state.read_model_queue_id,
+    start_time: state.read_model_start_time,
+    is_paused: state.read_model_is_paused,
+    queue_json: state.read_model_queue_json,
+  };
 }
 
 export function buildPrimaryPlaybackRows(items = [], queueRow = null, state = {}, metadataRows = []) {
@@ -274,14 +314,10 @@ export async function loadPrimaryPlaybackPayload(db, generatedAt = Date.now()) {
 
   const channelId = integer(state.channel_id);
   const revisionId = integer(state.revision_id);
-  const [itemsResult, queueRow] = await Promise.all([
-    revisionId == null
-      ? Promise.resolve({ results: [] })
-      : db.prepare(PRIMARY_PLAYBACK_ITEMS_SQL).bind(revisionId).all(),
-    channelId == null
-      ? Promise.resolve(null)
-      : db.prepare(QUEUE_READ_MODEL_SQL).bind(channelId).first(),
-  ]);
+  const embedded = embeddedQueueRow(state);
+  const queueRow = embedded === undefined
+    ? (channelId == null ? null : await db.prepare(QUEUE_READ_MODEL_SQL).bind(channelId).first())
+    : embedded;
   const effectiveState = {
     ...state,
     latest_observed_at: state.latest_observed_at ?? state.observed_at,
@@ -295,11 +331,16 @@ export async function loadPrimaryPlaybackPayload(db, generatedAt = Date.now()) {
       ?? (storedBoolean(queueRow?.is_paused) ? queueRow?.observed_at : null),
     last_observed_at: state.last_observed_at ?? queueRow?.observed_at,
   };
+  const display = displayRows(queueRow, effectiveState);
+  const useDisplayFastPath = displayRowsAreUsable(display);
+  const itemsResult = useDisplayFastPath || revisionId == null
+    ? { results: [] }
+    : await db.prepare(PRIMARY_PLAYBACK_ITEMS_SQL).bind(revisionId).all();
   const items = itemsResult.results || [];
-  const metadataRows = await loadMetadata(db, [
-    ...items,
-    ...displayRows(queueRow, effectiveState),
-  ]);
+  const metadataCandidates = items.length ? [...items, ...display] : display;
+  const metadataRows = metadataCandidates.some(trackNeedsMetadata)
+    ? await loadMetadata(db, metadataCandidates)
+    : [];
   const rows = buildPrimaryPlaybackRows(items, queueRow, effectiveState, metadataRows);
   if (!rows.length) return emptyPayload(generatedAt, effectiveState);
 
