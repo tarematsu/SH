@@ -17,27 +17,22 @@ function likeIdentity(row) {
   return spotifyId ? `spotify:${spotifyId}` : null;
 }
 
-export const TRACK_LIKE_REALTIME_SQL = `WITH ranked AS (
+export const TRACK_LIKE_REALTIME_SQL = `WITH prepared AS (
   SELECT
-    strftime('%Y-%m-%d',observed_at/1000,'unixepoch') AS play_date,
+    id,strftime('%Y-%m-%d',observed_at/1000,'unixepoch') AS play_date,
     spotify_id,apple_music_id,isrc,stationhead_track_id,queue_track_id,
-    NULL AS title,NULL AS artist,like_count,observed_at,source,
-    ROW_NUMBER() OVER (
-      PARTITION BY
-        strftime('%Y-%m-%d',observed_at/1000,'unixepoch'),
-        CASE
-          WHEN isrc IS NOT NULL AND TRIM(isrc)<>'' THEN 'isrc:'||UPPER(TRIM(isrc))
-          ELSE 'spotify:'||TRIM(spotify_id)
-        END
-      ORDER BY observed_at DESC,id DESC
-    ) AS row_rank
+    track_key,NULL AS title,NULL AS artist,like_count,observed_at,source
   FROM sh_track_like_observations
   WHERE observed_at>=? AND observed_at<?
     AND like_count IS NOT NULL
-    AND (
-      (isrc IS NOT NULL AND TRIM(isrc)<>'')
-      OR (spotify_id IS NOT NULL AND TRIM(spotify_id)<>'')
-    )
+    AND track_key<>''
+), ranked AS (
+  SELECT prepared.*,
+    ROW_NUMBER() OVER (
+      PARTITION BY play_date,track_key
+      ORDER BY observed_at DESC,id DESC
+    ) AS row_rank
+  FROM prepared
 )
 SELECT play_date,spotify_id,apple_music_id,isrc,stationhead_track_id,queue_track_id,
   title,artist,like_count,observed_at,source
