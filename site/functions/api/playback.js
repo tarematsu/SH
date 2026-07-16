@@ -14,6 +14,10 @@ import {
 
 const CACHE_CONTROL = 'public, max-age=5, s-maxage=10, stale-while-revalidate=30';
 const DEFAULT_CHANNEL_ALIAS = 'buddies';
+const SECONDARY_PLAYBACK_LEGACY_SQL = `SELECT channel_alias,station_id,queue_id,start_time,
+  is_paused,is_broadcasting,host_account_id,host_handle,state_hash,queue_json,
+  checked_at,changed_at
+FROM sh_playback_channel_current WHERE channel_alias=? LIMIT 1`;
 const PLAYBACK_SUCCESS_DEFAULTS = Object.freeze({
   channel_alias: null,
   generated_at: null,
@@ -88,10 +92,23 @@ function missingPlaybackTable(error) {
   return /no such table:\s*sh_playback_channel_current/i.test(String(error?.message || error));
 }
 
+function missingPlaybackClockTable(error) {
+  return /no such table:\s*sh_buddy_playback_clock/i.test(String(error?.message || error));
+}
+
+async function loadSecondaryPlaybackRow(otherDb, alias) {
+  try {
+    return await otherDb.prepare(SECONDARY_PLAYBACK_SQL).bind(alias).first();
+  } catch (error) {
+    if (!missingPlaybackClockTable(error)) throw error;
+    return otherDb.prepare(SECONDARY_PLAYBACK_LEGACY_SQL).bind(alias).first();
+  }
+}
+
 async function secondaryPlaybackResponse(otherDb, alias, generatedAt, includeRawPayload) {
   const collector = await loadBuddyCollectorStatus(otherDb, alias);
   try {
-    const row = await otherDb.prepare(SECONDARY_PLAYBACK_SQL).bind(alias).first();
+    const row = await loadSecondaryPlaybackRow(otherDb, alias);
     const metadata = row
       ? await loadSecondaryPlaybackMetadata(otherDb, row)
       : new Map();
