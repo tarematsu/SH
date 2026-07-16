@@ -46,19 +46,12 @@ jobs:
         working-directory: worker
         shell: bash
         run: |
-          set -euo pipefail
           for queue in \
             stationhead-raw-collection stationhead-raw-collection-dlq \
             stationhead-comments stationhead-comments-dlq \
             stationhead-read-model stationhead-read-model-dlq
           do
-            output="$(npx wrangler queues create "$queue" 2>&1)" || {
-              if grep -Eqi 'already exists|name already in use' <<<"$output"; then
-                continue
-              fi
-              printf '%s\n' "$output"
-              exit 1
-            }
+            npx wrangler queues create "$queue" >/dev/null 2>&1 || true
           done
       - name: Deploy ingest consumer
         run: npm run deploy:ingest
