@@ -2,9 +2,31 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import { collectOptionalComments } from '../src/index.js';
+import { configFromEnv } from '../src/collector-config.js';
 
 const state = { stationId: 42 };
 const config = { chatLimit: 10 };
+
+test('zero CHAT_LIMIT disables optional comment collection', async () => {
+  const disabled = configFromEnv({ CHAT_LIMIT: 0 });
+  assert.equal(disabled.chatLimit, 0);
+  assert.equal(configFromEnv({ CHAT_LIMIT: '0' }).chatLimit, 0);
+  assert.equal(configFromEnv({ CHAT_LIMIT: -1 }).chatLimit, 100);
+  assert.equal(configFromEnv({ CHAT_LIMIT: 500 }).chatLimit, 100);
+
+  let requests = 0;
+  const result = await collectOptionalComments({}, state, disabled, 1_700_000_000_000, {
+    requestJson: async () => { requests += 1; return {}; },
+    writeIngest: async () => assert.fail('disabled comment collection must not write'),
+  });
+
+  assert.deepEqual(result, {
+    commentsSaved: 0,
+    degraded: false,
+    errorStage: null,
+  });
+  assert.equal(requests, 0);
+});
 
 test('comment API failures degrade only optional comment collection', async () => {
   let writes = 0;
