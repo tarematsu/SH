@@ -96,6 +96,61 @@ function missingPlaybackClockTable(error) {
   return /no such table:\s*sh_buddy_playback_clock/i.test(String(error?.message || error));
 }
 
+function text(value) {
+  const parsed = String(value ?? '').trim();
+  return parsed && parsed !== '[object Object]' ? parsed : null;
+}
+
+function rawQueue(payload) {
+  return payload?.current_station?.queue || payload?.queue || null;
+}
+
+function storedQueueTracks(row) {
+  if (!row?.queue_json) return [];
+  let parsed;
+  try {
+    parsed = JSON.parse(row.queue_json);
+  } catch {
+    return [];
+  }
+  if (Array.isArray(parsed)) return parsed;
+  const queue = rawQueue(parsed);
+  if (Array.isArray(queue?.queue_tracks)) return queue.queue_tracks;
+  if (Array.isArray(queue?.tracks)) return queue.tracks;
+  return [];
+}
+
+function trackArtist(track) {
+  const artist = track?.artist || track?.artists?.[0] || null;
+  return text(typeof artist === 'string' ? artist : artist?.name) || text(track?.artist_name);
+}
+
+function trackThumbnail(item, track) {
+  return text(
+    track?.thumbnail_url
+      ?? track?.image_url
+      ?? track?.album_art_url
+      ?? track?.artwork_url
+      ?? track?.album?.thumbnail_url
+      ?? track?.album?.image_url
+      ?? track?.album?.artwork_url
+      ?? track?.album?.images?.[0]?.url
+      ?? item?.thumbnail_url
+      ?? item?.image_url
+      ?? item?.album_art_url
+      ?? item?.artwork_url,
+  );
+}
+
+export function secondaryRowNeedsMetadata(row) {
+  return storedQueueTracks(row).some((item) => {
+    const track = item?.track || item || {};
+    const lookupAvailable = Boolean(text(track?.spotify_id ?? item?.spotify_id) || text(track?.isrc ?? item?.isrc));
+    if (!lookupAvailable) return false;
+    return !text(track?.title ?? track?.name) || !trackArtist(track) || !trackThumbnail(item, track);
+  });
+}
+
 async function loadSecondaryPlaybackRow(otherDb, alias) {
   try {
     return await otherDb.prepare(SECONDARY_PLAYBACK_SQL).bind(alias).first();
@@ -106,10 +161,13 @@ async function loadSecondaryPlaybackRow(otherDb, alias) {
 }
 
 async function secondaryPlaybackResponse(otherDb, alias, generatedAt, includeRawPayload) {
-  const collector = await loadBuddyCollectorStatus(otherDb, alias);
+  const collectorPromise = loadBuddyCollectorStatus(otherDb, alias);
   try {
-    const row = await loadSecondaryPlaybackRow(otherDb, alias);
-    const metadata = row
+    const [collector, row] = await Promise.all([
+      collectorPromise,
+      loadSecondaryPlaybackRow(otherDb, alias),
+    ]);
+    const metadata = row && secondaryRowNeedsMetadata(row)
       ? await loadSecondaryPlaybackMetadata(otherDb, row)
       : new Map();
     const payload = row
@@ -125,6 +183,7 @@ async function secondaryPlaybackResponse(otherDb, alias, generatedAt, includeRaw
     );
   } catch (error) {
     if (!missingPlaybackTable(error)) throw error;
+    const collector = await collectorPromise;
     return playbackJson(
       attachBuddyCollectorStatus(
         emptySecondaryPayload(alias, generatedAt, true),
