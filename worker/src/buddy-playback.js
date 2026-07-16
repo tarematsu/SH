@@ -15,15 +15,20 @@ const DEFAULT_ALIAS = 'buddy46';
 const DEFAULT_AUTH_STATE_ID = 'buddy46';
 const DEFAULT_INTERVAL_MS = 5 * 60_000;
 const DEFAULT_MAX_TRACKS = 80;
-const DEFAULT_METADATA_LIMIT = 1;
+const DEFAULT_METADATA_LIMIT = 5;
 const DEFAULT_REQUEST_TIMEOUT_MS = 8_000;
 const USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36';
 
 export { extractBuddyPlayback, validateBuddyChannelPayload, attachBuddyMetadata };
 
-export const BUDDY_PLAYBACK_SELECT_SQL = `SELECT station_id,queue_id,start_time,is_paused,
-  is_broadcasting,host_account_id,host_handle,state_hash,queue_json,checked_at,changed_at
-  FROM sh_playback_channel_current WHERE channel_alias=?`;
+export const BUDDY_PLAYBACK_SELECT_SQL = `SELECT p.station_id,p.queue_id,p.start_time,p.is_paused,
+  p.is_broadcasting,p.host_account_id,p.host_handle,p.state_hash,p.queue_json,
+  p.checked_at,p.changed_at,c.queue_id AS clock_queue_id,
+  c.start_time AS clock_start_time,c.is_paused AS clock_is_paused,
+  c.paused_total_ms,c.pause_started_at,c.observed_at AS clock_observed_at
+  FROM sh_playback_channel_current p
+  LEFT JOIN sh_buddy_playback_clock c ON c.channel_alias=p.channel_alias
+  WHERE p.channel_alias=?`;
 
 export const BUDDY_PLAYBACK_TOUCH_SQL = `UPDATE sh_playback_channel_current
   SET checked_at=? WHERE channel_alias=?`;
@@ -44,6 +49,17 @@ ON CONFLICT(channel_alias) DO UPDATE SET
   queue_json=excluded.queue_json,
   checked_at=excluded.checked_at,
   changed_at=excluded.changed_at`;
+
+export const BUDDY_PLAYBACK_CLOCK_UPSERT_SQL = `INSERT INTO sh_buddy_playback_clock (
+  channel_alias,queue_id,start_time,is_paused,paused_total_ms,pause_started_at,observed_at
+) VALUES (?,?,?,?,?,?,?)
+ON CONFLICT(channel_alias) DO UPDATE SET
+  queue_id=excluded.queue_id,
+  start_time=excluded.start_time,
+  is_paused=excluded.is_paused,
+  paused_total_ms=excluded.paused_total_ms,
+  pause_started_at=excluded.pause_started_at,
+  observed_at=excluded.observed_at`;
 
 let buddyPlaybackFlight = null;
 
@@ -104,7 +120,7 @@ export function buddyPlaybackConfig(env = {}) {
     metadataLimit: positiveInteger(
       env.BUDDY_PLAYBACK_METADATA_LIMIT,
       DEFAULT_METADATA_LIMIT,
-      5,
+      10,
     ),
     requestTimeoutMs: positiveInteger(
       env.REQUEST_TIMEOUT_MS,
@@ -188,6 +204,57 @@ function displayStateChanged(current, queue) {
     || (String(current.host_handle || '').trim() || null) !== queue.host_handle;
 }
 
+function sameQueue(current, queue) {
+  if (!current) return false;
+  return finiteNumber(current.clock_queue_id ?? current.queue_id) === finiteNumber(queue.queue_id)
+    && finiteNumber(current.clock_start_time ?? current.start_time) === finiteNumber(queue.start_time);
+}
+
+export function buddyPlaybackClock(current, queue, now = Date.now()) {
+  const paused = booleanValue(queue?.is_paused);
+  if (!sameQueue(current, queue)) {
+    return {
+      queue_id: finiteNumber(queue?.queue_id),
+      start_time: finiteNumber(queue?.start_time),
+      is_paused: paused ? 1 : 0,
+      paused_total_ms: 0,
+      pause_started_at: paused ? now : null,
+      observed_at: now,
+    };
+  }
+
+  const wasPaused = booleanValue(current?.clock_is_paused ?? current?.is_paused);
+  let pausedTotalMs = Math.max(0, finiteNumber(current?.paused_total_ms, 0));
+  let pauseStartedAt = finiteNumber(current?.pause_started_at);
+  if (wasPaused && pauseStartedAt == null) pauseStartedAt = finiteNumber(current?.changed_at, now);
+  if (!wasPaused && paused) pauseStartedAt = now;
+  if (wasPaused && !paused) {
+    if (pauseStartedAt != null) pausedTotalMs += Math.max(0, now - pauseStartedAt);
+    pauseStartedAt = null;
+  }
+
+  return {
+    queue_id: finiteNumber(queue?.queue_id),
+    start_time: finiteNumber(queue?.start_time),
+    is_paused: paused ? 1 : 0,
+    paused_total_ms: pausedTotalMs,
+    pause_started_at: pauseStartedAt,
+    observed_at: now,
+  };
+}
+
+function clockStatement(db, alias, clock) {
+  return db.prepare(BUDDY_PLAYBACK_CLOCK_UPSERT_SQL).bind(
+    alias,
+    clock.queue_id,
+    clock.start_time,
+    clock.is_paused,
+    clock.paused_total_ms,
+    clock.pause_started_at,
+    clock.observed_at,
+  );
+}
+
 export async function collectBuddyPlayback(env, now = Date.now(), dependencies = {}) {
   if (!env?.OTHER_DB) return { skipped: true, reason: 'db-binding-missing' };
   const config = buddyPlaybackConfig(env);
@@ -230,25 +297,32 @@ export async function collectBuddyPlayback(env, now = Date.now(), dependencies =
   const contentChanged = current?.queue_json !== queueJson;
   const displayChanged = displayStateChanged(current, queue);
   const changed = playbackChanged || contentChanged || displayChanged;
+  const clock = buddyPlaybackClock(current, queue, now);
 
   if (!changed) {
-    await env.OTHER_DB.prepare(BUDDY_PLAYBACK_TOUCH_SQL).bind(now, config.alias).run();
+    await env.OTHER_DB.batch([
+      env.OTHER_DB.prepare(BUDDY_PLAYBACK_TOUCH_SQL).bind(now, config.alias),
+      clockStatement(env.OTHER_DB, config.alias, clock),
+    ]);
   } else {
     const changedAt = playbackChanged ? now : finiteNumber(current?.changed_at, now);
-    await env.OTHER_DB.prepare(BUDDY_PLAYBACK_UPSERT_SQL).bind(
-      config.alias,
-      queue.station_id,
-      queue.queue_id,
-      queue.start_time,
-      queue.is_paused ? 1 : 0,
-      queue.is_broadcasting ? 1 : 0,
-      queue.host_account_id,
-      queue.host_handle,
-      hash,
-      queueJson,
-      now,
-      changedAt,
-    ).run();
+    await env.OTHER_DB.batch([
+      env.OTHER_DB.prepare(BUDDY_PLAYBACK_UPSERT_SQL).bind(
+        config.alias,
+        queue.station_id,
+        queue.queue_id,
+        queue.start_time,
+        queue.is_paused ? 1 : 0,
+        queue.is_broadcasting ? 1 : 0,
+        queue.host_account_id,
+        queue.host_handle,
+        hash,
+        queueJson,
+        now,
+        changedAt,
+      ),
+      clockStatement(env.OTHER_DB, config.alias, clock),
+    ]);
   }
 
   return {
@@ -260,6 +334,7 @@ export async function collectBuddyPlayback(env, now = Date.now(), dependencies =
     display_changed: displayChanged,
     tracks: tracks.length,
     checked_at: now,
+    paused_total_ms: clock.paused_total_ms,
   };
 }
 
