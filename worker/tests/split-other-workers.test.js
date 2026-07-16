@@ -124,7 +124,7 @@ test('other monitor owns only buddy playback, host, prediction and official news
 
   const worker = config('wrangler.other.jsonc');
   assert.equal(worker.name, 'sh-monitor-other');
-  assert.equal(worker.main, 'src/other-monitor-entry.js');
+  assert.equal(worker.main, 'src/other-entry.js');
   assert.deepEqual(worker.triggers.crons, [OTHER_MONITOR_CRON]);
   assert.equal(worker.vars.DATA_MAINTENANCE_ENABLED, undefined);
   assert.equal(worker.vars.SNAPSHOT_RETENTION_ENABLED, undefined);
