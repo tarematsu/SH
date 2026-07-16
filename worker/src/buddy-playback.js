@@ -206,8 +206,12 @@ function displayStateChanged(current, queue) {
 
 function sameQueue(current, queue) {
   if (!current) return false;
-  return finiteNumber(current.clock_queue_id ?? current.queue_id) === finiteNumber(queue.queue_id)
-    && finiteNumber(current.clock_start_time ?? current.start_time) === finiteNumber(queue.start_time);
+  const currentQueueId = finiteNumber(current.clock_queue_id ?? current.queue_id);
+  const currentStartTime = finiteNumber(current.clock_start_time ?? current.start_time);
+  const queueId = finiteNumber(queue?.queue_id);
+  const startTime = finiteNumber(queue?.start_time);
+  if (queueId == null && startTime == null) return false;
+  return currentQueueId === queueId && currentStartTime === startTime;
 }
 
 export function buddyPlaybackClock(current, queue, now = Date.now()) {
