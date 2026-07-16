@@ -1,32 +1,18 @@
-const PLAYBACK_EDGE_TTL_SECONDS = 300;
-const PLAYBACK_BROWSER_TTL_SECONDS = 30;
+import {
+  API_BROWSER_TTL_SECONDS,
+  API_EDGE_TTL_SECONDS,
+  MATERIALIZED_RESPONSE_MAX_AGE_MS,
+  canonicalApiCacheRequest,
+  edgeCacheableApiRequest,
+  materializedApiKey,
+} from './lib/api-contract.js';
+
 const inFlight = new Map();
 
-function primaryPlaybackRequest(request) {
-  if (request.method !== 'GET' || request.headers.has('authorization')) return false;
-  const url = new URL(request.url);
-  if (url.pathname !== '/api/playback' || url.searchParams.has('raw')) return false;
-  const channel = String(url.searchParams.get('channel') || 'buddies').trim().toLowerCase();
-  return channel === 'buddies';
-}
-
-function canonicalRequest(request) {
-  const url = new URL(request.url);
-  url.searchParams.delete('v');
-  const sorted = [...url.searchParams.entries()].sort(([aKey, aValue], [bKey, bValue]) =>
-    aKey.localeCompare(bKey) || aValue.localeCompare(bValue));
-  url.search = '';
-  for (const [key, value] of sorted) url.searchParams.append(key, value);
-  return new Request(url.toString(), {
-    method: 'GET',
-    headers: { accept: 'application/json' },
-  });
-}
-
-function tagged(response, state) {
+function tagged(response, cacheState) {
   const clone = response.clone();
   const headers = new Headers(clone.headers);
-  headers.set('x-playback-cache', state);
+  headers.set('x-edge-cache', cacheState);
   return new Response(clone.body, {
     status: clone.status,
     statusText: clone.statusText,
@@ -34,12 +20,75 @@ function tagged(response, state) {
   });
 }
 
+function safeHeaders(value) {
+  try {
+    const parsed = JSON.parse(value || '{}');
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? parsed
+      : {};
+  } catch {
+    return {};
+  }
+}
+
+async function materializedResponse(context, modelKey, now = Date.now()) {
+  if (!modelKey || !context.env?.MINUTE_DB) return null;
+  const db = context.env.MINUTE_DB;
+  try {
+    const manifest = await db.prepare(`SELECT generation,status,headers_json,chunk_count,updated_at
+      FROM sh_pages_response_manifest
+      WHERE model_key=?
+      LIMIT 1`).bind(modelKey).first();
+    if (!manifest?.generation || Number(manifest.chunk_count) <= 0) return null;
+    const maximumAge = Math.max(
+      API_EDGE_TTL_SECONDS * 1000,
+      Number(context.env.PAGES_RESPONSE_MAX_AGE_MS || MATERIALIZED_RESPONSE_MAX_AGE_MS),
+    );
+    if (now - Number(manifest.updated_at || 0) > maximumAge) return null;
+
+    const result = await db.prepare(`SELECT payload_chunk
+      FROM sh_pages_response_chunks
+      WHERE model_key=? AND generation=?
+      ORDER BY chunk_index ASC`).bind(modelKey, manifest.generation).all();
+    const rows = result.results || [];
+    if (rows.length !== Number(manifest.chunk_count)) return null;
+
+    const headers = new Headers(safeHeaders(manifest.headers_json));
+    headers.set('x-api-source', 'worker-materialized');
+    headers.set('x-materialized-at', String(manifest.updated_at));
+    return new Response(rows.map((row) => String(row.payload_chunk || '')).join(''), {
+      status: Number(manifest.status) || 200,
+      headers,
+    });
+  } catch (error) {
+    if (/no such table/i.test(String(error?.message || error))) return null;
+    console.error(error);
+    return null;
+  }
+}
+
+function sharedResponse(origin) {
+  const headers = new Headers(origin.headers);
+  if (origin.ok) {
+    headers.set(
+      'cache-control',
+      `public, max-age=${API_BROWSER_TTL_SECONDS}, s-maxage=${API_EDGE_TTL_SECONDS}, stale-while-revalidate=${API_EDGE_TTL_SECONDS * 2}`,
+    );
+  }
+  headers.set('vary', 'accept-encoding');
+  return new Response(origin.body, {
+    status: origin.status,
+    statusText: origin.statusText,
+    headers,
+  });
+}
+
 export async function onRequest(context) {
   const { request } = context;
-  if (!primaryPlaybackRequest(request)) return context.next();
+  if (!edgeCacheableApiRequest(request)) return context.next();
 
   const cache = caches.default;
-  const cacheKey = canonicalRequest(request);
+  const cacheKey = canonicalApiCacheRequest(request);
   const hit = await cache.match(cacheKey);
   if (hit) return tagged(hit, 'HIT');
 
@@ -48,20 +97,10 @@ export async function onRequest(context) {
   const coalesced = Boolean(task);
   if (!task) {
     task = (async () => {
-      const origin = await context.next();
-      const headers = new Headers(origin.headers);
-      if (origin.ok) {
-        headers.set(
-          'cache-control',
-          `public, max-age=${PLAYBACK_BROWSER_TTL_SECONDS}, s-maxage=${PLAYBACK_EDGE_TTL_SECONDS}, stale-while-revalidate=${PLAYBACK_EDGE_TTL_SECONDS * 2}`,
-        );
-      }
-      headers.set('vary', 'accept-encoding');
-      const shared = new Response(origin.body, {
-        status: origin.status,
-        statusText: origin.statusText,
-        headers,
-      });
+      const modelKey = materializedApiKey(new URL(request.url));
+      const prebuilt = await materializedResponse(context, modelKey);
+      const origin = prebuilt || await context.next();
+      const shared = sharedResponse(origin);
       if (shared.ok) context.waitUntil(cache.put(cacheKey, shared.clone()));
       return shared;
     })().finally(() => inFlight.delete(key));
