@@ -1,10 +1,9 @@
 import { sanitizeFailureDetail } from './collector-failure.js';
+import { attachReadModelTrackMetadata } from './minute-facts-read-model.js';
 
 const DEFAULT_BATCH_SIZE = 100;
 const MAX_BATCH_SIZE = 500;
 const DEFAULT_SOURCE_LAG_MS = 5 * 60_000;
-// Queue structure is canonicalized by the minute worker into revisions/items.
-// Copying source-shaped queue rows here would recreate a second queue history.
 const SYNC_KEYS = Object.freeze(['track-likes', 'track-metadata']);
 
 function integer(value) {
@@ -96,9 +95,10 @@ function likeStatement(db, row) {
 function metadataStatement(db, row) {
   const spotifyId = text(row.spotify_id);
   return db.prepare(`INSERT INTO sh_track_metadata(
-      spotify_id,title,artist,display_title,thumbnail_url,spotify_url,source,fetched_at,raw_json
-    ) VALUES(?,?,?,?,?,?,?,?,?)
+      spotify_id,isrc,title,artist,display_title,thumbnail_url,spotify_url,source,fetched_at,raw_json
+    ) VALUES(?,?,?,?,?,?,?,?,?,?)
     ON CONFLICT(spotify_id) DO UPDATE SET
+      isrc=COALESCE(excluded.isrc,sh_track_metadata.isrc),
       title=COALESCE(excluded.title,sh_track_metadata.title),
       artist=COALESCE(excluded.artist,sh_track_metadata.artist),
       display_title=COALESCE(excluded.display_title,sh_track_metadata.display_title),
@@ -106,15 +106,16 @@ function metadataStatement(db, row) {
       spotify_url=COALESCE(excluded.spotify_url,sh_track_metadata.spotify_url),
       source=excluded.source,fetched_at=MAX(excluded.fetched_at,sh_track_metadata.fetched_at),
       raw_json=COALESCE(excluded.raw_json,sh_track_metadata.raw_json)`).bind(
-    spotifyId, text(row.title), text(row.artist), text(row.display_title), text(row.thumbnail_url),
-    text(row.spotify_url), text(row.source) || 'buddies-buffer', integer(row.fetched_at), text(row.raw_json),
+    spotifyId, text(row.isrc), text(row.title), text(row.artist), text(row.display_title),
+    text(row.thumbnail_url), text(row.spotify_url), text(row.source) || 'buddies-buffer',
+    integer(row.fetched_at), text(row.raw_json),
   );
 }
 
 async function readRows(sourceDb, syncKey, state, cutoff, limit) {
   const current = cursor(state);
   if (syncKey === 'track-metadata') {
-    return sourceDb.prepare(`SELECT spotify_id,title,artist,display_title,thumbnail_url,
+    return sourceDb.prepare(`SELECT spotify_id,isrc,title,artist,display_title,thumbnail_url,
         spotify_url,source,fetched_at,raw_json
       FROM sh_track_metadata WHERE fetched_at<? AND (
         fetched_at>? OR (fetched_at=? AND spotify_id>?)
@@ -175,20 +176,68 @@ async function syncOneSafely(env, syncKey, now, limit) {
   }
 }
 
+function safeQueue(value) {
+  try {
+    const parsed = JSON.parse(String(value || 'null'));
+    return parsed && typeof parsed === 'object' ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+export async function repairPlaybackReadModels(env) {
+  const db = env?.MINUTE_DB;
+  if (!db) return { repaired: 0, skipped: true, reason: 'db-binding-missing' };
+  const current = await db.prepare(`SELECT channel_id,queue_json
+    FROM sh_queue_read_model_current WHERE queue_json IS NOT NULL`).all();
+  let repaired = 0;
+  for (const row of current.results || []) {
+    const queue = safeQueue(row.queue_json);
+    const incomplete = queue?.tracks?.filter((track) => !track?.title || !track?.artist || !track?.thumbnail_url) || [];
+    if (!incomplete.length) continue;
+    const spotifyIds = [...new Set(incomplete.map((track) => text(track.spotify_id)).filter(Boolean))];
+    const isrcs = [...new Set(incomplete.map((track) => text(track.isrc)?.toUpperCase()).filter(Boolean))];
+    if (!spotifyIds.length && !isrcs.length) continue;
+    const clauses = [];
+    const bindings = [];
+    if (isrcs.length) {
+      clauses.push(`isrc IN (${isrcs.map(() => '?').join(',')})`);
+      bindings.push(...isrcs);
+    }
+    if (spotifyIds.length) {
+      clauses.push(`spotify_id IN (${spotifyIds.map(() => '?').join(',')})`);
+      bindings.push(...spotifyIds);
+    }
+    const metadata = await db.prepare(`SELECT spotify_id,isrc,title,artist,thumbnail_url,fetched_at
+      FROM sh_track_metadata WHERE ${clauses.join(' OR ')} ORDER BY fetched_at DESC`)
+      .bind(...bindings).all();
+    const hydrated = attachReadModelTrackMetadata(queue, metadata.results || []);
+    if (hydrated === queue) continue;
+    await db.prepare(`UPDATE sh_queue_read_model_current SET queue_json=? WHERE channel_id=?`)
+      .bind(JSON.stringify(hydrated), row.channel_id).run();
+    repaired += 1;
+  }
+  return { repaired, skipped: false };
+}
+
 export async function runBuddiesFactsSync(env, options = {}) {
   const now = integer(options.now) || Date.now();
   const limit = positive(options.limit ?? env?.BUDDIES_SYNC_BATCH_SIZE, DEFAULT_BATCH_SIZE, MAX_BATCH_SIZE);
-  // Likes and metadata have independent cursors and target tables. Overlap
-  // their source reads and D1 batches so a slow table does not delay the
-  // other one; each task still records its own failure and cursor.
   const results = await Promise.all(
     SYNC_KEYS.map((syncKey) => syncOneSafely(env, syncKey, now, limit)),
   );
+  let playbackRepair;
+  try {
+    playbackRepair = await repairPlaybackReadModels(env);
+  } catch (error) {
+    playbackRepair = { repaired: 0, skipped: true, reason: 'repair-error', error: sanitizeFailureDetail(error) };
+  }
   return {
     skipped: results.every((result) => result.skipped && result.reason === 'db-binding-missing'),
-    failed: results.some((result) => result.reason === 'sync-error'),
-    error: results.find((result) => result.reason === 'sync-error')?.error || null,
+    failed: results.some((result) => result.reason === 'sync-error') || playbackRepair.reason === 'repair-error',
+    error: results.find((result) => result.reason === 'sync-error')?.error || playbackRepair.error || null,
     results,
+    playbackRepair,
     rows: results.reduce((sum, result) => sum + Number(result.rows || 0), 0),
   };
 }
