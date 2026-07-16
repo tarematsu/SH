@@ -1,5 +1,5 @@
 import './fetch-guard.js';
-import { officialNewsProbeDue, runOfficialNewsWithReconcile, scheduledTimestamp } from './other-entry.js';
+import { officialNewsProbeDue, runOfficialNewsWithReconcile, scheduledTimestamp } from './other-legacy-entry.js';
 
 export const OTHER_MONITOR_CRON = '*/5 * * * *';
 const OTHER_CRON_SUCCESS_SQL = `INSERT INTO sh_collector_status (
