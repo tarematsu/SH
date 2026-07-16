@@ -3,6 +3,7 @@ import test from 'node:test';
 
 import { MATERIALIZED_API_VARIANTS } from '../../site/functions/lib/api-contract.js';
 import {
+  materializedVariantDue,
   refreshFastPagesReadModels,
   trackHistoryRefreshRanges,
 } from '../src/pages-read-model-refresh.js';
@@ -90,7 +91,19 @@ test('track history backfill clamps its final window to the archive epoch', () =
   assert.equal(trackHistoryRefreshRanges(now, { next_to: EPOCH }).backfill, null);
 });
 
-test('fast refresh stores completed default API responses as generation-safe chunks', async () => {
+test('playback variants are hourly while ordinary API variants remain five-minute', () => {
+  const hourly = Date.UTC(2026, 6, 16, 12, 0);
+  const fivePast = Date.UTC(2026, 6, 16, 12, 5);
+  const playback = MATERIALIZED_API_VARIANTS.filter((variant) => variant.key.startsWith('playback:'));
+  const ordinary = MATERIALIZED_API_VARIANTS.filter((variant) => !variant.key.startsWith('playback:'));
+
+  assert.equal(playback.length, 2);
+  assert.equal(playback.every((variant) => materializedVariantDue(variant, hourly)), true);
+  assert.equal(playback.some((variant) => materializedVariantDue(variant, fivePast)), false);
+  assert.equal(ordinary.every((variant) => materializedVariantDue(variant, fivePast)), true);
+});
+
+test('hourly refresh stores all completed default API responses as generation-safe chunks', async () => {
   const db = new FakeDb();
   const env = { BUDDIES_DB: {}, MINUTE_DB: db, OTHER_DB: {} };
   const now = Date.UTC(2026, 6, 16, 12);
@@ -117,6 +130,22 @@ test('fast refresh stores completed default API responses as generation-safe chu
   assert.equal(oldGenerationDeletes.length, MATERIALIZED_API_VARIANTS.length);
   assert.ok(db.calls.some((call) => call.method === 'run'
     && call.sql.includes('CREATE TABLE IF NOT EXISTS sh_pages_response_manifest')));
+});
+
+test('five-minute refresh defers both playback variants', async () => {
+  const db = new FakeDb();
+  const now = Date.UTC(2026, 6, 16, 12, 5);
+  const result = await refreshFastPagesReadModels({
+    BUDDIES_DB: {},
+    MINUTE_DB: db,
+    OTHER_DB: {},
+  }, now, {
+    render: async (variant) => Response.json({ ok: true, model_key: variant.key }),
+  });
+
+  assert.equal(result.deferred, 2);
+  assert.equal(result.responses.some((item) => item.key.startsWith('playback:')), false);
+  assert.equal(result.responses.length, MATERIALIZED_API_VARIANTS.length - 2);
 });
 
 test('fast refresh preserves the previous generation when one API render fails', async () => {
