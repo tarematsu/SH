@@ -1,4 +1,4 @@
-import { enqueueMinuteDeriveTrigger } from './minute-derive-queue.js';
+import { enqueueMinuteDeriveTrigger } from './minute-derive-trigger.js';
 
 export async function consumeMinuteQueue(batch, env, _ctx, dependencies = {}) {
   const [queueModule, inboxModule] = await Promise.all([
