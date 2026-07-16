@@ -1,4 +1,13 @@
 import { collectOnce } from './collector-runner.js';
+import {
+  extractIds,
+  extractQueue,
+  minuteFactQueue,
+  normalizeSnapshot,
+  readModelPresentation,
+  validateChannelPayload,
+} from './collector-payload.js';
+import { collectorStateFromAuthState } from './collector-state.js';
 import { parseMinuteFactQueueMessage } from './minute-facts-queue.js';
 
 function integer(value) {
@@ -60,6 +69,49 @@ export function readModelEnvelopeForMinuteFact(rawMessage, body) {
   };
 }
 
+function fallbackReadModelEnvelope(env, message, channel) {
+  const state = collectorStateFromAuthState(message.auth, env);
+  const channelAlias = message.channel_alias || env.CHANNEL_ALIAS || 'buddies';
+  const collectorId = env.COLLECTOR_ID || 'cloudflare-worker';
+  const observedAt = Number(message.observed_at);
+  validateChannelPayload(channel, channelAlias);
+  extractIds(channel, state);
+  const snapshot = normalizeSnapshot(channel, state, { channelAlias, collectorId });
+  const queue = minuteFactQueue(extractQueue(channel, state.stationId));
+  return {
+    message_type: 'stationhead-read-model',
+    message_version: 1,
+    observed_at: observedAt,
+    job_id: `read-model:${state.channelId}:${observedAt}`,
+    read_model: {
+      channel: {
+        channel_id: state.channelId,
+        observed_at: observedAt,
+        presentation: readModelPresentation(snapshot),
+      },
+      queue: {
+        station_id: queue?.station_id ?? state.stationId,
+        queue_id: queue?.queue_id ?? null,
+        start_time: queue?.start_time ?? null,
+        is_paused: queue?.is_paused ?? null,
+        value: queue,
+      },
+      collector: {
+        collector_id: collectorId,
+        last_run_at: observedAt,
+        last_success_at: observedAt,
+        last_error_present: false,
+        updated_at: observedAt,
+      },
+    },
+    comment_task: {
+      observed_at: observedAt,
+      station_id: state.stationId,
+      auth: message.auth || {},
+    },
+  };
+}
+
 function activeIngestEnv(env, message, channel, envelopes) {
   const active = Object.create(env || null);
   const commentsQueue = env?.COMMENTS_QUEUE;
@@ -89,7 +141,7 @@ function activeIngestEnv(env, message, channel, envelopes) {
   return active;
 }
 
-async function currentReadModelEnvelope(env, message, result, envelopes) {
+async function currentReadModelEnvelope(env, message, channel, result, envelopes) {
   const channelId = integer(result?.channel_id);
   const minuteAt = integer(result?.minute_fact_job_minute_at);
   const jobId = channelId != null && minuteAt != null ? `minute-fact:${channelId}:${minuteAt}` : null;
@@ -97,18 +149,27 @@ async function currentReadModelEnvelope(env, message, result, envelopes) {
   const captured = envelopes.get(jobId);
   if (captured) return captured;
 
-  const row = await env.DB.prepare(`SELECT payload_json
-    FROM sh_minute_fact_outbox
-    WHERE job_id=? AND status='pending'
-    LIMIT 1`).bind(jobId).first();
-  if (!row?.payload_json) throw new Error(`current minute fact read model is unavailable: ${jobId}`);
-  let body;
   try {
-    body = JSON.parse(String(row.payload_json));
+    const row = await env.DB.prepare(`SELECT payload_json
+      FROM sh_minute_fact_outbox
+      WHERE job_id=? AND status='pending'
+      LIMIT 1`).bind(jobId).first();
+    if (row?.payload_json) {
+      const body = JSON.parse(String(row.payload_json));
+      return readModelEnvelopeForMinuteFact(message, body);
+    }
   } catch (error) {
-    throw new Error(`invalid current minute fact outbox JSON: ${error?.message || error}`);
+    console.warn(JSON.stringify({
+      event: 'current_read_model_outbox_reuse_failed',
+      job_id: jobId,
+      error: String(error?.message || error).slice(0, 500),
+    }));
   }
-  return readModelEnvelopeForMinuteFact(message, body);
+
+  // A retried raw message can find its minute outbox row already sent and
+  // compacted to '{}', while the previous read-model Queue send never
+  // completed. Preserve that retry path by rebuilding only in this rare case.
+  return fallbackReadModelEnvelope(env, message, channel);
 }
 
 export async function ingestRawCollection(env, message) {
@@ -124,7 +185,7 @@ export async function ingestRawCollection(env, message) {
   const envelopes = new Map();
   const active = activeIngestEnv(env, message, channel, envelopes);
   const result = await collectOnce(active, 'raw-collection-queue');
-  const envelope = await currentReadModelEnvelope(env, message, result, envelopes);
+  const envelope = await currentReadModelEnvelope(env, message, channel, result, envelopes);
   await env.READ_MODEL_QUEUE.send(envelope, { contentType: 'json' });
   return result;
 }
