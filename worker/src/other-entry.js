@@ -22,23 +22,15 @@ export function scheduledTimestamp(controller, fallback = Date.now()) {
   return Number.isFinite(value) && value >= 0 ? value : fallback;
 }
 
-function positiveMinutes(value, fallbackMs) {
-  const milliseconds = Number(value ?? fallbackMs);
-  const safe = Number.isFinite(milliseconds) && milliseconds > 0 ? milliseconds : fallbackMs;
-  return Math.max(1, Math.round(safe / 60_000));
-}
-
 function positiveMs(value, fallback) {
   const number = Number(value);
   return Number.isFinite(number) && number > 0 ? number : fallback;
 }
 
-export function otherProductionTask(now, env = {}) {
+export function otherProductionTask(now, _env = {}) {
   const absoluteMinute = Math.floor(now / 60_000);
   const minute = ((absoluteMinute % 60) + 60) % 60;
-  const buddyMinutes = positiveMinutes(env.BUDDY_PLAYBACK_INTERVAL_MS, 3 * 60 * 60_000);
 
-  if (minute === 0 && absoluteMinute % buddyMinutes === 0) return 'buddy';
   if (minute === 10 || minute === 40) return 'prediction';
   if (minute === 20) return 'officialNews';
   if (minute === 30) return 'maintenance';
@@ -68,7 +60,8 @@ export async function selectOtherProductionTask(controller, env, dependencies = 
   const now = scheduledTimestamp(controller);
   const scheduled = otherProductionTask(now, env);
   // Active-event probing may replace an ordinary host poll, but must not starve
-  // prediction, maintenance, retention, or the three-hour buddy46 collection.
+  // prediction, maintenance, or retention. Buddy playback runs beside whichever
+  // workload is selected for every five-minute production tick.
   if (scheduled !== 'host') return scheduled;
   const due = dependencies.officialNewsDue || officialNewsProbeDue;
   return await due(env, now) ? 'officialNews' : scheduled;
@@ -108,6 +101,17 @@ async function invokeTask(name, controller, env, ctx, dependencies, collectorGat
   return runner(env, now);
 }
 
+async function invokeTaskSet(names, controller, env, ctx, dependencies, collectorGate = null) {
+  const results = await Promise.allSettled(names.map(
+    (name) => invokeTask(name, controller, env, ctx, dependencies, collectorGate),
+  ));
+  const failures = results.filter((result) => result.status === 'rejected');
+  if (failures.length) {
+    throw new AggregateError(failures.map((result) => result.reason), 'other worker scheduled tasks failed');
+  }
+  return results.map((result) => result.value);
+}
+
 // If probe throws, reconcile is skipped. The normal probe catches and records
 // its own failures, so rejection here is reserved for injected/test probes.
 export async function runOfficialNewsWithReconcile(env, now, probe = null, reconcile = null) {
@@ -125,25 +129,21 @@ export async function runOfficialNewsWithReconcile(env, now, probe = null, recon
 export async function runOtherScheduled(controller, env, ctx, dependencies = {}) {
   if (hasInjectedTaskSet(dependencies) && String(controller.cron || '') !== OTHER_WORKER_CRON) {
     // Preserve the broad injected mode used by integration tests and manual
-    // diagnostics. Production uses one selected workload per five-minute tick.
+    // diagnostics. Production uses buddy playback plus one selected workload
+    // per five-minute tick.
     const collectorGate = env?.BUDDIES_DB?.prepare
       ? (dependencies.waitForCollector
         ? dependencies.waitForCollector(env, scheduledTimestamp(controller))
         : (await import('./cron-stagger.js')).waitForCollectorCompletion(env, scheduledTimestamp(controller)))
       : null;
-    const results = await Promise.allSettled(PRODUCTION_TASK_KEYS.map(
-      (name) => invokeTask(name, controller, env, ctx, dependencies, collectorGate),
-    ));
-    const failures = results.filter((result) => result.status === 'rejected');
-    if (failures.length) throw new AggregateError(failures.map((result) => result.reason), 'other worker scheduled tasks failed');
-    return results.map((result) => result.value);
+    return invokeTaskSet(PRODUCTION_TASK_KEYS, controller, env, ctx, dependencies, collectorGate);
   }
 
   if (String(controller.cron || '') !== OTHER_WORKER_CRON) {
     return [{ skipped: true, reason: 'unsupported-other-cron', cron: String(controller.cron || '') }];
   }
-  const name = await selectOtherProductionTask(controller, env, dependencies);
-  return [await invokeTask(name, controller, env, ctx, dependencies)];
+  const selected = await selectOtherProductionTask(controller, env, dependencies);
+  return invokeTaskSet(['buddy', selected], controller, env, ctx, dependencies);
 }
 
 async function healthApp() {
