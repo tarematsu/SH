@@ -39,15 +39,13 @@ export function minuteFactRetryDelayMs(attempts) {
 }
 
 function withDeriveTimeout(env, timeoutMs) {
-  return new Proxy(env || {}, {
-    get(target, property, receiver) {
-      if (property === 'MINUTE_FACT_TIMEOUT_MS') return timeoutMs;
-      return Reflect.get(target, property, receiver);
-    },
-    has(target, property) {
-      return property === 'MINUTE_FACT_TIMEOUT_MS' || Reflect.has(target, property);
-    },
+  const activeEnv = Object.create(env || null);
+  Object.defineProperty(activeEnv, 'MINUTE_FACT_TIMEOUT_MS', {
+    value: timeoutMs,
+    enumerable: true,
+    configurable: true,
   });
+  return activeEnv;
 }
 
 function parseJobPayload(job) {
