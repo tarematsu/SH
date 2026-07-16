@@ -62,6 +62,10 @@ const trackHistoryViewRepairMigrationPath = resolve(
   repositoryRoot,
   'database/facts-migrations/015_repair_track_history_queue_views.sql',
 );
+const trackMetadataIsrcMigrationPath = resolve(
+  repositoryRoot,
+  'database/facts-migrations/016_track_metadata_isrc.sql',
+);
 const metadataPath = resolve(repositoryRoot, 'database/facts-db.json');
 const databaseName = process.env.FACTS_DATABASE_NAME || 'stationhead-minute';
 
@@ -236,6 +240,24 @@ wrangler([
   '--remote', '--yes',
   '--file', trackMetadataBackfillMigrationPath,
 ]);
+
+let trackMetadataColumns = tableColumnNames(databaseName, 'sh_track_metadata');
+if (trackMetadataColumns.size > 0 && !trackMetadataColumns.has('isrc')) {
+  console.log('Adding sh_track_metadata.isrc for committed metadata enrichment...');
+  wrangler([
+    'd1', 'execute', databaseName,
+    '--remote', '--yes',
+    '--file', trackMetadataIsrcMigrationPath,
+  ]);
+  trackMetadataColumns = tableColumnNames(databaseName, 'sh_track_metadata');
+}
+if (trackMetadataColumns.size > 0 && !trackMetadataColumns.has('isrc')) {
+  throw new Error('sh_track_metadata.isrc migration did not complete');
+}
+executeCommand(`CREATE INDEX IF NOT EXISTS idx_sh_track_metadata_isrc
+  ON sh_track_metadata(isrc)
+  WHERE isrc IS NOT NULL AND TRIM(isrc)<>''`);
+
 wrangler([
   'd1', 'execute', databaseName,
   '--remote', '--yes',
@@ -246,6 +268,6 @@ writeFileSync(metadataPath, `${JSON.stringify({
   binding: 'MINUTE_DB',
   database_name: databaseName,
   database_id: databaseId,
-  schema: 'database/facts-migrations/015_repair_track_history_queue_views.sql',
+  schema: 'database/facts-migrations/016_track_metadata_isrc.sql',
 }, null, 2)}\n`);
 console.log(JSON.stringify({ ok: true, database_name: databaseName, database_id: databaseId }));
