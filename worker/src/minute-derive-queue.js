@@ -1,6 +1,4 @@
 import { sanitizeFailureDetail } from './collector-failure.js';
-import { saveOptimizedMinuteFactWithinBudget } from './minute-facts-fast-store.js';
-import { saveReconstructedMinuteFactWithinBudget } from './minute-facts-rebuild-store.js';
 import {
   completeMinuteFactJob,
   failMinuteFactJob,
@@ -65,6 +63,15 @@ function withDeriveTimeout(env, timeoutMs) {
   return active;
 }
 
+async function defaultWrite(env, payload) {
+  if (payload?.rebuild) {
+    const { saveReconstructedMinuteFactWithinBudget } = await import('./minute-facts-rebuild-store.js');
+    return saveReconstructedMinuteFactWithinBudget(env, payload);
+  }
+  const { saveOptimizedMinuteFactWithinBudget } = await import('./minute-facts-fast-store.js');
+  return saveOptimizedMinuteFactWithinBudget(env, payload);
+}
+
 async function attachOptionalStats(summary, env, stats) {
   if (!stats) return summary;
   try { Object.assign(summary, await stats(env)); } catch {}
@@ -81,8 +88,6 @@ export async function processMinuteDeriveTrigger(env, body, dependencies = {}) {
   const claim = dependencies.claim || claimMinuteDeriveJob;
   const complete = dependencies.complete || completeMinuteFactJob;
   const fail = dependencies.fail || failMinuteFactJob;
-  const liveWrite = dependencies.liveWrite || saveOptimizedMinuteFactWithinBudget;
-  const rebuildWrite = dependencies.rebuildWrite || saveReconstructedMinuteFactWithinBudget;
   const stats = dependencies.stats || null;
   const job = await claim(env, trigger, { now: nowFn(), leaseMs });
   if (!job) {
@@ -91,9 +96,10 @@ export async function processMinuteDeriveTrigger(env, body, dependencies = {}) {
 
   try {
     const payload = parseJobPayload(job);
-    const write = dependencies.write || ((activeEnv, activePayload) => (
-      activePayload?.rebuild ? rebuildWrite(activeEnv, activePayload) : liveWrite(activeEnv, activePayload)
-    ));
+    const write = dependencies.write
+      || (payload?.rebuild && dependencies.rebuildWrite)
+      || (!payload?.rebuild && dependencies.liveWrite)
+      || defaultWrite;
     await write(withDeriveTimeout(env, timeoutMs), payload);
     await complete(env, job.id, nowFn());
     return attachOptionalStats({
