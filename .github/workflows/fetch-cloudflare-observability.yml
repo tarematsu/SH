@@ -20,8 +20,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:
-      AWS_ACCESS_KEY_ID: ${{ secrets.CLOUDFLARE_R2_ACCESS_KEY_ID }}
-      AWS_SECRET_ACCESS_KEY: ${{ secrets.CLOUDFLARE_R2_SECRET_ACCESS_KEY }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_BUILDS_API_TOKEN }}
       AWS_DEFAULT_REGION: auto
       R2_ENDPOINT: ${{ vars.CLOUDFLARE_R2_ENDPOINT }}
       R2_BUCKET: ${{ vars.CLOUDFLARE_OBSERVABILITY_BUCKET }}
@@ -33,11 +32,24 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          test -n "$AWS_ACCESS_KEY_ID" || { echo "Missing secret CLOUDFLARE_R2_ACCESS_KEY_ID" >&2; exit 1; }
-          test -n "$AWS_SECRET_ACCESS_KEY" || { echo "Missing secret CLOUDFLARE_R2_SECRET_ACCESS_KEY" >&2; exit 1; }
+          test -n "$CLOUDFLARE_API_TOKEN" || { echo "Missing secret CLOUDFLARE_BUILDS_API_TOKEN" >&2; exit 1; }
           test -n "$R2_ENDPOINT" || { echo "Missing variable CLOUDFLARE_R2_ENDPOINT" >&2; exit 1; }
           test -n "$R2_BUCKET" || { echo "Missing variable CLOUDFLARE_OBSERVABILITY_BUCKET" >&2; exit 1; }
           [[ "$OBJECT_LIMIT" =~ ^[1-9][0-9]{0,2}$ ]] || { echo "limit must be between 1 and 999" >&2; exit 1; }
+
+      - name: Derive R2 S3 credentials from API token
+        shell: bash
+        run: |
+          set -euo pipefail
+          response="$(curl --fail-with-body --silent --show-error \
+            -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+            https://api.cloudflare.com/client/v4/user/tokens/verify)"
+          token_id="$(jq -er '.result.id' <<<"$response")"
+          secret_access_key="$(printf '%s' "$CLOUDFLARE_API_TOKEN" | sha256sum | cut -d' ' -f1)"
+          echo "::add-mask::$token_id"
+          echo "::add-mask::$secret_access_key"
+          echo "AWS_ACCESS_KEY_ID=$token_id" >> "$GITHUB_ENV"
+          echo "AWS_SECRET_ACCESS_KEY=$secret_access_key" >> "$GITHUB_ENV"
 
       - name: Download newest log objects
         id: download
