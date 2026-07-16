@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
 import { processCommentsTask } from '../src/comments-entry.js';
+import { commentsTaskForMinuteFact } from '../src/ingest-channel-entry.js';
 import { minuteFactQueueMessage } from '../src/minute-facts-queue.js';
 import { collectRawChannel } from '../src/raw-collector-entry.js';
 
@@ -47,6 +48,7 @@ test('split pipeline has one owner for each queue boundary', () => {
   assert.equal(ingest.queues.producers.find(({ binding }) => binding === 'COMMENTS_QUEUE').queue, 'stationhead-comments');
   assert.equal(comments.queues.consumers[0].queue, 'stationhead-comments');
   assert.equal(comments.queues.producers.find(({ binding }) => binding === 'MINUTE_FACT_QUEUE').queue, 'stationhead-buddies-facts');
+  assert.equal(comments.d1_databases.some(({ binding }) => binding === 'MINUTE_DB'), true);
   assert.equal(ingest.queues.producers.find(({ binding }) => binding === 'READ_MODEL_QUEUE').queue, 'stationhead-read-model');
   assert.equal(readModel.queues.consumers[0].queue, 'stationhead-read-model');
   assert.equal(minuteIngest.queues.consumers[0].queue, 'stationhead-buddies-facts');
@@ -56,6 +58,11 @@ test('split pipeline has one owner for each queue boundary', () => {
   assert.equal(minuteDerive.queues.consumers[0].max_batch_size, 1);
   assert.equal(minuteMaintenance.queues.consumers, undefined);
   assert.equal(minuteMaintenance.queues.producers[0].queue, 'stationhead-minute-derive');
+
+  const minuteIngestSource = readFileSync(new URL('../src/minute-production-entry.js', import.meta.url), 'utf8');
+  const commentsSource = readFileSync(new URL('../src/comments-entry.js', import.meta.url), 'utf8');
+  assert.doesNotMatch(minuteIngestSource, /runCommittedMetadataEnrichment/);
+  assert.match(commentsSource, /runCommittedMetadataEnrichment/);
 });
 
 test('raw collector forwards the response body without parsing it', async () => {
@@ -81,6 +88,20 @@ test('raw collector forwards the response body without parsing it', async () => 
   assert.equal(sent[0].body, body);
   assert.equal(sent[0].message_type, 'stationhead-raw-channel');
   assert.equal(sent[0].channel_alias, 'buddies');
+});
+
+test('outbox retries retain the minute payload timestamp and station identity', () => {
+  const minuteFact = minuteFactQueueMessage({
+    observedAt: 1_783_000_000_000,
+    snapshot: { channel_id: 10, station_id: 456 },
+    queue: null,
+  });
+  const task = commentsTaskForMinuteFact(commentsTask(), minuteFact);
+
+  assert.equal(task.observed_at, 1_783_000_000_000);
+  assert.equal(task.station_id, 456);
+  assert.deepEqual(task.auth, commentsTask().auth);
+  assert.equal(task.minute_fact.read_model, null);
 });
 
 test('comments task succeeds only after comments are durably handled', async () => {
