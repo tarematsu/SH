@@ -69,3 +69,26 @@ test('discovered handle station response validates and extracts Spotify-only pla
   assert.equal(playback.tracks[0].spotify_id, '3V0aOhJIgKTkzJy7uonAOz');
   assert.equal('apple_music_id' in playback.tracks[0], false);
 });
+
+test('buddy46 handle response accepts the canonical buddies channel alias', () => {
+  const payload = {
+    alias: 'buddies',
+    current_station: {
+      id: 3858517,
+      is_broadcasting: false,
+      queue: {
+        station_id: 3858517,
+        id: 3858517,
+        start_time: 1783349967165,
+        is_paused: false,
+        queue_tracks: [],
+      },
+    },
+  };
+
+  assert.doesNotThrow(() => validateBuddyChannelPayload(payload, 'buddy46'));
+  assert.throws(
+    () => validateBuddyChannelPayload({ ...payload, alias: 'unrelated' }, 'buddy46'),
+    /alias mismatch/,
+  );
+});

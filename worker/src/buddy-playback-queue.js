@@ -42,6 +42,11 @@ function channelMatchesExpectedHandle(channel, expectedAlias) {
   ));
 }
 
+function channelAliasMatchesHandleStation(actualAlias, expectedAlias) {
+  return String(expectedAlias || '').trim().toLowerCase() === 'buddy46'
+    && String(actualAlias || '').trim().toLowerCase() === 'buddies';
+}
+
 export function validateBuddyChannelPayload(channel, expectedAlias = DEFAULT_ALIAS) {
   if (!channel || typeof channel !== 'object' || Array.isArray(channel)) {
     throw new Error('Stationhead buddy playback response is not an object');
@@ -49,7 +54,9 @@ export function validateBuddyChannelPayload(channel, expectedAlias = DEFAULT_ALI
   const expected = String(expectedAlias).trim().toLowerCase();
   const actualAlias = String(channel.alias || channel.channel_alias || '').trim().toLowerCase();
   if (!actualAlias) throw new Error('Stationhead buddy playback response is missing channel alias');
-  if (actualAlias !== expected && !channelMatchesExpectedHandle(channel, expected)) {
+  if (actualAlias !== expected
+      && !channelAliasMatchesHandleStation(actualAlias, expected)
+      && !channelMatchesExpectedHandle(channel, expected)) {
     throw new Error(`Stationhead alias mismatch: expected ${expectedAlias}, received ${actualAlias}`);
   }
   const queue = channel?.current_station?.queue || channel?.queue || null;
