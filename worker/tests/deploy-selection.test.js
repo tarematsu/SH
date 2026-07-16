@@ -2,6 +2,11 @@ import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import test from 'node:test';
 
+import {
+  connectedWorkerBuildWatchConfig,
+  workerBuildWatchPaths,
+} from '../scripts/select-worker-deploys.mjs';
+
 const selector = new URL('../scripts/select-worker-deploys.mjs', import.meta.url);
 
 function select(paths = [], args = []) {
@@ -52,6 +57,34 @@ test('shared package changes select every Worker that imports sh-shared', () => 
   assert.ok(result.workers.includes('sh-ingest-channel'));
   assert.ok(result.workers.includes('sh-comments'));
   assert.ok(result.workers.length >= 3);
+});
+
+test('connected build watch paths are generated for the three Git-managed Workers', () => {
+  const config = connectedWorkerBuildWatchConfig();
+  assert.deepEqual(Object.keys(config), [
+    'sh-monitor-buddies',
+    'sh-monitor-other',
+    'sh-minute-maintenance',
+  ]);
+  for (const paths of Object.values(config)) {
+    assert.ok(paths.includes('worker/package.json'));
+    assert.ok(paths.includes('worker/package-lock.json'));
+    assert.ok(paths.includes('worker/scripts/select-cloudflare-build-config.mjs'));
+    assert.equal(paths.includes('*'), false);
+  }
+});
+
+test('other connected build excludes retired Pages and maintenance workloads', () => {
+  const paths = workerBuildWatchPaths('sh-monitor-other');
+  assert.ok(paths.includes('worker/src/other-entry.js'));
+  assert.ok(paths.includes('worker/src/other-monitor-entry.js'));
+  assert.ok(paths.includes('worker/src/other-monitor-support.js'));
+  assert.ok(paths.includes('worker/src/other-entry-compat.js'));
+  assert.equal(paths.includes('worker/src/other-legacy-entry.js'), false);
+  assert.equal(paths.includes('worker/src/pages-read-model-refresh.js'), false);
+  assert.equal(paths.includes('worker/src/scheduled-maintenance.js'), false);
+  assert.equal(paths.includes('worker/src/snapshot-retention.js'), false);
+  assert.equal(paths.some((path) => path.startsWith('site/functions/')), false);
 });
 
 test('unresolved runtime source changes fall back to all Workers', () => {
