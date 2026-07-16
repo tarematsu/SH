@@ -66,7 +66,7 @@ async function cachedRequest(url, next, waits, env = {}) {
   });
 }
 
-test('buddies and buddy46 playback are served from hourly cron payloads', async () => {
+test('buddies and buddy46 playback are generated live and cached for five minutes', async () => {
   const previousCaches = globalThis.caches;
   globalThis.caches = { default: fakeCache() };
   let liveBuilds = 0;
@@ -82,9 +82,10 @@ test('buddies and buddy46 playback are served from hourly cron payloads', async 
       { MINUTE_DB: db },
     );
     assert.equal(buddies.headers.get('x-edge-cache'), 'MISS');
-    assert.equal(buddies.headers.get('x-api-source'), 'worker-materialized');
-    assert.ok(sharedTtl(buddies) >= 3598 && sharedTtl(buddies) <= 3600);
-    assert.deepEqual(await buddies.json(), { ok: true, model_key: 'playback:buddies' });
+    assert.equal(buddies.headers.get('x-api-source'), null);
+    assert.equal(sharedTtl(buddies), 300);
+    assert.deepEqual(await buddies.json(), { ok: true, build: 1 });
+    assert.equal(db.calls.length, 0);
     await Promise.all(waits.splice(0));
 
     const buddiesHit = await cachedRequest(
@@ -94,7 +95,7 @@ test('buddies and buddy46 playback are served from hourly cron payloads', async 
       { MINUTE_DB: db },
     );
     assert.equal(buddiesHit.headers.get('x-edge-cache'), 'HIT');
-    assert.deepEqual(await buddiesHit.json(), { ok: true, model_key: 'playback:buddies' });
+    assert.deepEqual(await buddiesHit.json(), { ok: true, build: 1 });
 
     const buddy46 = await cachedRequest(
       'https://skrzk.test/api/playback?channel=buddy46',
@@ -103,40 +104,35 @@ test('buddies and buddy46 playback are served from hourly cron payloads', async 
       { MINUTE_DB: db },
     );
     assert.equal(buddy46.headers.get('x-edge-cache'), 'MISS');
-    assert.equal(buddy46.headers.get('x-api-source'), 'worker-materialized');
-    assert.ok(sharedTtl(buddy46) >= 3598 && sharedTtl(buddy46) <= 3600);
-    assert.deepEqual(await buddy46.json(), { ok: true, model_key: 'playback:buddy46' });
-    assert.equal(liveBuilds, 0);
+    assert.equal(buddy46.headers.get('x-api-source'), null);
+    assert.equal(sharedTtl(buddy46), 300);
+    assert.deepEqual(await buddy46.json(), { ok: true, build: 2 });
+    assert.equal(db.calls.length, 0);
   } finally {
     globalThis.caches = previousCaches;
   }
 });
 
-test('playback edge cache expires with the materialized hour instead of extending stale JSON', async () => {
+test('non-playback public APIs can still use materialized responses', async () => {
   const previousCaches = globalThis.caches;
   globalThis.caches = { default: fakeCache() };
+  let liveBuilds = 0;
   const waits = [];
-  const next = async () => Response.json({ ok: true, source: 'live' });
+  const db = new MaterializedDb();
+  const next = async () => Response.json({ ok: true, build: ++liveBuilds });
 
   try {
-    const nearlyExpired = await cachedRequest(
-      'https://skrzk.test/api/playback?channel=buddies',
+    const response = await cachedRequest(
+      'https://skrzk.test/api/dashboard',
       next,
       waits,
-      { MINUTE_DB: new MaterializedDb({ updatedAt: Date.now() - 3_590_000 }) },
+      { MINUTE_DB: db },
     );
-    assert.ok(sharedTtl(nearlyExpired) >= 1 && sharedTtl(nearlyExpired) <= 10);
-    await nearlyExpired.arrayBuffer();
-
-    globalThis.caches = { default: fakeCache() };
-    const expiredGeneration = await cachedRequest(
-      'https://skrzk.test/api/playback?channel=buddies',
-      next,
-      waits,
-      { MINUTE_DB: new MaterializedDb({ updatedAt: Date.now() - 3_700_000 }) },
-    );
-    assert.equal(sharedTtl(expiredGeneration), 30);
-    await expiredGeneration.arrayBuffer();
+    assert.equal(response.headers.get('x-edge-cache'), 'MISS');
+    assert.equal(response.headers.get('x-api-source'), 'worker-materialized');
+    assert.equal(sharedTtl(response), 300);
+    assert.deepEqual(await response.json(), { ok: true, model_key: 'dashboard' });
+    assert.equal(liveBuilds, 0);
   } finally {
     globalThis.caches = previousCaches;
   }
