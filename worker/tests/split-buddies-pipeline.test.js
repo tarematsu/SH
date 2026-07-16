@@ -25,7 +25,7 @@ function commentsTask() {
   };
 }
 
-test('split pipeline has one owner for each queue boundary', () => {
+test('ordered comments and three minute Workers have one owner per queue boundary', () => {
   const buddies = config('wrangler.jsonc');
   const ingest = config('wrangler.ingest.jsonc');
   const comments = config('wrangler.comments.jsonc');
