@@ -1,6 +1,6 @@
 import { FACTS_FRESH_MS } from './dashboard-facts.js';
+import { LATEST_QUEUE_WITH_ITEMS_SQL, parseLatestQueueRows } from './latest-queue.js';
 import { computePlayback, normalizePlaybackTrack } from './playback.js';
-import { loadPublicReadModels, presentationFromRow, queueFromReadModel } from './public-read-model.js';
 import { hostIdentity, queueRevision, stateFromQueue } from './queue-state.js';
 
 export const PLAYBACK_FALLBACK_SNAPSHOT_SQL = `SELECT
@@ -33,35 +33,29 @@ function freshness(payload) {
 }
 
 export async function loadDashboardAlignedPlaybackPayload(db, generatedAt = Date.now()) {
-  const snapshot = await db.prepare(PLAYBACK_FALLBACK_SNAPSHOT_SQL).first();
-  const channelId = integer(snapshot?.channel_id);
-  if (channelId == null) return null;
+  const [snapshot, queueResult] = await Promise.all([
+    db.prepare(PLAYBACK_FALLBACK_SNAPSHOT_SQL).first(),
+    db.prepare(LATEST_QUEUE_WITH_ITEMS_SQL).all(),
+  ]);
+  const { latestQueue, queue } = parseLatestQueueRows(queueResult.results || []);
+  if (!snapshot || !latestQueue || !queue.length) return null;
 
-  const models = await loadPublicReadModels(db, channelId);
-  const { latestQueue, queue } = queueFromReadModel(models.queue);
-  if (!latestQueue || !queue.length) return null;
-
-  const presentation = presentationFromRow(models.presentation);
-  const channel = presentation.channel || presentation;
-  const station = channel.current_station || presentation.current_station || {};
-  const owner = station.owner || presentation.owner || {};
-  const latest = { ...presentation, ...presentation.latest, ...snapshot };
   const playback = computePlayback(queue, generatedAt);
   const paused = storedBoolean(latestQueue.is_paused);
-  const broadcasting = storedBoolean(latest.is_broadcasting);
+  const broadcasting = storedBoolean(snapshot.is_broadcasting);
   const queueEndAt = integer(playback.queueEndAt);
   const ended = queueEndAt != null && generatedAt >= queueEndAt;
   const currentIndex = ended ? -1 : playback.currentIndex;
   const playing = broadcasting && !paused && !ended && currentIndex >= 0;
-  const latestObservedAt = integer(latest.observed_at ?? models.presentation?.observed_at);
+  const latestObservedAt = integer(snapshot.observed_at);
   const queueObservedAt = integer(latestQueue.observed_at);
   const freshestAt = Math.max(latestObservedAt || 0, queueObservedAt || 0) || null;
   const stale = freshestAt == null || generatedAt - freshestAt > FACTS_FRESH_MS;
-  const state = stateFromQueue(latestQueue, queue);
   const host = {
-    host_account_id: latest.host_account_id ?? owner.stationhead_account_id ?? owner.account_id,
-    host_handle: latest.host_handle ?? owner.handle,
+    host_account_id: snapshot.host_account_id,
+    host_handle: snapshot.host_handle,
   };
+  const state = stateFromQueue(latestQueue, queue);
   const normalizedQueue = queue.map((track, index) => normalizePlaybackTrack(
     track,
     index,
@@ -75,7 +69,7 @@ export async function loadDashboardAlignedPlaybackPayload(db, generatedAt = Date
     latest_observed_at: latestObservedAt,
     queue_observed_at: queueObservedAt,
     changed_at: null,
-    station_id: integer(latestQueue.station_id ?? latest.station_id),
+    station_id: integer(latestQueue.station_id ?? snapshot.station_id),
     is_broadcasting: broadcasting,
     host_account_id: integer(host.host_account_id),
     host_handle: text(host.host_handle),
