@@ -174,4 +174,8 @@ test('Pages homepage is never stored by browsers or shared caches', async () => 
   const headers = await text('public/_headers');
   assert.match(headers, /^\/\n\s+Cache-Control: no-store, max-age=0, must-revalidate/m);
   assert.match(headers, /^\/index\.html\n\s+Cache-Control: no-store, max-age=0, must-revalidate/m);
+  assert.ok(
+    headers.indexOf('\n/\n') > headers.indexOf('\n/*\n'),
+    'homepage override should follow the wildcard rule',
+  );
 });
