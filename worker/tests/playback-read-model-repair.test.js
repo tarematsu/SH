@@ -79,10 +79,17 @@ test('metadata sync repairs an already persisted sparse playback queue', async (
   });
 });
 
-test('playback repair uses source metadata before the durable sync cursor catches up', async () => {
+test('playback repair completes partial local metadata from the source database', async () => {
   const updates = [];
   const sourceCalls = [];
-  const minuteDb = queueDb([], updates);
+  const minuteDb = queueDb([{
+    spotify_id: 'sp1',
+    isrc: 'JPX1',
+    title: 'Local Song',
+    artist: null,
+    thumbnail_url: null,
+    fetched_at: 10,
+  }], updates);
   const buddiesDb = metadataDb([{
     spotify_id: 'sp1',
     isrc: 'JPX1',
@@ -101,7 +108,7 @@ test('playback repair uses source metadata before the durable sync cursor catche
   assert.equal(sourceCalls.length, 1);
   assert.deepEqual(sourceCalls[0].bindings, ['JPX1', 'sp1']);
   const saved = JSON.parse(updates[0].bindings[0]);
-  assert.equal(saved.tracks[0].title, 'Fresh Song');
+  assert.equal(saved.tracks[0].title, 'Local Song');
   assert.equal(saved.tracks[0].artist, 'Fresh Artist');
   assert.equal(saved.tracks[0].thumbnail_url, 'https://img.example/fresh.jpg');
 });
