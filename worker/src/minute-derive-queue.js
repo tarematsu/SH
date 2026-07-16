@@ -4,7 +4,6 @@ import { saveReconstructedMinuteFactWithinBudget } from './minute-facts-rebuild-
 import {
   completeMinuteFactJob,
   failMinuteFactJob,
-  minuteFactInboxStats,
 } from './minute-facts-inbox.js';
 import { parseMinuteDeriveTrigger } from './minute-derive-trigger.js';
 
@@ -66,6 +65,12 @@ function withDeriveTimeout(env, timeoutMs) {
   return active;
 }
 
+async function attachOptionalStats(summary, env, stats) {
+  if (!stats) return summary;
+  try { Object.assign(summary, await stats(env)); } catch {}
+  return summary;
+}
+
 export async function processMinuteDeriveTrigger(env, body, dependencies = {}) {
   const trigger = parseMinuteDeriveTrigger(body);
   const nowFn = dependencies.now || Date.now;
@@ -78,7 +83,7 @@ export async function processMinuteDeriveTrigger(env, body, dependencies = {}) {
   const fail = dependencies.fail || failMinuteFactJob;
   const liveWrite = dependencies.liveWrite || saveOptimizedMinuteFactWithinBudget;
   const rebuildWrite = dependencies.rebuildWrite || saveReconstructedMinuteFactWithinBudget;
-  const stats = dependencies.stats || minuteFactInboxStats;
+  const stats = dependencies.stats || null;
   const job = await claim(env, trigger, { now: nowFn(), leaseMs });
   if (!job) {
     return { event: 'minute_fact_derive_job', processed: 0, failed: 0, skipped: true, reason: 'not-pending' };
@@ -91,7 +96,7 @@ export async function processMinuteDeriveTrigger(env, body, dependencies = {}) {
     ));
     await write(withDeriveTimeout(env, timeoutMs), payload);
     await complete(env, job.id, nowFn());
-    const summary = {
+    return attachOptionalStats({
       event: 'minute_fact_derive_job',
       processed: 1,
       failed: 0,
@@ -99,9 +104,7 @@ export async function processMinuteDeriveTrigger(env, body, dependencies = {}) {
       processed_rebuild: payload.rebuild ? 1 : 0,
       job_id: Number(job.id),
       duration_ms: Math.max(0, nowFn() - startedAt),
-    };
-    try { Object.assign(summary, await stats(env)); } catch {}
-    return summary;
+    }, env, stats);
   } catch (error) {
     const delayMs = retryDelayMs(job.attempts);
     const result = await fail(env, job, error, {
@@ -109,7 +112,7 @@ export async function processMinuteDeriveTrigger(env, body, dependencies = {}) {
       maxAttempts,
       retryDelayMs: delayMs,
     });
-    const summary = {
+    return attachOptionalStats({
       event: 'minute_fact_derive_job',
       processed: 0,
       failed: 1,
@@ -121,8 +124,6 @@ export async function processMinuteDeriveTrigger(env, body, dependencies = {}) {
       attempts: Number(job.attempts || 0),
       error: sanitizeFailureDetail(error?.message || error),
       duration_ms: Math.max(0, nowFn() - startedAt),
-    };
-    try { Object.assign(summary, await stats(env)); } catch {}
-    return summary;
+    }, env, stats);
   }
 }
