@@ -220,6 +220,17 @@ wrangler([
   '--remote', '--yes',
   '--file', runtimeTablesMigrationPath,
 ]);
+
+let trackColumns = tableColumnNames(databaseName, 'sh_tracks');
+if (trackColumns.size > 0 && !trackColumns.has('isrc')) {
+  console.log('Adding sh_tracks.isrc for minute track metadata enrichment...');
+  executeCommand('ALTER TABLE sh_tracks ADD COLUMN isrc TEXT');
+  trackColumns = tableColumnNames(databaseName, 'sh_tracks');
+}
+if (trackColumns.size > 0 && !trackColumns.has('isrc')) {
+  throw new Error('sh_tracks.isrc migration did not complete');
+}
+
 wrangler([
   'd1', 'execute', databaseName,
   '--remote', '--yes',
