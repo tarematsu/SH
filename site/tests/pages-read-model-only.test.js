@@ -8,9 +8,10 @@ const tracks = readFileSync(new URL('../functions/api/track-history.js', import.
 const refresh = readFileSync(new URL('../../worker/src/pages-read-model-refresh.js', import.meta.url), 'utf8');
 const maintenance = readFileSync(new URL('../../worker/src/scheduled-maintenance.js', import.meta.url), 'utf8');
 
-test('Pages daily changes reads a completed payload instead of aggregating minute facts', () => {
+test('Pages daily changes reads completed daily summaries without aggregating minute facts', () => {
   const handler = daily.slice(daily.indexOf('export async function onRequestGet'));
-  assert.match(handler, /FROM sh_pages_payload_read_model/);
+  assert.match(daily, /FROM sh_daily_summary/);
+  assert.match(handler, /OTHER_DB/);
   assert.doesNotMatch(handler, /FROM sh_minute_facts|sh_total_member_daily|difference\(/);
 });
 
