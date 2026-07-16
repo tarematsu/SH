@@ -91,11 +91,16 @@ test('track history backfill clamps its final window to the archive epoch', () =
   assert.equal(trackHistoryRefreshRanges(now, { next_to: EPOCH }).backfill, null);
 });
 
-test('playback is not materialized while ordinary API variants remain five-minute', () => {
+test('current APIs render on demand while historical variants remain materialized every five minutes', () => {
   const fivePast = Date.UTC(2026, 6, 16, 12, 5);
-  const playback = MATERIALIZED_API_VARIANTS.filter((variant) => variant.key.startsWith('playback:'));
+  const materializedKeys = new Set(MATERIALIZED_API_VARIANTS.map((variant) => variant.key));
 
-  assert.equal(playback.length, 0);
+  assert.equal(materializedKeys.has('dashboard'), false);
+  assert.equal(materializedKeys.has('dashboard-queue'), false);
+  assert.equal(materializedKeys.has('comment-velocity'), false);
+  assert.equal([...materializedKeys].some((key) => key.startsWith('playback:')), false);
+  assert.equal(materializedKeys.has('track-history'), true);
+  assert.equal(materializedKeys.has('history:weekly'), true);
   assert.equal(MATERIALIZED_API_VARIANTS.every((variant) => materializedVariantDue(variant, fivePast)), true);
 });
 
@@ -141,12 +146,15 @@ test('five-minute refresh renders every remaining materialized variant', async (
 
   assert.equal(result.deferred, 0);
   assert.equal(result.responses.some((item) => item.key.startsWith('playback:')), false);
+  assert.equal(result.responses.some((item) => item.key === 'dashboard'), false);
+  assert.equal(result.responses.some((item) => item.key === 'dashboard-queue'), false);
+  assert.equal(result.responses.some((item) => item.key === 'comment-velocity'), false);
   assert.equal(result.responses.length, MATERIALIZED_API_VARIANTS.length);
 });
 
 test('fast refresh preserves the previous generation when one API render fails', async () => {
   const db = new FakeDb();
-  const failedKey = 'dashboard';
+  const failedKey = 'track-history';
   const result = await refreshFastPagesReadModels({
     BUDDIES_DB: {},
     MINUTE_DB: db,
