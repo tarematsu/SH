@@ -36,16 +36,11 @@ test('legacy Cloudflare minute deploy typo routes to the canonical script', () =
   assert.match(workerPackage.scripts['deploy:minute'], /wrangler\.minute\.jsonc/);
 });
 
-test('Cloudflare Git diagnostics run automatically for all Worker builds', () => {
+test('Cloudflare Git diagnostics run automatically for connected Worker builds', () => {
   assert.match(diagnosticsWorkflow, /^\s{2}push:/m);
   assert.match(diagnosticsWorkflow, /branches: \[main\]/);
-  for (const name of [
-    'sh-monitor-buddies',
-    'sh-ingest-channel',
-    'sh-comments',
-    'sh-read-model',
-    'sh-monitor-other',
-    'sh-monitor-minute',
-  ]) assert.match(diagnosticsWorkflow, new RegExp(name));
+  assert.match(diagnosticsWorkflow, /sh-monitor-buddies/);
+  assert.match(diagnosticsWorkflow, /sh-monitor-other/);
+  assert.match(diagnosticsWorkflow, /sh-monitor-minute/);
   assert.match(diagnosticsWorkflow, /cloudflare-build-diagnostics\.mjs/);
 });
