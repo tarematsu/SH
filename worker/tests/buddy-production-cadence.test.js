@@ -7,7 +7,7 @@ import {
   runOtherScheduled,
 } from '../src/other-entry.js';
 
-test('buddy46 is collected beside the selected other-worker task every five minutes', async () => {
+test('buddy46 and public API responses refresh beside the selected task every five minutes', async () => {
   const calls = [];
   const scheduledTime = Date.UTC(2026, 0, 1, 0, 5, 0);
   const results = await runOtherScheduled(
@@ -19,6 +19,10 @@ test('buddy46 is collected beside the selected other-worker task every five minu
         calls.push(['buddy', now]);
         return 'buddy-done';
       },
+      pages: (_env, now) => {
+        calls.push(['pages', now]);
+        return 'pages-done';
+      },
       host: () => {
         calls.push(['host']);
         return 'host-done';
@@ -27,11 +31,15 @@ test('buddy46 is collected beside the selected other-worker task every five minu
     },
   );
 
-  assert.deepEqual(results, ['buddy-done', 'host-done']);
-  assert.deepEqual(calls, [['buddy', scheduledTime], ['host']]);
+  assert.deepEqual(results, ['buddy-done', 'pages-done', 'host-done']);
+  assert.deepEqual(calls, [
+    ['buddy', scheduledTime],
+    ['pages', scheduledTime],
+    ['host'],
+  ]);
 });
 
-test('other-worker production config no longer leaves buddy46 stale for three hours', () => {
+test('other-worker production config uses five-minute buddy and API cadence', () => {
   const config = JSON.parse(readFileSync(new URL('../wrangler.other.jsonc', import.meta.url), 'utf8'));
   assert.equal(config.vars.BUDDY_PLAYBACK_INTERVAL_MS, 300_000);
   assert.deepEqual(config.triggers.crons, [OTHER_WORKER_CRON]);
