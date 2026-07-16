@@ -15,7 +15,8 @@ test('connected Worker names map to their Wrangler configs', () => {
   assert.equal(cloudflareBuildConfig('sh-comments'), 'wrangler.comments.jsonc');
   assert.equal(cloudflareBuildConfig('sh-read-model'), 'wrangler.read-model.jsonc');
   assert.equal(cloudflareBuildConfig('sh-monitor-other'), 'wrangler.other.jsonc');
-  assert.equal(cloudflareBuildConfig('sh-monitor-minute'), 'wrangler.minute.jsonc');
+  assert.equal(cloudflareBuildConfig('sh-minute-maintenance'), 'wrangler.minute.jsonc');
+  assert.equal(cloudflareBuildConfig('sh-monitor-minute'), null);
   assert.equal(cloudflareBuildConfig('sh-minute-derive'), 'wrangler.minute-derive.jsonc');
   assert.equal(cloudflareBuildConfig('sh-minute-ingest'), 'wrangler.minute-ingest.jsonc');
   assert.equal(cloudflareBuildConfig('unknown-worker'), null);
@@ -25,21 +26,21 @@ test('minute connected build replaces only the ephemeral default config', async 
   const workerRoot = await mkdtemp(join(tmpdir(), 'sh-worker-config-'));
   try {
     await writeFile(join(workerRoot, 'wrangler.jsonc'), '{"name":"sh-monitor-buddies"}\n');
-    await writeFile(join(workerRoot, 'wrangler.minute.jsonc'), '{"name":"sh-monitor-minute"}\n');
+    await writeFile(join(workerRoot, 'wrangler.minute.jsonc'), '{"name":"sh-minute-maintenance"}\n');
 
     const result = await selectCloudflareBuildConfig({
-      workerName: 'sh-monitor-minute',
+      workerName: 'sh-minute-maintenance',
       workerRoot,
     });
 
     assert.deepEqual(result, {
       selected: true,
-      workerName: 'sh-monitor-minute',
+      workerName: 'sh-minute-maintenance',
       sourceName: 'wrangler.minute.jsonc',
     });
     assert.equal(
       await readFile(join(workerRoot, 'wrangler.jsonc'), 'utf8'),
-      '{"name":"sh-monitor-minute"}\n',
+      '{"name":"sh-minute-maintenance"}\n',
     );
   } finally {
     await rm(workerRoot, { recursive: true, force: true });
