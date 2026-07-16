@@ -25,10 +25,16 @@ function noSourceDataDb(sqls = []) {
           if (sql.includes('COUNT(*) AS sample_count')) return { sample_count: 0 };
           return null;
         },
+        async all() {
+          return { results: [] };
+        },
         async run() {
           return { meta: { changes: 1 } };
         },
       };
+    },
+    async batch(statements) {
+      return statements.map(() => ({ success: true }));
     },
   };
 }
@@ -110,22 +116,22 @@ test('scheduled maintenance legacy migration entry point remains disabled', asyn
   assert.equal(scheduledLegacyMigrationEnabled(), false);
 });
 
-test('scheduled maintenance writes durable daily rollups to OTHER_DB', async () => {
-  const sqls = [];
+test('scheduled maintenance writes rollups and Pages read models to their owned databases', async () => {
+  const sourceSqls = [];
+  const minuteSqls = [];
   const result = await runScheduledMaintenance({
-    BUDDIES_DB: noSourceDataDb(sqls),
-    MINUTE_DB: new Proxy({}, {
-      get() {
-        throw new Error('MINUTE_DB must not be touched by scheduled maintenance');
-      },
-    }),
+    BUDDIES_DB: noSourceDataDb(sourceSqls),
+    MINUTE_DB: noSourceDataDb(minuteSqls),
     OTHER_DB: noSourceDataDb(),
   }, 3_600_000);
 
   assert.equal(result.skipped, false);
   assert.equal(result.reason, 'completed');
   assert.equal(result.rollup.reason, 'no-source-data');
+  assert.equal(result.pagesReadModels.skipped, false);
   assert.equal(result.legacyBackfill.reason, LEGACY_MIGRATION_DISABLED_REASON);
   assert.equal(result.minuteFactsBackfill.reason, LEGACY_MIGRATION_DISABLED_REASON);
-  assert.equal(sqls.some((sql) => sql.includes('sh_legacy_')), false);
+  assert.equal(sourceSqls.some((sql) => sql.includes('sh_legacy_')), false);
+  assert.equal(minuteSqls.some((sql) => sql.includes('sh_pages_payload_read_model')), true);
+  assert.equal(minuteSqls.some((sql) => sql.includes('sh_pages_track_history_read_model')), true);
 });
