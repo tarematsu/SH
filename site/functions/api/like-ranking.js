@@ -9,6 +9,7 @@ const json = (value, status = 200) => new Response(JSON.stringify(value), {
   headers: status >= 400 ? { ...JSON_HEADERS, 'cache-control': 'no-store' } : JSON_HEADERS,
 });
 
+// Worker-owned source query. Pages reads only the completed payload.
 export const LIKE_RANKING_SQL = `WITH resolved AS (
   SELECT
     c.occurrence_key,c.observed_at,c.count_value,c.track_key,
@@ -93,25 +94,22 @@ export async function loadLikeRanking(db, { limit }) {
 }
 
 export async function onRequestGet({ request, env }) {
-  if (!env.MINUTE_DB) return json({ ok: false, error: 'MINUTE_DB binding missing' }, 500);
+  if (!env?.MINUTE_DB) return json({ ok: false, error: 'MINUTE_DB binding missing' }, 500);
   const url = new URL(request.url);
   const requestedLimit = Number(url.searchParams.get('limit'));
   const limit = Math.min(Math.max(Number.isFinite(requestedLimit) ? Math.trunc(requestedLimit) : 200, 20), 500);
 
   try {
-    const ranking = await loadLikeRanking(env.MINUTE_DB, { limit });
-    return json({
-      ok: true,
-      mode: 'likes',
-      generated_at: Date.now(),
-      limit,
-      filter: 'artist_starts_sakurazaka_or_isrc_starts_jp',
-      counter_name: 'like/bite',
-      source: 'stationhead-minute.sh_track_counter_current',
-      ...ranking,
-    });
+    const row = await env.MINUTE_DB.prepare(`SELECT payload_json
+      FROM sh_pages_payload_read_model
+      WHERE model_key='like-ranking'
+      LIMIT 1`).first();
+    if (!row?.payload_json) return json({ ok: true, mode: 'likes', rows: [], summary: {}, setup_required: true });
+    const payload = JSON.parse(row.payload_json);
+    const rows = Array.isArray(payload.rows) ? payload.rows.slice(0, limit) : [];
+    return json({ ...payload, limit, rows });
   } catch (error) {
-    if (/no such table|no such column/i.test(String(error?.message || ''))) {
+    if (/no such table/i.test(String(error?.message || ''))) {
       return json({ ok: true, mode: 'likes', rows: [], summary: {}, setup_required: true });
     }
     return json({ ok: false, error: error?.message || 'like ranking error' }, 500);
