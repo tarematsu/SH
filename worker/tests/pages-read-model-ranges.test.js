@@ -81,13 +81,15 @@ test('track history maximum age covers the hourly source refresh plus edge grace
   );
 });
 
-test('quarter-hour fast refresh does not republish unchanged track history', () => {
-  const keys = dueFastMaterializedVariants(Date.UTC(2026, 6, 16, 12, 15)).map(({ key }) => key);
-  assert.equal(keys.includes('track-history'), false);
-  assert.equal(keys.includes('minute-facts-current'), true);
+test('fast refresh never republishes track history before its source refresh', () => {
+  for (const minute of [0, 15, 30, 45]) {
+    const keys = dueFastMaterializedVariants(Date.UTC(2026, 6, 16, 12, minute)).map(({ key }) => key);
+    assert.equal(keys.includes('track-history'), false, `unexpected track-history at minute ${minute}`);
+    assert.equal(keys.includes('minute-facts-current'), true);
+  }
 });
 
-test('half-hour fast refresh leaves track history to its hourly source refresh', () => {
+test('half-hour fast refresh still includes likes without track history', () => {
   const keys = dueFastMaterializedVariants(Date.UTC(2026, 6, 16, 12, 30)).map(({ key }) => key);
   assert.equal(keys.includes('track-history'), false);
   assert.equal(keys.includes('track-likes'), true);
