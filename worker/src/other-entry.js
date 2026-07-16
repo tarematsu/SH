@@ -152,7 +152,8 @@ export async function runOtherScheduled(controller, env, ctx, dependencies = {})
   }
   const selected = await selectOtherProductionTask(controller, env, dependencies);
   const companion = selected === 'buddy' ? 'host' : selected;
-  return invokeTaskSet(['buddy', companion], controller, env, ctx, dependencies);
+  const buddyAvailable = Boolean(env?.OTHER_DB?.prepare || typeof dependencies.buddy === 'function');
+  return invokeTaskSet(buddyAvailable ? ['buddy', companion] : [companion], controller, env, ctx, dependencies);
 }
 
 async function healthApp() {
