@@ -25,13 +25,14 @@ function config(name) {
 
 const BASE = Date.UTC(2026, 0, 1, 0, 0, 0);
 
-test('Pages read-model Worker separates fast materialization from full history refresh', async () => {
+test('Pages read-model Worker separates five-minute materialization from full history refresh', async () => {
   const calls = [];
   const dependencies = {
     refreshFast: async (_env, now) => { calls.push(['fast', now]); return 'fast'; },
     refreshFull: async (_env, now) => { calls.push(['full', now]); return 'full'; },
   };
 
+  assert.equal(PAGES_FAST_READ_MODEL_CRON, '*/5 * * * *');
   assert.equal(await runPagesReadModelCron({ cron: PAGES_FAST_READ_MODEL_CRON, scheduledTime: BASE }, {}, dependencies), 'fast');
   assert.equal(await runPagesReadModelCron({ cron: PAGES_FULL_READ_MODEL_CRON, scheduledTime: BASE + 31 * 60_000 }, {}, dependencies), 'full');
   assert.deepEqual(calls, [['fast', BASE], ['full', BASE + 31 * 60_000]]);
@@ -41,6 +42,25 @@ test('Pages read-model Worker separates fast materialization from full history r
   assert.equal(worker.main, 'src/pages-read-model-entry.js');
   assert.deepEqual(worker.triggers.crons, [PAGES_FAST_READ_MODEL_CRON, PAGES_FULL_READ_MODEL_CRON]);
   assert.deepEqual(worker.d1_databases.map(({ binding }) => binding), ['BUDDIES_DB', 'MINUTE_DB', 'OTHER_DB']);
+});
+
+test('Pages read-model Worker surfaces partial materialization failures', async () => {
+  await assert.rejects(
+    runPagesReadModelCron(
+      { cron: PAGES_FAST_READ_MODEL_CRON, scheduledTime: BASE },
+      {},
+      {
+        refreshFast: async () => ({
+          skipped: false,
+          failed: 1,
+          responses: [{ key: 'minute-facts-current', ok: false, error: 'render failed' }],
+        }),
+      },
+    ),
+    (error) => error instanceof AggregateError
+      && /fast Pages read-model refresh failed/.test(error.message)
+      && error.errors.some((item) => /minute-facts-current: render failed/.test(item.message)),
+  );
 });
 
 test('maintenance Worker preserves stagger and collector-priority ordering', async () => {
