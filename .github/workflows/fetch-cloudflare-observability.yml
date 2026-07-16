@@ -70,21 +70,17 @@ jobs:
           aws s3api list-objects-v2 --endpoint-url "$R2_ENDPOINT" --bucket "$R2_BUCKET" --output json > objects.json
           python3 - <<'PY'
           import datetime as dt, json, os, pathlib
-
           data = json.loads(pathlib.Path('objects.json').read_text(encoding='utf-8'))
           objects = data.get('Contents') or []
           if not objects:
               raise SystemExit('No observability objects found')
-
           since = os.environ.get('LOG_SINCE', '').strip()
           if since:
               cutoff = dt.datetime.fromisoformat(since.replace('Z', '+00:00'))
               if cutoff.tzinfo is None:
                   cutoff = cutoff.replace(tzinfo=dt.timezone.utc)
           else:
-              minutes = max(1, int(os.environ.get('LOOKBACK_MINUTES', '120')))
-              cutoff = dt.datetime.now(dt.timezone.utc) - dt.timedelta(minutes=minutes)
-
+              cutoff = dt.datetime.now(dt.timezone.utc) - dt.timedelta(minutes=max(1, int(os.environ.get('LOOKBACK_MINUTES', '120'))))
           selected = []
           for item in objects:
               modified = dt.datetime.fromisoformat(str(item['LastModified']).replace('Z', '+00:00'))
@@ -93,9 +89,7 @@ jobs:
           selected.sort(reverse=True)
           selected = selected[:100]
           pathlib.Path('cutoff.txt').write_text(cutoff.isoformat().replace('+00:00', 'Z'), encoding='utf-8')
-          with pathlib.Path('keys.txt').open('w', encoding='utf-8') as dst:
-              for _, key in selected:
-                  dst.write(key + '\n')
+          pathlib.Path('keys.txt').write_text(''.join(f'{key}\n' for _, key in selected), encoding='utf-8')
           print(f'Selected {len(selected)} objects modified since {cutoff.isoformat()}')
           PY
           if [[ -s keys.txt ]]; then
@@ -113,21 +107,13 @@ jobs:
           set -euo pipefail
           python3 - <<'PY'
           import gzip, json, math, pathlib, statistics
-
           targets = {
-              'sh-monitor-buddies',
-              'sh-ingest-channel',
-              'sh-comments',
-              'sh-read-model',
-              'sh-minute-ingest',
-              'sh-minute-derive',
-              'sh-monitor-minute',
-              'sh-monitor-other',
+              'sh-monitor-buddies', 'sh-ingest-channel', 'sh-comments', 'sh-read-model',
+              'sh-minute-ingest', 'sh-minute-derive', 'sh-minute-maintenance', 'sh-monitor-other',
           }
           output_dir = pathlib.Path('observability-logs')
           full_path = output_dir / 'sh-workers.ndjson'
           findings_path = output_dir / 'findings.ndjson'
-          summary_path = output_dir / 'summary.json'
           cutoff = pathlib.Path('cutoff.txt').read_text(encoding='utf-8').strip()
 
           def walk(value, prefix=''):
@@ -140,39 +126,32 @@ jobs:
                   for index, child in enumerate(value):
                       yield from walk(child, f'{prefix}[{index}]')
 
-          def text_values(event, names):
-              values = []
-              for path, value in walk(event):
-                  leaf = path.rsplit('.', 1)[-1].lower()
-                  if leaf in names and value not in (None, '', [], {}):
-                      values.append(str(value))
-              return values
+          def values(event, names):
+              return [str(value) for path, value in walk(event)
+                      if path.rsplit('.', 1)[-1].lower() in names and value not in (None, '', [], {})]
 
           def cpu_values(event):
-              values = []
+              result = []
               for path, value in walk(event):
-                  leaf = path.rsplit('.', 1)[-1].lower()
-                  if 'cpu' not in leaf or isinstance(value, bool):
+                  if 'cpu' not in path.rsplit('.', 1)[-1].lower() or isinstance(value, bool):
                       continue
                   try:
                       number = float(value)
                   except (TypeError, ValueError):
                       continue
                   if math.isfinite(number):
-                      values.append(number)
-              return values
+                      result.append(number)
+              return result
 
-          def percentile(values, fraction):
-              if not values:
+          def percentile(items, fraction):
+              if not items:
                   return None
-              ordered = sorted(values)
-              index = min(len(ordered) - 1, math.ceil(len(ordered) * fraction) - 1)
-              return ordered[index]
+              ordered = sorted(items)
+              return ordered[min(len(ordered) - 1, math.ceil(len(ordered) * fraction) - 1)]
 
           counts = {name: 0 for name in sorted(targets)}
           cpu = {name: [] for name in sorted(targets)}
-          findings = 0
-          total = 0
+          findings = total = 0
           with full_path.open('w', encoding='utf-8') as full, findings_path.open('w', encoding='utf-8') as flagged:
               for path in sorted(pathlib.Path('raw').glob('*')):
                   data = path.read_bytes()
@@ -191,33 +170,24 @@ jobs:
                       total += 1
                       counts[script] += 1
                       cpu[script].extend(cpu_values(event))
-                      levels = [value.lower() for value in text_values(event, {'level', 'severity', 'loglevel'})]
-                      outcomes = [value.lower() for value in text_values(event, {'outcome', 'status'})]
-                      errors = text_values(event, {'error', 'exception', 'stack', 'stacktrace'})
-                      bad_level = any(value in {'warn', 'warning', 'error', 'fatal', 'critical'} for value in levels)
-                      bad_outcome = any(value not in {'ok', 'success', 'succeeded', 'completed', 'true', '200'} for value in outcomes)
-                      if bad_level or bad_outcome or errors:
+                      levels = [item.lower() for item in values(event, {'level', 'severity', 'loglevel'})]
+                      outcomes = [item.lower() for item in values(event, {'outcome', 'status'})]
+                      errors = values(event, {'error', 'exception', 'stack', 'stacktrace'})
+                      if (any(item in {'warn', 'warning', 'error', 'fatal', 'critical'} for item in levels)
+                              or any(item not in {'ok', 'success', 'succeeded', 'completed', 'true', '200'} for item in outcomes)
+                              or errors):
                           flagged.write(compact + '\n')
                           findings += 1
-
-          summary = {
-              'ok': True,
-              'since': cutoff,
-              'objects_downloaded': len(list(pathlib.Path('raw').glob('*'))),
-              'events': total,
-              'findings': findings,
-              'scripts': {},
-          }
+          summary = {'ok': True, 'since': cutoff, 'objects_downloaded': len(list(pathlib.Path('raw').glob('*'))),
+                     'events': total, 'findings': findings, 'scripts': {}}
           for script in sorted(targets):
-              values = cpu[script]
+              samples = cpu[script]
               summary['scripts'][script] = {
-                  'events': counts[script],
-                  'cpu_samples': len(values),
-                  'cpu_avg': statistics.fmean(values) if values else None,
-                  'cpu_p95': percentile(values, 0.95),
-                  'cpu_max': max(values) if values else None,
+                  'events': counts[script], 'cpu_samples': len(samples),
+                  'cpu_avg': statistics.fmean(samples) if samples else None,
+                  'cpu_p95': percentile(samples, 0.95), 'cpu_max': max(samples) if samples else None,
               }
-          summary_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
+          (output_dir / 'summary.json').write_text(json.dumps(summary, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
           print(json.dumps(summary, ensure_ascii=False, separators=(',', ':')))
           PY
 
