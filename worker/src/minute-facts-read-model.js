@@ -159,10 +159,54 @@ export function preserveReadModelTrackMetadata(queue, previousQueue) {
   return changed ? { ...queue, tracks } : queue;
 }
 
+async function queryTrackMetadata(db, spotifyIds, isrcs) {
+  if (!db || typeof db.prepare !== 'function') return [];
+  const clauses = [];
+  const bindings = [];
+  if (isrcs.length) {
+    clauses.push(`isrc IN (${isrcs.map(() => '?').join(',')})`);
+    bindings.push(...isrcs);
+  }
+  if (spotifyIds.length) {
+    clauses.push(`spotify_id IN (${spotifyIds.map(() => '?').join(',')})`);
+    bindings.push(...spotifyIds);
+  }
+  if (!clauses.length) return [];
+  const statement = db.prepare(`SELECT spotify_id,isrc,title,artist,thumbnail_url,fetched_at
+    FROM sh_track_metadata
+    WHERE ${clauses.join(' OR ')}
+    ORDER BY fetched_at DESC`).bind(...bindings);
+  if (typeof statement?.all !== 'function') return [];
+  const result = await statement.all();
+  return result.results || [];
+}
+
+export async function loadReadModelTrackMetadata(env, spotifyIds, isrcs) {
+  const primary = env?.MINUTE_DB;
+  const fallback = env?.BUDDIES_DB;
+  let rows = [];
+  try {
+    rows = await queryTrackMetadata(primary, spotifyIds, isrcs);
+  } catch (error) {
+    if (!/no such table|no such column/i.test(String(error?.message || ''))) throw error;
+  }
+  const completeSpotifyIds = new Set(rows.map((row) => String(row?.spotify_id || '').trim()).filter(Boolean));
+  const completeIsrcs = new Set(rows.map((row) => normalizedIsrc(row?.isrc)).filter(Boolean));
+  const missingSpotifyIds = spotifyIds.filter((value) => !completeSpotifyIds.has(value));
+  const missingIsrcs = isrcs.filter((value) => !completeIsrcs.has(value));
+  if ((!missingSpotifyIds.length && !missingIsrcs.length) || !fallback || fallback === primary) return rows;
+  try {
+    const fallbackRows = await queryTrackMetadata(fallback, missingSpotifyIds, missingIsrcs);
+    return [...rows, ...fallbackRows];
+  } catch (error) {
+    if (!/no such table|no such column/i.test(String(error?.message || ''))) throw error;
+    return rows;
+  }
+}
+
 async function hydrateQueueMetadataFromSource(env, readModel) {
-  const db = env?.BUDDIES_DB;
   const queue = readModel?.queue?.value;
-  if (!db || !queue?.tracks?.length) return readModel;
+  if (!queue?.tracks?.length) return readModel;
 
   const incomplete = queue.tracks.filter((track) => (
     !track?.title || !track?.artist || !track?.thumbnail_url
@@ -176,22 +220,8 @@ async function hydrateQueueMetadataFromSource(env, readModel) {
   if (!spotifyIds.length && !isrcs.length) return readModel;
 
   try {
-    const clauses = [];
-    const bindings = [];
-    if (isrcs.length) {
-      clauses.push(`isrc IN (${isrcs.map(() => '?').join(',')})`);
-      bindings.push(...isrcs);
-    }
-    if (spotifyIds.length) {
-      clauses.push(`spotify_id IN (${spotifyIds.map(() => '?').join(',')})`);
-      bindings.push(...spotifyIds);
-    }
-    const result = await db.prepare(`SELECT spotify_id,isrc,title,artist,thumbnail_url,fetched_at
-      FROM sh_track_metadata
-      WHERE ${clauses.join(' OR ')}
-      ORDER BY fetched_at DESC`)
-      .bind(...bindings).all();
-    const hydratedQueue = attachReadModelTrackMetadata(queue, result.results || []);
+    const metadataRows = await loadReadModelTrackMetadata(env, spotifyIds, isrcs);
+    const hydratedQueue = attachReadModelTrackMetadata(queue, metadataRows);
     return hydratedQueue === queue
       ? readModel
       : { ...readModel, queue: { ...readModel.queue, value: hydratedQueue } };
