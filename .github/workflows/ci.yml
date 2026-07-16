@@ -103,7 +103,7 @@ jobs:
   worker:
     name: Worker checks
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
     defaults:
       run:
         working-directory: worker
@@ -120,10 +120,12 @@ jobs:
         run: npm run check:ingest-bundle
       - name: Check comments Worker bundle
         run: npm run check:comments-bundle
-      - name: Check read model Worker bundle
-        run: npm run check:read-model-bundle
-      - name: Check minute Worker bundle
+      - name: Check minute read-model Worker bundle
+        run: npm run check:minute-read-model-bundle
+      - name: Check minute Worker bundles
         run: npm run check:minute-bundle
+      - name: Check split other Worker bundles
+        run: npm run check:split-other-bundle
       - name: Run Worker tests
         shell: bash
         run: |
