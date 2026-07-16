@@ -223,7 +223,9 @@ export async function onRequestGet({ request, env }) {
       return playbackJson({ ok: false, error: 'MINUTE_DB binding missing' }, 500, 'no-store');
     }
     const primary = await loadPrimaryPlaybackPayload(env.MINUTE_DB, generatedAt);
-    const payload = await preferDashboardAlignedPlayback(env.MINUTE_DB, primary, generatedAt);
+    const payload = env.DB
+      ? await preferDashboardAlignedPlayback(env.DB, primary, generatedAt)
+      : primary;
     return playbackJson(payload, 200, CACHE_CONTROL);
   } catch (error) {
     console.error(error);
