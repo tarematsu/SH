@@ -272,7 +272,7 @@ export function computePrimaryPlayback(rows = [], state = {}, generatedAt = Date
       currentIndex: -1,
       progressMs: 0,
       anchorAt: null,
-      queueEndAt: effectiveAt,
+      queueEndAt: queueStart + pausedTotalMs + totalDurationMs,
       ended: true,
     };
   }
