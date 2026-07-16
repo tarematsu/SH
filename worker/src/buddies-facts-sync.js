@@ -1,5 +1,8 @@
 import { sanitizeFailureDetail } from './collector-failure.js';
-import { attachReadModelTrackMetadata } from './minute-facts-read-model.js';
+import {
+  attachReadModelTrackMetadata,
+  loadReadModelTrackMetadata,
+} from './minute-facts-read-model.js';
 
 const DEFAULT_BATCH_SIZE = 100;
 const MAX_BATCH_SIZE = 500;
@@ -42,10 +45,6 @@ function cursor(state) {
 async function loadState(db, syncKey) {
   return db.prepare('SELECT * FROM sh_buddies_sync_state WHERE sync_key=?')
     .bind(syncKey).first();
-}
-
-async function saveState(db, syncKey, values = {}) {
-  await saveStateStatement(db, syncKey, values).run();
 }
 
 function saveStateStatement(db, syncKey, values = {}) {
@@ -122,8 +121,7 @@ async function readRows(sourceDb, syncKey, state, cutoff, limit) {
       ) ORDER BY fetched_at ASC,spotify_id ASC LIMIT ?`)
       .bind(cutoff, current.observedAt, current.observedAt, current.sourceText, limit).all();
   }
-  const table = 'sh_track_like_observations';
-  return sourceDb.prepare(`SELECT * FROM ${table}
+  return sourceDb.prepare(`SELECT * FROM sh_track_like_observations
     WHERE observed_at<? AND (observed_at>? OR (observed_at=? AND id>?))
     ORDER BY observed_at ASC,id ASC LIMIT ?`)
     .bind(cutoff, current.observedAt, current.observedAt, current.sourceId, limit).all();
@@ -147,13 +145,10 @@ async function syncOne(env, syncKey, now, limit) {
     ? likeStatement(minuteDb, row)
     : metadataStatement(minuteDb, row));
   const last = rows.at(-1);
-  const lastAt = integer(last.observed_at ?? last.fetched_at) || 0;
-  const lastId = integer(last.id) || 0;
-  const lastText = text(last.spotify_id);
   statements.push(saveStateStatement(minuteDb, syncKey, {
-    cursorObservedAt: lastAt,
-    cursorSourceId: lastId,
-    cursorSourceText: lastText,
+    cursorObservedAt: integer(last.observed_at ?? last.fetched_at) || 0,
+    cursorSourceId: integer(last.id) || 0,
+    cursorSourceText: text(last.spotify_id),
     rowsProcessed: rows.length,
     lastRunAt: now,
     lastSuccessAt: now,
@@ -198,20 +193,8 @@ export async function repairPlaybackReadModels(env) {
     const spotifyIds = [...new Set(incomplete.map((track) => text(track.spotify_id)).filter(Boolean))];
     const isrcs = [...new Set(incomplete.map((track) => text(track.isrc)?.toUpperCase()).filter(Boolean))];
     if (!spotifyIds.length && !isrcs.length) continue;
-    const clauses = [];
-    const bindings = [];
-    if (isrcs.length) {
-      clauses.push(`isrc IN (${isrcs.map(() => '?').join(',')})`);
-      bindings.push(...isrcs);
-    }
-    if (spotifyIds.length) {
-      clauses.push(`spotify_id IN (${spotifyIds.map(() => '?').join(',')})`);
-      bindings.push(...spotifyIds);
-    }
-    const metadata = await db.prepare(`SELECT spotify_id,isrc,title,artist,thumbnail_url,fetched_at
-      FROM sh_track_metadata WHERE ${clauses.join(' OR ')} ORDER BY fetched_at DESC`)
-      .bind(...bindings).all();
-    const hydrated = attachReadModelTrackMetadata(queue, metadata.results || []);
+    const metadataRows = await loadReadModelTrackMetadata(env, spotifyIds, isrcs);
+    const hydrated = attachReadModelTrackMetadata(queue, metadataRows);
     if (hydrated === queue) continue;
     await db.prepare(`UPDATE sh_queue_read_model_current SET queue_json=? WHERE channel_id=?`)
       .bind(JSON.stringify(hydrated), row.channel_id).run();
