@@ -11,6 +11,8 @@ test('zero CHAT_LIMIT disables optional comment collection', async () => {
   const disabled = configFromEnv({ CHAT_LIMIT: 0 });
   assert.equal(disabled.chatLimit, 0);
   assert.equal(configFromEnv({ CHAT_LIMIT: '0' }).chatLimit, 0);
+  assert.equal(configFromEnv({ CHAT_LIMIT: '' }).chatLimit, 100);
+  assert.equal(configFromEnv({ CHAT_LIMIT: '   ' }).chatLimit, 100);
   assert.equal(configFromEnv({ CHAT_LIMIT: -1 }).chatLimit, 100);
   assert.equal(configFromEnv({ CHAT_LIMIT: 500 }).chatLimit, 100);
 
