@@ -1,6 +1,6 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "sh-monitor-minute",
+  "name": "sh-minute-maintenance",
   "main": "src/minute-maintenance-entry.js",
   "compatibility_date": "2026-06-24",
   "workers_dev": false,
