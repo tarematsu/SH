@@ -2,12 +2,12 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
-  PLAYBACK_FALLBACK_SNAPSHOT_SQL,
-  preferDashboardAlignedPlayback,
+  CANONICAL_PLAYBACK_SNAPSHOT_SQL,
+  loadCanonicalPlaybackPayload,
 } from '../functions/lib/primary-playback-fallback.js';
 import { LATEST_QUEUE_WITH_ITEMS_SQL } from '../functions/lib/latest-queue.js';
 
-class DashboardFallbackDb {
+class CanonicalPlaybackDb {
   constructor({ snapshot, queueRows }) {
     this.snapshot = snapshot;
     this.queueRows = queueRows;
@@ -19,7 +19,7 @@ class DashboardFallbackDb {
     return {
       bind() { return this; },
       first: async () => {
-        if (sql === PLAYBACK_FALLBACK_SNAPSHOT_SQL) return this.snapshot;
+        if (sql === CANONICAL_PLAYBACK_SNAPSHOT_SQL) return this.snapshot;
         throw new Error(`unexpected first(): ${sql}`);
       },
       all: async () => {
@@ -58,9 +58,9 @@ function queueRow(overrides = {}) {
   };
 }
 
-test('stale primary playback is replaced by the same buddies DB queue used by dashboard?history=0', async () => {
+test('canonical playback uses the same buddies DB queue source as dashboard?history=0', async () => {
   const now = 1_800_000_000_000;
-  const db = new DashboardFallbackDb({
+  const db = new CanonicalPlaybackDb({
     snapshot: {
       observed_at: now - 1_000,
       channel_id: 318,
@@ -85,16 +85,8 @@ test('stale primary playback is replaced by the same buddies DB queue used by da
       }),
     ],
   });
-  const primary = {
-    ok: true,
-    stale: true,
-    latest_observed_at: now - 18 * 60 * 60_000,
-    queue_observed_at: now - 17 * 60 * 60_000,
-    queue_status: { current_index: -1, ended: true },
-    queue: [{ title: 'Old Song', duration_ms: 1 }],
-  };
 
-  const payload = await preferDashboardAlignedPlayback(db, primary, now);
+  const payload = await loadCanonicalPlaybackPayload(db, now);
 
   assert.equal(payload.latest_observed_at, now - 1_000);
   assert.equal(payload.queue_observed_at, now - 500);
@@ -107,20 +99,12 @@ test('stale primary playback is replaced by the same buddies DB queue used by da
   assert.equal(payload.queue[1].title, 'Next Song');
   assert.deepEqual(db.calls.sort(), [
     LATEST_QUEUE_WITH_ITEMS_SQL,
-    PLAYBACK_FALLBACK_SNAPSHOT_SQL,
+    CANONICAL_PLAYBACK_SNAPSHOT_SQL,
   ].sort());
 });
 
-test('fresh primary playback avoids extra buddies DB reads', async () => {
-  const db = new DashboardFallbackDb({ snapshot: null, queueRows: [] });
-  const primary = {
-    ok: true,
-    stale: false,
-    latest_observed_at: 100,
-    queue_observed_at: 100,
-    queue: [],
-  };
-
-  assert.equal(await preferDashboardAlignedPlayback(db, primary, 200), primary);
-  assert.deepEqual(db.calls, []);
+test('canonical playback returns null when the dashboard queue source is empty', async () => {
+  const db = new CanonicalPlaybackDb({ snapshot: null, queueRows: [] });
+  assert.equal(await loadCanonicalPlaybackPayload(db, 200), null);
+  assert.equal(db.calls.length, 2);
 });
