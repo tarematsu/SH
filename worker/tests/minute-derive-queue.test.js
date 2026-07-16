@@ -45,19 +45,30 @@ test('minute derive triggers have a stable idempotency identity', () => {
   );
 });
 
-test('derive Queue processing claims and completes exactly one job', async () => {
+test('derive Queue processing claims and completes exactly one job without default aggregation', async () => {
   const calls = [];
   const result = await processMinuteDeriveTrigger({ MINUTE_DB: {} }, trigger, {
     now: () => 200_000,
     claim: async () => { calls.push('claim'); return job(); },
     write: async (_env, payload) => { calls.push(`write:${payload.snapshot.channel_id}`); },
     complete: async (_env, id) => { calls.push(`complete:${id}`); },
-    stats: async () => ({ pending_count: 2, processing_count: 0, dead_count: 0 }),
   });
 
   assert.deepEqual(calls, ['claim', 'write:10', 'complete:7']);
   assert.equal(result.processed, 1);
   assert.equal(result.failed, 0);
+  assert.equal(Object.hasOwn(result, 'pending_count'), false);
+});
+
+test('derive Queue processing can expose injected stats without owning the production query', async () => {
+  const result = await processMinuteDeriveTrigger({ MINUTE_DB: {} }, trigger, {
+    now: () => 200_000,
+    claim: async () => job(),
+    write: async () => {},
+    complete: async () => {},
+    stats: async () => ({ pending_count: 2, processing_count: 0, dead_count: 0 }),
+  });
+
   assert.equal(result.pending_count, 2);
 });
 
@@ -71,19 +82,21 @@ test('derive Queue processing persists failure before requesting a retry', async
       failedOptions = options;
       return { terminal: false };
     },
-    stats: async () => ({ pending_count: 1, processing_count: 0, dead_count: 0 }),
   });
 
   assert.equal(result.failed, 1);
   assert.equal(result.terminal, false);
   assert.equal(result.retry_delay_ms, 120_000);
   assert.equal(failedOptions.retryDelayMs, 120_000);
+  assert.equal(Object.hasOwn(result, 'pending_count'), false);
 });
 
-test('maintenance dispatches bounded orphan and backlog triggers in one Queue batch', async () => {
+test('maintenance dispatches bounded triggers and records aggregate health once', async () => {
   const batches = [];
+  const records = [];
   const result = await dispatchPendingMinuteFacts({
     DERIVE_DISPATCH_LIMIT: 5,
+    MINUTE_DB: {},
     MINUTE_DERIVE_QUEUE: {
       async send() {},
       async sendBatch(batch) { batches.push(batch); },
@@ -93,10 +106,31 @@ test('maintenance dispatches bounded orphan and backlog triggers in one Queue ba
       assert.equal(options.limit, 5);
       return [trigger, minuteDeriveTrigger({ channel_id: 11, minute_at: 180_000 })];
     },
+    stats: async () => ({
+      pending_count: 4,
+      processing_count: 1,
+      dead_count: 0,
+      oldest_pending_minute: 60_000,
+    }),
+    record: async (_env, task, outcome) => {
+      records.push({ task, outcome });
+    },
   });
 
   assert.equal(result.dispatched, 2);
+  assert.equal(result.pending_count, 4);
   assert.equal(batches.length, 1);
   assert.equal(batches[0].length, 2);
   assert.equal(batches[0][0].contentType, 'json');
+  assert.deepEqual(records, [{
+    task: 'derive',
+    outcome: {
+      processed: 0,
+      failed: 0,
+      pending_count: 4,
+      processing_count: 1,
+      dead_count: 0,
+      oldest_pending_minute: 60_000,
+    },
+  }]);
 });
