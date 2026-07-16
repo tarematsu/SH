@@ -53,9 +53,11 @@ test('split pipeline has one owner for each queue boundary', () => {
   assert.equal(readModel.queues.consumers[0].queue, 'stationhead-read-model');
   assert.equal(minuteIngest.queues.consumers[0].queue, 'stationhead-buddies-facts');
   assert.equal(minuteIngest.queues.consumers[0].max_batch_size, 1);
+  assert.deepEqual(minuteIngest.d1_databases.map(({ binding }) => binding), ['MINUTE_DB']);
   assert.equal(minuteIngest.queues.producers[0].queue, 'stationhead-minute-derive');
   assert.equal(minuteDerive.queues.consumers[0].queue, 'stationhead-minute-derive');
   assert.equal(minuteDerive.queues.consumers[0].max_batch_size, 1);
+  assert.deepEqual(minuteDerive.d1_databases.map(({ binding }) => binding), ['DB', 'MINUTE_DB']);
   assert.equal(minuteMaintenance.queues.consumers, undefined);
   assert.equal(minuteMaintenance.queues.producers[0].queue, 'stationhead-minute-derive');
 
@@ -109,6 +111,24 @@ test('comments task succeeds only after comments are durably handled', async () 
     collectComments: async () => ({ commentsSaved: 4, degraded: false, errorStage: null }),
   });
   assert.equal(result.commentsSaved, 4);
+});
+
+test('chained comments task validates poison before calling Stationhead', async () => {
+  let collected = 0;
+  await assert.rejects(
+    processCommentsTask({}, {
+      ...commentsTask(),
+      message_version: 2,
+      minute_fact: { message_type: 'unknown' },
+    }, {
+      collectComments: async () => {
+        collected += 1;
+        return { commentsSaved: 0, degraded: false };
+      },
+    }),
+    /message_type is unsupported/,
+  );
+  assert.equal(collected, 0);
 });
 
 test('chained comments task forwards a fully hydrated minute fact after collection', async () => {
