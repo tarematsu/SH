@@ -11,7 +11,8 @@ export function firstDefined(...values) {
 }
 
 function boundedNonNegativeInteger(value, fallback, maximum) {
-  const parsed = Number(value ?? fallback);
+  if (value == null || (typeof value === 'string' && value.trim() === '')) return fallback;
+  const parsed = Number(value);
   if (!Number.isFinite(parsed) || parsed < 0) return fallback;
   return Math.min(Math.trunc(parsed), maximum);
 }
