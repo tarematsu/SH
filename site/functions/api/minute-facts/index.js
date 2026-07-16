@@ -78,39 +78,95 @@ export function decodeMinuteFactsCursor(value) {
 
 export const decodeMigratedCursor = decodeMinuteFactsCursor;
 
-export function minuteFactsRowsSql(options = {}) {
-  let sql = `SELECT
-    f.id,f.channel_id,c.station_id,f.minute_at,f.observed_at,f.received_at,
-    f.source_code,f.source_priority,f.source_record_id,fc.collector_id,
-    f.broadcast_session_id,f.is_broadcasting,c.broadcast_start_time,
-    f.listener_count,f.online_member_count,
-    COALESCE((SELECT d.last_total_member_count FROM sh_total_member_daily d
+function minuteFactQueryContext(latest) {
+  if (!latest) {
+    return {
+      stationId: 'c.station_id',
+      hostId: 'c.host_id',
+      broadcastStartTime: 'c.broadcast_start_time',
+      totalMemberCount: `COALESCE((SELECT d.last_total_member_count FROM sh_total_member_daily d
       WHERE d.channel_id=f.channel_id AND d.day_at=(f.observed_at/86400000)*86400000
         AND d.host_key IN (0,COALESCE(c.host_id,0))
-      ORDER BY d.host_key DESC,d.last_observed_at DESC LIMIT 1),f.total_member_count)
-      AS total_member_count,f.guest_count,
+      ORDER BY d.host_key DESC,d.last_observed_at DESC LIMIT 1),f.total_member_count)`,
+      queueRevisionId: 'c.queue_revision_id',
+      queueId: 'c.queue_id',
+      queueStartTime: 'c.queue_start_time',
+      queueTrackCount: 'c.queue_track_count',
+      queueAvailable: 'c.queue_available',
+      queuePosition: 'c.queue_position',
+      trackBiteCount: 'c.track_bite_count',
+      trackId: 'c.track_id',
+      joins: `LEFT JOIN sh_minute_fact_context c ON c.fact_id=f.id
+  LEFT JOIN sh_minute_fact_collectors fc ON fc.collector_code=f.collector_code
+  LEFT JOIN sh_tracks t ON t.id=c.track_id
+  LEFT JOIN sh_hosts h ON h.id=c.host_id
+  LEFT JOIN sh_broadcast_sessions s ON s.id=f.broadcast_session_id
+  LEFT JOIN sh_queue_revisions r ON r.id=c.queue_revision_id`,
+    };
+  }
+
+  return {
+    stationId: 'COALESCE(v.station_id_override,s.station_id)',
+    hostId: 'COALESCE(v.host_id_override,s.host_id)',
+    broadcastStartTime: 'COALESCE(v.broadcast_start_time_override,s.broadcast_start_time)',
+    totalMemberCount: 'COALESCE(host_total.last_total_member_count,generic_total.last_total_member_count,f.total_member_count)',
+    queueRevisionId: 'v.queue_revision_id',
+    queueId: 'r.queue_id',
+    queueStartTime: 'r.queue_start_time',
+    queueTrackCount: 'r.item_count',
+    queueAvailable: 'v.queue_available',
+    queuePosition: 'v.queue_position',
+    trackBiteCount: 'COALESCE(counter.count_value,i.bite_count)',
+    trackId: 'i.track_id',
+    joins: `LEFT JOIN sh_minute_fact_context_v2 v ON v.fact_id=f.id
+  LEFT JOIN sh_minute_fact_collectors fc ON fc.collector_code=f.collector_code
+  LEFT JOIN sh_broadcast_sessions s ON s.id=f.broadcast_session_id
+  LEFT JOIN sh_queue_revisions r ON r.id=v.queue_revision_id
+  LEFT JOIN sh_queue_revision_items i
+    ON i.revision_id=v.queue_revision_id AND i.position=v.queue_position
+  LEFT JOIN sh_track_counter_current counter
+    ON counter.occurrence_key='revision:'||CAST(v.queue_revision_id AS TEXT)||':'||CAST(v.queue_position AS TEXT)
+  LEFT JOIN sh_tracks t ON t.id=i.track_id
+  LEFT JOIN sh_hosts h ON h.id=COALESCE(v.host_id_override,s.host_id)
+  LEFT JOIN sh_total_member_daily host_total
+    ON host_total.channel_id=f.channel_id
+      AND host_total.day_at=(f.observed_at/86400000)*86400000
+      AND host_total.host_key=COALESCE(v.host_id_override,s.host_id,0)
+  LEFT JOIN sh_total_member_daily generic_total
+    ON generic_total.channel_id=f.channel_id
+      AND generic_total.day_at=(f.observed_at/86400000)*86400000
+      AND generic_total.host_key=0`,
+  };
+}
+
+export function minuteFactsRowsSql(options = {}) {
+  const latest = Boolean(options.latest);
+  const context = minuteFactQueryContext(latest);
+  let sql = `SELECT
+    f.id,f.channel_id,${context.stationId} AS station_id,f.minute_at,f.observed_at,f.received_at,
+    f.source_code,f.source_priority,f.source_record_id,fc.collector_id,
+    f.broadcast_session_id,f.is_broadcasting,${context.broadcastStartTime} AS broadcast_start_time,
+    f.listener_count,f.online_member_count,
+    ${context.totalMemberCount} AS total_member_count,f.guest_count,
     CASE WHEN f.source_code=1 THEN f.reported_total_listens ELSE NULL END
       AS cumulative_listener_count,
     CASE WHEN f.source_code=1 THEN f.reported_current_stream_count
       ELSE COALESCE(f.reported_current_stream_count,f.reported_total_listens) END
-      AS total_stream_count,c.queue_revision_id,c.queue_id,c.queue_start_time,
-    f.is_paused,c.queue_track_count,c.queue_available,c.queue_position,
+      AS total_stream_count,${context.queueRevisionId} AS queue_revision_id,
+    ${context.queueId} AS queue_id,${context.queueStartTime} AS queue_start_time,
+    f.is_paused,${context.queueTrackCount} AS queue_track_count,
+    ${context.queueAvailable} AS queue_available,${context.queuePosition} AS queue_position,
     f.track_detection_code,f.track_confidence_code/100.0 AS track_confidence,
-    f.schedule_valid,c.track_bite_count,f.comment_count,f.comment_total,
+    f.schedule_valid,${context.trackBiteCount} AS track_bite_count,f.comment_count,f.comment_total,
     f.comments_degraded,f.quality_score_code/100.0 AS quality_score,f.quality_flags,
     t.title AS track_title,t.artist AS artist_name,t.isrc,t.spotify_id,
     h.current_handle AS host_handle,
     s.status AS session_status,s.source AS session_source,
     r.status AS revision_status,r.item_count AS revision_item_count
   FROM sh_minute_facts f
-  LEFT JOIN sh_minute_fact_context c ON c.fact_id=f.id
-  LEFT JOIN sh_minute_fact_collectors fc ON fc.collector_code=f.collector_code
-  LEFT JOIN sh_tracks t ON t.id=c.track_id
-  LEFT JOIN sh_hosts h ON h.id=c.host_id
-  LEFT JOIN sh_broadcast_sessions s ON s.id=f.broadcast_session_id
-  LEFT JOIN sh_queue_revisions r ON r.id=c.queue_revision_id
+  ${context.joins}
   `;
-  if (!options.latest) {
+  if (!latest) {
     sql += ' WHERE f.minute_at>=? AND f.minute_at<?';
     if (options.source) sql += ' AND f.source_code=?';
     if (options.host) sql += ` AND lower(COALESCE(h.current_handle,'')) LIKE ? ESCAPE '\\'`;
@@ -121,7 +177,7 @@ export function minuteFactsRowsSql(options = {}) {
     }
     if (options.cursor) sql += ' AND (f.minute_at>? OR (f.minute_at=? AND f.id>?))';
   }
-  return `${sql} ORDER BY f.minute_at ${options.latest ? 'DESC' : 'ASC'},f.id ${options.latest ? 'DESC' : 'ASC'} LIMIT ?`;
+  return `${sql} ORDER BY f.minute_at ${latest ? 'DESC' : 'ASC'},f.id ${latest ? 'DESC' : 'ASC'} LIMIT ?`;
 }
 
 export const migratedRowsSql = minuteFactsRowsSql;
@@ -166,29 +222,49 @@ function sourceSummary(stats = {}) {
   };
 }
 
-const LATEST_FACT_SQL = `SELECT id,source_code,minute_at,observed_at,received_at
-  FROM sh_minute_facts
-  ORDER BY minute_at DESC,id DESC LIMIT 1`;
 const LATEST_LIVE_FACT_SQL = `SELECT id,source_code,minute_at,observed_at,received_at
   FROM sh_minute_facts
   WHERE source_code=1
   ORDER BY minute_at DESC,id DESC LIMIT 1`;
 
-async function loadLatestFacts(env, limit = 1440) {
-  const [rowsResult, latestAny, latestLive] = await Promise.all([
-    env.MINUTE_DB.prepare(minuteFactsRowsSql({ latest: true })).bind(limit).all(),
-    env.MINUTE_DB.prepare(LATEST_FACT_SQL).first(),
-    env.MINUTE_DB.prepare(LATEST_LIVE_FACT_SQL).first(),
-  ]);
-  const rows = (rowsResult.results || []).map(decodeFactRow).reverse();
+function latestFactPointer(row) {
+  if (!row) return null;
+  const { id, source_code, minute_at, observed_at, received_at } = row;
+  return {
+    id,
+    source_code,
+    minute_at,
+    observed_at,
+    received_at,
+    source: SOURCE_NAMES[Number(source_code)] || null,
+  };
+}
+
+export function latestFactPointers(rows = []) {
+  const newest = Array.isArray(rows) ? rows : [];
+  return {
+    latestAny: latestFactPointer(newest[0]),
+    latestLive: latestFactPointer(newest.find((row) => Number(row?.source_code) === SOURCE_CODES.live_collector)),
+  };
+}
+
+export async function loadLatestFacts(env, limit = 1440) {
+  const rowsResult = await env.MINUTE_DB.prepare(minuteFactsRowsSql({ latest: true })).bind(limit).all();
+  const rawRows = rowsResult.results || [];
+  const pointers = latestFactPointers(rawRows);
+  let latestLive = pointers.latestLive;
+  if (!latestLive && limit > 0 && rawRows.length >= limit) {
+    latestLive = latestFactPointer(await env.MINUTE_DB.prepare(LATEST_LIVE_FACT_SQL).first());
+  }
+  const rows = rawRows.map(decodeFactRow).reverse();
   return {
     ok: true,
     mode: 'current',
     database_name: 'stationhead-minute',
     limit,
     rows,
-    latest_any: latestAny ? { ...latestAny, source: SOURCE_NAMES[Number(latestAny.source_code)] || null } : null,
-    latest_live: latestLive ? { ...latestLive, source: SOURCE_NAMES[Number(latestLive.source_code)] || null } : null,
+    latest_any: pointers.latestAny,
+    latest_live: latestLive,
     latest_observed_at: Number(latestLive?.observed_at || 0) || null,
     storage_source: 'stationhead-minute.sh_minute_facts',
   };
