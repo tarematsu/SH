@@ -1,0 +1,88 @@
+name: Fetch Cloudflare observability logs
+
+on:
+  workflow_dispatch:
+    inputs:
+      prefix:
+        description: R2 object prefix to read
+        required: false
+        default: sh/
+      limit:
+        description: Maximum number of newest objects to download
+        required: false
+        default: "25"
+
+permissions:
+  contents: read
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      AWS_ACCESS_KEY_ID: ${{ secrets.CLOUDFLARE_R2_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.CLOUDFLARE_R2_SECRET_ACCESS_KEY }}
+      AWS_DEFAULT_REGION: auto
+      R2_ENDPOINT: ${{ vars.CLOUDFLARE_R2_ENDPOINT }}
+      R2_BUCKET: ${{ vars.CLOUDFLARE_OBSERVABILITY_BUCKET }}
+      OBJECT_PREFIX: ${{ inputs.prefix }}
+      OBJECT_LIMIT: ${{ inputs.limit }}
+
+    steps:
+      - name: Validate configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$AWS_ACCESS_KEY_ID" || { echo "Missing secret CLOUDFLARE_R2_ACCESS_KEY_ID" >&2; exit 1; }
+          test -n "$AWS_SECRET_ACCESS_KEY" || { echo "Missing secret CLOUDFLARE_R2_SECRET_ACCESS_KEY" >&2; exit 1; }
+          test -n "$R2_ENDPOINT" || { echo "Missing variable CLOUDFLARE_R2_ENDPOINT" >&2; exit 1; }
+          test -n "$R2_BUCKET" || { echo "Missing variable CLOUDFLARE_OBSERVABILITY_BUCKET" >&2; exit 1; }
+          [[ "$OBJECT_LIMIT" =~ ^[1-9][0-9]{0,2}$ ]] || { echo "limit must be between 1 and 999" >&2; exit 1; }
+
+      - name: Download newest log objects
+        id: download
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p observability-logs
+
+          aws s3api list-objects-v2 \
+            --endpoint-url "$R2_ENDPOINT" \
+            --bucket "$R2_BUCKET" \
+            --prefix "$OBJECT_PREFIX" \
+            --output json > objects.json
+
+          jq -r --argjson limit "$OBJECT_LIMIT" \
+            '(.Contents // []) | sort_by(.LastModified) | reverse | .[:$limit] | .[].Key' \
+            objects.json > object-keys.txt
+
+          count=0
+          while IFS= read -r key; do
+            [ -n "$key" ] || continue
+            destination="observability-logs/$key"
+            mkdir -p "$(dirname "$destination")"
+            aws s3api get-object \
+              --endpoint-url "$R2_ENDPOINT" \
+              --bucket "$R2_BUCKET" \
+              --key "$key" \
+              "$destination" >/dev/null
+            count=$((count + 1))
+          done < object-keys.txt
+
+          echo "count=$count" >> "$GITHUB_OUTPUT"
+          {
+            echo "## Cloudflare observability"
+            echo
+            echo "- Bucket: \`$R2_BUCKET\`"
+            echo "- Prefix: \`$OBJECT_PREFIX\`"
+            echo "- Downloaded objects: **$count**"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload logs as workflow artifact
+        if: steps.download.outputs.count != '0'
+        uses: actions/upload-artifact@v4
+        with:
+          name: cloudflare-observability-sh-${{ github.run_id }}
+          path: observability-logs/
+          if-no-files-found: error
+          retention-days: 7
