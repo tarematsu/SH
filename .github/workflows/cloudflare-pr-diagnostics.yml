@@ -51,7 +51,10 @@ jobs:
       - name: Deploy one-job derive consumer before legacy cutover
         run: npm run deploy:minute-derive
         working-directory: worker
-      - name: Deploy minute ingest consumer before legacy cutover
+      - name: Remove legacy minute Queue consumer
+        run: npm run deploy:minute-maintenance
+        working-directory: worker
+      - name: Deploy minute ingest consumer after cutover
         run: npm run deploy:minute-ingest
         working-directory: worker
 
