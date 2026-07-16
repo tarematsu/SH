@@ -60,10 +60,7 @@ export const MATERIALIZED_RESPONSE_MAX_AGE_MS = 15 * 60_000;
 export const PLAYBACK_RESPONSE_MAX_AGE_MS = 2 * 60 * 60_000;
 
 export const MATERIALIZED_API_VARIANTS = Object.freeze([
-  Object.freeze({ key: 'dashboard', url: '/api/dashboard', cadence_minutes: 5 }),
   Object.freeze({ key: 'dashboard-history', url: '/api/dashboard-history', cadence_minutes: 5 }),
-  Object.freeze({ key: 'dashboard-queue', url: '/api/dashboard-queue', cadence_minutes: 5 }),
-  Object.freeze({ key: 'comment-velocity', url: '/api/comment-velocity', cadence_minutes: 5 }),
   Object.freeze({ key: 'track-likes', url: '/api/track-likes', cadence_minutes: 5 }),
   Object.freeze({ key: 'like-ranking', url: '/api/like-ranking', cadence_minutes: 5 }),
   Object.freeze({ key: 'minute-facts-current', url: '/api/minute-facts/current', cadence_minutes: 5 }),
