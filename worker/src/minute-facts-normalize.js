@@ -53,7 +53,7 @@ export function normalizedIsrc(value) {
 export function normalizedLegacyTrack(title, artist) {
   const titleKey = text(title)?.toLowerCase() || '';
   const artistKey = text(artist)?.toLowerCase() || '';
-  return titleKey || artistKey ? `${titleKey}${artistKey}` : null;
+  return titleKey || artistKey ? `${titleKey}\u001f${artistKey}` : null;
 }
 
 export function uniqueAliases(aliases) {
@@ -132,7 +132,7 @@ export function queueRevisionItemStatement(db, revisionId, track, biteCount) {
       schedule_valid=excluded.schedule_valid`).bind(
     revisionId, track.position, track.trackId, track.queue_track_id, track.stationhead_track_id,
     track.isrc, track.spotify_id, track.deezer_id, track.duration_ms,
-    track.playbackOffset, track.scheduleValid ? 1 : 0,
+    track.playbackOffset, track.scheduleValid ? 1 : 0, biteCount,
   );
 }
 
