@@ -1,21 +1,14 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "sh-monitor-minute",
-  "main": "src/minute-production-entry.js",
+  "main": "src/minute-maintenance-entry.js",
   "compatibility_date": "2026-06-24",
   "workers_dev": false,
   "preview_urls": false,
   "logpush": true,
   "observability": { "enabled": true },
   "vars": {
-    "DERIVE_MAX_JOBS": 1000,
-    "DERIVE_JOB_TIMEOUT_MS": 18000,
-    "DERIVE_LEASE_MS": 60000,
-    "DERIVE_MAX_ATTEMPTS": 8,
-    "DERIVE_RUN_BUDGET_MS": 55000,
-    "REQUEST_TIMEOUT_MS": 8000,
-    "METADATA_LIMIT": 1,
-    "ISRC_METADATA_LIMIT": 1,
+    "DERIVE_DISPATCH_LIMIT": 5,
     "REBUILD_SOURCE_ROWS": 20,
     "REBUILD_MAX_JOBS": 4,
     "REBUILD_RECENT_GUARD_MS": 300000,
@@ -45,14 +38,8 @@
     { "binding": "MINUTE_DB", "database_name": "stationhead-minute", "database_id": "43c12c1e-886d-4496-9c37-61bc8a15bbd7" }
   ],
   "queues": {
-    "consumers": [
-      {
-        "queue": "stationhead-buddies-facts",
-        "max_batch_size": 10,
-        "max_batch_timeout": 5,
-        "max_retries": 8,
-        "dead_letter_queue": "stationhead-buddies-facts-dlq"
-      }
+    "producers": [
+      { "binding": "MINUTE_DERIVE_QUEUE", "queue": "stationhead-minute-derive" }
     ]
   }
 }
