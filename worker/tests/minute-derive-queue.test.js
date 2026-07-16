@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
 import {
@@ -43,6 +44,13 @@ test('minute derive triggers have a stable idempotency identity', () => {
     () => parseMinuteDeriveTrigger({ ...trigger, job_id: 'wrong' }),
     /job_id does not match/,
   );
+});
+
+test('derive Worker lazy-loads only the selected fact store', () => {
+  const source = readFileSync(new URL('../src/minute-derive-queue.js', import.meta.url), 'utf8');
+  assert.doesNotMatch(source, /^import .*minute-facts-(?:fast|rebuild)-store\.js/m);
+  assert.match(source, /import\('\.\/minute-facts-fast-store\.js'\)/);
+  assert.match(source, /import\('\.\/minute-facts-rebuild-store\.js'\)/);
 });
 
 test('derive Queue processing claims and completes exactly one job without default aggregation', async () => {
