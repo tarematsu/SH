@@ -110,20 +110,22 @@ test('collector priority timeout skips only optional buddies synchronization', a
   assert.deepEqual(calls, ['stagger']);
 });
 
-test('minute worker has no every-minute Stationhead comment cron', async () => {
+test('minute worker uses an every-minute derive wrapper without a Stationhead comment task', async () => {
   const config = JSON.parse(readFileSync(new URL('../wrangler.minute.jsonc', import.meta.url), 'utf8'));
-  const source = readFileSync(new URL('../src/minute-entry.js', import.meta.url), 'utf8');
+  const source = readFileSync(new URL('../src/minute-production-entry.js', import.meta.url), 'utf8');
   assert.equal(config.name, 'sh-monitor-minute');
-  assert.equal(config.main, 'src/minute-entry.js');
+  assert.equal(config.main, 'src/minute-production-entry.js');
   assert.deepEqual(config.triggers.crons, [
-    MINUTE_FACT_DERIVE_CRON,
+    '* * * * *',
     MINUTE_FACT_MAINTENANCE_CRON,
   ]);
   assert.equal(MINUTE_FACT_WORKER_CRON, MINUTE_FACT_DERIVE_CRON);
-  assert.equal(config.triggers.crons.includes('* * * * *'), false);
+  assert.equal(config.triggers.crons.includes('* * * * *'), true);
+  assert.match(source, /LEGACY_DERIVE_CRON/);
   assert.doesNotMatch(source, /minute-comments\.js|runMinuteCommentTasks/);
   assert.deepEqual(config.d1_databases.map(({ binding }) => binding), ['BUDDIES_DB', 'MINUTE_DB']);
   assert.equal(config.vars.MINUTE_FACT_AUTO_REQUEUE_DEAD, true);
+  assert.equal(config.vars.DERIVE_MAX_JOBS, 1_000);
   assert.equal(config.vars.REBUILD_RECENT_GUARD_MS, 300_000);
 
   assert.deepEqual(await runMinuteScheduled({ cron: '* * * * *' }, {}, {}), {
