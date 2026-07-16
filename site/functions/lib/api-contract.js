@@ -73,6 +73,7 @@ export const MATERIALIZED_API_VARIANTS = Object.freeze([
 ]);
 
 const blockedApiPaths = new Set(BLOCKED_API_PATHS);
+const materializedVariantsByKey = new Map(MATERIALIZED_API_VARIANTS.map((variant) => [variant.key, variant]));
 
 function normalizedPathname(value) {
   const pathname = String(value || '/');
@@ -141,14 +142,23 @@ export function apiCacheTtlSeconds(request) {
     : API_EDGE_TTL_SECONDS;
 }
 
+export function materializedResponseCadenceSeconds(modelKey) {
+  if (String(modelKey || '').startsWith('playback:')) return PLAYBACK_EDGE_TTL_SECONDS;
+  const cadenceMinutes = Number(materializedVariantsByKey.get(String(modelKey || ''))?.cadence_minutes);
+  if (!Number.isFinite(cadenceMinutes) || cadenceMinutes <= 0) return API_EDGE_TTL_SECONDS;
+  return Math.max(API_EDGE_TTL_SECONDS, Math.trunc(cadenceMinutes * 60));
+}
+
 export function materializedResponseMaximumAge(modelKey, env = {}) {
   const playback = String(modelKey || '').startsWith('playback:');
   const configured = Number(playback
     ? env.PLAYBACK_RESPONSE_MAX_AGE_MS
     : env.PAGES_RESPONSE_MAX_AGE_MS);
-  const fallback = playback ? PLAYBACK_RESPONSE_MAX_AGE_MS : MATERIALIZED_RESPONSE_MAX_AGE_MS;
-  const minimum = (playback ? PLAYBACK_EDGE_TTL_SECONDS : API_EDGE_TTL_SECONDS) * 1000;
-  return Number.isFinite(configured) && configured >= minimum ? configured : fallback;
+  const cadenceMs = materializedResponseCadenceSeconds(modelKey) * 1000;
+  const fallback = playback
+    ? PLAYBACK_RESPONSE_MAX_AGE_MS
+    : Math.max(MATERIALIZED_RESPONSE_MAX_AGE_MS, cadenceMs + API_EDGE_TTL_SECONDS * 1000);
+  return Number.isFinite(configured) && configured >= cadenceMs ? configured : fallback;
 }
 
 export function canonicalApiCacheRequest(request) {
