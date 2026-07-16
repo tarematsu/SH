@@ -155,10 +155,12 @@ export function materializedResponseMaximumAge(modelKey, env = {}) {
     ? env.PLAYBACK_RESPONSE_MAX_AGE_MS
     : env.PAGES_RESPONSE_MAX_AGE_MS);
   const cadenceMs = materializedResponseCadenceSeconds(modelKey) * 1000;
+  const graceMs = API_EDGE_TTL_SECONDS * 1000;
+  const minimum = cadenceMs + graceMs;
   const fallback = playback
     ? PLAYBACK_RESPONSE_MAX_AGE_MS
-    : Math.max(MATERIALIZED_RESPONSE_MAX_AGE_MS, cadenceMs + API_EDGE_TTL_SECONDS * 1000);
-  return Number.isFinite(configured) && configured >= cadenceMs ? configured : fallback;
+    : Math.max(MATERIALIZED_RESPONSE_MAX_AGE_MS, minimum);
+  return Number.isFinite(configured) && configured >= minimum ? configured : fallback;
 }
 
 export function canonicalApiCacheRequest(request) {
