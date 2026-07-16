@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - "worker/**"
+      - "site/functions/**"
       - "packages/sh-shared/**"
       - ".github/workflows/cloudflare-pr-diagnostics.yml"
       - ".github/scripts/cloudflare-build-diagnostics.mjs"
