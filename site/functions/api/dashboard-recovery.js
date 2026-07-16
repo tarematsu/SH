@@ -25,10 +25,8 @@ SELECT observed_at,listener_count,online_member_count,total_member_count,
   total_listens,current_stream_count
 FROM ranked WHERE rn=1 ORDER BY observed_at ASC LIMIT 300`;
 
-export const COLLECTOR_LATEST_SQL = `SELECT observed_at
-FROM sh_channel_snapshots
-ORDER BY observed_at DESC,id DESC
-LIMIT 1`;
+export const COLLECTOR_LATEST_SQL = `SELECT MAX(COALESCE(last_success_at,last_run_at,updated_at)) AS observed_at
+FROM sh_collector_read_model`;
 
 function json(data, status = 200, cache = CACHE_CONTROL) {
   return new Response(JSON.stringify(data), {
@@ -47,20 +45,18 @@ export async function onRequestGet({ env }) {
   }
 
   try {
-    const result = await env.MINUTE_DB.prepare(FACTS_RECOVERY_SQL).all();
+    const [result, collectorLatest] = await Promise.all([
+      env.MINUTE_DB.prepare(FACTS_RECOVERY_SQL).all(),
+      env.MINUTE_DB.prepare(COLLECTOR_LATEST_SQL).first().catch((error) => {
+        if (!/no such table|no such view/i.test(String(error?.message || ''))) throw error;
+        return null;
+      }),
+    ]);
 
     const rows = result.results || [];
     const latestObservedAt = Number(rows.at(-1)?.observed_at || 0) || null;
     const generatedAt = Date.now();
-    let collectorLatestObservedAt = null;
-    if (env.DB) {
-      try {
-        const collectorLatest = await env.DB.prepare(COLLECTOR_LATEST_SQL).first();
-        collectorLatestObservedAt = Number(collectorLatest?.observed_at || 0) || null;
-      } catch (error) {
-        if (!/no such table|no such view/i.test(String(error?.message || ''))) throw error;
-      }
-    }
+    const collectorLatestObservedAt = Number(collectorLatest?.observed_at || 0) || null;
     const readModelStale = !latestObservedAt || generatedAt - latestObservedAt > STALE_AFTER_MS;
     const collectorStale = !collectorLatestObservedAt
       || generatedAt - collectorLatestObservedAt > STALE_AFTER_MS;
