@@ -1,5 +1,6 @@
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { dirname, extname, relative, resolve, sep } from 'node:path';
+import { pathToFileURL } from 'node:url';
 
 const repositoryRoot = resolve(import.meta.dirname, '..', '..');
 const workerRoot = resolve(repositoryRoot, 'worker');
@@ -17,11 +18,12 @@ const workerDefinitions = [
   { name: 'sh-monitor-other', config: 'worker/wrangler.other.jsonc', command: 'deploy:other' },
 ];
 
-const gitConnectedWorkers = new Set([
+export const gitConnectedWorkers = Object.freeze([
   'sh-monitor-buddies',
   'sh-monitor-other',
   'sh-minute-maintenance',
 ]);
+const gitConnectedWorkerSet = new Set(gitConnectedWorkers);
 
 function repositoryPath(path) {
   return relative(repositoryRoot, path).split(sep).join('/');
@@ -86,13 +88,6 @@ function normalizeChangedPath(value) {
   return String(value || '').trim().replaceAll('\\', '/').replace(/^\.\//, '');
 }
 
-function readChangedPaths() {
-  if (process.argv.includes('--all')) return { all: true, paths: [] };
-  const input = readFileSync(0, 'utf8');
-  const paths = [...new Set(input.split(/\r?\n/).map(normalizeChangedPath).filter(Boolean))];
-  return { all: false, paths };
-}
-
 function affectedByPath(definition, changedPath) {
   if (changedPath === definition.config) return true;
   if (changedPath.startsWith('packages/sh-shared/')) {
@@ -101,49 +96,79 @@ function affectedByPath(definition, changedPath) {
   return definition.dependencies.has(changedPath);
 }
 
-const changed = readChangedPaths();
-const selected = new Set();
-
-if (changed.all) {
-  for (const definition of definitions) selected.add(definition.name);
-} else {
-  for (const changedPath of changed.paths) {
-    if (/^worker\/package(?:-lock)?\.json$/.test(changedPath)) {
-      for (const definition of definitions) selected.add(definition.name);
-      continue;
-    }
-
-    let matched = false;
-    for (const definition of definitions) {
-      if (affectedByPath(definition, changedPath)) {
-        selected.add(definition.name);
-        matched = true;
-      }
-    }
-
-    if (!matched
-        && changedPath.startsWith('worker/src/')
-        && !changedPath.startsWith('worker/src/__fixtures__/')) {
-      // A deleted or newly introduced runtime module may not be reachable from
-      // the current import graph. Fall back to all Workers rather than miss a
-      // production deploy.
-      for (const definition of definitions) selected.add(definition.name);
-    }
-
-    if (!matched && /^worker\/wrangler.*\.jsonc$/.test(changedPath)) {
-      for (const definition of definitions) selected.add(definition.name);
-    }
-  }
+export function workerBuildWatchPaths(workerName) {
+  const definition = definitions.find(({ name }) => name === workerName);
+  if (!definition) throw new Error(`Unknown Worker: ${workerName}`);
+  return [...new Set([
+    definition.config,
+    ...definition.dependencies,
+    'worker/package.json',
+    'worker/package-lock.json',
+    'worker/scripts/select-cloudflare-build-config.mjs',
+  ])].sort();
 }
 
-const workers = definitions.filter((definition) => selected.has(definition.name));
-const output = {
-  changed_paths: changed.paths,
-  workers: workers.map((definition) => definition.name),
-  commands: workers.map((definition) => definition.command),
-  diagnostics: workers
-    .map((definition) => definition.name)
-    .filter((name) => gitConnectedWorkers.has(name)),
-};
+export function connectedWorkerBuildWatchConfig() {
+  return Object.fromEntries(gitConnectedWorkers.map((name) => [name, workerBuildWatchPaths(name)]));
+}
 
-process.stdout.write(`${JSON.stringify(output)}\n`);
+export function selectWorkersForPaths(inputPaths = [], options = {}) {
+  const paths = [...new Set(inputPaths.map(normalizeChangedPath).filter(Boolean))];
+  const selected = new Set();
+
+  if (options.all === true) {
+    for (const definition of definitions) selected.add(definition.name);
+  } else {
+    for (const changedPath of paths) {
+      if (/^worker\/package(?:-lock)?\.json$/.test(changedPath)) {
+        for (const definition of definitions) selected.add(definition.name);
+        continue;
+      }
+
+      let matched = false;
+      for (const definition of definitions) {
+        if (affectedByPath(definition, changedPath)) {
+          selected.add(definition.name);
+          matched = true;
+        }
+      }
+
+      if (!matched
+          && changedPath.startsWith('worker/src/')
+          && !changedPath.startsWith('worker/src/__fixtures__/')) {
+        // A deleted or newly introduced runtime module may not be reachable from
+        // the current import graph. Fall back to all Workers rather than miss a
+        // production deploy.
+        for (const definition of definitions) selected.add(definition.name);
+      }
+
+      if (!matched && /^worker\/wrangler.*\.jsonc$/.test(changedPath)) {
+        for (const definition of definitions) selected.add(definition.name);
+      }
+    }
+  }
+
+  const workers = definitions.filter((definition) => selected.has(definition.name));
+  return {
+    changed_paths: paths,
+    workers: workers.map((definition) => definition.name),
+    commands: workers.map((definition) => definition.command),
+    diagnostics: workers
+      .map((definition) => definition.name)
+      .filter((name) => gitConnectedWorkerSet.has(name)),
+  };
+}
+
+function readChangedPaths() {
+  if (process.argv.includes('--all')) return { all: true, paths: [] };
+  const input = readFileSync(0, 'utf8');
+  return {
+    all: false,
+    paths: input.split(/\r?\n/).map(normalizeChangedPath).filter(Boolean),
+  };
+}
+
+if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
+  const changed = readChangedPaths();
+  process.stdout.write(`${JSON.stringify(selectWorkersForPaths(changed.paths, { all: changed.all }))}\n`);
+}
