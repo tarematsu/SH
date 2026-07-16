@@ -11,7 +11,6 @@ export async function consumeMinuteQueue(batch, env, ctx, dependencies = {}) {
   const consumeMinuteFactBatch = dependencies.consumeMinuteFactBatch || queueModule.consumeMinuteFactBatch;
   const enqueueMinuteFactJob = dependencies.enqueueMinuteFactJob || inboxModule.enqueueMinuteFactJob;
   const metadataJobs = [];
-  const newJobIds = new Set();
   const result = await consumeMinuteFactBatch(batch, env, {
     hasReceipt: async () => false,
     saveReceipt: async () => {},
@@ -21,8 +20,14 @@ export async function consumeMinuteQueue(batch, env, ctx, dependencies = {}) {
     saveCommentTask: async () => ({ created: false, skipped: true }),
     enqueue: async (activeEnv, payload, options) => {
       const accepted = await enqueueMinuteFactJob(activeEnv, payload, options);
-      if (accepted?.enqueued) {
-        newJobIds.add(`minute-fact:${accepted.channel_id}:${accepted.minute_at}`);
+      if (accepted?.enqueued
+          && options.enrichTrackMetadata
+          && payload.queue?.tracks?.length) {
+        metadataJobs.push({
+          jobId: `minute-fact:${accepted.channel_id}:${accepted.minute_at}`,
+          payload,
+          options,
+        });
       }
       return accepted;
     },
@@ -32,19 +37,14 @@ export async function consumeMinuteQueue(batch, env, ctx, dependencies = {}) {
     // normal split-pipeline path.
     saveReadModels: async (activeEnv, readModel, jobId) => {
       if (!readModel) return;
-      const { saveMinuteFactReadModels } = await import('./minute-facts-read-model.js');
-      await saveMinuteFactReadModels(activeEnv, readModel, jobId);
-    },
-    onCommitted(job) {
-      // Consume the acceptance marker once. A duplicate copy later in the same
-      // Queue batch must not repeat metadata work for the one accepted inbox row.
-      if (newJobIds.delete(job.jobId)
-          && job.options.enrichTrackMetadata
-          && job.payload.queue?.tracks?.length) {
-        metadataJobs.push(job);
-      }
+      const save = dependencies.saveMinuteFactReadModels
+        || (await import('./minute-facts-read-model.js')).saveMinuteFactReadModels;
+      await save(activeEnv, readModel, jobId);
     },
   });
+  // Schedule metadata from the successful durable inbox INSERT, rather than
+  // from the later ACK hook. A legacy read-model failure may retry the Queue
+  // message, but must not erase the one accepted job's optional metadata work.
   if (metadataJobs.length) {
     const enrich = dependencies.runCommittedMetadataEnrichment || runCommittedMetadataEnrichment;
     const task = enrich(env, metadataJobs);
