@@ -24,6 +24,29 @@ export const BUDDY_PLAYBACK_SCHEMA_SQL = `CREATE TABLE IF NOT EXISTS sh_playback
   changed_at INTEGER NOT NULL
 )`;
 
+export const BUDDY_PLAYBACK_CLOCK_SCHEMA_SQL = `CREATE TABLE IF NOT EXISTS sh_buddy_playback_clock (
+  channel_alias TEXT PRIMARY KEY,
+  queue_id INTEGER,
+  start_time INTEGER,
+  is_paused INTEGER NOT NULL DEFAULT 0,
+  paused_total_ms INTEGER NOT NULL DEFAULT 0,
+  pause_started_at INTEGER,
+  observed_at INTEGER NOT NULL
+)`;
+
+export const BUDDY_TRACK_METADATA_SCHEMA_SQL = `CREATE TABLE IF NOT EXISTS sh_buddy_track_metadata (
+  spotify_id TEXT PRIMARY KEY,
+  isrc TEXT,
+  title TEXT,
+  artist TEXT,
+  display_title TEXT,
+  thumbnail_url TEXT,
+  spotify_url TEXT,
+  source TEXT,
+  fetched_at INTEGER NOT NULL,
+  raw_json TEXT
+)`;
+
 let schemaReady = false;
 
 function positive(value, fallback, maximum = Number.MAX_SAFE_INTEGER) {
@@ -208,6 +231,8 @@ export async function ensureBuddyPlaybackSchema(env) {
   if (!env?.DB) throw new Error('buddy46 D1 binding is missing');
   if (schemaReady) return false;
   await env.DB.prepare(BUDDY_PLAYBACK_SCHEMA_SQL).run();
+  await env.DB.prepare(BUDDY_PLAYBACK_CLOCK_SCHEMA_SQL).run();
+  await env.DB.prepare(BUDDY_TRACK_METADATA_SCHEMA_SQL).run();
   schemaReady = true;
   return true;
 }
@@ -217,13 +242,6 @@ function isAuthFailure(error) {
     .test(String(error?.message || error));
 }
 
-// sh_worker_collector_state/sh_worker_auth_control/sh_playback_channel_current
-// are shared, alias-keyed tables (auth-state.js's functions also serve
-// buddies' own primary loop under the 'stationhead' id) -- schema init and
-// session refresh for buddy46 specifically run against OTHER_DB, via this
-// scoped substitute env, so buddy46's rows never touch buddies' database.
-// The playback collection below also uses OTHER_DB exclusively. It must not
-// depend on the private buddies collector database.
 function otherDbEnv(env) {
   return { ...env, DB: env.OTHER_DB };
 }
