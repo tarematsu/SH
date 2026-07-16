@@ -1,11 +1,10 @@
 import {
   API_BROWSER_TTL_SECONDS,
-  API_EDGE_TTL_SECONDS,
-  PLAYBACK_EDGE_TTL_SECONDS,
   apiCacheTtlSeconds,
   canonicalApiCacheRequest,
   edgeCacheableApiRequest,
   materializedApiKey,
+  materializedResponseCadenceSeconds,
   materializedResponseMaximumAge,
 } from './lib/api-contract.js';
 
@@ -34,12 +33,6 @@ function safeHeaders(value) {
   }
 }
 
-function materializedCadenceSeconds(modelKey) {
-  return String(modelKey || '').startsWith('playback:')
-    ? PLAYBACK_EDGE_TTL_SECONDS
-    : API_EDGE_TTL_SECONDS;
-}
-
 async function materializedResponse(context, modelKey, now = Date.now()) {
   if (!modelKey || !context.env?.MINUTE_DB) return null;
   const db = context.env.MINUTE_DB;
@@ -63,7 +56,7 @@ async function materializedResponse(context, modelKey, now = Date.now()) {
     const headers = new Headers(safeHeaders(manifest.headers_json));
     headers.set('x-api-source', 'worker-materialized');
     headers.set('x-materialized-at', String(manifest.updated_at));
-    headers.set('x-materialized-cadence-seconds', String(materializedCadenceSeconds(modelKey)));
+    headers.set('x-materialized-cadence-seconds', String(materializedResponseCadenceSeconds(modelKey)));
     return new Response(rows.map((row) => String(row.payload_chunk || '')).join(''), {
       status: Number(manifest.status) || 200,
       headers,
