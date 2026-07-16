@@ -19,6 +19,9 @@ const TRACK_HISTORY_BACKFILL_DAYS = 7;
 const TRACK_HISTORY_EPOCH = Date.UTC(2024, 4, 1);
 const TRACK_HISTORY_LIMIT = 40_000;
 const LIKE_RANKING_LIMIT = 500;
+const DAILY_CHANGES_CADENCE_MINUTES = 15;
+const LIKE_RANKING_CADENCE_MINUTES = 30;
+const TRACK_HISTORY_MODEL_KEY = 'track-history';
 const RESPONSE_CHUNK_SIZE = 192_000;
 const RESPONSE_MAX_CHUNKS = 80;
 
@@ -103,6 +106,23 @@ export function materializedVariantDue(variant, now = Date.now()) {
   const cadenceMinutes = Math.max(1, Math.trunc(Number(variant?.cadence_minutes) || 5));
   const absoluteMinute = Math.floor(Number(now) / 60_000);
   return Number.isFinite(absoluteMinute) && absoluteMinute % cadenceMinutes === 0;
+}
+
+export function pagesPayloadRefreshPlan(now = Date.now()) {
+  return {
+    daily: materializedVariantDue({ cadence_minutes: DAILY_CHANGES_CADENCE_MINUTES }, now),
+    likes: materializedVariantDue({ cadence_minutes: LIKE_RANKING_CADENCE_MINUTES }, now),
+  };
+}
+
+export function dueFastMaterializedVariants(now = Date.now()) {
+  const utcMinute = new Date(Number(now)).getUTCMinutes();
+  return MATERIALIZED_API_VARIANTS.filter((variant) => {
+    if (!materializedVariantDue(variant, now)) return false;
+    // The hourly track-history source refresh runs at :31 and immediately
+    // republishes the response. Avoid rendering the old source one minute before it.
+    return variant.key !== TRACK_HISTORY_MODEL_KEY || utcMinute !== 30;
+  });
 }
 
 async function ensureSchema(db) {
@@ -250,21 +270,9 @@ async function renderVariant(variant, env, dependencies = {}) {
   return handler({ request, env });
 }
 
-export async function refreshFastPagesReadModels(env, now = Date.now(), dependencies = {}) {
-  const targetDb = env?.MINUTE_DB;
-  if (!env?.BUDDIES_DB || !targetDb || !env?.OTHER_DB) {
-    return { skipped: true, reason: 'db-binding-missing' };
-  }
-  await ensureSchema(targetDb);
-  const activeEnv = pagesEnvironment(env);
-  const [daily, likes] = await Promise.all([
-    refreshDailyChanges(targetDb, now),
-    refreshLikeRanking(targetDb, now),
-  ]);
-
-  const dueVariants = MATERIALIZED_API_VARIANTS.filter((variant) => materializedVariantDue(variant, now));
+async function materializeVariants(variants, targetDb, activeEnv, now, dependencies = {}) {
   const responses = [];
-  for (const variant of dueVariants) {
+  for (const variant of variants) {
     try {
       const response = await renderVariant(variant, activeEnv, dependencies);
       const saved = await saveResponse(targetDb, variant.key, response, now);
@@ -277,16 +285,44 @@ export async function refreshFastPagesReadModels(env, now = Date.now(), dependen
       });
     }
   }
+  return responses;
+}
+
+function responseSummary(responses, totalVariants = MATERIALIZED_API_VARIANTS.length) {
+  return {
+    responses,
+    due: responses.length,
+    deferred: Math.max(0, totalVariants - responses.length),
+    succeeded: responses.filter((item) => item.ok).length,
+    failed: responses.filter((item) => !item.ok).length,
+  };
+}
+
+export async function refreshFastPagesReadModels(env, now = Date.now(), dependencies = {}) {
+  const targetDb = env?.MINUTE_DB;
+  if (!env?.BUDDIES_DB || !targetDb || !env?.OTHER_DB) {
+    return { skipped: true, reason: 'db-binding-missing' };
+  }
+  await ensureSchema(targetDb);
+  const activeEnv = pagesEnvironment(env);
+  const plan = pagesPayloadRefreshPlan(now);
+  const [daily, likes] = await Promise.all([
+    plan.daily
+      ? refreshDailyChanges(targetDb, now)
+      : Promise.resolve({ skipped: true, reason: 'not-due' }),
+    plan.likes
+      ? refreshLikeRanking(targetDb, now)
+      : Promise.resolve({ skipped: true, reason: 'not-due' }),
+  ]);
+
+  const dueVariants = dueFastMaterializedVariants(now);
+  const responses = await materializeVariants(dueVariants, targetDb, activeEnv, now, dependencies);
   return {
     skipped: false,
     generated_at: now,
     daily,
     likes,
-    responses,
-    due: dueVariants.length,
-    deferred: MATERIALIZED_API_VARIANTS.length - dueVariants.length,
-    succeeded: responses.filter((item) => item.ok).length,
-    failed: responses.filter((item) => !item.ok).length,
+    ...responseSummary(responses),
   };
 }
 
@@ -377,16 +413,62 @@ async function refreshTrackHistory(sourceDb, targetDb, now) {
   return { recent, backfill };
 }
 
-export async function refreshPagesReadModels(env, now = Date.now()) {
+function trackHistoryVariant() {
+  const variant = MATERIALIZED_API_VARIANTS.find(({ key }) => key === TRACK_HISTORY_MODEL_KEY);
+  if (!variant) throw new Error(`${TRACK_HISTORY_MODEL_KEY} materialized API variant is missing`);
+  return variant;
+}
+
+export async function refreshTrackHistoryPagesReadModel(env, now = Date.now(), dependencies = {}) {
   const sourceDb = env?.BUDDIES_DB;
   const targetDb = env?.MINUTE_DB;
   if (!sourceDb || !targetDb) return { skipped: true, reason: 'db-binding-missing' };
   await ensureSchema(targetDb);
 
+  const refreshTracks = dependencies.refreshTracks || refreshTrackHistory;
+  const tracks = await refreshTracks(sourceDb, targetDb, now);
+  const responses = await materializeVariants(
+    [trackHistoryVariant()],
+    targetDb,
+    pagesEnvironment(env),
+    now,
+    dependencies,
+  );
+  return {
+    skipped: false,
+    generated_at: now,
+    tracks,
+    ...responseSummary(responses, 1),
+  };
+}
+
+// Compatibility helper for manual repair paths. Production uses the cadence-aware
+// fast refresh and the track-history-only hourly refresh above.
+export async function refreshPagesReadModels(env, now = Date.now(), dependencies = {}) {
+  const sourceDb = env?.BUDDIES_DB;
+  const targetDb = env?.MINUTE_DB;
+  if (!sourceDb || !targetDb) return { skipped: true, reason: 'db-binding-missing' };
+  await ensureSchema(targetDb);
+
+  const refreshTracks = dependencies.refreshTracks || refreshTrackHistory;
   const [daily, likes, tracks] = await Promise.all([
     refreshDailyChanges(targetDb, now),
     refreshLikeRanking(targetDb, now),
-    refreshTrackHistory(sourceDb, targetDb, now),
+    refreshTracks(sourceDb, targetDb, now),
   ]);
-  return { skipped: false, daily, likes, tracks };
+  const responses = await materializeVariants(
+    [trackHistoryVariant()],
+    targetDb,
+    pagesEnvironment(env),
+    now,
+    dependencies,
+  );
+  return {
+    skipped: false,
+    generated_at: now,
+    daily,
+    likes,
+    tracks,
+    ...responseSummary(responses, 1),
+  };
 }
