@@ -184,6 +184,20 @@ function runWrangler(args = [], options = {}) {
 
 export async function deployConnectedWorker(options = {}) {
   const workerName = String(options.workerName ?? process.env.WRANGLER_CI_OVERRIDE_NAME ?? '').trim();
+  const branch = String(options.branch ?? process.env.WORKERS_CI_BRANCH ?? '').trim();
+  const productionBranch = String(options.productionBranch ?? 'main').trim() || 'main';
+  if (cloudflareBuildConfig(workerName) && branch && branch !== productionBranch) {
+    const decision = {
+      deploy: false,
+      reason: 'non-production-branch',
+      workerName,
+      branch,
+      productionBranch,
+    };
+    console.log(JSON.stringify({ event: 'connected_worker_deploy_decision', ...decision }));
+    return decision;
+  }
+
   const changedPaths = options.changedPaths === undefined
     ? await connectedCommitChangedPaths(options)
     : options.changedPaths;
@@ -195,6 +209,8 @@ export async function deployConnectedWorker(options = {}) {
   console.log(JSON.stringify({
     event: 'connected_worker_deploy_decision',
     ...decision,
+    branch: branch || null,
+    production_branch: productionBranch,
     changed_paths: Array.isArray(changedPaths) ? changedPaths : null,
     affected_workers: Array.isArray(selectedWorkers) ? selectedWorkers : null,
   }));
