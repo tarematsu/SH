@@ -103,6 +103,38 @@ test('maintenance Worker preserves stagger and collector-priority ordering', asy
   assert.equal(worker.vars.COLLECTOR_PRIORITY_WAIT_MS, 15_000);
 });
 
+test('maintenance Worker reports swallowed D1 failures as failed Cron invocations', async () => {
+  const env = { BUDDIES_DB: { prepare() {} }, OTHER_DB: {} };
+  const common = {
+    applyStagger: async () => {},
+    waitForCollector: async () => ({ ready: true }),
+  };
+
+  await assert.rejects(
+    runMonitorMaintenanceCron(
+      { cron: ROLLUP_MAINTENANCE_CRON, scheduledTime: BASE + 30 * 60_000 },
+      env,
+      {
+        ...common,
+        runRollup: async () => ({ skipped: true, reason: 'maintenance-error', error: 'D1 unavailable' }),
+      },
+    ),
+    /rollup maintenance failed: D1 unavailable/,
+  );
+
+  await assert.rejects(
+    runMonitorMaintenanceCron(
+      { cron: SNAPSHOT_RETENTION_CRON, scheduledTime: BASE + 50 * 60_000 },
+      env,
+      {
+        ...common,
+        pruneSnapshots: async () => ({ skipped: true, reason: 'retention-error', error: 'delete failed' }),
+      },
+    ),
+    /snapshot retention failed: delete failed/,
+  );
+});
+
 test('other monitor owns only buddy playback, host, prediction and official news', async () => {
   assert.equal(otherMonitorTask(BASE), 'host');
   assert.equal(otherMonitorTask(BASE + 10 * 60_000), 'prediction');
