@@ -1,24 +1,24 @@
-name: Fetch Cloudflare observability logs
+name: Check Cloudflare observability logs
 
 on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "worker/**"
+      - ".github/workflows/fetch-cloudflare-observability.yml"
   workflow_dispatch:
     inputs:
-      prefix:
-        description: R2 object prefix to read
-        required: false
-        default: sh/
       limit:
         description: Maximum number of newest objects to download
         required: false
         default: "25"
-  pull_request:
-    branches:
-      - main
-    paths:
-      - .github/workflows/fetch-cloudflare-observability.yml
 
 permissions:
   contents: read
+
+concurrency:
+  group: cloudflare-observability-sh-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 jobs:
   fetch:
@@ -28,7 +28,6 @@ jobs:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_BUILDS_API_TOKEN }}
       AWS_DEFAULT_REGION: auto
       R2_BUCKET: cloudflare-managed-1609110a
-      OBJECT_PREFIX: ${{ inputs.prefix || 'sh/' }}
       OBJECT_LIMIT: ${{ inputs.limit || '25' }}
 
     steps:
@@ -43,43 +42,24 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-
-          verify_response="$(curl --fail-with-body --silent --show-error \
-            -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
-            https://api.cloudflare.com/client/v4/user/tokens/verify)"
+          verify_response="$(curl --fail-with-body --silent --show-error -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" https://api.cloudflare.com/client/v4/user/tokens/verify)"
           token_id="$(jq -er '.result.id' <<<"$verify_response")"
           secret_access_key="$(printf '%s' "$CLOUDFLARE_API_TOKEN" | sha256sum | cut -d' ' -f1)"
-
-          accounts_response="$(curl --fail-with-body --silent --show-error \
-            -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
-            'https://api.cloudflare.com/client/v4/accounts?per_page=50')"
+          accounts_response="$(curl --fail-with-body --silent --show-error -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" 'https://api.cloudflare.com/client/v4/accounts?per_page=50')"
           mapfile -t account_ids < <(jq -er '.result[].id' <<<"$accounts_response")
-          [ "${#account_ids[@]}" -gt 0 ] || { echo "No Cloudflare account is visible to the API token" >&2; exit 1; }
-
           echo "::add-mask::$token_id"
           echo "::add-mask::$secret_access_key"
           export AWS_ACCESS_KEY_ID="$token_id"
           export AWS_SECRET_ACCESS_KEY="$secret_access_key"
-
           matches=()
           for account_id in "${account_ids[@]}"; do
             endpoint="https://${account_id}.r2.cloudflarestorage.com"
-            if aws s3api head-bucket \
-              --endpoint-url "$endpoint" \
-              --bucket "$R2_BUCKET" >/dev/null 2>&1; then
-              matches+=("$account_id")
-            fi
+            if aws s3api head-bucket --endpoint-url "$endpoint" --bucket "$R2_BUCKET" >/dev/null 2>&1; then matches+=("$account_id"); fi
           done
-
-          [ "${#matches[@]}" -eq 1 ] || {
-            echo "Expected exactly one accessible R2 bucket named $R2_BUCKET; found ${#matches[@]}" >&2
-            exit 1
-          }
-
-          account_id="${matches[0]}"
+          [ "${#matches[@]}" -eq 1 ] || { echo "Expected exactly one accessible R2 bucket named $R2_BUCKET; found ${#matches[@]}" >&2; exit 1; }
           echo "AWS_ACCESS_KEY_ID=$token_id" >> "$GITHUB_ENV"
           echo "AWS_SECRET_ACCESS_KEY=$secret_access_key" >> "$GITHUB_ENV"
-          echo "R2_ENDPOINT=https://${account_id}.r2.cloudflarestorage.com" >> "$GITHUB_ENV"
+          echo "R2_ENDPOINT=https://${matches[0]}.r2.cloudflarestorage.com" >> "$GITHUB_ENV"
 
       - name: Download newest log objects
         id: download
@@ -87,41 +67,19 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p observability-logs
-
-          aws s3api list-objects-v2 \
-            --endpoint-url "$R2_ENDPOINT" \
-            --bucket "$R2_BUCKET" \
-            --prefix "$OBJECT_PREFIX" \
-            --output json > objects.json
-
-          jq -r --argjson limit "$OBJECT_LIMIT" \
-            '(.Contents // []) | sort_by(.LastModified) | reverse | .[:$limit] | .[].Key' \
-            objects.json > object-keys.txt
-
-          count=0
+          aws s3api list-objects-v2 --endpoint-url "$R2_ENDPOINT" --bucket "$R2_BUCKET" --output json > objects.json
+          jq -r --argjson limit "$OBJECT_LIMIT" '(.Contents // []) | sort_by(.LastModified) | reverse | .[:$limit] | .[].Key' objects.json > object-keys.txt
+          count="$(grep -c . object-keys.txt || true)"
+          [ "$count" -gt 0 ] || { echo "No Cloudflare observability objects found in $R2_BUCKET" >&2; exit 1; }
           while IFS= read -r key; do
-            [ -n "$key" ] || continue
             destination="observability-logs/$key"
             mkdir -p "$(dirname "$destination")"
-            aws s3api get-object \
-              --endpoint-url "$R2_ENDPOINT" \
-              --bucket "$R2_BUCKET" \
-              --key "$key" \
-              "$destination" >/dev/null
-            count=$((count + 1))
+            aws s3api get-object --endpoint-url "$R2_ENDPOINT" --bucket "$R2_BUCKET" --key "$key" "$destination" >/dev/null
           done < object-keys.txt
-
           echo "count=$count" >> "$GITHUB_OUTPUT"
-          {
-            echo "## Cloudflare observability"
-            echo
-            echo "- Bucket: \`$R2_BUCKET\`"
-            echo "- Prefix: \`$OBJECT_PREFIX\`"
-            echo "- Downloaded objects: **$count**"
-          } >> "$GITHUB_STEP_SUMMARY"
+          printf '## Cloudflare observability\n\n- Bucket: `%s`\n- Downloaded objects: **%s**\n' "$R2_BUCKET" "$count" >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Upload logs as workflow artifact
-        if: steps.download.outputs.count != '0'
+      - name: Upload logs
         uses: actions/upload-artifact@v4
         with:
           name: cloudflare-observability-sh-${{ github.run_id }}
