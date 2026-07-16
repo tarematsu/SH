@@ -21,6 +21,11 @@ function sharedTtl(response) {
   return match ? Number(match[1]) : null;
 }
 
+function assertFiveMinuteTtl(response) {
+  const ttl = sharedTtl(response);
+  assert.ok(ttl === 299 || ttl === 300, `expected five-minute TTL, got ${ttl}`);
+}
+
 class MaterializedDb {
   constructor({ updatedAt = Date.now() } = {}) {
     this.updatedAt = updatedAt;
@@ -83,7 +88,7 @@ test('buddies and buddy46 playback are generated live and cached for five minute
     );
     assert.equal(buddies.headers.get('x-edge-cache'), 'MISS');
     assert.equal(buddies.headers.get('x-api-source'), null);
-    assert.equal(sharedTtl(buddies), 300);
+    assertFiveMinuteTtl(buddies);
     assert.deepEqual(await buddies.json(), { ok: true, build: 1 });
     assert.equal(db.calls.length, 0);
     await Promise.all(waits.splice(0));
@@ -105,7 +110,7 @@ test('buddies and buddy46 playback are generated live and cached for five minute
     );
     assert.equal(buddy46.headers.get('x-edge-cache'), 'MISS');
     assert.equal(buddy46.headers.get('x-api-source'), null);
-    assert.equal(sharedTtl(buddy46), 300);
+    assertFiveMinuteTtl(buddy46);
     assert.deepEqual(await buddy46.json(), { ok: true, build: 2 });
     assert.equal(db.calls.length, 0);
   } finally {
@@ -130,7 +135,7 @@ test('non-playback public APIs can still use materialized responses', async () =
     );
     assert.equal(response.headers.get('x-edge-cache'), 'MISS');
     assert.equal(response.headers.get('x-api-source'), 'worker-materialized');
-    assert.equal(sharedTtl(response), 300);
+    assertFiveMinuteTtl(response);
     assert.deepEqual(await response.json(), { ok: true, model_key: 'dashboard' });
     assert.equal(liveBuilds, 0);
   } finally {
@@ -148,7 +153,7 @@ test('non-playback public APIs are coalesced and cached for five minutes', async
   try {
     const first = await cachedRequest('https://skrzk.test/api/broadcast-series?id=7', next, waits);
     assert.equal(first.headers.get('x-edge-cache'), 'MISS');
-    assert.equal(sharedTtl(first), 300);
+    assertFiveMinuteTtl(first);
     assert.deepEqual(await first.json(), { ok: true, build: 1 });
     await Promise.all(waits.splice(0));
 

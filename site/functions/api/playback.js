@@ -4,7 +4,7 @@ import {
   loadBuddyCollectorStatus,
 } from '../lib/buddy-collector-status.js';
 import { computePlayback } from '../lib/playback.js';
-import { loadPrimaryPlaybackPayload } from '../lib/primary-playback.js';
+import { loadCanonicalPlaybackPayload } from '../lib/primary-playback-fallback.js';
 import {
   emptySecondaryPayload,
   loadSecondaryPlaybackMetadata,
@@ -218,11 +218,14 @@ export async function onRequestGet({ request, env }) {
       );
     }
 
-    if (!env.MINUTE_DB) {
-      return playbackJson({ ok: false, error: 'MINUTE_DB binding missing' }, 500, 'no-store');
+    if (!env.DB) {
+      return playbackJson({ ok: false, error: 'DB binding missing' }, 500, 'no-store');
     }
-    const payload = await loadPrimaryPlaybackPayload(env.MINUTE_DB, generatedAt);
-    return playbackJson(payload, 200, CACHE_CONTROL);
+    const canonical = await loadCanonicalPlaybackPayload(env.DB, generatedAt);
+    if (!canonical) {
+      return playbackJson({ ok: false, error: 'canonical playback state unavailable' }, 503, 'no-store');
+    }
+    return playbackJson(canonical, 200, CACHE_CONTROL);
   } catch (error) {
     console.error(error);
     return playbackJson({ ok: false, error: error?.message || 'playback feed error' }, 500, 'no-store');

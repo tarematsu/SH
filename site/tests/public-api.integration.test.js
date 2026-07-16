@@ -42,22 +42,16 @@ function assertPlaybackCoreEnvelope(payload) {
   for (const field of PLAYBACK_CORE_FIELDS) assert.ok(field in payload, `missing playback field: ${field}`);
 }
 
-test('playback endpoint rejects a missing D1 binding without cacheable output', async () => {
+test('playback endpoint rejects a missing canonical DB binding without cacheable output', async () => {
   const response = await playbackGet({ env: {} });
   assert.equal(response.status, 500);
   assert.equal(response.headers.get('cache-control'), 'no-store');
-  assert.deepEqual(await responseJson(response), { ok: false, error: 'MINUTE_DB binding missing' });
+  assert.deepEqual(await responseJson(response), { ok: false, error: 'DB binding missing' });
 });
 
-test('playback endpoint maps a live queue into current-track state and cache headers', async () => {
+test('playback endpoint maps the canonical Pages queue into current-track state and cache headers', async () => {
   const now = Date.now();
   const rows = [{
-    channel_observed_at: now - 1_000,
-    channel_station_id: 3328626,
-    is_broadcasting: 1,
-    host_account_id: 46,
-    host_handle: 'sakurazaka46jp',
-    broadcast_start_time: now - 600_000,
     queue_station_id: 3328626,
     queue_id: 91,
     queue_start_time: now - 30_000,
@@ -82,29 +76,16 @@ test('playback endpoint maps a live queue into current-track state and cache hea
     metadata_raw_json: null,
   }];
   const db = new FakeD1Database()
-    .route('first', 'FROM sh_minute_facts f', {
+    .route('first', 'FROM sh_channel_snapshots', {
       observed_at: now - 1_000,
       channel_id: 318,
       station_id: 3328626,
       is_broadcasting: 1,
       host_account_id: 46,
       host_handle: 'sakurazaka46jp',
-      broadcast_start_time: now - 600_000,
     })
-    .route('first', 'FROM sh_queue_read_model_current', {
-      channel_id: 318,
-      observed_at: now - 500,
-      station_id: 3328626,
-      queue_id: 91,
-      start_time: now - 30_000,
-      is_paused: 0,
-      queue_json: JSON.stringify(rows.map((row) => ({
-        ...row,
-        station_id: row.queue_station_id,
-        start_time: row.queue_start_time,
-      }))),
-    });
-  const response = await playbackGet({ env: { MINUTE_DB: db } });
+    .route('all', 'WITH latest_station AS', { results: rows });
+  const response = await playbackGet({ env: { DB: db } });
   const body = await responseJson(response);
 
   assert.equal(response.status, 200);
@@ -121,10 +102,13 @@ test('playback endpoint maps a live queue into current-track state and cache hea
   assert.match(body.queue_revision, /^[a-z0-9_-]+/i);
 });
 
-test('buddies and buddy46 expose the same core playback envelope when empty', async () => {
+test('buddies reports unavailable canonical state while buddy46 keeps its empty envelope', async () => {
+  const primaryDb = new FakeD1Database()
+    .route('first', 'FROM sh_channel_snapshots', null)
+    .route('all', 'WITH latest_station AS', { results: [] });
   const primaryResponse = await playbackGet({
     request: new Request('https://skrzk.test/api/playback?channel=buddies'),
-    env: { MINUTE_DB: new FakeD1Database().route('first', 'FROM sh_minute_facts f', null) },
+    env: { DB: primaryDb },
   });
   const secondaryDb = new FakeD1Database()
     .route('first', 'sh_collector_status', null)
@@ -136,17 +120,13 @@ test('buddies and buddy46 expose the same core playback envelope when empty', as
   const primary = await responseJson(primaryResponse);
   const secondary = await responseJson(secondaryResponse);
 
-  assert.equal(primaryResponse.status, 200);
+  assert.equal(primaryResponse.status, 503);
+  assert.deepEqual(primary, { ok: false, error: 'canonical playback state unavailable' });
   assert.equal(secondaryResponse.status, 200);
-  assertPlaybackCoreEnvelope(primary);
   assertPlaybackCoreEnvelope(secondary);
-  assert.equal(primary.host_account_id, null);
-  assert.equal(primary.host_handle, null);
   assert.equal(secondary.host_account_id, null);
   assert.equal(secondary.host_handle, null);
-  assert.deepEqual(primary.queue, []);
   assert.deepEqual(secondary.queue, []);
-  assert.equal('collector' in primary, false);
   assert.equal(secondary.collector.status, 'never');
 });
 
