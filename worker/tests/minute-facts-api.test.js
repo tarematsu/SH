@@ -11,7 +11,7 @@ test('minute facts monitoring API is owned only by Pages', () => {
     'utf8',
   );
 
-  assert.equal(config.main, 'src/minute-entry.js');
+  assert.equal(config.main, 'src/minute-production-entry.js');
   assert.equal(Object.hasOwn(config.vars, 'MINUTE_FACT_API_STALE_MS'), false);
   assert.doesNotMatch(workerRouter, /\/api\/minute-facts\/latest|minute-facts-api\.js/);
   assert.doesNotMatch(workerApi, /SELECT[\s\S]+FROM sh_minute_facts/);

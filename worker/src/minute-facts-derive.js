@@ -9,9 +9,10 @@ import {
   releaseMinuteFactJobs,
 } from './minute-facts-inbox.js';
 
-export const MINUTE_FACT_DERIVE_CRON = '*/2 * * * *';
+export const MINUTE_FACT_DERIVE_CRON = '* * * * *';
 
 const DEFAULT_MAX_JOBS = 8;
+const MAX_CLAIM_BATCH = 20;
 const DEFAULT_JOB_TIMEOUT_MS = 18_000;
 const DEFAULT_LEASE_MS = 60_000;
 const DEFAULT_MAX_ATTEMPTS = 8;
@@ -25,7 +26,7 @@ function positiveInteger(value, fallback, maximum = Number.MAX_SAFE_INTEGER) {
 
 export function deriveConfig(env = {}) {
   return {
-    maxJobs: positiveInteger(env.DERIVE_MAX_JOBS, DEFAULT_MAX_JOBS, 20),
+    maxJobs: positiveInteger(env.DERIVE_MAX_JOBS, DEFAULT_MAX_JOBS, 1_000),
     jobTimeoutMs: positiveInteger(env.DERIVE_JOB_TIMEOUT_MS, DEFAULT_JOB_TIMEOUT_MS, 20_000),
     leaseMs: positiveInteger(env.DERIVE_LEASE_MS, DEFAULT_LEASE_MS, 10 * 60_000),
     maxAttempts: positiveInteger(env.DERIVE_MAX_ATTEMPTS, DEFAULT_MAX_ATTEMPTS, 100),
@@ -88,61 +89,67 @@ export async function runMinuteFactDeriveCron(env, dependencies = {}) {
     skipped_budget: 0,
   };
 
-  // Lease the whole batch up front (one round trip) instead of re-claiming a
-  // single job every iteration, then process until the time budget runs out.
-  const jobs = await claim(env, {
-    now: nowFn(),
-    limit: config.maxJobs,
-    leaseMs: config.leaseMs,
-  });
+  let handled = 0;
+  let stopForBudget = false;
+  while (handled < config.maxJobs && !stopForBudget) {
+    if (nowFn() >= deadlineAt - 1_000) break;
+    const claimLimit = Math.min(MAX_CLAIM_BATCH, config.maxJobs - handled);
+    const jobs = await claim(env, {
+      now: nowFn(),
+      limit: claimLimit,
+      leaseMs: config.leaseMs,
+    });
+    if (!jobs.length) break;
 
-  let index = 0;
-  for (; index < jobs.length; index += 1) {
-    if (nowFn() >= deadlineAt - 1_000) {
-      summary.skipped_budget += 1;
-      break;
+    let index = 0;
+    for (; index < jobs.length; index += 1) {
+      if (nowFn() >= deadlineAt - 1_000) {
+        summary.skipped_budget += jobs.length - index;
+        stopForBudget = true;
+        break;
+      }
+
+      const job = jobs[index];
+      try {
+        const payload = parseJobPayload(job);
+        await write(withDeriveTimeout(env, config.jobTimeoutMs), payload);
+        await complete(env, job.id, nowFn());
+        summary.processed += 1;
+        if (payload.rebuild) summary.processed_rebuild += 1;
+        else summary.processed_live += 1;
+      } catch (error) {
+        const result = await fail(env, job, error, {
+          now: nowFn(),
+          maxAttempts: config.maxAttempts,
+          retryDelayMs: minuteFactRetryDelayMs(job.attempts),
+        });
+        summary.failed += 1;
+        if (result?.terminal) summary.dead += 1;
+        console.warn(JSON.stringify({
+          event: 'minute_fact_job_failed',
+          job_id: Number(job.id),
+          job_kind: job.job_kind || 'live',
+          attempts: Number(job.attempts || 0),
+          terminal: Boolean(result?.terminal),
+          error: sanitizeFailureDetail(error?.message || error),
+        }));
+      }
+      handled += 1;
     }
 
-    const job = jobs[index];
-    try {
-      const payload = parseJobPayload(job);
-      await write(withDeriveTimeout(env, config.jobTimeoutMs), payload);
-      await complete(env, job.id, nowFn());
-      summary.processed += 1;
-      if (payload.rebuild) summary.processed_rebuild += 1;
-      else summary.processed_live += 1;
-    } catch (error) {
-      const result = await fail(env, job, error, {
-        now: nowFn(),
-        maxAttempts: config.maxAttempts,
-        retryDelayMs: minuteFactRetryDelayMs(job.attempts),
-      });
-      summary.failed += 1;
-      if (result?.terminal) summary.dead += 1;
-      console.warn(JSON.stringify({
-        event: 'minute_fact_job_failed',
-        job_id: Number(job.id),
-        job_kind: job.job_kind || 'live',
-        attempts: Number(job.attempts || 0),
-        terminal: Boolean(result?.terminal),
-        error: sanitizeFailureDetail(error?.message || error),
-      }));
+    const unprocessed = jobs.slice(index).map((job) => job.id);
+    if (unprocessed.length) {
+      try {
+        await release(env, unprocessed, { now: nowFn() });
+      } catch (error) {
+        console.warn(JSON.stringify({
+          event: 'minute_fact_release_failed',
+          count: unprocessed.length,
+          error: sanitizeFailureDetail(error?.message || error),
+        }));
+      }
     }
-  }
-
-  // Return any jobs the budget prevented us from reaching so they retry on the
-  // next run rather than sitting leased until the lease expires.
-  const unprocessed = jobs.slice(index).map((job) => job.id);
-  if (unprocessed.length) {
-    try {
-      await release(env, unprocessed, { now: nowFn() });
-    } catch (error) {
-      console.warn(JSON.stringify({
-        event: 'minute_fact_release_failed',
-        count: unprocessed.length,
-        error: sanitizeFailureDetail(error?.message || error),
-      }));
-    }
+    if (jobs.length < claimLimit) break;
   }
 
   try {
