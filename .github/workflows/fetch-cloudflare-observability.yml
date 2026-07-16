@@ -7,6 +7,16 @@ on:
       - "worker/**"
       - ".github/workflows/fetch-cloudflare-observability.yml"
   workflow_dispatch:
+    inputs:
+      since:
+        description: Optional ISO-8601 lower bound for R2 object LastModified
+        required: false
+        type: string
+      lookback_minutes:
+        description: Used when since is omitted
+        required: false
+        default: "120"
+        type: string
 
 permissions:
   contents: read
@@ -23,6 +33,8 @@ jobs:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_BUILDS_API_TOKEN }}
       AWS_DEFAULT_REGION: auto
       R2_BUCKET: cloudflare-managed-1609110a
+      LOG_SINCE: ${{ inputs.since || '' }}
+      LOOKBACK_MINUTES: ${{ inputs.lookback_minutes || '120' }}
 
     steps:
       - name: Derive R2 credentials
@@ -50,25 +62,110 @@ jobs:
           echo "AWS_SECRET_ACCESS_KEY=$secret" >> "$GITHUB_ENV"
           echo "R2_ENDPOINT=https://${match}.r2.cloudflarestorage.com" >> "$GITHUB_ENV"
 
-      - name: Download and filter newest date-folder logs
+      - name: Download incremental Worker logs
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p raw observability-logs
           aws s3api list-objects-v2 --endpoint-url "$R2_ENDPOINT" --bucket "$R2_BUCKET" --output json > objects.json
-          jq -r '(.Contents // []) | sort_by(.LastModified) | reverse | .[:100] | .[].Key' objects.json > keys.txt
-          test -s keys.txt || { echo 'No observability objects found' >&2; exit 1; }
-          while IFS= read -r key; do
-            file="raw/$(basename "$key")"
-            aws s3api get-object --endpoint-url "$R2_ENDPOINT" --bucket "$R2_BUCKET" --key "$key" "$file" >/dev/null
-          done < keys.txt
           python3 - <<'PY'
-          import gzip, json, pathlib
-          targets = {'sh-monitor-buddies', 'sh-monitor-other', 'sh-monitor-minute'}
-          output = pathlib.Path('observability-logs/sh-workers.ndjson')
-          count = 0
-          with output.open('w', encoding='utf-8') as dst:
-              for path in pathlib.Path('raw').iterdir():
+          import datetime as dt, json, os, pathlib
+
+          data = json.loads(pathlib.Path('objects.json').read_text(encoding='utf-8'))
+          objects = data.get('Contents') or []
+          if not objects:
+              raise SystemExit('No observability objects found')
+
+          since = os.environ.get('LOG_SINCE', '').strip()
+          if since:
+              cutoff = dt.datetime.fromisoformat(since.replace('Z', '+00:00'))
+              if cutoff.tzinfo is None:
+                  cutoff = cutoff.replace(tzinfo=dt.timezone.utc)
+          else:
+              minutes = max(1, int(os.environ.get('LOOKBACK_MINUTES', '120')))
+              cutoff = dt.datetime.now(dt.timezone.utc) - dt.timedelta(minutes=minutes)
+
+          selected = []
+          for item in objects:
+              modified = dt.datetime.fromisoformat(str(item['LastModified']).replace('Z', '+00:00'))
+              if modified >= cutoff:
+                  selected.append((modified, item['Key']))
+          selected.sort(reverse=True)
+          selected = selected[:100]
+          pathlib.Path('cutoff.txt').write_text(cutoff.isoformat().replace('+00:00', 'Z'), encoding='utf-8')
+          with pathlib.Path('keys.txt').open('w', encoding='utf-8') as dst:
+              for _, key in selected:
+                  dst.write(key + '\n')
+          print(f'Selected {len(selected)} objects modified since {cutoff.isoformat()}')
+          PY
+          if [[ -s keys.txt ]]; then
+            index=0
+            while IFS= read -r key; do
+              index=$((index + 1))
+              file="raw/$(printf '%03d' "$index").log"
+              aws s3api get-object --endpoint-url "$R2_ENDPOINT" --bucket "$R2_BUCKET" --key "$key" "$file" >/dev/null
+            done < keys.txt
+          fi
+
+      - name: Build compact findings and CPU summary
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import gzip, json, math, pathlib, statistics
+
+          targets = {'sh-monitor-buddies', 'sh-monitor-minute', 'sh-monitor-other'}
+          output_dir = pathlib.Path('observability-logs')
+          full_path = output_dir / 'sh-workers.ndjson'
+          findings_path = output_dir / 'findings.ndjson'
+          summary_path = output_dir / 'summary.json'
+          cutoff = pathlib.Path('cutoff.txt').read_text(encoding='utf-8').strip()
+
+          def walk(value, prefix=''):
+              if isinstance(value, dict):
+                  for key, child in value.items():
+                      name = f'{prefix}.{key}' if prefix else str(key)
+                      yield name, child
+                      yield from walk(child, name)
+              elif isinstance(value, list):
+                  for index, child in enumerate(value):
+                      yield from walk(child, f'{prefix}[{index}]')
+
+          def text_values(event, names):
+              values = []
+              for path, value in walk(event):
+                  leaf = path.rsplit('.', 1)[-1].lower()
+                  if leaf in names and value not in (None, '', [], {}):
+                      values.append(str(value))
+              return values
+
+          def cpu_values(event):
+              values = []
+              for path, value in walk(event):
+                  leaf = path.rsplit('.', 1)[-1].lower()
+                  if 'cpu' not in leaf or isinstance(value, bool):
+                      continue
+                  try:
+                      number = float(value)
+                  except (TypeError, ValueError):
+                      continue
+                  if math.isfinite(number):
+                      values.append(number)
+              return values
+
+          def percentile(values, fraction):
+              if not values:
+                  return None
+              ordered = sorted(values)
+              index = min(len(ordered) - 1, math.ceil(len(ordered) * fraction) - 1)
+              return ordered[index]
+
+          counts = {name: 0 for name in sorted(targets)}
+          cpu = {name: [] for name in sorted(targets)}
+          findings = 0
+          total = 0
+          with full_path.open('w', encoding='utf-8') as full, findings_path.open('w', encoding='utf-8') as flagged:
+              for path in sorted(pathlib.Path('raw').glob('*')):
                   data = path.read_bytes()
                   if data[:2] == b'\x1f\x8b':
                       data = gzip.decompress(data)
@@ -77,15 +174,45 @@ jobs:
                           event = json.loads(line)
                       except json.JSONDecodeError:
                           continue
-                      if event.get('ScriptName') in targets:
-                          dst.write(json.dumps(event, ensure_ascii=False, separators=(',', ':')) + '\n')
-                          count += 1
-          if count == 0:
-              raise SystemExit('No SH Worker trace events found in newest R2 objects')
-          print(f'Filtered {count} SH events')
+                      script = event.get('ScriptName')
+                      if script not in targets:
+                          continue
+                      compact = json.dumps(event, ensure_ascii=False, separators=(',', ':'))
+                      full.write(compact + '\n')
+                      total += 1
+                      counts[script] += 1
+                      cpu[script].extend(cpu_values(event))
+                      levels = [value.lower() for value in text_values(event, {'level', 'severity', 'loglevel'})]
+                      outcomes = [value.lower() for value in text_values(event, {'outcome', 'status'})]
+                      errors = text_values(event, {'error', 'exception', 'stack', 'stacktrace'})
+                      bad_level = any(value in {'warn', 'warning', 'error', 'fatal', 'critical'} for value in levels)
+                      bad_outcome = any(value not in {'ok', 'success', 'succeeded', 'completed', 'true', '200'} for value in outcomes)
+                      if bad_level or bad_outcome or errors:
+                          flagged.write(compact + '\n')
+                          findings += 1
+
+          summary = {
+              'ok': True,
+              'since': cutoff,
+              'objects_downloaded': len(list(pathlib.Path('raw').glob('*'))),
+              'events': total,
+              'findings': findings,
+              'scripts': {},
+          }
+          for script in sorted(targets):
+              values = cpu[script]
+              summary['scripts'][script] = {
+                  'events': counts[script],
+                  'cpu_samples': len(values),
+                  'cpu_avg': statistics.fmean(values) if values else None,
+                  'cpu_p95': percentile(values, 0.95),
+                  'cpu_max': max(values) if values else None,
+              }
+          summary_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
+          print(json.dumps(summary, ensure_ascii=False, separators=(',', ':')))
           PY
 
-      - name: Upload filtered logs
+      - name: Upload filtered logs and compact analysis
         uses: actions/upload-artifact@v4
         with:
           name: cloudflare-observability-sh-${{ github.run_id }}
