@@ -4,6 +4,9 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const CONFIG_BY_WORKER = Object.freeze({
   'sh-monitor-buddies': 'wrangler.jsonc',
+  'sh-ingest-channel': 'wrangler.ingest.jsonc',
+  'sh-comments': 'wrangler.comments.jsonc',
+  'sh-read-model': 'wrangler.read-model.jsonc',
   'sh-monitor-other': 'wrangler.other.jsonc',
   'sh-monitor-minute': 'wrangler.minute.jsonc',
 });
