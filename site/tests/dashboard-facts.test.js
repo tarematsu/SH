@@ -6,6 +6,7 @@ import { onRequestGet as dashboardHistoryGet } from '../functions/api/dashboard-
 import { onRequestGet as dashboardRecoveryGet } from '../functions/api/dashboard-recovery.js';
 import {
   FACTS_HISTORY_24H_SQL,
+  FACTS_HISTORY_SINCE_SQL,
   FACTS_LATEST_SQL,
   FACTS_PREDICTION_24H_SQL,
   factsAreFresh,
@@ -20,8 +21,13 @@ test('facts dashboard SQL preserves the main-page response contract', () => {
   assert.match(FACTS_LATEST_SQL, /LEFT JOIN sh_minute_fact_context/);
   assert.match(FACTS_LATEST_SQL, /WHERE f\.source_code=1/);
   assert.match(FACTS_HISTORY_24H_SQL, /PARTITION BY CAST\(minute_at\/300000 AS INTEGER\)/);
-  assert.match(FACTS_HISTORY_24H_SQL, /SUM\(recent\.comment_count\)/);
+  assert.match(FACTS_HISTORY_24H_SQL, /RANGE BETWEEN 60000 PRECEDING AND CURRENT ROW/);
+  assert.match(FACTS_HISTORY_24H_SQL, /d\.daily_rank=1/);
   assert.match(FACTS_HISTORY_24H_SQL, /WHERE f\.source_code=1/);
+  assert.doesNotMatch(FACTS_HISTORY_24H_SQL, /SELECT SUM\(recent\.comment_count\)/);
+  assert.doesNotMatch(FACTS_HISTORY_24H_SQL, /SELECT d\.last_total_member_count/);
+  assert.match(FACTS_HISTORY_SINCE_SQL, /SUM\(recent\.comment_count\)/);
+  assert.match(FACTS_HISTORY_SINCE_SQL, /SELECT d\.last_total_member_count/);
   assert.match(FACTS_PREDICTION_24H_SQL, /reported_current_stream_count/);
   assert.match(FACTS_PREDICTION_24H_SQL, /WHERE source_code=1/);
   assert.doesNotMatch(FACTS_HISTORY_24H_SQL, /sh_channel_snapshots/);
