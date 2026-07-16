@@ -14,8 +14,8 @@ export async function consumeMinuteQueue(batch, env, ctx) {
     hasReceipt: async () => false,
     saveReceipt: async () => {},
     // Old Queue messages may still carry collectComments=true during rollout.
-    // The buddies collector now owns Stationhead comment collection, so minute
-    // must never create a follow-up task that would call production1 again.
+    // The dedicated comments Worker owns Stationhead comment collection, so
+    // minute must never create a follow-up task that would call production1.
     saveCommentTask: async () => ({ created: false, skipped: true }),
     enqueue: async (activeEnv, payload, options) => {
       const accepted = await enqueueMinuteFactJob(activeEnv, payload, options);
