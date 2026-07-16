@@ -35,7 +35,10 @@ export function connectedDeployDecision(workerName, changedPaths, selectedWorker
   if (changedPaths.length === 0) {
     return { deploy: true, reason: 'empty-or-root-diff', workerName: name };
   }
-  const affected = Array.isArray(selectedWorkers) ? selectedWorkers.includes(name) : false;
+  if (!Array.isArray(selectedWorkers)) {
+    return { deploy: true, reason: 'worker-selection-unavailable', workerName: name };
+  }
+  const affected = selectedWorkers.includes(name);
   return {
     deploy: affected,
     reason: affected ? 'worker-affected' : 'worker-unaffected',
