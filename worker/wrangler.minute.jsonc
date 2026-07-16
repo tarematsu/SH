@@ -8,11 +8,11 @@
   "logpush": true,
   "observability": { "enabled": true },
   "vars": {
-    "DERIVE_MAX_JOBS": 16,
+    "DERIVE_MAX_JOBS": 1000,
     "DERIVE_JOB_TIMEOUT_MS": 18000,
     "DERIVE_LEASE_MS": 60000,
     "DERIVE_MAX_ATTEMPTS": 8,
-    "DERIVE_RUN_BUDGET_MS": 30000,
+    "DERIVE_RUN_BUDGET_MS": 55000,
     "REQUEST_TIMEOUT_MS": 8000,
     "METADATA_LIMIT": 1,
     "ISRC_METADATA_LIMIT": 1,
@@ -36,7 +36,7 @@
   },
   "triggers": {
     "crons": [
-      "*/2 * * * *",
+      "* * * * *",
       "5,7,9,15,17,19,25,27,29,35,37,39,45,47,49,55,57,59 * * * *"
     ]
   },
