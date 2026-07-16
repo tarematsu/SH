@@ -114,7 +114,16 @@ jobs:
           python3 - <<'PY'
           import gzip, json, math, pathlib, statistics
 
-          targets = {'sh-monitor-buddies', 'sh-monitor-minute', 'sh-monitor-other'}
+          targets = {
+              'sh-monitor-buddies',
+              'sh-ingest-channel',
+              'sh-comments',
+              'sh-read-model',
+              'sh-minute-ingest',
+              'sh-minute-derive',
+              'sh-monitor-minute',
+              'sh-monitor-other',
+          }
           output_dir = pathlib.Path('observability-logs')
           full_path = output_dir / 'sh-workers.ndjson'
           findings_path = output_dir / 'findings.ndjson'
