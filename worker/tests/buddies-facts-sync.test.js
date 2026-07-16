@@ -37,6 +37,9 @@ function makeFacts(states, batches, updates) {
         async first() {
           return states[this.params[0]] || null;
         },
+        async all() {
+          return { results: [] };
+        },
         async run() {
           if (sql.includes('UPDATE sh_buddies_sync_state')) updates.push({ sql, params: this.params });
           return { meta: { changes: 1 } };
