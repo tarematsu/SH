@@ -93,9 +93,10 @@ export async function runMinuteFactDeriveCron(env, dependencies = {}) {
   let stopForBudget = false;
   while (handled < config.maxJobs && !stopForBudget) {
     if (nowFn() >= deadlineAt - 1_000) break;
+    const claimLimit = Math.min(MAX_CLAIM_BATCH, config.maxJobs - handled);
     const jobs = await claim(env, {
       now: nowFn(),
-      limit: Math.min(MAX_CLAIM_BATCH, config.maxJobs - handled),
+      limit: claimLimit,
       leaseMs: config.leaseMs,
     });
     if (!jobs.length) break;
@@ -148,6 +149,7 @@ export async function runMinuteFactDeriveCron(env, dependencies = {}) {
         }));
       }
     }
+    if (jobs.length < claimLimit) break;
   }
 
   try {
