@@ -54,8 +54,11 @@ jobs:
       - name: Detach legacy minute Queue consumer
         run: npm run detach:minute-consumer
         working-directory: worker
-      - name: Deploy maintenance-only minute Worker
+      - name: Deploy renamed maintenance Worker
         run: npm run deploy:minute-maintenance
+        working-directory: worker
+      - name: Retire legacy maintenance Worker
+        run: npm run retire:legacy-minute-maintenance
         working-directory: worker
       - name: Deploy minute ingest consumer after cutover
         run: npm run deploy:minute-ingest
@@ -76,7 +79,7 @@ jobs:
         worker:
           - sh-monitor-buddies
           - sh-monitor-other
-          - sh-monitor-minute
+          - sh-minute-maintenance
     runs-on: ubuntu-latest
     timeout-minutes: 25
     env:
