@@ -113,6 +113,15 @@ test('maintenance Worker reports swallowed D1 failures as failed Cron invocation
   await assert.rejects(
     runMonitorMaintenanceCron(
       { cron: ROLLUP_MAINTENANCE_CRON, scheduledTime: BASE + 30 * 60_000 },
+      {},
+      { applyStagger: async () => {} },
+    ),
+    /rollup maintenance failed: db-binding-missing/,
+  );
+
+  await assert.rejects(
+    runMonitorMaintenanceCron(
+      { cron: ROLLUP_MAINTENANCE_CRON, scheduledTime: BASE + 30 * 60_000 },
       env,
       {
         ...common,
