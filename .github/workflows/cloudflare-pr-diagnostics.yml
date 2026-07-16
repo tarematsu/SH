@@ -1,0 +1,137 @@
+name: Cloudflare PR diagnostics
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "worker/**"
+      - ".github/scripts/cloudflare-build-diagnostics.mjs"
+      - ".github/workflows/cloudflare-pr-diagnostics.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cloudflare-pr-diagnostics-sh-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: worker
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install Worker dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Worker tests
+        run: npm test
+
+      - name: Validate Worker bundles
+        shell: bash
+        run: |
+          set -euo pipefail
+          for config in wrangler.jsonc wrangler.other.jsonc wrangler.minute.jsonc; do
+            output=".wrangler-ci-output/${config%.jsonc}"
+            rm -rf "$output"
+            npx wrangler deploy --dry-run --config "$config" --outdir "$output"
+            test -n "$(find "$output" -type f -size +0c -print -quit)"
+          done
+
+  select:
+    runs-on: ubuntu-latest
+    outputs:
+      workers: ${{ steps.targets.outputs.workers }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+
+      - name: Select expected Cloudflare builds
+        id: targets
+        shell: bash
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          files="$(git diff --name-only "$BASE_SHA" "$HEAD_SHA")"
+          printf '%s\n' "$files"
+
+          workers='[]'
+          add_worker() {
+            workers="$(jq -c --arg worker "$1" 'if index($worker) then . else . + [$worker] end' <<<"$workers")"
+          }
+
+          if grep -Eq '^worker/src/|^worker/(package\.json|package-lock\.json)$' <<<"$files"; then
+            add_worker 'sh-monitor-buddies'
+            add_worker 'sh-monitor-other'
+            add_worker 'sh-monitor-minute'
+          else
+            grep -Eq '^worker/wrangler\.jsonc$' <<<"$files" && add_worker 'sh-monitor-buddies' || true
+            grep -Eq '^worker/wrangler\.other\.jsonc$' <<<"$files" && add_worker 'sh-monitor-other' || true
+            grep -Eq '^worker/wrangler\.minute\.jsonc$' <<<"$files" && add_worker 'sh-monitor-minute' || true
+          fi
+
+          echo "workers=$workers" >> "$GITHUB_OUTPUT"
+
+  diagnose:
+    needs:
+      - validate
+      - select
+    if: needs.select.outputs.workers != '[]'
+    strategy:
+      fail-fast: false
+      matrix:
+        worker: ${{ fromJSON(needs.select.outputs.workers) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      CLOUDFLARE_ACCOUNT_ID: "0500f25c2f74e7e76c94a8bcb6c7008b"
+      CLOUDFLARE_BUILDS_API_TOKEN: ${{ secrets.CLOUDFLARE_BUILDS_API_TOKEN || secrets.CLOUDFLARE_API_TOKEN || secrets.CF_API_TOKEN }}
+      CLOUDFLARE_WORKER_NAME: ${{ matrix.worker }}
+      TARGET_SHA: ${{ github.event.pull_request.head.sha }}
+      TARGET_BRANCH: ${{ github.event.pull_request.head.ref }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Watch exact Cloudflare build and collect logs
+        id: monitor
+        shell: bash
+        run: |
+          set +e
+          node .github/scripts/cloudflare-build-diagnostics.mjs
+          code=$?
+          echo "exit_code=$code" >> "$GITHUB_OUTPUT"
+          exit 0
+
+      - name: Upload sanitized Cloudflare diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cloudflare-pr-diagnostics-${{ matrix.worker }}-${{ github.event.pull_request.head.sha }}
+          path: .cloudflare-build-diagnostics/
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Fail the diagnostic check
+        if: steps.monitor.outputs.exit_code != '0'
+        shell: bash
+        run: exit "${{ steps.monitor.outputs.exit_code }}"
