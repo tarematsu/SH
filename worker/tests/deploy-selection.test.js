@@ -24,9 +24,9 @@ test('minute derive changes redeploy only the derive consumer', () => {
   assert.deepEqual(result.commands, ['deploy:minute-derive']);
 });
 
-test('bundled site function changes redeploy only the buddies materializer', () => {
+test('bundled site function changes redeploy only the Pages materializer', () => {
   const result = select(['site/functions/api/minute-facts/current.js']);
-  assert.deepEqual(result.workers, ['sh-buddies-read-model']);
+  assert.deepEqual(result.workers, ['sh-pages-read-model']);
   assert.deepEqual(result.commands, ['deploy:pages-read-model']);
   assert.deepEqual(result.diagnostics, []);
 });
@@ -40,7 +40,7 @@ test('other monitor changes do not pull retired Pages or maintenance Workers bac
 
 test('Wrangler config changes map directly to their Worker', () => {
   const result = select(['worker/wrangler.pages-read-model.jsonc']);
-  assert.deepEqual(result.workers, ['sh-buddies-read-model']);
+  assert.deepEqual(result.workers, ['sh-pages-read-model']);
   assert.deepEqual(result.commands, ['deploy:pages-read-model']);
 });
 
