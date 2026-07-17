@@ -1,10 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import {
-  resetSnapshotHashCacheForTests,
-  saveLeanSnapshot,
-} from '../functions/lib/d1-optimized-ingest.js';
+import { resetSnapshotHashCacheForTests } from '../functions/lib/d1-lean-ingest.js';
+import { saveLeanSnapshot } from '../functions/lib/d1-optimized-ingest.js';
 import { payloadHash } from '../functions/lib/ingest-claim.js';
 import { FakeD1Database } from './helpers/fake-d1.js';
 
