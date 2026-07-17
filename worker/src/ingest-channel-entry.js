@@ -26,12 +26,8 @@ export function commentsTaskForMinuteFact(commentTask, body, options = {}) {
     message_type: 'stationhead-comments-task',
     message_version: 2,
     auth: commentTask?.auth || {},
-    observed_at: options.trusted === true
-      ? commentTask?.observed_at
-      : integer(body?.payload?.observedAt) ?? integer(commentTask?.observed_at) ?? Date.now(),
-    station_id: options.trusted === true
-      ? commentTask?.station_id
-      : integer(body?.payload?.snapshot?.station_id) ?? integer(commentTask?.station_id),
+    observed_at: integer(body?.payload?.observedAt) ?? integer(commentTask?.observed_at) ?? Date.now(),
+    station_id: integer(body?.payload?.snapshot?.station_id) ?? integer(commentTask?.station_id),
     minute_fact: compact,
   };
 }
@@ -160,6 +156,11 @@ function fallbackReadModelEnvelope(env, message, channel) {
 function activeIngestEnv(env, message, channel, capture) {
   const active = Object.create(env || null);
   const commentsQueue = env?.COMMENTS_QUEUE;
+  const commentTask = {
+    observed_at: integer(message?.observed_at),
+    station_id: null,
+    auth: message?.auth || {},
+  };
   Object.defineProperties(active, {
     __shAuthState: { value: message.auth || {}, enumerable: false },
     __RAW_CHANNEL_PAYLOAD: { value: channel, enumerable: false },
@@ -174,9 +175,9 @@ function activeIngestEnv(env, message, channel, capture) {
             capture.minuteAt = integer(body.minute_at);
             capture.envelope = envelope;
             return commentsQueue.send(commentsTaskForMinuteFact(
-              envelope.comment_task,
+              commentTask,
               body,
-              { inPlace: true, trusted: true },
+              { inPlace: true },
             ), options);
           }
           return commentsQueue.send(body, options);
