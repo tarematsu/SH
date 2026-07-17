@@ -4,6 +4,7 @@ import test from 'node:test';
 import {
   attachReadModelTrackMetadata,
   preserveReadModelTrackMetadata,
+  queueNeedsPreviousTrackMetadata,
   saveMinuteFactReadModels,
 } from '../src/minute-facts-read-model.js';
 
@@ -55,6 +56,57 @@ test('previous metadata is not copied to a different track at the same position'
     tracks: [{ position: 0, spotify_id: 'sp1', title: 'Old', artist: 'Old', thumbnail_url: 'old' }],
   };
   assert.equal(preserveReadModelTrackMetadata(next, previous), next);
+});
+
+test('complete queue metadata skips the previous read-model lookup', async () => {
+  let previousReads = 0;
+  const batches = [];
+  const completeQueue = {
+    tracks: [{
+      position: 0,
+      spotify_id: 'sp1',
+      title: 'Song',
+      artist: 'Artist',
+      album_name: 'Album',
+      thumbnail_url: 'cover',
+    }],
+  };
+  assert.equal(queueNeedsPreviousTrackMetadata(completeQueue), false);
+  assert.equal(queueNeedsPreviousTrackMetadata({
+    tracks: [{ ...completeQueue.tracks[0], album_name: null }],
+  }), true);
+
+  const MINUTE_DB = {
+    prepare(sql) {
+      if (/FROM sh_queue_read_model_current/.test(sql)) previousReads += 1;
+      return {
+        sql,
+        params: [],
+        bind(...params) { this.params = params; return this; },
+        async first() { return null; },
+      };
+    },
+    async batch(statements) {
+      batches.push(statements);
+      return statements.map(() => ({ success: true }));
+    },
+  };
+
+  await saveMinuteFactReadModels({ MINUTE_DB }, {
+    channel: { channel_id: 10, observed_at: 123_456, presentation: {} },
+    queue: {
+      station_id: 5,
+      queue_id: 9,
+      start_time: 100,
+      is_paused: false,
+      value: completeQueue,
+    },
+    collector: { collector_id: 'cloudflare-worker', updated_at: 123_456 },
+  }, 'minute-fact:10:120000');
+
+  assert.equal(previousReads, 0);
+  assert.equal(batches.length, 1);
+  assert.match(batches[0][1].params[6], /"album_name":"Album"/);
 });
 
 test('minute read-model hydration queries both ISRC and Spotify IDs once', async () => {
