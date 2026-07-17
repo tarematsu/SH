@@ -29,6 +29,7 @@ const workerPackage = JSON.parse(readFileSync(
 
 const selectorName = 'select-worker-deploys.mjs';
 const splitQueues = [
+  'stationhead-buddies-persist',
   'stationhead-track-metadata',
   'stationhead-minute-enrichment',
   'stationhead-minute-rebuild',
@@ -43,6 +44,7 @@ test('manual deploy keeps all Cloudflare targets available', () => {
   assert.doesNotMatch(deployWorkflow, /^\s{2}push:/m);
   assert.match(deployWorkflow, /wrangler pages deploy/);
   assert.match(deployWorkflow, /npm run deploy:buddies/);
+  assert.match(deployWorkflow, /npm run deploy:persist/);
   assert.match(deployWorkflow, /npm run deploy:ingest/);
   assert.match(deployWorkflow, /npm run deploy:comments/);
   assert.match(deployWorkflow, /npm run deploy:minute/);
@@ -90,6 +92,7 @@ test('Worker package scripts contain only current deployment operations', () => 
     workerPackage.scripts['deploy:split-other'],
     'npm run deploy:pages-read-model && npm run deploy:monitor-maintenance && npm run deploy:other && npm run deploy:buddy-playback',
   );
+  assert.equal(workerPackage.scripts['deploy:persist'], 'wrangler deploy --config wrangler.persist.jsonc');
 
   for (const key of Object.keys(workerPackage.scripts)) {
     assert.doesNotMatch(key, /detach|retire|cutover|mintue/);
@@ -115,6 +118,7 @@ test('R2 observability covers the complete requested object window and split Wor
   assert.match(observabilityWorkflow, /newest_object_modified/);
   assert.match(observabilityWorkflow, /Downloaded \$downloaded_count of \$selected_count selected R2 objects/);
   for (const worker of [
+    'sh-buddies-persist',
     'sh-track-metadata',
     'sh-minute-enrichment',
     'sh-minute-rebuild',
