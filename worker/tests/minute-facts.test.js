@@ -13,6 +13,7 @@ import {
   queueStructuralHash,
   reportedStreamCount,
   queueStructurePayload,
+  resetQueueStructureCacheForTests,
   timestampMs,
 } from '../src/minute-facts-store.js';
 
@@ -27,6 +28,7 @@ test('Stationhead second and millisecond timestamps normalize to milliseconds', 
 });
 
 test('queue structural payload excludes pause and bite changes', () => {
+  resetQueueStructureCacheForTests();
   const payload = queueStructurePayload({
     queue_id: 4,
     start_time: 1_700_000_000,
@@ -43,6 +45,7 @@ test('queue structural payload excludes pause and bite changes', () => {
 });
 
 test('queue hash remains stable when only pause or bite changes', async () => {
+  resetQueueStructureCacheForTests();
   const first = {
     queue_id: 4,
     start_time: 1_700_000_000,
@@ -57,6 +60,48 @@ test('queue hash remains stable when only pause or bite changes', async () => {
   const payload = queueStructurePayload(first);
   assert.equal(await queueStructuralHash(first, payload), await queueStructuralHash(first));
   assert.equal(await queueStructuralHash(first), await queueStructuralHash(second));
+});
+
+test('unchanged dense queues reuse their normalized payload and hash', async () => {
+  resetQueueStructureCacheForTests();
+  const first = {
+    queue_id: 7,
+    start_time: 1_700_000_100,
+    is_paused: false,
+    tracks: Array.from({ length: 71 }, (_, position) => ({
+      position,
+      queue_track_id: 1_000 + position,
+      stationhead_track_id: 2_000 + position,
+      isrc: `JPTEST${String(position).padStart(5, '0')}`,
+      spotify_id: `spotify-${position}`,
+      deezer_id: `deezer-${position}`,
+      duration_ms: 180_000,
+      bite_count: position,
+    })),
+  };
+  const second = {
+    ...first,
+    is_paused: true,
+    tracks: first.tracks.map((track) => ({ ...track, bite_count: track.bite_count + 1 })),
+  };
+
+  const firstPayload = queueStructurePayload(first);
+  const firstHash = await queueStructuralHash(first, firstPayload);
+  const secondPayload = queueStructurePayload(second);
+  const secondHash = await queueStructuralHash(second, secondPayload);
+
+  assert.strictEqual(secondPayload, firstPayload);
+  assert.equal(secondHash, firstHash);
+
+  const changed = {
+    ...second,
+    tracks: second.tracks.map((track, index) => index === 35
+      ? { ...track, duration_ms: track.duration_ms + 1 }
+      : track),
+  };
+  const changedPayload = queueStructurePayload(changed);
+  assert.notStrictEqual(changedPayload, firstPayload);
+  assert.notEqual(await queueStructuralHash(changed, changedPayload), firstHash);
 });
 
 test('quality score reflects missing or degraded evidence', () => {
