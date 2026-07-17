@@ -87,6 +87,7 @@ jobs:
           for queue in \
             stationhead-raw-collection stationhead-raw-collection-dlq \
             stationhead-buddies-persist stationhead-buddies-persist-dlq \
+            stationhead-ingest-finalize stationhead-ingest-finalize-dlq \
             stationhead-comments stationhead-comments-dlq \
             stationhead-read-model stationhead-read-model-dlq \
             stationhead-track-metadata stationhead-track-metadata-dlq \
