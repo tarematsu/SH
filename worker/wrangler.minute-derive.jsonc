@@ -26,6 +26,9 @@
         "max_retries": 8,
         "dead_letter_queue": "stationhead-minute-derive-dlq"
       }
+    ],
+    "producers": [
+      { "binding": "MINUTE_ENRICHMENT_QUEUE", "queue": "stationhead-minute-enrichment" }
     ]
   }
 }
