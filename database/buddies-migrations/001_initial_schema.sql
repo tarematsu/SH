@@ -1,4 +1,4 @@
--- Storage owned exclusively by sh-monitor-buddies.
+-- Storage owned by the sh-buddies-monitor and sh-buddies-ingest pipeline.
 -- Other Workers and Pages must consume the MINUTE_DB read model instead.
 
 CREATE TABLE IF NOT EXISTS sh_channel_snapshots (
