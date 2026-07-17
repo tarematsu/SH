@@ -7,11 +7,15 @@ const CONFIG_BY_WORKER = Object.freeze({
   'sh-buddies-ingest': 'wrangler.ingest.jsonc',
   'sh-buddies-comments': 'wrangler.comments.jsonc',
   'sh-minute-read-model': 'wrangler.read-model.jsonc',
+  'sh-track-metadata': 'wrangler.track-metadata.jsonc',
   'sh-pages-read-model': 'wrangler.pages-read-model.jsonc',
   'sh-monitor-maintenance': 'wrangler.monitor-maintenance.jsonc',
   'sh-monitor-other': 'wrangler.other.jsonc',
+  'sh-buddy-playback': 'wrangler.buddy-playback.jsonc',
   'sh-minute-maintenance': 'wrangler.minute.jsonc',
   'sh-minute-derive': 'wrangler.minute-derive.jsonc',
+  'sh-minute-enrichment': 'wrangler.minute-enrichment.jsonc',
+  'sh-minute-rebuild': 'wrangler.minute-rebuild.jsonc',
   'sh-minute-ingest': 'wrangler.minute-ingest.jsonc',
 });
 
