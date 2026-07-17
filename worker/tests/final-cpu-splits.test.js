@@ -23,7 +23,11 @@ test('comment collection hands forwarding to a separate Queue invocation', async
     message_version: 2,
     observed_at: 1_784_000_000_000,
     station_id: 20,
-    auth: {},
+    auth: {
+      authToken: 'token',
+      deviceUid: 'device',
+      tokenExpiresAt: 9_999_999_999_999,
+    },
     minute_fact: minuteFact(),
   };
   const result = await processCommentsTask({
