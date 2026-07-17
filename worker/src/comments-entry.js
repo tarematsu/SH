@@ -36,14 +36,20 @@ async function scheduleMetadata(env, ctx, forwarding) {
   else void task;
 }
 
-export async function forwardMinuteFact(env, task, comments = {}, dependencies = {}) {
+export async function forwardMinuteFact(
+  env,
+  task,
+  comments = {},
+  dependencies = {},
+  validatedMinuteFact = null,
+) {
   if (!task?.minute_fact) return { forwarded: false };
   if (!env?.MINUTE_FACT_QUEUE?.send && !dependencies.sendMinuteFact) {
     throw new Error('MINUTE_FACT_QUEUE binding is missing');
   }
 
   const parse = dependencies.parseMinuteFact || parseMinuteFactQueueMessage;
-  const parsed = parse(task.minute_fact);
+  const parsed = validatedMinuteFact || parse(task.minute_fact);
   const loadFacts = dependencies.loadCommentFacts || loadMinuteCommentFacts;
   const facts = await loadFacts(
     env?.DB,
@@ -86,10 +92,11 @@ export async function processCommentsTask(env, task, dependencies = {}) {
   if (task?.message_type !== 'stationhead-comments-task' || ![1, 2].includes(version)) {
     throw new Error('unsupported comments task');
   }
+  let validatedMinuteFact = null;
   if (version === 2) {
     if (!task.minute_fact) throw new Error('comments task minute_fact is missing');
     const parse = dependencies.parseMinuteFact || parseMinuteFactQueueMessage;
-    parse(task.minute_fact);
+    validatedMinuteFact = parse(task.minute_fact);
   }
 
   const state = collectorStateFromAuthState(task.auth, env);
@@ -112,7 +119,7 @@ export async function processCommentsTask(env, task, dependencies = {}) {
   const forwarding = await forwardMinuteFact(env, task, {
     ...result,
     degraded: false,
-  }, dependencies);
+  }, dependencies, validatedMinuteFact);
   console.log(JSON.stringify({
     event: 'comments_task_completed',
     comments_saved: Number(result?.commentsSaved || 0),
