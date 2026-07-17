@@ -1,4 +1,8 @@
-import { collectOptionalComments } from './collector-comments.js';
+import {
+  collectOptionalComments,
+  fetchOptionalComments,
+  persistOptionalComments,
+} from './collector-comments.js';
 import { configFromEnv } from './collector-config.js';
 import { collectorStateFromAuthState } from './collector-state.js';
 import { parseMinuteFactQueueMessage } from './minute-facts-queue.js';
@@ -40,8 +44,6 @@ async function enqueueMetadata(env, ctx, forwarding) {
     return;
   }
 
-  // Rollout fallback. Once the dedicated Worker binding is present, normal
-  // comment invocations never import or execute metadata enrichment locally.
   const { runCommittedMetadataEnrichment } = await import('./committed-metadata-enrichment.js');
   const task = runCommittedMetadataEnrichment(env, [job]);
   if (typeof ctx?.waitUntil === 'function') ctx.waitUntil(task);
@@ -114,6 +116,23 @@ export async function forwardMinuteFact(
   };
 }
 
+async function enqueuePersist(env, task, collected, dependencies = {}) {
+  if (dependencies.enqueuePersist) {
+    await dependencies.enqueuePersist(task, collected);
+    return true;
+  }
+  if (!env?.COMMENTS_QUEUE?.send || !task?.minute_fact) return false;
+  await env.COMMENTS_QUEUE.send({
+    message_type: 'stationhead-comments-persist',
+    message_version: 1,
+    observed_at: task.observed_at,
+    station_id: task.station_id,
+    minute_fact: task.minute_fact,
+    collected,
+  }, { contentType: 'json' });
+  return true;
+}
+
 async function enqueueForward(env, task, comments, dependencies = {}) {
   if (dependencies.enqueueForward) {
     await dependencies.enqueueForward(task, comments);
@@ -140,6 +159,41 @@ export async function processCommentsForwardTask(env, task, dependencies = {}) {
   return forwardMinuteFact(env, task, task.comments || {}, dependencies);
 }
 
+export async function processCommentsPersistTask(env, task, dependencies = {}) {
+  if (task?.message_type !== 'stationhead-comments-persist'
+      || Number(task?.message_version) !== 1
+      || !task.minute_fact) {
+    throw new Error('unsupported comments persist task');
+  }
+  const parse = dependencies.parseMinuteFact || parseMinuteFactQueueMessage;
+  const validatedMinuteFact = parse(task.minute_fact);
+  const persist = dependencies.persistComments || persistOptionalComments;
+  const result = await persist(
+    env,
+    Number(task.station_id) || null,
+    task.collected || { comments: [], rawMeta: { next: null } },
+    Number(task.observed_at) || Date.now(),
+    dependencies.persistence || null,
+  );
+  const comments = { ...result, degraded: false };
+  if (await enqueueForward(env, task, comments, dependencies)) {
+    console.log(JSON.stringify({
+      event: 'comments_persist_completed',
+      comments_saved: Number(result?.commentsSaved || 0),
+      minute_fact_forward_deferred: true,
+    }));
+    return { ...result, forwarded: false, forward_deferred: true };
+  }
+  const forwarding = await forwardMinuteFact(
+    env,
+    task,
+    comments,
+    dependencies,
+    validatedMinuteFact,
+  );
+  return { ...result, ...forwarding };
+}
+
 export async function processCommentsTask(env, task, dependencies = {}) {
   const version = Number(task?.message_version);
   if (task?.message_type !== 'stationhead-comments-task' || ![1, 2].includes(version)) {
@@ -154,11 +208,29 @@ export async function processCommentsTask(env, task, dependencies = {}) {
 
   const state = collectorStateFromAuthState(task.auth, env);
   state.stationId = Number(task.station_id || state.stationId) || null;
+  const config = configFromEnv(env);
+  if (task.minute_fact && (env?.COMMENTS_QUEUE?.send || dependencies.enqueuePersist)) {
+    const fetchComments = dependencies.fetchComments || fetchOptionalComments;
+    const collected = await fetchComments(state, config, dependencies.fetching || null);
+    await enqueuePersist(env, task, collected, dependencies);
+    console.log(JSON.stringify({
+      event: 'comments_task_completed',
+      comments_fetched: Number(collected?.comments?.length || 0),
+      persistence_deferred: true,
+    }));
+    return {
+      commentsSaved: 0,
+      degraded: false,
+      forwarded: false,
+      persist_deferred: true,
+    };
+  }
+
   const collectComments = dependencies.collectComments || collectOptionalComments;
   const result = await collectComments(
     env,
     state,
-    configFromEnv(env),
+    config,
     Number(task.observed_at) || Date.now(),
   );
   if (result?.degraded) {
@@ -192,9 +264,16 @@ export default {
   async queue(batch, env, ctx) {
     for (const message of batch.messages || []) {
       try {
-        if (message.body?.message_type === 'stationhead-comments-forward') {
+        const type = message.body?.message_type;
+        if (type === 'stationhead-comments-forward') {
           const forwarding = await processCommentsForwardTask(env, message.body);
           await enqueueMetadata(env, ctx, forwarding);
+          message.ack();
+          continue;
+        }
+        if (type === 'stationhead-comments-persist') {
+          const result = await processCommentsPersistTask(env, message.body);
+          await enqueueMetadata(env, ctx, result);
           message.ack();
           continue;
         }
@@ -214,8 +293,9 @@ export default {
         const attempts = positiveInteger(message.attempts, 1, 100);
         const maximum = positiveInteger(env.COMMENT_CHAIN_MAX_ATTEMPTS, 3, 8);
         const chained = Boolean(message.body?.minute_fact);
-        const collecting = message.body?.message_type === 'stationhead-comments-task';
-        if (collecting && chained && attempts >= maximum) {
+        const chainStage = ['stationhead-comments-task', 'stationhead-comments-persist']
+          .includes(message.body?.message_type);
+        if (chainStage && chained && attempts >= maximum) {
           try {
             const comments = {
               commentsSaved: 0,
