@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
+// Runtime-neutral marker: trigger a fresh post-deploy observability window.
 import {
   analyzeQueueLikes,
 } from '../../site/functions/lib/d1-optimized-ingest.js';
@@ -53,7 +54,7 @@ function fakeDb() {
         method: 'batch',
         statements: statements.map((item) => ({ sql: item.sql, binds: item.binds })),
       });
-      return statements.map(() => ({ meta: { changes: 1 } }));
+      return statements.map(() => ({ meta: { changes: 1 }));
     },
   };
 }
