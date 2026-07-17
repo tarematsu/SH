@@ -180,21 +180,21 @@ export async function writeCurrentBite(db, input) {
       ?? sourceTrack?.isrc
       ?? `track:${revisionId}:${position}`,
   );
-  const latest = await db.prepare(`SELECT count_value FROM sh_track_counter_changes
-    WHERE occurrence_key=? ORDER BY observed_at DESC,id DESC LIMIT 1`)
-    .bind(occurrenceKey).first();
-  if (integer(latest?.count_value) !== biteCount) {
-    await db.prepare(`INSERT OR IGNORE INTO sh_track_counter_changes(
+  await db.prepare(`INSERT OR IGNORE INTO sh_track_counter_changes(
       observed_at,occurrence_key,channel_id,station_id,queue_id,queue_start_time,
-        queue_position,queue_track_id,stationhead_track_id,spotify_id,apple_music_id,isrc,
-        queue_revision_id,track_id,track_key,count_value,source,source_record_id
-      ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).bind(
-      integer(observedAt), occurrenceKey, integer(channelId), integer(stationId), integer(queue?.queue_id),
-      timestampMs(queue?.start_time), integer(position), integer(sourceTrack?.queue_track_id),
-      integer(sourceTrack?.stationhead_track_id), text(sourceTrack?.spotify_id), text(sourceTrack?.apple_music_id),
-      text(sourceTrack?.isrc), integer(revisionId), trackId, trackKey,
-      biteCount, 'live_collector', `live:${channelId}:${revisionId}:${position}:${observedAt}:${biteCount}`,
-    ).run();
-  }
+      queue_position,queue_track_id,stationhead_track_id,spotify_id,apple_music_id,isrc,
+      queue_revision_id,track_id,track_key,count_value,source,source_record_id
+    ) SELECT ?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?
+    WHERE ? IS NOT (
+      SELECT count_value FROM sh_track_counter_changes
+      WHERE occurrence_key=? ORDER BY observed_at DESC,id DESC LIMIT 1
+    )`).bind(
+    integer(observedAt), occurrenceKey, integer(channelId), integer(stationId), integer(queue?.queue_id),
+    timestampMs(queue?.start_time), integer(position), integer(sourceTrack?.queue_track_id),
+    integer(sourceTrack?.stationhead_track_id), text(sourceTrack?.spotify_id), text(sourceTrack?.apple_music_id),
+    text(sourceTrack?.isrc), integer(revisionId), trackId, trackKey,
+    biteCount, 'live_collector', `live:${channelId}:${revisionId}:${position}:${observedAt}:${biteCount}`,
+    biteCount, occurrenceKey,
+  ).run();
   return biteCount;
 }
