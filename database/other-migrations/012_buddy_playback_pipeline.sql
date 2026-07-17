@@ -19,6 +19,7 @@ CREATE TABLE IF NOT EXISTS sh_buddy_playback_pipeline (
   host_account_id INTEGER,
   host_handle TEXT,
   track_count INTEGER NOT NULL DEFAULT 0,
+  metadata_attempts INTEGER NOT NULL DEFAULT 0,
   attempts INTEGER NOT NULL DEFAULT 0,
   next_attempt_at INTEGER NOT NULL DEFAULT 0,
   lease_until INTEGER NOT NULL DEFAULT 0,
