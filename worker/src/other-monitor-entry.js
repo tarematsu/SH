@@ -33,7 +33,22 @@ async function defaultRunner(name) {
   throw new Error(`unsupported other monitor task: ${name}`);
 }
 
+async function dispatchBuddyPlayback(env, now) {
+  if (!env?.BUDDY_PLAYBACK_QUEUE?.send) return null;
+  await env.BUDDY_PLAYBACK_QUEUE.send({
+    message_type: 'buddy-playback-stage',
+    message_version: 1,
+    scheduled_at: now,
+    observed_at: Date.now(),
+  }, { contentType: 'json' });
+  return { dispatched: true, task: 'buddy', scheduled_at: now };
+}
+
 async function runTask(name, env, ctx, now, dependencies = {}) {
+  if (name === 'buddy') {
+    const dispatched = await dispatchBuddyPlayback(env, now);
+    if (dispatched) return dispatched;
+  }
   const runner = dependencies[name] || await defaultRunner(name);
   if (name === 'buddy') return runner(env, ctx, now);
   if (name === 'host') return runner(env);
