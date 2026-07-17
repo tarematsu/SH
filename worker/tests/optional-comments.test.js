@@ -61,6 +61,7 @@ test('comment count inputs retain only identity and timestamp fields', () => {
         { id: 'opaque', chat_time_ms: '300', raw: { unused: true } },
         { id: 'opaque', chat_time_ms: 400 },
         { id: '   ', chat_time_ms: 500 },
+        { id: '', chat_time_ms: 600 },
       ],
     },
   }, 42);
@@ -79,6 +80,13 @@ test('comment count inputs retain only identity and timestamp fields', () => {
       station_id: 42,
       chat_time: null,
       chat_time_ms: 300,
+    },
+    {
+      comment_id: 0,
+      id: '   ',
+      station_id: 42,
+      chat_time: null,
+      chat_time_ms: 500,
     },
   ]);
   assert.equal(Object.hasOwn(comments[0], 'text'), false);
