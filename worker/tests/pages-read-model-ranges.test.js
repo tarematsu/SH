@@ -127,7 +127,7 @@ test('incremental excluded-date updates replace only dates inside the refreshed 
   );
 });
 
-test('materialized payloads follow their source cadence', () => {
+test('materialized payloads declare hourly cadence while legacy source repair keeps its cadence', () => {
   const midnight = Date.UTC(2026, 6, 16, 0, 0);
   const fivePast = Date.UTC(2026, 6, 16, 0, 5);
   const quarterPast = Date.UTC(2026, 6, 16, 0, 15);
@@ -135,13 +135,11 @@ test('materialized payloads follow their source cadence', () => {
   const materialized = new Map(MATERIALIZED_API_VARIANTS.map((variant) => [variant.key, variant]));
 
   assert.equal(materialized.get('host-history:summary').cadence_minutes, 1440);
-  assert.equal(materialized.get('track-likes').cadence_minutes, 30);
-  assert.equal(materialized.get('like-ranking').cadence_minutes, 30);
-  assert.equal(materialized.get('track-history').cadence_minutes, 60);
-  assert.equal(materializedVariantDue(materialized.get('host-history:summary'), midnight), true);
-  assert.equal(materializedVariantDue(materialized.get('host-history:summary'), quarterPast), false);
-  assert.equal(materializedVariantDue(materialized.get('track-likes'), halfPast), true);
-  assert.equal(materializedVariantDue(materialized.get('track-likes'), quarterPast), false);
+  for (const [key, variant] of materialized) {
+    if (key !== 'host-history:summary') assert.equal(variant.cadence_minutes, 60, key);
+  }
+  assert.equal(materializedVariantDue(materialized.get('track-likes'), midnight), true);
+  assert.equal(materializedVariantDue(materialized.get('track-likes'), halfPast), false);
   assert.equal(materializedVariantDue(materialized.get('track-history'), midnight), true);
   assert.equal(materializedVariantDue(materialized.get('track-history'), quarterPast), false);
   assert.deepEqual(pagesPayloadRefreshPlan(fivePast), { daily: false, likes: false });
@@ -156,18 +154,17 @@ test('track history maximum age covers the hourly source refresh plus edge grace
   );
 });
 
-test('fast refresh never republishes track history before its source refresh', () => {
-  for (const minute of [0, 15, 30, 45]) {
-    const keys = dueFastMaterializedVariants(Date.UTC(2026, 6, 16, 12, minute)).map(({ key }) => key);
-    assert.equal(keys.includes('track-history'), false, `unexpected track-history at minute ${minute}`);
-    assert.equal(keys.includes('minute-facts-current'), true);
-  }
-});
+test('legacy fast refresh runs only at the hour boundary and never republishes track history', () => {
+  const midnightKeys = dueFastMaterializedVariants(Date.UTC(2026, 6, 16, 12, 0)).map(({ key }) => key);
+  assert.equal(midnightKeys.includes('track-history'), false);
+  assert.equal(midnightKeys.includes('minute-facts-current'), true);
+  assert.equal(midnightKeys.includes('track-likes'), true);
+  assert.equal(midnightKeys.includes('like-ranking'), true);
 
-test('half-hour fast refresh still includes likes without track history', () => {
-  const keys = dueFastMaterializedVariants(Date.UTC(2026, 6, 16, 12, 30)).map(({ key }) => key);
-  assert.equal(keys.includes('track-history'), false);
-  assert.equal(keys.includes('track-likes'), true);
-  assert.equal(keys.includes('like-ranking'), true);
-  assert.equal(keys.includes('minute-facts-current'), true);
+  for (const minute of [5, 15, 30, 45]) {
+    assert.deepEqual(
+      dueFastMaterializedVariants(Date.UTC(2026, 6, 16, 12, minute)).map(({ key }) => key),
+      [],
+    );
+  }
 });
