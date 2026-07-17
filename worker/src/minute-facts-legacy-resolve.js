@@ -104,6 +104,43 @@ export async function resolveTrack(db, source = {}, observedAt = Date.now()) {
   return trackId;
 }
 
+async function activeSession(db, channelId) {
+  return db.prepare(`SELECT * FROM sh_broadcast_sessions
+    WHERE channel_id=? AND status='active' AND source='live_collector'
+    ORDER BY last_observed_at DESC,id DESC LIMIT 1`).bind(channelId).first();
+}
+
+async function continueLiveSession(db, input) {
+  return db.prepare(`UPDATE sh_broadcast_sessions SET
+      station_id=COALESCE(station_id,?),host_id=COALESCE(host_id,?),
+      broadcast_start_time=COALESCE(broadcast_start_time,?),
+      last_observed_at=MAX(last_observed_at,?)
+    WHERE id=(
+      SELECT id FROM sh_broadcast_sessions
+      WHERE channel_id=? AND status='active' AND source='live_collector'
+      ORDER BY last_observed_at DESC,id DESC LIMIT 1
+    )
+      AND (? IS NULL OR station_id IS NULL OR station_id=?)
+      AND (? IS NULL OR host_id IS NULL OR host_id=?)
+      AND (? IS NULL OR broadcast_start_time IS NULL OR broadcast_start_time=?)
+      AND ?-COALESCE(last_observed_at,0)<=?
+    RETURNING id`).bind(
+    input.stationId,
+    input.hostId,
+    input.broadcastStart,
+    input.observedAt,
+    input.channelId,
+    input.stationId,
+    input.stationId,
+    input.hostId,
+    input.hostId,
+    input.broadcastStart,
+    input.broadcastStart,
+    input.observedAt,
+    SESSION_GAP_MS,
+  ).first();
+}
+
 async function endSession(db, sessionId, observedAt) {
   if (sessionId == null) return;
   await db.prepare(`UPDATE sh_broadcast_sessions SET
@@ -119,28 +156,22 @@ export async function resolveLiveSession(db, input) {
   const stationId = integer(input.stationId);
   const hostId = integer(input.hostId);
   const broadcastStart = timestampMs(input.broadcastStartTime);
-  const active = await db.prepare(`SELECT * FROM sh_broadcast_sessions
-    WHERE channel_id=? AND status='active' AND source='live_collector'
-    ORDER BY last_observed_at DESC,id DESC LIMIT 1`).bind(channelId).first();
 
+  if (broadcasting !== 0) {
+    const continued = await continueLiveSession(db, {
+      channelId,
+      stationId,
+      hostId,
+      broadcastStart,
+      observedAt,
+    });
+    if (continued?.id != null) return Number(continued.id);
+  }
+
+  const active = await activeSession(db, channelId);
   if (broadcasting === 0) {
     await endSession(db, active?.id, observedAt);
     return null;
-  }
-
-  const same = active
-    && (stationId == null || active.station_id == null || Number(active.station_id) === stationId)
-    && (hostId == null || active.host_id == null || Number(active.host_id) === hostId)
-    && (broadcastStart == null || active.broadcast_start_time == null
-      || Number(active.broadcast_start_time) === broadcastStart)
-    && observedAt - Number(active.last_observed_at || 0) <= SESSION_GAP_MS;
-  if (same) {
-    await db.prepare(`UPDATE sh_broadcast_sessions SET
-        station_id=COALESCE(station_id,?),host_id=COALESCE(host_id,?),
-        broadcast_start_time=COALESCE(broadcast_start_time,?),
-        last_observed_at=MAX(last_observed_at,?)
-      WHERE id=?`).bind(stationId, hostId, broadcastStart, observedAt, active.id).run();
-    return Number(active.id);
   }
 
   await endSession(db, active?.id, observedAt);
@@ -149,8 +180,8 @@ export async function resolveLiveSession(db, input) {
       session_key,channel_id,station_id,host_id,broadcast_start_time,
       first_observed_at,last_observed_at,ended_at,status,source
     ) VALUES(?,?,?,?,?,?,?,NULL,'active','live_collector')`).bind(
-      sessionKey, channelId, stationId, hostId, broadcastStart, observedAt, observedAt,
-    ).run();
+    sessionKey, channelId, stationId, hostId, broadcastStart, observedAt, observedAt,
+  ).run();
   const row = await db.prepare('SELECT id FROM sh_broadcast_sessions WHERE session_key=?')
     .bind(sessionKey).first();
   return row?.id == null ? null : Number(row.id);
