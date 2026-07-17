@@ -4,6 +4,7 @@ import test from 'node:test';
 
 import { processCommentsTask } from '../src/comments-entry.js';
 import {
+  channelFromRawCollection,
   commentsTaskForMinuteFact,
   readModelEnvelopeForMinuteFact,
 } from '../src/ingest-channel-entry.js';
@@ -72,9 +73,9 @@ test('ordered comments and three minute Workers have one owner per queue boundar
   assert.match(commentsSource, /runCommittedMetadataEnrichment/);
 });
 
-test('raw collector forwards the response body without parsing it', async () => {
+test('raw collector parses valid JSON once and emits a structured v2 message', async () => {
   const sent = [];
-  const body = '{"large":"payload","queue":[1,2,3]}';
+  const body = '{"id":10,"alias":"buddies","current_station_id":123,"queue":[1,2,3]}';
   const env = {
     CHANNEL_ALIAS: 'buddies',
     REQUEST_TIMEOUT_MS: 8_000,
@@ -92,9 +93,53 @@ test('raw collector forwards the response body without parsing it', async () => 
   });
 
   assert.equal(sent.length, 1);
-  assert.equal(sent[0].body, body);
   assert.equal(sent[0].message_type, 'stationhead-raw-channel');
+  assert.equal(sent[0].message_version, 2);
   assert.equal(sent[0].channel_alias, 'buddies');
+  assert.deepEqual(sent[0].channel, JSON.parse(body));
+  assert.equal(Object.hasOwn(sent[0], 'body'), false);
+});
+
+test('raw collector retains the legacy v1 poison path for malformed JSON', async () => {
+  const sent = [];
+  const body = '{"id":10';
+  await collectRawChannel({
+    CHANNEL_ALIAS: 'buddies',
+    REQUEST_TIMEOUT_MS: 8_000,
+    RAW_COLLECTION_QUEUE: {
+      async send(message) { sent.push(message); },
+    },
+  }, {
+    ensureSession: async () => ({
+      authToken: 'token',
+      deviceUid: 'device',
+      tokenExpiresAt: 9999999999999,
+    }),
+    fetch: async () => new Response(body, { status: 200 }),
+  });
+
+  assert.equal(sent[0].message_version, 1);
+  assert.equal(sent[0].body, body);
+  assert.equal(Object.hasOwn(sent[0], 'channel'), false);
+});
+
+test('ingest reuses structured v2 channels and remains compatible with v1 strings', () => {
+  const channel = { id: 10, alias: 'buddies', current_station_id: 123 };
+  assert.equal(channelFromRawCollection({
+    message_type: 'stationhead-raw-channel',
+    message_version: 2,
+    channel,
+  }), channel);
+  assert.deepEqual(channelFromRawCollection({
+    message_type: 'stationhead-raw-channel',
+    message_version: 1,
+    body: JSON.stringify(channel),
+  }), channel);
+  assert.throws(() => channelFromRawCollection({
+    message_type: 'stationhead-raw-channel',
+    message_version: 2,
+    channel: [],
+  }), /invalid structured raw channel payload/);
 });
 
 test('outbox retries retain the minute payload timestamp and station identity', () => {
