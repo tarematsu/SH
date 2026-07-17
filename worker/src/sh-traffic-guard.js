@@ -73,6 +73,11 @@ function retryable(status) {
   return code === 408 || code === 425 || code === 429 || code >= 500;
 }
 
+function nullBodyStatus(status) {
+  const code = Number(status);
+  return code === 101 || code === 204 || code === 205 || code === 304;
+}
+
 async function normalizeIdleGuestResponse(response, rule) {
   if (!rule?.idleNotFound || Number(response?.status) !== 404) return response;
   const body = await response.clone().text().catch(() => '');
@@ -94,16 +99,17 @@ async function normalizeIdleGuestResponse(response, rule) {
 }
 
 async function responseSnapshot(response) {
+  const status = Number(response?.status || 0);
   return {
-    status: Number(response?.status || 0),
+    status,
     statusText: String(response?.statusText || ''),
     headers: [...new Headers(response?.headers || undefined).entries()],
-    body: await response.arrayBuffer(),
+    body: nullBodyStatus(status) ? null : await response.arrayBuffer(),
   };
 }
 
 function responseFromSnapshot(snapshot) {
-  return new Response(snapshot.body.slice(0), {
+  return new Response(snapshot.body == null ? null : snapshot.body.slice(0), {
     status: snapshot.status,
     statusText: snapshot.statusText,
     headers: snapshot.headers,
