@@ -1,6 +1,6 @@
 import { MATERIALIZED_API_VARIANTS } from '../../site/functions/lib/api-contract.js';
 import { loadLikeRanking } from '../../site/functions/api/like-ranking.js';
-import { refreshTrackHistoryPagesReadModel } from './pages-read-model-refresh.js';
+import { runTrackHistoryHourlyStep } from './pages-track-history-hourly.js';
 
 const HOUR_MS = 60 * 60_000;
 const LIKE_RANKING_LIMIT = 500;
@@ -42,7 +42,6 @@ const HOURLY_SLOT_TASKS = new Map([
   [30, 'track-likes'],
   [35, 'source:like-ranking'],
   [40, 'like-ranking'],
-  [45, 'track-history'],
   [50, 'host-history:summary'],
 ]);
 
@@ -51,18 +50,19 @@ function validTimestamp(value, fallback = Date.now()) {
   return Number.isFinite(timestamp) && timestamp >= 0 ? timestamp : fallback;
 }
 
+function trackHistoryStep(minute, hour) {
+  return { kind: 'track-history-step', key: 'track-history-stage', minute, hour };
+}
+
 export function pagesHourlyTask(now = Date.now()) {
   const timestamp = validTimestamp(now);
   const date = new Date(timestamp);
   const minute = date.getUTCMinutes();
   const hour = date.getUTCHours();
   const key = HOURLY_SLOT_TASKS.get(minute) || null;
-  if (!key) return { kind: 'idle', key: null, minute, hour };
-  if (key === 'host-history:summary' && hour !== 0) {
-    return { kind: 'idle', key: null, minute, hour, reason: 'daily-task-not-due' };
-  }
+  if (!key) return trackHistoryStep(minute, hour);
+  if (key === 'host-history:summary' && hour !== 0) return trackHistoryStep(minute, hour);
   if (key === 'source:like-ranking') return { kind: 'source', key, minute, hour };
-  if (key === 'track-history') return { kind: 'track-history', key, minute, hour };
   return { kind: 'variant', key, minute, hour };
 }
 
@@ -236,15 +236,11 @@ function taskResponse(task, timestamp, response) {
 export async function runPagesHourlyTask(env, now = Date.now(), dependencies = {}) {
   const timestamp = validTimestamp(now);
   const task = pagesHourlyTask(timestamp);
-  if (task.kind === 'idle') {
-    return { skipped: true, reason: task.reason || 'no-hourly-task', task };
-  }
 
-  if (task.kind === 'track-history') {
+  if (task.kind === 'track-history-step') {
     requireBindings(env, ['BUDDIES_DB', 'MINUTE_DB']);
-    const refresh = dependencies.refreshTrackHistory || refreshTrackHistoryPagesReadModel;
-    const result = await refresh(env, timestamp, dependencies);
-    return { ...result, task };
+    const runStep = dependencies.runTrackHistoryStep || runTrackHistoryHourlyStep;
+    return runStep(env, timestamp, dependencies);
   }
 
   requireBindings(env, ['BUDDIES_DB', 'MINUTE_DB', 'OTHER_DB']);
