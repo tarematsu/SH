@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
+import { normalizeCommentCountInputs } from '../src/collector-comments.js';
 import { collectOptionalComments } from '../src/index.js';
 import { configFromEnv } from '../src/collector-config.js';
 
@@ -43,6 +44,54 @@ test('deployed split configs disable ingest comments and keep comments Worker co
   assert.equal(configFromEnv(ingest.vars).chatLimit, 0);
   assert.equal(comments.name, 'sh-comments');
   assert.equal(configFromEnv(comments.vars).chatLimit, 50);
+});
+
+test('comment count inputs retain only identity and timestamp fields', () => {
+  const comments = normalizeCommentCountInputs({
+    chats: {
+      items: [
+        {
+          id: '7',
+          station_id: '42',
+          chat_time: '100',
+          text: 'unused',
+          account: { handle: 'unused', followers: 10 },
+        },
+        { comment_id: 7, chat_time_ms: 200, text: 'duplicate' },
+        { id: 'opaque', chat_time_ms: '300', raw: { unused: true } },
+        { id: 'opaque', chat_time_ms: 400 },
+        { id: '   ', chat_time_ms: 500 },
+        { id: '', chat_time_ms: 600 },
+      ],
+    },
+  }, 42);
+
+  assert.deepEqual(comments, [
+    {
+      comment_id: 7,
+      id: '7',
+      station_id: 42,
+      chat_time: 100,
+      chat_time_ms: null,
+    },
+    {
+      comment_id: null,
+      id: 'opaque',
+      station_id: 42,
+      chat_time: null,
+      chat_time_ms: 300,
+    },
+    {
+      comment_id: 0,
+      id: '   ',
+      station_id: 42,
+      chat_time: null,
+      chat_time_ms: 500,
+    },
+  ]);
+  assert.equal(Object.hasOwn(comments[0], 'text'), false);
+  assert.equal(Object.hasOwn(comments[0], 'raw'), false);
+  assert.equal(Object.hasOwn(comments[0], 'account_id'), false);
 });
 
 test('comment API failures degrade only optional comment collection', async () => {
@@ -90,5 +139,12 @@ test('successful optional comment collection reports saved comments', async () =
   assert.equal(result.errorStage, null);
   assert.equal(written.type, 'comments');
   assert.equal(written.data.station_id, 42);
+  assert.deepEqual(written.data.comments, [{
+    comment_id: 7,
+    id: 7,
+    station_id: 42,
+    chat_time: null,
+    chat_time_ms: null,
+  }]);
   assert.equal(written.observedAt, 1_700_000_000_000);
 });
