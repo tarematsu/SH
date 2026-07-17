@@ -2,7 +2,6 @@ import { cleanText, looksLikeId } from './track-history-text.js';
 
 const POSITIVE_CACHE_SECONDS = 30 * 24 * 60 * 60;
 const NEGATIVE_CACHE_SECONDS = 60 * 60;
-const inFlight = new Map();
 
 export function parseSpotifyTitle(value) {
   const cleaned = cleanText(value)?.replace(/\s*\|\s*Spotify\s*$/i, '') || null;
@@ -79,12 +78,10 @@ async function fetchUncached(spotifyId, timeoutMs) {
 export function fetchSpotifyMetadata(spotifyId, { timeoutMs = 5000 } = {}) {
   const id = cleanText(spotifyId);
   if (!id) return Promise.resolve(null);
-  const existing = inFlight.get(id);
-  if (existing) return existing;
-
-  const pending = fetchUncached(id, timeoutMs).finally(() => inFlight.delete(id));
-  inFlight.set(id, pending);
-  return pending;
+  // Cache API entries are safe across requests. A module-level in-flight Promise
+  // is not, because it may still be awaiting fetch or a response body created by
+  // another Pages request. Concurrent misses therefore remain request-local.
+  return fetchUncached(id, timeoutMs);
 }
 
 export async function fetchSpotifyMetadataBatch(ids, { concurrency = 6, timeoutMs = 5000 } = {}) {
