@@ -6,7 +6,7 @@ import {
   normalizeSnapshot,
   validateChannelPayload,
 } from './collector-payload.js';
-import { serializedQueueAnalysis } from './queue-analysis-transfer.js';
+import { prepareQueueAnalysis } from './queue-analysis-transfer.js';
 import { jwtExpiryMs, normalizeBearer } from './shared.js';
 import { prepareSnapshotAnalysis } from './snapshot-analysis-transfer.js';
 
@@ -138,11 +138,11 @@ async function rawCollectionQueueMessage(message, body, config) {
         || !Number.isFinite(Number(snapshot.station_id))) {
       throw new Error('compact collection identity is missing');
     }
-    const [snapshotAnalysis, queue] = await Promise.all([
+    const queue = extractQueue(channel, state.stationId);
+    const [snapshotAnalysis, queueAnalysis] = await Promise.all([
       prepareSnapshotAnalysis(snapshot),
-      Promise.resolve(extractQueue(channel, state.stationId)),
+      prepareQueueAnalysis(queue),
     ]);
-    const queueAnalysis = serializedQueueAnalysis(queue);
     message.message_version = 3;
     message.snapshot = snapshot;
     message.queue = queue;
