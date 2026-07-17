@@ -302,6 +302,7 @@ async function loadOrCreateStage(targetDb, now, dependencies = {}) {
   const save = dependencies.savePayload || savePayload;
   const generation = Math.floor(now / HOUR_MS) * HOUR_MS;
   const existing = await load(targetDb, STAGE_KEY);
+  if (existing && !existing.published) return existing;
   if (existing?.generation === generation) return existing;
 
   const [backfillState, previousStatus] = await Promise.all([
