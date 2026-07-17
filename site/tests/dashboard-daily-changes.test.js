@@ -11,6 +11,8 @@ import {
 } from '../functions/api/dashboard-daily-changes.js';
 import { FakeD1Database, responseJson } from './helpers/fake-d1.js';
 
+const dayText = (value) => new Date(value).toISOString().slice(0, 10);
+
 test('UTC dashboard day boundaries always start at 00:00 UTC', () => {
   const starts = utcDayStarts(Date.UTC(2026, 6, 16, 14, 30));
   assert.deepEqual(starts, {
@@ -70,10 +72,13 @@ test('daily dashboard SQL uses the completed daily summary fields', () => {
 });
 
 test('daily changes endpoint returns completed summary rows from OTHER_DB', async () => {
+  const starts = utcDayStarts(Date.now());
+  const yesterdayKey = dayText(starts.yesterdayStart);
+  const dayBeforeKey = dayText(starts.dayBeforeYesterdayStart);
   const db = new FakeD1Database().route('all', 'FROM sh_daily_summary', () => ({
     results: [
-      { period_key: '2026-07-14', member_growth: 7, stream_growth: 40 },
-      { period_key: '2026-07-15', member_growth: 11, stream_growth: 55 },
+      { period_key: dayBeforeKey, member_growth: 7, stream_growth: 40 },
+      { period_key: yesterdayKey, member_growth: 11, stream_growth: 55 },
     ],
   }));
 
