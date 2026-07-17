@@ -131,7 +131,7 @@ test('queue structural and like analyses survive JSON Queue transport', () => {
   restoreQueueAnalysis(transported.queue, transported.analysis);
 
   assert.equal(queueStructuralPayload(transported.queue), transported.analysis.structural);
-  assert.equal(analyzeQueueLikes(transported.queue.tracks), transported.analysis.likes);
+  assert.deepEqual(analyzeQueueLikes(transported.queue.tracks), transported.analysis.likes);
 });
 
 test('prepared snapshot persistence keeps the existing SQL and bind format', async () => {
