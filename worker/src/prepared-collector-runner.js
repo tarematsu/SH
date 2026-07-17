@@ -16,6 +16,7 @@ import { handoffMinuteFactJob } from './minute-facts-queue.js';
 import { jwtExpiryMs } from './shared.js';
 
 const RAW_D1_STATEMENT = Symbol('prepared-collector-raw-d1-statement');
+const PREPARED_COLLECTOR_FINALIZE = Symbol('prepared-collector-finalize');
 const NO_COMMENTS_RESULT = Object.freeze({
   commentsSaved: 0,
   degraded: false,
@@ -28,6 +29,10 @@ const NO_PLANNED_COMMENTS_RESULT = Object.freeze({
   degraded: false,
   errorStage: null,
 });
+
+export function preparedCollectorFinalizeState(result) {
+  return result?.[PREPARED_COLLECTOR_FINALIZE] || null;
+}
 
 function signalFrom(value) {
   if (value && typeof value.aborted === 'boolean') return value;
@@ -130,6 +135,21 @@ function preparedPayload(env, state, config, previousRunAt, observedAt, metadata
   };
 }
 
+function finalizeState(state, observedAt, lastSuccessAt) {
+  return {
+    authToken: state.authToken,
+    deviceUid: state.deviceUid,
+    tokenExpiresAt: state.tokenExpiresAt || jwtExpiryMs(state.authToken) || null,
+    lastRunAt: observedAt,
+    lastSuccessAt,
+    lastError: null,
+    channelId: state.channelId,
+    stationId: state.stationId,
+    persistCredentials: state.persistCredentials !== false,
+    clearFailureOnSuccess: state.clearFailureOnSuccess === true,
+  };
+}
+
 export async function collectPreparedOnce(env, source = 'raw-collection-queue') {
   const observedAt = Date.now();
   let stage = 'collector_start';
@@ -214,16 +234,20 @@ export async function collectPreparedOnce(env, source = 'raw-collection-queue') 
       },
     });
 
-    stage = 'd1_write_collector_state';
-    throwIfAborted(activeEnv, stage);
-    await saveCollectorStateAndClearFailure(activeEnv, state, {
-      lastRunAt: observedAt,
-      lastSuccessAt: Date.now(),
-      lastError: null,
-      tokenExpiresAt: state.tokenExpiresAt || jwtExpiryMs(state.authToken),
-    });
+    const lastSuccessAt = Date.now();
+    const deferredState = finalizeState(state, observedAt, lastSuccessAt);
+    if (!activeEnv?.INGEST_FINALIZE_QUEUE?.send) {
+      stage = 'd1_write_collector_state';
+      throwIfAborted(activeEnv, stage);
+      await saveCollectorStateAndClearFailure(activeEnv, state, {
+        lastRunAt: observedAt,
+        lastSuccessAt,
+        lastError: null,
+        tokenExpiresAt: deferredState.tokenExpiresAt,
+      });
+    }
 
-    return {
+    const summary = {
       ok: true,
       source,
       observed_at: observedAt,
@@ -248,7 +272,10 @@ export async function collectPreparedOnce(env, source = 'raw-collection-queue') 
       minute_fact_job_minute_at: minuteFactJob?.minute_at ?? null,
       heartbeat_written: false,
       token_expires_at: state.tokenExpiresAt || null,
+      finalize_deferred: Boolean(activeEnv?.INGEST_FINALIZE_QUEUE?.send),
     };
+    Object.defineProperty(summary, PREPARED_COLLECTOR_FINALIZE, { value: deferredState });
+    return summary;
   } catch (error) {
     const failure = asCollectorFailure(error, stage, Date.now());
     if (state) {
