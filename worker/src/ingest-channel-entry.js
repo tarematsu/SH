@@ -19,6 +19,24 @@ function objectValue(value) {
   return value && typeof value === 'object' && !Array.isArray(value) ? value : null;
 }
 
+export function channelFromRawCollection(message) {
+  if (message?.message_type !== 'stationhead-raw-channel') {
+    throw new Error('unsupported raw collection message');
+  }
+  const version = integer(message?.message_version);
+  if (version === 2) {
+    const channel = objectValue(message?.channel);
+    if (!channel) throw new Error('invalid structured raw channel payload');
+    return channel;
+  }
+  if (version !== 1) throw new Error('unsupported raw collection message');
+  try {
+    return JSON.parse(String(message.body || ''));
+  } catch (error) {
+    throw new Error(`invalid raw channel JSON: ${error?.message || error}`);
+  }
+}
+
 export function commentsTaskForMinuteFact(commentTask, body, options = {}) {
   const compact = options.inPlace === true ? body : { ...body };
   compact.read_model = null;
@@ -228,15 +246,7 @@ async function recoverCurrentReadModelEnvelope(env, message, channel, result) {
 }
 
 export async function ingestRawCollection(env, message) {
-  if (message?.message_type !== 'stationhead-raw-channel' || Number(message?.message_version) !== 1) {
-    throw new Error('unsupported raw collection message');
-  }
-  let channel;
-  try {
-    channel = JSON.parse(String(message.body || ''));
-  } catch (error) {
-    throw new Error(`invalid raw channel JSON: ${error?.message || error}`);
-  }
+  const channel = channelFromRawCollection(message);
   const capture = { channelId: null, minuteAt: null, envelope: null };
   const active = activeIngestEnv(env, message, channel, capture);
   const result = await collectOnce(active, 'raw-collection-queue');
