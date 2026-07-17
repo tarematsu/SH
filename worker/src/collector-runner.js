@@ -177,6 +177,38 @@ function collectionTimingEnabled(env = {}) {
   );
 }
 
+export function preparedCollectionPayload(
+  prepared,
+  state,
+  config,
+  previousRunAt,
+  observedAt,
+  metadataRetry,
+) {
+  const snapshot = prepared?.snapshot;
+  const queue = prepared?.queue ?? null;
+  if (!snapshot || typeof snapshot !== 'object' || Array.isArray(snapshot)) {
+    throw new Error('prepared collection snapshot is missing');
+  }
+  if (queue !== null && (typeof queue !== 'object' || Array.isArray(queue))) {
+    throw new Error('prepared collection queue is invalid');
+  }
+  state.channelId = snapshot.channel_id;
+  state.stationId = snapshot.station_id;
+  return {
+    snapshot,
+    queue,
+    initialPlan: buildCollectionPlan({
+      state,
+      queue,
+      previousRunAt,
+      observedAt,
+      metadataRefreshIntervalMs: config.metadataRefreshIntervalMs,
+      metadataRetry,
+    }),
+  };
+}
+
 export async function collectOnce(env, source = 'manual') {
   const observedAt = Date.now();
   const startedAt = observedAt;
@@ -203,34 +235,52 @@ export async function collectOnce(env, source = 'manual') {
     state.lastRunAt = observedAt;
     state.lastError = null;
 
-    stage = 'sh_channel_request';
-    const channel = await measure(stage, () => shJson(
-      state,
-      config,
-      `/channels/alias/${encodeURIComponent(config.channelAlias)}`,
-    ));
-
-    stage = 'sh_channel_payload';
-    const { snapshot, queue, initialPlan } = await measure(stage, () => {
-      validateChannelPayload(channel, config.channelAlias);
-      extractIds(channel, state);
-
-      const normalizedSnapshot = normalizeSnapshot(channel, state, config);
-      const extractedQueue = extractQueue(channel, state.stationId);
-      const planInput = {
+    let snapshot;
+    let queue;
+    let initialPlan;
+    const prepared = activeEnv.__shPreparedCollection;
+    if (prepared) {
+      stage = 'sh_channel_payload';
+      const resolvePrepared = () => preparedCollectionPayload(
+        prepared,
         state,
-        queue: extractedQueue,
+        config,
         previousRunAt,
         observedAt,
-        metadataRefreshIntervalMs: config.metadataRefreshIntervalMs,
         metadataRetry,
-      };
-      return {
-        snapshot: normalizedSnapshot,
-        queue: extractedQueue,
-        initialPlan: buildCollectionPlan(planInput),
-      };
-    });
+      );
+      ({ snapshot, queue, initialPlan } = timings
+        ? await measure(stage, resolvePrepared)
+        : resolvePrepared());
+    } else {
+      stage = 'sh_channel_request';
+      const channel = await measure(stage, () => shJson(
+        state,
+        config,
+        `/channels/alias/${encodeURIComponent(config.channelAlias)}`,
+      ));
+
+      stage = 'sh_channel_payload';
+      ({ snapshot, queue, initialPlan } = await measure(stage, () => {
+        validateChannelPayload(channel, config.channelAlias);
+        extractIds(channel, state);
+
+        const normalizedSnapshot = normalizeSnapshot(channel, state, config);
+        const extractedQueue = extractQueue(channel, state.stationId);
+        return {
+          snapshot: normalizedSnapshot,
+          queue: extractedQueue,
+          initialPlan: buildCollectionPlan({
+            state,
+            queue: extractedQueue,
+            previousRunAt,
+            observedAt,
+            metadataRefreshIntervalMs: config.metadataRefreshIntervalMs,
+            metadataRetry,
+          }),
+        };
+      }));
+    }
 
     if (initialPlan.snapshot) {
       stage = 'd1_write_snapshot';
