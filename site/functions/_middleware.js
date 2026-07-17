@@ -9,7 +9,6 @@ import {
 } from './lib/api-contract.js';
 
 const MATERIALIZED_RETRY_TTL_SECONDS = 30;
-const inFlight = new Map();
 
 function tagged(response, cacheState) {
   const clone = response.clone();
@@ -108,28 +107,21 @@ export async function onRequest(context) {
   const hit = await cache.match(cacheKey);
   if (hit) return tagged(hit, 'HIT');
 
-  const key = cacheKey.url;
-  let task = inFlight.get(key);
-  const coalesced = Boolean(task);
-  if (!task) {
-    task = (async () => {
-      const now = Date.now();
-      const modelKey = materializedApiKey(new URL(request.url));
-      const prebuilt = await materializedResponse(context, modelKey, now);
-      const origin = prebuilt || await context.next();
-      const ttlSeconds = responseCacheTtl(
-        origin,
-        apiCacheTtlSeconds(request),
-        modelKey,
-        Boolean(prebuilt),
-        now,
-      );
-      const shared = sharedResponse(origin, ttlSeconds);
-      if (shared.ok) context.waitUntil(cache.put(cacheKey, shared.clone()));
-      return shared;
-    })().finally(() => inFlight.delete(key));
-    inFlight.set(key, task);
-  }
-
-  return tagged(await task, coalesced ? 'COALESCED' : 'MISS');
+  // Cache API entries are safe across requests; Promises and Response bodies are
+  // not. Concurrent misses may each build a response, then converge on the same
+  // edge cache entry without sharing request-scoped I/O objects.
+  const now = Date.now();
+  const modelKey = materializedApiKey(new URL(request.url));
+  const prebuilt = await materializedResponse(context, modelKey, now);
+  const origin = prebuilt || await context.next();
+  const ttlSeconds = responseCacheTtl(
+    origin,
+    apiCacheTtlSeconds(request),
+    modelKey,
+    Boolean(prebuilt),
+    now,
+  );
+  const shared = sharedResponse(origin, ttlSeconds);
+  if (shared.ok) context.waitUntil(cache.put(cacheKey, shared.clone()));
+  return tagged(shared, 'MISS');
 }

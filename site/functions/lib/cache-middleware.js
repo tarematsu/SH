@@ -1,5 +1,3 @@
-const inFlight = new Map();
-
 function cachePolicy(url) {
   if (url.pathname === '/api/dashboard') return { ttl: 60, browser: 30 };
   if (url.pathname === '/api/broadcast-series') return { ttl: 3600, browser: 300 };
@@ -46,27 +44,18 @@ export async function serveCached(context) {
   const cacheKey = canonicalRequest(request);
   const hit = await cache.match(cacheKey);
   if (hit) return tagged(hit, 'HIT');
-  const key = cacheKey.url;
-  let task = inFlight.get(key);
-  const coalesced = Boolean(task);
-  if (!task) {
-    task = (async () => {
-      const origin = await context.next();
-      const headers = new Headers(origin.headers);
-      if (origin.ok) {
-        headers.set('cache-control', `public, max-age=${policy.browser}, s-maxage=${policy.ttl}, stale-while-revalidate=${policy.ttl * 2}`);
-      }
-      headers.set('vary', 'accept-encoding');
-      const shared = new Response(origin.body, {
-        status: origin.status,
-        statusText: origin.statusText,
-        headers,
-      });
-      if (shared.ok) context.waitUntil(cache.put(cacheKey, shared.clone()));
-      return shared;
-    })().finally(() => inFlight.delete(key));
-    inFlight.set(key, task);
+
+  const origin = await context.next();
+  const headers = new Headers(origin.headers);
+  if (origin.ok) {
+    headers.set('cache-control', `public, max-age=${policy.browser}, s-maxage=${policy.ttl}, stale-while-revalidate=${policy.ttl * 2}`);
   }
-  const response = await task;
-  return tagged(response, coalesced ? 'COALESCED' : 'MISS');
+  headers.set('vary', 'accept-encoding');
+  const shared = new Response(origin.body, {
+    status: origin.status,
+    statusText: origin.statusText,
+    headers,
+  });
+  if (shared.ok) context.waitUntil(cache.put(cacheKey, shared.clone()));
+  return tagged(shared, 'MISS');
 }

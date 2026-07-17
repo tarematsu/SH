@@ -1,6 +1,5 @@
 import { BLOCKED_API_PATHS } from '../lib/api-contract.js';
 
-const inFlight = new Map();
 const blockedApiPaths = new Set(BLOCKED_API_PATHS);
 
 function normalizedPathname(value) {
@@ -75,28 +74,17 @@ export async function onRequest(context) {
   const hit = await cache.match(cacheKey);
   if (hit) return tagged(hit, 'HIT');
 
-  const key = cacheKey.url;
-  let task = inFlight.get(key);
-  const coalesced = Boolean(task);
-
-  if (!task) {
-    task = (async () => {
-      const origin = await context.next();
-      const headers = new Headers(origin.headers);
-      if (origin.ok) {
-        headers.set('cache-control', `public, max-age=${policy.browser}, s-maxage=${policy.ttl}, stale-while-revalidate=${policy.ttl * 2}`);
-      }
-      headers.set('vary', 'accept-encoding');
-      const shared = new Response(origin.body, {
-        status: origin.status,
-        statusText: origin.statusText,
-        headers,
-      });
-      if (shared.ok) context.waitUntil(cache.put(cacheKey, shared.clone()));
-      return shared;
-    })().finally(() => inFlight.delete(key));
-    inFlight.set(key, task);
+  const origin = await context.next();
+  const headers = new Headers(origin.headers);
+  if (origin.ok) {
+    headers.set('cache-control', `public, max-age=${policy.browser}, s-maxage=${policy.ttl}, stale-while-revalidate=${policy.ttl * 2}`);
   }
-
-  return tagged(await task, coalesced ? 'COALESCED' : 'MISS');
+  headers.set('vary', 'accept-encoding');
+  const shared = new Response(origin.body, {
+    status: origin.status,
+    statusText: origin.statusText,
+    headers,
+  });
+  if (shared.ok) context.waitUntil(cache.put(cacheKey, shared.clone()));
+  return tagged(shared, 'MISS');
 }
