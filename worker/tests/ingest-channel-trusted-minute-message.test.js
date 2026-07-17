@@ -11,7 +11,14 @@ function minuteMessage() {
     queue_id: 456,
     start_time: observedAt - 60_000,
     is_paused: false,
-    tracks: [{ position: 0, spotify_id: 'track', title: 'Song', artist: 'Artist' }],
+    tracks: Array.from({ length: 60 }, (_, position) => ({
+      position,
+      spotify_id: `track-${position}`,
+      title: `Song ${position}`,
+      artist: 'Artist',
+      album_name: null,
+      thumbnail_url: null,
+    })),
   };
   return minuteFactQueueMessage({
     observedAt,
@@ -57,4 +64,16 @@ test('trusted ingest path still rejects mismatched channel identity', () => {
     () => readModelEnvelopeForMinuteFact({ observed_at: 1 }, body, { trusted: true }),
     /invalid trusted minute fact queue message/,
   );
+});
+
+test('trusted envelope reuses the compact queue object', () => {
+  const body = minuteMessage();
+  const envelope = readModelEnvelopeForMinuteFact(
+    { observed_at: 1_784_000_000_000, auth: { authToken: 'token' } },
+    body,
+    { trusted: true },
+  );
+
+  assert.equal(envelope.read_model.queue.value, body.payload.queue);
+  assert.equal(envelope.read_model.queue.value.tracks.length, 60);
 });
