@@ -6,8 +6,12 @@ function taskKind(body) {
   return String(body.task || '');
 }
 
-async function enqueueReadModelWrite(env, body, readModel, dependencies) {
-  if (dependencies.enqueueReadModelWrite) {
+async function enqueueReadModelStage(env, body, readModel, task, dependencies) {
+  if (dependencies.enqueueReadModelStage) {
+    await dependencies.enqueueReadModelStage(task, readModel, body);
+    return;
+  }
+  if (task === 'read-model-write' && dependencies.enqueueReadModelWrite) {
     await dependencies.enqueueReadModelWrite(readModel, body);
     return;
   }
@@ -15,7 +19,7 @@ async function enqueueReadModelWrite(env, body, readModel, dependencies) {
   await env.TRACK_METADATA_QUEUE.send({
     message_type: 'stationhead-track-metadata',
     message_version: 1,
-    task: 'read-model-write',
+    task,
     job_id: body.job_id,
     observed_at: body.observed_at ?? null,
     read_model: readModel,
@@ -39,11 +43,25 @@ export async function processTrackMetadataTask(env, body, dependencies = {}) {
       await dependencies.saveMinuteFactReadModels(env, body.read_model, body.job_id);
       return { task: kind, job_id: body.job_id };
     }
-    const prepare = dependencies.prepareReadModelForWrite
-      || (await import('./read-model-stages.js')).prepareReadModelForWrite;
-    const readModel = await prepare(env, body.read_model);
-    await enqueueReadModelWrite(env, body, readModel, dependencies);
-    return { task: kind, job_id: body.job_id, pending: true };
+    if (dependencies.prepareReadModelForWrite) {
+      const readModel = await dependencies.prepareReadModelForWrite(env, body.read_model);
+      await enqueueReadModelStage(env, body, readModel, 'read-model-write', dependencies);
+      return { task: kind, job_id: body.job_id, pending: true, next_task: 'read-model-write' };
+    }
+    const hydrate = dependencies.hydrateReadModelMetadata
+      || (await import('./read-model-stages.js')).hydrateReadModelMetadata;
+    const readModel = await hydrate(env, body.read_model);
+    await enqueueReadModelStage(env, body, readModel, 'read-model-preserve', dependencies);
+    return { task: kind, job_id: body.job_id, pending: true, next_task: 'read-model-preserve' };
+  }
+
+  if (kind === 'read-model-preserve') {
+    if (!body.read_model || !body.job_id) throw new Error('read-model preserve task is invalid');
+    const preserve = dependencies.preserveReadModelForWrite
+      || (await import('./read-model-stages.js')).preserveReadModelForWrite;
+    const readModel = await preserve(env, body.read_model);
+    await enqueueReadModelStage(env, body, readModel, 'read-model-write', dependencies);
+    return { task: kind, job_id: body.job_id, pending: true, next_task: 'read-model-write' };
   }
 
   if (kind === 'read-model-write') {
