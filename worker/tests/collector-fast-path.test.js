@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import { collectOptionalComments } from '../src/collector-comments.js';
+import { firstDefined } from '../src/collector-config.js';
 import { ingest } from '../src/collector-ingest.js';
 
 test('disabled optional comments reuse one immutable resolved promise', async () => {
@@ -19,6 +20,14 @@ test('disabled optional comments reuse one immutable resolved promise', async ()
     degraded: false,
     errorStage: null,
   });
+});
+
+test('firstDefined preserves nullish-only fallback semantics and falsy values', () => {
+  assert.equal(firstDefined(undefined, null, 0, 1), 0);
+  assert.equal(firstDefined(null, false, true), false);
+  assert.equal(firstDefined(undefined, ''), '');
+  assert.equal(firstDefined(undefined, null), undefined);
+  assert.equal(firstDefined(), undefined);
 });
 
 test('unsupported collector writes retain the direct-ingest error', async () => {
