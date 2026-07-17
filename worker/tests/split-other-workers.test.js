@@ -47,7 +47,7 @@ test('Pages read-model Worker runs one hourly task from a one-minute Cron', asyn
   );
 
   const worker = config('wrangler.pages-read-model.jsonc');
-  assert.equal(worker.name, 'sh-pages-read-model');
+  assert.equal(worker.name, 'sh-buddies-read-model');
   assert.equal(worker.main, 'src/pages-read-model-entry.js');
   assert.deepEqual(worker.triggers.crons, [PAGES_READ_MODEL_CRON]);
   assert.deepEqual(worker.d1_databases.map(({ binding }) => binding), ['BUDDIES_DB', 'MINUTE_DB', 'OTHER_DB']);
