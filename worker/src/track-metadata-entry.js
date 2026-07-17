@@ -12,7 +12,7 @@ export async function processTrackMetadataTask(env, body, dependencies = {}) {
     const job = body.job;
     if (!job?.jobId || !job?.payload) throw new Error('committed metadata job is invalid');
     const runner = dependencies.runCommittedMetadataEnrichment
-      || (await import('./minute-entry.js')).runCommittedMetadataEnrichment;
+      || (await import('./committed-metadata-enrichment.js')).runCommittedMetadataEnrichment;
     await runner(env, [job], dependencies.enrichment || {});
     return { task: kind, job_id: job.jobId };
   }
