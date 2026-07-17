@@ -9,7 +9,7 @@ import {
 
 const QUEUE_STRUCTURE_CACHE_LIMIT = 16;
 const queueStructureCache = new Map();
-const payloadEntries = new WeakMap();
+let payloadEntries = new WeakMap();
 
 function sameInteger(value, expected) {
   return value === expected || integer(value) === expected;
@@ -91,4 +91,5 @@ export async function queueStructuralHash(queue, payload = null) {
 
 export function resetQueueStructureCacheForTests() {
   queueStructureCache.clear();
+  payloadEntries = new WeakMap();
 }
