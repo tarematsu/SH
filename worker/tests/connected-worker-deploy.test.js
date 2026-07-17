@@ -10,36 +10,63 @@ import {
   githubCommitChangedPaths,
 } from '../scripts/deploy-connected-worker.mjs';
 
-test('connected deploy decision skips an unaffected Worker', () => {
+test('connected deploy decision skips an unaffected canonical Worker', () => {
   assert.deepEqual(
     connectedDeployDecision(
-      'sh-monitor-buddies',
+      'sh-buddies-monitor',
       ['worker/src/other-monitor-entry.js'],
       ['sh-monitor-other'],
     ),
     {
       deploy: false,
       reason: 'worker-unaffected',
-      workerName: 'sh-monitor-buddies',
+      workerName: 'sh-buddies-monitor',
     },
   );
 });
 
-test('connected deploy decision keeps conservative fallbacks', () => {
+test('retired connected Worker names never redeploy', async () => {
+  const expected = {
+    deploy: false,
+    reason: 'renamed-worker-retired',
+    workerName: 'sh-monitor-buddies',
+    replacement: 'sh-buddies-monitor',
+  };
+  assert.deepEqual(connectedDeployDecision('sh-monitor-buddies', null, null), expected);
+
+  let spawned = false;
+  let fetched = false;
+  const result = await deployConnectedWorker({
+    workerName: 'sh-monitor-buddies',
+    fetch: async () => {
+      fetched = true;
+      throw new Error('unexpected fetch');
+    },
+    spawnSync() {
+      spawned = true;
+      return { status: 0 };
+    },
+  });
+  assert.deepEqual(result, expected);
+  assert.equal(fetched, false);
+  assert.equal(spawned, false);
+});
+
+test('connected deploy decision keeps conservative fallbacks for canonical names', () => {
   assert.equal(
-    connectedDeployDecision('sh-monitor-buddies', null, null).deploy,
+    connectedDeployDecision('sh-buddies-monitor', null, null).deploy,
     true,
   );
   assert.deepEqual(
     connectedDeployDecision(
-      'sh-monitor-buddies',
+      'sh-buddies-monitor',
       ['worker/src/other-monitor-entry.js'],
       null,
     ),
     {
       deploy: true,
       reason: 'worker-selection-unavailable',
-      workerName: 'sh-monitor-buddies',
+      workerName: 'sh-buddies-monitor',
     },
   );
   assert.equal(
@@ -136,7 +163,7 @@ test('non-production connected build exits before diff resolution or Wrangler', 
 test('unaffected connected build exits without invoking Wrangler', async () => {
   let spawned = false;
   const result = await deployConnectedWorker({
-    workerName: 'sh-monitor-buddies',
+    workerName: 'sh-buddies-monitor',
     changedPaths: ['worker/src/other-monitor-entry.js'],
     selectedWorkers: ['sh-monitor-other'],
     spawnSync() {
