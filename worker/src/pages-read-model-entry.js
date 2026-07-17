@@ -1,29 +1,23 @@
 import './fetch-guard.js';
-import {
-  refreshFastPagesReadModels,
-  refreshTrackHistoryPagesReadModel,
-} from './pages-read-model-refresh.js';
+import { runPagesHourlyTask } from './pages-hourly-read-model.js';
 
-export const PAGES_FAST_READ_MODEL_CRON = '*/5 * * * *';
-export const PAGES_FULL_READ_MODEL_CRON = '31 * * * *';
+export const PAGES_READ_MODEL_CRON = '* * * * *';
 
 function scheduledTimestamp(controller, fallback = Date.now()) {
   const value = Number(controller?.scheduledTime);
   return Number.isFinite(value) && value >= 0 ? value : fallback;
 }
 
-function assertRefreshSucceeded(kind, result) {
+function assertRefreshSucceeded(result) {
   if (!result || typeof result !== 'object') return result;
-  if (result.skipped && result.reason === 'db-binding-missing') {
-    throw new Error(`${kind} Pages read-model refresh is missing a required D1 binding`);
-  }
   const failures = Array.isArray(result.responses)
     ? result.responses.filter((item) => item?.ok === false)
     : [];
   if (Number(result.failed || failures.length) > 0) {
+    const task = result.task?.key || result.task?.kind || 'unknown';
     throw new AggregateError(
-      failures.map((item) => new Error(`${item.key || 'unknown'}: ${item.error || 'materialization failed'}`)),
-      `${kind} Pages read-model refresh failed for ${failures.length || result.failed} response(s)`,
+      failures.map((item) => new Error(`${item.key || task}: ${item.error || 'materialization failed'}`)),
+      `hourly Pages read-model task ${task} failed for ${failures.length || result.failed} response(s)`,
     );
   }
   return result;
@@ -31,16 +25,12 @@ function assertRefreshSucceeded(kind, result) {
 
 export async function runPagesReadModelCron(controller, env, dependencies = {}) {
   const cron = String(controller?.cron || '');
+  if (cron !== PAGES_READ_MODEL_CRON) {
+    return { skipped: true, reason: 'unsupported-pages-read-model-cron', cron };
+  }
   const now = scheduledTimestamp(controller);
-  if (cron === PAGES_FAST_READ_MODEL_CRON) {
-    const refresh = dependencies.refreshFast || refreshFastPagesReadModels;
-    return assertRefreshSucceeded('fast', await refresh(env, now));
-  }
-  if (cron === PAGES_FULL_READ_MODEL_CRON) {
-    const refresh = dependencies.refreshFull || refreshTrackHistoryPagesReadModel;
-    return assertRefreshSucceeded('full', await refresh(env, now));
-  }
-  return { skipped: true, reason: 'unsupported-pages-read-model-cron', cron };
+  const runTask = dependencies.runTask || runPagesHourlyTask;
+  return assertRefreshSucceeded(await runTask(env, now, dependencies));
 }
 
 export default {

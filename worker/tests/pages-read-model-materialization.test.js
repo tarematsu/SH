@@ -81,7 +81,7 @@ test('midnight fast refresh stores every due non-history response as generation-
     && call.sql.includes('CREATE TABLE IF NOT EXISTS sh_pages_response_manifest')));
 });
 
-test('five-minute refresh updates only the five-minute response', async () => {
+test('legacy fast refresh stays idle between hourly response generations', async () => {
   const db = new FakeDb();
   const result = await refreshFastPagesReadModels({
     BUDDIES_DB: {},
@@ -91,7 +91,7 @@ test('five-minute refresh updates only the five-minute response', async () => {
     render: async (variant) => Response.json({ ok: true, model_key: variant.key }),
   });
 
-  assert.deepEqual(result.responses.map((item) => item.key), ['minute-facts-current']);
+  assert.deepEqual(result.responses, []);
   assert.deepEqual(result.daily, { skipped: true, reason: 'not-due' });
   assert.deepEqual(result.likes, { skipped: true, reason: 'not-due' });
   const payloadWrites = db.calls.filter((call) =>
@@ -99,7 +99,7 @@ test('five-minute refresh updates only the five-minute response', async () => {
   assert.equal(payloadWrites.length, 0);
 });
 
-test('quarter-hour refresh skips half-hour and track-history work', async () => {
+test('quarter-hour legacy repair refreshes only the daily source payload', async () => {
   const db = new FakeDb();
   const result = await refreshFastPagesReadModels({
     BUDDIES_DB: {},
@@ -109,14 +109,12 @@ test('quarter-hour refresh skips half-hour and track-history work', async () => 
     render: async (variant) => Response.json({ ok: true, model_key: variant.key }),
   });
 
-  const keys = result.responses.map((item) => item.key);
-  assert.equal(keys.includes('track-likes'), false);
-  assert.equal(keys.includes('like-ranking'), false);
-  assert.equal(keys.includes('host-history:summary'), false);
-  assert.equal(keys.includes('track-history'), false);
-  assert.equal(keys.includes('minute-facts-current'), true);
+  assert.deepEqual(result.responses, []);
   assert.equal(result.daily.skipped, undefined);
   assert.deepEqual(result.likes, { skipped: true, reason: 'not-due' });
+  const payloadWrites = db.calls.filter((call) =>
+    call.method === 'run' && call.sql.includes('INSERT INTO sh_pages_payload_read_model'));
+  assert.equal(payloadWrites.length, 1);
 });
 
 test('full history refresh republishes track history after updating its source table', async () => {

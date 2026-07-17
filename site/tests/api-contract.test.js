@@ -67,28 +67,31 @@ test('GET /api catalog is generated from the same contract', () => {
   assert.equal(catalog.public_write_api, false);
 });
 
-test('materialized response freshness follows each model cadence', () => {
+test('materialized response freshness follows the hourly generation cadence', () => {
   const minute = 60_000;
-  assert.equal(materializedResponseCadenceSeconds('minute-facts-current'), 5 * 60);
-  assert.equal(materializedResponseCadenceSeconds('dashboard-history'), 15 * 60);
-  assert.equal(materializedResponseCadenceSeconds('track-likes'), 30 * 60);
+  for (const key of [
+    'minute-facts-current',
+    'dashboard-history',
+    'track-likes',
+    'like-ranking',
+    'history:daily',
+    'history:weekly',
+    'history:monthly',
+    'history:broadcasts',
+    'track-history',
+  ]) {
+    assert.equal(materializedResponseCadenceSeconds(key), 60 * 60, key);
+    assert.equal(materializedResponseMaximumAge(key), 65 * minute, key);
+  }
   assert.equal(materializedResponseCadenceSeconds('host-history:summary'), 24 * 60 * 60);
   assert.equal(materializedResponseCadenceSeconds('unknown'), 5 * 60);
-
-  assert.equal(materializedResponseMaximumAge('minute-facts-current'), 15 * minute);
-  assert.equal(materializedResponseMaximumAge('dashboard-history'), 20 * minute);
-  assert.equal(materializedResponseMaximumAge('track-likes'), 35 * minute);
   assert.equal(materializedResponseMaximumAge('host-history:summary'), (24 * 60 + 5) * minute);
   assert.equal(
     materializedResponseMaximumAge('dashboard-history', { PAGES_RESPONSE_MAX_AGE_MS: 15 * minute }),
-    20 * minute,
+    65 * minute,
   );
   assert.equal(
-    materializedResponseMaximumAge('track-likes', { PAGES_RESPONSE_MAX_AGE_MS: 20 * minute }),
-    35 * minute,
-  );
-  assert.equal(
-    materializedResponseMaximumAge('track-likes', { PAGES_RESPONSE_MAX_AGE_MS: 40 * minute }),
-    40 * minute,
+    materializedResponseMaximumAge('track-likes', { PAGES_RESPONSE_MAX_AGE_MS: 70 * minute }),
+    70 * minute,
   );
 });
