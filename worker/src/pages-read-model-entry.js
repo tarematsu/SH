@@ -1,5 +1,5 @@
 import './fetch-guard.js';
-import { runPagesHourlyTask } from './pages-hourly-read-model.js';
+import { runPagesSixHourTask } from './pages-six-hour-read-model.js';
 
 export const PAGES_READ_MODEL_CRON = '* * * * *';
 
@@ -17,7 +17,7 @@ function assertRefreshSucceeded(result) {
     const task = result.task?.key || result.task?.kind || 'unknown';
     throw new AggregateError(
       failures.map((item) => new Error(`${item.key || task}: ${item.error || 'materialization failed'}`)),
-      `hourly Pages read-model task ${task} failed for ${failures.length || result.failed} response(s)`,
+      `Pages read-model task ${task} failed for ${failures.length || result.failed} response(s)`,
     );
   }
   return result;
@@ -29,7 +29,7 @@ export async function runPagesReadModelCron(controller, env, dependencies = {}) 
     return { skipped: true, reason: 'unsupported-pages-read-model-cron', cron };
   }
   const now = scheduledTimestamp(controller);
-  const runTask = dependencies.runTask || runPagesHourlyTask;
+  const runTask = dependencies.runTask || runPagesSixHourTask;
   return assertRefreshSucceeded(await runTask(env, now, dependencies));
 }
 
