@@ -40,7 +40,7 @@ test('manual deploy keeps all Cloudflare targets available', () => {
   assert.equal(occurrences, 3);
 });
 
-test('automatic deploys select affected Workers and retire replaced names only after deploy', () => {
+test('automatic deploys select affected Workers and isolate topology renames', () => {
   for (const workflow of [splitDeployWorkflow, prDiagnosticsWorkflow]) {
     assert.match(workflow, new RegExp(selectorName.replace('.', '\\.')));
     assert.match(workflow, /site\/functions\/\*\*/);
@@ -52,9 +52,19 @@ test('automatic deploys select affected Workers and retire replaced names only a
 
   assert.match(splitDeployWorkflow, /workflow_dispatch/);
   assert.match(splitDeployWorkflow, /select-worker-deploys\.mjs --all/);
+  assert.match(splitDeployWorkflow, /Detach legacy Queue consumers for rename cutover/);
+  assert.match(splitDeployWorkflow, /queues consumer remove stationhead-comments sh-comments/);
+  assert.match(splitDeployWorkflow, /queues consumer remove stationhead-raw-collection sh-ingest-channel/);
+  assert.match(splitDeployWorkflow, /Restore legacy Queue consumers after failed cutover/);
+  assert.match(splitDeployWorkflow, /queues consumer add stationhead-comments sh-comments/);
+  assert.match(splitDeployWorkflow, /queues consumer add stationhead-raw-collection sh-ingest-channel/);
   assert.match(splitDeployWorkflow, /npm run retire:renamed-workers/);
+
   assert.doesNotMatch(prDiagnosticsWorkflow, /npm run retire:renamed-workers/);
   assert.match(prDiagnosticsWorkflow, /github\.event\.pull_request\.base\.sha/);
+  assert.match(prDiagnosticsWorkflow, /topology_rename/);
+  assert.match(prDiagnosticsWorkflow, /Skipping direct PR deploy because a Worker script name changed/);
+  assert.match(prDiagnosticsWorkflow, /needs\.select-workers\.outputs\.topology_rename != 'true'/);
   assert.match(prDiagnosticsWorkflow, /fromJSON\(needs\.select-workers\.outputs\.diagnostics\)/);
 });
 
