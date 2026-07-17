@@ -2,7 +2,10 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
-import { cloudflareBuildConfig } from './select-cloudflare-build-config.mjs';
+import {
+  cloudflareBuildConfig,
+  renamedCloudflareWorkerReplacement,
+} from './select-cloudflare-build-config.mjs';
 
 const workerRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const repositoryRoot = resolve(workerRoot, '..');
@@ -26,6 +29,15 @@ function gitOutput(args, options = {}) {
 
 export function connectedDeployDecision(workerName, changedPaths, selectedWorkers) {
   const name = String(workerName || '').trim();
+  const replacement = renamedCloudflareWorkerReplacement(name);
+  if (replacement) {
+    return {
+      deploy: false,
+      reason: 'renamed-worker-retired',
+      workerName: name,
+      replacement,
+    };
+  }
   if (!cloudflareBuildConfig(name)) {
     return { deploy: true, reason: 'not-a-connected-worker-build', workerName: name || null };
   }
@@ -184,6 +196,12 @@ function runWrangler(args = [], options = {}) {
 
 export async function deployConnectedWorker(options = {}) {
   const workerName = String(options.workerName ?? process.env.WRANGLER_CI_OVERRIDE_NAME ?? '').trim();
+  const renamedDecision = connectedDeployDecision(workerName, [], []);
+  if (renamedDecision.reason === 'renamed-worker-retired') {
+    console.log(JSON.stringify({ event: 'connected_worker_deploy_decision', ...renamedDecision }));
+    return renamedDecision;
+  }
+
   const branch = String(options.branch ?? process.env.WORKERS_CI_BRANCH ?? '').trim();
   const productionBranch = String(options.productionBranch ?? 'main').trim() || 'main';
   if (cloudflareBuildConfig(workerName) && branch && branch !== productionBranch) {
