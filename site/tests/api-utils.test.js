@@ -45,6 +45,23 @@ test('observedAtFrom uses numeric observed_at or a fallback', () => {
   assert.equal(observedAtFrom({}, 999), 999);
 });
 
+test('observedAtFrom does not evaluate the clock when observed_at is valid', () => {
+  const originalNow = Date.now;
+  let calls = 0;
+  Date.now = () => {
+    calls += 1;
+    return 777;
+  };
+  try {
+    assert.equal(observedAtFrom({ observed_at: 1234 }), 1234);
+    assert.equal(calls, 0);
+    assert.equal(observedAtFrom({}), 777);
+    assert.equal(calls, 1);
+  } finally {
+    Date.now = originalNow;
+  }
+});
+
 test('bool parses known representations and rejects unknown encodings', () => {
   assert.equal(bool(true), 1);
   assert.equal(bool(false), 0);
