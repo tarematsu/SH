@@ -57,13 +57,25 @@ export function withAbortableMinuteFactD1(db, signal) {
 }
 
 function boundedEnv(env, signal) {
-  return new Proxy(env || {}, {
-    get(target, property, receiver) {
-      if (property === '__COLLECTION_ABORT_SIGNAL') return signal;
-      if (property === 'DB' || property === 'MINUTE_DB') return withAbortableMinuteFactD1(Reflect.get(target, property, receiver), signal);
-      return Reflect.get(target, property, receiver);
+  const active = Object.create(env || null);
+  Object.defineProperties(active, {
+    __COLLECTION_ABORT_SIGNAL: {
+      value: signal,
+      enumerable: true,
+      configurable: true,
+    },
+    DB: {
+      value: withAbortableMinuteFactD1(env?.DB, signal),
+      enumerable: true,
+      configurable: true,
+    },
+    MINUTE_DB: {
+      value: withAbortableMinuteFactD1(env?.MINUTE_DB, signal),
+      enumerable: true,
+      configurable: true,
     },
   });
+  return active;
 }
 
 function rejectedWhenAborted(signal) {
@@ -77,8 +89,9 @@ export async function saveMinuteFactWithinBudget(env, input, writer) {
   const configured = Number(env?.MINUTE_FACT_TIMEOUT_MS ?? DEFAULT_TIMEOUT_MS);
   const timeout = Number.isFinite(configured) ? Math.max(1_000, Math.min(20_000, configured)) : DEFAULT_TIMEOUT_MS;
   const signal = combinedAbortSignal(signalFrom(env), timeout);
+  throwIfMinuteFactAborted(signal);
   return Promise.race([
-    Promise.resolve().then(() => writer(boundedEnv(env, signal), input)),
+    writer(boundedEnv(env, signal), input),
     rejectedWhenAborted(signal),
   ]);
 }

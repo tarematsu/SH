@@ -27,15 +27,20 @@ export async function saveOptimizedLiveMinuteFact(env, input) {
   if (!db) return { skipped: true, reason: 'minute-db-binding-missing' };
   const snapshot = input.snapshot || {};
   const queue = input.queue || null;
+  const tracks = Array.isArray(queue?.tracks) ? queue.tracks : null;
   const observedAt = integer(input.observedAt) ?? Date.now();
   const receivedAt = Date.now();
   const channelId = integer(snapshot.channel_id);
   if (channelId == null) return { skipped: true, reason: 'channel-id-missing' };
   const stationId = integer(snapshot.station_id ?? queue?.station_id);
+  const minuteAt = minuteBucket(observedAt);
+  const broadcasting = bool(snapshot.is_broadcasting);
+  const queueStartTime = timestampMs(queue?.start_time);
+  const paused = bool(queue?.is_paused) === 1;
   const context = {
     channelId,
-    minuteAt: minuteBucket(observedAt),
-    queueTracks: Array.isArray(queue?.tracks) ? queue.tracks.length : 0,
+    minuteAt,
+    queueTracks: tracks?.length || 0,
     revisionId: null,
   };
 
@@ -54,7 +59,7 @@ export async function saveOptimizedLiveMinuteFact(env, input) {
 
   let revisionId = null;
   let playback = null;
-  if (queue && Array.isArray(queue.tracks) && bool(snapshot.is_broadcasting) !== 0) {
+  if (queue && tracks && broadcasting !== 0) {
     const revision = await timedStage('create_or_resume_revision', context, () => createOptimizedRevision(
       db,
       env.DB,
@@ -66,40 +71,38 @@ export async function saveOptimizedLiveMinuteFact(env, input) {
       channelId,
       sessionId,
       revisionId,
-      queueStartTime: timestampMs(queue.start_time),
+      queueStartTime,
       observedAt,
-      isPaused: queue.is_paused,
+      isPaused: paused,
     }));
   }
 
   const position = integer(playback?.current_position);
-  const item = revisionId == null || position == null ? null : await db.prepare(`SELECT
-      track_id,schedule_valid FROM sh_queue_revision_items WHERE revision_id=? AND position=?`)
-    .bind(revisionId, position).first();
-  const trackId = integer(item?.track_id);
+  const trackId = integer(playback?.current_track_id);
+  const scheduleValid = Number(playback?.current_schedule_valid || 0);
   const biteCount = revisionId == null ? null : await timedStage('write_current_bite', context, () => writeCurrentBite(db, {
     channelId,
     stationId,
     revisionId,
     position,
+    trackId,
     observedAt,
     queue,
   }));
 
   let flags = 0;
-  const broadcasting = bool(snapshot.is_broadcasting);
   if (broadcasting === 0) flags |= FACT_QUALITY_FLAGS.OFFLINE;
   if (broadcasting !== 0 && !queue) flags |= FACT_QUALITY_FLAGS.QUEUE_MISSING;
   if (broadcasting !== 0 && queue && trackId == null) flags |= FACT_QUALITY_FLAGS.TRACK_UNKNOWN;
   if (trackId != null) flags |= FACT_QUALITY_FLAGS.TRACK_INFERRED;
   if (input.comments?.degraded) flags |= FACT_QUALITY_FLAGS.COMMENTS_DEGRADED;
   if (playback?.delayed) flags |= FACT_QUALITY_FLAGS.DELAYED_PAYLOAD;
-  if (bool(queue?.is_paused) === 1) flags |= FACT_QUALITY_FLAGS.PAUSED;
+  if (paused) flags |= FACT_QUALITY_FLAGS.PAUSED;
 
   const fact = {
     channel_id: channelId,
     station_id: stationId,
-    minute_at: minuteBucket(observedAt),
+    minute_at: minuteAt,
     observed_at: observedAt,
     received_at: receivedAt,
     source_code: MINUTE_FACT_SOURCE_CODES.live_collector,
@@ -118,9 +121,9 @@ export async function saveOptimizedLiveMinuteFact(env, input) {
     reported_current_stream_count: reportedStreamCount(snapshot.current_stream_count),
     queue_revision_id: revisionId,
     queue_id: integer(queue?.queue_id),
-    queue_start_time: timestampMs(queue?.start_time),
-    is_paused: bool(queue?.is_paused) === 1 ? 1 : 0,
-    queue_track_count: Array.isArray(queue?.tracks) ? queue.tracks.length : null,
+    queue_start_time: queueStartTime,
+    is_paused: paused ? 1 : 0,
+    queue_track_count: tracks?.length ?? null,
     queue_available: queue ? 1 : 0,
     track_id: trackId,
     queue_position: position,
@@ -128,7 +131,7 @@ export async function saveOptimizedLiveMinuteFact(env, input) {
       ? TRACK_DETECTION_METHOD_CODES.unknown
       : TRACK_DETECTION_METHOD_CODES.queue_inferred,
     track_confidence: trackId == null ? 0 : (playback?.delayed ? 0.6 : 0.9),
-    schedule_valid: Number(item?.schedule_valid || 0),
+    schedule_valid: scheduleValid,
     track_bite_count: biteCount,
     comment_count: integer(input.comments?.commentCount ?? input.comments?.commentsSaved),
     comment_total: integer(input.comments?.commentTotal),

@@ -2,10 +2,11 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { DatabaseSync } from 'node:sqlite';
 
-import { updatePlaybackState } from '../src/minute-facts-legacy-revision.js';
+import { updatePlaybackState, writeCurrentBite } from '../src/minute-facts-legacy-revision.js';
 
 function createDatabase() {
   const sqlite = new DatabaseSync(':memory:');
+  const preparedSql = [];
   sqlite.exec(`
     CREATE TABLE sh_playback_current (
       channel_id INTEGER PRIMARY KEY,
@@ -21,6 +22,7 @@ function createDatabase() {
     CREATE TABLE sh_queue_revision_items (
       revision_id INTEGER NOT NULL,
       position INTEGER NOT NULL,
+      track_id INTEGER,
       duration_ms INTEGER,
       playback_offset_ms INTEGER,
       schedule_valid INTEGER
@@ -31,10 +33,33 @@ function createDatabase() {
       is_paused INTEGER,
       source TEXT
     );
+    CREATE TABLE sh_track_counter_changes (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      observed_at INTEGER,
+      occurrence_key TEXT,
+      channel_id INTEGER,
+      station_id INTEGER,
+      queue_id INTEGER,
+      queue_start_time INTEGER,
+      queue_position INTEGER,
+      queue_track_id INTEGER,
+      stationhead_track_id INTEGER,
+      spotify_id TEXT,
+      apple_music_id TEXT,
+      isrc TEXT,
+      queue_revision_id INTEGER,
+      track_id INTEGER,
+      track_key TEXT,
+      count_value INTEGER,
+      source TEXT,
+      source_record_id TEXT UNIQUE
+    );
   `);
   return {
     sqlite,
+    preparedSql,
     prepare(sql) {
+      preparedSql.push(sql);
       const statement = sqlite.prepare(sql);
       return {
         bind(...params) {
@@ -60,8 +85,8 @@ test('revision changes within one queue instance preserve pause accumulation', a
   const db = createDatabase();
   const queueStartTime = 1_700_000_000_000;
   db.sqlite.exec(`
-    INSERT INTO sh_queue_revision_items VALUES (1,0,180000,0,1);
-    INSERT INTO sh_queue_revision_items VALUES (2,0,180000,0,1);
+    INSERT INTO sh_queue_revision_items VALUES (1,0,101,180000,0,1);
+    INSERT INTO sh_queue_revision_items VALUES (2,0,102,180000,0,1);
   `);
 
   await updatePlaybackState(db, {
@@ -94,4 +119,57 @@ test('revision changes within one queue instance preserve pause accumulation', a
   assert.equal(state.paused_total_ms, 120_000);
   assert.equal(state.pause_started_at, null);
   assert.equal(state.is_paused, 0);
+});
+
+test('current bite uses one conditional insert and records only count changes', async () => {
+  const db = createDatabase();
+  const queue = {
+    queue_id: 30,
+    start_time: 1_700_000_000,
+    tracks: [{
+      position: 0,
+      queue_track_id: 40,
+      stationhead_track_id: 50,
+      spotify_id: 'spotify-1',
+      isrc: 'JP-A',
+      bite_count: 5,
+    }],
+  };
+  db.preparedSql.length = 0;
+
+  await writeCurrentBite(db, {
+    channelId: 10,
+    stationId: 20,
+    revisionId: 60,
+    position: 0,
+    observedAt: 1_700_000_060_000,
+    queue,
+    trackId: 70,
+  });
+  await writeCurrentBite(db, {
+    channelId: 10,
+    stationId: 20,
+    revisionId: 60,
+    position: 0,
+    observedAt: 1_700_000_120_000,
+    queue,
+    trackId: 70,
+  });
+  queue.tracks[0].bite_count = 6;
+  await writeCurrentBite(db, {
+    channelId: 10,
+    stationId: 20,
+    revisionId: 60,
+    position: 0,
+    observedAt: 1_700_000_180_000,
+    queue,
+    trackId: 70,
+  });
+
+  const rows = db.sqlite.prepare(`SELECT count_value FROM sh_track_counter_changes
+    ORDER BY observed_at,id`).all();
+  assert.deepEqual(rows.map((row) => Number(row.count_value)), [5, 6]);
+  assert.equal(db.preparedSql.length, 3);
+  assert.ok(db.preparedSql.every((sql) => sql.includes('INSERT OR IGNORE INTO sh_track_counter_changes')));
+  assert.ok(db.preparedSql.every((sql) => sql.includes('WHERE ? IS NOT')));
 });

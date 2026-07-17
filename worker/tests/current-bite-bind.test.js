@@ -35,7 +35,7 @@ test('writeCurrentBite converts missing optional metadata to null before D1 bind
   assert.equal(result, 7);
   const insert = calls.find(({ sql }) => sql.includes('INSERT OR IGNORE INTO sh_track_counter_changes'));
   assert.ok(insert);
-  assert.equal(insert.values.length, 18);
+  assert.equal(insert.values.length, 20);
   assert.equal(insert.values.includes(undefined), false);
   assert.equal(insert.values[3], null);
   assert.equal(insert.values[4], null);
@@ -44,4 +44,6 @@ test('writeCurrentBite converts missing optional metadata to null before D1 bind
   assert.equal(insert.values[9], null);
   assert.equal(insert.values[10], null);
   assert.equal(insert.values[11], null);
+  assert.equal(insert.values[18], 7);
+  assert.equal(insert.values[19], 'revision:322:0');
 });

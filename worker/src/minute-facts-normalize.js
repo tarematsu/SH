@@ -96,8 +96,8 @@ export function queueStructurePayload(queue) {
   };
 }
 
-export async function queueStructuralHash(queue) {
-  return sha256(JSON.stringify(queueStructurePayload(queue)));
+export async function queueStructuralHash(queue, payload = null) {
+  return sha256(JSON.stringify(payload ?? queueStructurePayload(queue)));
 }
 
 export async function batchRun(db, statements, chunkSize = 35) {

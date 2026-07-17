@@ -6,7 +6,7 @@ import {
   missingRevisionPositions,
   resolveTracksBulk,
 } from '../src/minute-facts-fast-store.js';
-import { updatePlaybackState } from '../src/minute-facts-legacy-revision.js';
+import { updatePlaybackState, writeCurrentBite } from '../src/minute-facts-legacy-revision.js';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 
@@ -178,7 +178,7 @@ test('delayed playback payloads never reuse a later current position', async () 
   assert.equal(writes, 0);
 });
 
-test('revision changes within one queue preserve accumulated pause time', async () => {
+test('revision changes within one queue preserve pause time and load only the current item', async () => {
   let playbackParams = null;
   const previous = {
     session_id: 20,
@@ -197,18 +197,12 @@ test('revision changes within one queue preserve accumulated pause time', async 
         bind(...params) { this.params = params; return this; },
         async first() {
           if (sql.includes('SELECT * FROM sh_playback_current')) return previous;
+          if (sql.includes('FROM sh_queue_revision_items')) {
+            assert.match(sql, /playback_offset_ms<=\?/);
+            assert.match(sql, /LIMIT 1/);
+            return { position: 0, track_id: 31, schedule_valid: 1 };
+          }
           throw new Error(`unexpected first: ${sql}`);
-        },
-        async all() {
-          assert.match(sql, /sh_queue_revision_items/);
-          return {
-            results: [{
-              position: 0,
-              duration_ms: 10_000,
-              playback_offset_ms: 0,
-              schedule_valid: 1,
-            }],
-          };
         },
         async run() {
           if (sql.includes('INSERT INTO sh_playback_current')) playbackParams = this.params;
@@ -229,7 +223,49 @@ test('revision changes within one queue preserve accumulated pause time', async 
   });
 
   assert.equal(result.current_position, 0);
+  assert.equal(result.current_track_id, 31);
+  assert.equal(result.current_schedule_valid, 1);
   assert.equal(playbackParams[5], 5_000);
+});
+
+test('current bite reuses the resolved track and indexed queue entry', async () => {
+  const queries = [];
+  let insertParams = null;
+  const db = {
+    prepare(sql) {
+      queries.push(sql);
+      return {
+        params: [],
+        bind(...params) { this.params = params; return this; },
+        async first() {
+          if (sql.includes('FROM sh_track_counter_changes')) return { count_value: 6 };
+          throw new Error(`unexpected first: ${sql}`);
+        },
+        async run() {
+          if (sql.includes('INSERT OR IGNORE INTO sh_track_counter_changes')) insertParams = this.params;
+          return { meta: { changes: 1 } };
+        },
+      };
+    },
+  };
+
+  const result = await writeCurrentBite(db, {
+    channelId: 10,
+    stationId: 20,
+    revisionId: 30,
+    position: 0,
+    trackId: 42,
+    observedAt: 50_000,
+    queue: {
+      queue_id: 40,
+      start_time: 1_700_000_000,
+      tracks: [{ position: 0, queue_track_id: 77, bite_count: 7 }],
+    },
+  });
+
+  assert.equal(result, 7);
+  assert.equal(queries.some((sql) => sql.includes('FROM sh_queue_revision_items')), false);
+  assert.equal(insertParams[13], 42);
 });
 
 test('optimized minute storage uses canonical playback and counter logic', () => {
@@ -237,5 +273,6 @@ test('optimized minute storage uses canonical playback and counter logic', () =>
   assert.match(source, /updatePlaybackState, writeCurrentBite/);
   assert.doesNotMatch(source, /async function updatePlaybackState/);
   assert.match(source, /writeCurrentBite/);
+  assert.doesNotMatch(source, /sh_queue_revision_items/);
   assert.doesNotMatch(source, /sh_track_bite_observations/);
 });

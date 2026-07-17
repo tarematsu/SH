@@ -29,6 +29,47 @@ async function upsertAliases(db, table, idColumn, entityId, aliases, observedAt)
   }
 }
 
+function orderedAliasLookup(aliases) {
+  const pairs = aliases.flatMap((alias) => [alias.type, alias.value]);
+  return {
+    predicate: aliases.map(() => '(alias_type=? AND alias_value=?)').join(' OR '),
+    priority: `CASE ${aliases.map((_, index) => (
+      `WHEN alias_type=? AND alias_value=? THEN ${index}`
+    )).join(' ')} ELSE ${aliases.length} END`,
+    binds: pairs.concat(pairs),
+  };
+}
+
+async function updateExistingHost(db, aliases, accountId, handle, observedAt) {
+  const lookup = orderedAliasLookup(aliases);
+  return db.prepare(`UPDATE sh_hosts SET
+      stationhead_account_id=COALESCE(stationhead_account_id,?),
+      current_handle=COALESCE(?,current_handle),
+      last_seen_at=MAX(last_seen_at,?)
+    WHERE id=(
+      SELECT host_id FROM sh_host_aliases
+      WHERE ${lookup.predicate}
+      ORDER BY ${lookup.priority} LIMIT 1
+    )
+    RETURNING id`)
+    .bind(accountId, handle, observedAt, ...lookup.binds)
+    .first();
+}
+
+async function upsertHostAliases(db, hostId, aliases, observedAt) {
+  const values = aliases.map(() => '(?,?,?,?,?)').join(',');
+  const binds = aliases.flatMap((alias) => [
+    alias.type, alias.value, hostId, observedAt, observedAt,
+  ]);
+  await db.prepare(`INSERT INTO sh_host_aliases(
+      alias_type,alias_value,host_id,first_seen_at,last_seen_at
+    ) VALUES ${values}
+    ON CONFLICT(alias_type,alias_value) DO UPDATE SET
+      last_seen_at=MAX(sh_host_aliases.last_seen_at,excluded.last_seen_at)`)
+    .bind(...binds)
+    .run();
+}
+
 export async function resolveHost(db, source = {}, observedAt = Date.now()) {
   const accountId = integer(source.accountId ?? source.host_account_id);
   const handle = text(source.handle ?? source.host_handle);
@@ -40,24 +81,27 @@ export async function resolveHost(db, source = {}, observedAt = Date.now()) {
   ]);
   if (!aliases.length) return null;
 
-  let hostId = await findAlias(db, 'sh_host_aliases', 'host_id', aliases);
+  const existing = await updateExistingHost(db, aliases, accountId, handle, observedAt);
+  let hostId = Number(existing?.id);
   const canonicalKey = `${aliases[0].type}:${aliases[0].value}`;
-  if (hostId == null) {
+  if (!Number.isFinite(hostId)) {
     await db.prepare(`INSERT OR IGNORE INTO sh_hosts(
       canonical_key,stationhead_account_id,current_handle,first_seen_at,last_seen_at
     ) VALUES(?,?,?,?,?)`).bind(canonicalKey, accountId, handle, observedAt, observedAt).run();
     const row = await db.prepare('SELECT id FROM sh_hosts WHERE canonical_key=?')
       .bind(canonicalKey).first();
     hostId = Number(row?.id);
+    if (Number.isFinite(hostId)) {
+      await db.prepare(`UPDATE sh_hosts SET
+          stationhead_account_id=COALESCE(stationhead_account_id,?),
+          current_handle=COALESCE(?,current_handle),
+          last_seen_at=MAX(last_seen_at,?)
+        WHERE id=?`).bind(accountId, handle, observedAt, hostId).run();
+    }
   }
   if (!Number.isFinite(hostId)) return null;
 
-  await db.prepare(`UPDATE sh_hosts SET
-      stationhead_account_id=COALESCE(stationhead_account_id,?),
-      current_handle=COALESCE(?,current_handle),
-      last_seen_at=MAX(last_seen_at,?)
-    WHERE id=?`).bind(accountId, handle, observedAt, hostId).run();
-  await upsertAliases(db, 'sh_host_aliases', 'host_id', hostId, aliases, observedAt);
+  await upsertHostAliases(db, hostId, aliases, observedAt);
   return hostId;
 }
 
@@ -98,10 +142,47 @@ export async function resolveTrack(db, source = {}, observedAt = Date.now()) {
       title=COALESCE(title,?),artist=COALESCE(artist,?),
       last_seen_at=MAX(last_seen_at,?)
     WHERE id=?`).bind(
-      isrc, spotifyId, stationheadId, title, artist, observedAt, trackId,
-    ).run();
+    isrc, spotifyId, stationheadId, title, artist, observedAt, trackId,
+  ).run();
   await upsertAliases(db, 'sh_track_aliases', 'track_id', trackId, aliases, observedAt);
   return trackId;
+}
+
+async function activeSession(db, channelId) {
+  return db.prepare(`SELECT * FROM sh_broadcast_sessions
+    WHERE channel_id=? AND status='active' AND source='live_collector'
+    ORDER BY last_observed_at DESC,id DESC LIMIT 1`).bind(channelId).first();
+}
+
+async function continueLiveSession(db, input) {
+  return db.prepare(`UPDATE sh_broadcast_sessions SET
+      station_id=COALESCE(station_id,?),host_id=COALESCE(host_id,?),
+      broadcast_start_time=COALESCE(broadcast_start_time,?),
+      last_observed_at=MAX(last_observed_at,?)
+    WHERE id=(
+      SELECT id FROM sh_broadcast_sessions
+      WHERE channel_id=? AND status='active' AND source='live_collector'
+      ORDER BY last_observed_at DESC,id DESC LIMIT 1
+    )
+      AND (? IS NULL OR station_id IS NULL OR station_id=?)
+      AND (? IS NULL OR host_id IS NULL OR host_id=?)
+      AND (? IS NULL OR broadcast_start_time IS NULL OR broadcast_start_time=?)
+      AND ?-COALESCE(last_observed_at,0)<=?
+    RETURNING id`).bind(
+    input.stationId,
+    input.hostId,
+    input.broadcastStart,
+    input.observedAt,
+    input.channelId,
+    input.stationId,
+    input.stationId,
+    input.hostId,
+    input.hostId,
+    input.broadcastStart,
+    input.broadcastStart,
+    input.observedAt,
+    SESSION_GAP_MS,
+  ).first();
 }
 
 async function endSession(db, sessionId, observedAt) {
@@ -119,28 +200,22 @@ export async function resolveLiveSession(db, input) {
   const stationId = integer(input.stationId);
   const hostId = integer(input.hostId);
   const broadcastStart = timestampMs(input.broadcastStartTime);
-  const active = await db.prepare(`SELECT * FROM sh_broadcast_sessions
-    WHERE channel_id=? AND status='active' AND source='live_collector'
-    ORDER BY last_observed_at DESC,id DESC LIMIT 1`).bind(channelId).first();
 
+  if (broadcasting !== 0) {
+    const continued = await continueLiveSession(db, {
+      channelId,
+      stationId,
+      hostId,
+      broadcastStart,
+      observedAt,
+    });
+    if (continued?.id != null) return Number(continued.id);
+  }
+
+  const active = await activeSession(db, channelId);
   if (broadcasting === 0) {
     await endSession(db, active?.id, observedAt);
     return null;
-  }
-
-  const same = active
-    && (stationId == null || active.station_id == null || Number(active.station_id) === stationId)
-    && (hostId == null || active.host_id == null || Number(active.host_id) === hostId)
-    && (broadcastStart == null || active.broadcast_start_time == null
-      || Number(active.broadcast_start_time) === broadcastStart)
-    && observedAt - Number(active.last_observed_at || 0) <= SESSION_GAP_MS;
-  if (same) {
-    await db.prepare(`UPDATE sh_broadcast_sessions SET
-        station_id=COALESCE(station_id,?),host_id=COALESCE(host_id,?),
-        broadcast_start_time=COALESCE(broadcast_start_time,?),
-        last_observed_at=MAX(last_observed_at,?)
-      WHERE id=?`).bind(stationId, hostId, broadcastStart, observedAt, active.id).run();
-    return Number(active.id);
   }
 
   await endSession(db, active?.id, observedAt);
@@ -149,8 +224,8 @@ export async function resolveLiveSession(db, input) {
       session_key,channel_id,station_id,host_id,broadcast_start_time,
       first_observed_at,last_observed_at,ended_at,status,source
     ) VALUES(?,?,?,?,?,?,?,NULL,'active','live_collector')`).bind(
-      sessionKey, channelId, stationId, hostId, broadcastStart, observedAt, observedAt,
-    ).run();
+    sessionKey, channelId, stationId, hostId, broadcastStart, observedAt, observedAt,
+  ).run();
   const row = await db.prepare('SELECT id FROM sh_broadcast_sessions WHERE session_key=?')
     .bind(sessionKey).first();
   return row?.id == null ? null : Number(row.id);

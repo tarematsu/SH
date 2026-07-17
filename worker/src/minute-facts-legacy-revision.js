@@ -1,7 +1,6 @@
 import {
   batchRun,
   bool,
-  findScheduledPosition,
   integer,
   queueRevisionItemStatement,
   queueStructuralHash,
@@ -124,11 +123,15 @@ export async function updatePlaybackState(db, input) {
   const elapsed = queueStartTime == null
     ? null
     : Math.max(0, observedAt - queueStartTime - pausedTotal - activePause);
+  let currentItem = null;
   let currentPosition = null;
   if (elapsed != null) {
-    const items = await db.prepare(`SELECT position,duration_ms,playback_offset_ms,schedule_valid
-      FROM sh_queue_revision_items WHERE revision_id=? ORDER BY position ASC`).bind(revisionId).all();
-    currentPosition = findScheduledPosition(items.results || [], elapsed);
+    currentItem = await db.prepare(`SELECT position,track_id,schedule_valid
+      FROM sh_queue_revision_items
+      WHERE revision_id=? AND schedule_valid=1
+        AND playback_offset_ms<=? AND playback_offset_ms+duration_ms>?
+      ORDER BY position ASC LIMIT 1`).bind(revisionId, elapsed, elapsed).first();
+    currentPosition = integer(currentItem?.position);
   }
 
   await db.prepare(`INSERT INTO sh_playback_current(
@@ -140,13 +143,15 @@ export async function updatePlaybackState(db, input) {
       paused_total_ms=excluded.paused_total_ms,pause_started_at=excluded.pause_started_at,
       last_observed_at=excluded.last_observed_at,current_position=excluded.current_position
     WHERE excluded.last_observed_at>=sh_playback_current.last_observed_at`).bind(
-      channelId, sessionId, revisionId, queueStartTime, paused ? 1 : 0, pausedTotal,
-      pauseStartedAt, observedAt, currentPosition,
-    ).run();
+    channelId, sessionId, revisionId, queueStartTime, paused ? 1 : 0, pausedTotal,
+    pauseStartedAt, observedAt, currentPosition,
+  ).run();
   return {
     revision_id: revisionId,
     is_paused: paused ? 1 : 0,
     current_position: currentPosition,
+    current_track_id: integer(currentItem?.track_id),
+    current_schedule_valid: Number(currentItem?.schedule_valid || 0),
     delayed: false,
   };
 }
@@ -154,12 +159,19 @@ export async function updatePlaybackState(db, input) {
 export async function writeCurrentBite(db, input) {
   const { channelId, stationId, revisionId, position, observedAt, queue } = input;
   if (position == null) return null;
-  const sourceTrack = (queue?.tracks || []).find((track, index) => (integer(track?.position) ?? index) === position);
+  const tracks = Array.isArray(queue?.tracks) ? queue.tracks : [];
+  const indexedTrack = tracks[position];
+  const sourceTrack = indexedTrack && (integer(indexedTrack.position) ?? position) === position
+    ? indexedTrack
+    : tracks.find((track, index) => (integer(track?.position) ?? index) === position);
   const biteCount = integer(sourceTrack?.bite_count);
   if (biteCount == null) return null;
-  const item = await db.prepare(`SELECT track_id FROM sh_queue_revision_items
-    WHERE revision_id=? AND position=?`).bind(revisionId, position).first();
-  const trackId = integer(item?.track_id);
+  let trackId = integer(input.trackId);
+  if (!Object.hasOwn(input, 'trackId')) {
+    const item = await db.prepare(`SELECT track_id FROM sh_queue_revision_items
+      WHERE revision_id=? AND position=?`).bind(revisionId, position).first();
+    trackId = integer(item?.track_id);
+  }
   const occurrenceKey = `revision:${revisionId}:${position}`;
   const trackKey = String(
     sourceTrack?.queue_track_id
@@ -168,21 +180,21 @@ export async function writeCurrentBite(db, input) {
       ?? sourceTrack?.isrc
       ?? `track:${revisionId}:${position}`,
   );
-  const latest = await db.prepare(`SELECT count_value FROM sh_track_counter_changes
-    WHERE occurrence_key=? ORDER BY observed_at DESC,id DESC LIMIT 1`)
-    .bind(occurrenceKey).first();
-  if (integer(latest?.count_value) !== biteCount) {
-    await db.prepare(`INSERT OR IGNORE INTO sh_track_counter_changes(
+  await db.prepare(`INSERT OR IGNORE INTO sh_track_counter_changes(
       observed_at,occurrence_key,channel_id,station_id,queue_id,queue_start_time,
-        queue_position,queue_track_id,stationhead_track_id,spotify_id,apple_music_id,isrc,
-        queue_revision_id,track_id,track_key,count_value,source,source_record_id
-      ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).bind(
-      integer(observedAt), occurrenceKey, integer(channelId), integer(stationId), integer(queue?.queue_id),
-      timestampMs(queue?.start_time), integer(position), integer(sourceTrack?.queue_track_id),
-      integer(sourceTrack?.stationhead_track_id), text(sourceTrack?.spotify_id), text(sourceTrack?.apple_music_id),
-      text(sourceTrack?.isrc), integer(revisionId), trackId, trackKey,
-      biteCount, 'live_collector', `live:${channelId}:${revisionId}:${position}:${observedAt}:${biteCount}`,
-    ).run();
-  }
+      queue_position,queue_track_id,stationhead_track_id,spotify_id,apple_music_id,isrc,
+      queue_revision_id,track_id,track_key,count_value,source,source_record_id
+    ) SELECT ?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?
+    WHERE ? IS NOT (
+      SELECT count_value FROM sh_track_counter_changes
+      WHERE occurrence_key=? ORDER BY observed_at DESC,id DESC LIMIT 1
+    )`).bind(
+    integer(observedAt), occurrenceKey, integer(channelId), integer(stationId), integer(queue?.queue_id),
+    timestampMs(queue?.start_time), integer(position), integer(sourceTrack?.queue_track_id),
+    integer(sourceTrack?.stationhead_track_id), text(sourceTrack?.spotify_id), text(sourceTrack?.apple_music_id),
+    text(sourceTrack?.isrc), integer(revisionId), trackId, trackKey,
+    biteCount, 'live_collector', `live:${channelId}:${revisionId}:${position}:${observedAt}:${biteCount}`,
+    biteCount, occurrenceKey,
+  ).run();
   return biteCount;
 }
