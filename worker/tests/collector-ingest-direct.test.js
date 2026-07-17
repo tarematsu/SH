@@ -25,6 +25,18 @@ test('optimized ingest returns handler promises directly and reuses the unavaila
   assert.equal(await missingDb, null);
 });
 
+test('collector queue and comment dispatch avoids an async wrapper without changing unavailable errors', async () => {
+  assert.notEqual(ingest.constructor.name, 'AsyncFunction');
+  await assert.rejects(
+    ingest({}, 'queue', {}, 1),
+    /Direct D1 ingest is unavailable for type=queue/,
+  );
+  await assert.rejects(
+    ingest(null, 'comments', {}, 1),
+    /Direct D1 ingest is unavailable for type=comments/,
+  );
+});
+
 test('track metadata is written directly without constructing an internal HTTP Request', async () => {
   const originalRequest = globalThis.Request;
   let requestConstructed = false;
