@@ -6,6 +6,7 @@ import {
   normalizeSnapshot,
   validateChannelPayload,
 } from './collector-payload.js';
+import { serializedQueueAnalysis } from './queue-analysis-transfer.js';
 import { jwtExpiryMs, normalizeBearer } from './shared.js';
 
 const STATE_ID = 'stationhead';
@@ -136,9 +137,12 @@ function rawCollectionQueueMessage(message, body, config) {
         || !Number.isFinite(Number(snapshot.station_id))) {
       throw new Error('compact collection identity is missing');
     }
+    const queue = extractQueue(channel, state.stationId);
+    const queueAnalysis = serializedQueueAnalysis(queue);
     message.message_version = 3;
     message.snapshot = snapshot;
-    message.queue = extractQueue(channel, state.stationId);
+    message.queue = queue;
+    if (queueAnalysis) message.queue_analysis = queueAnalysis;
     return message;
   } catch {
     // Keep valid-but-unexpected upstream objects on the established ingest
