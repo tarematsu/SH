@@ -2,6 +2,7 @@ const ORIGIN='https://production1.stationhead.com';
 const PREFIX=`${ORIGIN}/station/`;
 const MAX=32;
 const MARK=Symbol.for('sh-monitor.sh-read-cache');
+const NULL_BODY_STATUS=new Set([101,204,205,304]);
 
 function cacheable(input,init,now){
   const raw=typeof input==='string'?input:input instanceof URL?input.toString():input?.url;
@@ -22,6 +23,23 @@ function cacheable(input,init,now){
   return {minute:Math.floor(now/60000),key:[method,url.toString(),body,headers.get('sth-device-uid')||'',headers.get('authorization')||''].join('\n')};
 }
 
+function responseFromSnapshot(snapshot){
+  return new Response(snapshot.body,{
+    status:snapshot.status,
+    statusText:snapshot.statusText,
+    headers:snapshot.headers,
+  });
+}
+
+async function responseSnapshot(response){
+  return {
+    body:NULL_BODY_STATUS.has(response.status)?null:await response.clone().text(),
+    status:response.status,
+    statusText:response.statusText,
+    headers:[...response.headers.entries()],
+  };
+}
+
 export function createShReadFetch(nativeFetch,nowFn=Date.now){
   if(typeof nativeFetch!=='function')throw new TypeError('nativeFetch must be a function');
   const cache=new Map();let minute=null;
@@ -29,10 +47,17 @@ export function createShReadFetch(nativeFetch,nowFn=Date.now){
     const request=cacheable(input,init,Number(nowFn())||Date.now());
     if(!request)return nativeFetch(input,init);
     if(minute!==request.minute){cache.clear();minute=request.minute;}
-    const existing=cache.get(request.key);if(existing)return (await existing).clone();
+    const existing=cache.get(request.key);
+    if(existing)return responseFromSnapshot(existing);
+
+    const response=await nativeFetch(input,init);
+    if(!response?.ok)return response;
+    let snapshot;
+    try{snapshot=await responseSnapshot(response);}catch{return response;}
+    if(minute!==request.minute)return response;
     while(cache.size>=MAX)cache.delete(cache.keys().next().value);
-    const pending=Promise.resolve().then(()=>nativeFetch(input,init)).then((response)=>{if(!response?.ok)cache.delete(request.key);return response;}).catch((error)=>{cache.delete(request.key);throw error;});
-    cache.set(request.key,pending);return (await pending).clone();
+    cache.set(request.key,snapshot);
+    return response;
   };
   Object.defineProperty(wrapped,MARK,{value:true});return wrapped;
 }
