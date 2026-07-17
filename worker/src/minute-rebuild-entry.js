@@ -49,27 +49,29 @@ export async function processMinuteRebuildStage(env, body, dependencies = {}) {
   if (!env?.BUDDIES_DB || !env?.MINUTE_DB) throw new Error('minute rebuild database binding is missing');
   const startedAt = Date.now();
   const active = sourceEnv(env);
+  const record = dependencies.recordStage || recordStage;
+  const enqueue = dependencies.enqueueStage || enqueueStage;
 
   try {
     if (task.stage === 'gap-scan') {
       const run = dependencies.runGapScan
         || (await import('./minute-facts-gap-scan.js')).runMinuteFactsGapScan;
       const result = await run(active, dependencies.gapScan || {});
-      await recordStage(env, task, result, startedAt);
-      await enqueueStage(env, task, 'backfill');
+      await record(env, task, result, startedAt);
+      await enqueue(env, task, 'backfill');
       return { stage: task.stage, run_id: task.runId, pending: true, result };
     }
 
     const run = dependencies.runBackfill
       || (await import('./minute-facts-backfill.js')).runMinuteFactsBackfill;
     const result = await run(active, dependencies.backfill || {});
-    await recordStage(env, task, result, startedAt);
+    await record(env, task, result, startedAt);
     const pending = Number(result?.pending_candidates || 0) > 0
       || Number(result?.scanned_snapshots || 0) > 0;
-    if (pending) await enqueueStage(env, task, 'backfill', 1);
+    if (pending) await enqueue(env, task, 'backfill', 1);
     return { stage: task.stage, run_id: task.runId, pending, result };
   } catch (error) {
-    await recordStage(env, task, { error: String(error?.message || error).slice(0, 800) }, startedAt, false)
+    await record(env, task, { error: String(error?.message || error).slice(0, 800) }, startedAt, false)
       .catch(() => {});
     throw error;
   }
