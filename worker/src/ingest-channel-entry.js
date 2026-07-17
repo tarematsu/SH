@@ -19,6 +19,70 @@ function objectValue(value) {
   return value && typeof value === 'object' && !Array.isArray(value) ? value : null;
 }
 
+function legacyChannelFromRawCollection(message, version) {
+  if (version === 2) {
+    const channel = objectValue(message?.channel);
+    if (!channel) throw new Error('invalid structured raw channel payload');
+    return channel;
+  }
+  if (version !== 1) throw new Error('unsupported raw collection message');
+  try {
+    return JSON.parse(String(message.body || ''));
+  } catch (error) {
+    throw new Error(`invalid raw channel JSON: ${error?.message || error}`);
+  }
+}
+
+export function collectionFromRawCollection(message) {
+  if (message?.message_type !== 'stationhead-raw-channel') {
+    throw new Error('unsupported raw collection message');
+  }
+  const version = integer(message?.message_version);
+  if (version !== 3) {
+    return {
+      prepared: false,
+      channel: legacyChannelFromRawCollection(message, version),
+      snapshot: null,
+      queue: null,
+    };
+  }
+
+  const snapshot = objectValue(message?.snapshot);
+  const queue = message?.queue == null ? null : objectValue(message.queue);
+  const channelId = integer(snapshot?.channel_id);
+  const stationId = integer(snapshot?.station_id);
+  if (!snapshot || channelId == null || stationId == null) {
+    throw new Error('invalid prepared raw collection snapshot');
+  }
+  if (message?.queue != null && !queue) {
+    throw new Error('invalid prepared raw collection queue');
+  }
+  if (queue && !Array.isArray(queue.tracks)) {
+    throw new Error('invalid prepared raw collection queue tracks');
+  }
+  const queueStationId = integer(queue?.station_id);
+  if (queueStationId != null && queueStationId !== stationId) {
+    throw new Error('prepared raw collection station identity does not match');
+  }
+  const expectedAlias = String(message.channel_alias || '').trim().toLowerCase();
+  const snapshotAlias = String(snapshot.channel_alias || '').trim().toLowerCase();
+  if (expectedAlias && snapshotAlias !== expectedAlias) {
+    throw new Error('prepared raw collection channel alias does not match');
+  }
+  return {
+    prepared: true,
+    channel: null,
+    snapshot,
+    queue,
+  };
+}
+
+export function channelFromRawCollection(message) {
+  const collection = collectionFromRawCollection(message);
+  if (!collection.channel) throw new Error('raw collection message does not contain a channel payload');
+  return collection.channel;
+}
+
 export function commentsTaskForMinuteFact(commentTask, body, options = {}) {
   const compact = options.inPlace === true ? body : { ...body };
   compact.read_model = null;
@@ -110,15 +174,24 @@ export function readModelEnvelopeForMinuteFact(rawMessage, body, options = {}) {
   };
 }
 
-function fallbackReadModelEnvelope(env, message, channel) {
+function fallbackReadModelEnvelope(env, message, collection) {
   const state = collectorStateFromAuthState(message.auth, env);
   const channelAlias = message.channel_alias || env.CHANNEL_ALIAS || 'buddies';
   const collectorId = env.COLLECTOR_ID || 'cloudflare-worker';
   const observedAt = Number(message.observed_at);
-  validateChannelPayload(channel, channelAlias);
-  extractIds(channel, state);
-  const snapshot = normalizeSnapshot(channel, state, { channelAlias, collectorId });
-  const queue = minuteFactQueue(extractQueue(channel, state.stationId));
+  let snapshot;
+  let queue;
+  if (collection.prepared) {
+    snapshot = collection.snapshot;
+    queue = minuteFactQueue(collection.queue);
+    state.channelId = snapshot.channel_id;
+    state.stationId = snapshot.station_id;
+  } else {
+    validateChannelPayload(collection.channel, channelAlias);
+    extractIds(collection.channel, state);
+    snapshot = normalizeSnapshot(collection.channel, state, { channelAlias, collectorId });
+    queue = minuteFactQueue(extractQueue(collection.channel, state.stationId));
+  }
   return {
     message_type: 'stationhead-read-model',
     message_version: 1,
@@ -153,7 +226,7 @@ function fallbackReadModelEnvelope(env, message, channel) {
   };
 }
 
-function activeIngestEnv(env, message, channel, capture) {
+function activeIngestEnv(env, message, collection, capture) {
   const active = Object.create(env || null);
   const commentsQueue = env?.COMMENTS_QUEUE;
   const commentTask = {
@@ -164,7 +237,14 @@ function activeIngestEnv(env, message, channel, capture) {
   Object.defineProperties(active, {
     __shAuthState: { value: message.auth || {}, enumerable: false },
     __shPersistCollectorCredentials: { value: message.persist_credentials !== false, enumerable: false },
-    __RAW_CHANNEL_PAYLOAD: { value: channel, enumerable: false },
+    __RAW_CHANNEL_PAYLOAD: { value: collection.channel, enumerable: false },
+    __shPreparedCollection: {
+      value: collection.prepared ? {
+        snapshot: collection.snapshot,
+        queue: collection.queue,
+      } : null,
+      enumerable: false,
+    },
     CHAT_LIMIT: { value: 0, enumerable: true },
     MINUTE_FACT_QUEUE: {
       enumerable: false,
@@ -198,7 +278,7 @@ export function capturedReadModelEnvelope(result, capture) {
     : null;
 }
 
-async function recoverCurrentReadModelEnvelope(env, message, channel, result) {
+async function recoverCurrentReadModelEnvelope(env, message, collection, result) {
   const channelId = integer(result?.channel_id);
   const minuteAt = integer(result?.minute_fact_job_minute_at);
   if (channelId == null || minuteAt == null) throw new Error('current minute fact identity is missing');
@@ -224,24 +304,16 @@ async function recoverCurrentReadModelEnvelope(env, message, channel, result) {
   // A retried raw message can find its minute outbox row already sent and
   // compacted to '{}', while the previous read-model Queue send never
   // completed. Preserve that retry path by rebuilding only in this rare case.
-  return fallbackReadModelEnvelope(env, message, channel);
+  return fallbackReadModelEnvelope(env, message, collection);
 }
 
 export async function ingestRawCollection(env, message) {
-  if (message?.message_type !== 'stationhead-raw-channel' || Number(message?.message_version) !== 1) {
-    throw new Error('unsupported raw collection message');
-  }
-  let channel;
-  try {
-    channel = JSON.parse(String(message.body || ''));
-  } catch (error) {
-    throw new Error(`invalid raw channel JSON: ${error?.message || error}`);
-  }
+  const collection = collectionFromRawCollection(message);
   const capture = { channelId: null, minuteAt: null, envelope: null };
-  const active = activeIngestEnv(env, message, channel, capture);
+  const active = activeIngestEnv(env, message, collection, capture);
   const result = await collectOnce(active, 'raw-collection-queue');
   const envelope = capturedReadModelEnvelope(result, capture)
-    || await recoverCurrentReadModelEnvelope(env, message, channel, result);
+    || await recoverCurrentReadModelEnvelope(env, message, collection, result);
   await env.READ_MODEL_QUEUE.send(envelope, { contentType: 'json' });
   return result;
 }

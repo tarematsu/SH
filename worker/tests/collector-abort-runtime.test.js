@@ -3,6 +3,7 @@ import test from 'node:test';
 
 import {
   throwIfCollectionAborted,
+  timedStage,
   withAbortableD1,
 } from '../src/collector-runner.js';
 import {
@@ -107,4 +108,23 @@ test('collection abort check preserves the original timeout reason', () => {
     () => throwIfCollectionAborted(controller.signal, 'test'),
     (error) => error === reason,
   );
+});
+
+test('disabled collector stage timing returns the original operation result', async () => {
+  const value = {};
+  assert.equal(timedStage('sync', () => value, 1_000, null), value);
+
+  const promise = Promise.resolve('done');
+  assert.equal(timedStage('async', () => promise, 1_000, null), promise);
+  assert.equal(await promise, 'done');
+});
+
+test('enabled collector stage timing records the measured stage', async () => {
+  const timings = [];
+  assert.equal(await timedStage('measured', async () => 'done', 1_000, timings), 'done');
+  assert.equal(timings.length, 1);
+  assert.equal(timings[0].stage, 'measured');
+  assert.equal(timings[0].outcome, 'success');
+  assert.equal(Number.isFinite(timings[0].duration_ms), true);
+  assert.equal(timings[0].duration_ms >= 0, true);
 });

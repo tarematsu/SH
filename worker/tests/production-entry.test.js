@@ -45,7 +45,7 @@ test('legacy production entry exposes no HTTP control or health endpoints', asyn
   assert.equal((await productionApp.fetch(new Request('https://buddies.test/favicon.ico'), {}, {})).status, 204);
 });
 
-test('buddies Wrangler configuration is raw-collection only', () => {
+test('buddies Wrangler configuration owns collection and compact queue preparation only', () => {
   const config = JSON.parse(readFileSync(new URL('../wrangler.jsonc', import.meta.url), 'utf8'));
   const source = readFileSync(new URL('../src/raw-collector-entry.js', import.meta.url), 'utf8');
   assert.equal(config.main, 'src/raw-collector-entry.js');
@@ -56,7 +56,10 @@ test('buddies Wrangler configuration is raw-collection only', () => {
     binding: 'RAW_COLLECTION_QUEUE',
     queue: 'stationhead-raw-collection',
   }]);
-  assert.doesNotMatch(source, /JSON\.parse|response\.json|normalizeSnapshot|extractQueue|readModelPresentation/);
+  assert.match(source, /JSON\.parse/);
+  assert.match(source, /normalizeSnapshot/);
+  assert.match(source, /extractQueue/);
+  assert.doesNotMatch(source, /response\.json|readModelPresentation|handoffMinuteFactJob/);
 
   const names = Object.keys(config.vars || {});
   for (const prefix of ['BUDDY_PLAYBACK_', 'HOST_', 'SOLO_', 'OFFICIAL_NEWS_', 'DERIVE_', 'HEALTH_ALERT_']) {
