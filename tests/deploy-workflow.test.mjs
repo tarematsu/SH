@@ -18,6 +18,10 @@ const splitDeployWorkflow = readFileSync(
   new URL('../.github/workflows/deploy-split-pipeline.yml', import.meta.url),
   'utf8',
 );
+const observabilityWorkflow = readFileSync(
+  new URL('../.github/workflows/fetch-cloudflare-observability.yml', import.meta.url),
+  'utf8',
+);
 const workerPackage = JSON.parse(readFileSync(
   new URL('../worker/package.json', import.meta.url),
   'utf8',
@@ -40,7 +44,7 @@ test('manual deploy keeps all Cloudflare targets available', () => {
   assert.equal(occurrences, 3);
 });
 
-test('automatic deploys select and deploy only affected current Workers', () => {
+test('automatic deploys select only affected current Workers and isolate script renames', () => {
   for (const workflow of [splitDeployWorkflow, prDiagnosticsWorkflow]) {
     assert.match(workflow, new RegExp(selectorName.replace('.', '\\.')));
     assert.match(workflow, /site\/functions\/\*\*/);
@@ -48,7 +52,6 @@ test('automatic deploys select and deploy only affected current Workers', () => 
     assert.match(workflow, /DEPLOY_COMMANDS/);
     assert.match(workflow, /npm run "\$command"/);
     assert.doesNotMatch(workflow, /sync-cloudflare-build-watch-paths/);
-    assert.doesNotMatch(workflow, /topology_rename/);
   }
 
   assert.match(splitDeployWorkflow, /workflow_dispatch/);
@@ -57,6 +60,9 @@ test('automatic deploys select and deploy only affected current Workers', () => 
   assert.doesNotMatch(splitDeployWorkflow, /retire:/);
 
   assert.match(prDiagnosticsWorkflow, /github\.event\.pull_request\.base\.sha/);
+  assert.match(prDiagnosticsWorkflow, /topology_rename/);
+  assert.match(prDiagnosticsWorkflow, /Skipping direct PR deploy because a Worker script name changed/);
+  assert.match(prDiagnosticsWorkflow, /needs\.select-workers\.outputs\.topology_rename != 'true'/);
   assert.match(prDiagnosticsWorkflow, /fromJSON\(needs\.select-workers\.outputs\.diagnostics\)/);
 });
 
@@ -85,4 +91,12 @@ test('Cloudflare Git diagnostics include only remaining connected Worker depende
   assert.match(diagnosticsWorkflow, /sh-monitor-other/);
   assert.match(diagnosticsWorkflow, /sh-minute-maintenance/);
   assert.match(diagnosticsWorkflow, /cloudflare-build-diagnostics\.mjs/);
+});
+
+test('R2 observability covers the complete requested object window', () => {
+  assert.doesNotMatch(observabilityWorkflow, /selected\s*=\s*selected\[:100\]/);
+  assert.match(observabilityWorkflow, /objects_selected/);
+  assert.match(observabilityWorkflow, /oldest_object_modified/);
+  assert.match(observabilityWorkflow, /newest_object_modified/);
+  assert.match(observabilityWorkflow, /Downloaded \$downloaded_count of \$selected_count selected R2 objects/);
 });
