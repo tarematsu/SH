@@ -35,6 +35,10 @@ export async function processTrackMetadataTask(env, body, dependencies = {}) {
 
   if (kind === 'read-model-hydration') {
     if (!body.read_model || !body.job_id) throw new Error('read-model hydration task is invalid');
+    if (dependencies.saveMinuteFactReadModels) {
+      await dependencies.saveMinuteFactReadModels(env, body.read_model, body.job_id);
+      return { task: kind, job_id: body.job_id };
+    }
     const prepare = dependencies.prepareReadModelForWrite
       || (await import('./read-model-stages.js')).prepareReadModelForWrite;
     const readModel = await prepare(env, body.read_model);
