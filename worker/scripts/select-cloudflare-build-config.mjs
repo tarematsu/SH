@@ -3,11 +3,11 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const CONFIG_BY_WORKER = Object.freeze({
-  'sh-monitor-buddies': 'wrangler.jsonc',
-  'sh-ingest-channel': 'wrangler.ingest.jsonc',
-  'sh-comments': 'wrangler.comments.jsonc',
+  'sh-buddies-monitor': 'wrangler.jsonc',
+  'sh-buddies-ingest': 'wrangler.ingest.jsonc',
+  'sh-buddies-comments': 'wrangler.comments.jsonc',
   'sh-minute-read-model': 'wrangler.read-model.jsonc',
-  'sh-pages-read-model': 'wrangler.pages-read-model.jsonc',
+  'sh-buddies-read-model': 'wrangler.pages-read-model.jsonc',
   'sh-monitor-maintenance': 'wrangler.monitor-maintenance.jsonc',
   'sh-monitor-other': 'wrangler.other.jsonc',
   'sh-minute-maintenance': 'wrangler.minute.jsonc',
@@ -15,8 +15,21 @@ const CONFIG_BY_WORKER = Object.freeze({
   'sh-minute-ingest': 'wrangler.minute-ingest.jsonc',
 });
 
+const RENAMED_WORKER_REPLACEMENTS = Object.freeze({
+  'sh-monitor-buddies': 'sh-buddies-monitor',
+  'sh-ingest-channel': 'sh-buddies-ingest',
+  'sh-comments': 'sh-buddies-comments',
+  'sh-pages-read-model': 'sh-buddies-read-model',
+});
+
+export function renamedCloudflareWorkerReplacement(workerName) {
+  return RENAMED_WORKER_REPLACEMENTS[String(workerName || '').trim()] || null;
+}
+
 export function cloudflareBuildConfig(workerName) {
-  return CONFIG_BY_WORKER[String(workerName || '').trim()] || null;
+  const name = String(workerName || '').trim();
+  const canonicalName = renamedCloudflareWorkerReplacement(name) || name;
+  return CONFIG_BY_WORKER[canonicalName] || null;
 }
 
 export async function selectCloudflareBuildConfig(options = {}) {

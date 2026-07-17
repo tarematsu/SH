@@ -1,6 +1,6 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "sh-pages-read-model",
+  "name": "sh-buddies-read-model",
   "main": "src/pages-read-model-entry.js",
   "compatibility_date": "2026-06-24",
   "workers_dev": false,

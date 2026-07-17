@@ -95,7 +95,7 @@ async function ensureSession(env) {
 }
 
 // Keep this path deliberately opaque: parsing and all queue-track work belong
-// to sh-ingest-channel so collector CPU does not scale with response contents.
+// to sh-buddies-ingest so collector CPU does not scale with response contents.
 export async function collectRawChannel(env, dependencies = {}) {
   if (!env?.RAW_COLLECTION_QUEUE?.send) throw new Error('RAW_COLLECTION_QUEUE binding is missing');
   const state = await (dependencies.ensureSession || ensureSession)(env);

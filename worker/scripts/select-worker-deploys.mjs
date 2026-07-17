@@ -9,16 +9,15 @@ const workerDefinitions = [
   { name: 'sh-minute-maintenance', config: 'worker/wrangler.minute.jsonc', command: 'deploy:minute-maintenance' },
   { name: 'sh-minute-ingest', config: 'worker/wrangler.minute-ingest.jsonc', command: 'deploy:minute-ingest' },
   { name: 'sh-minute-read-model', config: 'worker/wrangler.read-model.jsonc', command: 'deploy:minute-read-model' },
-  { name: 'sh-comments', config: 'worker/wrangler.comments.jsonc', command: 'deploy:comments' },
-  { name: 'sh-ingest-channel', config: 'worker/wrangler.ingest.jsonc', command: 'deploy:ingest' },
-  { name: 'sh-monitor-buddies', config: 'worker/wrangler.jsonc', command: 'deploy:buddies' },
-  { name: 'sh-pages-read-model', config: 'worker/wrangler.pages-read-model.jsonc', command: 'deploy:pages-read-model' },
+  { name: 'sh-buddies-comments', config: 'worker/wrangler.comments.jsonc', command: 'deploy:comments' },
+  { name: 'sh-buddies-ingest', config: 'worker/wrangler.ingest.jsonc', command: 'deploy:ingest' },
+  { name: 'sh-buddies-monitor', config: 'worker/wrangler.jsonc', command: 'deploy:buddies' },
+  { name: 'sh-buddies-read-model', config: 'worker/wrangler.pages-read-model.jsonc', command: 'deploy:pages-read-model' },
   { name: 'sh-monitor-maintenance', config: 'worker/wrangler.monitor-maintenance.jsonc', command: 'deploy:monitor-maintenance' },
   { name: 'sh-monitor-other', config: 'worker/wrangler.other.jsonc', command: 'deploy:other' },
 ];
 
 const gitConnectedWorkers = new Set([
-  'sh-monitor-buddies',
   'sh-monitor-other',
   'sh-minute-maintenance',
 ]);

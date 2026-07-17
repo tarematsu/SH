@@ -22,6 +22,7 @@
     "retire:legacy-minute-maintenance": "node scripts/retire-legacy-minute-maintenance.mjs",
     "detach:legacy-read-model-consumer": "wrangler queues consumer remove stationhead-read-model sh-read-model || true",
     "retire:legacy-read-model": "node scripts/retire-legacy-read-model.mjs",
+    "retire:renamed-workers": "node scripts/retire-renamed-workers.mjs",
     "deploy:minute-read-model-cutover": "npm run detach:legacy-read-model-consumer && npm run deploy:minute-read-model && npm run retire:legacy-read-model",
     "deploy:minute": "npm run deploy:minute-derive && npm run detach:minute-consumer && npm run deploy:minute-maintenance && npm run retire:legacy-minute-maintenance && npm run deploy:minute-ingest && npm run deploy:minute-read-model-cutover",
     "deploy:mintue": "npm run deploy:minute",

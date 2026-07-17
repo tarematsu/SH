@@ -13,7 +13,7 @@ function select(paths = [], args = []) {
 
 test('comments-only changes do not redeploy the minute pipeline', () => {
   const result = select(['worker/src/comments-entry.js']);
-  assert.deepEqual(result.workers, ['sh-comments']);
+  assert.deepEqual(result.workers, ['sh-buddies-comments']);
   assert.deepEqual(result.commands, ['deploy:comments']);
   assert.deepEqual(result.diagnostics, []);
 });
@@ -24,9 +24,9 @@ test('minute derive changes redeploy only the derive consumer', () => {
   assert.deepEqual(result.commands, ['deploy:minute-derive']);
 });
 
-test('bundled site function changes redeploy only the Pages materializer', () => {
+test('bundled site function changes redeploy only the buddies materializer', () => {
   const result = select(['site/functions/api/minute-facts/current.js']);
-  assert.deepEqual(result.workers, ['sh-pages-read-model']);
+  assert.deepEqual(result.workers, ['sh-buddies-read-model']);
   assert.deepEqual(result.commands, ['deploy:pages-read-model']);
   assert.deepEqual(result.diagnostics, []);
 });
@@ -40,7 +40,7 @@ test('other monitor changes do not pull retired Pages or maintenance Workers bac
 
 test('Wrangler config changes map directly to their Worker', () => {
   const result = select(['worker/wrangler.pages-read-model.jsonc']);
-  assert.deepEqual(result.workers, ['sh-pages-read-model']);
+  assert.deepEqual(result.workers, ['sh-buddies-read-model']);
   assert.deepEqual(result.commands, ['deploy:pages-read-model']);
 });
 
@@ -66,9 +66,9 @@ test('tests and verification scripts do not redeploy runtime Workers', () => {
 
 test('shared package changes select every Worker that imports sh-shared', () => {
   const result = select(['packages/sh-shared/index.mjs']);
-  assert.ok(result.workers.includes('sh-monitor-buddies'));
-  assert.ok(result.workers.includes('sh-ingest-channel'));
-  assert.ok(result.workers.includes('sh-comments'));
+  assert.ok(result.workers.includes('sh-buddies-monitor'));
+  assert.ok(result.workers.includes('sh-buddies-ingest'));
+  assert.ok(result.workers.includes('sh-buddies-comments'));
   assert.ok(result.workers.length >= 3);
 });
 
