@@ -38,6 +38,7 @@ export const BUDDY_PLAYBACK_PIPELINE_SCHEMA_SQL = `CREATE TABLE IF NOT EXISTS sh
   host_account_id INTEGER,
   host_handle TEXT,
   track_count INTEGER NOT NULL DEFAULT 0,
+  metadata_attempts INTEGER NOT NULL DEFAULT 0,
   attempts INTEGER NOT NULL DEFAULT 0,
   next_attempt_at INTEGER NOT NULL DEFAULT 0,
   lease_until INTEGER NOT NULL DEFAULT 0,
@@ -47,7 +48,7 @@ export const BUDDY_PLAYBACK_PIPELINE_SCHEMA_SQL = `CREATE TABLE IF NOT EXISTS sh
 
 const PIPELINE_SELECT_COLUMNS = `channel_alias,cycle_at,observed_at,stage,raw_json,
   parsed_queue_json,state_json,final_queue_json,station_id,queue_id,start_time,
-  is_paused,is_broadcasting,host_account_id,host_handle,track_count,attempts,
+  is_paused,is_broadcasting,host_account_id,host_handle,track_count,metadata_attempts,attempts,
   next_attempt_at,lease_until,last_error,updated_at`;
 const PIPELINE_SELECT_SQL = `SELECT ${PIPELINE_SELECT_COLUMNS}
   FROM sh_buddy_playback_pipeline WHERE channel_alias=?`;
@@ -58,7 +59,7 @@ const PIPELINE_RESET_STALE_SQL = `UPDATE sh_buddy_playback_pipeline SET
     cycle_at=?,observed_at=NULL,stage='fetch',raw_json=NULL,parsed_queue_json=NULL,
     state_json=NULL,final_queue_json=NULL,station_id=NULL,queue_id=NULL,start_time=NULL,
     is_paused=NULL,is_broadcasting=NULL,host_account_id=NULL,host_handle=NULL,
-    track_count=0,attempts=0,next_attempt_at=0,lease_until=0,last_error=NULL,updated_at=?
+    track_count=0,metadata_attempts=0,attempts=0,next_attempt_at=0,lease_until=0,last_error=NULL,updated_at=?
   WHERE channel_alias=? AND updated_at<? AND lease_until<=?`;
 const PIPELINE_CLAIM_SQL = `UPDATE sh_buddy_playback_pipeline SET
     lease_until=?,attempts=attempts+1,updated_at=?
@@ -71,11 +72,11 @@ const PIPELINE_FETCHED_SQL = `UPDATE sh_buddy_playback_pipeline SET
 const PIPELINE_PARSED_SQL = `UPDATE sh_buddy_playback_pipeline SET
     stage='metadata',raw_json=NULL,parsed_queue_json=?,state_json=?,
     final_queue_json=NULL,station_id=?,queue_id=?,start_time=?,is_paused=?,
-    is_broadcasting=?,host_account_id=?,host_handle=?,track_count=?,
+    is_broadcasting=?,host_account_id=?,host_handle=?,track_count=?,metadata_attempts=0,
     next_attempt_at=0,lease_until=0,last_error=NULL,updated_at=?
   WHERE channel_alias=? AND cycle_at=? AND stage='parse'`;
 const PIPELINE_METADATA_SQL = `UPDATE sh_buddy_playback_pipeline SET
-    stage=?,final_queue_json=?,next_attempt_at=0,lease_until=0,last_error=NULL,updated_at=?
+    stage=?,final_queue_json=?,metadata_attempts=metadata_attempts+?,next_attempt_at=0,lease_until=0,last_error=NULL,updated_at=?
   WHERE channel_alias=? AND cycle_at=? AND stage='metadata'`;
 const PIPELINE_FAILURE_SQL = `UPDATE sh_buddy_playback_pipeline SET
     next_attempt_at=?,lease_until=0,last_error=?,updated_at=?
@@ -321,10 +322,12 @@ async function runMetadataStage(env, row, observedAt, dependencies) {
     ? enriched.metadata
     : enriched instanceof Map ? enriched : new Map();
   const remaining = Math.max(0, Math.trunc(Number(enriched?.remaining || 0)));
+  const attempted = Math.max(0, Math.trunc(Number(enriched?.attempted || 0)));
+  const processed = Math.max(0, Math.trunc(Number(row.metadata_attempts || 0))) + attempted;
   const tracks = attachBuddyMetadata(queue, metadata);
-  const nextStage = remaining > 0 ? 'metadata' : 'commit';
+  const nextStage = remaining > 0 && processed < config.metadataLimit ? 'metadata' : 'commit';
   const result = await env.OTHER_DB.prepare(PIPELINE_METADATA_SQL)
-    .bind(nextStage, JSON.stringify(tracks), observedAt, row.channel_alias, row.cycle_at)
+    .bind(nextStage, JSON.stringify(tracks), attempted, observedAt, row.channel_alias, row.cycle_at)
     .run();
   requireChanged(result, 'metadata');
   return {
