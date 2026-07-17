@@ -50,7 +50,9 @@ jobs:
           echo "commands=$(jq -c '.commands' <<<"$selection")" >> "$GITHUB_OUTPUT"
           echo "diagnostics=$(jq -c '.diagnostics' <<<"$selection")" >> "$GITHUB_OUTPUT"
           topology_rename=false
-          if git diff -U0 "$BASE_SHA" "$HEAD_SHA" -- 'worker/wrangler*.jsonc' \
+          # New Worker configs are safe to deploy. Only an existing config whose
+          # script name changed needs the topology-rename guard.
+          if git diff --diff-filter=M -U0 "$BASE_SHA" "$HEAD_SHA" -- 'worker/wrangler*.jsonc' \
               | grep -Eq '^[+-][[:space:]]*"name"[[:space:]]*:'; then
             topology_rename=true
             echo "::notice::Skipping direct PR deploy because a Worker script name changed."
