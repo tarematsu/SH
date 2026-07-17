@@ -54,7 +54,7 @@ function fakeDb() {
         method: 'batch',
         statements: statements.map((item) => ({ sql: item.sql, binds: item.binds })),
       });
-      return statements.map(() => ({ meta: { changes: 1 }));
+      return statements.map(() => ({ meta: { changes: 1 } }));
     },
   };
 }
