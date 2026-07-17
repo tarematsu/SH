@@ -20,6 +20,12 @@ function validateTask(body) {
   return { channelId, minuteAt, observedAt };
 }
 
+async function loadCurrentMinute(db, identity) {
+  return db.prepare(`SELECT observed_at FROM sh_minute_facts
+    WHERE channel_id=? AND minute_at=? LIMIT 1`)
+    .bind(identity.channelId, identity.minuteAt).first();
+}
+
 async function newestActiveSession(db, channelId) {
   return db.prepare(`SELECT id,last_observed_at FROM sh_broadcast_sessions
     WHERE channel_id=? AND status='active' AND source='live_collector'
@@ -59,30 +65,50 @@ async function attachSession(db, body, identity, sessionId) {
   ]);
 }
 
-export async function processMinuteEnrichment(env, body) {
+async function updateMinuteFact(db, identity, values) {
+  await db.prepare(`UPDATE sh_minute_facts SET
+      broadcast_session_id=COALESCE(?,broadcast_session_id),
+      host_id=COALESCE(?,host_id),
+      track_bite_count=COALESCE(?,track_bite_count)
+    WHERE channel_id=? AND minute_at=? AND observed_at=? AND source_code=?`)
+    .bind(
+      values.sessionId,
+      values.hostId,
+      values.biteCount,
+      identity.channelId,
+      identity.minuteAt,
+      identity.observedAt,
+      MINUTE_FACT_SOURCE_CODES.live_collector,
+    ).run();
+}
+
+export async function processMinuteEnrichment(env, body, dependencies = {}) {
   const identity = validateTask(body);
   const db = env?.MINUTE_DB;
-  if (!db?.prepare) throw new Error('MINUTE_DB binding is missing');
+  if (!db?.prepare && !dependencies.loadCurrentMinute) throw new Error('MINUTE_DB binding is missing');
 
   // An older retried task must not rewrite a newer minute-fact winner.
-  const current = await db.prepare(`SELECT observed_at FROM sh_minute_facts
-    WHERE channel_id=? AND minute_at=? LIMIT 1`)
-    .bind(identity.channelId, identity.minuteAt).first();
+  const loadCurrent = dependencies.loadCurrentMinute || loadCurrentMinute;
+  const current = await loadCurrent(db, identity);
   if (integer(current?.observed_at) !== identity.observedAt) {
     return { skipped: true, reason: 'stale-minute-winner', ...identity };
   }
 
-  const hostId = await resolveHost(db, {
+  const resolveHostValue = dependencies.resolveHost || resolveHost;
+  const hostId = await resolveHostValue(db, {
     accountId: body.host_account_id,
     handle: body.host_handle,
   }, identity.observedAt);
-  const sessionId = await resolveOrderedSession(db, body, identity, hostId);
-  await attachSession(db, body, identity, sessionId);
+  const resolveSession = dependencies.resolveOrderedSession || resolveOrderedSession;
+  const sessionId = await resolveSession(db, body, identity, hostId);
+  const attach = dependencies.attachSession || attachSession;
+  await attach(db, body, identity, sessionId);
 
   const revisionId = integer(body.revision_id);
   const position = integer(body.queue_position);
   const trackId = integer(body.track_id);
-  const biteCount = revisionId == null ? null : await writeCurrentBite(db, {
+  const writeBite = dependencies.writeCurrentBite || writeCurrentBite;
+  const biteCount = revisionId == null ? null : await writeBite(db, {
     channelId: identity.channelId,
     stationId: body.station_id,
     revisionId,
@@ -92,20 +118,8 @@ export async function processMinuteEnrichment(env, body) {
     queue: body.queue,
   });
 
-  await db.prepare(`UPDATE sh_minute_facts SET
-      broadcast_session_id=COALESCE(?,broadcast_session_id),
-      host_id=COALESCE(?,host_id),
-      track_bite_count=COALESCE(?,track_bite_count)
-    WHERE channel_id=? AND minute_at=? AND observed_at=? AND source_code=?`)
-    .bind(
-      sessionId,
-      hostId,
-      biteCount,
-      identity.channelId,
-      identity.minuteAt,
-      identity.observedAt,
-      MINUTE_FACT_SOURCE_CODES.live_collector,
-    ).run();
+  const updateFact = dependencies.updateMinuteFact || updateMinuteFact;
+  await updateFact(db, identity, { sessionId, hostId, biteCount });
 
   return {
     skipped: false,
