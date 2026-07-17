@@ -2,7 +2,10 @@ import {
   minuteFactQueue,
   readModelPresentation,
 } from './collector-payload.js';
-import { collectPreparedOnce } from './prepared-collector-runner.js';
+import {
+  collectPreparedOnce,
+  preparedCollectorFinalizeState,
+} from './prepared-collector-runner.js';
 import { parseMinuteFactQueueMessage } from './minute-facts-queue.js';
 
 function integer(value) {
@@ -231,6 +234,24 @@ async function recoverCurrentReadModelEnvelope(env, message, collection, result)
   return fallbackReadModelEnvelope(env, message, collection);
 }
 
+async function finalizePreparedIngest(env, result, envelope) {
+  if (!env?.INGEST_FINALIZE_QUEUE?.send) {
+    await env.READ_MODEL_QUEUE.send(envelope, { contentType: 'json' });
+    return false;
+  }
+  const collectorState = preparedCollectorFinalizeState(result);
+  if (!collectorState) throw new Error('prepared collector finalize state is missing');
+  await env.INGEST_FINALIZE_QUEUE.send({
+    message_type: 'stationhead-ingest-finalize',
+    message_version: 1,
+    observed_at: result.observed_at,
+    channel_id: result.channel_id,
+    collector_state: collectorState,
+    read_model: envelope,
+  }, { contentType: 'json' });
+  return true;
+}
+
 export async function ingestPreparedRawCollection(env, message) {
   const collection = preparedCollection(message);
   const capture = { channelId: null, minuteAt: null, envelope: null };
@@ -238,6 +259,6 @@ export async function ingestPreparedRawCollection(env, message) {
   const result = await collectPreparedOnce(active, 'raw-collection-queue');
   const envelope = capturedReadModelEnvelope(result, capture)
     || await recoverCurrentReadModelEnvelope(env, message, collection, result);
-  await env.READ_MODEL_QUEUE.send(envelope, { contentType: 'json' });
+  result.finalize_deferred = await finalizePreparedIngest(env, result, envelope);
   return result;
 }
