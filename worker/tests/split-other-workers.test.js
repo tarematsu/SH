@@ -154,11 +154,15 @@ test('maintenance Worker reports swallowed D1 failures as failed Cron invocation
   );
 });
 
-test('other monitor owns only buddy playback, host, prediction and official news', async () => {
-  assert.equal(otherMonitorTask(BASE), 'host');
+test('other monitor reserves buddy46 stages and runs only one workload per tick', async () => {
+  assert.equal(otherMonitorTask(BASE), 'buddy');
+  assert.equal(otherMonitorTask(BASE + 5 * 60_000), 'buddy');
   assert.equal(otherMonitorTask(BASE + 10 * 60_000), 'prediction');
+  assert.equal(otherMonitorTask(BASE + 15 * 60_000), 'buddy');
   assert.equal(otherMonitorTask(BASE + 20 * 60_000), 'officialNews');
-  assert.equal(otherMonitorTask(BASE + 30 * 60_000), 'host');
+  assert.equal(otherMonitorTask(BASE + 25 * 60_000), 'host');
+  assert.equal(otherMonitorTask(BASE + 30 * 60_000), 'buddy');
+  assert.equal(otherMonitorTask(BASE + 40 * 60_000), 'prediction');
   assert.equal(otherMonitorTask(BASE + 50 * 60_000), 'host');
 
   const calls = [];
@@ -168,14 +172,24 @@ test('other monitor owns only buddy playback, host, prediction and official news
     officialNews: async () => { calls.push('officialNews'); return 'news'; },
     officialNewsDue: async () => true,
   };
-  const results = await runOtherMonitorScheduled(
+  const buddyResult = await runOtherMonitorScheduled(
     { cron: OTHER_MONITOR_CRON, scheduledTime: BASE + 5 * 60_000 },
     {},
     {},
     dependencies,
   );
-  assert.deepEqual(results, ['buddy', 'news']);
-  assert.deepEqual(calls, ['buddy', 'officialNews']);
+  assert.deepEqual(buddyResult, ['buddy']);
+  assert.deepEqual(calls, ['buddy']);
+
+  calls.length = 0;
+  const dueNewsResult = await runOtherMonitorScheduled(
+    { cron: OTHER_MONITOR_CRON, scheduledTime: BASE + 25 * 60_000 },
+    {},
+    {},
+    dependencies,
+  );
+  assert.deepEqual(dueNewsResult, ['news']);
+  assert.deepEqual(calls, ['officialNews']);
 
   const events = [];
   await runOtherMonitorCron(
@@ -197,6 +211,8 @@ test('other monitor owns only buddy playback, host, prediction and official news
   assert.equal(worker.name, 'sh-monitor-other');
   assert.equal(worker.main, 'src/other-entry.js');
   assert.deepEqual(worker.triggers.crons, [OTHER_MONITOR_CRON]);
+  assert.equal(worker.vars.BUDDY_PLAYBACK_INTERVAL_MS, 1_800_000);
+  assert.equal(worker.vars.BUDDY_PLAYBACK_METADATA_LIMIT, 1);
   assert.equal(worker.vars.DATA_MAINTENANCE_ENABLED, undefined);
   assert.equal(worker.vars.SNAPSHOT_RETENTION_ENABLED, undefined);
 });

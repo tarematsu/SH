@@ -116,17 +116,15 @@ function buddyMetadataNeedsRefresh(row, track, now) {
     || (!row?.thumbnail_url && !track?.thumbnail_url);
 }
 
-export async function enrichQueueMetadata(env, queue, now, config, fetchMetadata = fetchTrackMetadata) {
-  if (!env?.OTHER_DB) throw new Error('OTHER_DB binding is missing for buddy playback metadata');
-  const tracks = queue.tracks.filter((track) => track?.spotify_id || track?.isrc);
-  const metadata = await loadTrackMetadata(env.OTHER_DB, tracks);
-  if (!tracks.some((track) => track.spotify_id) || config.metadataLimit <= 0) return metadata;
-
+function orderedQueueTracks(queue, now) {
   const index = currentIndex(queue, now);
-  const ordered = [
+  return [
     ...queue.tracks.slice(Math.max(0, index)),
     ...queue.tracks.slice(0, Math.max(0, index)),
   ];
+}
+
+function missingMetadataTracks(ordered, metadata, now, limit = Number.MAX_SAFE_INTEGER) {
   const missing = [];
   const seen = new Set();
   for (const track of ordered) {
@@ -134,9 +132,22 @@ export async function enrichQueueMetadata(env, queue, now, config, fetchMetadata
     if (!spotifyId || seen.has(spotifyId) || metadataRetryBlocked(spotifyId, now)) continue;
     seen.add(spotifyId);
     if (buddyMetadataNeedsRefresh(metadataForTrack(metadata, track), track, now)) missing.push(track);
-    if (missing.length >= config.metadataLimit) break;
+    if (missing.length >= limit) break;
+  }
+  return missing;
+}
+
+export async function enrichQueueMetadata(env, queue, now, config, fetchMetadata = fetchTrackMetadata) {
+  if (!env?.OTHER_DB) throw new Error('OTHER_DB binding is missing for buddy playback metadata');
+  const tracks = queue.tracks.filter((track) => track?.spotify_id || track?.isrc);
+  const metadata = await loadTrackMetadata(env.OTHER_DB, tracks);
+  const withDetails = config?.returnDetails === true;
+  if (!tracks.some((track) => track.spotify_id) || config.metadataLimit <= 0) {
+    return withDetails ? { metadata, attempted: 0, fetched: 0, remaining: 0 } : metadata;
   }
 
+  const ordered = orderedQueueTracks(queue, now);
+  const missing = missingMetadataTracks(ordered, metadata, now, config.metadataLimit);
   const fetched = [];
   for (const track of missing) {
     let row = null;
@@ -160,7 +171,13 @@ export async function enrichQueueMetadata(env, queue, now, config, fetchMetadata
     if (isrc) metadata.set(`isrc:${isrc}`, row);
   }
   await saveTrackMetadata(env.OTHER_DB, fetched);
-  return metadata;
+  if (!withDetails) return metadata;
+  return {
+    metadata,
+    attempted: missing.length,
+    fetched: fetched.length,
+    remaining: missingMetadataTracks(ordered, metadata, now).length,
+  };
 }
 
 export function attachBuddyMetadata(queue, metadata) {

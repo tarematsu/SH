@@ -33,7 +33,7 @@ async function runAt(minute) {
   return { calls, results, scheduledTime };
 }
 
-test('buddy46 runs every five minutes while Pages materialization runs every fifteen minutes', async () => {
+test('legacy compatibility runner retains injected five-minute buddy cadence', async () => {
   const fivePast = await runAt(5);
   assert.deepEqual(fivePast.results, ['buddy-done', 'host-done']);
   assert.deepEqual(fivePast.calls, [
@@ -50,8 +50,8 @@ test('buddy46 runs every five minutes while Pages materialization runs every fif
   ]);
 });
 
-test('other-worker production config uses five-minute buddy cadence', () => {
+test('other-worker production config uses a 30-minute buddy cadence', () => {
   const config = JSON.parse(readFileSync(new URL('../wrangler.other.jsonc', import.meta.url), 'utf8'));
-  assert.equal(config.vars.BUDDY_PLAYBACK_INTERVAL_MS, 300_000);
+  assert.equal(config.vars.BUDDY_PLAYBACK_INTERVAL_MS, 1_800_000);
   assert.deepEqual(config.triggers.crons, [OTHER_WORKER_CRON]);
 });
