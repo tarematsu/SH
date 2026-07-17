@@ -152,13 +152,13 @@ test('dashboard client preserves playback, queue expansion and goals', async () 
   assert.match(source, /function spotifyUrl/);
 });
 
-test('edge middleware shares initial dashboard history between viewers', async () => {
+test('edge middleware shares dashboard history through Cache API without request promises', async () => {
   const source = await text('functions/api/_middleware.js');
   assert.match(source, /url\.pathname === '\/api\/dashboard-history'/);
   assert.match(source, /ttl: 300, browser: 60/);
   assert.match(source, /cache\.match/);
   assert.match(source, /cache\.put/);
-  assert.match(source, /inFlight/);
+  assert.doesNotMatch(source, /inFlight/);
 });
 
 test('Pages configuration binds the expected D1 database and output directory', async () => {
