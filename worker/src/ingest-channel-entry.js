@@ -131,7 +131,7 @@ function fallbackReadModelEnvelope(env, message, channel) {
   };
 }
 
-function activeIngestEnv(env, message, channel, envelopes) {
+function activeIngestEnv(env, message, channel, capture) {
   const active = Object.create(env || null);
   const commentsQueue = env?.COMMENTS_QUEUE;
   const commentTask = {
@@ -148,8 +148,8 @@ function activeIngestEnv(env, message, channel, envelopes) {
       value: commentsQueue?.send ? {
         send(body, options) {
           if (body && typeof body === 'object') {
-            const envelope = readModelEnvelopeForMinuteFact(message, body, { trusted: true });
-            envelopes.set(String(body.job_id || ''), envelope);
+            capture.jobId = String(body.job_id || '');
+            capture.envelope = readModelEnvelopeForMinuteFact(message, body, { trusted: true });
             return commentsQueue.send(commentsTaskForMinuteFact(commentTask, body), options);
           }
           return commentsQueue.send(body, options);
@@ -160,13 +160,12 @@ function activeIngestEnv(env, message, channel, envelopes) {
   return active;
 }
 
-async function currentReadModelEnvelope(env, message, channel, result, envelopes) {
+async function currentReadModelEnvelope(env, message, channel, result, capture) {
   const channelId = integer(result?.channel_id);
   const minuteAt = integer(result?.minute_fact_job_minute_at);
   const jobId = channelId != null && minuteAt != null ? `minute-fact:${channelId}:${minuteAt}` : null;
   if (!jobId) throw new Error('current minute fact identity is missing');
-  const captured = envelopes.get(jobId);
-  if (captured) return captured;
+  if (capture.jobId === jobId && capture.envelope) return capture.envelope;
 
   try {
     const row = await env.DB.prepare(`SELECT payload_json
@@ -201,10 +200,10 @@ export async function ingestRawCollection(env, message) {
   } catch (error) {
     throw new Error(`invalid raw channel JSON: ${error?.message || error}`);
   }
-  const envelopes = new Map();
-  const active = activeIngestEnv(env, message, channel, envelopes);
+  const capture = { jobId: null, envelope: null };
+  const active = activeIngestEnv(env, message, channel, capture);
   const result = await collectOnce(active, 'raw-collection-queue');
-  const envelope = await currentReadModelEnvelope(env, message, channel, result, envelopes);
+  const envelope = await currentReadModelEnvelope(env, message, channel, result, capture);
   await env.READ_MODEL_QUEUE.send(envelope, { contentType: 'json' });
   return result;
 }
