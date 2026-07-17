@@ -87,19 +87,32 @@ jobs:
               if modified >= cutoff:
                   selected.append((modified, item['Key']))
           selected.sort(reverse=True)
-          selected = selected[:100]
-          pathlib.Path('cutoff.txt').write_text(cutoff.isoformat().replace('+00:00', 'Z'), encoding='utf-8')
+          selection = {
+              'cutoff': cutoff.isoformat().replace('+00:00', 'Z'),
+              'objects_available': len(objects),
+              'objects_selected': len(selected),
+              'newest_object_modified': selected[0][0].isoformat().replace('+00:00', 'Z') if selected else None,
+              'oldest_object_modified': selected[-1][0].isoformat().replace('+00:00', 'Z') if selected else None,
+          }
+          pathlib.Path('selection.json').write_text(json.dumps(selection, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
+          pathlib.Path('cutoff.txt').write_text(selection['cutoff'], encoding='utf-8')
           pathlib.Path('keys.txt').write_text(''.join(f'{key}\n' for _, key in selected), encoding='utf-8')
-          print(f'Selected {len(selected)} objects modified since {cutoff.isoformat()}')
+          print(f"Selected {len(selected)} objects modified since {cutoff.isoformat()}")
           PY
           if [[ -s keys.txt ]]; then
             index=0
             while IFS= read -r key; do
               index=$((index + 1))
-              file="raw/$(printf '%03d' "$index").log"
+              file="raw/$(printf '%04d' "$index").log"
               aws s3api get-object --endpoint-url "$R2_ENDPOINT" --bucket "$R2_BUCKET" --key "$key" "$file" >/dev/null
             done < keys.txt
           fi
+          selected_count="$(jq -r '.objects_selected' selection.json)"
+          downloaded_count="$(find raw -type f | wc -l | tr -d ' ')"
+          test "$downloaded_count" -eq "$selected_count" || {
+            echo "Downloaded $downloaded_count of $selected_count selected R2 objects" >&2
+            exit 1
+          }
 
       - name: Build compact findings and CPU summary
         shell: bash
@@ -115,7 +128,7 @@ jobs:
           output_dir = pathlib.Path('observability-logs')
           full_path = output_dir / 'sh-workers.ndjson'
           findings_path = output_dir / 'findings.ndjson'
-          cutoff = pathlib.Path('cutoff.txt').read_text(encoding='utf-8').strip()
+          selection = json.loads(pathlib.Path('selection.json').read_text(encoding='utf-8'))
 
           def walk(value, prefix=''):
               if isinstance(value, dict):
@@ -153,8 +166,9 @@ jobs:
           counts = {name: 0 for name in sorted(targets)}
           cpu = {name: [] for name in sorted(targets)}
           findings = total = 0
+          raw_paths = sorted(pathlib.Path('raw').glob('*'))
           with full_path.open('w', encoding='utf-8') as full, findings_path.open('w', encoding='utf-8') as flagged:
-              for path in sorted(pathlib.Path('raw').glob('*')):
+              for path in raw_paths:
                   data = path.read_bytes()
                   if data[:2] == b'\x1f\x8b':
                       data = gzip.decompress(data)
@@ -179,8 +193,18 @@ jobs:
                               or errors):
                           flagged.write(compact + '\n')
                           findings += 1
-          summary = {'ok': True, 'since': cutoff, 'objects_downloaded': len(list(pathlib.Path('raw').glob('*'))),
-                     'events': total, 'findings': findings, 'scripts': {}}
+          summary = {
+              'ok': True,
+              'since': selection['cutoff'],
+              'objects_available': selection['objects_available'],
+              'objects_selected': selection['objects_selected'],
+              'objects_downloaded': len(raw_paths),
+              'oldest_object_modified': selection['oldest_object_modified'],
+              'newest_object_modified': selection['newest_object_modified'],
+              'events': total,
+              'findings': findings,
+              'scripts': {},
+          }
           for script in sorted(targets):
               samples = cpu[script]
               summary['scripts'][script] = {
