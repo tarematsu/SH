@@ -14,11 +14,15 @@ test('current Worker names map to their Wrangler configs', () => {
   assert.equal(cloudflareBuildConfig('sh-buddies-ingest'), 'wrangler.ingest.jsonc');
   assert.equal(cloudflareBuildConfig('sh-buddies-comments'), 'wrangler.comments.jsonc');
   assert.equal(cloudflareBuildConfig('sh-minute-read-model'), 'wrangler.read-model.jsonc');
+  assert.equal(cloudflareBuildConfig('sh-track-metadata'), 'wrangler.track-metadata.jsonc');
   assert.equal(cloudflareBuildConfig('sh-pages-read-model'), 'wrangler.pages-read-model.jsonc');
   assert.equal(cloudflareBuildConfig('sh-monitor-maintenance'), 'wrangler.monitor-maintenance.jsonc');
   assert.equal(cloudflareBuildConfig('sh-monitor-other'), 'wrangler.other.jsonc');
+  assert.equal(cloudflareBuildConfig('sh-buddy-playback'), 'wrangler.buddy-playback.jsonc');
   assert.equal(cloudflareBuildConfig('sh-minute-maintenance'), 'wrangler.minute.jsonc');
   assert.equal(cloudflareBuildConfig('sh-minute-derive'), 'wrangler.minute-derive.jsonc');
+  assert.equal(cloudflareBuildConfig('sh-minute-enrichment'), 'wrangler.minute-enrichment.jsonc');
+  assert.equal(cloudflareBuildConfig('sh-minute-rebuild'), 'wrangler.minute-rebuild.jsonc');
   assert.equal(cloudflareBuildConfig('sh-minute-ingest'), 'wrangler.minute-ingest.jsonc');
   assert.equal(cloudflareBuildConfig('unknown-worker'), null);
   assert.equal(cloudflareBuildConfig(''), null);
