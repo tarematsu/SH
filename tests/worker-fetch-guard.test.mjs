@@ -16,24 +16,25 @@ test('iTunes requests are blocked without contacting upstream', async () => {
   assert.equal(calls, 0);
 });
 
-test('duplicate Spotify requests share one upstream subrequest', async () => {
+test('duplicate Spotify misses stay request-local', async () => {
   let calls = 0;
   let release;
   const gate = new Promise((resolve) => { release = resolve; });
   const guarded = createOptionalFetchGuard(async () => {
     calls += 1;
+    const request = calls;
     await gate;
-    return new Response(JSON.stringify({ title: 'Track' }), { status: 200 });
+    return Response.json({ request });
   }, () => 1000);
 
   const first = guarded('https://open.spotify.com/oembed?url=track');
   const second = guarded('https://open.spotify.com/oembed?url=track');
   await new Promise((resolve) => setImmediate(resolve));
-  assert.equal(calls, 1);
+  assert.equal(calls, 2);
   release();
 
-  assert.equal((await first).status, 200);
-  assert.equal((await second).status, 200);
+  assert.deepEqual(await (await first).json(), { request: 1 });
+  assert.deepEqual(await (await second).json(), { request: 2 });
 });
 
 test('failed optional requests enter a five-minute local backoff', async () => {
