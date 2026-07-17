@@ -58,17 +58,23 @@ function combinedSignal(original, timeoutMs) {
   return original;
 }
 
-async function responseSnapshot(response) {
+function nullBodyStatus(status) {
+  const code = Number(status);
+  return code === 101 || code === 204 || code === 205 || code === 304;
+}
+
+async function responseSnapshot(response, method = 'GET') {
+  const status = Number(response.status || 0);
   return {
-    status: response.status,
+    status,
     statusText: response.statusText,
     headers: [...response.headers.entries()],
-    body: await response.arrayBuffer(),
+    body: method === 'HEAD' || nullBodyStatus(status) ? null : await response.arrayBuffer(),
   };
 }
 
 function responseFromSnapshot(snapshot) {
-  return new Response(snapshot.body.slice(0), {
+  return new Response(snapshot.body == null ? null : snapshot.body.slice(0), {
     status: snapshot.status,
     statusText: snapshot.statusText,
     headers: snapshot.headers,
@@ -78,7 +84,7 @@ function responseFromSnapshot(snapshot) {
 function resendResponseFromSnapshot(snapshot, cacheStatus) {
   const headers = new Headers(snapshot.headers);
   headers.set('x-sh-resend-cache', cacheStatus);
-  return new Response(snapshot.body.slice(0), {
+  return new Response(snapshot.body == null ? null : snapshot.body.slice(0), {
     status: snapshot.status,
     statusText: snapshot.statusText,
     headers,
@@ -92,11 +98,10 @@ function responseOk(snapshot) {
 export function createOptionalFetchGuard(nativeFetch, nowFn = Date.now) {
   if (typeof nativeFetch !== 'function') throw new TypeError('nativeFetch must be a function');
 
-  // Shared promises resolve only to detached status/header/body bytes. No
-  // Response, Request or stream is retained in module scope.
-  const flights = new Map();
+  // Only settled timestamps and detached response bytes survive between Worker
+  // invocations. In-flight Promises may still be awaiting request-scoped fetch
+  // or body I/O, so concurrent misses deliberately remain request-local.
   const failures = new Map();
-  const resendFlights = new Map();
   const resendSuccesses = new Map();
 
   const guardedFetch = async (input, init = {}) => {
@@ -124,71 +129,46 @@ export function createOptionalFetchGuard(nativeFetch, nowFn = Date.now) {
       }
       if (cached) resendSuccesses.delete(successKey);
 
-      const existing = resendFlights.get(successKey);
-      if (existing) return resendResponseFromSnapshot(await existing, 'coalesced');
-
-      const pending = Promise.resolve()
-        .then(() => nativeFetch(input, init))
-        .then(async (response) => {
-          const snapshot = await responseSnapshot(response);
-          if (responseOk(snapshot)) {
-            resendSuccesses.set(successKey, {
-              snapshot,
-              expiresAt: (Number(nowFn()) || Date.now()) + RESEND_SUCCESS_TTL_MS,
-            });
-            trimMap(resendSuccesses);
-          }
-          return snapshot;
-        })
-        .finally(() => {
-          if (resendFlights.get(successKey) === pending) resendFlights.delete(successKey);
+      // Concurrent sends retain the same provider idempotency key but never share
+      // a Promise tied to another Worker invocation.
+      const response = await nativeFetch(input, init);
+      const snapshot = await responseSnapshot(response, method);
+      if (responseOk(snapshot)) {
+        resendSuccesses.set(successKey, {
+          snapshot,
+          expiresAt: (Number(nowFn()) || Date.now()) + RESEND_SUCCESS_TTL_MS,
         });
-      resendFlights.set(successKey, pending);
-      trimMap(resendFlights);
-      return resendResponseFromSnapshot(await pending, 'miss');
+        trimMap(resendSuccesses);
+      }
+      return resendResponseFromSnapshot(snapshot, 'miss');
     }
 
     if (!OPTIONAL_HOSTS.has(url.hostname)) return nativeFetch(input, init);
 
-    const dedupe = method === 'GET' || method === 'HEAD';
     const key = `${method}\n${url.toString()}`;
     const retryAt = Number(failures.get(key) || 0);
 
     if (retryAt > now) return failureResponse(url.hostname);
     if (retryAt) failures.delete(key);
 
-    const existing = dedupe ? flights.get(key) : null;
-    if (existing) return responseFromSnapshot(await existing);
-
     const requestInit = {
       ...init,
       signal: combinedSignal(init?.signal, OPTIONAL_TIMEOUT_MS),
     };
-    const pending = Promise.resolve()
-      .then(() => nativeFetch(input, requestInit))
-      .then(async (response) => {
-        const snapshot = await responseSnapshot(response);
-        if (responseOk(snapshot)) failures.delete(key);
-        else {
-          failures.set(key, (Number(nowFn()) || Date.now()) + OPTIONAL_FAILURE_BACKOFF_MS);
-          trimMap(failures);
-        }
-        return snapshot;
-      })
-      .catch((error) => {
+    try {
+      const response = await nativeFetch(input, requestInit);
+      const snapshot = await responseSnapshot(response, method);
+      if (responseOk(snapshot)) failures.delete(key);
+      else {
         failures.set(key, (Number(nowFn()) || Date.now()) + OPTIONAL_FAILURE_BACKOFF_MS);
         trimMap(failures);
-        throw error;
-      })
-      .finally(() => {
-        if (flights.get(key) === pending) flights.delete(key);
-      });
-
-    if (dedupe) {
-      flights.set(key, pending);
-      trimMap(flights);
+      }
+      return responseFromSnapshot(snapshot);
+    } catch (error) {
+      failures.set(key, (Number(nowFn()) || Date.now()) + OPTIONAL_FAILURE_BACKOFF_MS);
+      trimMap(failures);
+      throw error;
     }
-    return responseFromSnapshot(await pending);
   };
 
   Object.defineProperty(guardedFetch, INSTALL_MARK, { value: true });
