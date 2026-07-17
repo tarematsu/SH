@@ -1,6 +1,6 @@
 -- Schema for the OTHER_DB database (stationhead-other), which holds tables
 -- exclusive to sh-monitor-other and site that have no write dependency on
--- sh-monitor-buddies' own collector tables. Applied by
+-- the sh-buddies collection pipeline tables. Applied by
 -- worker/scripts/provision-other-db.mjs, mirroring how
 -- database/facts-migrations/001_initial_schema.sql provisions MINUTE_DB.
 

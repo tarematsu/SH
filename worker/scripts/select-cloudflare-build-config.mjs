@@ -15,21 +15,9 @@ const CONFIG_BY_WORKER = Object.freeze({
   'sh-minute-ingest': 'wrangler.minute-ingest.jsonc',
 });
 
-const RENAMED_WORKER_REPLACEMENTS = Object.freeze({
-  'sh-monitor-buddies': 'sh-buddies-monitor',
-  'sh-ingest-channel': 'sh-buddies-ingest',
-  'sh-comments': 'sh-buddies-comments',
-  'sh-buddies-read-model': 'sh-pages-read-model',
-});
-
-export function renamedCloudflareWorkerReplacement(workerName) {
-  return RENAMED_WORKER_REPLACEMENTS[String(workerName || '').trim()] || null;
-}
-
 export function cloudflareBuildConfig(workerName) {
   const name = String(workerName || '').trim();
-  const canonicalName = renamedCloudflareWorkerReplacement(name) || name;
-  return CONFIG_BY_WORKER[canonicalName] || null;
+  return CONFIG_BY_WORKER[name] || null;
 }
 
 export async function selectCloudflareBuildConfig(options = {}) {
