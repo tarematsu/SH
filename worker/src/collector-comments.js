@@ -3,20 +3,23 @@ import { sanitizeFailureDetail } from './collector-failure.js';
 import { ingest } from './collector-ingest.js';
 import { shJson } from './collector-config.js';
 
+const NO_COMMENTS_RESULT = Object.freeze({
+  commentsSaved: 0,
+  degraded: false,
+  errorStage: null,
+});
+const NO_COMMENTS_PROMISE = Promise.resolve(NO_COMMENTS_RESULT);
+
 function collectionAbortReason(config, fallback) {
   const signal = config?.collectionSignal;
   if (!signal?.aborted) return null;
   return signal.reason instanceof Error ? signal.reason : fallback;
 }
 
-export async function collectOptionalComments(env, state, config, observedAt, dependencies = {}) {
-  if (!state?.stationId || Number(config?.chatLimit || 0) <= 0) {
-    return { commentsSaved: 0, degraded: false, errorStage: null };
-  }
-
-  const requestJson = dependencies.requestJson || shJson;
-  const writeIngest = dependencies.writeIngest || ingest;
-  const warn = dependencies.warn || console.warn;
+async function collectComments(env, state, config, observedAt, dependencies) {
+  const requestJson = dependencies?.requestJson || shJson;
+  const writeIngest = dependencies?.writeIngest || ingest;
+  const warn = dependencies?.warn || console.warn;
   let stage = 'sh_chat_history';
 
   try {
@@ -55,4 +58,11 @@ export async function collectOptionalComments(env, state, config, observedAt, de
     }));
     return { commentsSaved: 0, degraded: true, errorStage: stage };
   }
+}
+
+export function collectOptionalComments(env, state, config, observedAt, dependencies = null) {
+  if (!state?.stationId || Number(config?.chatLimit || 0) <= 0) {
+    return NO_COMMENTS_PROMISE;
+  }
+  return collectComments(env, state, config, observedAt, dependencies);
 }
