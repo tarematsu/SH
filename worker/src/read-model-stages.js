@@ -37,41 +37,51 @@ function queueValueFromJson(value) {
   }
 }
 
-export async function prepareReadModelForWrite(env, readModel) {
+export async function hydrateReadModelMetadata(env, readModel) {
   if (!readModel || typeof readModel !== 'object') throw new Error('minute fact read model payload is missing');
-  let prepared = readModel;
-  const queue = prepared?.queue?.value;
-  if (queue?.tracks?.length) {
-    const incomplete = queue.tracks.filter((track) => (
-      !track?.title || !track?.artist || !track?.thumbnail_url
-    ));
-    const spotifyIds = [...new Set(
-      incomplete.map((track) => String(track?.spotify_id || '').trim()).filter(Boolean),
-    )].slice(0, 80);
-    const isrcs = [...new Set(
-      incomplete.map((track) => normalizedIsrc(track?.isrc)).filter(Boolean),
-    )].slice(0, 80);
-    if (spotifyIds.length || isrcs.length) {
-      const rows = await loadReadModelTrackMetadata(env, spotifyIds, isrcs);
-      const hydrated = attachReadModelTrackMetadata(queue, rows);
-      if (hydrated !== queue) prepared = { ...prepared, queue: { ...prepared.queue, value: hydrated } };
-    }
-  }
+  const queue = readModel?.queue?.value;
+  if (!queue?.tracks?.length) return readModel;
 
-  const stableQueue = prepared?.queue?.value;
-  const channelId = integer(prepared?.channel?.channel_id);
-  if (!env?.MINUTE_DB || channelId == null || !stableQueue?.tracks?.length
-      || !queueNeedsPreviousTrackMetadata(stableQueue)) return prepared;
+  const incomplete = queue.tracks.filter((track) => (
+    !track?.title || !track?.artist || !track?.thumbnail_url
+  ));
+  const spotifyIds = [...new Set(
+    incomplete.map((track) => String(track?.spotify_id || '').trim()).filter(Boolean),
+  )].slice(0, 80);
+  const isrcs = [...new Set(
+    incomplete.map((track) => normalizedIsrc(track?.isrc)).filter(Boolean),
+  )].slice(0, 80);
+  if (!spotifyIds.length && !isrcs.length) return readModel;
+
+  const rows = await loadReadModelTrackMetadata(env, spotifyIds, isrcs);
+  const hydrated = attachReadModelTrackMetadata(queue, rows);
+  return hydrated === queue
+    ? readModel
+    : { ...readModel, queue: { ...readModel.queue, value: hydrated } };
+}
+
+export async function preserveReadModelForWrite(env, readModel) {
+  if (!readModel || typeof readModel !== 'object') throw new Error('minute fact read model payload is missing');
+  const queue = readModel?.queue?.value;
+  const channelId = integer(readModel?.channel?.channel_id);
+  if (!env?.MINUTE_DB || channelId == null || !queue?.tracks?.length
+      || !queueNeedsPreviousTrackMetadata(queue)) return readModel;
+
   const previous = await env.MINUTE_DB.prepare(`SELECT queue_id,start_time,queue_json
     FROM sh_queue_read_model_current WHERE channel_id=? LIMIT 1`).bind(channelId).first();
   if (!previous
-      || integer(previous.queue_id) !== integer(prepared.queue.queue_id)
-      || timestamp(previous.start_time) !== timestamp(prepared.queue.start_time)) return prepared;
+      || integer(previous.queue_id) !== integer(readModel.queue.queue_id)
+      || timestamp(previous.start_time) !== timestamp(readModel.queue.start_time)) return readModel;
   const previousQueue = queueValueFromJson(previous.queue_json);
-  const preserved = preserveReadModelTrackMetadata(stableQueue, previousQueue);
-  return preserved === stableQueue
-    ? prepared
-    : { ...prepared, queue: { ...prepared.queue, value: preserved } };
+  const preserved = preserveReadModelTrackMetadata(queue, previousQueue);
+  return preserved === queue
+    ? readModel
+    : { ...readModel, queue: { ...readModel.queue, value: preserved } };
+}
+
+export async function prepareReadModelForWrite(env, readModel) {
+  const hydrated = await hydrateReadModelMetadata(env, readModel);
+  return preserveReadModelForWrite(env, hydrated);
 }
 
 export async function writePreparedReadModel(env, readModel) {
