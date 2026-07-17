@@ -4,11 +4,11 @@ const DEFAULT_INTERVAL_MS = 60 * 60_000;
 const MIN_INTERVAL_MS = 15 * 60_000;
 const DEFAULT_BATCH_SIZE = 1000;
 const MAX_BATCH_SIZE = 5000;
-// Kept small on purpose: this worker shares a D1 database with sh-monitor-buddies,
-// which writes into these same two tables every minute. A shorter worst-case
-// burst (5 batches instead of a larger number) means less time this task can
-// hold up buddies' own writes if it does run while buddies is mid-collection;
-// a large initial backlog just drains over more hourly runs instead of one.
+// Kept small on purpose: this worker shares a D1 database with the
+// sh-buddies-monitor and sh-buddies-ingest pipeline, which writes into these
+// same tables every minute. A shorter worst-case burst (5 batches instead of a
+// larger number) means less time this task can hold up collection writes if it
+// runs mid-collection; a large initial backlog drains over more hourly runs.
 const DEFAULT_MAX_BATCHES = 5;
 const MAX_MAX_BATCHES = 100;
 const STATE_ID = 'snapshot-retention-v1';
