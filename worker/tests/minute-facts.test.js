@@ -54,6 +54,8 @@ test('queue hash remains stable when only pause or bite changes', async () => {
     is_paused: true,
     tracks: [{ ...first.tracks[0], bite_count: 8 }],
   };
+  const payload = queueStructurePayload(first);
+  assert.equal(await queueStructuralHash(first, payload), await queueStructuralHash(first));
   assert.equal(await queueStructuralHash(first), await queueStructuralHash(second));
 });
 
