@@ -1,6 +1,6 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "sh-comments",
+  "name": "sh-buddies-comments",
   "main": "src/comments-entry.js",
   "compatibility_date": "2026-06-24",
   "workers_dev": false,
