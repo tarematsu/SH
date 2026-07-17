@@ -69,11 +69,11 @@ test('automatic deploys select only affected current Workers and isolate script 
 test('Worker package scripts contain only current deployment operations', () => {
   assert.equal(
     workerPackage.scripts['deploy:minute'],
-    'npm run deploy:minute-derive && npm run deploy:minute-maintenance && npm run deploy:minute-ingest && npm run deploy:minute-read-model',
+    'npm run deploy:minute-derive && npm run deploy:minute-enrichment && npm run deploy:minute-rebuild && npm run deploy:minute-maintenance && npm run deploy:minute-ingest && npm run deploy:minute-read-model && npm run deploy:track-metadata',
   );
   assert.equal(
     workerPackage.scripts['deploy:split-other'],
-    'npm run deploy:pages-read-model && npm run deploy:monitor-maintenance && npm run deploy:other',
+    'npm run deploy:pages-read-model && npm run deploy:monitor-maintenance && npm run deploy:other && npm run deploy:buddy-playback',
   );
 
   for (const key of Object.keys(workerPackage.scripts)) {
