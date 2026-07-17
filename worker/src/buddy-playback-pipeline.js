@@ -45,6 +45,8 @@ export const BUDDY_PLAYBACK_PIPELINE_SCHEMA_SQL = `CREATE TABLE IF NOT EXISTS sh
   last_error TEXT,
   updated_at INTEGER NOT NULL
 )`;
+const PIPELINE_INDEX_SQL = `CREATE INDEX IF NOT EXISTS idx_sh_buddy_playback_pipeline_due
+  ON sh_buddy_playback_pipeline(next_attempt_at, lease_until, updated_at)`;
 
 const PIPELINE_SELECT_COLUMNS = `channel_alias,cycle_at,observed_at,stage,raw_json,
   parsed_queue_json,state_json,final_queue_json,station_id,queue_id,start_time,
@@ -76,7 +78,8 @@ const PIPELINE_PARSED_SQL = `UPDATE sh_buddy_playback_pipeline SET
     next_attempt_at=0,lease_until=0,last_error=NULL,updated_at=?
   WHERE channel_alias=? AND cycle_at=? AND stage='parse'`;
 const PIPELINE_METADATA_SQL = `UPDATE sh_buddy_playback_pipeline SET
-    stage=?,final_queue_json=?,metadata_attempts=metadata_attempts+?,next_attempt_at=0,lease_until=0,last_error=NULL,updated_at=?
+    stage=?,final_queue_json=?,metadata_attempts=metadata_attempts+?,next_attempt_at=0,
+    lease_until=CASE WHEN ?='commit' THEN lease_until ELSE 0 END,last_error=NULL,updated_at=?
   WHERE channel_alias=? AND cycle_at=? AND stage='metadata'`;
 const PIPELINE_FAILURE_SQL = `UPDATE sh_buddy_playback_pipeline SET
     next_attempt_at=?,lease_until=0,last_error=?,updated_at=?
@@ -85,6 +88,7 @@ const PIPELINE_DELETE_SQL = `DELETE FROM sh_buddy_playback_pipeline
   WHERE channel_alias=? AND cycle_at=? AND stage='commit'`;
 
 let pipelineFlightsByContext = new WeakMap();
+let pipelineSchemaReady = false;
 
 function finiteNumber(value, fallback = null) {
   if (value === undefined || value === null || value === '') return fallback;
@@ -119,6 +123,16 @@ function healthWriteError(event, error) {
 
 function pipelineTableMissing(error) {
   return /no such table:\s*sh_buddy_playback_pipeline/i.test(String(error?.message || error));
+}
+
+async function ensurePipelineSchema(env) {
+  if (pipelineSchemaReady) return false;
+  await env.OTHER_DB.batch([
+    env.OTHER_DB.prepare(BUDDY_PLAYBACK_PIPELINE_SCHEMA_SQL),
+    env.OTHER_DB.prepare(PIPELINE_INDEX_SQL),
+  ]);
+  pipelineSchemaReady = true;
+  return true;
 }
 
 function playbackTableMissing(error) {
@@ -332,11 +346,18 @@ async function runMetadataStage(env, row, observedAt, dependencies) {
   const attempted = Math.max(0, Math.trunc(Number(enriched?.attempted || 0)));
   const processed = alreadyAttempted + attempted;
   const tracks = attachBuddyMetadata(queue, metadata);
+  const finalQueueJson = JSON.stringify(tracks);
   const nextStage = remaining > 0 && processed < totalLimit ? 'metadata' : 'commit';
   const result = await env.OTHER_DB.prepare(PIPELINE_METADATA_SQL)
-    .bind(nextStage, JSON.stringify(tracks), attempted, observedAt, row.channel_alias, row.cycle_at)
+    .bind(nextStage, finalQueueJson, attempted, nextStage, observedAt, row.channel_alias, row.cycle_at)
     .run();
   requireChanged(result, 'metadata');
+  if (nextStage === 'commit') {
+    row.stage = 'commit';
+    row.final_queue_json = finalQueueJson;
+    row.metadata_attempts = processed;
+    return runCommitStage(env, row, observedAt, dependencies);
+  }
   return {
     skipped: false,
     pending: true,
@@ -436,8 +457,9 @@ export async function advanceBuddyPlaybackPipeline(
   try {
     row = await preparePipelineJob(env, config, scheduledAt, observedAt);
   } catch (error) {
-    if (pipelineTableMissing(error)) return { skipped: true, reason: 'playback-pipeline-setup-required' };
-    throw error;
+    if (!pipelineTableMissing(error)) throw error;
+    await ensurePipelineSchema(env);
+    row = await preparePipelineJob(env, config, scheduledAt, observedAt);
   }
   if (row?.skipped) return row;
 
@@ -505,4 +527,5 @@ export function scheduleBuddyPlaybackPipeline(
 
 export function resetBuddyPlaybackPipelineFlightForTests() {
   pipelineFlightsByContext = new WeakMap();
+  pipelineSchemaReady = false;
 }
