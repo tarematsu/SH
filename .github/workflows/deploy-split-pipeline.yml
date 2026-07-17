@@ -85,6 +85,17 @@ jobs:
           do
             npx wrangler queues create "$queue" >/dev/null 2>&1 || true
           done
+      - name: Detach legacy Queue consumers for rename cutover
+        working-directory: worker
+        shell: bash
+        run: |
+          set -euo pipefail
+          if jq -e 'index("deploy:comments") != null' <<<"$DEPLOY_COMMANDS" >/dev/null; then
+            npx wrangler queues consumer remove stationhead-comments sh-comments || true
+          fi
+          if jq -e 'index("deploy:ingest") != null' <<<"$DEPLOY_COMMANDS" >/dev/null; then
+            npx wrangler queues consumer remove stationhead-raw-collection sh-ingest-channel || true
+          fi
       - name: Deploy selected Workers in dependency order
         shell: bash
         working-directory: worker
@@ -94,6 +105,21 @@ jobs:
             echo "Deploying $command"
             npm run "$command"
           done < <(jq -r '.[]' <<<"$DEPLOY_COMMANDS")
+      - name: Restore legacy Queue consumers after failed cutover
+        if: failure()
+        working-directory: worker
+        shell: bash
+        run: |
+          if jq -e 'index("deploy:comments") != null' <<<"$DEPLOY_COMMANDS" >/dev/null; then
+            npx wrangler queues consumer add stationhead-comments sh-comments \
+              --batch-size 1 --batch-timeout 1 --message-retries 8 \
+              --dead-letter-queue stationhead-comments-dlq || true
+          fi
+          if jq -e 'index("deploy:ingest") != null' <<<"$DEPLOY_COMMANDS" >/dev/null; then
+            npx wrangler queues consumer add stationhead-raw-collection sh-ingest-channel \
+              --batch-size 1 --batch-timeout 1 --message-retries 8 \
+              --dead-letter-queue stationhead-raw-collection-dlq || true
+          fi
       - name: Retire renamed Workers
         working-directory: worker
         run: npm run retire:renamed-workers
