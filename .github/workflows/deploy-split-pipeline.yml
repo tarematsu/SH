@@ -94,3 +94,6 @@ jobs:
             echo "Deploying $command"
             npm run "$command"
           done < <(jq -r '.[]' <<<"$DEPLOY_COMMANDS")
+      - name: Retire renamed Workers
+        working-directory: worker
+        run: npm run retire:renamed-workers
