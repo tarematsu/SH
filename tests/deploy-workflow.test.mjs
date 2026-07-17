@@ -30,6 +30,7 @@ const workerPackage = JSON.parse(readFileSync(
 const selectorName = 'select-worker-deploys.mjs';
 const splitQueues = [
   'stationhead-buddies-persist',
+  'stationhead-ingest-finalize',
   'stationhead-track-metadata',
   'stationhead-minute-enrichment',
   'stationhead-minute-rebuild',
