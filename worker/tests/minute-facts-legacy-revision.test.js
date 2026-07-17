@@ -21,6 +21,7 @@ function createDatabase() {
     CREATE TABLE sh_queue_revision_items (
       revision_id INTEGER NOT NULL,
       position INTEGER NOT NULL,
+      track_id INTEGER,
       duration_ms INTEGER,
       playback_offset_ms INTEGER,
       schedule_valid INTEGER
@@ -60,8 +61,8 @@ test('revision changes within one queue instance preserve pause accumulation', a
   const db = createDatabase();
   const queueStartTime = 1_700_000_000_000;
   db.sqlite.exec(`
-    INSERT INTO sh_queue_revision_items VALUES (1,0,180000,0,1);
-    INSERT INTO sh_queue_revision_items VALUES (2,0,180000,0,1);
+    INSERT INTO sh_queue_revision_items VALUES (1,0,101,180000,0,1);
+    INSERT INTO sh_queue_revision_items VALUES (2,0,102,180000,0,1);
   `);
 
   await updatePlaybackState(db, {
