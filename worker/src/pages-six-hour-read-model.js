@@ -5,7 +5,7 @@ import { runTrackHistoryCycleStep } from './pages-track-history-cycle.js';
 const MINUTE_MS = 60_000;
 export const PAGES_READ_MODEL_CYCLE_MINUTES = 6 * 60;
 export const PAGES_READ_MODEL_CYCLE_MS = PAGES_READ_MODEL_CYCLE_MINUTES * MINUTE_MS;
-export const TRACK_HISTORY_WINDOW_MINUTES = 120;
+export const TRACK_HISTORY_WINDOW_MINUTES = 60;
 const LIKE_RANKING_LIMIT = 500;
 const RESPONSE_CHUNK_SIZE = 192_000;
 const RESPONSE_MAX_CHUNKS = 80;
