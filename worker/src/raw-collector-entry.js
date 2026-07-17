@@ -1,5 +1,11 @@
 import { ensureAuthControlRow, readAuthState } from './auth-state.js';
 import { API_BASE, configFromEnv, shHeaders } from './collector-config.js';
+import {
+  extractIds,
+  extractQueue,
+  normalizeSnapshot,
+  validateChannelPayload,
+} from './collector-payload.js';
 import { jwtExpiryMs, normalizeBearer } from './shared.js';
 
 const STATE_ID = 'stationhead';
@@ -94,26 +100,51 @@ async function ensureSession(env) {
   }
 }
 
-function rawCollectionQueueMessage(message, body) {
-  try {
-    const channel = JSON.parse(body);
-    if (channel && typeof channel === 'object' && !Array.isArray(channel)) {
-      message.message_version = 2;
-      message.channel = channel;
-      return message;
-    }
-  } catch {
-    // Preserve the legacy poison-message path so invalid upstream JSON still
-    // reaches the ingest retry and DLQ boundary instead of disappearing here.
+function legacyRawCollectionMessage(message, body, channel = null) {
+  if (channel) {
+    message.message_version = 2;
+    message.channel = channel;
+  } else {
+    message.message_version = 1;
+    message.body = body;
   }
-  message.message_version = 1;
-  message.body = body;
   return message;
 }
 
-// Parse only at the Queue boundary so sh-buddies-ingest receives the channel
-// as an already structured value. Validation and all queue-track work remain in
-// the ingest Worker, while legacy or malformed payloads retain the v1 path.
+function rawCollectionQueueMessage(message, body, config) {
+  let channel;
+  try {
+    channel = JSON.parse(body);
+  } catch {
+    // Preserve the legacy poison-message path so invalid upstream JSON still
+    // reaches the ingest retry and DLQ boundary instead of disappearing here.
+    return legacyRawCollectionMessage(message, body);
+  }
+  if (!channel || typeof channel !== 'object' || Array.isArray(channel)) {
+    return legacyRawCollectionMessage(message, body);
+  }
+
+  try {
+    const state = {
+      channelId: message.auth?.collectorChannelId ?? null,
+      stationId: message.auth?.collectorStationId ?? null,
+    };
+    validateChannelPayload(channel, config.channelAlias);
+    extractIds(channel, state);
+    message.message_version = 3;
+    message.snapshot = normalizeSnapshot(channel, state, config);
+    message.queue = extractQueue(channel, state.stationId);
+    return message;
+  } catch {
+    // Keep valid-but-unexpected upstream objects on the established ingest
+    // validation and retry path. Only the normal shape uses the compact v3.
+    return legacyRawCollectionMessage(message, body, channel);
+  }
+}
+
+// Normalize once at the producer boundary so sh-buddies-ingest receives only
+// the compact snapshot and queue fields it persists and forwards. Legacy or
+// unexpected payloads retain the v1/v2 validation, retry and DLQ paths.
 export async function collectRawChannel(env, dependencies = {}) {
   if (!env?.RAW_COLLECTION_QUEUE?.send) throw new Error('RAW_COLLECTION_QUEUE binding is missing');
   const state = await (dependencies.ensureSession || ensureSession)(env);
@@ -146,7 +177,7 @@ export async function collectRawChannel(env, dependencies = {}) {
       collectorChannelId: state.collectorChannelId,
       collectorStationId: state.collectorStationId,
     },
-  }, body), { contentType: 'json' });
+  }, body, config), { contentType: 'json' });
   console.log(JSON.stringify({
     event: 'raw_collection_enqueued',
     observed_at: observedAt,
