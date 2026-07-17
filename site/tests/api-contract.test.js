@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
 import {
@@ -93,5 +94,15 @@ test('materialized response freshness follows the hourly generation cadence', ()
   assert.equal(
     materializedResponseMaximumAge('track-likes', { PAGES_RESPONSE_MAX_AGE_MS: 70 * minute }),
     70 * minute,
+  );
+});
+
+test('Pages deployment tolerates the daily sharded track-history generation window', () => {
+  const config = JSON.parse(readFileSync(new URL('../wrangler.jsonc', import.meta.url), 'utf8'));
+  const maximumAge = Number(config.vars.PAGES_RESPONSE_MAX_AGE_MS);
+  assert.equal(maximumAge, 125 * 60_000);
+  assert.equal(
+    materializedResponseMaximumAge('track-history', config.vars),
+    maximumAge,
   );
 });
