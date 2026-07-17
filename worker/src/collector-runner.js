@@ -2,7 +2,11 @@ import { jwtExpiryMs } from './shared.js';
 import {
   asCollectorFailure,
 } from './collector-failure.js';
-import { collectOptionalComments } from './collector-comments.js';
+import {
+  NO_COMMENTS_RESULT,
+  collectOptionalComments,
+  optionalCommentsEnabled,
+} from './collector-comments.js';
 import { buildCollectionPlan } from './collector-plan.js';
 import { configFromEnv, shJson } from './collector-config.js';
 import {
@@ -21,6 +25,13 @@ import { handoffMinuteFactJob } from './minute-facts-queue.js';
 
 const SLOW_STAGE_THRESHOLD_MS = 1_000;
 const RAW_D1_STATEMENT = Symbol('collector-raw-d1-statement');
+const NO_PLANNED_COMMENTS_RESULT = Object.freeze({
+  commentsSaved: 0,
+  commentTotal: null,
+  commentTotalKnown: false,
+  degraded: false,
+  errorStage: null,
+});
 
 export async function loadMinuteFactQueueMetadata(db, queue, providedRows = []) {
   let hydratedQueue = attachMinuteFactQueueMetadata(queue, providedRows);
@@ -240,14 +251,11 @@ export async function collectOnce(env, source = 'manual') {
       metadataPlanned = initialPlan.metadataDue || queueResult?.structure_changed === true;
     }
 
-    let commentResult = {
-      commentsSaved: 0,
-      commentTotal: null,
-      commentTotalKnown: false,
-      degraded: false,
-      errorStage: null,
-    };
-    if (initialPlan.comments) {
+    const commentsEnabled = initialPlan.comments && optionalCommentsEnabled(state, config);
+    let commentResult = initialPlan.comments
+      ? NO_COMMENTS_RESULT
+      : NO_PLANNED_COMMENTS_RESULT;
+    if (commentsEnabled) {
       stage = 'sh_chat_history';
       commentResult = await measure(stage, () => collectOptionalComments(
         activeEnv,

@@ -3,12 +3,16 @@ import { sanitizeFailureDetail } from './collector-failure.js';
 import { ingest } from './collector-ingest.js';
 import { shJson } from './collector-config.js';
 
-const NO_COMMENTS_RESULT = Object.freeze({
+export const NO_COMMENTS_RESULT = Object.freeze({
   commentsSaved: 0,
   degraded: false,
   errorStage: null,
 });
 const NO_COMMENTS_PROMISE = Promise.resolve(NO_COMMENTS_RESULT);
+
+export function optionalCommentsEnabled(state, config) {
+  return Boolean(state?.stationId) && Number(config?.chatLimit || 0) > 0;
+}
 
 function collectionAbortReason(config, fallback) {
   const signal = config?.collectionSignal;
@@ -61,7 +65,7 @@ async function collectComments(env, state, config, observedAt, dependencies) {
 }
 
 export function collectOptionalComments(env, state, config, observedAt, dependencies = null) {
-  if (!state?.stationId || Number(config?.chatLimit || 0) <= 0) {
+  if (!optionalCommentsEnabled(state, config)) {
     return NO_COMMENTS_PROMISE;
   }
   return collectComments(env, state, config, observedAt, dependencies);
