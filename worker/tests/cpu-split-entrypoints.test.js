@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import { processBuddyPlaybackStage } from '../src/buddy-playback-entry.js';
+import { processMinuteEnrichment } from '../src/minute-enrichment-entry.js';
 import { processMinuteRebuildStage } from '../src/minute-rebuild-entry.js';
 import { readModelNeedsHydration } from '../src/read-model-entry.js';
 import { processTrackMetadataTask } from '../src/track-metadata-entry.js';
@@ -115,4 +116,65 @@ test('minute rebuild splits gap scan and self-draining backfill into separate in
     { runId: body.run_id, stage: 'backfill', delaySeconds: 1 },
   ]);
   assert.deepEqual(recorded.map((item) => item.stage), ['gap-scan', 'backfill']);
+});
+
+test('minute enrichment rejects stale winners before host or bite side effects', async () => {
+  let sideEffects = 0;
+  const result = await processMinuteEnrichment({}, {
+    message_type: 'minute-fact-enrichment',
+    message_version: 1,
+    channel_id: 10,
+    minute_at: 120_000,
+    observed_at: 125_000,
+  }, {
+    loadCurrentMinute: async () => ({ observed_at: 126_000 }),
+    resolveHost: async () => { sideEffects += 1; },
+  });
+
+  assert.equal(result.skipped, true);
+  assert.equal(result.reason, 'stale-minute-winner');
+  assert.equal(sideEffects, 0);
+});
+
+test('minute enrichment preserves host, session, bite and fact update ordering', async () => {
+  const calls = [];
+  const body = {
+    message_type: 'minute-fact-enrichment',
+    message_version: 1,
+    channel_id: 10,
+    station_id: 20,
+    minute_at: 120_000,
+    observed_at: 125_000,
+    revision_id: 30,
+    queue_position: 4,
+    track_id: 40,
+    host_account_id: 50,
+    queue: { tracks: [{ position: 4, bite_count: 6 }] },
+  };
+  const result = await processMinuteEnrichment({}, body, {
+    loadCurrentMinute: async () => ({ observed_at: body.observed_at }),
+    resolveHost: async () => { calls.push('host'); return 60; },
+    resolveOrderedSession: async (_db, task, identity, hostId) => {
+      calls.push('session');
+      assert.equal(task, body);
+      assert.equal(identity.channelId, body.channel_id);
+      assert.equal(hostId, 60);
+      return 70;
+    },
+    attachSession: async () => { calls.push('attach'); },
+    writeCurrentBite: async (_db, input) => {
+      calls.push('bite');
+      assert.equal(input.trackId, body.track_id);
+      return 6;
+    },
+    updateMinuteFact: async (_db, _identity, values) => {
+      calls.push('fact');
+      assert.deepEqual(values, { sessionId: 70, hostId: 60, biteCount: 6 });
+    },
+  });
+
+  assert.deepEqual(calls, ['host', 'session', 'attach', 'bite', 'fact']);
+  assert.equal(result.session_id, 70);
+  assert.equal(result.host_id, 60);
+  assert.equal(result.bite_count, 6);
 });
