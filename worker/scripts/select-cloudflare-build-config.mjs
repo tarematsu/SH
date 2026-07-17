@@ -7,7 +7,7 @@ const CONFIG_BY_WORKER = Object.freeze({
   'sh-buddies-ingest': 'wrangler.ingest.jsonc',
   'sh-buddies-comments': 'wrangler.comments.jsonc',
   'sh-minute-read-model': 'wrangler.read-model.jsonc',
-  'sh-buddies-read-model': 'wrangler.pages-read-model.jsonc',
+  'sh-pages-read-model': 'wrangler.pages-read-model.jsonc',
   'sh-monitor-maintenance': 'wrangler.monitor-maintenance.jsonc',
   'sh-monitor-other': 'wrangler.other.jsonc',
   'sh-minute-maintenance': 'wrangler.minute.jsonc',
@@ -19,7 +19,7 @@ const RENAMED_WORKER_REPLACEMENTS = Object.freeze({
   'sh-monitor-buddies': 'sh-buddies-monitor',
   'sh-ingest-channel': 'sh-buddies-ingest',
   'sh-comments': 'sh-buddies-comments',
-  'sh-pages-read-model': 'sh-buddies-read-model',
+  'sh-buddies-read-model': 'sh-pages-read-model',
 });
 
 export function renamedCloudflareWorkerReplacement(workerName) {
