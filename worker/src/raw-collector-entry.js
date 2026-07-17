@@ -94,8 +94,26 @@ async function ensureSession(env) {
   }
 }
 
-// Keep this path deliberately opaque: parsing and all queue-track work belong
-// to sh-buddies-ingest so collector CPU does not scale with response contents.
+function rawCollectionQueueMessage(message, body) {
+  try {
+    const channel = JSON.parse(body);
+    if (channel && typeof channel === 'object' && !Array.isArray(channel)) {
+      message.message_version = 2;
+      message.channel = channel;
+      return message;
+    }
+  } catch {
+    // Preserve the legacy poison-message path so invalid upstream JSON still
+    // reaches the ingest retry and DLQ boundary instead of disappearing here.
+  }
+  message.message_version = 1;
+  message.body = body;
+  return message;
+}
+
+// Parse only at the Queue boundary so sh-buddies-ingest receives the channel
+// as an already structured value. Validation and all queue-track work remain in
+// the ingest Worker, while legacy or malformed payloads retain the v1 path.
 export async function collectRawChannel(env, dependencies = {}) {
   if (!env?.RAW_COLLECTION_QUEUE?.send) throw new Error('RAW_COLLECTION_QUEUE binding is missing');
   const state = await (dependencies.ensureSession || ensureSession)(env);
@@ -113,12 +131,10 @@ export async function collectRawChannel(env, dependencies = {}) {
   const refreshed = normalizeBearer(response.headers.get('authorization'));
   const persistCredentials = !state.collectorUpdatedAt
     || Boolean(refreshed && refreshed !== state.authToken);
-  await env.RAW_COLLECTION_QUEUE.send({
+  await env.RAW_COLLECTION_QUEUE.send(rawCollectionQueueMessage({
     message_type: 'stationhead-raw-channel',
-    message_version: 1,
     observed_at: observedAt,
     channel_alias: config.channelAlias,
-    body,
     persist_credentials: persistCredentials,
     auth: {
       authToken: refreshed || state.authToken,
@@ -130,7 +146,7 @@ export async function collectRawChannel(env, dependencies = {}) {
       collectorChannelId: state.collectorChannelId,
       collectorStationId: state.collectorStationId,
     },
-  }, { contentType: 'json' });
+  }, body), { contentType: 'json' });
   console.log(JSON.stringify({
     event: 'raw_collection_enqueued',
     observed_at: observedAt,
