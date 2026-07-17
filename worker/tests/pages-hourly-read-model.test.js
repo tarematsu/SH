@@ -39,14 +39,16 @@ class FakeDb {
   }
 }
 
-test('hourly Pages work assigns at most one task to each minute', () => {
-  const tasks = [];
+test('hourly Pages work reserves API slots and uses every free minute for track history', () => {
+  const reserved = [];
+  const trackSteps = [];
   for (let minute = 0; minute < 60; minute += 1) {
     const task = pagesHourlyTask(BASE + minute * 60_000);
-    if (task.kind !== 'idle') tasks.push([minute, task.kind, task.key]);
+    if (task.kind === 'track-history-step') trackSteps.push(minute);
+    else reserved.push([minute, task.kind, task.key]);
   }
 
-  assert.deepEqual(tasks, [
+  assert.deepEqual(reserved, [
     [0, 'variant', 'dashboard-history'],
     [5, 'variant', 'history:daily'],
     [10, 'variant', 'history:weekly'],
@@ -56,13 +58,14 @@ test('hourly Pages work assigns at most one task to each minute', () => {
     [30, 'variant', 'track-likes'],
     [35, 'source', 'source:like-ranking'],
     [40, 'variant', 'like-ranking'],
-    [45, 'track-history', 'track-history'],
     [50, 'variant', 'host-history:summary'],
   ]);
+  assert.equal(trackSteps.length, 50);
+  assert.equal(trackSteps.includes(45), true);
 
   assert.deepEqual(
     pagesHourlyTask(BASE + 60 * 60_000 + 50 * 60_000),
-    { kind: 'idle', key: null, minute: 50, hour: 1, reason: 'daily-task-not-due' },
+    { kind: 'track-history-step', key: 'track-history-stage', minute: 50, hour: 1 },
   );
 });
 
@@ -119,21 +122,22 @@ test('like-ranking publication refuses a source from the previous hour', async (
   assert.equal(db.batches.length, 0);
 });
 
-test('track history keeps its source refresh and publication in one isolated slot', async () => {
+test('free minute delegates exactly one track history step', async () => {
   const env = { BUDDIES_DB: {}, MINUTE_DB: {}, OTHER_DB: {} };
   const calls = [];
   const result = await runPagesHourlyTask(env, BASE + 45 * 60_000, {
-    refreshTrackHistory: async (_env, now) => {
+    runTrackHistoryStep: async (_env, now) => {
       calls.push(now);
       return {
         skipped: false,
         generated_at: now,
-        responses: [{ key: 'track-history', ok: true }],
+        task: { kind: 'track-history-shard', key: 'recent:0:2025-12-29' },
+        responses: [],
         failed: 0,
       };
     },
   });
 
-  assert.equal(result.task.key, 'track-history');
+  assert.equal(result.task.kind, 'track-history-shard');
   assert.deepEqual(calls, [BASE + 45 * 60_000]);
 });
