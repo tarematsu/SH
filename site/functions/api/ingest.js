@@ -21,9 +21,9 @@ export function isPendingStreamSchemaError(error) {
 }
 
 const INGEST_HANDLERS = {
-  comments: async ({ env, body, observedAt, data }) => ({ ok: true, type: body.type, ...await saveCommentCounts(env.DB, observedAt, data) }),
-  snapshot: async ({ env, body, observedAt, data }) => ({ ok: true, type: body.type, accepted: true, ...await saveLeanSnapshot(env.DB, observedAt, data) }),
-  queue: async ({ env, body, observedAt, data }) => {
+  comments: async (env, body, observedAt, data) => ({ ok: true, type: body.type, ...await saveCommentCounts(env.DB, observedAt, data) }),
+  snapshot: async (env, body, observedAt, data) => ({ ok: true, type: body.type, accepted: true, ...await saveLeanSnapshot(env.DB, observedAt, data) }),
+  queue: async (env, body, observedAt, data) => {
     const result = await saveLeanQueue(env.DB, observedAt, body);
     const structuralSnapshotWritten = result.structureChanged === true && result.claim.accepted === true;
     const reachability = structuralSnapshotWritten ? { inserted: false } : await saveQueueReachability(env.DB, observedAt, data);
@@ -37,11 +37,11 @@ const INGEST_HANDLERS = {
       reachability_recorded: structuralSnapshotWritten || reachability.inserted,
     };
   },
-  collector_heartbeat: async ({ env, body, observedAt, data }) => {
+  collector_heartbeat: async (env, body, observedAt, data) => {
     const result = await saveLeanHeartbeat(env.DB, observedAt, { ...data, collector_id: data?.collector_id || body?.collector_id });
     return { ok: true, type: body.type, accepted: result.accepted };
   },
-  track_metadata: async ({ env, body, observedAt, data }) => {
+  track_metadata: async (env, body, observedAt, data) => {
     const tracks = Array.isArray(data?.tracks) ? data.tracks : [];
     const statements = tracks.filter((track) => track?.spotify_id).map((track) => env.DB.prepare(`INSERT INTO sh_track_metadata (
         spotify_id,isrc,title,artist,display_title,thumbnail_url,
@@ -76,7 +76,7 @@ export async function ingestOptimizedBody(env, body) {
   if (!env?.DB) return null;
   const handler = INGEST_HANDLERS[body?.type];
   if (!handler) return null;
-  return handler({ env, body, observedAt: observedAtFrom(body), data: body?.data ?? {} });
+  return handler(env, body, observedAtFrom(body), body?.data ?? {});
 }
 
 // Internal entry point used by the collector Worker. It is deliberately not
