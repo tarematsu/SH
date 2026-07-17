@@ -6,8 +6,12 @@ export const API_BASE = 'https://production1.stationhead.com';
 export const COLLECTOR_VERSION = '1.0.0-worker';
 export const DEFAULT_USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36';
 
-export function firstDefined(...values) {
-  return values.find((value) => value !== undefined && value !== null);
+export function firstDefined() {
+  for (let index = 0; index < arguments.length; index += 1) {
+    const value = arguments[index];
+    if (value !== undefined && value !== null) return value;
+  }
+  return undefined;
 }
 
 function boundedNonNegativeInteger(value, fallback, maximum) {
