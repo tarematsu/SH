@@ -89,6 +89,7 @@ export async function saveMinuteFactWithinBudget(env, input, writer) {
   const configured = Number(env?.MINUTE_FACT_TIMEOUT_MS ?? DEFAULT_TIMEOUT_MS);
   const timeout = Number.isFinite(configured) ? Math.max(1_000, Math.min(20_000, configured)) : DEFAULT_TIMEOUT_MS;
   const signal = combinedAbortSignal(signalFrom(env), timeout);
+  throwIfMinuteFactAborted(signal);
   return Promise.race([
     writer(boundedEnv(env, signal), input),
     rejectedWhenAborted(signal),
