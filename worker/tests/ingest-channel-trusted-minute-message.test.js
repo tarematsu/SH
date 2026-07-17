@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+  capturedReadModelEnvelope,
   commentsTaskForMinuteFact,
   readModelEnvelopeForMinuteFact,
 } from '../src/ingest-channel-entry.js';
@@ -83,6 +84,24 @@ test('trusted envelope hydrates the compact read model in place', () => {
   assert.equal(envelope.read_model.queue, compactQueue);
   assert.equal(envelope.read_model.queue.value, body.payload.queue);
   assert.equal(envelope.read_model.queue.value.tracks.length, 60);
+});
+
+test('captured read-model envelope is reused only for the matching minute identity', () => {
+  const envelope = { message_type: 'stationhead-read-model' };
+  const capture = { channelId: 10, minuteAt: 1_784_000_000_000, envelope };
+
+  assert.equal(capturedReadModelEnvelope({
+    channel_id: '10',
+    minute_fact_job_minute_at: '1784000000000',
+  }, capture), envelope);
+  assert.equal(capturedReadModelEnvelope({
+    channel_id: 10,
+    minute_fact_job_minute_at: 1_784_000_060_000,
+  }, capture), null);
+  assert.throws(
+    () => capturedReadModelEnvelope({ channel_id: 10 }, capture),
+    /current minute fact identity is missing/,
+  );
 });
 
 test('comments handoff mutates only the explicitly trusted in-memory message', () => {
