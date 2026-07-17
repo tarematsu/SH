@@ -99,13 +99,13 @@ test('comments handoff mutates only the explicitly trusted in-memory message', (
 
   const trustedBody = minuteMessage();
   const trustedTask = commentsTaskForMinuteFact(
-    { observed_at: 1, station_id: 123, auth: {} },
+    { observed_at: 1, station_id: 999, auth: {} },
     trustedBody,
-    { inPlace: true, trusted: true },
+    { inPlace: true },
   );
 
   assert.equal(trustedTask.minute_fact, trustedBody);
   assert.equal(trustedBody.read_model, null);
-  assert.equal(trustedTask.observed_at, 1);
-  assert.equal(trustedTask.station_id, 123);
+  assert.equal(trustedTask.observed_at, trustedBody.payload.observedAt);
+  assert.equal(trustedTask.station_id, trustedBody.payload.snapshot.station_id);
 });
