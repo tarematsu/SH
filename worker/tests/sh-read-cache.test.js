@@ -79,3 +79,38 @@ test('failed responses and minute changes do not reuse cached snapshots', async 
   assert.deepEqual(await (await wrapped(URL, INIT)).json(), { call: 4 });
   assert.equal(calls, 4);
 });
+
+test('a slow response from the previous minute cannot repopulate the new cache', async () => {
+  let now = 60_000;
+  let calls = 0;
+  let release;
+  const wrapped = createShReadFetch(() => {
+    calls += 1;
+    if (calls === 1) return new Promise((resolve) => { release = resolve; });
+    return Promise.resolve(Response.json({ call: calls }));
+  }, () => now);
+
+  const previousMinute = wrapped(URL, INIT);
+  now = 120_000;
+  assert.deepEqual(await (await wrapped(URL, INIT)).json(), { call: 2 });
+  release(Response.json({ call: 1 }));
+  assert.deepEqual(await (await previousMinute).json(), { call: 1 });
+  assert.deepEqual(await (await wrapped(URL, INIT)).json(), { call: 2 });
+  assert.equal(calls, 2);
+});
+
+test('null-body statuses are reconstructed without an empty body', async () => {
+  let calls = 0;
+  const wrapped = createShReadFetch(async () => {
+    calls += 1;
+    return new Response(null, { status: 204, headers: { 'x-test': 'ok' } });
+  }, () => 60_000);
+
+  const first = await wrapped(URL, INIT);
+  const second = await wrapped(URL, INIT);
+  assert.equal(calls, 1);
+  assert.equal(first.status, 204);
+  assert.equal(second.status, 204);
+  assert.equal(second.body, null);
+  assert.equal(second.headers.get('x-test'), 'ok');
+});
