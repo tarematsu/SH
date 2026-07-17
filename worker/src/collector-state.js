@@ -1,10 +1,17 @@
 import { jwtExpiryMs, normalizeBearer } from './shared.js';
 
 function collectorState(value, persistCredentials = true) {
-  Object.defineProperty(value, 'persistCredentials', {
-    value: persistCredentials,
-    enumerable: false,
-    writable: true,
+  Object.defineProperties(value, {
+    persistCredentials: {
+      value: persistCredentials,
+      enumerable: false,
+      writable: true,
+    },
+    clearFailureOnSuccess: {
+      value: Boolean(value.lastError),
+      enumerable: false,
+      writable: true,
+    },
   });
   return value;
 }
@@ -133,11 +140,15 @@ async function clearFailureBestEffort(db) {
   }
 }
 
-// The successful collector path always clears the incident state immediately
-// after saving the new run state. Keep both writes in one D1 round trip so a
-// normal tick does not pay for two sequential network calls.
+// Clean ticks persist only collector progress. A tick following a recorded
+// collector error batches the state recovery and incident cleanup so the old
+// failure remains visible until the successful state is durable.
 export async function saveCollectorStateAndClearFailure(env, state, patch = {}) {
   Object.assign(state, patch);
+  if (state.clearFailureOnSuccess !== true) {
+    await saveSuccessfulCollectorState(env.DB, state);
+    return;
+  }
   if (typeof env?.DB?.batch !== 'function') {
     await saveSuccessfulCollectorState(env.DB, state);
     await clearFailureBestEffort(env.DB);

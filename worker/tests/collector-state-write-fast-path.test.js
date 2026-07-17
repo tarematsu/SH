@@ -61,15 +61,17 @@ class Statement {
 
   async run() {
     this.db.runs.push(this);
-    return { meta: { changes: 1 } };
+    const changes = this.db.runChanges.length ? this.db.runChanges.shift() : 1;
+    return { meta: { changes } };
   }
 }
 
-function fakeDb(firstChanges = 1) {
+function fakeDb(runChanges = []) {
   return {
     prepared: [],
     batches: [],
     runs: [],
+    runChanges: [...runChanges],
     prepare(sql) {
       const statement = new Statement(this, sql);
       this.prepared.push(statement);
@@ -77,9 +79,9 @@ function fakeDb(firstChanges = 1) {
     },
     async batch(statements) {
       this.batches.push(statements);
-      return statements.map((statement, index) => ({
+      return statements.map((statement) => ({
         success: true,
-        meta: { changes: index === 0 ? firstChanges : 1 },
+        meta: { changes: 1 },
         statement,
       }));
     },
@@ -112,13 +114,15 @@ test('new raw messages update only mutable collector progress columns', async ()
     lastError: null,
   });
 
-  assert.equal(db.batches.length, 1);
-  const progress = db.batches[0][0];
+  assert.equal(db.batches.length, 0);
+  assert.equal(db.runs.length, 1);
+  const progress = db.runs[0];
   assert.match(progress.sql, /^UPDATE sh_worker_collector_state SET/);
   assert.doesNotMatch(progress.sql, /auth_token|device_uid|token_expires_at/);
   assert.deepEqual(progress.params.slice(0, 5), [1_000, 1_001, null, 10, 20]);
   assert.equal(progress.params.includes('large-jwt-token'), false);
   assert.equal(progress.params.includes('device-id'), false);
+  assert.equal(db.prepared.some(({ sql }) => /DELETE FROM sh_collector_failure_state/.test(sql)), false);
 });
 
 test('old messages and missing progress rows retain the full credential upsert', async () => {
@@ -134,13 +138,15 @@ test('old messages and missing progress rows retain the full credential upsert',
     lastRunAt: 1_000,
     lastSuccessAt: 1_001,
   });
-  assert.match(oldDb.batches[0][0].sql, /INSERT INTO sh_worker_collector_state/);
+  assert.equal(oldDb.runs.length, 1);
+  assert.match(oldDb.runs[0].sql, /INSERT INTO sh_worker_collector_state/);
 
-  const missingDb = fakeDb(0);
+  const missingDb = fakeDb([0, 1]);
   await saveCollectorStateAndClearFailure({ DB: missingDb }, state(false), {
     lastRunAt: 2_000,
     lastSuccessAt: 2_001,
   });
-  assert.equal(missingDb.runs.length, 1);
-  assert.match(missingDb.runs[0].sql, /INSERT INTO sh_worker_collector_state/);
+  assert.equal(missingDb.runs.length, 2);
+  assert.match(missingDb.runs[0].sql, /^UPDATE sh_worker_collector_state SET/);
+  assert.match(missingDb.runs[1].sql, /INSERT INTO sh_worker_collector_state/);
 });
