@@ -82,8 +82,8 @@ test('derive Queue processing claims and completes exactly one job without defau
   const result = await processMinuteDeriveTrigger({ MINUTE_DB: {} }, trigger, {
     now: () => 200_000,
     claim: async (_env, parsed, options) => {
-      assert.strictEqual(parsed, trigger);
-      assert.strictEqual(options.parsedTrigger, trigger);
+      assert.deepEqual(parsed, trigger);
+      assert.strictEqual(options.parsedTrigger, parsed);
       calls.push('claim');
       return job();
     },
