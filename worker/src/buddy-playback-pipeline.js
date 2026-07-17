@@ -62,7 +62,7 @@ const PIPELINE_RESET_STALE_SQL = `UPDATE sh_buddy_playback_pipeline SET
     state_json=NULL,final_queue_json=NULL,station_id=NULL,queue_id=NULL,start_time=NULL,
     is_paused=NULL,is_broadcasting=NULL,host_account_id=NULL,host_handle=NULL,
     track_count=0,metadata_attempts=0,attempts=0,next_attempt_at=0,lease_until=0,last_error=NULL,updated_at=?
-  WHERE channel_alias=? AND updated_at<? AND lease_until<=?`;
+  WHERE channel_alias=? AND cycle_at<=? AND lease_until<=?`;
 const PIPELINE_CLAIM_SQL = `UPDATE sh_buddy_playback_pipeline SET
     lease_until=?,attempts=attempts+1,updated_at=?
   WHERE channel_alias=? AND lease_until<=? AND next_attempt_at<=?
