@@ -66,79 +66,105 @@ function snapshotRawPayload(data) {
   };
 }
 
-function snapshotHashPayload(data, reportedStreamCount, compactRaw) {
+function snapshotFrame(data, streamCount) {
   return {
-    channel_id: num(data?.channel_id),
-    station_id: num(data?.station_id),
-    is_launched: bool(data?.is_launched),
-    is_broadcasting: bool(data?.is_broadcasting),
-    chat_status: text(data?.chat_status),
-    listener_count: num(data?.listener_count),
-    online_member_count: num(data?.online_member_count),
-    total_member_count: num(data?.total_member_count),
-    guest_count: num(data?.guest_count),
-    cumulative_listener_count: num(data?.total_listens),
-    reported_stream_count: reportedStreamCount,
-    stream_goal: num(data?.stream_goal),
-    host_account_id: num(data?.host_account_id),
-    host_handle: text(data?.host_handle),
-    broadcast_start_time: num(data?.broadcast_start_time),
-    metadata: compactRaw,
+    channelId: num(data?.channel_id),
+    channelAlias: text(data?.channel_alias),
+    channelName: text(data?.channel_name),
+    stationId: num(data?.station_id),
+    isLaunched: bool(data?.is_launched),
+    isBroadcasting: bool(data?.is_broadcasting),
+    chatStatus: text(data?.chat_status),
+    listenerCount: num(data?.listener_count),
+    onlineMemberCount: num(data?.online_member_count),
+    totalMemberCount: num(data?.total_member_count),
+    guestCount: num(data?.guest_count),
+    cumulativeListenerCount: num(data?.total_listens),
+    streamGoal: num(data?.stream_goal),
+    streamCount,
+    hostAccountId: num(data?.host_account_id),
+    hostHandle: text(data?.host_handle),
+    broadcastStartTime: num(data?.broadcast_start_time),
+    metadata: snapshotRawPayload(data),
   };
 }
 
-function snapshotSignatureMatches(signature, payload) {
-  if (!signature || signature.length !== SNAPSHOT_SIGNATURE_LENGTH) return false;
-  const metadata = payload?.metadata || {};
-  const images = metadata.images || {};
-  const currentStation = metadata.current_station || {};
-  const owner = currentStation.owner || {};
-  return signature[0] === payload?.channel_id
-    && signature[1] === payload?.station_id
-    && signature[2] === payload?.is_launched
-    && signature[3] === payload?.is_broadcasting
-    && signature[4] === payload?.chat_status
-    && signature[5] === payload?.listener_count
-    && signature[6] === payload?.online_member_count
-    && signature[7] === payload?.total_member_count
-    && signature[8] === payload?.guest_count
-    && signature[9] === payload?.cumulative_listener_count
-    && signature[10] === payload?.reported_stream_count
-    && signature[11] === payload?.stream_goal
-    && signature[12] === payload?.host_account_id
-    && signature[13] === payload?.host_handle
-    && signature[14] === payload?.broadcast_start_time
-    && signature[15] === metadata.description
-    && signature[16] === metadata.artist_name
-    && signature[17] === metadata.accent_color
-    && signature[18] === images.medium?.url
-    && signature[19] === images.logo?.medium?.url
-    && signature[20] === currentStation.status
-    && signature[21] === owner.thumbnail?.url
-    && signature[22] === owner.medium?.url;
+function snapshotHashPayload(frame) {
+  return {
+    channel_id: frame.channelId,
+    station_id: frame.stationId,
+    is_launched: frame.isLaunched,
+    is_broadcasting: frame.isBroadcasting,
+    chat_status: frame.chatStatus,
+    listener_count: frame.listenerCount,
+    online_member_count: frame.onlineMemberCount,
+    total_member_count: frame.totalMemberCount,
+    guest_count: frame.guestCount,
+    cumulative_listener_count: frame.cumulativeListenerCount,
+    reported_stream_count: frame.streamCount,
+    stream_goal: frame.streamGoal,
+    host_account_id: frame.hostAccountId,
+    host_handle: frame.hostHandle,
+    broadcast_start_time: frame.broadcastStartTime,
+    metadata: frame.metadata,
+  };
 }
 
-function captureSnapshotSignature(payload) {
-  const metadata = payload?.metadata || {};
+function snapshotSignatureMatchesData(signature, data, streamCount) {
+  if (!signature || signature.length !== SNAPSHOT_SIGNATURE_LENGTH) return false;
+  const presentation = data?.presentation;
+  const metadata = presentation && typeof presentation === 'object'
+    ? presentation
+    : data?.raw || {};
+  const currentStation = metadata.current_station || {};
+  const owner = currentStation.owner || {};
+  const images = metadata.images || {};
+  return signature[0] === num(data?.channel_id)
+    && signature[1] === num(data?.station_id)
+    && signature[2] === bool(data?.is_launched)
+    && signature[3] === bool(data?.is_broadcasting)
+    && signature[4] === text(data?.chat_status)
+    && signature[5] === num(data?.listener_count)
+    && signature[6] === num(data?.online_member_count)
+    && signature[7] === num(data?.total_member_count)
+    && signature[8] === num(data?.guest_count)
+    && signature[9] === num(data?.total_listens)
+    && signature[10] === streamCount
+    && signature[11] === num(data?.stream_goal)
+    && signature[12] === num(data?.host_account_id)
+    && signature[13] === text(data?.host_handle)
+    && signature[14] === num(data?.broadcast_start_time)
+    && signature[15] === text(metadata.description || currentStation.status)
+    && signature[16] === text(metadata.artist_name)
+    && signature[17] === text(metadata.accent_color)
+    && signature[18] === text(images.medium?.url)
+    && signature[19] === text(images.logo?.medium?.url)
+    && signature[20] === text(currentStation.status)
+    && signature[21] === text(owner.thumbnail?.url)
+    && signature[22] === text(owner.medium?.url);
+}
+
+function captureSnapshotSignature(frame) {
+  const metadata = frame.metadata || {};
   const images = metadata.images || {};
   const currentStation = metadata.current_station || {};
   const owner = currentStation.owner || {};
   return [
-    payload?.channel_id,
-    payload?.station_id,
-    payload?.is_launched,
-    payload?.is_broadcasting,
-    payload?.chat_status,
-    payload?.listener_count,
-    payload?.online_member_count,
-    payload?.total_member_count,
-    payload?.guest_count,
-    payload?.cumulative_listener_count,
-    payload?.reported_stream_count,
-    payload?.stream_goal,
-    payload?.host_account_id,
-    payload?.host_handle,
-    payload?.broadcast_start_time,
+    frame.channelId,
+    frame.stationId,
+    frame.isLaunched,
+    frame.isBroadcasting,
+    frame.chatStatus,
+    frame.listenerCount,
+    frame.onlineMemberCount,
+    frame.totalMemberCount,
+    frame.guestCount,
+    frame.cumulativeListenerCount,
+    frame.streamCount,
+    frame.streamGoal,
+    frame.hostAccountId,
+    frame.hostHandle,
+    frame.broadcastStartTime,
     metadata.description,
     metadata.artist_name,
     metadata.accent_color,
@@ -162,13 +188,14 @@ export async function saveLeanSnapshot(db, observedAt, data) {
   const current = await db.prepare(`SELECT payload_hash,last_snapshot_at
     FROM sh_snapshot_current WHERE channel_key=?`).bind(channelKey).first();
   const streamCount = reportedStreamCount(data);
-  const compactPayload = snapshotRawPayload(data);
-  const hashPayload = snapshotHashPayload(data, streamCount, compactPayload);
   const hashCache = snapshotHashCacheFor(channelKey);
-  const cacheHit = snapshotSignatureMatches(hashCache.signature, hashPayload);
-  const hash = cacheHit ? hashCache.hash : await payloadHash(hashPayload);
+  const cacheHit = snapshotSignatureMatchesData(hashCache.signature, data, streamCount);
+  let frame = null;
+  let hash = hashCache.hash;
   if (!cacheHit) {
-    hashCache.signature = captureSnapshotSignature(hashPayload);
+    frame = snapshotFrame(data, streamCount);
+    hash = await payloadHash(snapshotHashPayload(frame));
+    hashCache.signature = captureSnapshotSignature(frame);
     hashCache.hash = hash;
   }
   if (current?.payload_hash === hash
@@ -181,16 +208,17 @@ export async function saveLeanSnapshot(db, observedAt, data) {
     };
   }
 
+  frame ||= snapshotFrame(data, streamCount);
   const common = [
-    observedAt, channelId, text(data?.channel_alias), text(data?.channel_name), stationId,
-    bool(data?.is_launched), bool(data?.is_broadcasting), text(data?.chat_status),
-    num(data?.listener_count), num(data?.online_member_count), num(data?.total_member_count),
-    num(data?.guest_count), num(data?.total_listens), num(data?.stream_goal),
-    streamCount, null, num(data?.host_account_id), text(data?.host_handle),
-    num(data?.broadcast_start_time),
+    observedAt, frame.channelId, frame.channelAlias, frame.channelName, frame.stationId,
+    frame.isLaunched, frame.isBroadcasting, frame.chatStatus,
+    frame.listenerCount, frame.onlineMemberCount, frame.totalMemberCount,
+    frame.guestCount, frame.cumulativeListenerCount, frame.streamGoal,
+    frame.streamCount, null, frame.hostAccountId, frame.hostHandle,
+    frame.broadcastStartTime,
   ];
-  const velocityBinds = [stationId, observedAt - 120_000, observedAt];
-  const compactRaw = rawJson(compactPayload);
+  const velocityBinds = [frame.stationId, observedAt - 120_000, observedAt];
+  const compactRaw = rawJson(frame.metadata);
 
   await db.batch([
     db.prepare(`INSERT INTO sh_channel_snapshots (
