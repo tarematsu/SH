@@ -41,7 +41,7 @@ test('Spotify title parser removes service suffix and extracts artist', () => {
   });
 });
 
-test('simultaneous metadata requests for one track share a single fetch', async () => {
+test('simultaneous metadata misses stay request-local and later reads use Cache API', async () => {
   let calls = 0;
   await withGlobals(async () => {
     calls += 1;
@@ -51,14 +51,18 @@ test('simultaneous metadata requests for one track share a single fetch', async 
       headers: { 'content-type': 'application/json' },
     });
   }, async () => {
-    const id = 'dedupe-track-20260701';
+    const id = 'request-local-track-20260717';
     const [first, second] = await Promise.all([
       fetchSpotifyMetadata(id),
       fetchSpotifyMetadata(id),
     ]);
-    assert.equal(calls, 1);
+    assert.equal(calls, 2);
     assert.equal(first.title, 'Track');
     assert.deepEqual(second, first);
+
+    const cached = await fetchSpotifyMetadata(id);
+    assert.equal(calls, 2);
+    assert.deepEqual(cached, first);
   });
 });
 
