@@ -22,6 +22,42 @@ import { updatePlaybackState, writeCurrentBite } from './minute-facts-legacy-rev
 
 export { buildTrackDescriptor, createOptimizedRevision, missingRevisionPositions, resolveTracksBulk };
 
+function currentQueueSlice(queue, position) {
+  if (!queue) return null;
+  const tracks = Array.isArray(queue.tracks) ? queue.tracks : [];
+  const indexed = position == null ? null : tracks[position];
+  const current = indexed && (integer(indexed.position) ?? position) === position
+    ? indexed
+    : tracks.find((track, index) => (integer(track?.position) ?? index) === position);
+  return {
+    queue_id: queue.queue_id ?? null,
+    start_time: queue.start_time ?? null,
+    tracks: current ? [current] : [],
+  };
+}
+
+async function enqueueMinuteEnrichment(env, input) {
+  if (!env?.MINUTE_ENRICHMENT_QUEUE?.send) return false;
+  await env.MINUTE_ENRICHMENT_QUEUE.send({
+    message_type: 'minute-fact-enrichment',
+    message_version: 1,
+    channel_id: input.channelId,
+    station_id: input.stationId,
+    minute_at: input.minuteAt,
+    observed_at: input.observedAt,
+    provisional_session_id: input.sessionId,
+    revision_id: input.revisionId,
+    queue_position: input.position,
+    track_id: input.trackId,
+    host_account_id: input.snapshot.host_account_id ?? null,
+    host_handle: input.snapshot.host_handle ?? null,
+    broadcast_start_time: input.snapshot.broadcast_start_time ?? null,
+    is_broadcasting: input.snapshot.is_broadcasting ?? null,
+    queue: currentQueueSlice(input.queue, input.position),
+  }, { contentType: 'json' });
+  return true;
+}
+
 export async function saveOptimizedLiveMinuteFact(env, input) {
   const db = env?.MINUTE_DB;
   if (!db) return { skipped: true, reason: 'minute-db-binding-missing' };
@@ -37,6 +73,7 @@ export async function saveOptimizedLiveMinuteFact(env, input) {
   const broadcasting = bool(snapshot.is_broadcasting);
   const queueStartTime = timestampMs(queue?.start_time);
   const paused = bool(queue?.is_paused) === 1;
+  const deferred = Boolean(env?.MINUTE_ENRICHMENT_QUEUE?.send);
   const context = {
     channelId,
     minuteAt,
@@ -44,10 +81,13 @@ export async function saveOptimizedLiveMinuteFact(env, input) {
     revisionId: null,
   };
 
-  const hostId = await timedStage('resolve_host', context, () => resolveHost(db, {
+  const hostId = deferred ? null : await timedStage('resolve_host', context, () => resolveHost(db, {
     accountId: snapshot.host_account_id,
     handle: snapshot.host_handle,
   }, observedAt));
+  // Session continuity remains on the ordered derive path. During deferred host
+  // resolution, null host matches the active session and enrichment later
+  // patches or splits the session without blocking the core minute write.
   const sessionId = await timedStage('resolve_session', context, () => resolveLiveSession(db, {
     channelId,
     stationId,
@@ -80,7 +120,7 @@ export async function saveOptimizedLiveMinuteFact(env, input) {
   const position = integer(playback?.current_position);
   const trackId = integer(playback?.current_track_id);
   const scheduleValid = Number(playback?.current_schedule_valid || 0);
-  const biteCount = revisionId == null ? null : await timedStage('write_current_bite', context, () => writeCurrentBite(db, {
+  const biteCount = deferred || revisionId == null ? null : await timedStage('write_current_bite', context, () => writeCurrentBite(db, {
     channelId,
     stationId,
     revisionId,
@@ -140,7 +180,21 @@ export async function saveOptimizedLiveMinuteFact(env, input) {
     quality_flags: flags,
   };
   await timedStage('upsert_minute_fact', context, () => upsertMinuteFact(db, fact));
-  return { skipped: false, fact, sessionId, revisionId };
+  if (deferred) {
+    await enqueueMinuteEnrichment(env, {
+      channelId,
+      stationId,
+      minuteAt,
+      observedAt,
+      sessionId,
+      revisionId,
+      position,
+      trackId,
+      snapshot,
+      queue,
+    });
+  }
+  return { skipped: false, fact, sessionId, revisionId, enrichment_deferred: deferred };
 }
 
 export function saveOptimizedMinuteFactWithinBudget(env, input) {
