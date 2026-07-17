@@ -2,6 +2,7 @@ const ORIGIN='https://production1.stationhead.com';
 const PREFIX=`${ORIGIN}/station/`;
 const MAX=32;
 const MARK=Symbol.for('sh-monitor.sh-read-cache');
+const NULL_BODY_STATUS=new Set([101,204,205,304]);
 
 function cacheable(input,init,now){
   const raw=typeof input==='string'?input:input instanceof URL?input.toString():input?.url;
@@ -31,9 +32,8 @@ function responseFromSnapshot(snapshot){
 }
 
 async function responseSnapshot(response){
-  const clone=response.clone();
   return {
-    body:await clone.text(),
+    body:NULL_BODY_STATUS.has(response.status)?null:await response.clone().text(),
     status:response.status,
     statusText:response.statusText,
     headers:[...response.headers.entries()],
@@ -50,14 +50,11 @@ export function createShReadFetch(nativeFetch,nowFn=Date.now){
     const existing=cache.get(request.key);
     if(existing)return responseFromSnapshot(existing);
 
-    // Never cache an in-flight Promise or Response. Both are request-scoped I/O
-    // objects in Cloudflare Workers and cannot be consumed by another Queue or
-    // request invocation. Concurrent misses deliberately perform independent
-    // subrequests; only the settled, plain-data snapshot is shared afterwards.
     const response=await nativeFetch(input,init);
     if(!response?.ok)return response;
     let snapshot;
     try{snapshot=await responseSnapshot(response);}catch{return response;}
+    if(minute!==request.minute)return response;
     while(cache.size>=MAX)cache.delete(cache.keys().next().value);
     cache.set(request.key,snapshot);
     return response;
