@@ -1,14 +1,9 @@
 import {
   ingestOptimizedBody,
   isPendingStreamSchemaError,
-  supportsOptimizedIngestType,
 } from '../../site/functions/api/ingest.js';
 
 export async function ingest(env, type, data, observedAt, options = null) {
-  if (!supportsOptimizedIngestType(type)) {
-    throw new Error(`Direct D1 ingest is unavailable for type=${type}`);
-  }
-
   let directResult = null;
   try {
     directResult = await ingestOptimizedBody(env, {

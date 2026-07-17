@@ -30,9 +30,18 @@ test('firstDefined preserves nullish-only fallback semantics and falsy values', 
   assert.equal(firstDefined(), undefined);
 });
 
-test('unsupported collector writes retain the direct-ingest error', async () => {
+test('unsupported collector writes retain the direct-ingest error without touching D1', async () => {
+  let prepares = 0;
   await assert.rejects(
-    ingest({}, 'unsupported', {}, 1),
+    ingest({
+      DB: {
+        prepare() {
+          prepares += 1;
+          throw new Error('unsupported ingest must not prepare D1');
+        },
+      },
+    }, 'unsupported', {}, 1),
     /Direct D1 ingest is unavailable for type=unsupported/,
   );
+  assert.equal(prepares, 0);
 });
