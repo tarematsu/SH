@@ -65,6 +65,7 @@ jobs:
         run: |
           for queue in \
             stationhead-raw-collection stationhead-raw-collection-dlq \
+            stationhead-buddies-persist stationhead-buddies-persist-dlq \
             stationhead-comments stationhead-comments-dlq \
             stationhead-read-model stationhead-read-model-dlq \
             stationhead-track-metadata stationhead-track-metadata-dlq \
@@ -79,6 +80,8 @@ jobs:
       - run: npm run deploy:minute
         working-directory: worker
       - run: npm run deploy:comments
+        working-directory: worker
+      - run: npm run deploy:persist
         working-directory: worker
       - run: npm run deploy:ingest
         working-directory: worker
