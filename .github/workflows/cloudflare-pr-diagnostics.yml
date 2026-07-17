@@ -102,11 +102,12 @@ jobs:
       matrix:
         worker: ${{ fromJSON(needs.select-workers.outputs.diagnostics) }}
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 10
     env:
       CLOUDFLARE_ACCOUNT_ID: "0500f25c2f74e7e76c94a8bcb6c7008b"
       CLOUDFLARE_BUILDS_API_TOKEN: ${{ secrets.CLOUDFLARE_BUILDS_API_TOKEN || secrets.CLOUDFLARE_API_TOKEN || secrets.CF_API_TOKEN }}
       CLOUDFLARE_WORKER_NAME: ${{ matrix.worker }}
+      CLOUDFLARE_BUILD_TIMEOUT_MINUTES: "5"
       TARGET_SHA: ${{ github.event.pull_request.head.sha }}
       TARGET_BRANCH: ${{ github.event.pull_request.head.ref }}
     steps:
@@ -115,7 +116,16 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha }}
       - name: Watch Cloudflare build and collect logs
         shell: bash
-        run: node .github/scripts/cloudflare-build-diagnostics.mjs
+        run: |
+          set +e
+          node .github/scripts/cloudflare-build-diagnostics.mjs
+          status=$?
+          set -e
+          if [[ "$status" -eq 4 ]]; then
+            echo "::notice::No matching finished Cloudflare build appeared; the direct PR deploy already succeeded."
+            exit 0
+          fi
+          exit "$status"
       - name: Upload diagnostics
         if: always()
         uses: actions/upload-artifact@v4
