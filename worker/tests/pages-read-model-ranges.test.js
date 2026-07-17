@@ -34,7 +34,7 @@ test('missing status performs a full recent refresh and starts bounded backfill 
   });
 });
 
-test('same-day status limits hourly refresh to the latest three days', () => {
+test('same-day status limits cycle refresh to the latest three days', () => {
   const now = Date.UTC(2026, 6, 16, 12, 31);
   const currentDay = Date.UTC(2026, 6, 16);
   const fullAt = Date.UTC(2026, 6, 16, 0, 31);
@@ -65,7 +65,7 @@ test('legacy generated_at is accepted as the previous full refresh', () => {
   assert.equal(ranges.previousFullAt, generatedAt);
 });
 
-test('the first hourly refresh after a UTC day change performs the full 35-day sweep', () => {
+test('the first cycle refresh after a UTC day change performs the full 35-day sweep', () => {
   const now = Date.UTC(2026, 6, 17, 0, 31);
   const currentDay = Date.UTC(2026, 6, 17);
   const ranges = trackHistoryRefreshRanges(now, null, {
@@ -127,19 +127,21 @@ test('incremental excluded-date updates replace only dates inside the refreshed 
   );
 });
 
-test('materialized payloads declare hourly cadence while legacy source repair keeps its cadence', () => {
+test('materialized payloads declare six-hour cadence while legacy source repair keeps its cadence', () => {
   const midnight = Date.UTC(2026, 6, 16, 0, 0);
   const fivePast = Date.UTC(2026, 6, 16, 0, 5);
   const quarterPast = Date.UTC(2026, 6, 16, 0, 15);
   const halfPast = Date.UTC(2026, 6, 16, 0, 30);
+  const sixHoursLater = Date.UTC(2026, 6, 16, 6, 0);
   const materialized = new Map(MATERIALIZED_API_VARIANTS.map((variant) => [variant.key, variant]));
 
   assert.equal(materialized.get('host-history:summary').cadence_minutes, 1440);
   for (const [key, variant] of materialized) {
-    if (key !== 'host-history:summary') assert.equal(variant.cadence_minutes, 60, key);
+    if (key !== 'host-history:summary') assert.equal(variant.cadence_minutes, 360, key);
   }
   assert.equal(materializedVariantDue(materialized.get('track-likes'), midnight), true);
   assert.equal(materializedVariantDue(materialized.get('track-likes'), halfPast), false);
+  assert.equal(materializedVariantDue(materialized.get('track-likes'), sixHoursLater), true);
   assert.equal(materializedVariantDue(materialized.get('track-history'), midnight), true);
   assert.equal(materializedVariantDue(materialized.get('track-history'), quarterPast), false);
   assert.deepEqual(pagesPayloadRefreshPlan(fivePast), { daily: false, likes: false });
@@ -147,19 +149,19 @@ test('materialized payloads declare hourly cadence while legacy source repair ke
   assert.deepEqual(pagesPayloadRefreshPlan(halfPast), { daily: true, likes: true });
 });
 
-test('track history maximum age covers the hourly source refresh plus edge grace', () => {
+test('track history maximum age covers the six-hour source refresh plus edge grace', () => {
   assert.equal(
     materializedResponseMaximumAge('track-history', { PAGES_RESPONSE_MAX_AGE_MS: 15 * 60_000 }),
-    65 * 60_000,
+    365 * 60_000,
   );
 });
 
-test('legacy fast refresh runs only at the hour boundary and never republishes track history', () => {
-  const midnightKeys = dueFastMaterializedVariants(Date.UTC(2026, 6, 16, 12, 0)).map(({ key }) => key);
-  assert.equal(midnightKeys.includes('track-history'), false);
-  assert.equal(midnightKeys.includes('minute-facts-current'), true);
-  assert.equal(midnightKeys.includes('track-likes'), true);
-  assert.equal(midnightKeys.includes('like-ranking'), true);
+test('legacy fast refresh runs only at six-hour boundaries and never republishes track history', () => {
+  const boundaryKeys = dueFastMaterializedVariants(Date.UTC(2026, 6, 16, 12, 0)).map(({ key }) => key);
+  assert.equal(boundaryKeys.includes('track-history'), false);
+  assert.equal(boundaryKeys.includes('minute-facts-current'), true);
+  assert.equal(boundaryKeys.includes('track-likes'), true);
+  assert.equal(boundaryKeys.includes('like-ranking'), true);
 
   for (const minute of [5, 15, 30, 45]) {
     assert.deepEqual(
@@ -167,4 +169,8 @@ test('legacy fast refresh runs only at the hour boundary and never republishes t
       [],
     );
   }
+  assert.deepEqual(
+    dueFastMaterializedVariants(Date.UTC(2026, 6, 16, 13, 0)).map(({ key }) => key),
+    [],
+  );
 });
