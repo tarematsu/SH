@@ -34,10 +34,12 @@
         "max_batch_size": 1,
         "max_batch_timeout": 1,
         "max_retries": 8,
-        "dead_letter_queue": "stationhead-comments-dlq"
+        "dead_letter_queue": "stationhead-comments-dlq",
+        "max_concurrency": 1
       }
     ],
     "producers": [
+      { "binding": "COMMENTS_QUEUE", "queue": "stationhead-comments" },
       { "binding": "MINUTE_FACT_QUEUE", "queue": "stationhead-buddies-facts" },
       { "binding": "TRACK_METADATA_QUEUE", "queue": "stationhead-track-metadata" }
     ]
