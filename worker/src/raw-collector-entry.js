@@ -131,8 +131,13 @@ function rawCollectionQueueMessage(message, body, config) {
     };
     validateChannelPayload(channel, config.channelAlias);
     extractIds(channel, state);
+    const snapshot = normalizeSnapshot(channel, state, config);
+    if (!Number.isFinite(Number(snapshot.channel_id))
+        || !Number.isFinite(Number(snapshot.station_id))) {
+      throw new Error('compact collection identity is missing');
+    }
     message.message_version = 3;
-    message.snapshot = normalizeSnapshot(channel, state, config);
+    message.snapshot = snapshot;
     message.queue = extractQueue(channel, state.stationId);
     return message;
   } catch {
