@@ -7,7 +7,7 @@
   "preview_urls": false,
   "logpush": true,
   "observability": { "enabled": true },
-  "triggers": { "crons": ["*/5 * * * *", "31 * * * *"] },
+  "triggers": { "crons": ["* * * * *"] },
   "d1_databases": [
     { "binding": "BUDDIES_DB", "database_name": "stationhead-buddies", "database_id": "f361aae0-05f0-42bc-8784-77100e80133d" },
     { "binding": "MINUTE_DB", "database_name": "stationhead-minute", "database_id": "43c12c1e-886d-4496-9c37-61bc8a15bbd7" },
