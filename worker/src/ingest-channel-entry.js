@@ -31,8 +31,27 @@ export function commentsTaskForMinuteFact(commentTask, body) {
   };
 }
 
-export function readModelEnvelopeForMinuteFact(rawMessage, body) {
-  const parsed = parseMinuteFactQueueMessage(body);
+function trustedMinuteFactQueueMessage(body) {
+  const payload = objectValue(body?.payload);
+  const channelId = integer(body?.channel_id);
+  if (body?.message_type !== 'minute-fact-job'
+      || integer(body?.message_version) !== 1
+      || !payload
+      || channelId == null
+      || integer(payload?.snapshot?.channel_id) !== channelId) {
+    throw new Error('invalid trusted minute fact queue message');
+  }
+  return { payload, channel_id: channelId };
+}
+
+export function readModelEnvelopeForMinuteFact(rawMessage, body, options = {}) {
+  // The active ingest wrapper receives the exact object returned by
+  // minuteFactQueueMessage(), which was already normalized, validated and
+  // size-checked. Avoid walking the full snapshot/queue a second time there.
+  // Durable outbox recovery still uses the strict parser below.
+  const parsed = options.trusted === true
+    ? trustedMinuteFactQueueMessage(body)
+    : parseMinuteFactQueueMessage(body);
   const compact = objectValue(body?.read_model);
   if (!compact) throw new Error('minute fact read model is missing');
 
@@ -129,7 +148,7 @@ function activeIngestEnv(env, message, channel, envelopes) {
       value: commentsQueue?.send ? {
         send(body, options) {
           if (body && typeof body === 'object') {
-            const envelope = readModelEnvelopeForMinuteFact(message, body);
+            const envelope = readModelEnvelopeForMinuteFact(message, body, { trusted: true });
             envelopes.set(String(body.job_id || ''), envelope);
             return commentsQueue.send(commentsTaskForMinuteFact(commentTask, body), options);
           }
