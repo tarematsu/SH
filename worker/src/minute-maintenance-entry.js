@@ -1,4 +1,7 @@
-import minuteWorker, { runMinuteScheduledWithCollectorPriority } from './minute-entry.js';
+import minuteWorker, {
+  minuteMaintenanceTask,
+  runMinuteScheduledWithCollectorPriority,
+} from './minute-entry.js';
 import { pendingMinuteDeriveTriggers } from './minute-derive-trigger.js';
 
 export const MINUTE_DERIVE_DISPATCH_CRON = '* * * * *';
@@ -57,11 +60,41 @@ export async function dispatchPendingMinuteFacts(env, dependencies = {}, ctx = n
   return summary;
 }
 
+async function dispatchRebuild(controller, env, ctx, dependencies = {}) {
+  if (!env?.MINUTE_REBUILD_QUEUE?.send) {
+    return runMinuteScheduledWithCollectorPriority(controller, env, ctx, dependencies);
+  }
+  const cronModule = await import('./cron-stagger.js');
+  await (dependencies.applyStagger || cronModule.applyCronStagger)(env, 'minute');
+  const collector = await (dependencies.waitForCollector || cronModule.waitForCollectorCompletion)(
+    env,
+    controller?.scheduledTime,
+  );
+  if (!collector?.ready) {
+    return { skipped: true, reason: collector?.reason || 'collector-not-ready' };
+  }
+  const scheduledAt = Number(controller?.scheduledTime) || Date.now();
+  const runId = `minute-rebuild:${scheduledAt}`;
+  await env.MINUTE_REBUILD_QUEUE.send({
+    message_type: 'minute-rebuild-stage',
+    message_version: 1,
+    run_id: runId,
+    stage: 'gap-scan',
+    scheduled_at: scheduledAt,
+  }, { contentType: 'json' });
+  const result = { event: 'minute_rebuild_dispatched', run_id: runId, dispatched: 1 };
+  console.log(JSON.stringify(result));
+  return result;
+}
+
 export default {
   fetch: minuteWorker.fetch,
   scheduled(controller, env, ctx) {
     if (String(controller?.cron || '') === MINUTE_DERIVE_DISPATCH_CRON) {
       return dispatchPendingMinuteFacts(env, {}, ctx);
+    }
+    if (minuteMaintenanceTask(controller) === 'rebuild') {
+      return dispatchRebuild(controller, env, ctx);
     }
     return runMinuteScheduledWithCollectorPriority(controller, env, ctx);
   },
