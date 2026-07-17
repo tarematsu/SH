@@ -137,6 +137,11 @@ function cycleStart(scheduledAt, intervalMs) {
   return Math.floor(scheduledAt / intervalMs) * intervalMs;
 }
 
+function pipelineMetadataAttemptLimit(env) {
+  const value = Math.trunc(Number(env?.BUDDY_PLAYBACK_PIPELINE_METADATA_ATTEMPTS ?? 5));
+  return Number.isFinite(value) ? Math.max(0, Math.min(20, value)) : 5;
+}
+
 function displayStateChanged(current, state) {
   if (!current) return true;
   return booleanValue(current.is_broadcasting) !== state.is_broadcasting
@@ -305,6 +310,8 @@ async function runParseStage(env, row, observedAt) {
 
 async function runMetadataStage(env, row, observedAt, dependencies) {
   const config = buddyPlaybackConfig(env);
+  const totalLimit = pipelineMetadataAttemptLimit(env);
+  const alreadyAttempted = Math.max(0, Math.trunc(Number(row.metadata_attempts || 0)));
   const queue = JSON.parse(row.parsed_queue_json);
   const enrich = dependencies.enrichMetadata || enrichQueueMetadata;
   const enriched = await enrich(
@@ -313,7 +320,7 @@ async function runMetadataStage(env, row, observedAt, dependencies) {
     observedAt,
     {
       ...config,
-      metadataLimit: Math.min(1, config.metadataLimit),
+      metadataLimit: alreadyAttempted < totalLimit ? Math.min(1, config.metadataLimit) : 0,
       returnDetails: true,
     },
     dependencies.fetchTrackMetadata,
@@ -323,9 +330,9 @@ async function runMetadataStage(env, row, observedAt, dependencies) {
     : enriched instanceof Map ? enriched : new Map();
   const remaining = Math.max(0, Math.trunc(Number(enriched?.remaining || 0)));
   const attempted = Math.max(0, Math.trunc(Number(enriched?.attempted || 0)));
-  const processed = Math.max(0, Math.trunc(Number(row.metadata_attempts || 0))) + attempted;
+  const processed = alreadyAttempted + attempted;
   const tracks = attachBuddyMetadata(queue, metadata);
-  const nextStage = remaining > 0 && processed < config.metadataLimit ? 'metadata' : 'commit';
+  const nextStage = remaining > 0 && processed < totalLimit ? 'metadata' : 'commit';
   const result = await env.OTHER_DB.prepare(PIPELINE_METADATA_SQL)
     .bind(nextStage, JSON.stringify(tracks), attempted, observedAt, row.channel_alias, row.cycle_at)
     .run();
