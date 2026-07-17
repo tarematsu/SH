@@ -188,13 +188,19 @@ function activeIngestEnv(env, message, channel, capture) {
   return active;
 }
 
-async function currentReadModelEnvelope(env, message, channel, result, capture) {
+export function capturedReadModelEnvelope(result, capture) {
   const channelId = integer(result?.channel_id);
   const minuteAt = integer(result?.minute_fact_job_minute_at);
   if (channelId == null || minuteAt == null) throw new Error('current minute fact identity is missing');
-  if (capture.channelId === channelId && capture.minuteAt === minuteAt && capture.envelope) {
-    return capture.envelope;
-  }
+  return capture?.channelId === channelId && capture?.minuteAt === minuteAt && capture?.envelope
+    ? capture.envelope
+    : null;
+}
+
+async function recoverCurrentReadModelEnvelope(env, message, channel, result) {
+  const channelId = integer(result?.channel_id);
+  const minuteAt = integer(result?.minute_fact_job_minute_at);
+  if (channelId == null || minuteAt == null) throw new Error('current minute fact identity is missing');
   const jobId = `minute-fact:${channelId}:${minuteAt}`;
 
   try {
@@ -233,7 +239,8 @@ export async function ingestRawCollection(env, message) {
   const capture = { channelId: null, minuteAt: null, envelope: null };
   const active = activeIngestEnv(env, message, channel, capture);
   const result = await collectOnce(active, 'raw-collection-queue');
-  const envelope = await currentReadModelEnvelope(env, message, channel, result, capture);
+  const envelope = capturedReadModelEnvelope(result, capture)
+    || await recoverCurrentReadModelEnvelope(env, message, channel, result);
   await env.READ_MODEL_QUEUE.send(envelope, { contentType: 'json' });
   return result;
 }
