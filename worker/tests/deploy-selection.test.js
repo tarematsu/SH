@@ -28,6 +28,7 @@ test('split enrichment entrypoints map to their own Workers', () => {
   assert.deepEqual(select(['worker/src/minute-enrichment-entry.js']).workers, ['sh-minute-enrichment']);
   assert.deepEqual(select(['worker/src/minute-rebuild-entry.js']).workers, ['sh-minute-rebuild']);
   assert.deepEqual(select(['worker/src/track-metadata-entry.js']).workers, ['sh-track-metadata']);
+  assert.deepEqual(select(['worker/src/persist-channel-entry.js']).workers, ['sh-buddies-persist']);
   assert.deepEqual(select(['worker/src/buddy-playback-entry.js']).workers, ['sh-buddy-playback']);
 });
 
@@ -59,7 +60,7 @@ test('deploy script-only package changes do not redeploy runtime Workers', () =>
 
 test('lockfile changes conservatively redeploy every Worker', () => {
   const result = select(['worker/package-lock.json']);
-  assert.equal(result.workers.length, 14);
+  assert.equal(result.workers.length, 15);
 });
 
 test('tests and verification scripts do not redeploy runtime Workers', () => {
@@ -81,12 +82,12 @@ test('shared package changes select every Worker that imports sh-shared', () => 
 
 test('unresolved runtime source changes fall back to all Workers', () => {
   const result = select(['worker/src/deleted-runtime-module.js']);
-  assert.equal(result.workers.length, 14);
+  assert.equal(result.workers.length, 15);
 });
 
 test('manual selection deploys all Workers in durable order', () => {
   const result = select([], ['--all']);
-  assert.deepEqual(result.workers.slice(0, 7), [
+  assert.deepEqual(result.workers.slice(0, 10), [
     'sh-minute-derive',
     'sh-minute-enrichment',
     'sh-minute-rebuild',
@@ -94,6 +95,9 @@ test('manual selection deploys all Workers in durable order', () => {
     'sh-minute-ingest',
     'sh-minute-read-model',
     'sh-track-metadata',
+    'sh-buddies-comments',
+    'sh-buddies-persist',
+    'sh-buddies-ingest',
   ]);
-  assert.equal(result.workers.length, 14);
+  assert.equal(result.workers.length, 15);
 });
