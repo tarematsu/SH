@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { supportsOptimizedIngestType } from '../../site/functions/api/ingest.js';
+import {
+  ingestOptimizedBody,
+  supportsOptimizedIngestType,
+} from '../../site/functions/api/ingest.js';
 import { ingest } from '../src/collector-ingest.js';
 
 test('all collector write types use the optimized direct ingest path', () => {
@@ -10,6 +13,16 @@ test('all collector write types use the optimized direct ingest path', () => {
   assert.equal(supportsOptimizedIngestType('comments'), true);
   assert.equal(supportsOptimizedIngestType('collector_heartbeat'), true);
   assert.equal(supportsOptimizedIngestType('track_metadata'), true);
+});
+
+test('optimized ingest returns handler promises directly and reuses the unavailable result', async () => {
+  assert.notEqual(ingestOptimizedBody.constructor.name, 'AsyncFunction');
+  const missingDb = ingestOptimizedBody({}, { type: 'snapshot' });
+  const unsupported = ingestOptimizedBody({ DB: {} }, { type: 'unsupported' });
+
+  assert.equal(missingDb, unsupported);
+  assert.equal(missingDb instanceof Promise, true);
+  assert.equal(await missingDb, null);
 });
 
 test('track metadata is written directly without constructing an internal HTTP Request', async () => {
