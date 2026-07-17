@@ -60,14 +60,14 @@ export const MATERIALIZED_RESPONSE_MAX_AGE_MS = 15 * 60_000;
 export const PLAYBACK_RESPONSE_MAX_AGE_MS = 2 * 60 * 60_000;
 
 export const MATERIALIZED_API_VARIANTS = Object.freeze([
-  Object.freeze({ key: 'dashboard-history', url: '/api/dashboard-history', cadence_minutes: 15 }),
-  Object.freeze({ key: 'track-likes', url: '/api/track-likes', cadence_minutes: 30 }),
-  Object.freeze({ key: 'like-ranking', url: '/api/like-ranking', cadence_minutes: 30 }),
-  Object.freeze({ key: 'minute-facts-current', url: '/api/minute-facts/current', cadence_minutes: 5 }),
-  Object.freeze({ key: 'history:daily', url: '/api/history?mode=daily', cadence_minutes: 15 }),
-  Object.freeze({ key: 'history:weekly', url: '/api/history?mode=weekly', cadence_minutes: 15 }),
-  Object.freeze({ key: 'history:monthly', url: '/api/history?mode=monthly', cadence_minutes: 15 }),
-  Object.freeze({ key: 'history:broadcasts', url: '/api/history?mode=broadcasts', cadence_minutes: 15 }),
+  Object.freeze({ key: 'dashboard-history', url: '/api/dashboard-history', cadence_minutes: 60 }),
+  Object.freeze({ key: 'track-likes', url: '/api/track-likes', cadence_minutes: 60 }),
+  Object.freeze({ key: 'like-ranking', url: '/api/like-ranking', cadence_minutes: 60 }),
+  Object.freeze({ key: 'minute-facts-current', url: '/api/minute-facts/current', cadence_minutes: 60 }),
+  Object.freeze({ key: 'history:daily', url: '/api/history?mode=daily', cadence_minutes: 60 }),
+  Object.freeze({ key: 'history:weekly', url: '/api/history?mode=weekly', cadence_minutes: 60 }),
+  Object.freeze({ key: 'history:monthly', url: '/api/history?mode=monthly', cadence_minutes: 60 }),
+  Object.freeze({ key: 'history:broadcasts', url: '/api/history?mode=broadcasts', cadence_minutes: 60 }),
   Object.freeze({ key: 'track-history', url: '/api/track-history', cadence_minutes: 60 }),
   Object.freeze({ key: 'host-history:summary', url: '/api/host-history?mode=summary', cadence_minutes: 1440 }),
 ]);
