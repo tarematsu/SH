@@ -1,9 +1,11 @@
 import { ingestRawCollection as ingestPreparedCollection } from './ingest-channel-entry.js';
 import { restoreQueueAnalysis } from './queue-analysis-transfer.js';
+import { restoreSnapshotAnalysis } from './snapshot-analysis-transfer.js';
 
 export async function ingestRawCollection(env, message) {
-  if (message?.message_version === 3 && message?.queue) {
-    restoreQueueAnalysis(message.queue, message.queue_analysis);
+  if (message?.message_version === 3) {
+    if (message.snapshot) restoreSnapshotAnalysis(message.snapshot, message.snapshot_analysis);
+    if (message.queue) restoreQueueAnalysis(message.queue, message.queue_analysis);
   }
   return ingestPreparedCollection(env, message);
 }
