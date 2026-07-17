@@ -132,12 +132,20 @@ function withCollectionSignal(env, signal) {
   return activeEnv;
 }
 
-async function timedStage(
+export function timedStage(
   stage,
   operation,
   thresholdMs = SLOW_STAGE_THRESHOLD_MS,
   timings = null,
 ) {
+  // Stage timing is diagnostic-only. When it is disabled, return the original
+  // operation result directly so the per-minute path pays no Date.now(),
+  // async wrapper, catch/finally continuation, or replacement Promise.
+  if (!timings) return operation();
+  return measureTimedStage(stage, operation, thresholdMs, timings);
+}
+
+async function measureTimedStage(stage, operation, thresholdMs, timings) {
   const startedAt = Date.now();
   let outcome = 'success';
   try {
@@ -147,7 +155,7 @@ async function timedStage(
     throw error;
   } finally {
     const durationMs = Date.now() - startedAt;
-    timings?.push({ stage, outcome, duration_ms: durationMs });
+    timings.push({ stage, outcome, duration_ms: durationMs });
     if (outcome === 'error' || durationMs >= thresholdMs) {
       console.log(JSON.stringify({
         event: 'collector_stage_timing',
