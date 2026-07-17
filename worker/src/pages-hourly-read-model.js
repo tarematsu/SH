@@ -2,6 +2,7 @@ import { MATERIALIZED_API_VARIANTS } from '../../site/functions/lib/api-contract
 import { loadLikeRanking } from '../../site/functions/api/like-ranking.js';
 import { refreshTrackHistoryPagesReadModel } from './pages-read-model-refresh.js';
 
+const HOUR_MS = 60 * 60_000;
 const LIKE_RANKING_LIMIT = 500;
 const RESPONSE_CHUNK_SIZE = 192_000;
 const RESPONSE_MAX_CHUNKS = 80;
@@ -74,6 +75,15 @@ async function savePayload(db, key, payload, now) {
     VALUES(?,?,?) ON CONFLICT(model_key) DO UPDATE SET
       payload_json=excluded.payload_json,updated_at=excluded.updated_at`)
     .bind(key, JSON.stringify(payload), now).run();
+}
+
+async function payloadUpdatedAt(db, key) {
+  const row = await db.prepare(`SELECT updated_at
+    FROM sh_pages_payload_read_model
+    WHERE model_key=?
+    LIMIT 1`).bind(key).first();
+  const updatedAt = Number(row?.updated_at);
+  return Number.isFinite(updatedAt) && updatedAt >= 0 ? updatedAt : null;
 }
 
 async function refreshLikeRankingPayload(db, now) {
@@ -210,6 +220,19 @@ function requireBindings(env, names) {
   if (missing.length) throw new Error(`hourly Pages task is missing D1 binding(s): ${missing.join(', ')}`);
 }
 
+function taskResponse(task, timestamp, response) {
+  return {
+    skipped: false,
+    generated_at: timestamp,
+    task,
+    responses: [response],
+    due: 1,
+    deferred: MATERIALIZED_API_VARIANTS.length - 1,
+    succeeded: response.ok ? 1 : 0,
+    failed: response.ok ? 0 : 1,
+  };
+}
+
 export async function runPagesHourlyTask(env, now = Date.now(), dependencies = {}) {
   const timestamp = validTimestamp(now);
   const task = pagesHourlyTask(timestamp);
@@ -233,6 +256,19 @@ export async function runPagesHourlyTask(env, now = Date.now(), dependencies = {
     return { skipped: false, generated_at: timestamp, task, source, responses: [], failed: 0 };
   }
 
+  if (task.key === 'like-ranking') {
+    const readUpdatedAt = dependencies.payloadUpdatedAt || payloadUpdatedAt;
+    const updatedAt = await readUpdatedAt(env.MINUTE_DB, 'like-ranking');
+    const hourStart = Math.floor(timestamp / HOUR_MS) * HOUR_MS;
+    if (updatedAt == null || updatedAt < hourStart) {
+      return taskResponse(task, timestamp, {
+        key: task.key,
+        ok: false,
+        error: 'like-ranking source was not refreshed in the current hour',
+      });
+    }
+  }
+
   const variant = variantByKey(task.key);
   const response = await materializeVariant(
     variant,
@@ -241,14 +277,5 @@ export async function runPagesHourlyTask(env, now = Date.now(), dependencies = {
     timestamp,
     dependencies,
   );
-  return {
-    skipped: false,
-    generated_at: timestamp,
-    task,
-    responses: [response],
-    due: 1,
-    deferred: MATERIALIZED_API_VARIANTS.length - 1,
-    succeeded: response.ok ? 1 : 0,
-    failed: response.ok ? 0 : 1,
-  };
+  return taskResponse(task, timestamp, response);
 }
