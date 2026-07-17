@@ -33,6 +33,7 @@
       }
     ],
     "producers": [
+      { "binding": "PERSIST_QUEUE", "queue": "stationhead-buddies-persist" },
       { "binding": "COMMENTS_QUEUE", "queue": "stationhead-comments" },
       { "binding": "READ_MODEL_QUEUE", "queue": "stationhead-read-model" }
     ]
