@@ -84,6 +84,7 @@ test('like-ranking source and response are separate minute tasks', async () => {
 
   const response = await runPagesHourlyTask(env, BASE + 40 * 60_000, {
     ensureSchema: async () => calls.push('schema'),
+    payloadUpdatedAt: async () => BASE + 35 * 60_000,
     render: async (variant) => {
       calls.push(['render', variant.key]);
       return Response.json({ ok: true, rows: [] });
@@ -98,6 +99,24 @@ test('like-ranking source and response are separate minute tasks', async () => {
     'schema',
     ['render', 'like-ranking'],
   ]);
+});
+
+test('like-ranking publication refuses a source from the previous hour', async () => {
+  const db = new FakeDb();
+  const env = { BUDDIES_DB: {}, MINUTE_DB: db, OTHER_DB: {} };
+  const result = await runPagesHourlyTask(env, BASE + 60 * 60_000 + 40 * 60_000, {
+    ensureSchema: async () => {},
+    payloadUpdatedAt: async () => BASE + 35 * 60_000,
+    render: async () => assert.fail('stale source must not be published'),
+  });
+
+  assert.equal(result.failed, 1);
+  assert.deepEqual(result.responses, [{
+    key: 'like-ranking',
+    ok: false,
+    error: 'like-ranking source was not refreshed in the current hour',
+  }]);
+  assert.equal(db.batches.length, 0);
 });
 
 test('track history keeps its source refresh and publication in one isolated slot', async () => {
