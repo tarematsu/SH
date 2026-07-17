@@ -1,7 +1,11 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { collectOptionalComments } from '../src/collector-comments.js';
+import {
+  NO_COMMENTS_RESULT,
+  collectOptionalComments,
+  optionalCommentsEnabled,
+} from '../src/collector-comments.js';
 import { firstDefined } from '../src/collector-config.js';
 import { ingest } from '../src/collector-ingest.js';
 
@@ -11,9 +15,13 @@ test('disabled optional comments reuse one immutable resolved promise', async ()
   const first = collectOptionalComments({}, state, config, 1);
   const second = collectOptionalComments({}, state, config, 2);
 
+  assert.equal(optionalCommentsEnabled(state, config), false);
+  assert.equal(optionalCommentsEnabled(state, { chatLimit: 1 }), true);
+  assert.equal(optionalCommentsEnabled({}, { chatLimit: 1 }), false);
   assert.equal(first, second);
   assert.equal(first instanceof Promise, true);
   const result = await first;
+  assert.equal(result, NO_COMMENTS_RESULT);
   assert.equal(Object.isFrozen(result), true);
   assert.deepEqual(result, {
     commentsSaved: 0,
