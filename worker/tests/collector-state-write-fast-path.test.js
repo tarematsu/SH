@@ -143,4 +143,4 @@ test('old messages and missing progress rows retain the full credential upsert',
   });
   assert.equal(missingDb.runs.length, 1);
   assert.match(missingDb.runs[0].sql, /INSERT INTO sh_worker_collector_state/);
-}
+});
