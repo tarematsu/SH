@@ -111,12 +111,15 @@ export async function collectRawChannel(env, dependencies = {}) {
   const body = await response.text();
   if (!response.ok) throw new Error(`Stationhead API ${response.status}: channel`);
   const refreshed = normalizeBearer(response.headers.get('authorization'));
+  const persistCredentials = !state.collectorUpdatedAt
+    || Boolean(refreshed && refreshed !== state.authToken);
   await env.RAW_COLLECTION_QUEUE.send({
     message_type: 'stationhead-raw-channel',
     message_version: 1,
     observed_at: observedAt,
     channel_alias: config.channelAlias,
     body,
+    persist_credentials: persistCredentials,
     auth: {
       authToken: refreshed || state.authToken,
       deviceUid: state.deviceUid,

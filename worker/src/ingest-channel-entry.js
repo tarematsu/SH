@@ -163,6 +163,7 @@ function activeIngestEnv(env, message, channel, capture) {
   };
   Object.defineProperties(active, {
     __shAuthState: { value: message.auth || {}, enumerable: false },
+    __shPersistCollectorCredentials: { value: message.persist_credentials !== false, enumerable: false },
     __RAW_CHANNEL_PAYLOAD: { value: channel, enumerable: false },
     CHAT_LIMIT: { value: 0, enumerable: true },
     MINUTE_FACT_QUEUE: {
