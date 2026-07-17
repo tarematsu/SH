@@ -38,5 +38,10 @@
     { "binding": "BUDDIES_DB", "database_name": "stationhead-buddies", "database_id": "f361aae0-05f0-42bc-8784-77100e80133d" },
     { "binding": "MINUTE_DB", "database_name": "stationhead-minute", "database_id": "43c12c1e-886d-4496-9c37-61bc8a15bbd7" },
     { "binding": "OTHER_DB", "database_name": "stationhead-other", "database_id": "21e70e92-6725-4e62-809e-8aadb088cc11" }
-  ]
+  ],
+  "queues": {
+    "producers": [
+      { "binding": "BUDDY_PLAYBACK_QUEUE", "queue": "stationhead-buddy-playback" }
+    ]
+  }
 }
