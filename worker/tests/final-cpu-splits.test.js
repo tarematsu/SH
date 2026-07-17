@@ -6,6 +6,7 @@ import {
   processCommentsPersistTask,
   processCommentsTask,
 } from '../src/comments-entry.js';
+import { processIngestFinalizeTask } from '../src/ingest-finalize-entry.js';
 import { minuteFactQueueMessage } from '../src/minute-facts-queue.js';
 import { processTrackMetadataTask } from '../src/track-metadata-entry.js';
 
@@ -125,4 +126,36 @@ test('read-model hydration, preservation and writes run as separate metadata sta
   assert.equal(write.pending, false);
   assert.equal(written.hydrated, true);
   assert.equal(written.preserved, true);
+});
+
+test('ingest finalization preserves collector state before read-model handoff', async () => {
+  const calls = [];
+  const state = {
+    authToken: 'token',
+    deviceUid: 'device',
+    lastRunAt: 20,
+    lastSuccessAt: 21,
+  };
+  const readModel = { message_type: 'stationhead-read-model', job_id: 'read-model:10:20' };
+  const result = await processIngestFinalizeTask({ DB: {} }, {
+    message_type: 'stationhead-ingest-finalize',
+    message_version: 1,
+    observed_at: 20,
+    channel_id: 10,
+    collector_state: state,
+    read_model: readModel,
+  }, {
+    saveCollectorState: async (_env, value) => {
+      calls.push('state');
+      assert.equal(value, state);
+      return { accepted: true };
+    },
+    sendReadModel: async (value) => {
+      calls.push('read-model');
+      assert.equal(value, readModel);
+    },
+  });
+
+  assert.deepEqual(calls, ['state', 'read-model']);
+  assert.equal(result.state_accepted, true);
 });
