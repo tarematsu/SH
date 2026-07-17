@@ -20,6 +20,9 @@
         "dead_letter_queue": "stationhead-minute-enrichment-dlq",
         "max_concurrency": 1
       }
+    ],
+    "producers": [
+      { "binding": "MINUTE_ENRICHMENT_QUEUE", "queue": "stationhead-minute-enrichment" }
     ]
   }
 }
