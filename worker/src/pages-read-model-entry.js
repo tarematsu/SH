@@ -1,7 +1,7 @@
 import './fetch-guard.js';
 import { runPagesHourlyTask } from './pages-hourly-read-model.js';
 
-export const PAGES_READ_MODEL_CRON = '* * * *';
+export const PAGES_READ_MODEL_CRON = '* * * * *';
 
 function scheduledTimestamp(controller, fallback = Date.now()) {
   const value = Number(controller?.scheduledTime);
