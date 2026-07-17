@@ -38,7 +38,8 @@
       }
     ],
     "producers": [
-      { "binding": "MINUTE_FACT_QUEUE", "queue": "stationhead-buddies-facts" }
+      { "binding": "MINUTE_FACT_QUEUE", "queue": "stationhead-buddies-facts" },
+      { "binding": "TRACK_METADATA_QUEUE", "queue": "stationhead-track-metadata" }
     ]
   }
 }
