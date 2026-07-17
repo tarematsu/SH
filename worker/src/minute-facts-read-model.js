@@ -159,6 +159,12 @@ export function preserveReadModelTrackMetadata(queue, previousQueue) {
   return changed ? { ...queue, tracks } : queue;
 }
 
+export function queueNeedsPreviousTrackMetadata(queue) {
+  return Boolean(queue?.tracks?.some((track) => (
+    !track?.title || !track?.artist || !track?.album_name || !track?.thumbnail_url
+  )));
+}
+
 async function queryTrackMetadata(db, spotifyIds, isrcs) {
   if (!db || typeof db.prepare !== 'function') return [];
   const clauses = [];
@@ -236,6 +242,7 @@ async function preservePreviousQueueMetadata(env, readModel) {
   const queueValue = queue.value;
   const channelId = integer(readModel?.channel?.channel_id);
   if (!env?.MINUTE_DB || channelId == null || !queueValue?.tracks?.length) return readModel;
+  if (!queueNeedsPreviousTrackMetadata(queueValue)) return readModel;
   const statement = env.MINUTE_DB.prepare(`SELECT queue_id,start_time,queue_json
     FROM sh_queue_read_model_current
     WHERE channel_id=?
