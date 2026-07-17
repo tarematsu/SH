@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { readModelEnvelopeForMinuteFact } from '../src/ingest-channel-entry.js';
+import {
+  commentsTaskForMinuteFact,
+  readModelEnvelopeForMinuteFact,
+} from '../src/ingest-channel-entry.js';
 import { minuteFactQueueMessage } from '../src/minute-facts-queue.js';
 
 function minuteMessage() {
@@ -66,14 +69,43 @@ test('trusted ingest path still rejects mismatched channel identity', () => {
   );
 });
 
-test('trusted envelope reuses the compact queue object', () => {
+test('trusted envelope hydrates the compact read model in place', () => {
   const body = minuteMessage();
+  const compactReadModel = body.read_model;
+  const compactQueue = compactReadModel.queue;
   const envelope = readModelEnvelopeForMinuteFact(
     { observed_at: 1_784_000_000_000, auth: { authToken: 'token' } },
     body,
     { trusted: true },
   );
 
+  assert.equal(envelope.read_model, compactReadModel);
+  assert.equal(envelope.read_model.queue, compactQueue);
   assert.equal(envelope.read_model.queue.value, body.payload.queue);
   assert.equal(envelope.read_model.queue.value.tracks.length, 60);
+});
+
+test('comments handoff mutates only the explicitly trusted in-memory message', () => {
+  const copiedBody = minuteMessage();
+  const copiedReadModel = copiedBody.read_model;
+  const copiedTask = commentsTaskForMinuteFact(
+    { observed_at: 1, station_id: 123, auth: {} },
+    copiedBody,
+  );
+
+  assert.notEqual(copiedTask.minute_fact, copiedBody);
+  assert.equal(copiedBody.read_model, copiedReadModel);
+  assert.equal(copiedTask.minute_fact.read_model, null);
+
+  const trustedBody = minuteMessage();
+  const trustedTask = commentsTaskForMinuteFact(
+    { observed_at: 1, station_id: 123, auth: {} },
+    trustedBody,
+    { inPlace: true, trusted: true },
+  );
+
+  assert.equal(trustedTask.minute_fact, trustedBody);
+  assert.equal(trustedBody.read_model, null);
+  assert.equal(trustedTask.observed_at, 1);
+  assert.equal(trustedTask.station_id, 123);
 });
