@@ -259,7 +259,7 @@ export function missingRevisionPositions(tracks, existingRows = []) {
 export async function createOptimizedRevision(db, oldDb, input) {
   const { channelId, stationId, sessionId, queue, observedAt, receivedAt } = input;
   const payload = queueStructurePayload(queue);
-  const structuralHash = await queueStructuralHash(queue);
+  const structuralHash = await queueStructuralHash(queue, payload);
   const queueStart = timestampMs(queue?.start_time);
   const context = {
     channelId,
