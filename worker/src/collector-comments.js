@@ -56,38 +56,60 @@ function collectionAbortReason(config, fallback) {
   return signal.reason instanceof Error ? signal.reason : fallback;
 }
 
-async function collectComments(env, state, config, observedAt, dependencies) {
+export async function fetchOptionalComments(state, config, dependencies = null) {
+  if (!optionalCommentsEnabled(state, config)) {
+    return { comments: [], rawMeta: { next: null }, skipped: true };
+  }
   const requestJson = dependencies?.requestJson || shJson;
+  const history = await requestJson(
+    state,
+    config,
+    `/station/${encodeURIComponent(state.stationId)}/chatHistory?limit=${config.chatLimit}`,
+  );
+  return {
+    comments: normalizeCommentCountInputs(history, state.stationId),
+    rawMeta: { next: history?.chats?.next ?? history?.next ?? null },
+    skipped: false,
+  };
+}
+
+export async function persistOptionalComments(
+  env,
+  stationId,
+  collected,
+  observedAt,
+  dependencies = null,
+) {
+  if (collected?.skipped) return NO_COMMENTS_RESULT;
   const writeIngest = dependencies?.writeIngest || ingest;
+  const comments = Array.isArray(collected?.comments) ? collected.comments : [];
+  const ingestResult = await writeIngest(env, 'comments', {
+    station_id: stationId,
+    comments,
+    raw_meta: collected?.rawMeta || { next: null },
+  }, observedAt, { returnDetails: true });
+  const commentDetails = ingestResult?.totalKnown === true
+    ? {
+      commentTotal: Number(ingestResult.total),
+      commentTotalKnown: true,
+    }
+    : {};
+  return {
+    commentsSaved: comments.length,
+    degraded: false,
+    errorStage: null,
+    ...commentDetails,
+  };
+}
+
+async function collectComments(env, state, config, observedAt, dependencies) {
   const warn = dependencies?.warn || console.warn;
   let stage = 'sh_chat_history';
 
   try {
-    const history = await requestJson(
-      state,
-      config,
-      `/station/${encodeURIComponent(state.stationId)}/chatHistory?limit=${config.chatLimit}`,
-    );
-    stage = 'sh_chat_payload';
-    const comments = normalizeCommentCountInputs(history, state.stationId);
+    const collected = await fetchOptionalComments(state, config, dependencies);
     stage = 'd1_write_comments';
-    const ingestResult = await writeIngest(env, 'comments', {
-      station_id: state.stationId,
-      comments,
-      raw_meta: { next: history?.chats?.next ?? history?.next ?? null },
-    }, observedAt, { returnDetails: true });
-    const commentDetails = ingestResult?.totalKnown === true
-      ? {
-        commentTotal: Number(ingestResult.total),
-        commentTotalKnown: true,
-      }
-      : {};
-    return {
-      commentsSaved: comments.length,
-      degraded: false,
-      errorStage: null,
-      ...commentDetails,
-    };
+    return await persistOptionalComments(env, state.stationId, collected, observedAt, dependencies);
   } catch (error) {
     const abortReason = collectionAbortReason(config, error);
     if (abortReason) throw abortReason;
