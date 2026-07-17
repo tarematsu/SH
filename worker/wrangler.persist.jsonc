@@ -1,0 +1,32 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "sh-buddies-persist",
+  "main": "src/persist-channel-entry.js",
+  "compatibility_date": "2026-06-24",
+  "workers_dev": false,
+  "preview_urls": false,
+  "logpush": true,
+  "observability": { "enabled": true },
+  "vars": {
+    "COLLECTOR_ID": "cloudflare-worker"
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "stationhead-buddies",
+      "database_id": "f361aae0-05f0-42bc-8784-77100e80133d"
+    }
+  ],
+  "queues": {
+    "consumers": [
+      {
+        "queue": "stationhead-buddies-persist",
+        "max_batch_size": 1,
+        "max_batch_timeout": 1,
+        "max_retries": 8,
+        "dead_letter_queue": "stationhead-buddies-persist-dlq",
+        "max_concurrency": 1
+      }
+    ]
+  }
+}
