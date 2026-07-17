@@ -63,12 +63,12 @@ test('track history ranges split into one-day shards', () => {
   assert.deepEqual(splitTrackHistoryRange(null), []);
 });
 
-test('full daily stage fits inside the fifty free minute slots', () => {
+test('full daily stage fits inside the first cycle hour free slots', () => {
   const stage = createTrackHistoryHourlyStage(BASE, null, {});
   assert.equal(stage.refresh_mode, 'full');
   assert.equal(stage.tasks.filter(({ kind }) => kind === 'recent').length, 36);
   assert.equal(stage.tasks.filter(({ kind }) => kind === 'backfill').length, 7);
-  assert.equal(stage.tasks.length + 1 <= 50, true, '43 shards plus one publication must fit');
+  assert.equal(stage.tasks.length + 1 <= 57, true, '43 shards plus one publication must fit');
 });
 
 test('same-day stage refreshes four recent days when backfill is complete', () => {
@@ -83,7 +83,7 @@ test('same-day stage refreshes four recent days when backfill is complete', () =
   assert.equal(stage.tasks.every(({ kind }) => kind === 'recent'), true);
 });
 
-test('unfinished stage survives the hour boundary and publishes only after every shard', async () => {
+test('unfinished stage survives a boundary and publishes only after every shard', async () => {
   const memory = memoryDependencies(incrementalState());
   const env = { BUDDIES_DB: {}, MINUTE_DB: {} };
   const refreshed = [];
