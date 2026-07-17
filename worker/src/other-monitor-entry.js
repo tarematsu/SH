@@ -18,13 +18,15 @@ let loadedHealthApp = null;
 
 export function otherMonitorTask(now) {
   const minute = new Date(now).getUTCMinutes();
+  const buddySlot = minute % 30;
+  if (buddySlot === 0 || buddySlot === 5 || buddySlot === 15) return 'buddy';
   if (minute === 10 || minute === 40) return 'prediction';
   if (minute === 20) return 'officialNews';
   return 'host';
 }
 
 async function defaultRunner(name) {
-  if (name === 'buddy') return (await import('./buddy-playback-scheduler.js')).scheduleBuddyPlayback;
+  if (name === 'buddy') return (await import('./buddy-playback-pipeline.js')).scheduleBuddyPlaybackPipeline;
   if (name === 'host') return (await import('./cloud-host-monitor.js')).runCloudHostMonitor;
   if (name === 'prediction') return (await import('./stream-goal-prediction.js')).runStreamGoalPrediction;
   if (name === 'officialNews') return runOfficialNewsWithReconcile;
@@ -46,16 +48,7 @@ export async function runOtherMonitorScheduled(controller, env, ctx, dependencie
   let task = otherMonitorTask(now);
   const due = dependencies.officialNewsDue || officialNewsProbeDue;
   if (task === 'host' && await due(env, now)) task = 'officialNews';
-
-  const names = [];
-  if (env?.OTHER_DB?.prepare || typeof dependencies.buddy === 'function') names.push('buddy');
-  names.push(task);
-  const results = await Promise.allSettled(names.map((name) => runTask(name, env, ctx, now, dependencies)));
-  const failures = results.filter((result) => result.status === 'rejected');
-  if (failures.length) {
-    throw new AggregateError(failures.map((result) => result.reason), 'other monitor tasks failed');
-  }
-  return results.map((result) => result.value);
+  return [await runTask(task, env, ctx, now, dependencies)];
 }
 
 async function recordOtherCronSuccessFast(env, at = Date.now()) {
