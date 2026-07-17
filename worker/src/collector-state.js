@@ -15,6 +15,7 @@ export function collectorStateFromAuthState(authState, env = {}) {
     lastError: authState?.collectorLastError || null,
     channelId: Number(authState?.collectorChannelId || 0) || null,
     stationId: Number(authState?.collectorStationId || 0) || null,
+    persistCredentials: env.__shPersistCollectorCredentials !== false,
   };
 }
 
@@ -46,6 +47,7 @@ export async function loadCollectorState(env) {
     lastError: row?.last_error || null,
     channelId: Number(row?.last_channel_id || 0) || null,
     stationId: Number(row?.last_station_id || 0) || null,
+    persistCredentials: true,
   };
 }
 
@@ -84,6 +86,34 @@ function collectorStateStatement(db, state) {
   );
 }
 
+function collectorProgressStatement(db, state) {
+  return db.prepare(`UPDATE sh_worker_collector_state SET
+      last_run_at=?,last_success_at=?,last_error=?,
+      last_channel_id=?,last_station_id=?,updated_at=?
+    WHERE id='stationhead'`)
+    .bind(
+      state.lastRunAt || null,
+      state.lastSuccessAt || null,
+      state.lastError || null,
+      state.channelId || null,
+      state.stationId || null,
+      Date.now(),
+    );
+}
+
+function successfulCollectorStateStatement(db, state) {
+  return state.persistCredentials === false
+    ? collectorProgressStatement(db, state)
+    : collectorStateStatement(db, state);
+}
+
+async function saveSuccessfulCollectorState(db, state) {
+  const result = await successfulCollectorStateStatement(db, state).run();
+  if (state.persistCredentials === false && Number(result?.meta?.changes || 0) === 0) {
+    await collectorStateStatement(db, state).run();
+  }
+}
+
 async function clearFailureBestEffort(db) {
   try {
     await db.prepare('DELETE FROM sh_collector_failure_state WHERE id=?')
@@ -102,19 +132,25 @@ async function clearFailureBestEffort(db) {
 export async function saveCollectorStateAndClearFailure(env, state, patch = {}) {
   Object.assign(state, patch);
   if (typeof env?.DB?.batch !== 'function') {
-    await saveCollectorState(env, state);
+    await saveSuccessfulCollectorState(env.DB, state);
     await clearFailureBestEffort(env.DB);
     return;
   }
   try {
-    await env.DB.batch([
-      collectorStateStatement(env.DB, state),
+    const results = await env.DB.batch([
+      successfulCollectorStateStatement(env.DB, state),
       env.DB.prepare('DELETE FROM sh_collector_failure_state WHERE id=?').bind('stationhead'),
     ]);
+    if (state.persistCredentials === false
+        && Array.isArray(results)
+        && results[0]
+        && Number(results[0]?.meta?.changes || 0) === 0) {
+      await collectorStateStatement(env.DB, state).run();
+    }
   } catch (error) {
     // Preserve the old success semantics if only the best-effort incident
     // cleanup failed: the collector state must still be committed.
-    await collectorStateStatement(env.DB, state).run();
+    await saveSuccessfulCollectorState(env.DB, state);
     await clearFailureBestEffort(env.DB);
   }
 }
