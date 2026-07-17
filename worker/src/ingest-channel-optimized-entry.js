@@ -1,4 +1,5 @@
 import { ingestPreparedRawCollection } from './ingest-prepared-channel.js';
+import { processIngestFinalizeTask } from './ingest-finalize-entry.js';
 import { restoreQueueAnalysis } from './queue-analysis-transfer.js';
 import { restoreSnapshotAnalysis } from './snapshot-analysis-transfer.js';
 
@@ -16,11 +17,18 @@ export default {
   async queue(batch, env) {
     for (const message of batch.messages || []) {
       try {
-        await ingestRawCollection(env, message.body);
+        if (message.body?.message_type === 'stationhead-ingest-finalize') {
+          const result = await processIngestFinalizeTask(env, message.body);
+          console.log(JSON.stringify(result));
+        } else {
+          await ingestRawCollection(env, message.body);
+        }
         message.ack();
       } catch (error) {
         console.error(JSON.stringify({
-          event: 'raw_collection_ingest_failed',
+          event: message.body?.message_type === 'stationhead-ingest-finalize'
+            ? 'ingest_finalize_failed'
+            : 'raw_collection_ingest_failed',
           error: String(error?.message || error).slice(0, 800),
         }));
         message.retry();
