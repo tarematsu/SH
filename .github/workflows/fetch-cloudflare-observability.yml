@@ -15,7 +15,7 @@ on:
       lookback_minutes:
         description: Used when since is omitted
         required: false
-        default: "120"
+        default: "30"
         type: string
 
 permissions:
@@ -34,7 +34,7 @@ jobs:
       AWS_DEFAULT_REGION: auto
       R2_BUCKET: cloudflare-managed-1609110a
       LOG_SINCE: ${{ inputs.since || '' }}
-      LOOKBACK_MINUTES: ${{ inputs.lookback_minutes || '120' }}
+      LOOKBACK_MINUTES: ${{ inputs.lookback_minutes || '30' }}
 
     steps:
       - name: Derive R2 credentials
@@ -80,7 +80,7 @@ jobs:
               if cutoff.tzinfo is None:
                   cutoff = cutoff.replace(tzinfo=dt.timezone.utc)
           else:
-              cutoff = dt.datetime.now(dt.timezone.utc) - dt.timedelta(minutes=max(1, int(os.environ.get('LOOKBACK_MINUTES', '120'))))
+              cutoff = dt.datetime.now(dt.timezone.utc) - dt.timedelta(minutes=max(1, int(os.environ.get('LOOKBACK_MINUTES', '30'))))
           selected = []
           for item in objects:
               modified = dt.datetime.fromisoformat(str(item['LastModified']).replace('Z', '+00:00'))
