@@ -1,6 +1,6 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "sh-monitor-buddies",
+  "name": "sh-buddies-monitor",
   "main": "src/raw-collector-entry.js",
   "compatibility_date": "2026-06-24",
   "workers_dev": false,
