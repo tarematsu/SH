@@ -6,8 +6,6 @@ import {
   minuteFactStatement,
   qualityScore,
   queueRevisionItemStatement,
-  queueStructuralHash,
-  queueStructurePayload,
   reportedStreamCount,
   scheduleQueueTracks,
   findScheduledPosition,
@@ -17,6 +15,11 @@ import {
   ensureMinuteFactCollectorCode,
   minuteFactStatements,
 } from './minute-facts-normalize.js';
+import {
+  queueStructuralHash,
+  queueStructurePayload,
+  resetQueueStructureCacheForTests,
+} from './minute-facts-queue-cache.js';
 import { resolveHost, resolveLiveSession, resolveTrack } from './minute-facts-legacy-resolve.js';
 import { createRevision, updatePlaybackState, writeCurrentBite } from './minute-facts-legacy-revision.js';
 
@@ -29,6 +32,7 @@ export {
   queueRevisionItemStatement,
   queueStructuralHash,
   queueStructurePayload,
+  resetQueueStructureCacheForTests,
   reportedStreamCount,
   scheduleQueueTracks,
   findScheduledPosition,
