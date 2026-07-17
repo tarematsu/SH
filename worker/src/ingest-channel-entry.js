@@ -19,8 +19,9 @@ function objectValue(value) {
   return value && typeof value === 'object' && !Array.isArray(value) ? value : null;
 }
 
-export function commentsTaskForMinuteFact(commentTask, body) {
-  const compact = { ...body, read_model: null };
+export function commentsTaskForMinuteFact(commentTask, body, options = {}) {
+  const compact = options.inPlace === true ? body : { ...body };
+  compact.read_model = null;
   return {
     message_type: 'stationhead-comments-task',
     message_version: 2,
@@ -31,8 +32,30 @@ export function commentsTaskForMinuteFact(commentTask, body) {
   };
 }
 
-export function readModelEnvelopeForMinuteFact(rawMessage, body) {
-  const parsed = parseMinuteFactQueueMessage(body);
+function trustedMinuteFactQueueMessage(body) {
+  const payload = objectValue(body?.payload);
+  const channelId = integer(body?.channel_id);
+  const minuteAt = integer(body?.minute_at);
+  if (body?.message_type !== 'minute-fact-job'
+      || integer(body?.message_version) !== 1
+      || !payload
+      || channelId == null
+      || minuteAt == null
+      || integer(payload?.snapshot?.channel_id) !== channelId) {
+    throw new Error('invalid trusted minute fact queue message');
+  }
+  return { payload, channel_id: channelId };
+}
+
+export function readModelEnvelopeForMinuteFact(rawMessage, body, options = {}) {
+  // The active ingest wrapper receives the exact object returned by
+  // minuteFactQueueMessage(), which was already normalized, validated and
+  // size-checked. Avoid walking the full snapshot/queue a second time there.
+  // Durable outbox recovery still uses the strict parser below.
+  const trusted = options.trusted === true;
+  const parsed = trusted
+    ? trustedMinuteFactQueueMessage(body)
+    : parseMinuteFactQueueMessage(body);
   const compact = objectValue(body?.read_model);
   if (!compact) throw new Error('minute fact read model is missing');
 
@@ -40,20 +63,38 @@ export function readModelEnvelopeForMinuteFact(rawMessage, body) {
   const compactChannel = objectValue(compact.channel) || {};
   const compactQueue = objectValue(compact.queue);
   const compactCollector = objectValue(compact.collector) || {};
-  const queue = compactQueue && !Object.hasOwn(compactQueue, 'value')
-    ? { ...compactQueue, value: parsed.payload.queue ?? null }
-    : compactQueue;
-  const readModel = {
-    ...compact,
-    channel: { ...compactChannel, observed_at: observedAt },
-    queue,
-    collector: {
-      ...compactCollector,
-      last_run_at: observedAt,
-      last_success_at: observedAt,
-      updated_at: observedAt,
-    },
-  };
+  let readModel;
+  if (trusted) {
+    // The durable outbox JSON was serialized before this Queue wrapper runs.
+    // Hydrate only the disposable in-memory copy so the normal path avoids
+    // cloning the read model, channel, queue and collector objects.
+    compactChannel.observed_at = observedAt;
+    if (compactQueue && !Object.hasOwn(compactQueue, 'value')) {
+      compactQueue.value = parsed.payload.queue ?? null;
+    }
+    compactCollector.last_run_at = observedAt;
+    compactCollector.last_success_at = observedAt;
+    compactCollector.updated_at = observedAt;
+    compact.channel = compactChannel;
+    compact.queue = compactQueue;
+    compact.collector = compactCollector;
+    readModel = compact;
+  } else {
+    const queue = compactQueue && !Object.hasOwn(compactQueue, 'value')
+      ? { ...compactQueue, value: parsed.payload.queue ?? null }
+      : compactQueue;
+    readModel = {
+      ...compact,
+      channel: { ...compactChannel, observed_at: observedAt },
+      queue,
+      collector: {
+        ...compactCollector,
+        last_run_at: observedAt,
+        last_success_at: observedAt,
+        updated_at: observedAt,
+      },
+    };
+  }
 
   return {
     message_type: 'stationhead-read-model',
@@ -112,7 +153,7 @@ function fallbackReadModelEnvelope(env, message, channel) {
   };
 }
 
-function activeIngestEnv(env, message, channel, envelopes) {
+function activeIngestEnv(env, message, channel, capture) {
   const active = Object.create(env || null);
   const commentsQueue = env?.COMMENTS_QUEUE;
   const commentTask = {
@@ -129,9 +170,15 @@ function activeIngestEnv(env, message, channel, envelopes) {
       value: commentsQueue?.send ? {
         send(body, options) {
           if (body && typeof body === 'object') {
-            const envelope = readModelEnvelopeForMinuteFact(message, body);
-            envelopes.set(String(body.job_id || ''), envelope);
-            return commentsQueue.send(commentsTaskForMinuteFact(commentTask, body), options);
+            const envelope = readModelEnvelopeForMinuteFact(message, body, { trusted: true });
+            capture.channelId = integer(body.channel_id);
+            capture.minuteAt = integer(body.minute_at);
+            capture.envelope = envelope;
+            return commentsQueue.send(commentsTaskForMinuteFact(
+              commentTask,
+              body,
+              { inPlace: true },
+            ), options);
           }
           return commentsQueue.send(body, options);
         },
@@ -141,13 +188,14 @@ function activeIngestEnv(env, message, channel, envelopes) {
   return active;
 }
 
-async function currentReadModelEnvelope(env, message, channel, result, envelopes) {
+async function currentReadModelEnvelope(env, message, channel, result, capture) {
   const channelId = integer(result?.channel_id);
   const minuteAt = integer(result?.minute_fact_job_minute_at);
-  const jobId = channelId != null && minuteAt != null ? `minute-fact:${channelId}:${minuteAt}` : null;
-  if (!jobId) throw new Error('current minute fact identity is missing');
-  const captured = envelopes.get(jobId);
-  if (captured) return captured;
+  if (channelId == null || minuteAt == null) throw new Error('current minute fact identity is missing');
+  if (capture.channelId === channelId && capture.minuteAt === minuteAt && capture.envelope) {
+    return capture.envelope;
+  }
+  const jobId = `minute-fact:${channelId}:${minuteAt}`;
 
   try {
     const row = await env.DB.prepare(`SELECT payload_json
@@ -182,10 +230,10 @@ export async function ingestRawCollection(env, message) {
   } catch (error) {
     throw new Error(`invalid raw channel JSON: ${error?.message || error}`);
   }
-  const envelopes = new Map();
-  const active = activeIngestEnv(env, message, channel, envelopes);
+  const capture = { channelId: null, minuteAt: null, envelope: null };
+  const active = activeIngestEnv(env, message, channel, capture);
   const result = await collectOnce(active, 'raw-collection-queue');
-  const envelope = await currentReadModelEnvelope(env, message, channel, result, envelopes);
+  const envelope = await currentReadModelEnvelope(env, message, channel, result, capture);
   await env.READ_MODEL_QUEUE.send(envelope, { contentType: 'json' });
   return result;
 }
