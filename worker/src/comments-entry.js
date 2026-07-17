@@ -27,13 +27,52 @@ function metadataJob(forwarding) {
   };
 }
 
-async function scheduleMetadata(env, ctx, forwarding) {
+async function enqueueMetadata(env, ctx, forwarding) {
   const job = metadataJob(forwarding);
   if (!job) return;
+  if (env?.TRACK_METADATA_QUEUE?.send) {
+    await env.TRACK_METADATA_QUEUE.send({
+      message_type: 'stationhead-track-metadata',
+      message_version: 1,
+      task: 'committed-enrichment',
+      job,
+    }, { contentType: 'json' });
+    return;
+  }
+
+  // Rollout fallback. Once the dedicated Worker binding is present, normal
+  // comment invocations never import or execute metadata enrichment locally.
   const { runCommittedMetadataEnrichment } = await import('./minute-entry.js');
   const task = runCommittedMetadataEnrichment(env, [job]);
   if (typeof ctx?.waitUntil === 'function') ctx.waitUntil(task);
-  else void task;
+  else await task;
+}
+
+function forwardedMinuteFact(task, finalComments) {
+  const source = task.minute_fact;
+  const payload = source?.payload;
+  const options = source?.options;
+  if (source && payload && options
+      && Object.isExtensible(source)
+      && Object.isExtensible(payload)
+      && Object.isExtensible(options)) {
+    source.read_model = null;
+    payload.comments = finalComments;
+    options.collectComments = false;
+    return source;
+  }
+  return {
+    ...source,
+    read_model: null,
+    payload: {
+      ...payload,
+      comments: finalComments,
+    },
+    options: {
+      ...(options || {}),
+      collectComments: false,
+    },
+  };
 }
 
 export async function forwardMinuteFact(
@@ -63,19 +102,10 @@ export async function forwardMinuteFact(
     commentTotal: facts?.commentTotal ?? comments?.commentTotal ?? null,
     commentTotalKnown: (facts?.commentTotal ?? comments?.commentTotal) != null,
   };
-  const message = {
-    ...task.minute_fact,
-    read_model: null,
-    payload: {
-      ...task.minute_fact.payload,
-      comments: finalComments,
-    },
-    options: {
-      ...(task.minute_fact.options || {}),
-      collectComments: false,
-    },
-  };
-  parse(message);
+  // The minute-fact envelope was already fully validated above. Only the
+  // comments and collectComments fields change here, so avoid walking the full
+  // queue and snapshot a second time before the durable Queue handoff.
+  const message = forwardedMinuteFact(task, finalComments);
   const send = dependencies.sendMinuteFact
     || ((body) => env.MINUTE_FACT_QUEUE.send(body, { contentType: 'json' }));
   await send(message);
@@ -133,7 +163,7 @@ export default {
     for (const message of batch.messages || []) {
       try {
         const result = await processCommentsTask(env, message.body);
-        await scheduleMetadata(env, ctx, result);
+        await enqueueMetadata(env, ctx, result);
         message.ack();
       } catch (error) {
         if (error?.code === 'MINUTE_FACT_QUEUE_INVALID_MESSAGE') {
@@ -154,7 +184,7 @@ export default {
               degraded: true,
               errorStage: String(error?.errorStage || error?.message || 'unknown').slice(0, 120),
             });
-            await scheduleMetadata(env, ctx, forwarding);
+            await enqueueMetadata(env, ctx, forwarding);
             console.warn(JSON.stringify({
               event: 'comments_task_degraded_forward',
               attempts,
