@@ -10,7 +10,7 @@ import {
   githubCommitChangedPaths,
 } from '../scripts/deploy-connected-worker.mjs';
 
-test('connected deploy decision skips an unaffected canonical Worker', () => {
+test('connected deploy decision skips an unaffected current Worker', () => {
   assert.deepEqual(
     connectedDeployDecision(
       'sh-buddies-monitor',
@@ -25,19 +25,18 @@ test('connected deploy decision skips an unaffected canonical Worker', () => {
   );
 });
 
-test('retired connected Worker names never redeploy', async () => {
+test('unknown connected Worker names never deploy', async () => {
   const expected = {
     deploy: false,
-    reason: 'renamed-worker-retired',
-    workerName: 'sh-monitor-buddies',
-    replacement: 'sh-buddies-monitor',
+    reason: 'unknown-worker-build',
+    workerName: 'unknown-worker',
   };
-  assert.deepEqual(connectedDeployDecision('sh-monitor-buddies', null, null), expected);
+  assert.deepEqual(connectedDeployDecision('unknown-worker', null, null), expected);
 
   let spawned = false;
   let fetched = false;
   const result = await deployConnectedWorker({
-    workerName: 'sh-monitor-buddies',
+    workerName: 'unknown-worker',
     fetch: async () => {
       fetched = true;
       throw new Error('unexpected fetch');
@@ -52,7 +51,7 @@ test('retired connected Worker names never redeploy', async () => {
   assert.equal(spawned, false);
 });
 
-test('connected deploy decision keeps conservative fallbacks for canonical names', () => {
+test('connected deploy decision keeps conservative fallbacks for current names', () => {
   assert.equal(
     connectedDeployDecision('sh-buddies-monitor', null, null).deploy,
     true,
@@ -69,9 +68,13 @@ test('connected deploy decision keeps conservative fallbacks for canonical names
       workerName: 'sh-buddies-monitor',
     },
   );
-  assert.equal(
-    connectedDeployDecision('', ['worker/src/other-monitor-entry.js'], ['sh-monitor-other']).deploy,
-    true,
+  assert.deepEqual(
+    connectedDeployDecision('', ['worker/src/other-monitor-entry.js'], ['sh-monitor-other']),
+    {
+      deploy: true,
+      reason: 'not-a-connected-worker-build',
+      workerName: null,
+    },
   );
 });
 
