@@ -109,7 +109,7 @@ jobs:
           import gzip, json, math, pathlib, statistics
           targets = {
               'sh-buddies-monitor', 'sh-buddies-ingest', 'sh-buddies-comments',
-              'sh-minute-read-model', 'sh-buddies-read-model', 'sh-monitor-maintenance',
+              'sh-minute-read-model', 'sh-pages-read-model', 'sh-monitor-maintenance',
               'sh-minute-ingest', 'sh-minute-derive', 'sh-minute-maintenance', 'sh-monitor-other',
           }
           output_dir = pathlib.Path('observability-logs')

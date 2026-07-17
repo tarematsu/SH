@@ -1,7 +1,11 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { MATERIALIZED_API_VARIANTS } from '../../site/functions/lib/api-contract.js';
+import {
+  MATERIALIZED_API_VARIANTS,
+  materializedResponseCadenceSeconds,
+  materializedResponseMaximumAge,
+} from '../../site/functions/lib/api-contract.js';
 import {
   refreshFastPagesReadModels,
   refreshTrackHistoryPagesReadModel,
@@ -50,7 +54,17 @@ class FakeDb {
   }
 }
 
-test('midnight fast refresh stores every due non-history response as generation-safe chunks', async () => {
+test('materialized API contracts retain six-hour responses through their next cycle', () => {
+  const sixHourKeys = MATERIALIZED_API_VARIANTS
+    .filter(({ key }) => key !== 'host-history:summary')
+    .map(({ key, cadence_minutes: cadence }) => [key, cadence]);
+  assert.equal(sixHourKeys.length, 9);
+  assert.equal(sixHourKeys.every(([, cadence]) => cadence === 360), true);
+  assert.equal(materializedResponseCadenceSeconds('history:daily'), 6 * 60 * 60);
+  assert.equal(materializedResponseMaximumAge('history:daily'), (6 * 60 + 5) * 60_000);
+});
+
+test('midnight compatibility refresh stores every due non-history response as generation-safe chunks', async () => {
   const db = new FakeDb();
   const env = { BUDDIES_DB: {}, MINUTE_DB: db, OTHER_DB: {} };
   const now = Date.UTC(2026, 6, 16, 0);
@@ -81,7 +95,7 @@ test('midnight fast refresh stores every due non-history response as generation-
     && call.sql.includes('CREATE TABLE IF NOT EXISTS sh_pages_response_manifest')));
 });
 
-test('legacy fast refresh stays idle between hourly response generations', async () => {
+test('compatibility refresh stays idle between six-hour response generations', async () => {
   const db = new FakeDb();
   const result = await refreshFastPagesReadModels({
     BUDDIES_DB: {},
@@ -99,7 +113,7 @@ test('legacy fast refresh stays idle between hourly response generations', async
   assert.equal(payloadWrites.length, 0);
 });
 
-test('quarter-hour legacy repair refreshes only the daily source payload', async () => {
+test('quarter-hour compatibility repair refreshes only the daily source payload', async () => {
   const db = new FakeDb();
   const result = await refreshFastPagesReadModels({
     BUDDIES_DB: {},
@@ -140,7 +154,7 @@ test('full history refresh republishes track history after updating its source t
   assert.deepEqual(result.responses.map(({ key }) => key), ['track-history']);
 });
 
-test('fast refresh preserves the previous generation when one API render fails', async () => {
+test('compatibility refresh preserves the previous generation when one API render fails', async () => {
   const db = new FakeDb();
   const failedKey = 'history:daily';
   const result = await refreshFastPagesReadModels({

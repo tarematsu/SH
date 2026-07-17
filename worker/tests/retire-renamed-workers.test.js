@@ -11,7 +11,7 @@ test('renamed Worker retirement deletes each legacy script and tolerates 404', a
     { legacy: 'sh-monitor-buddies', replacement: 'sh-buddies-monitor' },
     { legacy: 'sh-ingest-channel', replacement: 'sh-buddies-ingest' },
     { legacy: 'sh-comments', replacement: 'sh-buddies-comments' },
-    { legacy: 'sh-pages-read-model', replacement: 'sh-buddies-read-model' },
+    { legacy: 'sh-buddies-read-model', replacement: 'sh-pages-read-model' },
   ]);
 
   const calls = [];
@@ -34,7 +34,7 @@ test('renamed Worker retirement deletes each legacy script and tolerates 404', a
 
   assert.deepEqual(summary, {
     retired: ['sh-monitor-buddies', 'sh-comments'],
-    already_retired: ['sh-ingest-channel', 'sh-pages-read-model'],
+    already_retired: ['sh-ingest-channel', 'sh-buddies-read-model'],
   });
   assert.equal(calls.length, 4);
   for (const call of calls) {

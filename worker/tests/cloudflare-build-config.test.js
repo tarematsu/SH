@@ -15,7 +15,7 @@ test('canonical Worker names map to their Wrangler configs', () => {
   assert.equal(cloudflareBuildConfig('sh-buddies-ingest'), 'wrangler.ingest.jsonc');
   assert.equal(cloudflareBuildConfig('sh-buddies-comments'), 'wrangler.comments.jsonc');
   assert.equal(cloudflareBuildConfig('sh-minute-read-model'), 'wrangler.read-model.jsonc');
-  assert.equal(cloudflareBuildConfig('sh-buddies-read-model'), 'wrangler.pages-read-model.jsonc');
+  assert.equal(cloudflareBuildConfig('sh-pages-read-model'), 'wrangler.pages-read-model.jsonc');
   assert.equal(cloudflareBuildConfig('sh-monitor-maintenance'), 'wrangler.monitor-maintenance.jsonc');
   assert.equal(cloudflareBuildConfig('sh-monitor-other'), 'wrangler.other.jsonc');
   assert.equal(cloudflareBuildConfig('sh-minute-maintenance'), 'wrangler.minute.jsonc');
@@ -30,12 +30,13 @@ test('retired Worker names remain build aliases without becoming canonical names
   assert.equal(renamedCloudflareWorkerReplacement('sh-monitor-buddies'), 'sh-buddies-monitor');
   assert.equal(renamedCloudflareWorkerReplacement('sh-ingest-channel'), 'sh-buddies-ingest');
   assert.equal(renamedCloudflareWorkerReplacement('sh-comments'), 'sh-buddies-comments');
-  assert.equal(renamedCloudflareWorkerReplacement('sh-pages-read-model'), 'sh-buddies-read-model');
+  assert.equal(renamedCloudflareWorkerReplacement('sh-buddies-read-model'), 'sh-pages-read-model');
   assert.equal(renamedCloudflareWorkerReplacement('sh-buddies-monitor'), null);
+  assert.equal(renamedCloudflareWorkerReplacement('sh-pages-read-model'), null);
   assert.equal(cloudflareBuildConfig('sh-monitor-buddies'), 'wrangler.jsonc');
   assert.equal(cloudflareBuildConfig('sh-ingest-channel'), 'wrangler.ingest.jsonc');
   assert.equal(cloudflareBuildConfig('sh-comments'), 'wrangler.comments.jsonc');
-  assert.equal(cloudflareBuildConfig('sh-pages-read-model'), 'wrangler.pages-read-model.jsonc');
+  assert.equal(cloudflareBuildConfig('sh-buddies-read-model'), 'wrangler.pages-read-model.jsonc');
 });
 
 test('minute connected build replaces only the ephemeral default config', async () => {

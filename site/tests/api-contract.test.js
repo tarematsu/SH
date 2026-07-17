@@ -68,7 +68,7 @@ test('GET /api catalog is generated from the same contract', () => {
   assert.equal(catalog.public_write_api, false);
 });
 
-test('materialized response freshness follows the hourly generation cadence', () => {
+test('materialized response freshness follows the six-hour generation cadence', () => {
   const minute = 60_000;
   for (const key of [
     'minute-facts-current',
@@ -81,26 +81,26 @@ test('materialized response freshness follows the hourly generation cadence', ()
     'history:broadcasts',
     'track-history',
   ]) {
-    assert.equal(materializedResponseCadenceSeconds(key), 60 * 60, key);
-    assert.equal(materializedResponseMaximumAge(key), 65 * minute, key);
+    assert.equal(materializedResponseCadenceSeconds(key), 6 * 60 * 60, key);
+    assert.equal(materializedResponseMaximumAge(key), 365 * minute, key);
   }
   assert.equal(materializedResponseCadenceSeconds('host-history:summary'), 24 * 60 * 60);
   assert.equal(materializedResponseCadenceSeconds('unknown'), 5 * 60);
   assert.equal(materializedResponseMaximumAge('host-history:summary'), (24 * 60 + 5) * minute);
   assert.equal(
     materializedResponseMaximumAge('dashboard-history', { PAGES_RESPONSE_MAX_AGE_MS: 15 * minute }),
-    65 * minute,
+    365 * minute,
   );
   assert.equal(
-    materializedResponseMaximumAge('track-likes', { PAGES_RESPONSE_MAX_AGE_MS: 70 * minute }),
-    70 * minute,
+    materializedResponseMaximumAge('track-likes', { PAGES_RESPONSE_MAX_AGE_MS: 370 * minute }),
+    370 * minute,
   );
 });
 
-test('Pages deployment tolerates the daily sharded track-history generation window', () => {
+test('Pages deployment tolerates the six-hour sharded track-history generation window', () => {
   const config = JSON.parse(readFileSync(new URL('../wrangler.jsonc', import.meta.url), 'utf8'));
   const maximumAge = Number(config.vars.PAGES_RESPONSE_MAX_AGE_MS);
-  assert.equal(maximumAge, 125 * 60_000);
+  assert.equal(maximumAge, 365 * 60_000);
   assert.equal(
     materializedResponseMaximumAge('track-history', config.vars),
     maximumAge,

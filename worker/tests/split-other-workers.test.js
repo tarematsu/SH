@@ -24,7 +24,7 @@ function config(name) {
 
 const BASE = Date.UTC(2026, 0, 1, 0, 0, 0);
 
-test('Pages read-model Worker runs one hourly task from a one-minute Cron', async () => {
+test('Pages read-model Worker runs one six-hour task slot from a one-minute Cron', async () => {
   const calls = [];
   const dependencies = {
     runTask: async (_env, now) => {
@@ -47,7 +47,7 @@ test('Pages read-model Worker runs one hourly task from a one-minute Cron', asyn
   );
 
   const worker = config('wrangler.pages-read-model.jsonc');
-  assert.equal(worker.name, 'sh-buddies-read-model');
+  assert.equal(worker.name, 'sh-pages-read-model');
   assert.equal(worker.main, 'src/pages-read-model-entry.js');
   assert.deepEqual(worker.triggers.crons, [PAGES_READ_MODEL_CRON]);
   assert.deepEqual(worker.d1_databases.map(({ binding }) => binding), ['BUDDIES_DB', 'MINUTE_DB', 'OTHER_DB']);
@@ -68,7 +68,7 @@ test('Pages read-model Worker surfaces single-task materialization failures', as
       },
     ),
     (error) => error instanceof AggregateError
-      && /hourly Pages read-model task minute-facts-current failed/.test(error.message)
+      && /Pages read-model task minute-facts-current failed/.test(error.message)
       && error.errors.some((item) => /minute-facts-current: render failed/.test(item.message)),
   );
 });

@@ -5,7 +5,7 @@ export const RENAMED_WORKERS = Object.freeze([
   { legacy: 'sh-monitor-buddies', replacement: 'sh-buddies-monitor' },
   { legacy: 'sh-ingest-channel', replacement: 'sh-buddies-ingest' },
   { legacy: 'sh-comments', replacement: 'sh-buddies-comments' },
-  { legacy: 'sh-pages-read-model', replacement: 'sh-buddies-read-model' },
+  { legacy: 'sh-buddies-read-model', replacement: 'sh-pages-read-model' },
 ]);
 
 function configuredToken(options = {}) {
