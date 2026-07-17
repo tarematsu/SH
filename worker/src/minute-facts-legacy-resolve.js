@@ -29,6 +29,47 @@ async function upsertAliases(db, table, idColumn, entityId, aliases, observedAt)
   }
 }
 
+function orderedAliasLookup(aliases) {
+  const pairs = aliases.flatMap((alias) => [alias.type, alias.value]);
+  return {
+    predicate: aliases.map(() => '(alias_type=? AND alias_value=?)').join(' OR '),
+    priority: `CASE ${aliases.map((_, index) => (
+      `WHEN alias_type=? AND alias_value=? THEN ${index}`
+    )).join(' ')} ELSE ${aliases.length} END`,
+    binds: pairs.concat(pairs),
+  };
+}
+
+async function updateExistingHost(db, aliases, accountId, handle, observedAt) {
+  const lookup = orderedAliasLookup(aliases);
+  return db.prepare(`UPDATE sh_hosts SET
+      stationhead_account_id=COALESCE(stationhead_account_id,?),
+      current_handle=COALESCE(?,current_handle),
+      last_seen_at=MAX(last_seen_at,?)
+    WHERE id=(
+      SELECT host_id FROM sh_host_aliases
+      WHERE ${lookup.predicate}
+      ORDER BY ${lookup.priority} LIMIT 1
+    )
+    RETURNING id`)
+    .bind(accountId, handle, observedAt, ...lookup.binds)
+    .first();
+}
+
+async function upsertHostAliases(db, hostId, aliases, observedAt) {
+  const values = aliases.map(() => '(?,?,?,?,?)').join(',');
+  const binds = aliases.flatMap((alias) => [
+    alias.type, alias.value, hostId, observedAt, observedAt,
+  ]);
+  await db.prepare(`INSERT INTO sh_host_aliases(
+      alias_type,alias_value,host_id,first_seen_at,last_seen_at
+    ) VALUES ${values}
+    ON CONFLICT(alias_type,alias_value) DO UPDATE SET
+      last_seen_at=MAX(sh_host_aliases.last_seen_at,excluded.last_seen_at)`)
+    .bind(...binds)
+    .run();
+}
+
 export async function resolveHost(db, source = {}, observedAt = Date.now()) {
   const accountId = integer(source.accountId ?? source.host_account_id);
   const handle = text(source.handle ?? source.host_handle);
@@ -40,24 +81,27 @@ export async function resolveHost(db, source = {}, observedAt = Date.now()) {
   ]);
   if (!aliases.length) return null;
 
-  let hostId = await findAlias(db, 'sh_host_aliases', 'host_id', aliases);
+  const existing = await updateExistingHost(db, aliases, accountId, handle, observedAt);
+  let hostId = Number(existing?.id);
   const canonicalKey = `${aliases[0].type}:${aliases[0].value}`;
-  if (hostId == null) {
+  if (!Number.isFinite(hostId)) {
     await db.prepare(`INSERT OR IGNORE INTO sh_hosts(
       canonical_key,stationhead_account_id,current_handle,first_seen_at,last_seen_at
     ) VALUES(?,?,?,?,?)`).bind(canonicalKey, accountId, handle, observedAt, observedAt).run();
     const row = await db.prepare('SELECT id FROM sh_hosts WHERE canonical_key=?')
       .bind(canonicalKey).first();
     hostId = Number(row?.id);
+    if (Number.isFinite(hostId)) {
+      await db.prepare(`UPDATE sh_hosts SET
+          stationhead_account_id=COALESCE(stationhead_account_id,?),
+          current_handle=COALESCE(?,current_handle),
+          last_seen_at=MAX(last_seen_at,?)
+        WHERE id=?`).bind(accountId, handle, observedAt, hostId).run();
+    }
   }
   if (!Number.isFinite(hostId)) return null;
 
-  await db.prepare(`UPDATE sh_hosts SET
-      stationhead_account_id=COALESCE(stationhead_account_id,?),
-      current_handle=COALESCE(?,current_handle),
-      last_seen_at=MAX(last_seen_at,?)
-    WHERE id=?`).bind(accountId, handle, observedAt, hostId).run();
-  await upsertAliases(db, 'sh_host_aliases', 'host_id', hostId, aliases, observedAt);
+  await upsertHostAliases(db, hostId, aliases, observedAt);
   return hostId;
 }
 
@@ -98,8 +142,8 @@ export async function resolveTrack(db, source = {}, observedAt = Date.now()) {
       title=COALESCE(title,?),artist=COALESCE(artist,?),
       last_seen_at=MAX(last_seen_at,?)
     WHERE id=?`).bind(
-      isrc, spotifyId, stationheadId, title, artist, observedAt, trackId,
-    ).run();
+    isrc, spotifyId, stationheadId, title, artist, observedAt, trackId,
+  ).run();
   await upsertAliases(db, 'sh_track_aliases', 'track_id', trackId, aliases, observedAt);
   return trackId;
 }
