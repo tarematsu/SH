@@ -161,7 +161,7 @@ export async function writeCurrentBite(db, input) {
   if (position == null) return null;
   const tracks = Array.isArray(queue?.tracks) ? queue.tracks : [];
   const indexedTrack = tracks[position];
-  const sourceTrack = (integer(indexedTrack?.position) ?? position) === position
+  const sourceTrack = indexedTrack && (integer(indexedTrack.position) ?? position) === position
     ? indexedTrack
     : tracks.find((track, index) => (integer(track?.position) ?? index) === position);
   const biteCount = integer(sourceTrack?.bite_count);
