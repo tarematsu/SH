@@ -1,4 +1,4 @@
-import { normalizeComments } from './shared.js';
+import { finiteNumber } from './shared.js';
 import { sanitizeFailureDetail } from './collector-failure.js';
 import { ingest } from './collector-ingest.js';
 import { shJson } from './collector-config.js';
@@ -12,6 +12,42 @@ const NO_COMMENTS_PROMISE = Promise.resolve(NO_COMMENTS_RESULT);
 
 export function optionalCommentsEnabled(state, config) {
   return Boolean(state?.stationId) && Number(config?.chatLimit || 0) > 0;
+}
+
+function commentItems(payload) {
+  if (Array.isArray(payload)) return payload;
+  if (Array.isArray(payload?.items)) return payload.items;
+  if (Array.isArray(payload?.data?.items)) return payload.data.items;
+  if (Array.isArray(payload?.chats?.items)) return payload.chats.items;
+  return Array.isArray(payload?.chats) ? payload.chats : [];
+}
+
+export function normalizeCommentCountInputs(payload, stationId) {
+  const comments = [];
+  const numericIds = new Set();
+  const rawIds = new Set();
+  const fallbackStationId = finiteNumber(stationId);
+
+  for (const chat of commentItems(payload)) {
+    const rawId = chat?.comment_id ?? chat?.id;
+    const commentId = finiteNumber(rawId);
+    if (commentId != null) {
+      if (numericIds.has(commentId)) continue;
+      numericIds.add(commentId);
+    } else {
+      const identity = String(rawId ?? '').trim();
+      if (!identity || rawIds.has(identity)) continue;
+      rawIds.add(identity);
+    }
+    comments.push({
+      comment_id: commentId,
+      id: rawId,
+      station_id: finiteNumber(chat?.station_id ?? fallbackStationId),
+      chat_time: finiteNumber(chat?.chat_time),
+      chat_time_ms: finiteNumber(chat?.chat_time_ms),
+    });
+  }
+  return comments;
 }
 
 function collectionAbortReason(config, fallback) {
@@ -33,7 +69,7 @@ async function collectComments(env, state, config, observedAt, dependencies) {
       `/station/${encodeURIComponent(state.stationId)}/chatHistory?limit=${config.chatLimit}`,
     );
     stage = 'sh_chat_payload';
-    const comments = normalizeComments(history, state.stationId);
+    const comments = normalizeCommentCountInputs(history, state.stationId);
     stage = 'd1_write_comments';
     const ingestResult = await writeIngest(env, 'comments', {
       station_id: state.stationId,
