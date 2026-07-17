@@ -88,133 +88,286 @@ test('raw collector emits a compact prepared v3 message for the normal channel s
         start_time: 1_784_000_000_000,
         is_paused: false,
         queue_tracks: [{
-          id: 789,
+          id: 11,
           track: {
-            id: 321,
-            spotify_id: 'spotify-1',
-            isrc: 'JPABC1234567',
-            duration: 180_000,
+            id: 22,
+            spotify_id: 'track',
+            bite_count: 4,
             title: 'Song',
             artist: { name: 'Artist' },
-            album: { name: 'Album' },
           },
         }],
       },
     },
   });
-  await collectRawChannel({
-    RAW_COLLECTION_QUEUE: { send: async (message) => sent.push(message) },
-  }, {
-    ensureSession: async () => ({ authToken: 'token', deviceUid: 'device' }),
+  const env = {
+    CHANNEL_ALIAS: 'buddies',
+    REQUEST_TIMEOUT_MS: 8_000,
+    RAW_COLLECTION_QUEUE: {
+      async send(message) { sent.push(message); },
+    },
+  };
+  await collectRawChannel(env, {
+    ensureSession: async () => ({
+      authToken: 'token',
+      deviceUid: 'device',
+      tokenExpiresAt: 9999999999999,
+    }),
     fetch: async () => new Response(body, { status: 200 }),
   });
 
   assert.equal(sent.length, 1);
+  assert.equal(sent[0].message_type, 'stationhead-raw-channel');
   assert.equal(sent[0].message_version, 3);
-  assert.equal(sent[0].body, undefined);
-  assert.equal(sent[0].channel, undefined);
+  assert.equal(sent[0].channel_alias, 'buddies');
   assert.equal(sent[0].snapshot.channel_id, 10);
   assert.equal(sent[0].snapshot.station_id, 123);
-  assert.equal(sent[0].snapshot.raw, undefined);
   assert.equal(sent[0].queue.station_id, 123);
-  assert.equal(sent[0].queue.tracks.length, 1);
-  assert.equal(sent[0].queue.tracks[0].spotify_id, 'spotify-1');
+  assert.equal(sent[0].queue.queue_id, 456);
+  assert.equal(sent[0].queue.tracks[0].spotify_id, 'track');
+  assert.equal(Object.hasOwn(sent[0], 'channel'), false);
+  assert.equal(Object.hasOwn(sent[0], 'body'), false);
 });
 
-test('raw collector retains valid unexpected payloads on the legacy v2 path', async () => {
+test('raw collector retains v2 validation retries for unexpected valid objects', async () => {
   const sent = [];
-  const channel = {
-    id: 10,
-    alias: 'buddies',
-    current_station_id: null,
-  };
+  const body = '{"id":10,"alias":"unexpected","current_station_id":123}';
   await collectRawChannel({
-    RAW_COLLECTION_QUEUE: { send: async (message) => sent.push(message) },
+    CHANNEL_ALIAS: 'buddies',
+    REQUEST_TIMEOUT_MS: 8_000,
+    RAW_COLLECTION_QUEUE: {
+      async send(message) { sent.push(message); },
+    },
   }, {
-    ensureSession: async () => ({ authToken: 'token', deviceUid: 'device' }),
-    fetch: async () => new Response(JSON.stringify(channel), { status: 200 }),
+    ensureSession: async () => ({
+      authToken: 'token',
+      deviceUid: 'device',
+      tokenExpiresAt: 9999999999999,
+    }),
+    fetch: async () => new Response(body, { status: 200 }),
   });
 
   assert.equal(sent[0].message_version, 2);
-  assert.deepEqual(sent[0].channel, channel);
+  assert.deepEqual(sent[0].channel, JSON.parse(body));
+  assert.equal(Object.hasOwn(sent[0], 'snapshot'), false);
 });
 
-test('raw collector retains invalid JSON on the legacy v1 poison path', async () => {
+test('raw collector retains the legacy v1 poison path for malformed JSON', async () => {
   const sent = [];
+  const body = '{"id":10';
   await collectRawChannel({
-    RAW_COLLECTION_QUEUE: { send: async (message) => sent.push(message) },
+    CHANNEL_ALIAS: 'buddies',
+    REQUEST_TIMEOUT_MS: 8_000,
+    RAW_COLLECTION_QUEUE: {
+      async send(message) { sent.push(message); },
+    },
   }, {
-    ensureSession: async () => ({ authToken: 'token', deviceUid: 'device' }),
-    fetch: async () => new Response('not-json', { status: 200 }),
+    ensureSession: async () => ({
+      authToken: 'token',
+      deviceUid: 'device',
+      tokenExpiresAt: 9999999999999,
+    }),
+    fetch: async () => new Response(body, { status: 200 }),
   });
 
   assert.equal(sent[0].message_version, 1);
-  assert.equal(sent[0].body, 'not-json');
+  assert.equal(sent[0].body, body);
+  assert.equal(Object.hasOwn(sent[0], 'channel'), false);
 });
 
-test('prepared v3 collection bypasses channel normalization in ingest', () => {
-  const message = {
+test('ingest accepts compact v3 payloads and remains compatible with v1 and v2', () => {
+  const channel = { id: 10, alias: 'buddies', current_station_id: 123 };
+  assert.equal(channelFromRawCollection({
+    message_type: 'stationhead-raw-channel',
+    message_version: 2,
+    channel,
+  }), channel);
+  assert.deepEqual(channelFromRawCollection({
+    message_type: 'stationhead-raw-channel',
+    message_version: 1,
+    body: JSON.stringify(channel),
+  }), channel);
+
+  const snapshot = { channel_id: 10, channel_alias: 'buddies', station_id: 123 };
+  const queue = { station_id: 123, tracks: [] };
+  const prepared = collectionFromRawCollection({
     message_type: 'stationhead-raw-channel',
     message_version: 3,
     channel_alias: 'buddies',
-    snapshot: { channel_id: 10, station_id: 123, channel_alias: 'buddies' },
-    queue: { station_id: 123, tracks: [] },
-  };
-  const collection = collectionFromRawCollection(message);
-  assert.equal(collection.prepared, true);
-  assert.equal(collection.channel, null);
-  assert.equal(collection.snapshot, message.snapshot);
-  assert.equal(collection.queue, message.queue);
-  assert.throws(() => channelFromRawCollection(message), /does not contain a channel payload/);
+    snapshot,
+    queue,
+  });
+  assert.equal(prepared.prepared, true);
+  assert.equal(prepared.snapshot, snapshot);
+  assert.equal(prepared.queue, queue);
+  assert.throws(() => collectionFromRawCollection({
+    message_type: 'stationhead-raw-channel',
+    message_version: 3,
+    channel_alias: 'buddies',
+    snapshot,
+    queue: { station_id: 999, tracks: [] },
+  }), /station identity does not match/);
+  assert.throws(() => channelFromRawCollection({
+    message_type: 'stationhead-raw-channel',
+    message_version: 2,
+    channel: [],
+  }), /invalid structured raw channel payload/);
 });
 
-test('prepared collection payload reuses the normalized snapshot and queue', () => {
+test('prepared collector payload preserves compact object identity and collection planning', () => {
   const snapshot = { channel_id: 10, station_id: 123 };
   const queue = { station_id: 123, tracks: [] };
   const state = { channelId: null, stationId: null };
-  const result = preparedCollectionPayload({ snapshot, queue }, state, {
-    metadataRefreshIntervalMs: 1000,
-  }, 0, 1_784_000_000_000, false);
+  const result = preparedCollectionPayload(
+    { snapshot, queue },
+    state,
+    { metadataRefreshIntervalMs: 15 * 60_000 },
+    1_784_000_000_000,
+    1_784_000_060_000,
+    false,
+  );
   assert.equal(result.snapshot, snapshot);
   assert.equal(result.queue, queue);
   assert.equal(state.channelId, 10);
   assert.equal(state.stationId, 123);
+  assert.equal(result.initialPlan.snapshot, true);
+  assert.equal(result.initialPlan.queue, true);
 });
 
-test('comments task v1 remains independent of minute-fact forwarding', async () => {
+test('outbox retries retain the minute payload timestamp and station identity', () => {
+  const minuteFact = minuteFactQueueMessage({
+    observedAt: 1_783_000_000_000,
+    snapshot: { channel_id: 10, station_id: 456 },
+    queue: null,
+  });
+  const task = commentsTaskForMinuteFact(commentsTask(), minuteFact);
+
+  assert.equal(task.observed_at, 1_783_000_000_000);
+  assert.equal(task.station_id, 456);
+  assert.deepEqual(task.auth, commentsTask().auth);
+  assert.equal(task.minute_fact.read_model, null);
+});
+
+test('ingest reuses the compact minute message to build the read-model envelope', () => {
+  const rawObservedAt = 1_784_000_000_000;
+  const processingObservedAt = rawObservedAt + 12_345;
+  const queue = {
+    station_id: 123,
+    queue_id: 456,
+    start_time: processingObservedAt - 60_000,
+    is_paused: false,
+    tracks: [{ position: 0, spotify_id: 'track', title: 'Song', artist: 'Artist', album_name: null, thumbnail_url: null }],
+  };
+  const body = minuteFactQueueMessage({
+    observedAt: processingObservedAt,
+    snapshot: { channel_id: 10, station_id: 123, listener_count: 99 },
+    queue,
+  }, {
+    readModelPresentationOnly: true,
+    readModel: {
+      channel: {
+        channel_id: 10,
+        observed_at: processingObservedAt,
+        presentation: { description: 'kept' },
+      },
+      queue: {
+        station_id: 123,
+        queue_id: 456,
+        start_time: queue.start_time,
+        is_paused: false,
+        value: queue,
+      },
+      collector: {
+        collector_id: 'cloudflare-worker',
+        last_run_at: processingObservedAt,
+        last_success_at: processingObservedAt,
+        last_error_present: false,
+        updated_at: processingObservedAt,
+      },
+    },
+  });
+  assert.equal(Object.hasOwn(body.read_model.queue, 'value'), false);
+
+  const envelope = readModelEnvelopeForMinuteFact({
+    observed_at: rawObservedAt,
+    auth: commentsTask().auth,
+  }, body);
+
+  assert.equal(envelope.observed_at, rawObservedAt);
+  assert.equal(envelope.job_id, `read-model:10:${rawObservedAt}`);
+  assert.deepEqual(envelope.read_model.channel.presentation, { description: 'kept' });
+  assert.equal(envelope.read_model.channel.observed_at, rawObservedAt);
+  assert.equal(envelope.read_model.queue.value, queue);
+  assert.equal(envelope.read_model.collector.last_run_at, rawObservedAt);
+  assert.equal(envelope.read_model.collector.last_success_at, rawObservedAt);
+  assert.equal(envelope.read_model.collector.updated_at, rawObservedAt);
+  assert.equal(envelope.comment_task.station_id, 123);
+  assert.deepEqual(envelope.comment_task.auth, commentsTask().auth);
+});
+
+test('comments task succeeds only after comments are durably handled', async () => {
   const result = await processCommentsTask({}, commentsTask(), {
-    collectComments: async () => ({ commentsSaved: 4, degraded: false }),
+    collectComments: async () => ({ commentsSaved: 4, degraded: false, errorStage: null }),
   });
   assert.equal(result.commentsSaved, 4);
-  assert.equal(result.forwarded, false);
 });
 
-test('comments task v2 forwards the embedded minute fact after collection', async () => {
-  let sent;
+test('chained comments task validates poison before calling Stationhead', async () => {
+  let collected = 0;
+  await assert.rejects(
+    processCommentsTask({}, {
+      ...commentsTask(),
+      message_version: 2,
+      minute_fact: { message_type: 'unknown' },
+    }, {
+      collectComments: async () => {
+        collected += 1;
+        return { commentsSaved: 0, degraded: false };
+      },
+    }),
+    /message_type is unsupported/,
+  );
+  assert.equal(collected, 0);
+});
+
+test('chained comments task forwards a fully hydrated minute fact after collection', async () => {
+  const minuteFact = minuteFactQueueMessage({
+    observedAt: 1_784_000_000_000,
+    snapshot: { channel_id: 10, station_id: 123 },
+    queue: { tracks: [] },
+  });
+  minuteFact.read_model = null;
   const task = {
     ...commentsTask(),
     message_version: 2,
-    minute_fact: minuteFactQueueMessage({
-      observedAt: 1_784_000_000_000,
-      snapshot: { channel_id: 10, station_id: 123 },
-      queue: { tracks: [] },
-    }),
+    minute_fact: minuteFact,
   };
-  const result = await processCommentsTask({}, task, {
-    collectComments: async () => ({ commentsSaved: 4, degraded: false }),
-    loadCommentFacts: async () => ({ commentCount: 4, commentTotal: 12 }),
-    sendMinuteFact: async (message) => { sent = message; },
+  let sent = null;
+  const result = await processCommentsTask({
+    MINUTE_FACT_QUEUE: {
+      async send(message) { sent = message; },
+    },
+  }, task, {
+    collectComments: async () => ({ commentsSaved: 4, degraded: false, errorStage: null }),
+    loadCommentFacts: async () => ({ commentCount: 4, commentTotal: 20 }),
   });
+
   assert.equal(result.forwarded, true);
   assert.equal(sent.payload.comments.commentCount, 4);
-  assert.equal(sent.payload.comments.commentTotal, 12);
+  assert.equal(sent.payload.comments.commentTotal, 20);
+  assert.equal(sent.payload.comments.commentTotalKnown, true);
+  assert.equal(sent.payload.comments.degraded, false);
 });
 
 test('comments task throws on degraded collection so Queue retries it', async () => {
   await assert.rejects(
-    () => processCommentsTask({}, commentsTask(), {
-      collectComments: async () => ({ commentsSaved: 0, degraded: true, errorStage: 'sh_chat_history' }),
+    processCommentsTask({}, commentsTask(), {
+      collectComments: async () => ({
+        commentsSaved: 0,
+        degraded: true,
+        errorStage: 'd1_write_comments',
+      }),
     }),
-    /comment collection degraded/,
+    /comment collection degraded at d1_write_comments/,
   );
 });
