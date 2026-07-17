@@ -1,12 +1,21 @@
 import { jwtExpiryMs, normalizeBearer } from './shared.js';
 
+function collectorState(value, persistCredentials = true) {
+  Object.defineProperty(value, 'persistCredentials', {
+    value: persistCredentials,
+    enumerable: false,
+    writable: true,
+  });
+  return value;
+}
+
 export function collectorStateFromAuthState(authState, env = {}) {
   const authToken = normalizeBearer(authState?.authToken || env.STATIONHEAD_AUTH_TOKEN || env.SH_AUTH_TOKEN);
   const deviceUid = String(authState?.deviceUid || env.STATIONHEAD_DEVICE_UID || env.SH_DEVICE_UID || '').trim();
   if (!authToken || !deviceUid) {
     throw new Error('Stationhead session is missing. Set the SH_AUTH_TOKEN and SH_DEVICE_UID Worker secrets.');
   }
-  return {
+  return collectorState({
     authToken,
     deviceUid,
     tokenExpiresAt: Number(authState?.tokenExpiresAt || 0) || jwtExpiryMs(authToken),
@@ -15,8 +24,7 @@ export function collectorStateFromAuthState(authState, env = {}) {
     lastError: authState?.collectorLastError || null,
     channelId: Number(authState?.collectorChannelId || 0) || null,
     stationId: Number(authState?.collectorStationId || 0) || null,
-    persistCredentials: env.__shPersistCollectorCredentials !== false,
-  };
+  }, env.__shPersistCollectorCredentials !== false);
 }
 
 export async function loadCollectorState(env) {
@@ -38,7 +46,7 @@ export async function loadCollectorState(env) {
     throw new Error('Stationhead session is missing. Set the SH_AUTH_TOKEN and SH_DEVICE_UID Worker secrets.');
   }
 
-  return {
+  return collectorState({
     authToken,
     deviceUid,
     tokenExpiresAt: Number(row?.token_expires_at || 0) || jwtExpiryMs(authToken),
@@ -47,8 +55,7 @@ export async function loadCollectorState(env) {
     lastError: row?.last_error || null,
     channelId: Number(row?.last_channel_id || 0) || null,
     stationId: Number(row?.last_station_id || 0) || null,
-    persistCredentials: true,
-  };
+  });
 }
 
 export async function saveCollectorState(env, state, patch = {}) {
