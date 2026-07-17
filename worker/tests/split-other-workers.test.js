@@ -3,8 +3,7 @@ import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
 import {
-  PAGES_FAST_READ_MODEL_CRON,
-  PAGES_FULL_READ_MODEL_CRON,
+  PAGES_READ_MODEL_CRON,
   runPagesReadModelCron,
 } from '../src/pages-read-model-entry.js';
 import {
@@ -25,40 +24,51 @@ function config(name) {
 
 const BASE = Date.UTC(2026, 0, 1, 0, 0, 0);
 
-test('Pages read-model Worker separates five-minute materialization from full history refresh', async () => {
+test('Pages read-model Worker runs one hourly task from a one-minute Cron', async () => {
   const calls = [];
   const dependencies = {
-    refreshFast: async (_env, now) => { calls.push(['fast', now]); return 'fast'; },
-    refreshFull: async (_env, now) => { calls.push(['full', now]); return 'full'; },
+    runTask: async (_env, now) => {
+      calls.push(now);
+      return { skipped: false, task: { key: 'dashboard-history' }, responses: [], failed: 0 };
+    },
   };
 
-  assert.equal(PAGES_FAST_READ_MODEL_CRON, '*/5 * * * *');
-  assert.equal(await runPagesReadModelCron({ cron: PAGES_FAST_READ_MODEL_CRON, scheduledTime: BASE }, {}, dependencies), 'fast');
-  assert.equal(await runPagesReadModelCron({ cron: PAGES_FULL_READ_MODEL_CRON, scheduledTime: BASE + 31 * 60_000 }, {}, dependencies), 'full');
-  assert.deepEqual(calls, [['fast', BASE], ['full', BASE + 31 * 60_000]]);
+  assert.equal(PAGES_READ_MODEL_CRON, '* * * * *');
+  const result = await runPagesReadModelCron(
+    { cron: PAGES_READ_MODEL_CRON, scheduledTime: BASE },
+    {},
+    dependencies,
+  );
+  assert.equal(result.task.key, 'dashboard-history');
+  assert.deepEqual(calls, [BASE]);
+  assert.deepEqual(
+    await runPagesReadModelCron({ cron: '*/5 * * * *', scheduledTime: BASE }, {}, dependencies),
+    { skipped: true, reason: 'unsupported-pages-read-model-cron', cron: '*/5 * * * *' },
+  );
 
   const worker = config('wrangler.pages-read-model.jsonc');
   assert.equal(worker.name, 'sh-pages-read-model');
   assert.equal(worker.main, 'src/pages-read-model-entry.js');
-  assert.deepEqual(worker.triggers.crons, [PAGES_FAST_READ_MODEL_CRON, PAGES_FULL_READ_MODEL_CRON]);
+  assert.deepEqual(worker.triggers.crons, [PAGES_READ_MODEL_CRON]);
   assert.deepEqual(worker.d1_databases.map(({ binding }) => binding), ['BUDDIES_DB', 'MINUTE_DB', 'OTHER_DB']);
 });
 
-test('Pages read-model Worker surfaces partial materialization failures', async () => {
+test('Pages read-model Worker surfaces single-task materialization failures', async () => {
   await assert.rejects(
     runPagesReadModelCron(
-      { cron: PAGES_FAST_READ_MODEL_CRON, scheduledTime: BASE },
+      { cron: PAGES_READ_MODEL_CRON, scheduledTime: BASE },
       {},
       {
-        refreshFast: async () => ({
+        runTask: async () => ({
           skipped: false,
+          task: { key: 'minute-facts-current' },
           failed: 1,
           responses: [{ key: 'minute-facts-current', ok: false, error: 'render failed' }],
         }),
       },
     ),
     (error) => error instanceof AggregateError
-      && /fast Pages read-model refresh failed/.test(error.message)
+      && /hourly Pages read-model task minute-facts-current failed/.test(error.message)
       && error.errors.some((item) => /minute-facts-current: render failed/.test(item.message)),
   );
 });
