@@ -42,7 +42,7 @@ async function enqueueMetadata(env, ctx, forwarding) {
 
   // Rollout fallback. Once the dedicated Worker binding is present, normal
   // comment invocations never import or execute metadata enrichment locally.
-  const { runCommittedMetadataEnrichment } = await import('./minute-entry.js');
+  const { runCommittedMetadataEnrichment } = await import('./committed-metadata-enrichment.js');
   const task = runCommittedMetadataEnrichment(env, [job]);
   if (typeof ctx?.waitUntil === 'function') ctx.waitUntil(task);
   else await task;
@@ -102,9 +102,6 @@ export async function forwardMinuteFact(
     commentTotal: facts?.commentTotal ?? comments?.commentTotal ?? null,
     commentTotalKnown: (facts?.commentTotal ?? comments?.commentTotal) != null,
   };
-  // The minute-fact envelope was already fully validated above. Only the
-  // comments and collectComments fields change here, so avoid walking the full
-  // queue and snapshot a second time before the durable Queue handoff.
   const message = forwardedMinuteFact(task, finalComments);
   const send = dependencies.sendMinuteFact
     || ((body) => env.MINUTE_FACT_QUEUE.send(body, { contentType: 'json' }));
@@ -115,6 +112,32 @@ export async function forwardMinuteFact(
     comments: finalComments,
     message,
   };
+}
+
+async function enqueueForward(env, task, comments, dependencies = {}) {
+  if (dependencies.enqueueForward) {
+    await dependencies.enqueueForward(task, comments);
+    return true;
+  }
+  if (!env?.COMMENTS_QUEUE?.send || !task?.minute_fact) return false;
+  await env.COMMENTS_QUEUE.send({
+    message_type: 'stationhead-comments-forward',
+    message_version: 1,
+    observed_at: task.observed_at,
+    station_id: task.station_id,
+    minute_fact: task.minute_fact,
+    comments,
+  }, { contentType: 'json' });
+  return true;
+}
+
+export async function processCommentsForwardTask(env, task, dependencies = {}) {
+  if (task?.message_type !== 'stationhead-comments-forward'
+      || Number(task?.message_version) !== 1
+      || !task.minute_fact) {
+    throw new Error('unsupported comments forward task');
+  }
+  return forwardMinuteFact(env, task, task.comments || {}, dependencies);
 }
 
 export async function processCommentsTask(env, task, dependencies = {}) {
@@ -146,10 +169,17 @@ export async function processCommentsTask(env, task, dependencies = {}) {
     throw error;
   }
 
-  const forwarding = await forwardMinuteFact(env, task, {
-    ...result,
-    degraded: false,
-  }, dependencies, validatedMinuteFact);
+  const comments = { ...result, degraded: false };
+  if (await enqueueForward(env, task, comments, dependencies)) {
+    console.log(JSON.stringify({
+      event: 'comments_task_completed',
+      comments_saved: Number(result?.commentsSaved || 0),
+      minute_fact_forward_deferred: true,
+    }));
+    return { ...result, forwarded: false, forward_deferred: true };
+  }
+
+  const forwarding = await forwardMinuteFact(env, task, comments, dependencies, validatedMinuteFact);
   console.log(JSON.stringify({
     event: 'comments_task_completed',
     comments_saved: Number(result?.commentsSaved || 0),
@@ -162,6 +192,13 @@ export default {
   async queue(batch, env, ctx) {
     for (const message of batch.messages || []) {
       try {
+        if (message.body?.message_type === 'stationhead-comments-forward') {
+          const forwarding = await processCommentsForwardTask(env, message.body);
+          await enqueueMetadata(env, ctx, forwarding);
+          message.ack();
+          continue;
+        }
+
         const result = await processCommentsTask(env, message.body);
         await enqueueMetadata(env, ctx, result);
         message.ack();
@@ -177,13 +214,24 @@ export default {
         const attempts = positiveInteger(message.attempts, 1, 100);
         const maximum = positiveInteger(env.COMMENT_CHAIN_MAX_ATTEMPTS, 3, 8);
         const chained = Boolean(message.body?.minute_fact);
-        if (chained && attempts >= maximum) {
+        const collecting = message.body?.message_type === 'stationhead-comments-task';
+        if (collecting && chained && attempts >= maximum) {
           try {
-            const forwarding = await forwardMinuteFact(env, message.body, {
+            const comments = {
               commentsSaved: 0,
               degraded: true,
               errorStage: String(error?.errorStage || error?.message || 'unknown').slice(0, 120),
-            });
+            };
+            if (await enqueueForward(env, message.body, comments)) {
+              console.warn(JSON.stringify({
+                event: 'comments_task_degraded_forward_deferred',
+                attempts,
+                error: String(error?.message || error).slice(0, 800),
+              }));
+              message.ack();
+              continue;
+            }
+            const forwarding = await forwardMinuteFact(env, message.body, comments);
             await enqueueMetadata(env, ctx, forwarding);
             console.warn(JSON.stringify({
               event: 'comments_task_degraded_forward',
