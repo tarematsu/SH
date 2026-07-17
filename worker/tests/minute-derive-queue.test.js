@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
 import {
+  claimMinuteDeriveJob,
   minuteDeriveTrigger,
   parseMinuteDeriveTrigger,
   processMinuteDeriveTrigger,
@@ -46,6 +47,29 @@ test('minute derive triggers have a stable idempotency identity', () => {
   );
 });
 
+test('derive claim reuses a prevalidated trigger without inspecting the raw body', async () => {
+  let bindings = null;
+  const MINUTE_DB = {
+    prepare() {
+      return {
+        bind(...values) { bindings = values; return this; },
+        async all() { return { results: [] }; },
+      };
+    },
+  };
+  const unreadableBody = new Proxy({}, {
+    get() { throw new Error('raw trigger must not be inspected again'); },
+  });
+
+  await claimMinuteDeriveJob({ MINUTE_DB }, unreadableBody, {
+    parsedTrigger: trigger,
+    now: 200_000,
+    leaseMs: 60_000,
+  });
+
+  assert.deepEqual(bindings, [260_000, 200_000, 10, 120_000, 200_000, 200_000]);
+});
+
 test('derive Worker lazy-loads only the selected fact store', () => {
   const source = readFileSync(new URL('../src/minute-derive-queue.js', import.meta.url), 'utf8');
   assert.doesNotMatch(source, /^import .*minute-facts-(?:fast|rebuild)-store\.js/m);
@@ -57,7 +81,12 @@ test('derive Queue processing claims and completes exactly one job without defau
   const calls = [];
   const result = await processMinuteDeriveTrigger({ MINUTE_DB: {} }, trigger, {
     now: () => 200_000,
-    claim: async () => { calls.push('claim'); return job(); },
+    claim: async (_env, parsed, options) => {
+      assert.deepEqual(parsed, trigger);
+      assert.strictEqual(options.parsedTrigger, parsed);
+      calls.push('claim');
+      return job();
+    },
     write: async (_env, payload) => { calls.push(`write:${payload.snapshot.channel_id}`); },
     complete: async (_env, id) => { calls.push(`complete:${id}`); },
   });
