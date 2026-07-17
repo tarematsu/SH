@@ -110,7 +110,7 @@ test('metadata stage fetches at most one missing track and reports remaining wor
       title: `Title ${track.spotify_id}`,
       artist: 'Artist',
       display_title: `Title ${track.spotify_id} — Artist`,
-      thumbnail_url: null,
+      thumbnail_url: 'cover',
       spotify_url: null,
       source: 'test',
       fetched_at: 600_000,
