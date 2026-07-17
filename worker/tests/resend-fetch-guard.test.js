@@ -33,13 +33,15 @@ test('successful Resend requests are reused by idempotency key for one hour', as
   assert.equal(calls, 2);
 });
 
-test('concurrent Resend requests with the same idempotency key share one request', async () => {
+test('concurrent Resend requests stay request-local and reuse settled success later', async () => {
   let calls = 0;
-  let resolveFetch;
-  const guarded = createOptionalFetchGuard(async () => {
+  const releases = [];
+  const guarded = createOptionalFetchGuard(() => {
     calls += 1;
-    await new Promise((resolve) => { resolveFetch = resolve; });
-    return Response.json({ id: 'email-1' }, { status: 200 });
+    const request = calls;
+    return new Promise((resolve) => {
+      releases.push(() => resolve(Response.json({ id: `email-${request}` }, { status: 200 })));
+    });
   });
 
   const init = {
@@ -49,13 +51,20 @@ test('concurrent Resend requests with the same idempotency key share one request
   };
   const firstPromise = guarded('https://api.resend.com/emails', init);
   const secondPromise = guarded('https://api.resend.com/emails', init);
-  await Promise.resolve();
-  resolveFetch();
+  assert.equal(calls, 2);
+  releases[0]();
+  releases[1]();
   const [first, second] = await Promise.all([firstPromise, secondPromise]);
 
-  assert.equal(calls, 1);
   assert.equal(first.headers.get('x-sh-resend-cache'), 'miss');
-  assert.equal(second.headers.get('x-sh-resend-cache'), 'coalesced');
+  assert.equal(second.headers.get('x-sh-resend-cache'), 'miss');
+  assert.deepEqual(await first.json(), { id: 'email-1' });
+  assert.deepEqual(await second.json(), { id: 'email-2' });
+
+  const cached = await guarded('https://api.resend.com/emails', init);
+  assert.equal(calls, 2);
+  assert.equal(cached.headers.get('x-sh-resend-cache'), 'hit');
+  assert.deepEqual(await cached.json(), { id: 'email-2' });
 });
 
 test('failed Resend requests are not cached', async () => {
