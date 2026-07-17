@@ -1,7 +1,7 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "sh-buddies-ingest",
-  "main": "src/ingest-channel-entry.js",
+  "main": "src/ingest-channel-optimized-entry.js",
   "compatibility_date": "2026-06-24",
   "workers_dev": false,
   "preview_urls": false,
