@@ -143,7 +143,7 @@ export async function enrichQueueMetadata(env, queue, now, config, fetchMetadata
   const metadata = await loadTrackMetadata(env.OTHER_DB, tracks);
   const withDetails = config?.returnDetails === true;
   if (!tracks.some((track) => track.spotify_id) || config.metadataLimit <= 0) {
-    return withDetails ? { metadata, fetched: 0, remaining: 0 } : metadata;
+    return withDetails ? { metadata, attempted: 0, fetched: 0, remaining: 0 } : metadata;
   }
 
   const ordered = orderedQueueTracks(queue, now);
@@ -174,6 +174,7 @@ export async function enrichQueueMetadata(env, queue, now, config, fetchMetadata
   if (!withDetails) return metadata;
   return {
     metadata,
+    attempted: missing.length,
     fetched: fetched.length,
     remaining: missingMetadataTracks(ordered, metadata, now).length,
   };
