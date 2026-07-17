@@ -5,9 +5,11 @@ import test from 'node:test';
 import { processCommentsTask } from '../src/comments-entry.js';
 import {
   channelFromRawCollection,
+  collectionFromRawCollection,
   commentsTaskForMinuteFact,
   readModelEnvelopeForMinuteFact,
 } from '../src/ingest-channel-entry.js';
+import { preparedCollectionPayload } from '../src/collector-runner.js';
 import { minuteFactQueueMessage } from '../src/minute-facts-queue.js';
 import { collectRawChannel } from '../src/raw-collector-entry.js';
 
@@ -73,9 +75,31 @@ test('ordered comments and three minute Workers have one owner per queue boundar
   assert.match(commentsSource, /runCommittedMetadataEnrichment/);
 });
 
-test('raw collector parses valid JSON once and emits a structured v2 message', async () => {
+test('raw collector emits a compact prepared v3 message for the normal channel shape', async () => {
   const sent = [];
-  const body = '{"id":10,"alias":"buddies","current_station_id":123,"queue":[1,2,3]}';
+  const body = JSON.stringify({
+    id: 10,
+    alias: 'buddies',
+    current_station_id: 123,
+    current_station: {
+      id: 123,
+      queue: {
+        id: 456,
+        start_time: 1_784_000_000_000,
+        is_paused: false,
+        queue_tracks: [{
+          id: 11,
+          track: {
+            id: 22,
+            spotify_id: 'track',
+            bite_count: 4,
+            title: 'Song',
+            artist: { name: 'Artist' },
+          },
+        }],
+      },
+    },
+  });
   const env = {
     CHANNEL_ALIAS: 'buddies',
     REQUEST_TIMEOUT_MS: 8_000,
@@ -94,10 +118,38 @@ test('raw collector parses valid JSON once and emits a structured v2 message', a
 
   assert.equal(sent.length, 1);
   assert.equal(sent[0].message_type, 'stationhead-raw-channel');
-  assert.equal(sent[0].message_version, 2);
+  assert.equal(sent[0].message_version, 3);
   assert.equal(sent[0].channel_alias, 'buddies');
-  assert.deepEqual(sent[0].channel, JSON.parse(body));
+  assert.equal(sent[0].snapshot.channel_id, 10);
+  assert.equal(sent[0].snapshot.station_id, 123);
+  assert.equal(sent[0].queue.station_id, 123);
+  assert.equal(sent[0].queue.queue_id, 456);
+  assert.equal(sent[0].queue.tracks[0].spotify_id, 'track');
+  assert.equal(Object.hasOwn(sent[0], 'channel'), false);
   assert.equal(Object.hasOwn(sent[0], 'body'), false);
+});
+
+test('raw collector retains v2 validation retries for unexpected valid objects', async () => {
+  const sent = [];
+  const body = '{"id":10,"alias":"unexpected","current_station_id":123}';
+  await collectRawChannel({
+    CHANNEL_ALIAS: 'buddies',
+    REQUEST_TIMEOUT_MS: 8_000,
+    RAW_COLLECTION_QUEUE: {
+      async send(message) { sent.push(message); },
+    },
+  }, {
+    ensureSession: async () => ({
+      authToken: 'token',
+      deviceUid: 'device',
+      tokenExpiresAt: 9999999999999,
+    }),
+    fetch: async () => new Response(body, { status: 200 }),
+  });
+
+  assert.equal(sent[0].message_version, 2);
+  assert.deepEqual(sent[0].channel, JSON.parse(body));
+  assert.equal(Object.hasOwn(sent[0], 'snapshot'), false);
 });
 
 test('raw collector retains the legacy v1 poison path for malformed JSON', async () => {
@@ -123,7 +175,7 @@ test('raw collector retains the legacy v1 poison path for malformed JSON', async
   assert.equal(Object.hasOwn(sent[0], 'channel'), false);
 });
 
-test('ingest reuses structured v2 channels and remains compatible with v1 strings', () => {
+test('ingest accepts compact v3 payloads and remains compatible with v1 and v2', () => {
   const channel = { id: 10, alias: 'buddies', current_station_id: 123 };
   assert.equal(channelFromRawCollection({
     message_type: 'stationhead-raw-channel',
@@ -135,11 +187,51 @@ test('ingest reuses structured v2 channels and remains compatible with v1 string
     message_version: 1,
     body: JSON.stringify(channel),
   }), channel);
+
+  const snapshot = { channel_id: 10, channel_alias: 'buddies', station_id: 123 };
+  const queue = { station_id: 123, tracks: [] };
+  const prepared = collectionFromRawCollection({
+    message_type: 'stationhead-raw-channel',
+    message_version: 3,
+    channel_alias: 'buddies',
+    snapshot,
+    queue,
+  });
+  assert.equal(prepared.prepared, true);
+  assert.equal(prepared.snapshot, snapshot);
+  assert.equal(prepared.queue, queue);
+  assert.throws(() => collectionFromRawCollection({
+    message_type: 'stationhead-raw-channel',
+    message_version: 3,
+    channel_alias: 'buddies',
+    snapshot,
+    queue: { station_id: 999, tracks: [] },
+  }), /station identity does not match/);
   assert.throws(() => channelFromRawCollection({
     message_type: 'stationhead-raw-channel',
     message_version: 2,
     channel: [],
   }), /invalid structured raw channel payload/);
+});
+
+test('prepared collector payload preserves compact object identity and collection planning', () => {
+  const snapshot = { channel_id: 10, station_id: 123 };
+  const queue = { station_id: 123, tracks: [] };
+  const state = { channelId: null, stationId: null };
+  const result = preparedCollectionPayload(
+    { snapshot, queue },
+    state,
+    { metadataRefreshIntervalMs: 15 * 60_000 },
+    1_784_000_000_000,
+    1_784_000_060_000,
+    false,
+  );
+  assert.equal(result.snapshot, snapshot);
+  assert.equal(result.queue, queue);
+  assert.equal(state.channelId, 10);
+  assert.equal(state.stationId, 123);
+  assert.equal(result.initialPlan.snapshot, true);
+  assert.equal(result.initialPlan.queue, true);
 });
 
 test('outbox retries retain the minute payload timestamp and station identity', () => {
