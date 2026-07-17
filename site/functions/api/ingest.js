@@ -67,15 +67,16 @@ const INGEST_HANDLERS = {
     return { ok: true, type: body.type, accepted: true, tracks_written: statements.length };
   },
 };
+const NO_OPTIMIZED_INGEST = Promise.resolve(null);
 
 export function supportsOptimizedIngestType(type) {
   return Object.hasOwn(INGEST_HANDLERS, String(type || ''));
 }
 
-export async function ingestOptimizedBody(env, body) {
-  if (!env?.DB) return null;
+export function ingestOptimizedBody(env, body) {
+  if (!env?.DB) return NO_OPTIMIZED_INGEST;
   const handler = INGEST_HANDLERS[body?.type];
-  if (!handler) return null;
+  if (!handler) return NO_OPTIMIZED_INGEST;
   return handler(env, body, observedAtFrom(body), body?.data ?? {});
 }
 
