@@ -22,38 +22,44 @@ import { updatePlaybackState, writeCurrentBite } from './minute-facts-legacy-rev
 
 export { buildTrackDescriptor, createOptimizedRevision, missingRevisionPositions, resolveTracksBulk };
 
-function currentQueueSlice(queue, position) {
+function compactPlaybackQueue(queue) {
   if (!queue) return null;
   const tracks = Array.isArray(queue.tracks) ? queue.tracks : [];
-  const indexed = position == null ? null : tracks[position];
-  const current = indexed && (integer(indexed.position) ?? position) === position
-    ? indexed
-    : tracks.find((track, index) => (integer(track?.position) ?? index) === position);
   return {
     queue_id: queue.queue_id ?? null,
     start_time: queue.start_time ?? null,
-    tracks: current ? [current] : [],
+    tracks: tracks.map((track, index) => ({
+      position: integer(track?.position) ?? index,
+      queue_track_id: track?.queue_track_id ?? null,
+      stationhead_track_id: track?.stationhead_track_id ?? null,
+      spotify_id: track?.spotify_id ?? null,
+      apple_music_id: track?.apple_music_id ?? null,
+      isrc: track?.isrc ?? null,
+      bite_count: track?.bite_count ?? null,
+    })),
   };
 }
 
 async function enqueueMinuteEnrichment(env, input) {
   if (!env?.MINUTE_ENRICHMENT_QUEUE?.send) return false;
+  const playbackPending = input.revisionId != null && input.broadcasting !== 0;
   await env.MINUTE_ENRICHMENT_QUEUE.send({
     message_type: 'minute-fact-enrichment',
     message_version: 1,
+    stage: playbackPending ? 'playback' : 'identity',
     channel_id: input.channelId,
     station_id: input.stationId,
     minute_at: input.minuteAt,
     observed_at: input.observedAt,
     provisional_session_id: input.sessionId,
     revision_id: input.revisionId,
-    queue_position: input.position,
-    track_id: input.trackId,
+    queue_start_time: input.queueStartTime,
+    is_paused: input.paused,
     host_account_id: input.snapshot.host_account_id ?? null,
     host_handle: input.snapshot.host_handle ?? null,
     broadcast_start_time: input.snapshot.broadcast_start_time ?? null,
     is_broadcasting: input.snapshot.is_broadcasting ?? null,
-    queue: currentQueueSlice(input.queue, input.position),
+    queue: playbackPending ? compactPlaybackQueue(input.queue) : null,
   }, { contentType: 'json' });
   return true;
 }
@@ -85,9 +91,9 @@ export async function saveOptimizedLiveMinuteFact(env, input) {
     accountId: snapshot.host_account_id,
     handle: snapshot.host_handle,
   }, observedAt));
-  // Session continuity remains on the ordered derive path. During deferred host
-  // resolution, null host matches the active session and enrichment later
-  // patches or splits the session without blocking the core minute write.
+  // Keep session identity on the ordered derive path so queue revision identity
+  // remains stable. Host resolution may complete later without changing the
+  // durable revision key used by subsequent minute jobs.
   const sessionId = await timedStage('resolve_session', context, () => resolveLiveSession(db, {
     channelId,
     stationId,
@@ -107,14 +113,16 @@ export async function saveOptimizedLiveMinuteFact(env, input) {
     ));
     revisionId = revision.revisionId;
     context.revisionId = revisionId;
-    playback = await timedStage('update_playback', context, () => updatePlaybackState(db, {
-      channelId,
-      sessionId,
-      revisionId,
-      queueStartTime,
-      observedAt,
-      isPaused: paused,
-    }));
+    if (!deferred) {
+      playback = await timedStage('update_playback', context, () => updatePlaybackState(db, {
+        channelId,
+        sessionId,
+        revisionId,
+        queueStartTime,
+        observedAt,
+        isPaused: paused,
+      }));
+    }
   }
 
   const position = integer(playback?.current_position);
@@ -188,8 +196,9 @@ export async function saveOptimizedLiveMinuteFact(env, input) {
       observedAt,
       sessionId,
       revisionId,
-      position,
-      trackId,
+      queueStartTime,
+      paused,
+      broadcasting,
       snapshot,
       queue,
     });
