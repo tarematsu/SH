@@ -89,7 +89,7 @@ export async function readMinuteHealth(env, now = Date.now()) {
   });
   return {
     ok: tasks.every((task) => task.ok),
-    service: 'sh-monitor-minute',
+    service: 'sh-minute-pipeline',
     gateway: 'cloudflare-pages',
     checked_at: now,
     tasks,
@@ -117,7 +117,7 @@ export async function onRequest(context) {
     }));
     return Response.json({
       ok: false,
-      service: 'sh-monitor-minute',
+      service: 'sh-minute-pipeline',
       gateway: 'cloudflare-pages',
       error: 'minute-health-query-failed',
       checked_at: now,
