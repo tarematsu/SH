@@ -21,7 +21,7 @@ export function ingest(env, type, data, observedAt, options = null) {
   const result = ingestOptimizedBody(env, {
     type,
     observed_at: observedAt,
-    collector_id: env.COLLECTOR_ID || 'cloudflare-worker',
+    collector_id: env?.COLLECTOR_ID || 'cloudflare-worker',
     data,
   });
   if (env?.DB && (type === 'queue' || type === 'comments')) return result;
