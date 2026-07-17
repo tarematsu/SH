@@ -56,7 +56,8 @@ test('buddies Wrangler configuration is raw-collection only', () => {
     binding: 'RAW_COLLECTION_QUEUE',
     queue: 'stationhead-raw-collection',
   }]);
-  assert.doesNotMatch(source, /JSON\.parse|response\.json|normalizeSnapshot|extractQueue|readModelPresentation/);
+  assert.match(source, /JSON\.parse/);
+  assert.doesNotMatch(source, /response\.json|normalizeSnapshot|extractQueue|readModelPresentation/);
 
   const names = Object.keys(config.vars || {});
   for (const prefix of ['BUDDY_PLAYBACK_', 'HOST_', 'SOLO_', 'OFFICIAL_NEWS_', 'DERIVE_', 'HEALTH_ALERT_']) {
