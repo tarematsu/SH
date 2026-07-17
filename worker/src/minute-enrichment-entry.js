@@ -66,15 +66,14 @@ async function attachSession(db, body, identity, sessionId) {
 }
 
 async function updateMinuteFact(db, identity, values) {
+  // Migration 003 moved host and bite context out of sh_minute_facts. Host is
+  // derived through the attached broadcast session and the bite value through
+  // sh_track_counter_changes, so only the compact fact's session FK is mutable.
   await db.prepare(`UPDATE sh_minute_facts SET
-      broadcast_session_id=COALESCE(?,broadcast_session_id),
-      host_id=COALESCE(?,host_id),
-      track_bite_count=COALESCE(?,track_bite_count)
+      broadcast_session_id=COALESCE(?,broadcast_session_id)
     WHERE channel_id=? AND minute_at=? AND observed_at=? AND source_code=?`)
     .bind(
       values.sessionId,
-      values.hostId,
-      values.biteCount,
       identity.channelId,
       identity.minuteAt,
       identity.observedAt,
