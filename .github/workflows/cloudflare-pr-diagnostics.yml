@@ -26,7 +26,6 @@ jobs:
       workers: ${{ steps.targets.outputs.workers }}
       commands: ${{ steps.targets.outputs.commands }}
       diagnostics: ${{ steps.targets.outputs.diagnostics }}
-      topology_rename: ${{ steps.targets.outputs.topology_rename }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -49,23 +48,16 @@ jobs:
           echo "workers=$(jq -c '.workers' <<<"$selection")" >> "$GITHUB_OUTPUT"
           echo "commands=$(jq -c '.commands' <<<"$selection")" >> "$GITHUB_OUTPUT"
           echo "diagnostics=$(jq -c '.diagnostics' <<<"$selection")" >> "$GITHUB_OUTPUT"
-          topology_rename=false
-          if git diff -U0 "$BASE_SHA" "$HEAD_SHA" -- 'worker/wrangler*.jsonc' \
-              | grep -Eq '^[+-][[:space:]]*"name"[[:space:]]*:'; then
-            topology_rename=true
-            echo "::notice::Skipping direct PR deploy because a Worker script name changed."
-          fi
-          echo "topology_rename=$topology_rename" >> "$GITHUB_OUTPUT"
 
   prepare-workers:
     name: Deploy affected Workers
     needs: select-workers
-    if: needs.select-workers.outputs.workers != '[]' && needs.select-workers.outputs.topology_rename != 'true'
+    if: needs.select-workers.outputs.workers != '[]'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
       CLOUDFLARE_ACCOUNT_ID: "0500f25c2f74e7e76c94a8bcb6c7008b"
-      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_BUILDS_API_TOKEN || secrets.CLOUDFLARE_API_TOKEN || secrets.CF_API_TOKEN }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets['CLOUDFLARE_BUILDS_API_TOKEN'] || secrets['CLOUDFLARE_API_TOKEN'] || secrets['CF_API_TOKEN'] }}
       DEPLOY_COMMANDS: ${{ needs.select-workers.outputs.commands }}
     steps:
       - uses: actions/checkout@v4
@@ -113,7 +105,7 @@ jobs:
     timeout-minutes: 10
     env:
       CLOUDFLARE_ACCOUNT_ID: "0500f25c2f74e7e76c94a8bcb6c7008b"
-      CLOUDFLARE_BUILDS_API_TOKEN: ${{ secrets.CLOUDFLARE_BUILDS_API_TOKEN || secrets.CLOUDFLARE_API_TOKEN || secrets.CF_API_TOKEN }}
+      CLOUDFLARE_BUILDS_API_TOKEN: ${{ secrets['CLOUDFLARE_BUILDS_API_TOKEN'] || secrets['CLOUDFLARE_API_TOKEN'] || secrets['CF_API_TOKEN'] }}
       CLOUDFLARE_WORKER_NAME: ${{ matrix.worker }}
       CLOUDFLARE_BUILD_TIMEOUT_MINUTES: "5"
       TARGET_SHA: ${{ github.event.pull_request.head.sha }}
