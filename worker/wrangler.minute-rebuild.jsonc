@@ -8,14 +8,14 @@
   "logpush": true,
   "observability": { "enabled": true },
   "vars": {
-    "REBUILD_SOURCE_ROWS": 20,
-    "REBUILD_MAX_JOBS": 4,
+    "REBUILD_SOURCE_ROWS": 10,
+    "REBUILD_MAX_JOBS": 1,
     "REBUILD_RECENT_GUARD_MS": 300000,
     "REBUILD_MAX_CARRY_MINUTES": 5,
-    "GAP_SCAN_WINDOW_MINUTES": 360,
-    "GAP_SCAN_MAX_JOBS": 4,
+    "GAP_SCAN_WINDOW_MINUTES": 60,
+    "GAP_SCAN_MAX_JOBS": 1,
     "GAP_SCAN_RECENT_GUARD_MS": 300000,
-    "GAP_SCAN_MAX_CARRY_MINUTES": 360
+    "GAP_SCAN_MAX_CARRY_MINUTES": 60
   },
   "d1_databases": [
     { "binding": "BUDDIES_DB", "database_name": "stationhead-buddies", "database_id": "f361aae0-05f0-42bc-8784-77100e80133d" },
