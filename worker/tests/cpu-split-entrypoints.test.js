@@ -118,17 +118,18 @@ test('minute rebuild splits gap scan and self-draining backfill into separate in
   assert.deepEqual(recorded.map((item) => item.stage), ['gap-scan', 'backfill']);
 });
 
-test('minute enrichment rejects stale winners before host or bite side effects', async () => {
+test('minute enrichment rejects stale winners before stage side effects', async () => {
   let sideEffects = 0;
   const result = await processMinuteEnrichment({}, {
     message_type: 'minute-fact-enrichment',
     message_version: 1,
+    stage: 'playback',
     channel_id: 10,
     minute_at: 120_000,
     observed_at: 125_000,
   }, {
     loadCurrentMinute: async () => ({ observed_at: 126_000 }),
-    resolveHost: async () => { sideEffects += 1; },
+    updatePlaybackState: async () => { sideEffects += 1; },
   });
 
   assert.equal(result.skipped, true);
@@ -136,11 +137,61 @@ test('minute enrichment rejects stale winners before host or bite side effects',
   assert.equal(sideEffects, 0);
 });
 
-test('minute enrichment preserves host, session, bite and fact update ordering', async () => {
+test('playback enrichment patches the winner before handing off identity work', async () => {
   const calls = [];
   const body = {
     message_type: 'minute-fact-enrichment',
     message_version: 1,
+    stage: 'playback',
+    channel_id: 10,
+    station_id: 20,
+    minute_at: 120_000,
+    observed_at: 125_000,
+    provisional_session_id: 25,
+    revision_id: 30,
+    queue_start_time: 100_000,
+    is_paused: false,
+    queue: { tracks: [{ position: 4, bite_count: 6 }] },
+  };
+  const playback = {
+    current_position: 4,
+    current_track_id: 40,
+    current_schedule_valid: 1,
+    delayed: false,
+  };
+  const result = await processMinuteEnrichment({ MINUTE_DB: {} }, body, {
+    loadCurrentMinute: async () => ({ id: 1, observed_at: body.observed_at, quality_flags: 8 }),
+    updatePlaybackState: async (_db, input) => {
+      calls.push('playback');
+      assert.equal(input.revisionId, body.revision_id);
+      return playback;
+    },
+    patchPlaybackResult: async (_db, current, identity, value) => {
+      calls.push('patch');
+      assert.equal(current.id, 1);
+      assert.equal(identity.channelId, body.channel_id);
+      assert.equal(value, playback);
+      return { position: 4, trackId: 40 };
+    },
+    enqueueIdentityStage: async (_env, task, value) => {
+      calls.push('enqueue');
+      assert.equal(task, body);
+      assert.equal(value, playback);
+    },
+  });
+
+  assert.deepEqual(calls, ['playback', 'patch', 'enqueue']);
+  assert.equal(result.pending, true);
+  assert.equal(result.queue_position, 4);
+  assert.equal(result.track_id, 40);
+});
+
+test('identity enrichment preserves host, session, bite and compact fact update ordering', async () => {
+  const calls = [];
+  const body = {
+    message_type: 'minute-fact-enrichment',
+    message_version: 1,
+    stage: 'identity',
     channel_id: 10,
     station_id: 20,
     minute_at: 120_000,
@@ -152,7 +203,7 @@ test('minute enrichment preserves host, session, bite and fact update ordering',
     queue: { tracks: [{ position: 4, bite_count: 6 }] },
   };
   const result = await processMinuteEnrichment({}, body, {
-    loadCurrentMinute: async () => ({ observed_at: body.observed_at }),
+    loadCurrentMinute: async () => ({ id: 1, observed_at: body.observed_at, quality_flags: 0 }),
     resolveHost: async () => { calls.push('host'); return 60; },
     resolveOrderedSession: async (_db, task, identity, hostId) => {
       calls.push('session');
@@ -167,13 +218,14 @@ test('minute enrichment preserves host, session, bite and fact update ordering',
       assert.equal(input.trackId, body.track_id);
       return 6;
     },
-    updateMinuteFact: async (_db, _identity, values) => {
+    updateMinuteFactSession: async (_db, _identity, values) => {
       calls.push('fact');
       assert.deepEqual(values, { sessionId: 70, hostId: 60, biteCount: 6 });
     },
   });
 
   assert.deepEqual(calls, ['host', 'session', 'attach', 'bite', 'fact']);
+  assert.equal(result.pending, false);
   assert.equal(result.session_id, 70);
   assert.equal(result.host_id, 60);
   assert.equal(result.bite_count, 6);
