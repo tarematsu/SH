@@ -86,8 +86,12 @@ jobs:
             stationhead-raw-collection stationhead-raw-collection-dlq \
             stationhead-comments stationhead-comments-dlq \
             stationhead-read-model stationhead-read-model-dlq \
+            stationhead-track-metadata stationhead-track-metadata-dlq \
             stationhead-buddies-facts stationhead-buddies-facts-dlq \
-            stationhead-minute-derive stationhead-minute-derive-dlq
+            stationhead-minute-derive stationhead-minute-derive-dlq \
+            stationhead-minute-enrichment stationhead-minute-enrichment-dlq \
+            stationhead-minute-rebuild stationhead-minute-rebuild-dlq \
+            stationhead-buddy-playback stationhead-buddy-playback-dlq
           do
             npx wrangler queues create "$queue" >/dev/null 2>&1 || true
           done
