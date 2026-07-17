@@ -20,7 +20,7 @@ function positiveInteger(value, fallback, maximum = Number.MAX_SAFE_INTEGER) {
 
 export async function claimMinuteDeriveJob(env, trigger, options = {}) {
   if (!env?.MINUTE_DB) throw new Error('minute derive MINUTE_DB binding is missing');
-  const parsed = parseMinuteDeriveTrigger(trigger);
+  const parsed = options.parsedTrigger || parseMinuteDeriveTrigger(trigger);
   const now = integer(options.now) ?? Date.now();
   const leaseMs = positiveInteger(options.leaseMs, 60_000, 10 * 60_000);
   const result = await env.MINUTE_DB.prepare(`UPDATE sh_minute_fact_jobs SET
@@ -89,7 +89,7 @@ export async function processMinuteDeriveTrigger(env, body, dependencies = {}) {
   const complete = dependencies.complete || completeMinuteFactJob;
   const fail = dependencies.fail || failMinuteFactJob;
   const stats = dependencies.stats || null;
-  const job = await claim(env, trigger, { now: nowFn(), leaseMs });
+  const job = await claim(env, trigger, { now: nowFn(), leaseMs, parsedTrigger: trigger });
   if (!job) {
     return { event: 'minute_fact_derive_job', processed: 0, failed: 0, skipped: true, reason: 'not-pending' };
   }
