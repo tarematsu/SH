@@ -48,7 +48,7 @@ function trustedMinuteFactQueueMessage(body) {
       || integer(payload?.snapshot?.channel_id) !== channelId) {
     throw new Error('invalid trusted minute fact queue message');
   }
-  return { payload, channel_id: channelId, minute_at: minuteAt };
+  return { payload, channel_id: channelId };
 }
 
 export function readModelEnvelopeForMinuteFact(rawMessage, body, options = {}) {
@@ -111,7 +111,6 @@ export function readModelEnvelopeForMinuteFact(rawMessage, body, options = {}) {
       station_id: integer(parsed.payload?.snapshot?.station_id),
       auth: rawMessage?.auth || {},
     },
-    minute_at: parsed.minute_at,
   };
 }
 
@@ -172,7 +171,7 @@ function activeIngestEnv(env, message, channel, capture) {
           if (body && typeof body === 'object') {
             const envelope = readModelEnvelopeForMinuteFact(message, body, { trusted: true });
             capture.channelId = integer(body.channel_id);
-            capture.minuteAt = envelope.minute_at;
+            capture.minuteAt = integer(body.minute_at);
             capture.envelope = envelope;
             return commentsQueue.send(commentsTaskForMinuteFact(
               envelope.comment_task,
