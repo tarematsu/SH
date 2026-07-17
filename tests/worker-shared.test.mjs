@@ -47,7 +47,7 @@ test('shared title normalization preserves dash-separated artists', () => {
     const value = parse('Song - song and lyrics by Artist | Spotify');
     assert.equal(value.title, 'Song');
     assert.equal(value.artist, 'Artist');
-    assert.equal(value.display_title, 'Song \u2014 Artist');
+    assert.equal(value.display_title, 'Song — Artist');
   }
 });
 
@@ -76,7 +76,7 @@ test('completed queue metadata skips repeated D1 lookups', async () => {
   assert.equal(queries, 1);
 });
 
-test('duplicate Stationhead station and comment reads share one response per minute', async () => {
+test('concurrent Stationhead reads stay request-local and settled reads share snapshots', async () => {
   let now = 120_000;
   let calls = 0;
   const nativeFetch = async (input) => {
@@ -98,14 +98,19 @@ test('duplicate Stationhead station and comment reads share one response per min
     cachedFetch(commentsUrl, { headers }),
     cachedFetch(commentsUrl, { headers }),
   ]);
-  assert.equal(calls, 2);
-  assert.deepEqual((await Promise.all(responses.map((response) => response.json()))).map((value) => value.call), [1, 1, 2, 2]);
+  assert.equal(calls, 4);
+  assert.deepEqual(
+    (await Promise.all(responses.map((response) => response.json()))).map((value) => value.call),
+    [1, 2, 3, 4],
+  );
 
-  await cachedFetch(stationUrl, { method: 'POST', headers, body: '{}' });
-  assert.equal(calls, 2);
+  const cachedStation = await cachedFetch(stationUrl, { method: 'POST', headers, body: '{}' });
+  assert.equal(calls, 4);
+  assert.equal([1, 2].includes((await cachedStation.json()).call), true);
+
   now += 60_000;
   await cachedFetch(stationUrl, { method: 'POST', headers, body: '{}' });
-  assert.equal(calls, 3);
+  assert.equal(calls, 5);
 });
 
 test('comment normalization ignores duplicate upstream IDs before reporting saved counts', () => {
