@@ -34,8 +34,10 @@ export async function readJsonBody(request, options = {}) {
   }
 }
 
-export function observedAtFrom(body, fallback = Date.now()) {
-  return num(body?.observed_at) ?? fallback;
+export function observedAtFrom(body, fallback) {
+  const observedAt = num(body?.observed_at);
+  if (observedAt != null) return observedAt;
+  return arguments.length >= 2 ? fallback : Date.now();
 }
 
 export function num(value) {
