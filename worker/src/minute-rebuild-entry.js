@@ -30,6 +30,20 @@ async function recordStage(env, task, result, startedAt, success = true) {
   }, { startedAt, success });
 }
 
+async function enqueueStage(env, task, stage, delaySeconds = 0) {
+  if (!env?.MINUTE_REBUILD_QUEUE?.send) throw new Error('MINUTE_REBUILD_QUEUE binding is missing');
+  await env.MINUTE_REBUILD_QUEUE.send({
+    message_type: 'minute-rebuild-stage',
+    message_version: 1,
+    run_id: task.runId,
+    stage,
+    scheduled_at: task.scheduledAt,
+  }, {
+    contentType: 'json',
+    ...(delaySeconds > 0 ? { delaySeconds } : {}),
+  });
+}
+
 export async function processMinuteRebuildStage(env, body, dependencies = {}) {
   const task = validateTask(body);
   if (!env?.BUDDIES_DB || !env?.MINUTE_DB) throw new Error('minute rebuild database binding is missing');
@@ -42,14 +56,7 @@ export async function processMinuteRebuildStage(env, body, dependencies = {}) {
         || (await import('./minute-facts-gap-scan.js')).runMinuteFactsGapScan;
       const result = await run(active, dependencies.gapScan || {});
       await recordStage(env, task, result, startedAt);
-      if (!env?.MINUTE_REBUILD_QUEUE?.send) throw new Error('MINUTE_REBUILD_QUEUE binding is missing');
-      await env.MINUTE_REBUILD_QUEUE.send({
-        message_type: 'minute-rebuild-stage',
-        message_version: 1,
-        run_id: task.runId,
-        stage: 'backfill',
-        scheduled_at: task.scheduledAt,
-      }, { contentType: 'json' });
+      await enqueueStage(env, task, 'backfill');
       return { stage: task.stage, run_id: task.runId, pending: true, result };
     }
 
@@ -57,7 +64,10 @@ export async function processMinuteRebuildStage(env, body, dependencies = {}) {
       || (await import('./minute-facts-backfill.js')).runMinuteFactsBackfill;
     const result = await run(active, dependencies.backfill || {});
     await recordStage(env, task, result, startedAt);
-    return { stage: task.stage, run_id: task.runId, pending: false, result };
+    const pending = Number(result?.pending_candidates || 0) > 0
+      || Number(result?.scanned_snapshots || 0) > 0;
+    if (pending) await enqueueStage(env, task, 'backfill', 1);
+    return { stage: task.stage, run_id: task.runId, pending, result };
   } catch (error) {
     await recordStage(env, task, { error: String(error?.message || error).slice(0, 800) }, startedAt, false)
       .catch(() => {});
