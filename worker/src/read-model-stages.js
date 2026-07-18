@@ -37,36 +37,34 @@ function queueValueFromJson(value) {
   }
 }
 
+const TRACK_METADATA_KEY_LIMIT = 80;
+
 function incompleteTrackMetadataKeys(tracks) {
-  const spotifyIds = [];
-  const isrcs = [];
-  const spotifySeen = new Set();
-  const isrcSeen = new Set();
+  const spotifyIds = new Set();
+  const isrcs = new Set();
 
-  for (let index = 0; index < tracks.length; index += 1) {
+  for (let index = 0, length = tracks.length; index < length; index += 1) {
     const track = tracks[index];
-    if (track?.title && track?.artist && track?.thumbnail_url) continue;
+    if (!track || (track.title && track.artist && track.thumbnail_url)) continue;
 
-    if (spotifyIds.length < 80) {
-      const spotifyId = String(track?.spotify_id || '').trim();
-      if (spotifyId && !spotifySeen.has(spotifyId)) {
-        spotifySeen.add(spotifyId);
-        spotifyIds.push(spotifyId);
-      }
+    if (spotifyIds.size < TRACK_METADATA_KEY_LIMIT) {
+      const spotifyId = String(track.spotify_id || '').trim();
+      if (spotifyId) spotifyIds.add(spotifyId);
     }
 
-    if (isrcs.length < 80) {
-      const isrc = normalizedIsrc(track?.isrc);
-      if (isrc && !isrcSeen.has(isrc)) {
-        isrcSeen.add(isrc);
-        isrcs.push(isrc);
-      }
+    if (isrcs.size < TRACK_METADATA_KEY_LIMIT) {
+      const isrc = normalizedIsrc(track.isrc);
+      if (isrc) isrcs.add(isrc);
     }
 
-    if (spotifyIds.length === 80 && isrcs.length === 80) break;
+    if (spotifyIds.size === TRACK_METADATA_KEY_LIMIT
+        && isrcs.size === TRACK_METADATA_KEY_LIMIT) break;
   }
 
-  return { spotifyIds, isrcs };
+  return {
+    spotifyIds: Array.from(spotifyIds),
+    isrcs: Array.from(isrcs),
+  };
 }
 
 export async function hydrateReadModelMetadata(env, readModel) {
