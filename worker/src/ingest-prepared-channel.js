@@ -4,9 +4,13 @@ import {
 } from './collector-payload.js';
 import {
   collectPreparedOnce,
+  preparedCollectorFactStage,
   preparedCollectorFinalizeState,
 } from './prepared-collector-runner.js';
-import { parseMinuteFactQueueMessage } from './minute-facts-queue.js';
+import {
+  handoffMinuteFactJob,
+  parseMinuteFactQueueMessage,
+} from './minute-facts-queue.js';
 
 function integer(value) {
   const parsed = Number(value);
@@ -234,6 +238,22 @@ async function recoverCurrentReadModelEnvelope(env, message, collection, result)
   return fallbackReadModelEnvelope(env, message, collection);
 }
 
+async function enqueueFinalize(env, identity, collectorState, envelope, dependencies = {}) {
+  const send = dependencies.sendFinalize
+    || ((body) => env.INGEST_FINALIZE_QUEUE.send(body, { contentType: 'json' }));
+  if (!dependencies.sendFinalize && !env?.INGEST_FINALIZE_QUEUE?.send) {
+    throw new Error('INGEST_FINALIZE_QUEUE binding is missing');
+  }
+  await send({
+    message_type: 'stationhead-ingest-finalize',
+    message_version: 1,
+    observed_at: identity.observed_at,
+    channel_id: identity.channel_id,
+    collector_state: collectorState,
+    read_model: envelope,
+  });
+}
+
 async function finalizePreparedIngest(env, result, envelope) {
   if (!env?.INGEST_FINALIZE_QUEUE?.send) {
     await env.READ_MODEL_QUEUE.send(envelope, { contentType: 'json' });
@@ -241,15 +261,61 @@ async function finalizePreparedIngest(env, result, envelope) {
   }
   const collectorState = preparedCollectorFinalizeState(result);
   if (!collectorState) throw new Error('prepared collector finalize state is missing');
-  await env.INGEST_FINALIZE_QUEUE.send({
-    message_type: 'stationhead-ingest-finalize',
-    message_version: 1,
+  await enqueueFinalize(env, {
     observed_at: result.observed_at,
     channel_id: result.channel_id,
-    collector_state: collectorState,
-    read_model: envelope,
-  }, { contentType: 'json' });
+  }, collectorState, envelope);
   return true;
+}
+
+function validateFactTask(body) {
+  const fact = objectValue(body?.fact);
+  if (body?.message_type !== 'stationhead-ingest-fact'
+      || integer(body?.message_version) !== 1
+      || !fact
+      || !objectValue(fact.snapshot)
+      || !objectValue(fact.options)
+      || !objectValue(fact.collectorState)) {
+    throw new Error('unsupported ingest fact task');
+  }
+  if (integer(fact.observedAt) == null || integer(fact.snapshot.channel_id) == null) {
+    throw new Error('ingest fact identity is invalid');
+  }
+  return fact;
+}
+
+export async function processIngestFactTask(env, body, dependencies = {}) {
+  const fact = validateFactTask(body);
+  const rawMessage = {
+    observed_at: fact.observedAt,
+    auth: fact.auth || {},
+  };
+  const collection = { snapshot: fact.snapshot, queue: fact.queue ?? null };
+  const capture = { channelId: null, minuteAt: null, envelope: null };
+  const active = activeIngestEnv(env, rawMessage, collection, capture);
+  const handoff = dependencies.handoffMinuteFactJob || handoffMinuteFactJob;
+  const minuteFactJob = await handoff(active, {
+    observedAt: fact.observedAt,
+    snapshot: fact.snapshot,
+    queue: fact.queue ?? null,
+    comments: fact.comments || {},
+  }, fact.options);
+  const identity = {
+    observed_at: integer(fact.observedAt),
+    channel_id: integer(fact.snapshot.channel_id),
+    minute_fact_job_minute_at: integer(minuteFactJob?.minute_at),
+  };
+  const envelope = capturedReadModelEnvelope(identity, capture)
+    || await recoverCurrentReadModelEnvelope(env, rawMessage, collection, identity);
+  await enqueueFinalize(env, identity, fact.collectorState, envelope, dependencies);
+  return {
+    event: 'ingest_fact_completed',
+    observed_at: identity.observed_at,
+    channel_id: identity.channel_id,
+    minute_at: identity.minute_fact_job_minute_at,
+    minute_fact_job_enqueued: Boolean(minuteFactJob?.enqueued),
+    minute_fact_outbox_pending: Boolean(minuteFactJob?.outbox_pending),
+  };
 }
 
 export async function ingestPreparedRawCollection(env, message) {
@@ -257,6 +323,15 @@ export async function ingestPreparedRawCollection(env, message) {
   const capture = { channelId: null, minuteAt: null, envelope: null };
   const active = activeIngestEnv(env, message, collection, capture);
   const result = await collectPreparedOnce(active, 'raw-collection-queue');
+  const fact = preparedCollectorFactStage(result);
+  if (fact) {
+    await env.INGEST_FINALIZE_QUEUE.send({
+      message_type: 'stationhead-ingest-fact',
+      message_version: 1,
+      fact,
+    }, { contentType: 'json' });
+    return result;
+  }
   const envelope = capturedReadModelEnvelope(result, capture)
     || await recoverCurrentReadModelEnvelope(env, message, collection, result);
   result.finalize_deferred = await finalizePreparedIngest(env, result, envelope);
