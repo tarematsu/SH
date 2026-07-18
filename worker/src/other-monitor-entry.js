@@ -8,6 +8,10 @@ import {
 } from './other-monitor-support.js';
 
 export const OTHER_MONITOR_CRON = '*/5 * * * *';
+const MINUTE_MS = 60_000;
+const EMPTY_DEPENDENCIES = Object.freeze({});
+const EMPTY_OPTIONS = Object.freeze({});
+const JSON_QUEUE_SEND_OPTIONS = Object.freeze({ contentType: 'json' });
 const OTHER_CRON_SUCCESS_SQL = `INSERT INTO sh_collector_status (
     collector_id,status,last_attempt_at,last_success_at,last_error,
     failure_code,failure_stage,failure_summary,failure_hint,tracks,changed,updated_at
@@ -17,9 +21,33 @@ const OTHER_CRON_SUCCESS_SQL = `INSERT INTO sh_collector_status (
     last_error=NULL,failure_code=NULL,failure_stage=NULL,failure_summary=NULL,failure_hint=NULL,
     updated_at=excluded.updated_at`;
 let loadedHealthApp = null;
+let buddyPipelineModulePromise;
+let hostMonitorModulePromise;
+let predictionModulePromise;
+let buddyHealthModulePromise;
+
+function loadBuddyPipelineModule() {
+  buddyPipelineModulePromise ||= import('./buddy-playback-pipeline.js');
+  return buddyPipelineModulePromise;
+}
+
+function loadHostMonitorModule() {
+  hostMonitorModulePromise ||= import('./cloud-host-monitor.js');
+  return hostMonitorModulePromise;
+}
+
+function loadPredictionModule() {
+  predictionModulePromise ||= import('./stream-goal-prediction.js');
+  return predictionModulePromise;
+}
+
+function loadBuddyHealthModule() {
+  buddyHealthModulePromise ||= import('./buddy-health.js');
+  return buddyHealthModulePromise;
+}
 
 export function otherMonitorTask(now) {
-  const minute = new Date(now).getUTCMinutes();
+  const minute = Math.floor(now / MINUTE_MS) % 60;
   const buddySlot = minute % 30;
   if (buddySlot === 0 || buddySlot === 5 || buddySlot === 15) return 'buddy';
   if (minute === 10 || minute === 40) return 'prediction';
@@ -28,16 +56,17 @@ export function otherMonitorTask(now) {
 }
 
 async function defaultRunner(name) {
-  if (name === 'buddy') return (await import('./buddy-playback-pipeline.js')).scheduleBuddyPlaybackPipeline;
-  if (name === 'host') return (await import('./cloud-host-monitor.js')).runCloudHostMonitor;
-  if (name === 'prediction') return (await import('./stream-goal-prediction.js')).runStreamGoalPrediction;
+  if (name === 'buddy') return (await loadBuddyPipelineModule()).scheduleBuddyPlaybackPipeline;
+  if (name === 'host') return (await loadHostMonitorModule()).runCloudHostMonitor;
+  if (name === 'prediction') return (await loadPredictionModule()).runStreamGoalPrediction;
   if (name === 'officialNews') return runOfficialNewsWithReconcile;
   throw new Error(`unsupported other monitor task: ${name}`);
 }
 
 async function dispatchQueue(env, binding, body) {
-  if (!env?.[binding]?.send) return null;
-  await env[binding].send(body, { contentType: 'json' });
+  const queue = env?.[binding];
+  if (!queue?.send) return null;
+  await queue.send(body, JSON_QUEUE_SEND_OPTIONS);
   return body;
 }
 
@@ -61,7 +90,7 @@ async function dispatchHostMonitor(env, now) {
   return body ? { dispatched: true, task: 'host', scheduled_at: now } : null;
 }
 
-async function runTask(name, env, ctx, now, dependencies = {}) {
+async function runTask(name, env, ctx, now, dependencies = EMPTY_DEPENDENCIES) {
   if (name === 'buddy') {
     const dispatched = await dispatchBuddyPlayback(env, now);
     if (dispatched) return dispatched;
@@ -76,9 +105,11 @@ async function runTask(name, env, ctx, now, dependencies = {}) {
   return runner(env, now);
 }
 
-export async function runOtherMonitorScheduled(controller, env, ctx, dependencies = {}) {
-  if (String(controller?.cron || '') !== OTHER_MONITOR_CRON) {
-    return [{ skipped: true, reason: 'unsupported-other-monitor-cron', cron: String(controller?.cron || '') }];
+export async function runOtherMonitorScheduled(controller, env, ctx, dependencies = EMPTY_DEPENDENCIES) {
+  const rawCron = controller?.cron;
+  const cron = rawCron === OTHER_MONITOR_CRON ? rawCron : String(rawCron || '');
+  if (cron !== OTHER_MONITOR_CRON) {
+    return [{ skipped: true, reason: 'unsupported-other-monitor-cron', cron }];
   }
   const now = scheduledTimestamp(controller);
   let task = otherMonitorTask(now);
@@ -94,20 +125,25 @@ async function recordOtherCronSuccessFast(env, at = Date.now()) {
     return true;
   } catch (error) {
     if (!/no such table/i.test(String(error?.message || error))) throw error;
-    return (await import('./buddy-health.js')).recordOtherCronSuccess(env, at);
+    return (await loadBuddyHealthModule()).recordOtherCronSuccess(env, at);
   }
 }
 
 async function recordOtherCronFailureLazy(env, error) {
-  return (await import('./buddy-health.js')).recordOtherCronFailure(env, error);
+  return (await loadBuddyHealthModule()).recordOtherCronFailure(env, error);
 }
 
-export async function runOtherMonitorCron(controller, env, ctx, options = {}) {
+export async function runOtherMonitorCron(controller, env, ctx, options = EMPTY_OPTIONS) {
   const health = options.healthApp || loadedHealthApp;
   const recordSuccess = options.recordSuccess || recordOtherCronSuccessFast;
   const recordFailure = options.recordFailure || recordOtherCronFailureLazy;
   try {
-    const result = await runOtherMonitorScheduled(controller, env, ctx, options.dependencies);
+    const result = await runOtherMonitorScheduled(
+      controller,
+      env,
+      ctx,
+      options.dependencies || EMPTY_DEPENDENCIES,
+    );
     await recordSuccess(env);
     return result;
   } catch (error) {
@@ -119,20 +155,21 @@ export async function runOtherMonitorCron(controller, env, ctx, options = {}) {
 }
 
 export async function runOtherMonitorQueue(batch, env) {
-  const messageType = String(batch?.messages?.[0]?.body?.message_type || '');
+  const messages = batch?.messages;
+  if (!messages?.length) return;
+  const message = messages[0];
+  const messageType = String(message?.body?.message_type || '');
   if (messageType === 'buddy-playback-stage') {
     return runBuddyPlaybackQueue(batch, env);
   }
   if (messageType === 'host-monitor-task') {
     return runHostMonitorQueue(batch, env);
   }
-  for (const message of batch?.messages || []) {
-    console.error(JSON.stringify({
-      event: 'other_monitor_queue_task_failed',
-      error: `unsupported monitor queue task: ${String(message?.body?.message_type || 'unknown')}`,
-    }));
-    message.retry();
-  }
+  console.error(JSON.stringify({
+    event: 'other_monitor_queue_task_failed',
+    error: `unsupported monitor queue task: ${messageType || 'unknown'}`,
+  }));
+  message.retry();
 }
 
 async function healthApp() {
