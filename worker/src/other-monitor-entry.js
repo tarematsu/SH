@@ -116,6 +116,23 @@ export async function runOtherMonitorCron(controller, env, ctx, options = {}) {
   }
 }
 
+export async function runOtherMonitorQueue(batch, env) {
+  const messageType = String(batch?.messages?.[0]?.body?.message_type || '');
+  if (messageType === 'buddy-playback-stage') {
+    return (await import('./buddy-playback-entry.js')).runBuddyPlaybackQueue(batch, env);
+  }
+  if (messageType === 'host-monitor-task') {
+    return (await import('./host-monitor-entry.js')).runHostMonitorQueue(batch, env);
+  }
+  for (const message of batch?.messages || []) {
+    console.error(JSON.stringify({
+      event: 'other_monitor_queue_task_failed',
+      error: `unsupported monitor queue task: ${String(message?.body?.message_type || 'unknown')}`,
+    }));
+    message.retry();
+  }
+}
+
 async function healthApp() {
   if (!loadedHealthApp) loadedHealthApp = (await import('./other-health.js')).createOtherHealthApp();
   return loadedHealthApp;
@@ -123,6 +140,7 @@ async function healthApp() {
 
 export default {
   scheduled: runOtherMonitorCron,
+  queue: runOtherMonitorQueue,
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
     if (request.method === 'GET' && (url.pathname === '/' || url.pathname === '/health')) {
