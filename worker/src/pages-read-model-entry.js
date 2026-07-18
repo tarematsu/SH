@@ -33,8 +33,26 @@ export async function runPagesReadModelCron(controller, env, dependencies = {}) 
   return assertRefreshSucceeded(await runTask(env, now, dependencies));
 }
 
+export async function runPagesReadModelQueue(batch, env, dependencies = {}) {
+  const { processTrackHistoryPublicationTask } = await import('./pages-track-history-publication-queue.js');
+  for (const message of batch.messages || []) {
+    try {
+      const result = await processTrackHistoryPublicationTask(env, message.body, dependencies);
+      console.log(JSON.stringify(result));
+      message.ack();
+    } catch (error) {
+      console.error(JSON.stringify({
+        event: 'track_history_publication_step_failed',
+        error: String(error?.message || error).slice(0, 800),
+      }));
+      message.retry();
+    }
+  }
+}
+
 export default {
   scheduled: runPagesReadModelCron,
+  queue: runPagesReadModelQueue,
   fetch() {
     return Response.json({ ok: false, error: 'not found' }, { status: 404 });
   },
