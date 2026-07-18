@@ -64,10 +64,17 @@ function compactQueueIdentity(queue, totalCount) {
 
 export function historicalPlaybackState(queue, observedAt) {
   const tracks = Array.isArray(queue?.tracks) ? queue.tracks : [];
-  const queueStart = timestampMs(queue?.start_time);
-  if (bool(queue?.is_paused) === 1 || queueStart == null) {
-    return { position: null, delayed: true };
+  if (bool(queue?.is_paused) === 1) return { position: null, delayed: true };
+
+  const explicit = integer(queue?.current_position);
+  if (explicit != null && tracks.some((track, index) => (
+    integer(track?.position) ?? index
+  ) === explicit)) {
+    return { position: explicit, delayed: false };
   }
+
+  const queueStart = timestampMs(queue?.start_time);
+  if (queueStart == null) return { position: null, delayed: true };
   const elapsed = observedAt - queueStart;
   if (elapsed < 0) return { position: null, delayed: true };
 
