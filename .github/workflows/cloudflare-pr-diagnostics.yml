@@ -120,6 +120,30 @@ jobs:
             echo "Deploying $command"
             npm run "$command"
           done < <(jq -r '.[]' <<<"$DEPLOY_COMMANDS")
+      - name: Verify consolidated monitor topology
+        shell: bash
+        working-directory: worker
+        run: |
+          set -euo pipefail
+          auth=(-H "Authorization: Bearer $CLOUDFLARE_API_TOKEN")
+          base="https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID"
+          curl --fail-with-body --silent --show-error "${auth[@]}" "$base/queues?per_page=100" > queues.json
+          curl --fail-with-body --silent --show-error "${auth[@]}" "$base/workers/scripts" > scripts.json
+          jq -e '.success == true' queues.json >/dev/null
+          jq -e '.success == true' scripts.json >/dev/null
+          for specification in \
+            'stationhead-buddy-playback sh-buddy-playback' \
+            'stationhead-host-monitor sh-host-monitor'
+          do
+            read -r queue old_script <<<"$specification"
+            queue_id="$(jq -er --arg queue "$queue" '.result[] | select((.queue_name // .name) == $queue) | (.queue_id // .id)' queues.json | head -1)"
+            curl --fail-with-body --silent --show-error "${auth[@]}" "$base/queues/$queue_id/consumers" > consumers.json
+            jq -e --arg script 'sh-monitor-other' '[.result[]?.script_name] | index($script) != null' consumers.json >/dev/null
+            jq -e --arg script "$old_script" '[.result[]?.script_name] | index($script) == null' consumers.json >/dev/null
+          done
+          jq -e --arg script 'sh-monitor-other' '[.result[]?.id] | index($script) != null' scripts.json >/dev/null
+          jq -e --arg script 'sh-buddy-playback' '[.result[]?.id] | index($script) == null' scripts.json >/dev/null
+          jq -e --arg script 'sh-host-monitor' '[.result[]?.id] | index($script) == null' scripts.json >/dev/null
 
   diagnose:
     name: Diagnose ${{ matrix.worker }}
