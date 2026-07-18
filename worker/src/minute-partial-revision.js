@@ -14,7 +14,8 @@ import {
 
 async function findReusableRevision(db, input) {
   try {
-    return await db.prepare(`SELECT id,status,effective_at,item_count,total_item_count,coverage_complete
+    return await db.prepare(`SELECT id,status,effective_at,item_count,
+        materialized_item_count,coverage_complete
       FROM sh_queue_revisions
       WHERE channel_id=? AND structural_hash=? AND session_id IS ? AND queue_start_time IS ?
         AND status IN ('complete','pending')
@@ -35,10 +36,21 @@ async function findReusableRevision(db, input) {
   }
 }
 
+async function storedMaterializedCount(db, revision) {
+  if (!revision) return 0;
+  if (Object.hasOwn(revision, 'materialized_item_count')) {
+    return Number(revision.materialized_item_count || 0);
+  }
+  const row = await db.prepare(
+    'SELECT COUNT(*) AS item_count FROM sh_queue_revision_items WHERE revision_id=?',
+  ).bind(revision.id).first();
+  return Number(row?.item_count || 0);
+}
+
 function coverageStored(revision, materializedCount, totalCount) {
-  if (!revision || !Object.hasOwn(revision, 'total_item_count')) return true;
-  return Number(revision.item_count || 0) === materializedCount
-    && Number(revision.total_item_count || 0) === totalCount
+  if (!revision || !Object.hasOwn(revision, 'materialized_item_count')) return true;
+  return Number(revision.item_count || 0) === totalCount
+    && Number(revision.materialized_item_count || 0) === materializedCount
     && Number(revision.coverage_complete || 0) === Number(materializedCount >= totalCount);
 }
 
@@ -46,26 +58,28 @@ async function updateRevisionCoverage(db, revisionId, materializedCount, totalCo
   const complete = materializedCount >= totalCount ? 1 : 0;
   try {
     await db.prepare(`UPDATE sh_queue_revisions SET
-        item_count=?,total_item_count=?,coverage_complete=?,status='complete'
+        item_count=MAX(item_count,?),
+        materialized_item_count=MAX(COALESCE(materialized_item_count,0),?),
+        coverage_complete=?,status='complete'
       WHERE id=? AND (
-        item_count IS NOT ? OR total_item_count IS NOT ?
+        item_count<? OR COALESCE(materialized_item_count,0)<?
         OR coverage_complete IS NOT ? OR status IS NOT 'complete'
       )`)
       .bind(
-        materializedCount,
         totalCount,
+        materializedCount,
         complete,
         revisionId,
-        materializedCount,
         totalCount,
+        materializedCount,
         complete,
       )
       .run();
   } catch (error) {
     if (!/no such column/i.test(String(error?.message || ''))) throw error;
-    await db.prepare(`UPDATE sh_queue_revisions SET item_count=?,status='complete'
-      WHERE id=? AND (item_count IS NOT ? OR status IS NOT 'complete')`)
-      .bind(materializedCount, revisionId, materializedCount)
+    await db.prepare(`UPDATE sh_queue_revisions SET item_count=MAX(item_count,?),status='complete'
+      WHERE id=? AND (item_count<? OR status IS NOT 'complete')`)
+      .bind(totalCount, revisionId, totalCount)
       .run();
   }
 }
@@ -94,19 +108,21 @@ export async function createPartialRevision(db, oldDb, input) {
     structuralHash,
   }));
   const created = !revision;
-  if (revision?.status === 'complete' && Number(revision.item_count || 0) >= visibleCount) {
-    const materializedCount = Number(revision.item_count || 0);
-    if (!coverageStored(revision, materializedCount, totalCount)) {
-      await updateRevisionCoverage(db, Number(revision.id), materializedCount, totalCount);
+  if (revision?.status === 'complete') {
+    const materializedCount = await storedMaterializedCount(db, revision);
+    if (materializedCount >= visibleCount) {
+      if (!coverageStored(revision, materializedCount, totalCount)) {
+        await updateRevisionCoverage(db, Number(revision.id), materializedCount, totalCount);
+      }
+      return {
+        revisionId: Number(revision.id),
+        created: false,
+        resumed: false,
+        materializedCount,
+        totalCount,
+        coverageComplete: materializedCount >= totalCount,
+      };
     }
-    return {
-      revisionId: Number(revision.id),
-      created: false,
-      resumed: false,
-      materializedCount,
-      totalCount,
-      coverageComplete: materializedCount >= totalCount,
-    };
   }
 
   if (!revision) {
@@ -123,7 +139,7 @@ export async function createPartialRevision(db, oldDb, input) {
         observedAt,
         receivedAt,
         structuralHash,
-        visibleCount,
+        totalCount,
       )
       .run());
     revision = await findReusableRevision(db, {
