@@ -41,7 +41,8 @@
   ],
   "queues": {
     "producers": [
-      { "binding": "BUDDY_PLAYBACK_QUEUE", "queue": "stationhead-buddy-playback" }
+      { "binding": "BUDDY_PLAYBACK_QUEUE", "queue": "stationhead-buddy-playback" },
+      { "binding": "HOST_MONITOR_QUEUE", "queue": "stationhead-host-monitor" }
     ]
   }
 }
