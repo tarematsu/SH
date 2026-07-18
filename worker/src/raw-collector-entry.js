@@ -206,11 +206,6 @@ export async function collectRawChannel(env, dependencies = {}) {
 
 export default {
   scheduled(_controller, env, ctx) {
-    const task = collectRawChannel(env);
-    if (typeof ctx?.waitUntil === 'function') ctx.waitUntil(task);
-    return task;
-  },
-  fetch() {
-    return Response.json({ ok: false, error: 'not found' }, { status: 404 });
+    ctx.waitUntil(collectRawChannel(env));
   },
 };
