@@ -37,20 +37,42 @@ function queueValueFromJson(value) {
   }
 }
 
+const TRACK_METADATA_KEY_LIMIT = 80;
+
+function incompleteTrackMetadataKeys(tracks) {
+  const spotifyIds = new Set();
+  const isrcs = new Set();
+
+  for (let index = 0, length = tracks.length; index < length; index += 1) {
+    const track = tracks[index];
+    if (!track || (track.title && track.artist && track.thumbnail_url)) continue;
+
+    if (spotifyIds.size < TRACK_METADATA_KEY_LIMIT) {
+      const spotifyId = String(track.spotify_id || '').trim();
+      if (spotifyId) spotifyIds.add(spotifyId);
+    }
+
+    if (isrcs.size < TRACK_METADATA_KEY_LIMIT) {
+      const isrc = normalizedIsrc(track.isrc);
+      if (isrc) isrcs.add(isrc);
+    }
+
+    if (spotifyIds.size === TRACK_METADATA_KEY_LIMIT
+        && isrcs.size === TRACK_METADATA_KEY_LIMIT) break;
+  }
+
+  return {
+    spotifyIds: Array.from(spotifyIds),
+    isrcs: Array.from(isrcs),
+  };
+}
+
 export async function hydrateReadModelMetadata(env, readModel) {
   if (!readModel || typeof readModel !== 'object') throw new Error('minute fact read model payload is missing');
   const queue = readModel?.queue?.value;
   if (!queue?.tracks?.length) return readModel;
 
-  const incomplete = queue.tracks.filter((track) => (
-    !track?.title || !track?.artist || !track?.thumbnail_url
-  ));
-  const spotifyIds = [...new Set(
-    incomplete.map((track) => String(track?.spotify_id || '').trim()).filter(Boolean),
-  )].slice(0, 80);
-  const isrcs = [...new Set(
-    incomplete.map((track) => normalizedIsrc(track?.isrc)).filter(Boolean),
-  )].slice(0, 80);
+  const { spotifyIds, isrcs } = incompleteTrackMetadataKeys(queue.tracks);
   if (!spotifyIds.length && !isrcs.length) return readModel;
 
   const rows = await loadReadModelTrackMetadata(env, spotifyIds, isrcs);
