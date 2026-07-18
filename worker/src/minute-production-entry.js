@@ -7,13 +7,13 @@ let productionEnqueueMinuteFactJob = null;
 let readModelModulePromise = null;
 let defaultSaveMinuteFactReadModels = null;
 
-async function noReceipt() {
+function noReceipt() {
   return false;
 }
 
-async function ignoreReceipt() {}
+function ignoreReceipt() {}
 
-async function skipCommentTask() {
+function skipCommentTask() {
   return { created: false, skipped: true };
 }
 
