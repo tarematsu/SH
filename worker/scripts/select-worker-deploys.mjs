@@ -19,6 +19,7 @@ const workerDefinitions = [
   { name: 'sh-pages-read-model', config: 'worker/wrangler.pages-read-model.jsonc', command: 'deploy:pages-read-model' },
   { name: 'sh-monitor-maintenance', config: 'worker/wrangler.monitor-maintenance.jsonc', command: 'deploy:monitor-maintenance' },
   { name: 'sh-monitor-other', config: 'worker/wrangler.other.jsonc', command: 'deploy:other' },
+  { name: 'sh-host-monitor', config: 'worker/wrangler.host-monitor.jsonc', command: 'deploy:host-monitor' },
   { name: 'sh-buddy-playback', config: 'worker/wrangler.buddy-playback.jsonc', command: 'deploy:buddy-playback' },
 ];
 
