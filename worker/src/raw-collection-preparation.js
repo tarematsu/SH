@@ -4,7 +4,10 @@ import {
   normalizeSnapshot,
   validateChannelPayload,
 } from './collector-payload.js';
-import { prepareQueueAnalysis } from './queue-analysis-transfer.js';
+import {
+  prepareQueueAnalysis,
+  serializedQueueAnalysis,
+} from './queue-analysis-transfer.js';
 import { prepareMaterializedQueue } from './queue-materialization.js';
 import { prepareSnapshotAnalysis } from './snapshot-analysis-transfer.js';
 
@@ -90,12 +93,17 @@ export async function processRawNormalizeStage(env, body, dependencies = {}) {
     throw new Error('normalized raw collection identity is missing');
   }
   const queue = extractQueue(channel, state.stationId);
+  // extractQueue caches structural/like payloads on non-enumerable Symbols.
+  // Serialize that seed before the Queue boundary; hashes stay in the next
+  // invocation, but the structural walk is not repeated and the seed is not lost.
+  const queueAnalysisSeed = serializedQueueAnalysis(queue);
   const next = {
     message_type: RAW_ANALYSIS_MESSAGE,
     message_version: 1,
     ...common,
     snapshot,
     queue,
+    queue_analysis_seed: queueAnalysisSeed,
   };
   await sendNext(env, next, dependencies);
   const result = {
@@ -115,7 +123,7 @@ export async function processRawAnalysisStage(env, body, dependencies = {}) {
   const prepareQueue = dependencies.prepareQueue || prepareQueueAnalysis;
   const [snapshotAnalysis, queueAnalysis] = await Promise.all([
     prepareSnapshot(snapshot),
-    prepareQueue(queue),
+    prepareQueue(queue, body.queue_analysis_seed || null),
   ]);
   const next = {
     message_type: RAW_MATERIALIZE_MESSAGE,
