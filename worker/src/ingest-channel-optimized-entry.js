@@ -1,4 +1,4 @@
-export async function ingestRawCollection(env, message) {
+export async function ingestRawCollection(env, message, dependencies = {}) {
   if (Number(message?.message_version) === 3) {
     const [prepared, queueAnalysis, snapshotAnalysis] = await Promise.all([
       import('./ingest-prepared-channel.js'),
@@ -10,6 +10,10 @@ export async function ingestRawCollection(env, message) {
     }
     if (message.queue) queueAnalysis.restoreQueueAnalysis(message.queue, message.queue_analysis);
     return prepared.ingestPreparedRawCollection(env, message);
+  }
+  if (env?.INGEST_FINALIZE_QUEUE?.send && dependencies.inline !== true) {
+    const stages = await import('./raw-collection-preparation.js');
+    return stages.processRawNormalizeStage(env, message, dependencies);
   }
   const legacy = await import('./ingest-channel-entry.js');
   return legacy.ingestRawCollection(env, message);
@@ -32,6 +36,12 @@ export default {
           const { processIngestFinalizeTask } = await import('./ingest-finalize-entry.js');
           const result = await processIngestFinalizeTask(env, message.body);
           console.log(JSON.stringify(result));
+        } else if (type === 'stationhead-raw-analysis') {
+          const { processRawAnalysisStage } = await import('./raw-collection-preparation.js');
+          await processRawAnalysisStage(env, message.body);
+        } else if (type === 'stationhead-raw-materialize') {
+          const { processRawMaterializeStage } = await import('./raw-collection-preparation.js');
+          await processRawMaterializeStage(env, message.body);
         } else {
           await ingestRawCollection(env, message.body);
         }
@@ -41,6 +51,10 @@ export default {
           ? 'ingest_fact_failed'
           : type === 'stationhead-ingest-finalize'
           ? 'ingest_finalize_failed'
+          : type === 'stationhead-raw-analysis'
+          ? 'raw_collection_analysis_failed'
+          : type === 'stationhead-raw-materialize'
+          ? 'raw_collection_materialization_failed'
           : 'raw_collection_ingest_failed';
         console.error(JSON.stringify({
           event,
