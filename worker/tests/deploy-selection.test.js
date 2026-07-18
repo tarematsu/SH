@@ -37,6 +37,13 @@ test('monitor Queue modules redeploy the consolidated monitor Worker', () => {
   assert.deepEqual(select(['worker/src/other-monitor-entry.js']).workers, ['sh-monitor-other']);
 });
 
+test('monitor cutover script redeploys only the consolidated monitor Worker', () => {
+  const result = select(['worker/scripts/deploy-other-monitor.mjs']);
+  assert.deepEqual(result.workers, ['sh-monitor-other']);
+  assert.deepEqual(result.commands, ['deploy:other']);
+  assert.deepEqual(result.diagnostics, ['sh-monitor-other']);
+});
+
 test('bundled site function changes redeploy only the Pages materializer', () => {
   const result = select(['site/functions/api/minute-facts/current.js']);
   assert.deepEqual(result.workers, ['sh-pages-read-model']);
