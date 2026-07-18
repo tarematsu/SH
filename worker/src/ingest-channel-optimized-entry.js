@@ -1,15 +1,11 @@
-let preparedModulesPromise;
+let preparedRuntimePromise;
 let rawStagesPromise;
 let legacyIngestPromise;
 let ingestFactStagesPromise;
 let ingestFinalizePromise;
 
-function loadPreparedModules() {
-  return preparedModulesPromise ??= Promise.all([
-    import('./ingest-prepared-channel.js'),
-    import('./queue-analysis-transfer.js'),
-    import('./snapshot-analysis-transfer.js'),
-  ]);
+function loadPreparedRuntime() {
+  return preparedRuntimePromise ??= import('./ingest-prepared-runtime.js');
 }
 
 function loadRawStages() {
@@ -30,12 +26,8 @@ function loadIngestFinalize() {
 
 export async function ingestRawCollection(env, message, dependencies = {}) {
   if (Number(message?.message_version) === 3) {
-    const [prepared, queueAnalysis, snapshotAnalysis] = await loadPreparedModules();
-    if (message.snapshot) {
-      snapshotAnalysis.restoreSnapshotAnalysis(message.snapshot, message.snapshot_analysis);
-    }
-    if (message.queue) queueAnalysis.restoreQueueAnalysis(message.queue, message.queue_analysis);
-    return prepared.ingestPreparedRawCollection(env, message);
+    const runtime = await loadPreparedRuntime();
+    return runtime.ingestPreparedRuntime(env, message);
   }
   if (env?.INGEST_FINALIZE_QUEUE?.send && dependencies.inline !== true) {
     const stages = await loadRawStages();
