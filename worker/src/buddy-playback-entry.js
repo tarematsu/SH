@@ -1,4 +1,9 @@
 import { buddyPlaybackConfig } from './buddy-playback.js';
+import {
+  BUDDY_FETCH_COMPUTE_STAGE,
+  processBuddyFetchCompute,
+  processBuddyFetchPlan,
+} from './buddy-playback-fetch-stages.js';
 import { recordBuddyFailure, recordBuddySuccess } from './buddy-health.js';
 import {
   BUDDY_PARSE_COMPUTE_STAGE,
@@ -16,7 +21,11 @@ const BENIGN_SKIP_REASONS = new Set([
   'stale-cycle',
 ]);
 const PIPELINE_STAGES = new Set(['fetch', 'parse', 'parse-store', 'metadata', 'commit']);
-const DIRECT_STAGES = new Set([BUDDY_PARSE_COMPUTE_STAGE, BUDDY_PARSE_STORE_STAGE]);
+const DIRECT_STAGES = new Set([
+  BUDDY_FETCH_COMPUTE_STAGE,
+  BUDDY_PARSE_COMPUTE_STAGE,
+  BUDDY_PARSE_STORE_STAGE,
+]);
 const NEXT_STAGE_OPTIONS = Object.freeze({ contentType: 'json', delaySeconds: 1 });
 const RETRY_60_SECONDS = Object.freeze({ delaySeconds: 60 });
 const EMPTY_DEPENDENCIES = Object.freeze({});
@@ -83,12 +92,24 @@ function pipelineDependencies(task, dependencies) {
 
 async function runTask(env, task, dependencies) {
   const channelAlias = task.channelAlias || buddyPlaybackConfig(env).alias;
+  if (task.directStage === BUDDY_FETCH_COMPUTE_STAGE) {
+    const run = dependencies.fetchCompute || processBuddyFetchCompute;
+    return run(env, { ...task, channelAlias }, dependencies.fetch || EMPTY_DEPENDENCIES);
+  }
   if (task.directStage === BUDDY_PARSE_COMPUTE_STAGE) {
     const run = dependencies.parseCompute || processBuddyParseCompute;
     return run(env, { ...task, channelAlias });
   }
   if (task.directStage === BUDDY_PARSE_STORE_STAGE) {
     const run = dependencies.parseStore || processBuddyParseStore;
+    return run(env, { ...task, channelAlias });
+  }
+  const productionPlan = !task.expectedStage
+    && task.cycleAt === null
+    && !dependencies.advance
+    && !dependencies.pipeline;
+  if (dependencies.fetchPlan || productionPlan) {
+    const run = dependencies.fetchPlan || processBuddyFetchPlan;
     return run(env, { ...task, channelAlias });
   }
   const run = dependencies.advance || advanceBuddyPlaybackPipeline;
