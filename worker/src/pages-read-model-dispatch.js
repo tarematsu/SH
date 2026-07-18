@@ -1,6 +1,6 @@
 const MINUTE_MS = 60_000;
 const CYCLE_MS = 6 * 60 * MINUTE_MS;
-const TRACK_HISTORY_WINDOW_MINUTES = 60;
+const TRACK_HISTORY_WINDOW_MINUTES = 175;
 
 const CYCLE_SLOT_TASKS = new Map([
   [0, 'dashboard-history'],
@@ -79,7 +79,7 @@ export async function runDispatchedPagesReadModelTask(env, now = Date.now(), dep
       throw new Error('Pages read-model task is missing D1 binding(s): BUDDIES_DB, MINUTE_DB');
     }
     const run = dependencies.runTrackHistoryStep
-      || (await import('./pages-track-history-cycle.js')).runTrackHistoryCycleStep;
+      || (await import('./pages-track-history-split-cycle.js')).runSplitTrackHistoryCycleStep;
     return run(env, timestamp, dependencies);
   }
   const legacy = await import('./pages-six-hour-read-model.js');
