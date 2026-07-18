@@ -5,6 +5,7 @@ import {
   chooseMaterializedTrackCount,
   expansionRequest,
   materializeQueueWindow,
+  prepareMaterializedQueue,
   QUEUE_MATERIALIZATION_DEFAULTS,
 } from '../src/queue-materialization.js';
 import { queueStructuralHash } from '../src/minute-facts-queue-cache.js';
@@ -91,10 +92,21 @@ test('materialized queue retains total count and full source hash while omitting
   assert.equal(await queueStructuralHash(materialized.queue), 'full-structure-a');
 });
 
+test('producer computes separate persistence hashes for each materialized window', async () => {
+  const queue = fullQueue();
+  const analysis = fullAnalysis(queue);
+  const first = await prepareMaterializedQueue(null, queue, analysis, { QUEUE_INITIAL_TRACKS: 22 });
+  const expanded = await prepareMaterializedQueue(null, queue, analysis, { QUEUE_INITIAL_TRACKS: 32 });
+
+  assert.equal(typeof first.analysis.structural_hash, 'string');
+  assert.equal(typeof first.analysis.likes_hash, 'string');
+  assert.notEqual(first.analysis.structural_hash, analysis.structural_hash);
+  assert.notEqual(first.analysis.structural_hash, expanded.analysis.structural_hash);
+  assert.equal(first.analysis.source_structural_hash, analysis.structural_hash);
+  assert.equal(expanded.analysis.source_structural_hash, analysis.structural_hash);
+});
+
 test('expansion requests ten more tracks only at the five-track low-water mark', () => {
-  const queue = {
-    ...fullQueue().tracks.slice(0, 22),
-  };
   const materialized = {
     station_id: 20,
     queue_id: 30,
