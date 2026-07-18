@@ -26,12 +26,15 @@ const valid = (value) => {
 const ts = (value) => Date.parse(`${value}T00:00:00Z`);
 
 export const TRACK_HISTORY_GRACE_MS = 5 * 60 * 1000;
-export const TRACK_HISTORY_SQL = `WITH queue_starts AS (
+export const TRACK_HISTORY_SQL = `WITH RECURSIVE queue_starts AS (
       SELECT DISTINCT station_id,start_time
       FROM sh_queue_items
       WHERE start_time IS NOT NULL AND start_time < ?
     ), queue_instances AS (
       SELECT station_id,start_time,
+        LAG(start_time) OVER (
+          PARTITION BY station_id ORDER BY start_time
+        ) AS previous_start_time,
         LEAD(start_time) OVER (
           PARTITION BY station_id ORDER BY start_time
         ) AS next_start_time
@@ -145,18 +148,23 @@ export const TRACK_HISTORY_SQL = `WITH queue_starts AS (
       FROM state_spans
       WHERE COALESCE(is_paused,0)=0
     ), normalized AS (
-      SELECT q.*,
+      SELECT q.*,queues.previous_start_time,queues.next_start_time,
         CASE WHEN json_valid(q.raw_json) THEN q.raw_json ELSE '{}' END AS safe_raw_json,
         CASE
           WHEN q.duration_ms BETWEEN 1000 AND 21600000 THEN q.duration_ms
           ELSE NULL
         END AS normalized_duration_ms
       FROM sh_queue_items q
+      JOIN queue_instances queues
+        ON queues.station_id=q.station_id AND queues.start_time=q.start_time
       JOIN raw_evidence evidence
         ON evidence.station_id=q.station_id AND evidence.start_time=q.start_time
       WHERE q.start_time < ?
     ), timed_offsets AS (
       SELECT n.*,
+        ROW_NUMBER() OVER (
+          PARTITION BY n.station_id,n.start_time ORDER BY n.position
+        ) AS queue_item_rank,
         COALESCE(SUM(n.normalized_duration_ms) OVER (
           PARTITION BY n.station_id,n.start_time ORDER BY n.position
           ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING
@@ -166,25 +174,107 @@ export const TRACK_HISTORY_SQL = `WITH queue_starts AS (
           ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING
         ),0) AS invalid_durations_before
       FROM normalized n
+    ), queue_boundary_progress AS (
+      SELECT queues.station_id,queues.start_time,
+        COALESCE(MAX(
+          spans.active_before_ms+MIN(
+            MAX(0,queues.next_start_time-spans.state_at),
+            spans.active_duration_ms
+              +CASE WHEN spans.is_terminal=1 THEN ${TRACK_HISTORY_GRACE_MS} ELSE 0 END
+          )
+        ),0) AS active_at_boundary_ms
+      FROM queue_instances queues
+      LEFT JOIN active_spans spans
+        ON spans.station_id=queues.station_id
+       AND spans.start_time=queues.start_time
+       AND spans.state_at<queues.next_start_time
+      WHERE queues.next_start_time IS NOT NULL
+      GROUP BY queues.station_id,queues.start_time
+    ), timed_queues AS (
+      SELECT station_id,start_time,previous_start_time,next_start_time,
+        ROW_NUMBER() OVER (
+          PARTITION BY station_id ORDER BY start_time
+        ) AS timed_queue_rank
+      FROM (
+        SELECT DISTINCT station_id,start_time,previous_start_time,next_start_time
+        FROM timed_offsets
+      )
+    ), queue_adjustments(
+      station_id,timed_queue_rank,start_time,playback_shift_ms,continuation_item_id
+    ) AS (
+      SELECT queues.station_id,queues.timed_queue_rank,queues.start_time,0,NULL
+      FROM timed_queues queues
+      WHERE queues.timed_queue_rank=1
+      UNION ALL
+      SELECT current_queue.station_id,current_queue.timed_queue_rank,current_queue.start_time,
+        CASE WHEN previous_item.id IS NULL THEN 0
+          ELSE previous_adjustment.playback_shift_ms+boundary.active_at_boundary_ms
+            -previous_item.playback_offset_ms
+        END AS playback_shift_ms,
+        CASE WHEN previous_item.id IS NULL THEN NULL ELSE current_first.id END AS continuation_item_id
+      FROM queue_adjustments previous_adjustment
+      JOIN timed_queues current_queue
+        ON current_queue.station_id=previous_adjustment.station_id
+       AND current_queue.timed_queue_rank=previous_adjustment.timed_queue_rank+1
+      JOIN timed_offsets current_first
+        ON current_first.station_id=current_queue.station_id
+       AND current_first.start_time=current_queue.start_time
+       AND current_first.queue_item_rank=1
+      LEFT JOIN queue_boundary_progress boundary
+        ON boundary.station_id=previous_adjustment.station_id
+       AND boundary.start_time=previous_adjustment.start_time
+      LEFT JOIN timed_offsets previous_item
+        ON current_queue.previous_start_time=previous_adjustment.start_time
+       AND previous_item.station_id=previous_adjustment.station_id
+       AND previous_item.start_time=previous_adjustment.start_time
+       AND previous_item.normalized_duration_ms IS NOT NULL
+       AND previous_item.invalid_durations_before=0
+       AND previous_item.playback_offset_ms
+         <=previous_adjustment.playback_shift_ms+COALESCE(boundary.active_at_boundary_ms,0)
+       AND previous_item.playback_offset_ms+previous_item.normalized_duration_ms
+         >previous_adjustment.playback_shift_ms+COALESCE(boundary.active_at_boundary_ms,0)
+       AND (
+         (current_first.queue_track_id IS NOT NULL
+           AND current_first.queue_track_id=previous_item.queue_track_id)
+         OR (current_first.stationhead_track_id IS NOT NULL
+           AND current_first.stationhead_track_id=previous_item.stationhead_track_id)
+         OR (current_first.spotify_id IS NOT NULL
+           AND current_first.spotify_id=previous_item.spotify_id)
+         OR (current_first.apple_music_id IS NOT NULL
+           AND current_first.apple_music_id=previous_item.apple_music_id)
+         OR (current_first.isrc IS NOT NULL
+           AND UPPER(current_first.isrc)=UPPER(previous_item.isrc))
+       )
+    ), adjusted_offsets AS (
+      SELECT offsets.*,
+        offsets.playback_offset_ms-adjustments.playback_shift_ms
+          AS adjusted_playback_offset_ms,
+        CASE WHEN offsets.id=adjustments.continuation_item_id THEN 1 ELSE 0 END
+          AS is_continuation
+      FROM timed_offsets offsets
+      JOIN queue_adjustments adjustments
+        ON adjustments.station_id=offsets.station_id
+       AND adjustments.start_time=offsets.start_time
     ), timed AS (
       SELECT offsets.*,
         (
-          SELECT span.state_at+(offsets.playback_offset_ms-span.active_before_ms)
+          SELECT span.state_at+(offsets.adjusted_playback_offset_ms-span.active_before_ms)
           FROM active_spans span
           WHERE span.station_id=offsets.station_id
             AND span.start_time=offsets.start_time
-            AND offsets.playback_offset_ms>=span.active_before_ms
+            AND offsets.adjusted_playback_offset_ms>=span.active_before_ms
             AND (
-              offsets.playback_offset_ms<span.active_before_ms+span.active_duration_ms
+              offsets.adjusted_playback_offset_ms<span.active_before_ms+span.active_duration_ms
               OR (
                 span.is_terminal=1
-                AND offsets.playback_offset_ms<=span.active_before_ms+span.active_duration_ms+?
+                AND offsets.adjusted_playback_offset_ms
+                  <=span.active_before_ms+span.active_duration_ms+?
               )
             )
           ORDER BY span.active_before_ms DESC,span.state_at DESC,span.state_id DESC
           LIMIT 1
         ) AS played_at
-      FROM timed_offsets offsets
+      FROM adjusted_offsets offsets
     ), plays AS (
       SELECT
         strftime('%Y-%m-%d', p.played_at / 1000, 'unixepoch') AS play_date,
@@ -213,6 +303,8 @@ export const TRACK_HISTORY_SQL = `WITH queue_starts AS (
       WHERE p.played_at IS NOT NULL
         AND p.played_at >= ? AND p.played_at < ?
         AND p.invalid_durations_before = 0
+        AND (p.next_start_time IS NULL OR p.played_at<p.next_start_time)
+        AND p.is_continuation=0
     ), play_days AS (
       SELECT DISTINCT play_date,
         CAST(strftime('%s', play_date) AS INTEGER) * 1000 AS period_start,
@@ -391,7 +483,7 @@ export async function handleTrackHistory({ request, env, waitUntil }) {
       historical_recovery: env.MINUTE_DB
         ? 'facts_downstream_archive_with_wall_clock_pause_mapping'
         : 'channel_snapshots_with_wall_clock_pause_mapping',
-      method: 'queue_checkpoint_terminal_active_span_and_namespaced_like_reachability_utc_sql_preaggregate',
+      method: 'queue_checkpoint_terminal_active_span_revision_boundary_carryover_and_namespaced_like_reachability_utc_sql_preaggregate',
     });
   } catch (error) {
     if (/no such table|no such column/i.test(String(error?.message || ''))) {
