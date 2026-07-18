@@ -25,20 +25,22 @@ export async function processHostMonitorTask(env, body, dependencies = {}) {
   };
 }
 
-export default {
-  async queue(batch, env) {
-    for (const message of batch.messages) {
-      try {
-        const result = await processHostMonitorTask(env, message.body);
-        console.log(JSON.stringify(result));
-        message.ack();
-      } catch (error) {
-        console.error(JSON.stringify({
-          event: 'host_monitor_task_failed',
-          error: String(error?.message || error).slice(0, 800),
-        }));
-        message.retry();
-      }
+export async function runHostMonitorQueue(batch, env, dependencies = {}) {
+  for (const message of batch.messages || []) {
+    try {
+      const result = await processHostMonitorTask(env, message.body, dependencies);
+      console.log(JSON.stringify(result));
+      message.ack();
+    } catch (error) {
+      console.error(JSON.stringify({
+        event: 'host_monitor_task_failed',
+        error: String(error?.message || error).slice(0, 800),
+      }));
+      message.retry();
     }
-  },
+  }
+}
+
+export default {
+  queue: runHostMonitorQueue,
 };
