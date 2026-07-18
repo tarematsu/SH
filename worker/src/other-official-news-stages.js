@@ -1,12 +1,12 @@
 export const OFFICIAL_NEWS_STAGE_MESSAGE = 'other-official-news-stage';
 const JSON_QUEUE_SEND_OPTIONS = Object.freeze({ contentType: 'json' });
-let probeModulePromise;
+let splitModulePromise;
 let reconcileModulePromise;
 let utilsModulePromise;
 
-function loadProbeModule() {
-  probeModulePromise ||= import('./official-news-probe.js');
-  return probeModulePromise;
+function loadSplitModule() {
+  splitModulePromise ||= import('./official-news-split-stages.js');
+  return splitModulePromise;
 }
 
 function loadReconcileModule() {
@@ -19,11 +19,11 @@ function loadUtilsModule() {
   return utilsModulePromise;
 }
 
-async function sendReconcile(env, scheduledAt, dependencies) {
+async function sendStage(env, stage, scheduledAt, dependencies) {
   const body = {
     message_type: OFFICIAL_NEWS_STAGE_MESSAGE,
     message_version: 1,
-    stage: 'reconcile',
+    stage,
     scheduled_at: scheduledAt,
   };
   if (dependencies.send) return dependencies.send(body);
@@ -31,14 +31,33 @@ async function sendReconcile(env, scheduledAt, dependencies) {
   return env.HOST_MONITOR_QUEUE.send(body, JSON_QUEUE_SEND_OPTIONS);
 }
 
-async function runProbe(env, scheduledAt, dependencies) {
-  const probe = dependencies.probe || (await loadProbeModule()).runOfficialNewsMonitor;
+async function stageConfig(env, dependencies) {
   const config = dependencies.config || (await loadUtilsModule()).officialNewsConfig;
-  const result = await probe(env, config(env), scheduledAt);
-  await sendReconcile(env, scheduledAt, dependencies);
+  return config(env);
+}
+
+async function runCheck(env, scheduledAt, dependencies) {
+  const check = dependencies.check || (await loadSplitModule()).runOfficialNewsCheckOnly;
+  const result = await check(env, await stageConfig(env, dependencies), scheduledAt);
+  const nextStage = result?.reason === 'check-failed' ? 'reconcile' : 'probe';
+  await sendStage(env, nextStage, scheduledAt, dependencies);
+  return {
+    stage: 'check',
+    pending: true,
+    next_stage: nextStage,
+    skipped: result?.skipped === true,
+    reason: result?.reason ?? null,
+  };
+}
+
+async function runProbe(env, scheduledAt, dependencies) {
+  const probe = dependencies.probe || (await loadSplitModule()).runOfficialNewsProbeOnly;
+  const result = await probe(env, await stageConfig(env, dependencies), scheduledAt);
+  await sendStage(env, 'reconcile', scheduledAt, dependencies);
   return {
     stage: 'probe',
     pending: true,
+    next_stage: 'reconcile',
     skipped: result?.skipped === true,
     reason: result?.reason ?? null,
   };
@@ -63,13 +82,14 @@ export function officialNewsStageTask(body) {
   }
   const scheduledAt = Number(body.scheduled_at);
   if (!Number.isFinite(scheduledAt)) throw new Error('official news stage timestamp is invalid');
-  return {
-    stage: body.stage === 'reconcile' ? 'reconcile' : 'probe',
-    scheduledAt,
-  };
+  let stage = 'check';
+  if (body.stage === 'probe') stage = 'probe';
+  else if (body.stage === 'reconcile') stage = 'reconcile';
+  return { stage, scheduledAt };
 }
 
 export async function processOfficialNewsStage(env, task, dependencies = {}) {
   if (task.stage === 'reconcile') return runReconcile(env, task.scheduledAt, dependencies);
-  return runProbe(env, task.scheduledAt, dependencies);
+  if (task.stage === 'probe') return runProbe(env, task.scheduledAt, dependencies);
+  return runCheck(env, task.scheduledAt, dependencies);
 }
