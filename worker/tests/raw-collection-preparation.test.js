@@ -5,10 +5,14 @@ import { ingestRawCollection } from '../src/ingest-channel-optimized-entry.js';
 import { collectRawChannel } from '../src/raw-collector-entry.js';
 import {
   processRawAnalysisStage,
+  processRawLikesStage,
   processRawMaterializeStage,
   processRawNormalizeStage,
+  processRawStructuralStage,
   RAW_ANALYSIS_MESSAGE,
+  RAW_LIKES_MESSAGE,
   RAW_MATERIALIZE_MESSAGE,
+  RAW_STRUCTURAL_MESSAGE,
 } from '../src/raw-collection-preparation.js';
 
 function channelBody() {
@@ -56,6 +60,14 @@ function rawTask(body = channelBody()) {
   };
 }
 
+async function normalizedTask() {
+  const sent = [];
+  await processRawNormalizeStage({ CHANNEL_ALIAS: 'buddies' }, rawTask(), {
+    send: async (message) => sent.push(message),
+  });
+  return sent[0];
+}
+
 test('production collector durably hands off raw text without parsing or hashing it', async () => {
   const sent = [];
   await collectRawChannel({
@@ -100,37 +112,50 @@ test('normalize stage converts raw JSON to a compact snapshot and full queue', a
   assert.equal(Object.hasOwn(sent[0], 'body'), false);
 });
 
-test('analysis stage computes hashes in a separate Queue invocation', async () => {
-  const normalized = [];
-  await processRawNormalizeStage({ CHANNEL_ALIAS: 'buddies' }, rawTask(), {
-    send: async (message) => normalized.push(message),
-  });
-  const sent = [];
-  const result = await processRawAnalysisStage({}, normalized[0], {
+test('snapshot, structural and likes hashes run in separate Queue invocations', async () => {
+  const normalized = await normalizedTask();
+  const snapshotSent = [];
+  const snapshotResult = await processRawAnalysisStage({}, normalized, {
     prepareSnapshot: async () => ({ frame: { channelId: 10 }, hash: 'snapshot-hash' }),
-    prepareQueue: async () => ({
+    send: async (message) => snapshotSent.push(message),
+  });
+
+  assert.equal(snapshotResult.event, 'raw_collection_snapshot_analyzed');
+  assert.equal(snapshotSent[0].message_type, RAW_STRUCTURAL_MESSAGE);
+  assert.equal(snapshotSent[0].snapshot_analysis.hash, 'snapshot-hash');
+
+  const structuralSent = [];
+  const structuralResult = await processRawStructuralStage({}, snapshotSent[0], {
+    prepareStructural: async () => ({
       structural: { tracks: [{ position: 0 }] },
       likes: { complete: true, payload: [] },
       structural_hash: 'queue-hash',
-      likes_hash: 'likes-hash',
+      likes_hash: null,
     }),
-    send: async (message) => sent.push(message),
+    send: async (message) => structuralSent.push(message),
   });
 
-  assert.equal(result.event, 'raw_collection_analyzed');
-  assert.equal(sent.length, 1);
-  assert.equal(sent[0].message_type, RAW_MATERIALIZE_MESSAGE);
-  assert.equal(sent[0].snapshot_analysis.hash, 'snapshot-hash');
-  assert.equal(sent[0].queue_analysis.structural_hash, 'queue-hash');
+  assert.equal(structuralResult.event, 'raw_collection_structural_analyzed');
+  assert.equal(structuralSent[0].message_type, RAW_LIKES_MESSAGE);
+  assert.equal(structuralSent[0].queue_analysis.structural_hash, 'queue-hash');
+
+  const likesSent = [];
+  const likesResult = await processRawLikesStage({}, structuralSent[0], {
+    prepareLikes: async (_queue, analysis) => ({ ...analysis, likes_hash: 'likes-hash' }),
+    send: async (message) => likesSent.push(message),
+  });
+
+  assert.equal(likesResult.event, 'raw_collection_likes_analyzed');
+  assert.equal(likesSent[0].message_type, RAW_MATERIALIZE_MESSAGE);
+  assert.equal(likesSent[0].snapshot_analysis.hash, 'snapshot-hash');
+  assert.equal(likesSent[0].queue_analysis.structural_hash, 'queue-hash');
+  assert.equal(likesSent[0].queue_analysis.likes_hash, 'likes-hash');
 });
 
 test('materialization stage emits the existing prepared v3 contract', async () => {
-  const normalized = [];
-  await processRawNormalizeStage({ CHANNEL_ALIAS: 'buddies' }, rawTask(), {
-    send: async (message) => normalized.push(message),
-  });
+  const normalized = await normalizedTask();
   const analyzed = {
-    ...normalized[0],
+    ...normalized,
     message_type: RAW_MATERIALIZE_MESSAGE,
     snapshot_analysis: { frame: { channelId: 10 }, hash: 'snapshot-hash' },
     queue_analysis: { structural_hash: 'queue-hash' },

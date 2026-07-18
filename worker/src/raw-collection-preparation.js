@@ -5,13 +5,16 @@ import {
   validateChannelPayload,
 } from './collector-payload.js';
 import {
-  prepareQueueAnalysis,
+  prepareQueueLikesAnalysis,
+  prepareQueueStructuralAnalysis,
   serializedQueueAnalysis,
 } from './queue-analysis-transfer.js';
 import { prepareMaterializedQueue } from './queue-materialization.js';
 import { prepareSnapshotAnalysis } from './snapshot-analysis-transfer.js';
 
 export const RAW_ANALYSIS_MESSAGE = 'stationhead-raw-analysis';
+export const RAW_STRUCTURAL_MESSAGE = 'stationhead-raw-structural-analysis';
+export const RAW_LIKES_MESSAGE = 'stationhead-raw-likes-analysis';
 export const RAW_MATERIALIZE_MESSAGE = 'stationhead-raw-materialize';
 
 function integer(value) {
@@ -75,6 +78,17 @@ function validatePreparedStage(body, expectedType) {
   return { snapshot, queue, common: commonTask(body) };
 }
 
+function preparedMessage(type, common, snapshot, queue, details = null) {
+  return {
+    message_type: type,
+    message_version: 1,
+    ...common,
+    snapshot,
+    queue,
+    ...(details || {}),
+  };
+}
+
 export async function processRawNormalizeStage(env, body, dependencies = {}) {
   const channel = channelPayload(body);
   const common = commonTask(body);
@@ -94,18 +108,16 @@ export async function processRawNormalizeStage(env, body, dependencies = {}) {
   }
   const queue = extractQueue(channel, state.stationId);
   // extractQueue caches structural/like payloads on non-enumerable Symbols.
-  // Serialize that seed before the Queue boundary; hashes stay in the next
-  // invocation, but the structural walk is not repeated and the seed is not lost.
+  // Serialize that seed before the Queue boundary; hashes stay in later
+  // invocations, while the structural walk is not repeated.
   const queueAnalysisSeed = serializedQueueAnalysis(queue);
-  const next = {
-    message_type: RAW_ANALYSIS_MESSAGE,
-    message_version: 1,
-    ...common,
+  await sendNext(env, preparedMessage(
+    RAW_ANALYSIS_MESSAGE,
+    common,
     snapshot,
     queue,
-    queue_analysis_seed: queueAnalysisSeed,
-  };
-  await sendNext(env, next, dependencies);
+    { queue_analysis_seed: queueAnalysisSeed },
+  ), dependencies);
   const result = {
     event: 'raw_collection_normalized',
     observed_at: common.observed_at,
@@ -120,23 +132,67 @@ export async function processRawNormalizeStage(env, body, dependencies = {}) {
 export async function processRawAnalysisStage(env, body, dependencies = {}) {
   const { snapshot, queue, common } = validatePreparedStage(body, RAW_ANALYSIS_MESSAGE);
   const prepareSnapshot = dependencies.prepareSnapshot || prepareSnapshotAnalysis;
-  const prepareQueue = dependencies.prepareQueue || prepareQueueAnalysis;
-  const [snapshotAnalysis, queueAnalysis] = await Promise.all([
-    prepareSnapshot(snapshot),
-    prepareQueue(queue, body.queue_analysis_seed || null),
-  ]);
-  const next = {
-    message_type: RAW_MATERIALIZE_MESSAGE,
-    message_version: 1,
-    ...common,
+  const snapshotAnalysis = await prepareSnapshot(snapshot);
+  await sendNext(env, preparedMessage(
+    RAW_STRUCTURAL_MESSAGE,
+    common,
     snapshot,
     queue,
-    snapshot_analysis: snapshotAnalysis,
-    queue_analysis: queueAnalysis,
-  };
-  await sendNext(env, next, dependencies);
+    {
+      snapshot_analysis: snapshotAnalysis,
+      queue_analysis_seed: body.queue_analysis_seed || null,
+    },
+  ), dependencies);
   const result = {
-    event: 'raw_collection_analyzed',
+    event: 'raw_collection_snapshot_analyzed',
+    observed_at: common.observed_at,
+    channel_id: integer(snapshot.channel_id),
+    queue_tracks: Array.isArray(queue?.tracks) ? queue.tracks.length : 0,
+  };
+  console.log(JSON.stringify(result));
+  return result;
+}
+
+export async function processRawStructuralStage(env, body, dependencies = {}) {
+  const { snapshot, queue, common } = validatePreparedStage(body, RAW_STRUCTURAL_MESSAGE);
+  const prepareStructural = dependencies.prepareStructural || prepareQueueStructuralAnalysis;
+  const queueAnalysis = await prepareStructural(queue, body.queue_analysis_seed || null);
+  await sendNext(env, preparedMessage(
+    RAW_LIKES_MESSAGE,
+    common,
+    snapshot,
+    queue,
+    {
+      snapshot_analysis: body.snapshot_analysis || null,
+      queue_analysis: queueAnalysis,
+    },
+  ), dependencies);
+  const result = {
+    event: 'raw_collection_structural_analyzed',
+    observed_at: common.observed_at,
+    channel_id: integer(snapshot.channel_id),
+    queue_tracks: Array.isArray(queue?.tracks) ? queue.tracks.length : 0,
+  };
+  console.log(JSON.stringify(result));
+  return result;
+}
+
+export async function processRawLikesStage(env, body, dependencies = {}) {
+  const { snapshot, queue, common } = validatePreparedStage(body, RAW_LIKES_MESSAGE);
+  const prepareLikes = dependencies.prepareLikes || prepareQueueLikesAnalysis;
+  const queueAnalysis = await prepareLikes(queue, body.queue_analysis || null);
+  await sendNext(env, preparedMessage(
+    RAW_MATERIALIZE_MESSAGE,
+    common,
+    snapshot,
+    queue,
+    {
+      snapshot_analysis: body.snapshot_analysis || null,
+      queue_analysis: queueAnalysis,
+    },
+  ), dependencies);
+  const result = {
+    event: 'raw_collection_likes_analyzed',
     observed_at: common.observed_at,
     channel_id: integer(snapshot.channel_id),
     queue_tracks: Array.isArray(queue?.tracks) ? queue.tracks.length : 0,

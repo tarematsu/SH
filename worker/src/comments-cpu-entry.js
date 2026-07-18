@@ -3,9 +3,10 @@ import commentsWorker from './comments-entry.js';
 const activeCommentsEnvs = new WeakMap();
 
 function compactTrackIdentities(tracks) {
-  const compactTracks = new Array(tracks.length);
+  const trackCount = tracks.length;
+  const compactTracks = new Array(trackCount);
   let compactCount = 0;
-  for (let index = 0; index < tracks.length; index += 1) {
+  for (let index = 0; index < trackCount; index += 1) {
     const track = tracks[index];
     if (!track || typeof track !== 'object') continue;
     const spotifyId = track.spotify_id;
