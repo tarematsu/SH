@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
 import { processMinuteRebuildStage } from '../src/minute-rebuild-entry.js';
@@ -119,4 +120,87 @@ test('rebuild commit continues with the next pending candidate before scanning m
   assert.equal(result.pending, true);
   assert.equal(h.enqueued[0].stage, 'backfill-prepare');
   assert.equal(h.enqueued[0].delaySeconds, 1);
+});
+
+test('durable rebuild commit dispatches one derive trigger without batching fact work', async () => {
+  const h = harness();
+  const sent = [];
+  const prepared = {
+    candidate: {
+      minuteAt: 120_000,
+      observedAt: 125_000,
+      snapshot: { channel_id: 10, station_id: 20 },
+      rebuild: { mode: 'exact' },
+    },
+    skip_existing: false,
+  };
+  const result = await processMinuteRebuildStage({
+    ...env,
+    MINUTE_DERIVE_QUEUE: {
+      async send(body, options) { sent.push({ body, options }); },
+    },
+  }, {
+    ...base,
+    stage: 'backfill-commit',
+    prepared,
+  }, {
+    ...h.dependencies,
+    commitBackfill: async () => ({ enqueued: 1, pending_candidates: 0 }),
+  });
+
+  assert.equal(result.result.derive_dispatched, true);
+  assert.equal(sent.length, 1);
+  assert.deepEqual(sent[0], {
+    body: {
+      message_type: 'minute-fact-derive',
+      message_version: 1,
+      job_id: 'minute-fact:10:120000',
+      channel_id: 10,
+      minute_at: 120_000,
+    },
+    options: { contentType: 'json' },
+  });
+});
+
+test('gap commit dispatches at most the first prepared candidate per invocation', async () => {
+  const h = harness();
+  const sent = [];
+  const prepared = {
+    attempted: [
+      { minuteAt: 60_000, snapshot: { channel_id: 10 } },
+      { minuteAt: 120_000, snapshot: { channel_id: 10 } },
+    ],
+  };
+  const result = await processMinuteRebuildStage({
+    ...env,
+    MINUTE_DERIVE_QUEUE: {
+      async send(body) { sent.push(body); },
+    },
+  }, {
+    ...base,
+    stage: 'gap-commit',
+    prepared,
+  }, {
+    ...h.dependencies,
+    commitGapScan: async () => ({ event: 'minute_fact_gap_scan_summary', enqueued: 2 }),
+  });
+
+  assert.equal(result.result.derive_dispatched, true);
+  assert.deepEqual(sent.map((body) => body.minute_at), [60_000]);
+});
+
+test('recovery throughput raises only dispatch breadth while keeping Queue invocations isolated', () => {
+  const maintenance = JSON.parse(readFileSync(new URL('../wrangler.minute.jsonc', import.meta.url), 'utf8'));
+  const rebuild = JSON.parse(readFileSync(new URL('../wrangler.minute-rebuild.jsonc', import.meta.url), 'utf8'));
+
+  assert.equal(maintenance.vars.DERIVE_DISPATCH_LIMIT, 20);
+  assert.equal(rebuild.vars.REBUILD_SOURCE_ROWS, 1);
+  assert.equal(rebuild.vars.REBUILD_MAX_JOBS, 1);
+  assert.equal(rebuild.vars.GAP_SCAN_MAX_JOBS, 1);
+  assert.equal(rebuild.queues.consumers[0].max_batch_size, 1);
+  assert.equal(rebuild.queues.consumers[0].max_concurrency, 1);
+  assert.equal(
+    rebuild.queues.producers.some(({ binding }) => binding === 'MINUTE_DERIVE_QUEUE'),
+    true,
+  );
 });
