@@ -15,7 +15,7 @@ on:
       lookback_minutes:
         description: Used when since is omitted
         required: false
-        default: "120"
+        default: "30"
         type: string
 
 permissions:
@@ -34,7 +34,7 @@ jobs:
       AWS_DEFAULT_REGION: auto
       R2_BUCKET: cloudflare-managed-1609110a
       LOG_SINCE: ${{ inputs.since || '' }}
-      LOOKBACK_MINUTES: ${{ inputs.lookback_minutes || '120' }}
+      LOOKBACK_MINUTES: ${{ inputs.lookback_minutes || '30' }}
 
     steps:
       - name: Derive R2 credentials
@@ -80,7 +80,7 @@ jobs:
               if cutoff.tzinfo is None:
                   cutoff = cutoff.replace(tzinfo=dt.timezone.utc)
           else:
-              cutoff = dt.datetime.now(dt.timezone.utc) - dt.timedelta(minutes=max(1, int(os.environ.get('LOOKBACK_MINUTES', '120'))))
+              cutoff = dt.datetime.now(dt.timezone.utc) - dt.timedelta(minutes=max(1, int(os.environ.get('LOOKBACK_MINUTES', '30'))))
           selected = []
           for item in objects:
               modified = dt.datetime.fromisoformat(str(item['LastModified']).replace('Z', '+00:00'))
@@ -121,9 +121,12 @@ jobs:
           python3 - <<'PY'
           import gzip, json, math, pathlib, statistics
           targets = {
-              'sh-buddies-monitor', 'sh-buddies-ingest', 'sh-buddies-comments',
-              'sh-minute-read-model', 'sh-pages-read-model', 'sh-monitor-maintenance',
-              'sh-minute-ingest', 'sh-minute-derive', 'sh-minute-maintenance', 'sh-monitor-other',
+              'sh-buddies-monitor', 'sh-buddies-persist', 'sh-buddies-ingest', 'sh-buddies-comments',
+              'sh-minute-read-model', 'sh-track-metadata',
+              'sh-pages-read-model', 'sh-monitor-maintenance',
+              'sh-minute-ingest', 'sh-minute-derive', 'sh-minute-enrichment',
+              'sh-minute-rebuild', 'sh-minute-maintenance',
+              'sh-monitor-other', 'sh-buddy-playback',
           }
           output_dir = pathlib.Path('observability-logs')
           full_path = output_dir / 'sh-workers.ndjson'
@@ -213,7 +216,7 @@ jobs:
                   'cpu_p95': percentile(samples, 0.95), 'cpu_max': max(samples) if samples else None,
               }
           (output_dir / 'summary.json').write_text(json.dumps(summary, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
-          print(json.dumps(summary, ensure_ascii=False, separators=(',', ':')))
+          print(json.dumps(summary, ensure_ascii=False,separators=(',', ':')))
           PY
 
       - name: Upload filtered logs and compact analysis

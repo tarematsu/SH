@@ -1,5 +1,5 @@
 import './fetch-guard.js';
-import { runPagesSixHourTask } from './pages-six-hour-read-model.js';
+import { runDispatchedPagesReadModelTask } from './pages-read-model-dispatch.js';
 
 export const PAGES_READ_MODEL_CRON = '* * * * *';
 
@@ -29,7 +29,7 @@ export async function runPagesReadModelCron(controller, env, dependencies = {}) 
     return { skipped: true, reason: 'unsupported-pages-read-model-cron', cron };
   }
   const now = scheduledTimestamp(controller);
-  const runTask = dependencies.runTask || runPagesSixHourTask;
+  const runTask = dependencies.runTask || runDispatchedPagesReadModelTask;
   return assertRefreshSucceeded(await runTask(env, now, dependencies));
 }
 

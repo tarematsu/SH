@@ -65,16 +65,24 @@ jobs:
         run: |
           for queue in \
             stationhead-raw-collection stationhead-raw-collection-dlq \
+            stationhead-buddies-persist stationhead-buddies-persist-dlq \
+            stationhead-ingest-finalize stationhead-ingest-finalize-dlq \
             stationhead-comments stationhead-comments-dlq \
             stationhead-read-model stationhead-read-model-dlq \
+            stationhead-track-metadata stationhead-track-metadata-dlq \
             stationhead-buddies-facts stationhead-buddies-facts-dlq \
-            stationhead-minute-derive stationhead-minute-derive-dlq
+            stationhead-minute-derive stationhead-minute-derive-dlq \
+            stationhead-minute-enrichment stationhead-minute-enrichment-dlq \
+            stationhead-minute-rebuild stationhead-minute-rebuild-dlq \
+            stationhead-buddy-playback stationhead-buddy-playback-dlq
           do
             npx wrangler queues create "$queue" >/dev/null 2>&1 || true
           done
       - run: npm run deploy:minute
         working-directory: worker
       - run: npm run deploy:comments
+        working-directory: worker
+      - run: npm run deploy:persist
         working-directory: worker
       - run: npm run deploy:ingest
         working-directory: worker
@@ -107,7 +115,10 @@ jobs:
           for queue in \
             stationhead-buddies-facts stationhead-buddies-facts-dlq \
             stationhead-minute-derive stationhead-minute-derive-dlq \
-            stationhead-read-model stationhead-read-model-dlq
+            stationhead-minute-enrichment stationhead-minute-enrichment-dlq \
+            stationhead-minute-rebuild stationhead-minute-rebuild-dlq \
+            stationhead-read-model stationhead-read-model-dlq \
+            stationhead-track-metadata stationhead-track-metadata-dlq
           do
             npx wrangler queues create "$queue" >/dev/null 2>&1 || true
           done

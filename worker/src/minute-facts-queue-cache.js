@@ -81,6 +81,11 @@ export function queueStructurePayload(queue) {
 }
 
 export async function queueStructuralHash(queue, payload = null) {
+  // A partially materialized queue carries the full upstream structure hash.
+  // Reuse it so expanding 22 -> 32 tracks extends the same revision rather
+  // than inventing a new revision for unchanged upstream content.
+  const sourceHash = text(queue?.source_structural_hash);
+  if (sourceHash) return sourceHash;
   const normalized = payload ?? queueStructurePayload(queue);
   const entry = payloadEntries.get(normalized);
   if (entry?.hash) return entry.hash;

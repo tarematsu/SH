@@ -9,7 +9,7 @@ import {
   mergeTrackHistoryExcludedDates,
   refreshTrackHistoryPagesReadModel,
   trackHistoryRefreshRanges,
-} from './pages-read-model-refresh.js';
+} from './pages-track-history-support.js';
 
 const DAY_MS = 86_400_000;
 const MINUTE_MS = 60_000;

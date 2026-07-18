@@ -26,7 +26,7 @@ function commentsTask() {
   };
 }
 
-test('normal chained comments reuse the initial minute parse before final validation', async () => {
+test('normal chained comments reuse the initial trusted minute parse', async () => {
   let parseCalls = 0;
   let sent = null;
   const task = commentsTask();
@@ -45,7 +45,7 @@ test('normal chained comments reuse the initial minute parse before final valida
     sendMinuteFact: async (message) => { sent = message; },
   });
 
-  assert.equal(parseCalls, 2);
+  assert.equal(parseCalls, 1);
   assert.equal(result.forwarded, true);
   assert.equal(result.job_id, task.minute_fact.job_id);
   assert.equal(sent.payload.comments.commentCount, 2);

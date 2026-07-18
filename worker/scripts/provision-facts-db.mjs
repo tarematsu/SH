@@ -264,10 +264,39 @@ wrangler([
   '--file', trackHistoryViewRepairMigrationPath,
 ]);
 
+let revisionColumns = tableColumnNames(databaseName, 'sh_queue_revisions');
+if (revisionColumns.size > 0 && !revisionColumns.has('materialized_item_count')) {
+  console.log('Adding materialized queue coverage count...');
+  executeCommand('ALTER TABLE sh_queue_revisions ADD COLUMN materialized_item_count INTEGER');
+  revisionColumns = tableColumnNames(databaseName, 'sh_queue_revisions');
+}
+if (revisionColumns.size > 0 && !revisionColumns.has('coverage_complete')) {
+  console.log('Adding partial revision coverage status...');
+  executeCommand('ALTER TABLE sh_queue_revisions ADD COLUMN coverage_complete INTEGER NOT NULL DEFAULT 1');
+  revisionColumns = tableColumnNames(databaseName, 'sh_queue_revisions');
+}
+if (revisionColumns.size > 0
+    && (!revisionColumns.has('materialized_item_count') || !revisionColumns.has('coverage_complete'))) {
+  throw new Error('partial queue revision coverage migration did not complete');
+}
+executeCommand(`UPDATE sh_queue_revisions
+  SET materialized_item_count=(
+    SELECT COUNT(*) FROM sh_queue_revision_items i
+    WHERE i.revision_id=sh_queue_revisions.id
+  )
+  WHERE materialized_item_count IS NULL`);
+executeCommand(`UPDATE sh_queue_revisions
+  SET coverage_complete=CASE
+    WHEN COALESCE(materialized_item_count,0)>=item_count THEN 1
+    ELSE 0
+  END`);
+executeCommand(`CREATE INDEX IF NOT EXISTS idx_sh_queue_revisions_coverage
+  ON sh_queue_revisions(channel_id,coverage_complete,effective_at DESC)`);
+
 writeFileSync(metadataPath, `${JSON.stringify({
   binding: 'MINUTE_DB',
   database_name: databaseName,
   database_id: databaseId,
-  schema: 'database/facts-migrations/016_track_metadata_isrc.sql',
+  schema: 'database/facts-migrations/017_partial_queue_revision_coverage.sql',
 }, null, 2)}\n`);
 console.log(JSON.stringify({ ok: true, database_name: databaseName, database_id: databaseId }));

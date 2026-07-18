@@ -17,6 +17,11 @@ const QUEUE_LIKE_ANALYSIS = Symbol.for('stationhead.queue.like-analysis');
 export const D1_BATCH_STATEMENT_LIMIT = 40;
 export const D1_BATCH_VARIABLE_LIMIT = 90;
 export const D1_SINGLE_STATEMENT_VARIABLE_LIMIT = 90;
+const QUEUE_ITEM_BIND_COUNT = 14;
+const QUEUE_ITEM_WRITE_CHUNK = Math.max(
+  1,
+  Math.floor(D1_SINGLE_STATEMENT_VARIABLE_LIMIT / QUEUE_ITEM_BIND_COUNT),
+);
 const QUEUE_HASH_CACHE_LIMIT = 16;
 const queueHashCache = new Map();
 
@@ -272,36 +277,74 @@ async function loadComparisonState(db, stationId, startTime, positions, likeAnal
   };
 }
 
-function queueItemWriteStatements(db, tracks, observedAt, stationId, queueId, startTime) {
-  if (!tracks.length) return [];
-  const statement = db.prepare(`INSERT INTO sh_queue_items (
-      observed_at,station_id,queue_id,start_time,position,
-      queue_track_id,stationhead_track_id,spotify_id,
-      deezer_id,isrc,duration_ms,preview_url,bite_count,raw_json
-    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-    ON CONFLICT(station_id,start_time,position) DO UPDATE SET
-      observed_at=excluded.observed_at,queue_id=excluded.queue_id,
-      queue_track_id=excluded.queue_track_id,stationhead_track_id=excluded.stationhead_track_id,
-      spotify_id=excluded.spotify_id,apple_music_id=NULL,
-      deezer_id=excluded.deezer_id,isrc=excluded.isrc,duration_ms=excluded.duration_ms,
-      preview_url=excluded.preview_url,raw_json=excluded.raw_json
-      WHERE excluded.observed_at>=COALESCE((
-      SELECT MAX(snapshot.observed_at) FROM sh_queue_snapshots snapshot
-      WHERE snapshot.station_id IS excluded.station_id
-        AND snapshot.start_time IS excluded.start_time
-    ),sh_queue_items.observed_at)`);
-  return tracks.map((track) => prepared(statement.bind(
-      observedAt, stationId, queueId, startTime, num(track?.position),
-      num(track?.queue_track_id), num(track?.stationhead_track_id),
-      normalizedTrackSpotifyId(track), text(track?.deezer_id), normalizedTrackIsrc(track),
-      num(track?.duration_ms), text(track?.preview_url),
-      num(track?.bite_count), compactQueueItemRaw(track, queueId),
-    ), 14));
+function queueItemWriteValues(track, observedAt, stationId, queueId, startTime) {
+  return [
+    observedAt,
+    stationId,
+    queueId,
+    startTime,
+    num(track?.position),
+    num(track?.queue_track_id),
+    num(track?.stationhead_track_id),
+    normalizedTrackSpotifyId(track),
+    text(track?.deezer_id),
+    normalizedTrackIsrc(track),
+    num(track?.duration_ms),
+    text(track?.preview_url),
+    num(track?.bite_count),
+    compactQueueItemRaw(track, queueId),
+  ];
 }
 
-function queueItemLikeUpdateStatements(db, tracks, observedAt, stationId, startTime) {
+function queueItemWriteStatements(db, tracks, observedAt, stationId, queueId, startTime) {
+  if (!tracks.length) return [];
+  return chunks(tracks, QUEUE_ITEM_WRITE_CHUNK).map((group) => {
+    const valuesSql = group
+      .map(() => '(?,?,?,?,?,?,?,?,?,?,?,?,?,?)')
+      .join(',');
+    const binds = group.flatMap((track) => queueItemWriteValues(
+      track,
+      observedAt,
+      stationId,
+      queueId,
+      startTime,
+    ));
+    return prepared(db.prepare(`INSERT INTO sh_queue_items (
+        observed_at,station_id,queue_id,start_time,position,
+        queue_track_id,stationhead_track_id,spotify_id,
+        deezer_id,isrc,duration_ms,preview_url,bite_count,raw_json
+      ) VALUES ${valuesSql}
+      ON CONFLICT(station_id,start_time,position) DO UPDATE SET
+        observed_at=excluded.observed_at,queue_id=excluded.queue_id,
+        queue_track_id=excluded.queue_track_id,stationhead_track_id=excluded.stationhead_track_id,
+        spotify_id=excluded.spotify_id,apple_music_id=NULL,
+        deezer_id=excluded.deezer_id,isrc=excluded.isrc,duration_ms=excluded.duration_ms,
+        preview_url=excluded.preview_url,raw_json=excluded.raw_json
+        WHERE excluded.observed_at>=COALESCE((
+        SELECT MAX(snapshot.observed_at) FROM sh_queue_snapshots snapshot
+        WHERE snapshot.station_id IS excluded.station_id
+          AND snapshot.start_time IS excluded.start_time
+      ),sh_queue_items.observed_at)`)
+      .bind(...binds), binds.length);
+  });
+}
+
+function queueItemLikeUpdateStatements(
+  db,
+  tracks,
+  observedAt,
+  stationId,
+  startTime,
+  insertedPositions = null,
+) {
+  const positions = insertedPositions instanceof Set ? insertedPositions : new Set();
   const eligible = (Array.isArray(tracks) ? tracks : [])
-    .filter((track) => num(track?.position) != null && num(track?.bite_count) != null)
+    .filter((track) => {
+      const position = num(track?.position);
+      return position != null
+        && num(track?.bite_count) != null
+        && !positions.has(position);
+    });
   if (!eligible.length) return [];
   const statement = db.prepare(`UPDATE sh_queue_items
       SET bite_count=?
@@ -556,6 +599,16 @@ export async function saveLeanQueue(db, observedAt, body) {
   const changedTracks = structureChanged
     ? queueItemsToWriteLean(tracks, existingRows, queueId)
     : [];
+  const existingPositions = new Set(
+    existingRows
+      .map((row) => num(row?.position))
+      .filter((position) => position != null),
+  );
+  const insertedPositions = new Set(
+    changedTracks
+      .map((track) => num(track?.position))
+      .filter((position) => position != null && !existingPositions.has(position)),
+  );
   const likeChanges = likesChanged ? planLikeChanges(tracks, latestRows) : null;
   const observations = likeChanges?.observations || [];
   const currentLikeMigrations = likeChanges?.currentLikeMigrations || [];
@@ -583,6 +636,7 @@ export async function saveLeanQueue(db, observedAt, body) {
       observedAt,
       stationId,
       startTime,
+      insertedPositions,
     ));
     statements.push(...likeCurrentMigrationStatements(
       db,

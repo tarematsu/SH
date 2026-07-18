@@ -1,4 +1,5 @@
 import { saveMinuteFactWithinBudget } from './minute-facts-write-budget.js';
+import { createPartialRevision } from './minute-partial-revision.js';
 import {
   FACT_QUALITY_FLAGS,
   minuteBucket,
@@ -13,14 +14,65 @@ import {
 } from './minute-facts-store.js';
 import { bool, buildTrackDescriptor, integer, text } from './minute-facts-track-descriptor.js';
 import {
-  createOptimizedRevision,
   missingRevisionPositions,
   resolveTracksBulk,
   timedStage,
 } from './minute-facts-track-resolution.js';
 import { updatePlaybackState, writeCurrentBite } from './minute-facts-legacy-revision.js';
 
-export { buildTrackDescriptor, createOptimizedRevision, missingRevisionPositions, resolveTracksBulk };
+export {
+  buildTrackDescriptor,
+  createPartialRevision as createOptimizedRevision,
+  missingRevisionPositions,
+  resolveTracksBulk,
+};
+
+function compactPlaybackQueue(queue) {
+  if (!queue) return null;
+  const tracks = Array.isArray(queue.tracks) ? queue.tracks : [];
+  return {
+    station_id: queue.station_id ?? null,
+    queue_id: queue.queue_id ?? null,
+    start_time: queue.start_time ?? null,
+    total_track_count: integer(queue.total_track_count) ?? tracks.length,
+    materialized_track_count: integer(queue.materialized_track_count) ?? tracks.length,
+    source_structural_hash: queue.source_structural_hash ?? null,
+    source_likes_hash: queue.source_likes_hash ?? null,
+    tracks: tracks.map((track, index) => ({
+      position: integer(track?.position) ?? index,
+      queue_track_id: track?.queue_track_id ?? null,
+      stationhead_track_id: track?.stationhead_track_id ?? null,
+      spotify_id: track?.spotify_id ?? null,
+      apple_music_id: track?.apple_music_id ?? null,
+      isrc: track?.isrc ?? null,
+      bite_count: track?.bite_count ?? null,
+    })),
+  };
+}
+
+async function enqueueMinuteEnrichment(env, input) {
+  if (!env?.MINUTE_ENRICHMENT_QUEUE?.send) return false;
+  const playbackPending = input.revisionId != null && input.broadcasting !== 0;
+  await env.MINUTE_ENRICHMENT_QUEUE.send({
+    message_type: 'minute-fact-enrichment',
+    message_version: 1,
+    stage: playbackPending ? 'playback' : 'identity',
+    channel_id: input.channelId,
+    station_id: input.stationId,
+    minute_at: input.minuteAt,
+    observed_at: input.observedAt,
+    provisional_session_id: input.sessionId,
+    revision_id: input.revisionId,
+    queue_start_time: input.queueStartTime,
+    is_paused: input.paused,
+    host_account_id: input.snapshot.host_account_id ?? null,
+    host_handle: input.snapshot.host_handle ?? null,
+    broadcast_start_time: input.snapshot.broadcast_start_time ?? null,
+    is_broadcasting: input.snapshot.is_broadcasting ?? null,
+    queue: playbackPending ? compactPlaybackQueue(input.queue) : null,
+  }, { contentType: 'json' });
+  return true;
+}
 
 export async function saveOptimizedLiveMinuteFact(env, input) {
   const db = env?.MINUTE_DB;
@@ -37,6 +89,7 @@ export async function saveOptimizedLiveMinuteFact(env, input) {
   const broadcasting = bool(snapshot.is_broadcasting);
   const queueStartTime = timestampMs(queue?.start_time);
   const paused = bool(queue?.is_paused) === 1;
+  const deferred = Boolean(env?.MINUTE_ENRICHMENT_QUEUE?.send);
   const context = {
     channelId,
     minuteAt,
@@ -44,10 +97,13 @@ export async function saveOptimizedLiveMinuteFact(env, input) {
     revisionId: null,
   };
 
-  const hostId = await timedStage('resolve_host', context, () => resolveHost(db, {
+  const hostId = deferred ? null : await timedStage('resolve_host', context, () => resolveHost(db, {
     accountId: snapshot.host_account_id,
     handle: snapshot.host_handle,
   }, observedAt));
+  // Keep session identity on the ordered derive path so queue revision identity
+  // remains stable. Host resolution may complete later without changing the
+  // durable revision key used by subsequent minute jobs.
   const sessionId = await timedStage('resolve_session', context, () => resolveLiveSession(db, {
     channelId,
     stationId,
@@ -59,28 +115,32 @@ export async function saveOptimizedLiveMinuteFact(env, input) {
 
   let revisionId = null;
   let playback = null;
+  let revisionCoverage = null;
   if (queue && tracks && broadcasting !== 0) {
-    const revision = await timedStage('create_or_resume_revision', context, () => createOptimizedRevision(
+    const revision = await timedStage('create_or_resume_revision', context, () => createPartialRevision(
       db,
       env.DB,
       { channelId, stationId, sessionId, queue, observedAt, receivedAt },
     ));
     revisionId = revision.revisionId;
+    revisionCoverage = revision;
     context.revisionId = revisionId;
-    playback = await timedStage('update_playback', context, () => updatePlaybackState(db, {
-      channelId,
-      sessionId,
-      revisionId,
-      queueStartTime,
-      observedAt,
-      isPaused: paused,
-    }));
+    if (!deferred) {
+      playback = await timedStage('update_playback', context, () => updatePlaybackState(db, {
+        channelId,
+        sessionId,
+        revisionId,
+        queueStartTime,
+        observedAt,
+        isPaused: paused,
+      }));
+    }
   }
 
   const position = integer(playback?.current_position);
   const trackId = integer(playback?.current_track_id);
   const scheduleValid = Number(playback?.current_schedule_valid || 0);
-  const biteCount = revisionId == null ? null : await timedStage('write_current_bite', context, () => writeCurrentBite(db, {
+  const biteCount = deferred || revisionId == null ? null : await timedStage('write_current_bite', context, () => writeCurrentBite(db, {
     channelId,
     stationId,
     revisionId,
@@ -123,7 +183,7 @@ export async function saveOptimizedLiveMinuteFact(env, input) {
     queue_id: integer(queue?.queue_id),
     queue_start_time: queueStartTime,
     is_paused: paused ? 1 : 0,
-    queue_track_count: tracks?.length ?? null,
+    queue_track_count: integer(queue?.total_track_count) ?? tracks?.length ?? null,
     queue_available: queue ? 1 : 0,
     track_id: trackId,
     queue_position: position,
@@ -140,7 +200,30 @@ export async function saveOptimizedLiveMinuteFact(env, input) {
     quality_flags: flags,
   };
   await timedStage('upsert_minute_fact', context, () => upsertMinuteFact(db, fact));
-  return { skipped: false, fact, sessionId, revisionId };
+  if (deferred) {
+    await enqueueMinuteEnrichment(env, {
+      channelId,
+      stationId,
+      minuteAt,
+      observedAt,
+      sessionId,
+      revisionId,
+      queueStartTime,
+      paused,
+      broadcasting,
+      snapshot,
+      queue,
+    });
+  }
+  return {
+    skipped: false,
+    fact,
+    sessionId,
+    revisionId,
+    revision_materialized_count: revisionCoverage?.materializedCount ?? tracks?.length ?? 0,
+    revision_total_count: revisionCoverage?.totalCount ?? integer(queue?.total_track_count) ?? tracks?.length ?? 0,
+    enrichment_deferred: deferred,
+  };
 }
 
 export function saveOptimizedMinuteFactWithinBudget(env, input) {
