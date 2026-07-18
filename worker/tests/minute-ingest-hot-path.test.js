@@ -1,7 +1,18 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
 import { consumeMinuteQueue } from '../src/minute-production-entry.js';
+
+const source = readFileSync(new URL('../src/minute-production-entry.js', import.meta.url), 'utf8');
+
+test('production minute ingest caches modules and reuses one handler object', () => {
+  assert.match(source, /const EMPTY_DEPENDENCIES = Object\.freeze\(\{\}\)/);
+  assert.match(source, /const PRODUCTION_HANDLERS = Object\.freeze\(\{/);
+  assert.match(source, /productionModulesPromise \|\|= Promise\.all\(\[/);
+  assert.match(source, /return productionConsumeMinuteFactBatch\(batch, env, PRODUCTION_HANDLERS\)/);
+  assert.doesNotMatch(source, /Promise\.resolve\(null\)/);
+});
 
 test('minute ingest composes inbox acceptance and derive handoff in order', async () => {
   const batch = { messages: [{ body: { job_id: 'minute-fact:10:20' } }] };
@@ -33,4 +44,25 @@ test('minute ingest composes inbox acceptance and derive handoff in order', asyn
   assert.deepEqual(accepted, { jobId: 'minute-fact:10:20', created: true });
   assert.deepEqual(calls.map(([kind]) => kind), ['inbox', 'derive']);
   assert.equal(calls[1][2], accepted);
+});
+
+test('dependency-injected rollout read-model handling remains compatible', async () => {
+  const saved = [];
+  let handlers = null;
+  await consumeMinuteQueue({ messages: [] }, {}, null, {
+    consumeMinuteFactBatch: async (_batch, _env, value) => {
+      handlers = value;
+      return { received: 0 };
+    },
+    enqueueMinuteFactJob: async () => ({ jobId: 'unused' }),
+    saveMinuteFactReadModels: async (...args) => saved.push(args),
+  });
+
+  await handlers.saveReadModels({}, null, 'missing');
+  const readModel = { channel: { channel_id: 10 } };
+  await handlers.saveReadModels({ MINUTE_DB: {} }, readModel, 'read-model:10:20');
+
+  assert.equal(saved.length, 1);
+  assert.equal(saved[0][1], readModel);
+  assert.equal(saved[0][2], 'read-model:10:20');
 });
