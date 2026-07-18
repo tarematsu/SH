@@ -45,11 +45,13 @@ function fullAnalysis(queue, hash = 'full-structure-a') {
       })),
     },
     likes: {
-      complete: true,
-      payload: queue.tracks.map((track) => ({
-        track_key: `isrc:${track.isrc}`,
-        like_count: track.bite_count,
-      })),
+      complete: queue.tracks.every((track) => track.bite_count != null),
+      payload: queue.tracks
+        .filter((track) => track.bite_count != null)
+        .map((track) => ({
+          track_key: `isrc:${track.isrc}`,
+          like_count: track.bite_count,
+        })),
     },
     structural_hash: hash,
     likes_hash: 'full-likes-a',
@@ -90,6 +92,20 @@ test('materialized queue retains total count and full source hash while omitting
   assert.equal(materialized.analysis.structural.source_structural_hash, 'full-structure-a');
   assert.equal(materialized.analysis.likes.payload.length, 22);
   assert.equal(await queueStructuralHash(materialized.queue), 'full-structure-a');
+});
+
+test('omitted-tail like gaps do not make a complete visible window incomplete', async () => {
+  const queue = fullQueue();
+  queue.tracks[40].bite_count = null;
+  const analysis = fullAnalysis(queue);
+  assert.equal(analysis.likes.complete, false);
+
+  const materialized = await prepareMaterializedQueue(null, queue, analysis, {
+    QUEUE_INITIAL_TRACKS: 22,
+  });
+  assert.equal(materialized.analysis.likes.complete, true);
+  assert.equal(materialized.analysis.likes.payload.length, 22);
+  assert.equal(typeof materialized.analysis.likes_hash, 'string');
 });
 
 test('producer computes separate persistence hashes for each materialized window', async () => {
