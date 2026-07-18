@@ -5,7 +5,10 @@ import {
   processMinuteDeriveRevisionChunkStage,
   processMinuteDeriveRevisionCompleteStage,
 } from '../src/minute-derive-queue.js';
-import { shouldStageLiveRevision } from '../src/minute-revision-stages.js';
+import {
+  prepareLiveRevisionStage,
+  shouldStageLiveRevision,
+} from '../src/minute-revision-stages.js';
 
 const job = {
   id: 7,
@@ -56,6 +59,39 @@ test('only sufficiently large live revisions use chunked derive stages', () => {
     ...payload,
     snapshot: { ...payload.snapshot, is_broadcasting: 0 },
   }), false);
+});
+
+test('an expanded partial queue resumes chunking after the stored 22-track cursor', async () => {
+  const expanded = {
+    ...payload,
+    queue: {
+      ...payload.queue,
+      source_structural_hash: 'full-queue-generation',
+      total_track_count: 80,
+      materialized_track_count: 32,
+      tracks: Array.from({ length: 32 }, (_value, position) => ({
+        position,
+        isrc: `JPTEST${String(position).padStart(3, '0')}`,
+        duration_ms: 180_000,
+      })),
+    },
+  };
+  const result = await prepareLiveRevisionStage({ MINUTE_DB: {} }, expanded, {
+    resolveLiveSession: async () => 40,
+    findReusableRevision: async () => ({ id: 50, status: 'complete', item_count: 22 }),
+    revisionProgress: async () => ({
+      cursor: 22,
+      playbackOffset: 22 * 180_000,
+      scheduleValid: true,
+    }),
+  });
+
+  assert.equal(result.staged, true);
+  assert.equal(result.revision_id, 50);
+  assert.equal(result.cursor, 22);
+  assert.equal(result.playback_offset_ms, 22 * 180_000);
+  assert.equal(result.item_count, 32);
+  assert.equal(result.total_item_count, 80);
 });
 
 test('revision chunks requeue the next bounded chunk and renew the job lease', async () => {
