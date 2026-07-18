@@ -7,6 +7,8 @@ on:
       - "worker/**"
       - "site/functions/**"
       - "packages/sh-shared/**"
+      - "database/facts-migrations/**"
+      - "database/facts-db.json"
       - ".github/workflows/cloudflare-pr-diagnostics.yml"
       - ".github/scripts/cloudflare-build-diagnostics.mjs"
 
@@ -27,6 +29,7 @@ jobs:
       commands: ${{ steps.targets.outputs.commands }}
       diagnostics: ${{ steps.targets.outputs.diagnostics }}
       topology_rename: ${{ steps.targets.outputs.topology_rename }}
+      facts_schema: ${{ steps.targets.outputs.facts_schema }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -58,6 +61,11 @@ jobs:
             echo "::notice::Skipping direct PR deploy because a Worker script name changed."
           fi
           echo "topology_rename=$topology_rename" >> "$GITHUB_OUTPUT"
+          facts_schema=false
+          if grep -Eq '^(database/facts-migrations/|database/facts-db\.json$|worker/scripts/provision-facts-db\.mjs$)' changed-files.txt; then
+            facts_schema=true
+          fi
+          echo "facts_schema=$facts_schema" >> "$GITHUB_OUTPUT"
 
   prepare-workers:
     name: Deploy affected Workers
@@ -80,6 +88,10 @@ jobs:
           cache-dependency-path: worker/package-lock.json
       - run: npm ci --no-audit --no-fund
         working-directory: worker
+      - name: Provision facts schema before dependent Workers
+        if: needs.select-workers.outputs.facts_schema == 'true'
+        working-directory: worker
+        run: node scripts/provision-facts-db.mjs
       - name: Ensure split pipeline queues exist
         shell: bash
         working-directory: worker
