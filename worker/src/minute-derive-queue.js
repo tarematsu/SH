@@ -120,6 +120,7 @@ function parseStage(body, expectedStage) {
   return {
     job,
     payload: body.payload == null ? null : validateStagePayload(body.payload, job.payload_version),
+    revision: body.revision || null,
     startedAt: integer(body.started_at) ?? Date.now(),
   };
 }
@@ -135,6 +136,17 @@ async function enqueueStage(env, body, dependencies = {}) {
     message_version: MINUTE_DERIVE_STAGE_VERSION,
     ...body,
   });
+}
+
+async function renewJobLease(env, job, dependencies = {}) {
+  if (dependencies.renewLease) return dependencies.renewLease(env, job);
+  if (!env?.MINUTE_DB) return;
+  const now = (dependencies.now || Date.now)();
+  const leaseMs = positiveInteger(env.DERIVE_LEASE_MS, 60_000, 10 * 60_000);
+  await env.MINUTE_DB.prepare(`UPDATE sh_minute_fact_jobs
+    SET lease_until=?,updated_at=? WHERE id=? AND status='processing'`)
+    .bind(now + leaseMs, now, job.id)
+    .run();
 }
 
 async function failureSummary(env, job, error, startedAt, dependencies = {}, retryMessage = true) {
@@ -236,12 +248,36 @@ export async function processMinuteDeriveWriteStage(env, body, dependencies = {}
   const { job, payload, startedAt } = parseStage(body, 'write');
   if (!payload) throw new Error('minute derive write payload is missing');
   const timeoutMs = positiveInteger(env.DERIVE_JOB_TIMEOUT_MS, 18_000, 20_000);
-  const write = dependencies.write
+  const customWrite = dependencies.write
     || (payload?.rebuild && dependencies.rebuildWrite)
-    || (!payload?.rebuild && dependencies.liveWrite)
-    || defaultWrite;
+    || (!payload?.rebuild && dependencies.liveWrite);
   try {
-    await write(withDeriveTimeout(env, timeoutMs), payload);
+    if (!customWrite && dependencies.stageRevision !== false && !payload.rebuild) {
+      const revisionStages = await import('./minute-revision-stages.js');
+      if (revisionStages.shouldStageLiveRevision(env, payload)) {
+        const revision = await revisionStages.prepareLiveRevisionStage(env, payload);
+        if (revision.staged) {
+          await renewJobLease(env, job, dependencies);
+          await enqueueStage(env, {
+            stage: 'revision-chunk',
+            job,
+            payload,
+            revision,
+            started_at: startedAt,
+          }, dependencies);
+          return {
+            event: 'minute_fact_derive_revision_prepared',
+            processed: 0,
+            failed: 0,
+            pending: true,
+            job_id: Number(job.id),
+            revision_id: Number(revision.revision_id),
+            item_count: Number(revision.item_count),
+          };
+        }
+      }
+    }
+    await (customWrite || defaultWrite)(withDeriveTimeout(env, timeoutMs), payload);
   } catch (error) {
     return failureSummary(env, job, error, startedAt, dependencies, false);
   }
@@ -259,6 +295,65 @@ export async function processMinuteDeriveWriteStage(env, body, dependencies = {}
     processed_rebuild: payload.rebuild ? 1 : 0,
     job_id: Number(job.id),
   };
+}
+
+export async function processMinuteDeriveRevisionChunkStage(env, body, dependencies = {}) {
+  const { job, payload, revision, startedAt } = parseStage(body, 'revision-chunk');
+  if (!payload || !revision) throw new Error('minute derive revision chunk payload is missing');
+  try {
+    const writeChunk = dependencies.writeRevisionChunk
+      || (await import('./minute-revision-stages.js')).writeLiveRevisionChunk;
+    const next = await writeChunk(env, payload, revision);
+    await renewJobLease(env, job, dependencies);
+    await enqueueStage(env, {
+      stage: next.complete ? 'revision-complete' : 'revision-chunk',
+      job,
+      payload,
+      revision: next,
+      started_at: startedAt,
+    }, dependencies);
+    return {
+      event: 'minute_fact_derive_revision_chunk',
+      processed: 0,
+      failed: 0,
+      pending: true,
+      job_id: Number(job.id),
+      revision_id: Number(next.revision_id),
+      cursor: Number(next.cursor),
+      item_count: Number(next.item_count),
+      chunk_tracks: Number(next.chunk_tracks || 0),
+    };
+  } catch (error) {
+    return failureSummary(env, job, error, startedAt, dependencies, false);
+  }
+}
+
+export async function processMinuteDeriveRevisionCompleteStage(env, body, dependencies = {}) {
+  const { job, payload, revision, startedAt } = parseStage(body, 'revision-complete');
+  if (!payload || !revision) throw new Error('minute derive revision completion payload is missing');
+  try {
+    const completeRevision = dependencies.completeRevision
+      || (await import('./minute-revision-stages.js')).completeLiveRevisionStage;
+    const completed = await completeRevision(env, payload, revision);
+    await renewJobLease(env, job, dependencies);
+    await enqueueStage(env, {
+      stage: 'write',
+      job,
+      payload,
+      started_at: startedAt,
+    }, dependencies);
+    return {
+      event: 'minute_fact_derive_revision_completed',
+      processed: 0,
+      failed: 0,
+      pending: true,
+      job_id: Number(job.id),
+      revision_id: Number(completed.revision_id),
+      item_count: Number(completed.item_count),
+    };
+  } catch (error) {
+    return failureSummary(env, job, error, startedAt, dependencies, false);
+  }
 }
 
 export async function processMinuteDeriveCompleteStage(env, body, dependencies = {}) {
@@ -280,6 +375,8 @@ export async function processMinuteDeriveCompleteStage(env, body, dependencies =
 export function processMinuteDeriveMessage(env, body, dependencies = {}) {
   if (body?.message_type === MINUTE_DERIVE_STAGE_TYPE) {
     if (body.stage === 'write') return processMinuteDeriveWriteStage(env, body, dependencies);
+    if (body.stage === 'revision-chunk') return processMinuteDeriveRevisionChunkStage(env, body, dependencies);
+    if (body.stage === 'revision-complete') return processMinuteDeriveRevisionCompleteStage(env, body, dependencies);
     if (body.stage === 'complete') return processMinuteDeriveCompleteStage(env, body, dependencies);
     const error = new Error(`invalid minute derive stage: ${body?.stage || 'missing'}`);
     error.code = 'MINUTE_DERIVE_INVALID_TRIGGER';
