@@ -1,6 +1,6 @@
 const MINUTE_MS = 60_000;
 const CYCLE_MS = 6 * 60 * MINUTE_MS;
-const TRACK_HISTORY_WINDOW_MINUTES = 175;
+const TRACK_HISTORY_WINDOW_MINUTES = 60;
 
 const CYCLE_SLOT_TASKS = new Map([
   [0, 'dashboard-history'],
