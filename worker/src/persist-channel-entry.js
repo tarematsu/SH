@@ -1,4 +1,5 @@
 import { ingestOptimizedBody } from '../../site/functions/api/ingest.js';
+import { resetQueueHashCacheForTests } from '../../site/functions/lib/d1-optimized-ingest.js';
 import { restoreQueueAnalysis } from './queue-analysis-transfer.js';
 import { recordQueueMaterialization } from './queue-materialization.js';
 import { restoreSnapshotAnalysis, savePreparedSnapshot } from './snapshot-analysis-transfer.js';
@@ -25,6 +26,9 @@ export async function processPersistenceTask(env, body) {
     return { task, observed_at: observedAt, ...result };
   }
   restoreQueueAnalysis(body.data, body.analysis);
+  // The queue hash cache predates partial materialization and its signature only
+  // covers visible track fields. A changed omitted tail must force a fresh hash.
+  if (body.data?.source_structural_hash) resetQueueHashCacheForTests();
   const result = await ingestOptimizedBody(env, {
     type: 'queue',
     observed_at: observedAt,
