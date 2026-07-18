@@ -105,6 +105,11 @@ export async function runSplitTrackHistoryCycleStep(env, now = Date.now(), depen
   if (!stage || (stage.published && Number(stage.generation) !== currentGeneration)) {
     return runLegacyTrackHistoryCycleStep(env, timestamp, dependencies);
   }
+  if (stage.published && !stage.publication) {
+    stage.published = false;
+    stage.published_at = null;
+    return initializePublication(env, stage, timestamp, dependencies);
+  }
   if (stage.published) {
     return {
       skipped: true,
