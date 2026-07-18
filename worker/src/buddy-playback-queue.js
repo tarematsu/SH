@@ -73,14 +73,6 @@ export function validateBuddyChannelPayload(channel, expectedAlias = DEFAULT_ALI
   return channel;
 }
 
-function firstPresent(...values) {
-  for (let index = 0; index < values.length; index += 1) {
-    const value = values[index];
-    if (value !== undefined && value !== null && value !== '') return value;
-  }
-  return null;
-}
-
 function trackThumbnail(item, track) {
   let value = track?.thumbnail_url;
   if (value === undefined || value === null || value === '') value = track?.image_url;
