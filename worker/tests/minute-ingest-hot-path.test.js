@@ -12,6 +12,7 @@ test('production minute ingest caches modules and reuses one handler object', ()
   assert.match(source, /productionModulesPromise \|\|= Promise\.all\(\[/);
   assert.match(source, /return productionConsumeMinuteFactBatch\(batch, env, PRODUCTION_HANDLERS\)/);
   assert.doesNotMatch(source, /Promise\.resolve\(null\)/);
+  assert.doesNotMatch(source, /async function (?:noReceipt|ignoreReceipt|skipCommentTask)/);
 });
 
 test('minute ingest composes inbox acceptance and derive handoff in order', async () => {
