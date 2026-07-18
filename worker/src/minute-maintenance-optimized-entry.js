@@ -2,15 +2,20 @@ import {
   minuteMaintenanceTask,
   runMinuteScheduledWithCollectorPriority,
 } from './minute-entry.js';
-import {
-  dispatchPendingMinuteFacts,
-  MINUTE_DERIVE_DISPATCH_CRON,
-} from './minute-maintenance-entry.js';
 
+const MINUTE_DERIVE_DISPATCH_CRON = '* * * * *';
 const EMPTY_DEPENDENCIES = Object.freeze({});
 const JSON_QUEUE_SEND_OPTIONS = Object.freeze({ contentType: 'json' });
 const DEFAULT_STAGGER_MS = 12_000;
 const MAX_STAGGER_MS = 45_000;
+let maintenanceEntryPromise = null;
+
+function loadMaintenanceEntry() {
+  if (!maintenanceEntryPromise) {
+    maintenanceEntryPromise = import('./minute-maintenance-entry.js');
+  }
+  return maintenanceEntryPromise;
+}
 
 function scheduledTimestamp(controller) {
   const value = controller?.scheduledTime;
@@ -73,9 +78,10 @@ export async function dispatchMinuteMaintenanceGate(controller, env, task, ctx =
   return result;
 }
 
-export function runMinuteMaintenanceScheduled(controller, env, ctx) {
+export async function runMinuteMaintenanceScheduled(controller, env, ctx) {
   if (isDeriveDispatchCron(controller)) {
-    return dispatchPendingMinuteFacts(env, EMPTY_DEPENDENCIES, ctx);
+    const entry = await loadMaintenanceEntry();
+    return entry.dispatchPendingMinuteFacts(env, EMPTY_DEPENDENCIES, ctx);
   }
   const task = minuteMaintenanceTask(controller);
   if (task === 'rebuild' || task === 'sync') {
