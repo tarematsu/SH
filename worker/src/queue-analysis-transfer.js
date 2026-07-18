@@ -46,8 +46,8 @@ export function serializedQueueAnalysis(queue) {
   };
 }
 
-export async function prepareQueueAnalysis(queue) {
-  const envelope = serializedQueueAnalysis(queue);
+export async function prepareQueueAnalysis(queue, serialized = null) {
+  const envelope = objectValue(serialized) || serializedQueueAnalysis(queue);
   if (!envelope) return null;
   const [structuralHash, likesHash] = await Promise.all([
     envelope.structural ? payloadHash(envelope.structural) : null,
@@ -60,7 +60,7 @@ export async function prepareQueueAnalysis(queue) {
     structural_hash: structuralHash,
     likes_hash: likesHash,
   };
-  Object.defineProperty(queue, QUEUE_TRANSFER_ANALYSIS, { value: prepared });
+  if (queue) Object.defineProperty(queue, QUEUE_TRANSFER_ANALYSIS, { value: prepared });
   return prepared;
 }
 
