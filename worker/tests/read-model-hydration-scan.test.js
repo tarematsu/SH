@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { readModelNeedsHydration } from '../src/read-model-entry.js';
+import { processReadModelMessage, readModelNeedsHydration } from '../src/read-model-entry.js';
 
 function completeTrack(index) {
   return {
@@ -21,4 +21,50 @@ test('read-model hydration scan preserves complete and incomplete queue decision
   assert.equal(readModelNeedsHydration({ queue: { value: { tracks: incomplete } } }), true);
   assert.equal(readModelNeedsHydration({ queue: { value: { tracks: [] } } }), false);
   assert.equal(readModelNeedsHydration(null), false);
+});
+
+test('read-model hydration handoff reuses Queue options and preserves its payload', async () => {
+  const readModel = {
+    queue: {
+      value: {
+        tracks: [{ ...completeTrack(0), thumbnail_url: null }],
+      },
+    },
+  };
+  const sends = [];
+  const env = {
+    TRACK_METADATA_QUEUE: {
+      async send(payload, options) {
+        sends.push({ payload, options });
+      },
+    },
+  };
+  const body = {
+    message_type: 'stationhead-read-model',
+    message_version: 1,
+    job_id: 'read-model-job',
+    observed_at: '123',
+    read_model: readModel,
+  };
+  const originalLog = console.log;
+  console.log = () => {};
+  try {
+    assert.deepEqual(await processReadModelMessage(env, body), { deferred: true });
+    assert.deepEqual(await processReadModelMessage(env, body), { deferred: true });
+  } finally {
+    console.log = originalLog;
+  }
+
+  assert.equal(sends.length, 2);
+  assert.strictEqual(sends[0].options, sends[1].options);
+  assert.deepEqual(sends[0].options, { contentType: 'json' });
+  assert.strictEqual(sends[0].payload.read_model, readModel);
+  assert.deepEqual(sends[0].payload, {
+    message_type: 'stationhead-track-metadata',
+    message_version: 1,
+    task: 'read-model-hydration',
+    job_id: 'read-model-job',
+    observed_at: 123,
+    read_model: readModel,
+  });
 });
