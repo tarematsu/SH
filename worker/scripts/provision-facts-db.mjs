@@ -275,9 +275,28 @@ if (revisionColumns.size > 0 && !revisionColumns.has('coverage_complete')) {
   executeCommand('ALTER TABLE sh_queue_revisions ADD COLUMN coverage_complete INTEGER NOT NULL DEFAULT 1');
   revisionColumns = tableColumnNames(databaseName, 'sh_queue_revisions');
 }
+if (revisionColumns.size > 0 && !revisionColumns.has('source_job_id')) {
+  console.log('Adding durable revision source job identity...');
+  executeCommand('ALTER TABLE sh_queue_revisions ADD COLUMN source_job_id INTEGER');
+  revisionColumns = tableColumnNames(databaseName, 'sh_queue_revisions');
+}
+if (revisionColumns.size > 0 && !revisionColumns.has('source_visible_count')) {
+  console.log('Adding sparse revision source coverage...');
+  executeCommand('ALTER TABLE sh_queue_revisions ADD COLUMN source_visible_count INTEGER');
+  revisionColumns = tableColumnNames(databaseName, 'sh_queue_revisions');
+}
+if (revisionColumns.size > 0 && !revisionColumns.has('last_materialized_at')) {
+  console.log('Adding sparse revision materialization checkpoint...');
+  executeCommand('ALTER TABLE sh_queue_revisions ADD COLUMN last_materialized_at INTEGER');
+  revisionColumns = tableColumnNames(databaseName, 'sh_queue_revisions');
+}
 if (revisionColumns.size > 0
-    && (!revisionColumns.has('materialized_item_count') || !revisionColumns.has('coverage_complete'))) {
-  throw new Error('partial queue revision coverage migration did not complete');
+    && (!revisionColumns.has('materialized_item_count')
+      || !revisionColumns.has('coverage_complete')
+      || !revisionColumns.has('source_job_id')
+      || !revisionColumns.has('source_visible_count')
+      || !revisionColumns.has('last_materialized_at'))) {
+  throw new Error('sparse queue revision migration did not complete');
 }
 executeCommand(`UPDATE sh_queue_revisions
   SET materialized_item_count=(
@@ -290,13 +309,20 @@ executeCommand(`UPDATE sh_queue_revisions
     WHEN COALESCE(materialized_item_count,0)>=item_count THEN 1
     ELSE 0
   END`);
+executeCommand(`UPDATE sh_queue_revisions
+  SET source_visible_count=COALESCE(source_visible_count,materialized_item_count,item_count)`);
 executeCommand(`CREATE INDEX IF NOT EXISTS idx_sh_queue_revisions_coverage
   ON sh_queue_revisions(channel_id,coverage_complete,effective_at DESC)`);
+executeCommand(`CREATE INDEX IF NOT EXISTS idx_sh_queue_revisions_source_job
+  ON sh_queue_revisions(source_job_id)
+  WHERE source_job_id IS NOT NULL`);
+executeCommand(`CREATE INDEX IF NOT EXISTS idx_sh_queue_revisions_materialization
+  ON sh_queue_revisions(coverage_complete,last_materialized_at,effective_at)`);
 
 writeFileSync(metadataPath, `${JSON.stringify({
   binding: 'MINUTE_DB',
   database_name: databaseName,
   database_id: databaseId,
-  schema: 'database/facts-migrations/017_partial_queue_revision_coverage.sql',
+  schema: 'database/facts-migrations/018_sparse_revision_sources.sql',
 }, null, 2)}\n`);
 console.log(JSON.stringify({ ok: true, database_name: databaseName, database_id: databaseId }));
