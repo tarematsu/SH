@@ -1,4 +1,5 @@
 import { saveMinuteFactWithinBudget } from './minute-facts-write-budget.js';
+import { createPartialRevision } from './minute-partial-revision.js';
 import {
   FACT_QUALITY_FLAGS,
   minuteBucket,
@@ -13,21 +14,30 @@ import {
 } from './minute-facts-store.js';
 import { bool, buildTrackDescriptor, integer, text } from './minute-facts-track-descriptor.js';
 import {
-  createOptimizedRevision,
   missingRevisionPositions,
   resolveTracksBulk,
   timedStage,
 } from './minute-facts-track-resolution.js';
 import { updatePlaybackState, writeCurrentBite } from './minute-facts-legacy-revision.js';
 
-export { buildTrackDescriptor, createOptimizedRevision, missingRevisionPositions, resolveTracksBulk };
+export {
+  buildTrackDescriptor,
+  createPartialRevision as createOptimizedRevision,
+  missingRevisionPositions,
+  resolveTracksBulk,
+};
 
 function compactPlaybackQueue(queue) {
   if (!queue) return null;
   const tracks = Array.isArray(queue.tracks) ? queue.tracks : [];
   return {
+    station_id: queue.station_id ?? null,
     queue_id: queue.queue_id ?? null,
     start_time: queue.start_time ?? null,
+    total_track_count: integer(queue.total_track_count) ?? tracks.length,
+    materialized_track_count: integer(queue.materialized_track_count) ?? tracks.length,
+    source_structural_hash: queue.source_structural_hash ?? null,
+    source_likes_hash: queue.source_likes_hash ?? null,
     tracks: tracks.map((track, index) => ({
       position: integer(track?.position) ?? index,
       queue_track_id: track?.queue_track_id ?? null,
@@ -105,13 +115,15 @@ export async function saveOptimizedLiveMinuteFact(env, input) {
 
   let revisionId = null;
   let playback = null;
+  let revisionCoverage = null;
   if (queue && tracks && broadcasting !== 0) {
-    const revision = await timedStage('create_or_resume_revision', context, () => createOptimizedRevision(
+    const revision = await timedStage('create_or_resume_revision', context, () => createPartialRevision(
       db,
       env.DB,
       { channelId, stationId, sessionId, queue, observedAt, receivedAt },
     ));
     revisionId = revision.revisionId;
+    revisionCoverage = revision;
     context.revisionId = revisionId;
     if (!deferred) {
       playback = await timedStage('update_playback', context, () => updatePlaybackState(db, {
@@ -171,7 +183,7 @@ export async function saveOptimizedLiveMinuteFact(env, input) {
     queue_id: integer(queue?.queue_id),
     queue_start_time: queueStartTime,
     is_paused: paused ? 1 : 0,
-    queue_track_count: tracks?.length ?? null,
+    queue_track_count: integer(queue?.total_track_count) ?? tracks?.length ?? null,
     queue_available: queue ? 1 : 0,
     track_id: trackId,
     queue_position: position,
@@ -203,7 +215,15 @@ export async function saveOptimizedLiveMinuteFact(env, input) {
       queue,
     });
   }
-  return { skipped: false, fact, sessionId, revisionId, enrichment_deferred: deferred };
+  return {
+    skipped: false,
+    fact,
+    sessionId,
+    revisionId,
+    revision_materialized_count: revisionCoverage?.materializedCount ?? tracks?.length ?? 0,
+    revision_total_count: revisionCoverage?.totalCount ?? integer(queue?.total_track_count) ?? tracks?.length ?? 0,
+    enrichment_deferred: deferred,
+  };
 }
 
 export function saveOptimizedMinuteFactWithinBudget(env, input) {
