@@ -8,13 +8,11 @@ import {
   resolveLiveSession,
   timestampMs,
 } from './minute-facts-store.js';
-import {
-  batchRun,
-  resolveTracksBulk,
-} from './minute-facts-track-resolution.js';
+import { batchRun } from './minute-facts-track-resolution.js';
+import { resolveSparseTracks } from './minute-sparse-track-resolution.js';
 import { shouldStageLiveRevision } from './minute-revision-stages.js';
 
-const DEFAULT_CHUNK_TRACKS = 3;
+const DEFAULT_CHUNK_TRACKS = 1;
 
 function positiveInteger(value, fallback, maximum = Number.MAX_SAFE_INTEGER) {
   const parsed = integer(value);
@@ -169,7 +167,6 @@ export async function prepareSparseLiveRevision(env, payload, options = {}, depe
     .run());
   await updateSource();
 
-  const preferredPosition = preferredQueuePosition(queue, observedAt);
   return {
     staged: materializedCount < visibleCount,
     sparse: true,
@@ -178,7 +175,7 @@ export async function prepareSparseLiveRevision(env, payload, options = {}, depe
     visible_item_count: visibleCount,
     total_item_count: totalCount,
     materialized_item_count: materializedCount,
-    preferred_position: preferredPosition,
+    preferred_position: preferredQueuePosition(queue, observedAt),
     enrichment: {
       channel_id: channelId,
       minute_at: Math.floor(observedAt / 60_000) * 60_000,
@@ -274,7 +271,7 @@ export async function writeSparseLiveRevisionChunk(env, revisionState, dependenc
     queueTracks: state.visible_item_count,
     revisionId: state.revision_id,
   };
-  const resolve = dependencies.resolveTracksBulk || resolveTracksBulk;
+  const resolve = dependencies.resolveTracksBulk || resolveSparseTracks;
   const resolved = sourceTracks.length
     ? await resolve(db, env?.DB, sourceTracks, observedAt, context)
     : [];
