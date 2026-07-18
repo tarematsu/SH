@@ -129,12 +129,42 @@ async function patchPlaybackResult(db, current, identity, playback) {
   return { trackId, position, flags, confidenceCode, detectionCode };
 }
 
+function compactCurrentBiteQueue(queue, position) {
+  if (!queue || position == null) return null;
+  const tracks = Array.isArray(queue.tracks) ? queue.tracks : [];
+  const indexedTrack = tracks[position];
+  const sourceTrack = indexedTrack && (integer(indexedTrack.position) ?? position) === position
+    ? indexedTrack
+    : tracks.find((track, index) => (integer(track?.position) ?? index) === position);
+  const compactTrack = sourceTrack ? {
+    position,
+    queue_track_id: sourceTrack.queue_track_id ?? null,
+    stationhead_track_id: sourceTrack.stationhead_track_id ?? null,
+    spotify_id: sourceTrack.spotify_id ?? null,
+    apple_music_id: sourceTrack.apple_music_id ?? null,
+    isrc: sourceTrack.isrc ?? null,
+    bite_count: sourceTrack.bite_count ?? null,
+  } : null;
+  return {
+    station_id: queue.station_id ?? null,
+    queue_id: queue.queue_id ?? null,
+    start_time: queue.start_time ?? null,
+    total_track_count: integer(queue.total_track_count) ?? tracks.length,
+    materialized_track_count: integer(queue.materialized_track_count) ?? tracks.length,
+    source_structural_hash: queue.source_structural_hash ?? null,
+    source_likes_hash: queue.source_likes_hash ?? null,
+    tracks: compactTrack ? [compactTrack] : [],
+  };
+}
+
 async function enqueueIdentityStage(env, body, playback) {
   if (!env?.MINUTE_ENRICHMENT_QUEUE?.send) throw new Error('MINUTE_ENRICHMENT_QUEUE binding is missing');
+  const position = integer(playback?.current_position);
   await env.MINUTE_ENRICHMENT_QUEUE.send({
     ...body,
     stage: 'identity',
-    queue_position: integer(playback?.current_position),
+    queue: compactCurrentBiteQueue(body.queue, position),
+    queue_position: position,
     track_id: integer(playback?.current_track_id),
     schedule_valid: Number(playback?.current_schedule_valid || 0),
     delayed: Boolean(playback?.delayed),
