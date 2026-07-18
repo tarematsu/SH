@@ -1,6 +1,8 @@
 import { buddyPlaybackConfig } from './buddy-playback.js';
 import {
+  BUDDY_FETCH_AUTH_STAGE,
   BUDDY_FETCH_COMPUTE_STAGE,
+  processBuddyFetchAuth,
   processBuddyFetchCompute,
   processBuddyFetchPlan,
 } from './buddy-playback-fetch-stages.js';
@@ -22,6 +24,7 @@ const BENIGN_SKIP_REASONS = new Set([
 ]);
 const PIPELINE_STAGES = new Set(['fetch', 'parse', 'parse-store', 'metadata', 'commit']);
 const DIRECT_STAGES = new Set([
+  BUDDY_FETCH_AUTH_STAGE,
   BUDDY_FETCH_COMPUTE_STAGE,
   BUDDY_PARSE_COMPUTE_STAGE,
   BUDDY_PARSE_STORE_STAGE,
@@ -92,6 +95,10 @@ function pipelineDependencies(task, dependencies) {
 
 async function runTask(env, task, dependencies) {
   const channelAlias = task.channelAlias || buddyPlaybackConfig(env).alias;
+  if (task.directStage === BUDDY_FETCH_AUTH_STAGE) {
+    const run = dependencies.fetchAuth || processBuddyFetchAuth;
+    return run(env, { ...task, channelAlias }, dependencies.fetch || EMPTY_DEPENDENCIES);
+  }
   if (task.directStage === BUDDY_FETCH_COMPUTE_STAGE) {
     const run = dependencies.fetchCompute || processBuddyFetchCompute;
     return run(env, { ...task, channelAlias }, dependencies.fetch || EMPTY_DEPENDENCIES);
@@ -154,6 +161,7 @@ function logBuddyPlaybackResult(result) {
     checked_at: result?.checked_at,
     requeued: result?.requeued === true,
     replayed_handoff: result?.replayed_handoff === true,
+    auth_prepared: result?.auth_prepared === true,
     tracks: result?.tracks,
     metadata_remaining: result?.metadata_remaining,
     changed: result?.changed,
