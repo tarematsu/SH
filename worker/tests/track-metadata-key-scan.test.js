@@ -54,3 +54,24 @@ test('metadata hydration keeps collecting the second key type after the first re
     ],
   );
 });
+
+test('metadata hydration does not spend key capacity on duplicates', async () => {
+  const calls = [];
+  const tracks = Array.from({ length: 20 }, () => ({
+    spotify_id: ' duplicate ',
+    isrc: ' duplicate ',
+  }));
+  for (let index = 0; index < 85; index += 1) {
+    tracks.push({ spotify_id: `spotify-${index}`, isrc: `isrc-${index}` });
+  }
+
+  await hydrateReadModelMetadata(metadataEnv(calls), readModel(tracks));
+
+  assert.equal(calls.length, 1);
+  assert.deepEqual(calls[0].bindings, [
+    'DUPLICATE',
+    ...Array.from({ length: 79 }, (_, index) => `ISRC-${index}`),
+    'duplicate',
+    ...Array.from({ length: 79 }, (_, index) => `spotify-${index}`),
+  ]);
+});
