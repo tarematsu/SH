@@ -99,15 +99,14 @@ test('D1 budget indexes stay selective', () => {
   assert.match(facts, /WHERE status='complete' AND source='live_collector'/);
 });
 
-test('daily budget workflow enforces the 80 percent targets only on schedule', () => {
+test('daily budget workflow enforces measured 80 percent targets only on schedule', () => {
   const workflow = source('../.github/workflows/fetch-cloudflare-d1-usage.yml');
   const reporter = source('../scripts/cloudflare-d1-usage.mjs');
   assert.match(workflow, /cron: "30 1 \* \* \*"/);
   assert.match(workflow, /if: github\.event_name == 'schedule'/);
   assert.match(workflow, /actual\.rowsRead > target\.rowsRead/);
   assert.match(workflow, /actual\.rowsWritten > target\.rowsWritten/);
-  assert.match(reporter, /rowsReadLow: 3_200_000/);
-  assert.match(reporter, /rowsReadHigh: 3_900_000/);
-  assert.match(reporter, /rowsWrittenLow: 35_000/);
-  assert.match(reporter, /rowsWrittenHigh: 75_000/);
+  assert.match(reporter, /const TARGET_RATIO = 0\.8/);
+  assert.match(reporter, /d1AnalyticsAdaptiveGroups/);
+  assert.doesNotMatch(reporter, /rowsReadLow|rowsReadHigh|rowsWrittenLow|rowsWrittenHigh/);
 });
