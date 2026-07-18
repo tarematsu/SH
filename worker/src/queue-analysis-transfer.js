@@ -25,6 +25,15 @@ function transferMetadata(transfer = {}) {
   };
 }
 
+function queueAnalysisEnvelope(queue, serialized = null) {
+  return objectValue(serialized) || serializedQueueAnalysis(queue);
+}
+
+function attachPreparedQueueAnalysis(queue, prepared) {
+  if (queue) Object.defineProperty(queue, QUEUE_TRANSFER_ANALYSIS, { value: prepared });
+  return prepared;
+}
+
 export function serializedQueueAnalysis(queue) {
   if (!queue) return null;
   const transfer = objectValue(queue[QUEUE_TRANSFER_ANALYSIS]);
@@ -46,8 +55,31 @@ export function serializedQueueAnalysis(queue) {
   };
 }
 
+export async function prepareQueueStructuralAnalysis(queue, serialized = null) {
+  const envelope = queueAnalysisEnvelope(queue, serialized);
+  if (!envelope) return null;
+  const prepared = {
+    ...envelope,
+    structural_hash: envelope.structural ? await payloadHash(envelope.structural) : null,
+  };
+  return attachPreparedQueueAnalysis(queue, prepared);
+}
+
+export async function prepareQueueLikesAnalysis(queue, serialized = null) {
+  const envelope = queueAnalysisEnvelope(queue, serialized);
+  if (!envelope) return null;
+  const likesHash = envelope.likes?.complete !== false && Array.isArray(envelope.likes?.payload)
+    ? await payloadHash(envelope.likes.payload)
+    : null;
+  const prepared = {
+    ...envelope,
+    likes_hash: likesHash,
+  };
+  return attachPreparedQueueAnalysis(queue, prepared);
+}
+
 export async function prepareQueueAnalysis(queue, serialized = null) {
-  const envelope = objectValue(serialized) || serializedQueueAnalysis(queue);
+  const envelope = queueAnalysisEnvelope(queue, serialized);
   if (!envelope) return null;
   const [structuralHash, likesHash] = await Promise.all([
     envelope.structural ? payloadHash(envelope.structural) : null,
@@ -60,8 +92,7 @@ export async function prepareQueueAnalysis(queue, serialized = null) {
     structural_hash: structuralHash,
     likes_hash: likesHash,
   };
-  if (queue) Object.defineProperty(queue, QUEUE_TRANSFER_ANALYSIS, { value: prepared });
-  return prepared;
+  return attachPreparedQueueAnalysis(queue, prepared);
 }
 
 export function restoredQueueTransferAnalysis(queue) {
