@@ -13,9 +13,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Archive source
-        run: tar --exclude=.git -czf source.tgz .
+        run: tar --exclude=.git -czf /tmp/source.tgz .
       - uses: actions/upload-artifact@v4
         with:
           name: agent-source-${{ github.run_id }}
-          path: source.tgz
+          path: /tmp/source.tgz
           retention-days: 1
