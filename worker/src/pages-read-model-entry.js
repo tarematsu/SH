@@ -2,6 +2,15 @@ import './fetch-guard.js';
 import { runDispatchedPagesReadModelTask } from './pages-read-model-dispatch.js';
 
 export const PAGES_READ_MODEL_CRON = '* * * * *';
+const EMPTY_DEPENDENCIES = Object.freeze({});
+const EMPTY_MESSAGES = Object.freeze([]);
+
+let publicationModulePromise;
+
+function loadPublicationModule() {
+  publicationModulePromise ||= import('./pages-track-history-publication-queue.js');
+  return publicationModulePromise;
+}
 
 function scheduledTimestamp(controller, fallback = Date.now()) {
   const value = Number(controller?.scheduledTime);
@@ -10,20 +19,33 @@ function scheduledTimestamp(controller, fallback = Date.now()) {
 
 function assertRefreshSucceeded(result) {
   if (!result || typeof result !== 'object') return result;
-  const failures = Array.isArray(result.responses)
-    ? result.responses.filter((item) => item?.ok === false)
-    : [];
-  if (Number(result.failed || failures.length) > 0) {
+  const responses = result.responses;
+  let failures = null;
+  if (Array.isArray(responses)) {
+    for (let index = 0; index < responses.length; index += 1) {
+      const item = responses[index];
+      if (item?.ok !== false) continue;
+      if (failures) failures.push(item);
+      else failures = [item];
+    }
+  }
+  const responseFailureCount = failures?.length || 0;
+  if (Number(result.failed || responseFailureCount) > 0) {
     const task = result.task?.key || result.task?.kind || 'unknown';
+    const errors = new Array(responseFailureCount);
+    for (let index = 0; index < responseFailureCount; index += 1) {
+      const item = failures[index];
+      errors[index] = new Error(`${item.key || task}: ${item.error || 'materialization failed'}`);
+    }
     throw new AggregateError(
-      failures.map((item) => new Error(`${item.key || task}: ${item.error || 'materialization failed'}`)),
-      `Pages read-model task ${task} failed for ${failures.length || result.failed} response(s)`,
+      errors,
+      `Pages read-model task ${task} failed for ${responseFailureCount || result.failed} response(s)`,
     );
   }
   return result;
 }
 
-export async function runPagesReadModelCron(controller, env, dependencies = {}) {
+export async function runPagesReadModelCron(controller, env, dependencies = EMPTY_DEPENDENCIES) {
   const cron = String(controller?.cron || '');
   if (cron !== PAGES_READ_MODEL_CRON) {
     return { skipped: true, reason: 'unsupported-pages-read-model-cron', cron };
@@ -33,9 +55,11 @@ export async function runPagesReadModelCron(controller, env, dependencies = {}) 
   return assertRefreshSucceeded(await runTask(env, now, dependencies));
 }
 
-export async function runPagesReadModelQueue(batch, env, dependencies = {}) {
-  const { processTrackHistoryPublicationTask } = await import('./pages-track-history-publication-queue.js');
-  for (const message of batch.messages || []) {
+export async function runPagesReadModelQueue(batch, env, dependencies = EMPTY_DEPENDENCIES) {
+  const { processTrackHistoryPublicationTask } = await loadPublicationModule();
+  const messages = batch.messages || EMPTY_MESSAGES;
+  for (let index = 0; index < messages.length; index += 1) {
+    const message = messages[index];
     try {
       const result = await processTrackHistoryPublicationTask(env, message.body, dependencies);
       console.log(JSON.stringify(result));
@@ -53,7 +77,4 @@ export async function runPagesReadModelQueue(batch, env, dependencies = {}) {
 export default {
   scheduled: runPagesReadModelCron,
   queue: runPagesReadModelQueue,
-  fetch() {
-    return Response.json({ ok: false, error: 'not found' }, { status: 404 });
-  },
 };
