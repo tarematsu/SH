@@ -8,6 +8,7 @@ import {
 } from './minute-facts-store.js';
 import { integer } from './minute-facts-track-descriptor.js';
 import { updatePlaybackState, writeCurrentBite } from './minute-facts-legacy-revision.js';
+import { requestQueueExpansion } from './queue-materialization.js';
 
 function validateTask(body) {
   if (body?.message_type !== 'minute-fact-enrichment'
@@ -140,6 +141,28 @@ async function enqueueIdentityStage(env, body, playback) {
   }, { contentType: 'json' });
 }
 
+async function maybeRequestExpansion(env, body, position, identity, dependencies) {
+  if (!body.queue || position == null) return null;
+  const request = dependencies.requestQueueExpansion || requestQueueExpansion;
+  try {
+    return await request(
+      env?.BUDDIES_DB,
+      body.queue,
+      position,
+      identity.observedAt,
+      env,
+    );
+  } catch (error) {
+    console.warn(JSON.stringify({
+      event: 'queue_materialization_expand_failed',
+      revision_id: integer(body.revision_id),
+      queue_position: position,
+      error: String(error?.message || error).slice(0, 500),
+    }));
+    return null;
+  }
+}
+
 async function processPlaybackStage(env, body, identity, current, dependencies) {
   const revisionId = integer(body.revision_id);
   if (revisionId == null) throw new Error('minute playback revision id is missing');
@@ -154,6 +177,13 @@ async function processPlaybackStage(env, body, identity, current, dependencies) 
   });
   const patch = dependencies.patchPlaybackResult || patchPlaybackResult;
   const patched = await patch(env.MINUTE_DB, current, identity, playback);
+  const expansionRequested = await maybeRequestExpansion(
+    env,
+    body,
+    patched.position,
+    identity,
+    dependencies,
+  );
   const enqueue = dependencies.enqueueIdentityStage || enqueueIdentityStage;
   await enqueue(env, body, playback);
   return {
@@ -163,6 +193,7 @@ async function processPlaybackStage(env, body, identity, current, dependencies) 
     ...identity,
     queue_position: patched.position,
     track_id: patched.trackId,
+    requested_materialized_tracks: expansionRequested,
   };
 }
 
