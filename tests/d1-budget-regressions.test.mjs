@@ -92,6 +92,8 @@ test('D1 budget indexes stay selective', () => {
   assert.match(facts, /WHERE reported_current_stream_count IS NOT NULL/);
   assert.match(facts, /WHERE source_code=1/);
   assert.match(facts, /sh_broadcast_sessions\(channel_id, broadcast_start_time/);
+  assert.match(facts, /sh_tracks\(stationhead_track_id\)/);
+  assert.match(facts, /WHERE stationhead_track_id IS NOT NULL/);
   assert.match(facts, /WHERE status='pending'/);
   assert.match(facts, /WHERE status='processing'/);
   assert.match(facts, /WHERE status='complete' AND source='live_collector'/);
