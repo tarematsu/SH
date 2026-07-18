@@ -35,6 +35,7 @@ const splitQueues = [
   'stationhead-minute-enrichment',
   'stationhead-minute-rebuild',
   'stationhead-buddy-playback',
+  'stationhead-host-monitor',
 ];
 
 test('manual deploy keeps all Cloudflare targets available', () => {
@@ -91,9 +92,10 @@ test('Worker package scripts contain only current deployment operations', () => 
   );
   assert.equal(
     workerPackage.scripts['deploy:split-other'],
-    'npm run deploy:pages-read-model && npm run deploy:monitor-maintenance && npm run deploy:other && npm run deploy:buddy-playback',
+    'npm run deploy:pages-read-model && npm run deploy:monitor-maintenance && npm run deploy:other && npm run deploy:host-monitor && npm run deploy:buddy-playback',
   );
   assert.equal(workerPackage.scripts['deploy:persist'], 'wrangler deploy --config wrangler.persist.jsonc');
+  assert.equal(workerPackage.scripts['deploy:host-monitor'], 'wrangler deploy --config wrangler.host-monitor.jsonc');
 
   for (const key of Object.keys(workerPackage.scripts)) {
     assert.doesNotMatch(key, /detach|retire|cutover|mintue/);
@@ -123,6 +125,7 @@ test('R2 observability covers the complete requested object window and split Wor
     'sh-track-metadata',
     'sh-minute-enrichment',
     'sh-minute-rebuild',
+    'sh-host-monitor',
     'sh-buddy-playback',
   ]) {
     assert.match(observabilityWorkflow, new RegExp(worker));
