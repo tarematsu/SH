@@ -108,10 +108,13 @@ test('Worker package scripts contain only current deployment operations', () => 
   );
   assert.equal(
     workerPackage.scripts['deploy:split-other'],
-    'npm run deploy:pages-read-model && npm run deploy:monitor-maintenance && npm run deploy:other && npm run deploy:host-monitor && npm run deploy:buddy-playback',
+    'npm run deploy:pages-read-model && npm run deploy:monitor-maintenance && npm run deploy:other',
   );
   assert.equal(workerPackage.scripts['deploy:persist'], 'wrangler deploy --config wrangler.persist.jsonc');
-  assert.equal(workerPackage.scripts['deploy:host-monitor'], 'wrangler deploy --config wrangler.host-monitor.jsonc');
+  assert.equal(workerPackage.scripts['deploy:host-monitor'], undefined);
+  assert.equal(workerPackage.scripts['deploy:buddy-playback'], undefined);
+  assert.equal(workerPackage.scripts['check:host-monitor-bundle'], undefined);
+  assert.equal(workerPackage.scripts['check:buddy-playback-bundle'], undefined);
 
   for (const key of Object.keys(workerPackage.scripts)) {
     assert.doesNotMatch(key, /detach|retire|cutover|mintue/);
@@ -130,7 +133,7 @@ test('Cloudflare Git diagnostics include only remaining connected Worker depende
   assert.match(diagnosticsWorkflow, /cloudflare-build-diagnostics\.mjs/);
 });
 
-test('R2 observability covers the complete requested object window and split Workers', () => {
+test('R2 observability covers current scripts after monitor consolidation', () => {
   assert.doesNotMatch(observabilityWorkflow, /selected\s*=\s*selected\[:100\]/);
   assert.match(observabilityWorkflow, /objects_selected/);
   assert.match(observabilityWorkflow, /oldest_object_modified/);
@@ -141,9 +144,10 @@ test('R2 observability covers the complete requested object window and split Wor
     'sh-track-metadata',
     'sh-minute-enrichment',
     'sh-minute-rebuild',
-    'sh-host-monitor',
-    'sh-buddy-playback',
+    'sh-monitor-other',
   ]) {
     assert.match(observabilityWorkflow, new RegExp(worker));
   }
+  assert.doesNotMatch(observabilityWorkflow, /sh-host-monitor/);
+  assert.doesNotMatch(observabilityWorkflow, /sh-buddy-playback/);
 });
