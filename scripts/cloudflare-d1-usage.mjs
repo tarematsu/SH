@@ -1,236 +1,245 @@
-import { execFileSync } from 'node:child_process';
 import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import process from 'node:process';
 
+const API_ROOT = 'https://api.cloudflare.com/client/v4';
+const GRAPHQL_URL = `${API_ROOT}/graphql`;
 const FREE_READ_ROWS = 5_000_000;
 const FREE_WRITE_ROWS = 100_000;
 const TARGET_RATIO = 0.8;
-const TARGET_READ_ROWS = Math.floor(FREE_READ_ROWS * TARGET_RATIO);
-const TARGET_WRITE_ROWS = Math.floor(FREE_WRITE_ROWS * TARGET_RATIO);
-const WINDOW_DAYS = 8;
-const outputDir = path.resolve(process.env.D1_USAGE_OUTPUT_DIR || 'd1-usage');
+const TARGET_READ_ROWS = FREE_READ_ROWS * TARGET_RATIO;
+const TARGET_WRITE_ROWS = FREE_WRITE_ROWS * TARGET_RATIO;
 const token = String(process.env.CLOUDFLARE_API_TOKEN || '').trim();
 if (!token) throw new Error('CLOUDFLARE_API_TOKEN is required');
+
+const outputDir = path.resolve(process.env.D1_USAGE_OUTPUT_DIR || 'd1-usage');
+await mkdir(outputDir, { recursive: true });
 
 function isoDate(date) {
   return date.toISOString().slice(0, 10);
 }
 
-function dayOffset(date, days) {
-  return new Date(date.getTime() + days * 86_400_000);
+function shiftUtcDate(date, days) {
+  const next = new Date(date);
+  next.setUTCDate(next.getUTCDate() + days);
+  return next;
 }
 
-function finite(value) {
-  const number = Number(value);
+function numeric(value) {
+  const number = Number(value || 0);
   return Number.isFinite(number) ? number : 0;
 }
 
-function percentage(value, denominator) {
-  return denominator > 0 ? (value / denominator) * 100 : 0;
+function percentage(value, limit) {
+  return limit > 0 ? (value / limit) * 100 : 0;
 }
 
-function average(items, field) {
-  return items.length ? items.reduce((sum, item) => sum + finite(item[field]), 0) / items.length : 0;
-}
-
-function maximum(items, field) {
-  return items.length ? Math.max(...items.map((item) => finite(item[field]))) : 0;
-}
-
-async function cloudflare(pathname, options = {}) {
-  const response = await fetch(`https://api.cloudflare.com/client/v4${pathname}`, {
+async function api(url, options = {}) {
+  const response = await fetch(url, {
     ...options,
     headers: {
-      authorization: `Bearer ${token}`,
-      'content-type': 'application/json',
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
       ...(options.headers || {}),
     },
   });
-  const payload = await response.json().catch(() => null);
-  if (!response.ok || payload?.success === false) {
-    throw new Error(`Cloudflare API ${response.status}: ${JSON.stringify(payload).slice(0, 2000)}`);
+  const text = await response.text();
+  let body;
+  try {
+    body = JSON.parse(text);
+  } catch {
+    throw new Error(`Cloudflare returned non-JSON (${response.status}): ${text.slice(0, 500)}`);
   }
-  return payload;
+  if (!response.ok || body?.success === false || body?.errors?.length) {
+    throw new Error(`Cloudflare API failed (${response.status}): ${JSON.stringify(body?.errors || body).slice(0, 1200)}`);
+  }
+  return body;
 }
 
-async function graphql(accountId, query, variables) {
-  const payload = await cloudflare('/graphql', {
-    method: 'POST',
-    body: JSON.stringify({ query, variables }),
-  });
-  if (payload?.errors?.length) throw new Error(`Cloudflare GraphQL: ${JSON.stringify(payload.errors)}`);
-  const account = payload?.data?.viewer?.accounts?.[0];
-  if (!account || account.id !== accountId) throw new Error(`Cloudflare GraphQL account missing: ${accountId}`);
-  return account;
-}
-
-async function repositoryConfigs() {
+async function referencedDatabases() {
   const workerDir = path.resolve('worker');
-  const names = (await readdir(workerDir)).filter((name) => /^wrangler(?:\..+)?\.jsonc$/.test(name));
+  const files = (await readdir(workerDir)).filter((name) => /^wrangler.*\.jsonc$/.test(name));
   const databases = new Map();
-  for (const name of names) {
-    const text = await readFile(path.join(workerDir, name), 'utf8');
-    for (const match of text.matchAll(/"database_name"\s*:\s*"([^"]+)"[\s\S]{0,300}?"database_id"\s*:\s*"([^"]+)"/g)) {
-      const [, databaseName, databaseId] = match;
-      const record = databases.get(databaseId) || { id: databaseId, name: databaseName, configs: [] };
-      if (!record.configs.includes(name)) record.configs.push(name);
-      databases.set(databaseId, record);
+  const pattern = /"database_name"\s*:\s*"([^"]+)"[\s\S]{0,300}?"database_id"\s*:\s*"([^"]+)"/g;
+  for (const file of files) {
+    const text = await readFile(path.join(workerDir, file), 'utf8');
+    for (const match of text.matchAll(pattern)) {
+      const [, name, id] = match;
+      const current = databases.get(id) || { id, name, configs: [] };
+      current.configs.push(file);
+      databases.set(id, current);
     }
   }
-  return [...databases.values()].sort((left, right) => left.name.localeCompare(right.name));
+  if (!databases.size) throw new Error('No D1 databases found in worker/wrangler*.jsonc');
+  return databases;
 }
 
-const now = new Date();
-const today = isoDate(now);
-const yesterday = isoDate(dayOffset(now, -1));
-const startDate = isoDate(dayOffset(now, -WINDOW_DAYS + 1));
-const accountsPayload = await cloudflare('/accounts?per_page=50');
-const accounts = accountsPayload.result || [];
-if (!accounts.length) throw new Error('No Cloudflare accounts are visible to this token');
-
-const configs = await repositoryConfigs();
-const databases = [];
-for (const account of accounts) {
-  const listed = await cloudflare(`/accounts/${account.id}/d1/database?per_page=100`);
-  const byId = new Map((listed.result || []).map((database) => [database.uuid, database]));
-  for (const config of configs) {
-    const database = byId.get(config.id);
-    if (!database) continue;
-    databases.push({ ...config, accountId: account.id, accountName: account.name });
+async function discoverAccounts(referenced) {
+  const accountsResponse = await api(`${API_ROOT}/accounts?per_page=50`);
+  const matches = [];
+  for (const account of accountsResponse.result || []) {
+    let response;
+    try {
+      response = await api(`${API_ROOT}/accounts/${account.id}/d1/database?per_page=100`);
+    } catch (error) {
+      console.warn(`Skipping account ${account.id}: ${error.message}`);
+      continue;
+    }
+    const databases = response.result || [];
+    const referencedHere = databases.filter((database) => referenced.has(database.uuid || database.id));
+    if (referencedHere.length) {
+      matches.push({ id: account.id, name: account.name, databases, referenced: referencedHere });
+    }
   }
+  if (!matches.length) throw new Error('No accessible Cloudflare account contains the referenced D1 databases');
+  return matches;
 }
 
-const usageQuery = `query D1Usage($accountTag: string!, $start: Time!, $end: Time!) {
+const query = `query D1DailyUsage($accountTag: string!, $start: Date!, $end: Date!) {
   viewer {
     accounts(filter: { accountTag: $accountTag }) {
-      id
       d1AnalyticsAdaptiveGroups(
-        filter: { datetime_geq: $start, datetime_lt: $end }
         limit: 10000
-        orderBy: [datetimeDay_ASC]
+        filter: { date_geq: $start, date_leq: $end }
+        orderBy: [date_ASC]
       ) {
-        dimensions { datetimeDay databaseId }
-        sum { readQueries writeQueries rowsRead rowsWritten }
+        sum {
+          readQueries
+          writeQueries
+          rowsRead
+          rowsWritten
+          queryBatchResponseBytes
+        }
+        dimensions {
+          date
+          databaseId
+        }
       }
     }
   }
 }`;
 
-const daily = new Map();
-const byDatabase = new Map();
-for (const account of accounts) {
-  const accountData = await graphql(account.id, usageQuery, {
-    accountTag: account.id,
-    start: `${startDate}T00:00:00Z`,
-    end: `${isoDate(dayOffset(now, 1))}T00:00:00Z`,
+async function usageForAccount(accountId, start, end) {
+  const body = await api(GRAPHQL_URL, {
+    method: 'POST',
+    body: JSON.stringify({ query, variables: { accountTag: accountId, start, end } }),
   });
-  for (const group of accountData.d1AnalyticsAdaptiveGroups || []) {
-    const date = String(group.dimensions?.datetimeDay || '').slice(0, 10);
-    const databaseId = String(group.dimensions?.databaseId || 'unknown');
-    const sum = group.sum || {};
-    const values = {
-      rowsRead: finite(sum.rowsRead),
-      rowsWritten: finite(sum.rowsWritten),
-      readQueries: finite(sum.readQueries),
-      writeQueries: finite(sum.writeQueries),
-    };
-    const day = daily.get(date) || { date, rowsRead: 0, rowsWritten: 0, readQueries: 0, writeQueries: 0 };
-    for (const key of ['rowsRead', 'rowsWritten', 'readQueries', 'writeQueries']) day[key] += values[key];
-    daily.set(date, day);
-    const databaseDayKey = `${databaseId}:${date}`;
-    const dbDay = byDatabase.get(databaseDayKey) || {
-      databaseId,
-      date,
-      rowsRead: 0,
-      rowsWritten: 0,
-      readQueries: 0,
-      writeQueries: 0,
-    };
-    for (const key of ['rowsRead', 'rowsWritten', 'readQueries', 'writeQueries']) dbDay[key] += values[key];
-    byDatabase.set(databaseDayKey, dbDay);
+  return body.data?.viewer?.accounts?.[0]?.d1AnalyticsAdaptiveGroups || [];
+}
+
+const now = new Date();
+const today = isoDate(now);
+const yesterday = isoDate(shiftUtcDate(now, -1));
+const start = isoDate(shiftUtcDate(now, -7));
+const referenced = await referencedDatabases();
+const accounts = await discoverAccounts(referenced);
+
+const databaseNames = new Map();
+for (const account of accounts) {
+  for (const database of account.databases) {
+    databaseNames.set(database.uuid || database.id, database.name || database.uuid || database.id);
   }
+}
+for (const database of referenced.values()) databaseNames.set(database.id, database.name);
+
+const groups = [];
+for (const account of accounts) {
+  const rows = await usageForAccount(account.id, start, today);
+  for (const row of rows) groups.push({ ...row, accountId: account.id, accountName: account.name });
+}
+
+const daily = new Map();
+const databaseDaily = new Map();
+for (let cursor = new Date(`${start}T00:00:00Z`); isoDate(cursor) <= today; cursor = shiftUtcDate(cursor, 1)) {
+  daily.set(isoDate(cursor), { date: isoDate(cursor), rowsRead: 0, rowsWritten: 0, readQueries: 0, writeQueries: 0 });
+}
+for (const group of groups) {
+  const date = String(group.dimensions?.date || '');
+  const databaseId = String(group.dimensions?.databaseId || 'unknown');
+  const sum = group.sum || {};
+  const values = {
+    rowsRead: numeric(sum.rowsRead),
+    rowsWritten: numeric(sum.rowsWritten),
+    readQueries: numeric(sum.readQueries),
+    writeQueries: numeric(sum.writeQueries),
+  };
+  const total = daily.get(date) || { date, rowsRead: 0, rowsWritten: 0, readQueries: 0, writeQueries: 0 };
+  for (const key of ['rowsRead', 'rowsWritten', 'readQueries', 'writeQueries']) total[key] += values[key];
+  daily.set(date, total);
+  const dbKey = `${date}:${databaseId}`;
+  const db = databaseDaily.get(dbKey) || {
+    date,
+    databaseId,
+    databaseName: databaseNames.get(databaseId) || databaseId,
+    rowsRead: 0,
+    rowsWritten: 0,
+    readQueries: 0,
+    writeQueries: 0,
+  };
+  for (const key of ['rowsRead', 'rowsWritten', 'readQueries', 'writeQueries']) db[key] += values[key];
+  databaseDaily.set(dbKey, db);
 }
 
 const completeDays = [...daily.values()].filter((item) => item.date < today).sort((a, b) => a.date.localeCompare(b.date));
-const latestComplete = completeDays.find((item) => item.date === yesterday)
-  || completeDays.at(-1)
-  || { date: yesterday, rowsRead: 0, rowsWritten: 0, readQueries: 0, writeQueries: 0 };
-const currentPartial = daily.get(today)
-  || { date: today, rowsRead: 0, rowsWritten: 0, readQueries: 0, writeQueries: 0 };
-const elapsedTodayMs = Math.max(60_000, now.getTime() - Date.parse(`${today}T00:00:00Z`));
-const projectedFactor = Math.min(24, 86_400_000 / elapsedTodayMs);
+const lastSeven = completeDays.slice(-7);
+const latestComplete = daily.get(yesterday) || { date: yesterday, rowsRead: 0, rowsWritten: 0, readQueries: 0, writeQueries: 0 };
+const currentPartial = daily.get(today) || { date: today, rowsRead: 0, rowsWritten: 0, readQueries: 0, writeQueries: 0 };
+const elapsedHours = Math.max(1, now.getUTCHours() + now.getUTCMinutes() / 60 + now.getUTCSeconds() / 3600);
+const projectionFactor = Math.min(24, 24 / elapsedHours);
 const projectedToday = {
   date: today,
-  rowsRead: Math.round(currentPartial.rowsRead * projectedFactor),
-  rowsWritten: Math.round(currentPartial.rowsWritten * projectedFactor),
-  readQueries: Math.round(currentPartial.readQueries * projectedFactor),
-  writeQueries: Math.round(currentPartial.writeQueries * projectedFactor),
+  rowsRead: Math.round(currentPartial.rowsRead * projectionFactor),
+  rowsWritten: Math.round(currentPartial.rowsWritten * projectionFactor),
+  readQueries: Math.round(currentPartial.readQueries * projectionFactor),
+  writeQueries: Math.round(currentPartial.writeQueries * projectionFactor),
 };
-const recentComplete = completeDays.slice(-7);
+
+function average(key) {
+  return lastSeven.length ? Math.round(lastSeven.reduce((sum, day) => sum + day[key], 0) / lastSeven.length) : 0;
+}
+function maximum(key) {
+  return lastSeven.length ? Math.max(...lastSeven.map((day) => day[key])) : 0;
+}
+
 const sevenDayAverage = {
-  rowsRead: Math.round(average(recentComplete, 'rowsRead')),
-  rowsWritten: Math.round(average(recentComplete, 'rowsWritten')),
-  readQueries: Math.round(average(recentComplete, 'readQueries')),
-  writeQueries: Math.round(average(recentComplete, 'writeQueries')),
+  rowsRead: average('rowsRead'),
+  rowsWritten: average('rowsWritten'),
+  readQueries: average('readQueries'),
+  writeQueries: average('writeQueries'),
 };
 const sevenDayMaximum = {
-  rowsRead: maximum(recentComplete, 'rowsRead'),
-  rowsWritten: maximum(recentComplete, 'rowsWritten'),
-  readQueries: maximum(recentComplete, 'readQueries'),
-  writeQueries: maximum(recentComplete, 'writeQueries'),
+  rowsRead: maximum('rowsRead'),
+  rowsWritten: maximum('rowsWritten'),
+  readQueries: maximum('readQueries'),
+  writeQueries: maximum('writeQueries'),
 };
 const planningEstimate = {
   rowsRead: Math.max(latestComplete.rowsRead, sevenDayAverage.rowsRead, projectedToday.rowsRead),
   rowsWritten: Math.max(latestComplete.rowsWritten, sevenDayAverage.rowsWritten, projectedToday.rowsWritten),
 };
-const model = {
-  basis: 'one-day query insights plus bounded execution frequency after this change',
-  normalDay: {
-    rowsReadLow: 3_200_000,
-    rowsReadHigh: 3_900_000,
-    rowsWrittenLow: 35_000,
-    rowsWrittenHigh: 75_000,
-  },
-  caveat: 'Model excludes the first index-build or migration day; completed UTC-day analytics remain authoritative.',
-};
 
-const configuredNames = new Map(configs.map((database) => [database.id, database.name]));
-const latestDatabaseRows = databases.map((database) => {
-  const values = byDatabase.get(`${database.id}:${latestComplete.date}`) || {};
-  return {
-    databaseId: database.id,
-    databaseName: database.name,
-    accountId: database.accountId,
-    rowsRead: finite(values.rowsRead),
-    rowsWritten: finite(values.rowsWritten),
-    readQueries: finite(values.readQueries),
-    writeQueries: finite(values.writeQueries),
-  };
-}).sort((left, right) => right.rowsRead - left.rowsRead || right.rowsWritten - left.rowsWritten);
+const latestDatabaseRows = [...databaseDaily.values()]
+  .filter((item) => item.date === yesterday)
+  .sort((a, b) => (b.rowsRead + b.rowsWritten) - (a.rowsRead + a.rowsWritten));
 
-for (const item of byDatabase.values()) {
-  if (!configuredNames.has(item.databaseId)) configuredNames.set(item.databaseId, item.databaseId);
-}
-
-await mkdir(outputDir, { recursive: true });
 const report = {
   generatedAt: now.toISOString(),
-  window: { start: startDate, end: today, latestCompleteDate: latestComplete.date },
+  window: { start, end: today, latestCompleteDate: yesterday },
   limits: {
     free: { rowsRead: FREE_READ_ROWS, rowsWritten: FREE_WRITE_ROWS },
     targetRatio: TARGET_RATIO,
     target: { rowsRead: TARGET_READ_ROWS, rowsWritten: TARGET_WRITE_ROWS },
   },
-  accounts: accounts.map(({ id, name }) => ({ id, name })),
-  databases,
+  accounts: accounts.map((account) => ({ id: account.id, name: account.name })),
+  databases: [...referenced.values()].map((database) => ({
+    ...database,
+    accountId: accounts.find((account) => account.referenced.some((item) => (item.uuid || item.id) === database.id))?.id || null,
+  })),
   latestComplete,
   currentPartial,
   projectedToday,
   sevenDayAverage,
   sevenDayMaximum,
   planningEstimate,
-  model,
   targetUtilization: {
     rowsReadPercent: percentage(planningEstimate.rowsRead, TARGET_READ_ROWS),
     rowsWrittenPercent: percentage(planningEstimate.rowsWritten, TARGET_WRITE_ROWS),
@@ -259,13 +268,6 @@ const lines = [
   '',
   `Planning headroom: ${fmt.format(report.targetHeadroom.rowsRead)} read rows/day and ${fmt.format(report.targetHeadroom.rowsWritten)} written rows/day.`,
   '',
-  '## Post-change normal-day model',
-  '',
-  `- Rows read: ${fmt.format(model.normalDay.rowsReadLow)}-${fmt.format(model.normalDay.rowsReadHigh)} per day`,
-  `- Rows written: ${fmt.format(model.normalDay.rowsWrittenLow)}-${fmt.format(model.normalDay.rowsWrittenHigh)} per day`,
-  `- Basis: ${model.basis}`,
-  `- Caveat: ${model.caveat}`,
-  '',
   `## ${yesterday} by database`,
   '',
   '| Database | Rows read | Rows written | Read queries | Write queries |',
@@ -280,7 +282,6 @@ console.log(JSON.stringify({
   sevenDayMaximum,
   projectedToday,
   planningEstimate,
-  model,
   targetUtilization: report.targetUtilization,
   targetHeadroom: report.targetHeadroom,
 }));
