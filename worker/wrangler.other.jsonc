@@ -40,6 +40,24 @@
     { "binding": "OTHER_DB", "database_name": "stationhead-other", "database_id": "21e70e92-6725-4e62-809e-8aadb088cc11" }
   ],
   "queues": {
+    "consumers": [
+      {
+        "queue": "stationhead-buddy-playback",
+        "max_batch_size": 1,
+        "max_batch_timeout": 1,
+        "max_retries": 8,
+        "dead_letter_queue": "stationhead-buddy-playback-dlq",
+        "max_concurrency": 1
+      },
+      {
+        "queue": "stationhead-host-monitor",
+        "max_batch_size": 1,
+        "max_batch_timeout": 1,
+        "max_retries": 8,
+        "dead_letter_queue": "stationhead-host-monitor-dlq",
+        "max_concurrency": 1
+      }
+    ],
     "producers": [
       { "binding": "BUDDY_PLAYBACK_QUEUE", "queue": "stationhead-buddy-playback" },
       { "binding": "HOST_MONITOR_QUEUE", "queue": "stationhead-host-monitor" }
