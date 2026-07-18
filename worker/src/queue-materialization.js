@@ -88,14 +88,26 @@ export function chooseMaterializedTrackCount(queue, analysis, state = null, env 
   return Math.min(total, Math.max(cfg.initialTracks, requested));
 }
 
-function visibleLikeAnalysis(tracks, fullLikes) {
-  const keys = new Set((tracks || []).map(trackKey).filter(Boolean));
-  const payload = Array.isArray(fullLikes?.payload)
-    ? fullLikes.payload.filter((entry) => keys.has(String(entry?.track_key || '')))
-    : [];
+function visibleLikeAnalysis(tracks) {
+  const unique = new Map();
+  let identifiable = 0;
+  let complete = true;
+  for (const track of Array.isArray(tracks) ? tracks : []) {
+    const key = trackKey(track);
+    if (!key) continue;
+    identifiable += 1;
+    const likeCount = integer(track?.bite_count);
+    if (likeCount == null) {
+      complete = false;
+      continue;
+    }
+    unique.set(key, likeCount);
+  }
   return {
-    complete: fullLikes?.complete !== false,
-    payload,
+    complete: identifiable === 0 || complete,
+    payload: [...unique.entries()]
+      .map(([track_key, like_count]) => ({ track_key, like_count }))
+      .sort((left, right) => left.track_key.localeCompare(right.track_key)),
   };
 }
 
@@ -132,7 +144,7 @@ export function materializeQueueWindow(queue, analysis, requestedCount) {
       source_structural_hash: sourceStructuralHash,
       tracks: structuralTracks,
     },
-    likes: visibleLikeAnalysis(tracks, analysis.likes),
+    likes: visibleLikeAnalysis(tracks),
     structural_hash: null,
     likes_hash: null,
     source_structural_hash: sourceStructuralHash,
