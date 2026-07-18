@@ -1,5 +1,4 @@
 name: Check Cloudflare observability logs
-# Temporary R2-only verification trigger; this comment is removed after the artifact is captured.
 
 on:
   pull_request:
@@ -127,7 +126,7 @@ jobs:
               'sh-pages-read-model', 'sh-monitor-maintenance',
               'sh-minute-ingest', 'sh-minute-derive', 'sh-minute-enrichment',
               'sh-minute-rebuild', 'sh-minute-maintenance',
-              'sh-monitor-other', 'sh-buddy-playback',
+              'sh-monitor-other', 'sh-host-monitor', 'sh-buddy-playback',
           }
           output_dir = pathlib.Path('observability-logs')
           full_path = output_dir / 'sh-workers.ndjson'
