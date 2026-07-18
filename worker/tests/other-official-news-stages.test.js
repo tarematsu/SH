@@ -10,11 +10,63 @@ import {
 
 const BASE = Date.UTC(2026, 0, 1, 0, 20, 0);
 
-test('official-news probe queues reconciliation only after successful completion', async () => {
+function messageStage(stage) {
+  return {
+    message_type: OFFICIAL_NEWS_STAGE_MESSAGE,
+    message_version: 1,
+    stage,
+    scheduled_at: BASE,
+  };
+}
+
+test('legacy probe stage performs only the news check and queues station probe', async () => {
   const order = [];
   const sent = [];
   const result = await processOfficialNewsStage({ marker: true }, {
     stage: 'probe',
+    scheduledAt: BASE,
+  }, {
+    config: () => ({ marker: 'config' }),
+    check: async (env, config, now) => {
+      order.push('check');
+      assert.equal(env.marker, true);
+      assert.equal(config.marker, 'config');
+      assert.equal(now, BASE);
+      return { skipped: false };
+    },
+    send: async (message) => {
+      order.push('send');
+      sent.push(message);
+    },
+  });
+
+  assert.deepEqual(order, ['check', 'send']);
+  assert.equal(result.stage, 'probe');
+  assert.equal(result.next_stage, 'station-probe');
+  assert.equal(result.pending, true);
+  assert.equal(sent[0].stage, 'station-probe');
+  assert.equal(sent[0].scheduled_at, BASE);
+});
+
+test('news check failure never queues the next stage for injected callers', async () => {
+  let sent = false;
+  const failure = new Error('check failed');
+  await assert.rejects(processOfficialNewsStage({}, {
+    stage: 'probe',
+    scheduledAt: BASE,
+  }, {
+    config: () => ({}),
+    check: async () => { throw failure; },
+    send: async () => { sent = true; },
+  }), failure);
+  assert.equal(sent, false);
+});
+
+test('station probe is independent and queues reconciliation', async () => {
+  const order = [];
+  const sent = [];
+  const result = await processOfficialNewsStage({ marker: true }, {
+    stage: 'station-probe',
     scheduledAt: BASE,
   }, {
     config: () => ({ marker: 'config' }),
@@ -32,25 +84,9 @@ test('official-news probe queues reconciliation only after successful completion
   });
 
   assert.deepEqual(order, ['probe', 'send']);
-  assert.equal(result.stage, 'probe');
-  assert.equal(result.pending, true);
-  assert.equal(sent[0].message_type, OFFICIAL_NEWS_STAGE_MESSAGE);
+  assert.equal(result.stage, 'station-probe');
+  assert.equal(result.next_stage, 'reconcile');
   assert.equal(sent[0].stage, 'reconcile');
-  assert.equal(sent[0].scheduled_at, BASE);
-});
-
-test('official-news probe failure never queues reconciliation', async () => {
-  let sent = false;
-  const failure = new Error('probe failed');
-  await assert.rejects(processOfficialNewsStage({}, {
-    stage: 'probe',
-    scheduledAt: BASE,
-  }, {
-    config: () => ({}),
-    probe: async () => { throw failure; },
-    send: async () => { sent = true; },
-  }), failure);
-  assert.equal(sent, false);
 });
 
 test('official-news reconciliation is an independent stage', async () => {
@@ -68,13 +104,19 @@ test('official-news reconciliation is an independent stage', async () => {
   assert.equal(calls[0][1], BASE);
 });
 
-test('official-news task validation and monitor router retain one-message dispatch', () => {
-  assert.deepEqual(officialNewsStageTask({
-    message_type: OFFICIAL_NEWS_STAGE_MESSAGE,
-    message_version: 1,
+test('official-news task validation preserves old probe messages and new station probe', () => {
+  assert.deepEqual(officialNewsStageTask(messageStage('probe')), {
+    stage: 'probe',
+    scheduledAt: BASE,
+  });
+  assert.deepEqual(officialNewsStageTask(messageStage('station-probe')), {
+    stage: 'station-probe',
+    scheduledAt: BASE,
+  });
+  assert.deepEqual(officialNewsStageTask(messageStage('reconcile')), {
     stage: 'reconcile',
-    scheduled_at: BASE,
-  }), { stage: 'reconcile', scheduledAt: BASE });
+    scheduledAt: BASE,
+  });
 
   const source = readFileSync(new URL('../src/other-monitor-entry.js', import.meta.url), 'utf8');
   assert.match(source, /messageType === OFFICIAL_NEWS_STAGE_MESSAGE/);
