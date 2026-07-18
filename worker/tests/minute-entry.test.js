@@ -121,7 +121,7 @@ test('maintenance worker owns dispatch and maintenance schedules without comment
   assert.match(source, /pendingMinuteDeriveTriggers/);
   assert.deepEqual(config.d1_databases.map(({ binding }) => binding), ['BUDDIES_DB', 'MINUTE_DB']);
   assert.equal(config.vars.MINUTE_FACT_AUTO_REQUEUE_DEAD, true);
-  assert.equal(config.vars.DERIVE_DISPATCH_LIMIT, 5);
+  assert.equal(config.vars.DERIVE_DISPATCH_LIMIT, 20);
   assert.equal(config.vars.REBUILD_RECENT_GUARD_MS, 300_000);
 
   assert.deepEqual(await runMinuteScheduled({ cron: '* * * * *' }, {}, {}), {
