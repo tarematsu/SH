@@ -1,40 +1,43 @@
 import { saveMinuteFactReadModels } from './minute-facts-read-model.js';
 
+const JSON_QUEUE_SEND_OPTIONS = { contentType: 'json' };
+
 export function readModelNeedsHydration(readModel) {
   const tracks = readModel?.queue?.value?.tracks;
-  return Array.isArray(tracks) && tracks.some((track) => (
-    !track?.title || !track?.artist || !track?.album_name || !track?.thumbnail_url
-  ));
-}
-
-async function deferReadModelHydration(env, body) {
-  if (!env?.TRACK_METADATA_QUEUE?.send || !readModelNeedsHydration(body?.read_model)) return false;
-  await env.TRACK_METADATA_QUEUE.send({
-    message_type: 'stationhead-track-metadata',
-    message_version: 1,
-    task: 'read-model-hydration',
-    job_id: body.job_id,
-    observed_at: Number(body.observed_at) || null,
-    read_model: body.read_model,
-  }, { contentType: 'json' });
-  return true;
+  if (!Array.isArray(tracks)) return false;
+  for (let index = 0; index < tracks.length; index += 1) {
+    const track = tracks[index];
+    if (!track?.title || !track?.artist || !track?.album_name || !track?.thumbnail_url) return true;
+  }
+  return false;
 }
 
 export async function processReadModelMessage(env, body) {
   if (body?.message_type !== 'stationhead-read-model' || Number(body?.message_version) !== 1) {
     throw new Error('unsupported read model message');
   }
-  if (await deferReadModelHydration(env, body)) {
+  const observedAt = Number(body.observed_at) || null;
+  const readModel = body.read_model;
+  const metadataQueue = env?.TRACK_METADATA_QUEUE;
+  if (metadataQueue?.send && readModelNeedsHydration(readModel)) {
+    await metadataQueue.send({
+      message_type: 'stationhead-track-metadata',
+      message_version: 1,
+      task: 'read-model-hydration',
+      job_id: body.job_id,
+      observed_at: observedAt,
+      read_model: readModel,
+    }, JSON_QUEUE_SEND_OPTIONS);
     console.log(JSON.stringify({
       event: 'read_model_hydration_deferred',
-      observed_at: Number(body.observed_at) || null,
+      observed_at: observedAt,
     }));
     return { deferred: true };
   }
-  await saveMinuteFactReadModels(env, body.read_model, body.job_id);
+  await saveMinuteFactReadModels(env, readModel, body.job_id);
   console.log(JSON.stringify({
     event: 'read_model_updated',
-    observed_at: Number(body.observed_at) || null,
+    observed_at: observedAt,
   }));
   return { deferred: false };
 }
