@@ -63,13 +63,15 @@ export async function createPartialRevision(db, oldDb, input) {
   }));
   const created = !revision;
   if (revision?.status === 'complete' && Number(revision.item_count || 0) >= visibleCount) {
+    const materializedCount = Number(revision.item_count || 0);
+    await updateRevisionCoverage(db, Number(revision.id), materializedCount, totalCount);
     return {
       revisionId: Number(revision.id),
       created: false,
       resumed: false,
-      materializedCount: Number(revision.item_count || 0),
+      materializedCount,
       totalCount,
-      coverageComplete: Number(revision.item_count || 0) >= totalCount,
+      coverageComplete: materializedCount >= totalCount,
     };
   }
 
