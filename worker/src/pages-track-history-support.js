@@ -1,7 +1,8 @@
 const DAY_MS = 86_400_000;
 const TRACK_HISTORY_DAYS = 35;
-const TRACK_HISTORY_HOURLY_DAYS = 3;
+const TRACK_HISTORY_HOURLY_DAYS = 1;
 const TRACK_HISTORY_BACKFILL_DAYS = 7;
+const TRACK_HISTORY_FULL_RECONCILE_MS = 30 * DAY_MS;
 const TRACK_HISTORY_EPOCH = Date.UTC(2024, 4, 1);
 
 function dayText(timestamp) {
@@ -21,7 +22,8 @@ export function trackHistoryRefreshRanges(now, backfillState = null, statusState
   const previousFullAt = validTimestamp(
     statusState?.full_reconciled_at ?? statusState?.generated_at,
   );
-  const fullReconcile = previousFullAt == null || previousFullAt < currentDayStart;
+  const fullReconcile = previousFullAt == null
+    || previousFullAt + TRACK_HISTORY_FULL_RECONCILE_MS <= currentDayStart;
   const fullRecent = { fromTs: fullRecentFrom, toTs };
   const recent = {
     fromTs: fullReconcile ? fullRecentFrom : hourlyRecentFrom,
