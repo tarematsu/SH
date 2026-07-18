@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import {
+import commentsWorker from '../src/comments-entry.js';
+import worker, {
   compactCommentsEnv,
   compactCommittedMetadataMessage,
 } from '../src/comments-cpu-entry.js';
@@ -30,8 +31,10 @@ function metadataMessage() {
               artist: 'unused',
               raw: { unused: true },
             },
+            { spotify_id: 'spotify-only', title: 'spotify-only' },
             { isrc: 'JPB123456789', title: 'isrc-only' },
             { title: 'no metadata identity' },
+            null,
           ],
         },
       },
@@ -53,6 +56,7 @@ test('comments metadata handoff retains only fields used by enrichment', () => {
         queue: {
           tracks: [
             { spotify_id: 'spotify-a', isrc: 'JPA123456789' },
+            { spotify_id: 'spotify-only' },
             { isrc: 'JPB123456789' },
           ],
         },
@@ -76,6 +80,7 @@ test('comments environment wrapper compacts only metadata queue sends', async ()
   const message = metadataMessage();
 
   assert.notEqual(active, env);
+  assert.equal(compactCommentsEnv(env), active);
   assert.equal(active.DB, env.DB);
   await active.TRACK_METADATA_QUEUE.send(message, { contentType: 'json' });
 
@@ -83,10 +88,25 @@ test('comments environment wrapper compacts only metadata queue sends', async ()
   assert.notEqual(sent[0].body, message);
   assert.deepEqual(sent[0].body.job.payload.queue.tracks, [
     { spotify_id: 'spotify-a', isrc: 'JPA123456789' },
+    { spotify_id: 'spotify-only' },
     { isrc: 'JPB123456789' },
   ]);
   assert.deepEqual(sent[0].options, { contentType: 'json' });
 
   const unrelated = { message_type: 'other' };
   assert.equal(compactCommittedMetadataMessage(unrelated), unrelated);
+});
+
+test('comments environment cache refreshes when the queue binding changes', () => {
+  const env = { TRACK_METADATA_QUEUE: { send() {} } };
+  const first = compactCommentsEnv(env);
+  env.TRACK_METADATA_QUEUE = { send() {} };
+  const second = compactCommentsEnv(env);
+
+  assert.notEqual(second, first);
+  assert.equal(compactCommentsEnv(env), second);
+});
+
+test('comments fetch keeps the original no-op handler', () => {
+  assert.equal(worker.fetch, commentsWorker.fetch);
 });
