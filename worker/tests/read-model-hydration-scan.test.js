@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
-import { processReadModelMessage, readModelNeedsHydration } from '../src/read-model-entry.js';
+import readModelWorker, { processReadModelMessage, readModelNeedsHydration } from '../src/read-model-entry.js';
 
 function completeTrack(index) {
   return {
@@ -67,4 +68,43 @@ test('read-model hydration handoff reuses Queue options and preserves its payloa
     observed_at: 123,
     read_model: readModel,
   });
+});
+
+test('read-model deployment uses a queue-only single-message entry', async () => {
+  const config = readFileSync(new URL('../wrangler.read-model.jsonc', import.meta.url), 'utf8');
+  assert.match(config, /"max_batch_size"\s*:\s*1\b/);
+  assert.deepEqual(Object.keys(readModelWorker), ['queue']);
+
+  let acknowledged = 0;
+  const readModel = {
+    queue: { value: { tracks: [{ ...completeTrack(0), thumbnail_url: null }] } },
+  };
+  const messages = [{
+    body: {
+      message_type: 'stationhead-read-model',
+      message_version: 1,
+      job_id: 'read-model-job',
+      observed_at: 123,
+      read_model: readModel,
+    },
+    ack() { acknowledged += 1; },
+    retry() { assert.fail('valid read-model handoff must not retry'); },
+  }, {
+    get body() { assert.fail('single-message dispatch must not read a second body'); },
+  }];
+  Object.defineProperty(messages, Symbol.iterator, {
+    configurable: true,
+    get() { assert.fail('read-model batch iterator was accessed'); },
+  });
+
+  const originalLog = console.log;
+  console.log = () => {};
+  try {
+    await readModelWorker.queue({ messages }, {
+      TRACK_METADATA_QUEUE: { send: async () => {} },
+    });
+  } finally {
+    console.log = originalLog;
+  }
+  assert.equal(acknowledged, 1);
 });

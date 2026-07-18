@@ -7,6 +7,7 @@ import minuteDeriveWorker from '../src/minute-derive-entry.js';
 test('minute derive deployment guarantees one message per invocation', async () => {
   const config = await readFile(new URL('../wrangler.minute-derive.jsonc', import.meta.url), 'utf8');
   assert.match(config, /"max_batch_size"\s*:\s*1\b/);
+  assert.deepEqual(Object.keys(minuteDeriveWorker), ['queue']);
 });
 
 test('single-message derive batches avoid iterator and loop setup', async () => {

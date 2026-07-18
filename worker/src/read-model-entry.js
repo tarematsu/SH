@@ -1,11 +1,12 @@
 import { saveMinuteFactReadModels } from './minute-facts-read-model.js';
 
-const JSON_QUEUE_SEND_OPTIONS = { contentType: 'json' };
+const JSON_QUEUE_SEND_OPTIONS = Object.freeze({ contentType: 'json' });
 
 export function readModelNeedsHydration(readModel) {
   const tracks = readModel?.queue?.value?.tracks;
   if (!Array.isArray(tracks)) return false;
-  for (let index = 0; index < tracks.length; index += 1) {
+  const trackCount = tracks.length;
+  for (let index = 0; index < trackCount; index += 1) {
     const track = tracks[index];
     if (!track?.title || !track?.artist || !track?.album_name || !track?.thumbnail_url) return true;
   }
@@ -42,22 +43,22 @@ export async function processReadModelMessage(env, body) {
   return { deferred: false };
 }
 
+async function processReadModelBatch(batch, env) {
+  const messages = batch.messages;
+  if (!messages?.length) return;
+  const message = messages[0];
+  try {
+    await processReadModelMessage(env, message.body);
+    message.ack();
+  } catch (error) {
+    console.error(JSON.stringify({
+      event: 'read_model_update_failed',
+      error: String(error?.message || error).slice(0, 800),
+    }));
+    message.retry();
+  }
+}
+
 export default {
-  async queue(batch, env) {
-    for (const message of batch.messages || []) {
-      try {
-        await processReadModelMessage(env, message.body);
-        message.ack();
-      } catch (error) {
-        console.error(JSON.stringify({
-          event: 'read_model_update_failed',
-          error: String(error?.message || error).slice(0, 800),
-        }));
-        message.retry();
-      }
-    }
-  },
-  fetch() {
-    return Response.json({ ok: false, error: 'not found' }, { status: 404 });
-  },
+  queue: processReadModelBatch,
 };
