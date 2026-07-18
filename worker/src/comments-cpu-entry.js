@@ -73,4 +73,5 @@ export default {
   queue(batch, env, ctx) {
     return commentsWorker.queue(batch, compactCommentsEnv(env), ctx);
   },
+  fetch: commentsWorker.fetch,
 };
