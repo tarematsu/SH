@@ -1,5 +1,6 @@
 export const TRACK_HISTORY_MODEL_KEY = 'track-history';
 export const TRACK_HISTORY_RESPONSE_CHUNK_SIZE = 192_000;
+export const TRACK_HISTORY_RESPONSE_MAX_CHUNKS = 80;
 export const TRACK_HISTORY_RESPONSE_LIMIT = 10_000;
 
 const DEFAULT_PAGE_ROWS = 100;
@@ -80,6 +81,7 @@ export function splitTrackHistoryPublicationRows(
   let offset = 0;
   for (const row of rows || []) {
     const raw = String(row?.row_json || 'null');
+    JSON.parse(raw);
     const piece = `${rowsWritten + offset > 0 ? ',' : ''}${raw}`;
     if (piece.length > maximum) throw new Error('track-history row exceeded response chunk size');
     if (chunk && chunk.length + piece.length > maximum) {
