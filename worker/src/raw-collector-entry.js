@@ -1,15 +1,6 @@
 import { ensureAuthControlRow, readAuthState } from './auth-state.js';
 import { API_BASE, configFromEnv, shHeaders } from './collector-config.js';
-import {
-  extractIds,
-  extractQueue,
-  normalizeSnapshot,
-  validateChannelPayload,
-} from './collector-payload.js';
-import { prepareQueueAnalysis } from './queue-analysis-transfer.js';
-import { prepareMaterializedQueue } from './queue-materialization.js';
 import { jwtExpiryMs, normalizeBearer } from './shared.js';
-import { prepareSnapshotAnalysis } from './snapshot-analysis-transfer.js';
 
 const STATE_ID = 'stationhead';
 
@@ -103,69 +94,9 @@ async function ensureSession(env) {
   }
 }
 
-function legacyRawCollectionMessage(message, body, channel = null) {
-  if (channel) {
-    message.message_version = 2;
-    message.channel = channel;
-  } else {
-    message.message_version = 1;
-    message.body = body;
-  }
-  return message;
-}
-
-async function rawCollectionQueueMessage(message, body, config, env) {
-  let channel;
-  try {
-    channel = JSON.parse(body);
-  } catch {
-    // Preserve the legacy poison-message path so invalid upstream JSON still
-    // reaches the ingest retry and DLQ boundary instead of disappearing here.
-    return legacyRawCollectionMessage(message, body);
-  }
-  if (!channel || typeof channel !== 'object' || Array.isArray(channel)) {
-    return legacyRawCollectionMessage(message, body);
-  }
-
-  try {
-    const state = {
-      channelId: message.auth?.collectorChannelId ?? null,
-      stationId: message.auth?.collectorStationId ?? null,
-    };
-    validateChannelPayload(channel, config.channelAlias);
-    extractIds(channel, state);
-    const snapshot = normalizeSnapshot(channel, state, config);
-    if (!Number.isFinite(Number(snapshot.channel_id))
-        || !Number.isFinite(Number(snapshot.station_id))) {
-      throw new Error('compact collection identity is missing');
-    }
-    const fullQueue = extractQueue(channel, state.stationId);
-    const [snapshotAnalysis, fullQueueAnalysis] = await Promise.all([
-      prepareSnapshotAnalysis(snapshot),
-      prepareQueueAnalysis(fullQueue),
-    ]);
-    const materialized = await prepareMaterializedQueue(
-      env?.DB,
-      fullQueue,
-      fullQueueAnalysis,
-      env,
-    );
-    message.message_version = 3;
-    message.snapshot = snapshot;
-    message.queue = materialized.queue;
-    if (snapshotAnalysis) message.snapshot_analysis = snapshotAnalysis;
-    if (materialized.analysis) message.queue_analysis = materialized.analysis;
-    return message;
-  } catch {
-    // Keep valid-but-unexpected upstream objects on the established ingest
-    // validation and retry path. Only the normal shape uses the compact v3.
-    return legacyRawCollectionMessage(message, body, channel);
-  }
-}
-
-// Normalize once at the producer boundary so sh-buddies-ingest receives only
-// the compact snapshot and queue fields it persists and forwards. Legacy or
-// unexpected payloads retain the v1/v2 validation, retry and DLQ paths.
+// The cron Worker owns network collection only. JSON parsing, normalization,
+// hashing and queue-window materialization run behind durable ingest Queue
+// boundaries so one upstream response cannot consume the whole CPU budget.
 export async function collectRawChannel(env, dependencies = {}) {
   if (!env?.RAW_COLLECTION_QUEUE?.send) throw new Error('RAW_COLLECTION_QUEUE binding is missing');
   const state = await (dependencies.ensureSession || ensureSession)(env);
@@ -183,8 +114,9 @@ export async function collectRawChannel(env, dependencies = {}) {
   const refreshed = normalizeBearer(response.headers.get('authorization'));
   const persistCredentials = !state.collectorUpdatedAt
     || Boolean(refreshed && refreshed !== state.authToken);
-  const rawMessage = await rawCollectionQueueMessage({
+  await env.RAW_COLLECTION_QUEUE.send({
     message_type: 'stationhead-raw-channel',
+    message_version: 1,
     observed_at: observedAt,
     channel_alias: config.channelAlias,
     persist_credentials: persistCredentials,
@@ -198,14 +130,12 @@ export async function collectRawChannel(env, dependencies = {}) {
       collectorChannelId: state.collectorChannelId,
       collectorStationId: state.collectorStationId,
     },
-  }, body, config, env);
-  await env.RAW_COLLECTION_QUEUE.send(rawMessage, { contentType: 'json' });
+    body,
+  }, { contentType: 'json' });
   console.log(JSON.stringify({
     event: 'raw_collection_enqueued',
     observed_at: observedAt,
     payload_chars: body.length,
-    queue_total_tracks: Number(rawMessage.queue?.total_track_count || rawMessage.queue?.tracks?.length || 0),
-    queue_materialized_tracks: Number(rawMessage.queue?.materialized_track_count || rawMessage.queue?.tracks?.length || 0),
   }));
 }
 
