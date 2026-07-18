@@ -1,12 +1,31 @@
 import { minuteDeriveTrigger } from './minute-derive-trigger.js';
 
+const EMPTY_DEPENDENCIES = Object.freeze({});
+const JSON_QUEUE_SEND_OPTIONS = Object.freeze({ contentType: 'json' });
+let runtimeStateModulePromise;
+let gapScanModulePromise;
+let backfillModulePromise;
+
+function validStage(stage) {
+  switch (stage) {
+    case 'gap-scan':
+    case 'gap-commit':
+    case 'backfill':
+    case 'backfill-prepare':
+    case 'backfill-commit':
+      return true;
+    default:
+      return false;
+  }
+}
+
 function validateTask(body) {
   if (body?.message_type !== 'minute-rebuild-stage'
       || Number(body?.message_version) !== 1) {
     throw new Error('unsupported minute rebuild task');
   }
   const stage = String(body.stage || '');
-  if (!['gap-scan', 'gap-commit', 'backfill', 'backfill-prepare', 'backfill-commit'].includes(stage)) {
+  if (!validStage(stage)) {
     throw new Error(`unsupported minute rebuild stage: ${stage}`);
   }
   return {
@@ -23,9 +42,24 @@ function sourceEnv(env) {
   return active;
 }
 
+function loadRuntimeStateModule() {
+  runtimeStateModulePromise ||= import('./minute-facts-runtime-state.js');
+  return runtimeStateModulePromise;
+}
+
+function loadGapScanModule() {
+  gapScanModulePromise ||= import('./minute-facts-gap-scan.js');
+  return gapScanModulePromise;
+}
+
+function loadBackfillModule() {
+  backfillModulePromise ||= import('./minute-facts-backfill-stages.js');
+  return backfillModulePromise;
+}
+
 async function recordStage(env, task, result, startedAt, success = true) {
   if (!env?.MINUTE_DB) return;
-  const { recordMinuteFactRuntimeState } = await import('./minute-facts-runtime-state.js');
+  const { recordMinuteFactRuntimeState } = await loadRuntimeStateModule();
   await recordMinuteFactRuntimeState(env, 'rebuild', {
     processed: Number(result?.processed ?? result?.enqueued ?? 0),
     failed: success ? 0 : 1,
@@ -37,17 +71,18 @@ async function recordStage(env, task, result, startedAt, success = true) {
 
 async function enqueueStage(env, task, stage, delaySeconds = 0, details = null) {
   if (!env?.MINUTE_REBUILD_QUEUE?.send) throw new Error('MINUTE_REBUILD_QUEUE binding is missing');
-  await env.MINUTE_REBUILD_QUEUE.send({
+  const message = {
     message_type: 'minute-rebuild-stage',
     message_version: 1,
     run_id: task.runId,
     stage,
     scheduled_at: task.scheduledAt,
     ...(details || {}),
-  }, {
-    contentType: 'json',
-    ...(delaySeconds > 0 ? { delaySeconds } : {}),
-  });
+  };
+  const options = delaySeconds > 0
+    ? { contentType: 'json', delaySeconds }
+    : JSON_QUEUE_SEND_OPTIONS;
+  await env.MINUTE_REBUILD_QUEUE.send(message, options);
 }
 
 function preparedDeriveCandidate(task, result) {
@@ -57,7 +92,7 @@ function preparedDeriveCandidate(task, result) {
   return null;
 }
 
-async function dispatchPreparedDerive(env, task, result, dependencies = {}) {
+async function dispatchPreparedDerive(env, task, result, dependencies = EMPTY_DEPENDENCIES) {
   const candidate = preparedDeriveCandidate(task, result);
   const channelId = Number(candidate?.snapshot?.channel_id);
   const observedAt = Number(candidate?.observedAt);
@@ -68,13 +103,13 @@ async function dispatchPreparedDerive(env, task, result, dependencies = {}) {
       ? Math.floor(observedAt / 60_000) * 60_000
       : null;
   if (!Number.isFinite(channelId) || minuteAt == null) return false;
-  if (!dependencies.sendDerive && !env?.MINUTE_DERIVE_QUEUE?.send) return false;
+  const sendDerive = dependencies.sendDerive;
+  if (!sendDerive && !env?.MINUTE_DERIVE_QUEUE?.send) return false;
 
   const message = minuteDeriveTrigger({ channel_id: channelId, minute_at: minuteAt });
-  const send = dependencies.sendDerive
-    || ((body) => env.MINUTE_DERIVE_QUEUE.send(body, { contentType: 'json' }));
   try {
-    await send(message);
+    if (sendDerive) await sendDerive(message);
+    else await env.MINUTE_DERIVE_QUEUE.send(message, JSON_QUEUE_SEND_OPTIONS);
     return true;
   } catch (error) {
     // The durable inbox row remains pending and the every-minute maintenance
@@ -90,7 +125,7 @@ async function dispatchPreparedDerive(env, task, result, dependencies = {}) {
   }
 }
 
-export async function processMinuteRebuildStage(env, body, dependencies = {}) {
+export async function processMinuteRebuildStage(env, body, dependencies = EMPTY_DEPENDENCIES) {
   const task = validateTask(body);
   if (!env?.BUDDIES_DB || !env?.MINUTE_DB) throw new Error('minute rebuild database binding is missing');
   const startedAt = Date.now();
@@ -103,15 +138,15 @@ export async function processMinuteRebuildStage(env, body, dependencies = {}) {
       // Compatibility path for tests and rollback callers that still inject the
       // former single-invocation scanner.
       if (dependencies.runGapScan) {
-        const result = await dependencies.runGapScan(active, dependencies.gapScan || {});
+        const result = await dependencies.runGapScan(active, dependencies.gapScan || EMPTY_DEPENDENCIES);
         await record(env, task, result, startedAt);
         await enqueue(env, task, 'backfill');
         return { stage: task.stage, run_id: task.runId, pending: true, result };
       }
 
-      const stages = await import('./minute-facts-gap-scan.js');
+      const stages = await loadGapScanModule();
       const prepare = dependencies.prepareGapScan || stages.prepareMinuteFactsGapScan;
-      const prepared = await prepare(active, dependencies.gapScan || {});
+      const prepared = await prepare(active, dependencies.gapScan || EMPTY_DEPENDENCIES);
       if (prepared?.skipped) {
         await record(env, task, prepared, startedAt);
         await enqueue(env, task, 'backfill');
@@ -134,9 +169,9 @@ export async function processMinuteRebuildStage(env, body, dependencies = {}) {
     }
 
     if (task.stage === 'gap-commit') {
-      const stages = await import('./minute-facts-gap-scan.js');
+      const stages = await loadGapScanModule();
       const commit = dependencies.commitGapScan || stages.commitMinuteFactsGapScan;
-      const result = await commit(active, task.prepared, dependencies.gapScan || {});
+      const result = await commit(active, task.prepared, dependencies.gapScan || EMPTY_DEPENDENCIES);
       const reported = {
         ...result,
         derive_dispatched: await dispatchPreparedDerive(env, task, result, dependencies),
@@ -148,7 +183,7 @@ export async function processMinuteRebuildStage(env, body, dependencies = {}) {
 
     // Test and rollout fallback for the former single-invocation backfill.
     if (task.stage === 'backfill' && dependencies.runBackfill) {
-      const result = await dependencies.runBackfill(active, dependencies.backfill || {});
+      const result = await dependencies.runBackfill(active, dependencies.backfill || EMPTY_DEPENDENCIES);
       await record(env, task, result, startedAt);
       const pending = Number(result?.pending_candidates || 0) > 0
         || Number(result?.scanned_snapshots || 0) > 0;
@@ -156,10 +191,10 @@ export async function processMinuteRebuildStage(env, body, dependencies = {}) {
       return { stage: task.stage, run_id: task.runId, pending, result };
     }
 
-    const stages = await import('./minute-facts-backfill-stages.js');
+    const stages = await loadBackfillModule();
     if (task.stage === 'backfill') {
       const scan = dependencies.scanBackfill || stages.scanMinuteFactsBackfill;
-      const result = await scan(active, dependencies.backfill || {});
+      const result = await scan(active, dependencies.backfill || EMPTY_DEPENDENCIES);
       const pending = Number(result?.pending_candidates || 0) > 0;
       if (pending) {
         await enqueue(env, task, 'backfill-prepare');
@@ -171,7 +206,7 @@ export async function processMinuteRebuildStage(env, body, dependencies = {}) {
 
     if (task.stage === 'backfill-prepare') {
       const prepare = dependencies.prepareBackfill || stages.prepareMinuteFactsBackfillCandidate;
-      const result = await prepare(active, dependencies.backfill || {});
+      const result = await prepare(active, dependencies.backfill || EMPTY_DEPENDENCIES);
       const pending = Boolean(result?.prepared);
       if (pending) {
         await enqueue(env, task, 'backfill-commit', 0, { prepared: result.prepared });
@@ -183,7 +218,7 @@ export async function processMinuteRebuildStage(env, body, dependencies = {}) {
     }
 
     const commit = dependencies.commitBackfill || stages.commitMinuteFactsBackfillCandidate;
-    const result = await commit(active, task.prepared, dependencies.backfill || {});
+    const result = await commit(active, task.prepared, dependencies.backfill || EMPTY_DEPENDENCIES);
     const reported = {
       ...result,
       derive_dispatched: await dispatchPreparedDerive(env, task, result, dependencies),
@@ -201,23 +236,23 @@ export async function processMinuteRebuildStage(env, body, dependencies = {}) {
   }
 }
 
+async function processMinuteRebuildBatch(batch, env) {
+  const messages = batch.messages;
+  if (!messages?.length) return;
+  const message = messages[0];
+  try {
+    const result = await processMinuteRebuildStage(env, message.body);
+    console.log(JSON.stringify({ event: 'minute_rebuild_stage_completed', ...result }));
+    message.ack();
+  } catch (error) {
+    console.error(JSON.stringify({
+      event: 'minute_rebuild_stage_failed',
+      error: String(error?.message || error).slice(0, 800),
+    }));
+    message.retry({ delaySeconds: 60 });
+  }
+}
+
 export default {
-  async queue(batch, env) {
-    for (const message of batch.messages || []) {
-      try {
-        const result = await processMinuteRebuildStage(env, message.body);
-        console.log(JSON.stringify({ event: 'minute_rebuild_stage_completed', ...result }));
-        message.ack();
-      } catch (error) {
-        console.error(JSON.stringify({
-          event: 'minute_rebuild_stage_failed',
-          error: String(error?.message || error).slice(0, 800),
-        }));
-        message.retry({ delaySeconds: 60 });
-      }
-    }
-  },
-  fetch() {
-    return Response.json({ ok: false, error: 'not found' }, { status: 404 });
-  },
+  queue: processMinuteRebuildBatch,
 };

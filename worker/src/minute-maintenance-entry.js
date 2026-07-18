@@ -1,4 +1,4 @@
-import minuteWorker, {
+import {
   minuteMaintenanceTask,
   runMinuteScheduledWithCollectorPriority,
 } from './minute-entry.js';
@@ -7,10 +7,12 @@ import {
   markSparseRevisionRecoveryDispatched,
   pendingSparseRevisionTasks,
 } from './minute-revision-recovery.js';
+import optimizedMaintenanceWorker from './minute-maintenance-optimized-entry.js';
 
 export const MINUTE_DERIVE_DISPATCH_CRON = '* * * * *';
 
 const EMPTY_DEPENDENCIES = Object.freeze({});
+const JSON_QUEUE_SEND_OPTIONS = Object.freeze({ contentType: 'json' });
 let deriveDispatchStateDependenciesPromise = null;
 let cronStaggerModulePromise = null;
 
@@ -34,6 +36,21 @@ function positiveInteger(value, fallback, maximum = Number.MAX_SAFE_INTEGER) {
   const parsed = Math.trunc(Number(value));
   if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
   return Math.min(parsed, maximum);
+}
+
+function scheduledTimestamp(controller) {
+  const value = controller?.scheduledTime;
+  if (typeof value === 'number') {
+    return Number.isFinite(value) && value >= 0 ? value : Date.now();
+  }
+  const timestamp = Number(value);
+  return Number.isFinite(timestamp) && timestamp >= 0 ? timestamp : Date.now();
+}
+
+function isDeriveDispatchCron(controller) {
+  const value = controller?.cron;
+  return value === MINUTE_DERIVE_DISPATCH_CRON
+    || String(value || '') === MINUTE_DERIVE_DISPATCH_CRON;
 }
 
 async function recordDeriveDispatchState(env, summary, startedAt, dependencies = EMPTY_DEPENDENCIES) {
@@ -79,11 +96,11 @@ async function sendDeriveMessages(env, triggers, revisionRecoveries) {
   const sends = new Array(messageCount);
   let offset = 0;
   for (let index = 0; index < triggerCount; index += 1) {
-    sends[offset] = env.MINUTE_DERIVE_QUEUE.send(triggers[index], { contentType: 'json' });
+    sends[offset] = env.MINUTE_DERIVE_QUEUE.send(triggers[index], JSON_QUEUE_SEND_OPTIONS);
     offset += 1;
   }
   for (let index = 0; index < recoveryCount; index += 1) {
-    sends[offset] = env.MINUTE_DERIVE_QUEUE.send(revisionRecoveries[index], { contentType: 'json' });
+    sends[offset] = env.MINUTE_DERIVE_QUEUE.send(revisionRecoveries[index], JSON_QUEUE_SEND_OPTIONS);
     offset += 1;
   }
   await Promise.all(sends);
@@ -143,7 +160,7 @@ async function dispatchRebuild(controller, env, ctx, dependencies = EMPTY_DEPEND
   if (!collector?.ready) {
     return { skipped: true, reason: collector?.reason || 'collector-not-ready' };
   }
-  const scheduledAt = Number(controller?.scheduledTime) || Date.now();
+  const scheduledAt = scheduledTimestamp(controller);
   const runId = `minute-rebuild:${scheduledAt}`;
   await env.MINUTE_REBUILD_QUEUE.send({
     message_type: 'minute-rebuild-stage',
@@ -151,21 +168,10 @@ async function dispatchRebuild(controller, env, ctx, dependencies = EMPTY_DEPEND
     run_id: runId,
     stage: 'gap-scan',
     scheduled_at: scheduledAt,
-  }, { contentType: 'json' });
+  }, JSON_QUEUE_SEND_OPTIONS);
   const result = { event: 'minute_rebuild_dispatched', run_id: runId, dispatched: 1 };
   console.log(JSON.stringify(result));
   return result;
 }
 
-export default {
-  fetch: minuteWorker.fetch,
-  scheduled(controller, env, ctx) {
-    if (String(controller?.cron || '') === MINUTE_DERIVE_DISPATCH_CRON) {
-      return dispatchPendingMinuteFacts(env, EMPTY_DEPENDENCIES, ctx);
-    }
-    if (minuteMaintenanceTask(controller) === 'rebuild') {
-      return dispatchRebuild(controller, env, ctx, EMPTY_DEPENDENCIES);
-    }
-    return runMinuteScheduledWithCollectorPriority(controller, env, ctx, EMPTY_DEPENDENCIES);
-  },
-};
+export default optimizedMaintenanceWorker;
