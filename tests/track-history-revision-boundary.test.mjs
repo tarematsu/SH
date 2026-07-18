@@ -166,6 +166,38 @@ test('preserves the original playback origin across multiple queue changes', () 
   assert.equal(byId.has('removed-two'), false);
 });
 
+test('uses active playback progress when a pause crosses the queue boundary', () => {
+  const db = createDatabase();
+  const firstStart = Date.parse('2026-07-18T12:00:00Z');
+  const secondStart = firstStart + 2 * 60_000;
+
+  addQueue(db, {
+    start: firstStart,
+    tracks: [
+      { spotifyId: 'song-a', queueTrackId: 101, duration: 3 * 60_000 },
+      { spotifyId: 'removed-song', duration: 60_000 },
+    ],
+  });
+  db.prepare(`INSERT INTO sh_queue_snapshots (
+    observed_at,station_id,queue_id,start_time,is_paused,raw_json
+  ) VALUES (?,?,?,?,1,'{}')`).run(firstStart + 60_000, 1, firstStart, firstStart);
+  addQueue(db, {
+    start: secondStart,
+    evidenceAt: secondStart + 4 * 60_000,
+    tracks: [
+      { spotifyId: 'song-a', queueTrackId: 201, duration: 3 * 60_000 },
+      { spotifyId: 'replacement-song', duration: 60_000 },
+    ],
+  });
+
+  const rows = queryTracks(db, '2026-07-18');
+  const byId = new Map(rows.map((row) => [row.spotify_id, row]));
+
+  assert.equal(byId.get('song-a').play_count, 1);
+  assert.equal(byId.get('replacement-song').played_at, secondStart + 2 * 60_000);
+  assert.equal(byId.has('removed-song'), false);
+});
+
 test('still counts the same song twice when the first play ended at the boundary', () => {
   const db = createDatabase();
   const firstStart = Date.parse('2026-07-18T12:00:00Z');
