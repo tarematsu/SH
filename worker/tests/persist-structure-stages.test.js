@@ -74,6 +74,7 @@ test('structure planning skips claim and comparison when current hash already ma
   const result = await prepareQueueStructurePersistence(db, body(), 123_456);
 
   assert.equal(result.structure_changed, false);
+  assert.equal(result.snapshot_required, false);
   assert.equal(result.structural_hash, 'structure-hash');
   assert.equal(result.likes_hash, 'likes-hash');
   assert.deepEqual(result.all_positions, [0]);
@@ -97,6 +98,7 @@ test('structure commit writes snapshot, bounded items and current state in its o
   };
   const plan = {
     structure_changed: true,
+    snapshot_required: true,
     stale_current: false,
     station_id: 20,
     queue_id: 30,
@@ -114,6 +116,7 @@ test('structure commit writes snapshot, bounded items and current state in its o
   assert.equal(result.structureChanged, true);
   assert.equal(result.itemsWritten, 1);
   assert.match(sql, /INSERT INTO sh_queue_snapshots/);
+  assert.match(sql, /WHERE NOT EXISTS/);
   assert.match(sql, /INSERT INTO sh_queue_items/);
   assert.match(sql, /INSERT INTO sh_queue_current/);
   assert.match(sql, /DELETE FROM sh_queue_items/);
