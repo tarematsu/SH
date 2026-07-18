@@ -66,27 +66,39 @@ async function rollupDaily(db, otherDb, period, now) {
     FROM sh_channel_snapshots WHERE observed_at>=? AND observed_at<?`)
     .bind(period.start, period.end).first();
   if (!aggregate || Number(aggregate.sample_count || 0) < 1) return false;
-  const first = await db.prepare(`SELECT
+  const boundaries = await db.prepare(`SELECT
       (SELECT ${STREAM_VALUE_SQL} FROM sh_channel_snapshots
        WHERE observed_at>=? AND observed_at<? AND ${STREAM_VALUE_SQL} IS NOT NULL
        ORDER BY observed_at ASC,id ASC LIMIT 1) AS stream_start,
-      (SELECT total_member_count FROM sh_channel_snapshots
-       WHERE observed_at>=? AND observed_at<? AND total_member_count IS NOT NULL
-       ORDER BY observed_at ASC,id ASC LIMIT 1) AS member_start`)
-    .bind(period.start, period.end, period.start, period.end).first();
-  const last = await db.prepare(`SELECT
       (SELECT ${STREAM_VALUE_SQL} FROM sh_channel_snapshots
        WHERE observed_at>=? AND observed_at<? AND ${STREAM_VALUE_SQL} IS NOT NULL
        ORDER BY observed_at DESC,id DESC LIMIT 1) AS stream_end,
       (SELECT total_member_count FROM sh_channel_snapshots
        WHERE observed_at>=? AND observed_at<? AND total_member_count IS NOT NULL
-       ORDER BY observed_at DESC,id DESC LIMIT 1) AS member_end`)
-    .bind(period.start, period.end, period.start, period.end).first();
-  const host = await db.prepare(`SELECT host_handle FROM sh_channel_snapshots
-    WHERE observed_at>=? AND observed_at<? AND host_handle IS NOT NULL AND host_handle<>''
-    GROUP BY host_handle ORDER BY COUNT(*) DESC,host_handle ASC LIMIT 1`)
-    .bind(period.start, period.end).first();
-  return upsertSummary(otherDb, 'sh_daily_summary', period.key, aggregate, first, last, host?.host_handle, now);
+       ORDER BY observed_at ASC,id ASC LIMIT 1) AS member_start,
+      (SELECT total_member_count FROM sh_channel_snapshots
+       WHERE observed_at>=? AND observed_at<? AND total_member_count IS NOT NULL
+       ORDER BY observed_at DESC,id DESC LIMIT 1) AS member_end,
+      (SELECT host_handle FROM sh_channel_snapshots
+       WHERE observed_at>=? AND observed_at<? AND host_handle IS NOT NULL AND host_handle<>''
+       GROUP BY host_handle ORDER BY COUNT(*) DESC,host_handle ASC LIMIT 1) AS primary_host`)
+    .bind(
+      period.start, period.end,
+      period.start, period.end,
+      period.start, period.end,
+      period.start, period.end,
+      period.start, period.end,
+    ).first();
+  return upsertSummary(
+    otherDb,
+    'sh_daily_summary',
+    period.key,
+    aggregate,
+    boundaries,
+    boundaries,
+    boundaries?.primary_host,
+    now,
+  );
 }
 
 async function rollupFromDaily(otherDb, table, range, now) {
@@ -102,27 +114,39 @@ async function rollupFromDaily(otherDb, table, range, now) {
     FROM sh_daily_summary WHERE period_key>=? AND period_key<?`)
     .bind(range.startKey, range.endKey).first();
   if (!aggregate || Number(aggregate.sample_count || 0) < 1) return false;
-  const first = await otherDb.prepare(`SELECT
+  const boundaries = await otherDb.prepare(`SELECT
       (SELECT stream_start FROM sh_daily_summary
        WHERE period_key>=? AND period_key<? AND stream_start IS NOT NULL
        ORDER BY period_key ASC LIMIT 1) AS stream_start,
-      (SELECT member_start FROM sh_daily_summary
-       WHERE period_key>=? AND period_key<? AND member_start IS NOT NULL
-       ORDER BY period_key ASC LIMIT 1) AS member_start`)
-    .bind(range.startKey, range.endKey, range.startKey, range.endKey).first();
-  const last = await otherDb.prepare(`SELECT
       (SELECT stream_end FROM sh_daily_summary
        WHERE period_key>=? AND period_key<? AND stream_end IS NOT NULL
        ORDER BY period_key DESC LIMIT 1) AS stream_end,
+      (SELECT member_start FROM sh_daily_summary
+       WHERE period_key>=? AND period_key<? AND member_start IS NOT NULL
+       ORDER BY period_key ASC LIMIT 1) AS member_start,
       (SELECT member_end FROM sh_daily_summary
        WHERE period_key>=? AND period_key<? AND member_end IS NOT NULL
-       ORDER BY period_key DESC LIMIT 1) AS member_end`)
-    .bind(range.startKey, range.endKey, range.startKey, range.endKey).first();
-  const host = await otherDb.prepare(`SELECT primary_host FROM sh_daily_summary
-    WHERE period_key>=? AND period_key<? AND primary_host IS NOT NULL AND primary_host<>''
-    GROUP BY primary_host ORDER BY SUM(reliable_sample_count) DESC,primary_host ASC LIMIT 1`)
-    .bind(range.startKey, range.endKey).first();
-  return upsertSummary(otherDb, table, range.key, aggregate, first, last, host?.primary_host, now);
+       ORDER BY period_key DESC LIMIT 1) AS member_end,
+      (SELECT primary_host FROM sh_daily_summary
+       WHERE period_key>=? AND period_key<? AND primary_host IS NOT NULL AND primary_host<>''
+       GROUP BY primary_host ORDER BY SUM(reliable_sample_count) DESC,primary_host ASC LIMIT 1) AS primary_host`)
+    .bind(
+      range.startKey, range.endKey,
+      range.startKey, range.endKey,
+      range.startKey, range.endKey,
+      range.startKey, range.endKey,
+      range.startKey, range.endKey,
+    ).first();
+  return upsertSummary(
+    otherDb,
+    table,
+    range.key,
+    aggregate,
+    boundaries,
+    boundaries,
+    boundaries?.primary_host,
+    now,
+  );
 }
 
 function jstPeriod(dayKey) {
