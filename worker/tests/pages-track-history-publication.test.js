@@ -173,9 +173,10 @@ test('Queue consumer checkpoints one page before sending its continuation', asyn
   assert.deepEqual(operations, ['save', 'send']);
 });
 
-test('cron window returns to shard scheduling because publication uses Queue invocations', () => {
+test('cron keeps lightweight stalled-publication recovery active through minute 174', () => {
   assert.equal(pagesReadModelTask(CYCLE_START + 59 * 60_000).kind, 'track-history-step');
-  assert.equal(pagesReadModelTask(CYCLE_START + 60 * 60_000).kind, 'idle');
+  assert.equal(pagesReadModelTask(CYCLE_START + 60 * 60_000).kind, 'track-history-step');
+  assert.equal(pagesReadModelTask(CYCLE_START + 174 * 60_000).kind, 'track-history-step');
   assert.equal(pagesReadModelTask(CYCLE_START + 175 * 60_000).key, 'minute-facts-current');
 
   const config = JSON.parse(readFileSync(new URL('../wrangler.pages-read-model.jsonc', import.meta.url), 'utf8'));
