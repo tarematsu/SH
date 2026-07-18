@@ -74,6 +74,23 @@ async function enqueueMinuteEnrichment(env, input) {
   return true;
 }
 
+function preparedRevision(input) {
+  const value = input?.prepared_revision;
+  const revisionId = integer(value?.revision_id);
+  if (revisionId == null) return null;
+  return {
+    revisionId,
+    materializedCount: Math.max(0, integer(value?.materialized_item_count) ?? 0),
+    totalCount: Math.max(
+      0,
+      integer(value?.total_item_count)
+        ?? integer(input?.queue?.total_track_count)
+        ?? input?.queue?.tracks?.length
+        ?? 0,
+    ),
+  };
+}
+
 export async function saveOptimizedLiveMinuteFact(env, input) {
   const db = env?.MINUTE_DB;
   if (!db) return { skipped: true, reason: 'minute-db-binding-missing' };
@@ -117,13 +134,19 @@ export async function saveOptimizedLiveMinuteFact(env, input) {
   let playback = null;
   let revisionCoverage = null;
   if (queue && tracks && broadcasting !== 0) {
-    const revision = await timedStage('create_or_resume_revision', context, () => createPartialRevision(
-      db,
-      env.DB,
-      { channelId, stationId, sessionId, queue, observedAt, receivedAt },
-    ));
-    revisionId = revision.revisionId;
-    revisionCoverage = revision;
+    const prepared = preparedRevision(input);
+    if (prepared) {
+      revisionId = prepared.revisionId;
+      revisionCoverage = prepared;
+    } else {
+      const revision = await timedStage('create_or_resume_revision', context, () => createPartialRevision(
+        db,
+        env.DB,
+        { channelId, stationId, sessionId, queue, observedAt, receivedAt },
+      ));
+      revisionId = revision.revisionId;
+      revisionCoverage = revision;
+    }
     context.revisionId = revisionId;
     if (!deferred) {
       playback = await timedStage('update_playback', context, () => updatePlaybackState(db, {
