@@ -22,6 +22,7 @@ const payload = {
     station_id: 20,
     queue_id: 40,
     start_time: 10_000,
+    current_position: 3,
     total_track_count: 6,
     tracks: Array.from({ length: 6 }, (_value, position) => ({
       position,
@@ -58,12 +59,19 @@ function writeBody() {
 
 test('preferred queue position follows the playback clock without requiring resolved items', () => {
   assert.equal(preferredQueuePosition(payload.queue, 370_000), 3);
-  assert.equal(preferredQueuePosition({ ...payload.queue, is_paused: 1 }, 370_000), 0);
+  assert.equal(preferredQueuePosition({
+    ...payload.queue,
+    current_position: null,
+    is_paused: 1,
+  }, 370_000), 0);
 });
 
 test('sparse revision preparation pins the durable minute job and keeps partial coverage valid', async () => {
   const updates = [];
-  const result = await prepareSparseLiveRevision({ MINUTE_DB: {} }, payload, {
+  const result = await prepareSparseLiveRevision({
+    MINUTE_DB: {},
+    DERIVE_REVISION_STAGE_TRACKS: 1,
+  }, payload, {
     sourceJobId: job.id,
   }, {
     resolveLiveSession: async () => 50,
