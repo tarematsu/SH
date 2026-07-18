@@ -110,7 +110,4 @@ export function consumeMinuteQueue(batch, env, _ctx, dependencies = EMPTY_DEPEND
 
 export default {
   queue: consumeProductionMinuteQueue,
-  fetch() {
-    return Response.json({ ok: false, error: 'not found' }, { status: 404 });
-  },
 };

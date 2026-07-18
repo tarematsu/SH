@@ -2,11 +2,12 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
-import { consumeMinuteQueue } from '../src/minute-production-entry.js';
+import minuteIngestWorker, { consumeMinuteQueue } from '../src/minute-production-entry.js';
 
 const source = readFileSync(new URL('../src/minute-production-entry.js', import.meta.url), 'utf8');
 
 test('production minute ingest uses direct warm-path functions and stable handlers', () => {
+  assert.deepEqual(Object.keys(minuteIngestWorker), ['queue']);
   assert.match(source, /const EMPTY_DEPENDENCIES = Object\.freeze\(\{\}\)/);
   assert.match(source, /const SKIPPED_COMMENT_TASK = Object\.freeze\(\{ created: false, skipped: true \}\)/);
   assert.match(source, /const PRODUCTION_HANDLERS = Object\.freeze\(\{/);
