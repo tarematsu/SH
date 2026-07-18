@@ -26,6 +26,10 @@ const gitConnectedWorkers = new Set([
   'sh-minute-maintenance',
 ]);
 
+const deployScriptWorkers = new Map([
+  ['worker/scripts/deploy-other-monitor.mjs', 'sh-monitor-other'],
+]);
+
 function repositoryPath(path) {
   return relative(repositoryRoot, path).split(sep).join('/');
 }
@@ -113,6 +117,12 @@ if (changed.all) {
   for (const changedPath of changed.paths) {
     if (changedPath === 'worker/package-lock.json') {
       for (const definition of definitions) selected.add(definition.name);
+      continue;
+    }
+
+    const deployWorker = deployScriptWorkers.get(changedPath);
+    if (deployWorker) {
+      selected.add(deployWorker);
       continue;
     }
 
