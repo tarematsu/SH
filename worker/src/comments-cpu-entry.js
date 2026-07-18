@@ -1,11 +1,25 @@
 import commentsWorker from './comments-entry.js';
 
-function compactTrackIdentity(track) {
-  if (!track || typeof track !== 'object') return null;
-  const compact = {};
-  if (track.spotify_id != null) compact.spotify_id = track.spotify_id;
-  if (track.isrc != null) compact.isrc = track.isrc;
-  return Object.keys(compact).length ? compact : null;
+const activeCommentsEnvs = new WeakMap();
+
+function compactTrackIdentities(tracks) {
+  const compactTracks = new Array(tracks.length);
+  let compactCount = 0;
+  for (let index = 0; index < tracks.length; index += 1) {
+    const track = tracks[index];
+    if (!track || typeof track !== 'object') continue;
+    const spotifyId = track.spotify_id;
+    const isrc = track.isrc;
+    if (spotifyId == null) {
+      if (isrc != null) compactTracks[compactCount++] = { isrc };
+      continue;
+    }
+    compactTracks[compactCount++] = isrc == null
+      ? { spotify_id: spotifyId }
+      : { spotify_id: spotifyId, isrc };
+  }
+  compactTracks.length = compactCount;
+  return compactTracks;
 }
 
 export function compactCommittedMetadataMessage(body) {
@@ -27,7 +41,7 @@ export function compactCommittedMetadataMessage(body) {
       payload: {
         observedAt: payload.observedAt,
         queue: {
-          tracks: tracks.map(compactTrackIdentity).filter(Boolean),
+          tracks: compactTrackIdentities(tracks),
         },
       },
     },
@@ -36,9 +50,12 @@ export function compactCommittedMetadataMessage(body) {
 
 export function compactCommentsEnv(env) {
   const metadataQueue = env?.TRACK_METADATA_QUEUE;
-  if (!metadataQueue?.send) return env;
+  if (typeof metadataQueue?.send !== 'function') return env;
 
-  const active = Object.create(env || null);
+  const cached = activeCommentsEnvs.get(env);
+  if (cached?.metadataQueue === metadataQueue) return cached.active;
+
+  const active = Object.create(env);
   Object.defineProperty(active, 'TRACK_METADATA_QUEUE', {
     enumerable: false,
     value: {
@@ -47,6 +64,7 @@ export function compactCommentsEnv(env) {
       },
     },
   });
+  activeCommentsEnvs.set(env, { metadataQueue, active });
   return active;
 }
 
@@ -54,7 +72,5 @@ export default {
   queue(batch, env, ctx) {
     return commentsWorker.queue(batch, compactCommentsEnv(env), ctx);
   },
-  fetch(request, env, ctx) {
-    return commentsWorker.fetch(request, compactCommentsEnv(env), ctx);
-  },
+  fetch: commentsWorker.fetch,
 };
