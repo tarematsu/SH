@@ -15,7 +15,7 @@
     "deploy:track-metadata": "wrangler deploy --config wrangler.track-metadata.jsonc",
     "deploy:pages-read-model": "wrangler deploy --config wrangler.pages-read-model.jsonc",
     "deploy:monitor-maintenance": "wrangler deploy --config wrangler.monitor-maintenance.jsonc",
-    "deploy:other": "wrangler deploy --config wrangler.other.jsonc",
+    "deploy:other": "node scripts/deploy-other-monitor.mjs",
     "deploy:minute-maintenance": "wrangler deploy --config wrangler.minute.jsonc",
     "deploy:minute-derive": "wrangler deploy --config wrangler.minute-derive.jsonc",
     "deploy:minute-enrichment": "wrangler deploy --config wrangler.minute-enrichment.jsonc",
