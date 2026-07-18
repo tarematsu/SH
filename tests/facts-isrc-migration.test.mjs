@@ -42,16 +42,25 @@ test('facts provisioner adds both required ISRC columns before sparse revision s
   assert.ok(position(provisioner, revisionColumnCheck) < position(provisioner, schemaMarker));
 });
 
-test('live facts verification requires both production ISRC columns and measures revision reach', () => {
+test('live facts verification requires production ISRC and sparse revision columns', () => {
   assert.match(verifier, /pragma_table_info\('sh_tracks'\)/);
   assert.match(verifier, /pragma_table_info\('sh_track_metadata'\)/);
-  assert.match(verifier, /sh_tracks_isrc_present/);
-  assert.match(verifier, /sh_track_metadata_isrc_present/);
+  for (const field of [
+    'sh_tracks_isrc_present',
+    'sh_track_metadata_isrc_present',
+    'revision_materialized_count_present',
+    'revision_coverage_present',
+    'revision_source_job_present',
+    'revision_source_visible_present',
+    'revision_checkpoint_present',
+  ]) {
+    assert.match(verifier, new RegExp(field));
+  }
   assert.match(verifier, /revision_reach/);
   assert.match(verifier, /p95_reached_tracks/);
   assert.match(
     verifier,
-    /last\.sh_tracks_isrc_present\s*&&\s*last\.sh_track_metadata_isrc_present/,
+    /last\.revision_source_job_present[\s\S]*last\.revision_source_visible_present[\s\S]*last\.revision_checkpoint_present/,
   );
   assert.match(
     verifier,
