@@ -174,25 +174,22 @@ export const TRACK_HISTORY_SQL = `WITH RECURSIVE queue_starts AS (
           ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING
         ),0) AS invalid_durations_before
       FROM normalized n
-    ), timed AS (
-      SELECT offsets.*,
-        (
-          SELECT span.state_at+(offsets.playback_offset_ms-span.active_before_ms)
-          FROM active_spans span
-          WHERE span.station_id=offsets.station_id
-            AND span.start_time=offsets.start_time
-            AND offsets.playback_offset_ms>=span.active_before_ms
-            AND (
-              offsets.playback_offset_ms<span.active_before_ms+span.active_duration_ms
-              OR (
-                span.is_terminal=1
-                AND offsets.playback_offset_ms<=span.active_before_ms+span.active_duration_ms+?
-              )
-            )
-          ORDER BY span.active_before_ms DESC,span.state_at DESC,span.state_id DESC
-          LIMIT 1
-        ) AS played_at
-      FROM timed_offsets offsets
+    ), queue_boundary_progress AS (
+      SELECT queues.station_id,queues.start_time,
+        COALESCE(MAX(
+          spans.active_before_ms+MIN(
+            MAX(0,queues.next_start_time-spans.state_at),
+            spans.active_duration_ms
+              +CASE WHEN spans.is_terminal=1 THEN ${TRACK_HISTORY_GRACE_MS} ELSE 0 END
+          )
+        ),0) AS active_at_boundary_ms
+      FROM queue_instances queues
+      LEFT JOIN active_spans spans
+        ON spans.station_id=queues.station_id
+       AND spans.start_time=queues.start_time
+       AND spans.state_at<queues.next_start_time
+      WHERE queues.next_start_time IS NOT NULL
+      GROUP BY queues.station_id,queues.start_time
     ), timed_queues AS (
       SELECT station_id,start_time,previous_start_time,next_start_time,
         ROW_NUMBER() OVER (
@@ -200,7 +197,7 @@ export const TRACK_HISTORY_SQL = `WITH RECURSIVE queue_starts AS (
         ) AS timed_queue_rank
       FROM (
         SELECT DISTINCT station_id,start_time,previous_start_time,next_start_time
-        FROM timed
+        FROM timed_offsets
       )
     ), queue_adjustments(
       station_id,timed_queue_rank,start_time,playback_shift_ms,continuation_item_id
@@ -211,27 +208,31 @@ export const TRACK_HISTORY_SQL = `WITH RECURSIVE queue_starts AS (
       UNION ALL
       SELECT current_queue.station_id,current_queue.timed_queue_rank,current_queue.start_time,
         CASE WHEN previous_item.id IS NULL THEN 0
-          ELSE current_queue.start_time-(previous_item.played_at-previous_adjustment.playback_shift_ms)
+          ELSE previous_adjustment.playback_shift_ms+boundary.active_at_boundary_ms
+            -previous_item.playback_offset_ms
         END AS playback_shift_ms,
         CASE WHEN previous_item.id IS NULL THEN NULL ELSE current_first.id END AS continuation_item_id
       FROM queue_adjustments previous_adjustment
       JOIN timed_queues current_queue
         ON current_queue.station_id=previous_adjustment.station_id
        AND current_queue.timed_queue_rank=previous_adjustment.timed_queue_rank+1
-      JOIN timed current_first
+      JOIN timed_offsets current_first
         ON current_first.station_id=current_queue.station_id
        AND current_first.start_time=current_queue.start_time
        AND current_first.queue_item_rank=1
-      LEFT JOIN timed previous_item
+      LEFT JOIN queue_boundary_progress boundary
+        ON boundary.station_id=previous_adjustment.station_id
+       AND boundary.start_time=previous_adjustment.start_time
+      LEFT JOIN timed_offsets previous_item
         ON current_queue.previous_start_time=previous_adjustment.start_time
        AND previous_item.station_id=previous_adjustment.station_id
        AND previous_item.start_time=previous_adjustment.start_time
-       AND previous_item.played_at IS NOT NULL
        AND previous_item.normalized_duration_ms IS NOT NULL
        AND previous_item.invalid_durations_before=0
-       AND previous_item.played_at-previous_adjustment.playback_shift_ms<current_queue.start_time
-       AND previous_item.played_at-previous_adjustment.playback_shift_ms
-         +previous_item.normalized_duration_ms>current_queue.start_time
+       AND previous_item.playback_offset_ms
+         <=previous_adjustment.playback_shift_ms+COALESCE(boundary.active_at_boundary_ms,0)
+       AND previous_item.playback_offset_ms+previous_item.normalized_duration_ms
+         >previous_adjustment.playback_shift_ms+COALESCE(boundary.active_at_boundary_ms,0)
        AND (
          (current_first.queue_track_id IS NOT NULL
            AND current_first.queue_track_id=previous_item.queue_track_id)
@@ -244,18 +245,40 @@ export const TRACK_HISTORY_SQL = `WITH RECURSIVE queue_starts AS (
          OR (current_first.isrc IS NOT NULL
            AND UPPER(current_first.isrc)=UPPER(previous_item.isrc))
        )
-    ), adjusted_timed AS (
-      SELECT timed.*,
-        timed.played_at-adjustments.playback_shift_ms AS adjusted_played_at,
-        CASE WHEN timed.id=adjustments.continuation_item_id THEN 1 ELSE 0 END AS is_continuation
-      FROM timed
+    ), adjusted_offsets AS (
+      SELECT offsets.*,
+        offsets.playback_offset_ms-adjustments.playback_shift_ms
+          AS adjusted_playback_offset_ms,
+        CASE WHEN offsets.id=adjustments.continuation_item_id THEN 1 ELSE 0 END
+          AS is_continuation
+      FROM timed_offsets offsets
       JOIN queue_adjustments adjustments
-        ON adjustments.station_id=timed.station_id
-       AND adjustments.start_time=timed.start_time
+        ON adjustments.station_id=offsets.station_id
+       AND adjustments.start_time=offsets.start_time
+    ), timed AS (
+      SELECT offsets.*,
+        (
+          SELECT span.state_at+(offsets.adjusted_playback_offset_ms-span.active_before_ms)
+          FROM active_spans span
+          WHERE span.station_id=offsets.station_id
+            AND span.start_time=offsets.start_time
+            AND offsets.adjusted_playback_offset_ms>=span.active_before_ms
+            AND (
+              offsets.adjusted_playback_offset_ms<span.active_before_ms+span.active_duration_ms
+              OR (
+                span.is_terminal=1
+                AND offsets.adjusted_playback_offset_ms
+                  <=span.active_before_ms+span.active_duration_ms+?
+              )
+            )
+          ORDER BY span.active_before_ms DESC,span.state_at DESC,span.state_id DESC
+          LIMIT 1
+        ) AS played_at
+      FROM adjusted_offsets offsets
     ), plays AS (
       SELECT
-        strftime('%Y-%m-%d', p.adjusted_played_at / 1000, 'unixepoch') AS play_date,
-        p.adjusted_played_at AS played_at,p.position,p.queue_track_id,p.stationhead_track_id,
+        strftime('%Y-%m-%d', p.played_at / 1000, 'unixepoch') AS play_date,
+        p.played_at,p.position,p.queue_track_id,p.stationhead_track_id,
         p.spotify_id,p.apple_music_id,p.isrc,p.bite_count AS queue_like_count,
         NULLIF(m.title, '') AS title,
         NULLIF(m.artist, '') AS artist,
@@ -275,12 +298,12 @@ export const TRACK_HISTORY_SQL = `WITH RECURSIVE queue_starts AS (
           NULLIF(json_extract(p.safe_raw_json, '$.artist'), ''),
           NULLIF(json_extract(p.safe_raw_json, '$.artists[0].name'), '')
         ) AS raw_artist
-      FROM adjusted_timed p
+      FROM timed p
       LEFT JOIN sh_track_metadata m ON m.spotify_id = p.spotify_id
-      WHERE p.adjusted_played_at IS NOT NULL
-        AND p.adjusted_played_at >= ? AND p.adjusted_played_at < ?
+      WHERE p.played_at IS NOT NULL
+        AND p.played_at >= ? AND p.played_at < ?
         AND p.invalid_durations_before = 0
-        AND (p.next_start_time IS NULL OR p.adjusted_played_at<p.next_start_time)
+        AND (p.next_start_time IS NULL OR p.played_at<p.next_start_time)
         AND p.is_continuation=0
     ), play_days AS (
       SELECT DISTINCT play_date,
