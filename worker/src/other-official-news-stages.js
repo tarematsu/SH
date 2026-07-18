@@ -48,7 +48,7 @@ async function runList(env, task, dependencies) {
   const result = await list(env, await stageConfig(env, dependencies), task.scheduledAt);
   let nextStage;
   let extra = null;
-  if (result?.failed) {
+  if (result?.failed || result?.reason === 'not-due') {
     nextStage = 'station-probe';
   } else if (result?.candidates?.length) {
     nextStage = 'news-detail';
