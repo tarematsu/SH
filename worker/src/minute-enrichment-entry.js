@@ -141,14 +141,29 @@ async function enqueueIdentityStage(env, body, playback) {
   }, { contentType: 'json' });
 }
 
+function expansionProbePosition(queue, position) {
+  const current = integer(position);
+  if (current != null) return current;
+  const total = integer(queue?.total_track_count);
+  const materialized = integer(queue?.materialized_track_count)
+    ?? (Array.isArray(queue?.tracks) ? queue.tracks.length : null);
+  if (total == null || materialized == null || materialized <= 0 || materialized >= total) return null;
+  // A delayed payload may land beyond the current materialized schedule and
+  // therefore produce no position. Treat that as reaching this window's tail
+  // so the next chunk is requested instead of permanently stalling coverage.
+  return materialized - 1;
+}
+
 async function maybeRequestExpansion(env, body, position, identity, dependencies) {
-  if (!body.queue || position == null) return null;
+  if (!body.queue) return null;
+  const probePosition = expansionProbePosition(body.queue, position);
+  if (probePosition == null) return null;
   const request = dependencies.requestQueueExpansion || requestQueueExpansion;
   try {
     return await request(
       env?.BUDDIES_DB,
       body.queue,
-      position,
+      probePosition,
       identity.observedAt,
       env,
     );
@@ -156,7 +171,8 @@ async function maybeRequestExpansion(env, body, position, identity, dependencies
     console.warn(JSON.stringify({
       event: 'queue_materialization_expand_failed',
       revision_id: integer(body.revision_id),
-      queue_position: position,
+      queue_position: integer(position),
+      expansion_probe_position: probePosition,
       error: String(error?.message || error).slice(0, 500),
     }));
     return null;
