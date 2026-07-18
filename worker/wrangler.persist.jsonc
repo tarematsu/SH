@@ -32,6 +32,10 @@
     ],
     "producers": [
       {
+        "binding": "PERSIST_QUEUE",
+        "queue": "stationhead-buddies-persist"
+      },
+      {
         "binding": "TRACK_METADATA_QUEUE",
         "queue": "stationhead-track-metadata"
       }
