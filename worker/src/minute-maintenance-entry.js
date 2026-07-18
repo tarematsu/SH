@@ -7,6 +7,7 @@ import {
   markSparseRevisionRecoveryDispatched,
   pendingSparseRevisionTasks,
 } from './minute-revision-recovery.js';
+import optimizedMaintenanceWorker from './minute-maintenance-optimized-entry.js';
 
 export const MINUTE_DERIVE_DISPATCH_CRON = '* * * * *';
 
@@ -173,14 +174,4 @@ async function dispatchRebuild(controller, env, ctx, dependencies = EMPTY_DEPEND
   return result;
 }
 
-export default {
-  scheduled(controller, env, ctx) {
-    if (isDeriveDispatchCron(controller)) {
-      return dispatchPendingMinuteFacts(env, EMPTY_DEPENDENCIES, ctx);
-    }
-    if (minuteMaintenanceTask(controller) === 'rebuild') {
-      return dispatchRebuild(controller, env, ctx, EMPTY_DEPENDENCIES);
-    }
-    return runMinuteScheduledWithCollectorPriority(controller, env, ctx, EMPTY_DEPENDENCIES);
-  },
-};
+export default optimizedMaintenanceWorker;
