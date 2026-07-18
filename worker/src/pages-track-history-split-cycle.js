@@ -7,7 +7,8 @@ import {
 import { initializeTrackHistoryPublication } from './pages-track-history-publication.js';
 import {
   enqueueTrackHistoryPublication,
-  trackHistoryPublicationStalled,
+  TRACK_HISTORY_PUBLICATION_ACTIONS,
+  trackHistoryPublicationRecoveryAction,
 } from './pages-track-history-publication-queue.js';
 import { createTrackHistoryPublication } from './pages-track-history-response.js';
 import {
@@ -36,26 +37,51 @@ function hasPublicationQueue(env, dependencies) {
   return Boolean(dependencies.sendPublication || env?.PAGES_READ_MODEL_QUEUE?.send);
 }
 
-async function dispatchPublication(env, stage, timestamp, dependencies = {}, reason = 'start') {
+function actionGeneration(stage, action) {
+  return action === TRACK_HISTORY_PUBLICATION_ACTIONS.PAGE
+    ? stage.publication?.generation
+    : stage.generation;
+}
+
+async function dispatchPublication(env, stage, timestamp, action, dependencies = {}, reason = action) {
+  const generation = actionGeneration(stage, action);
+  if (!generation) throw new Error(`track-history publication ${action} generation is missing`);
   const enqueue = dependencies.enqueuePublication || enqueueTrackHistoryPublication;
-  await enqueue(env, stage.publication.generation, dependencies);
+  await enqueue(env, generation, dependencies, action);
   return {
     ...responseBase(timestamp, stage),
     task: {
       kind: 'track-history-publish-dispatch',
       key: 'track-history',
-      generation: stage.publication.generation,
+      generation,
     },
     publication: {
       action: reason,
-      phase: stage.publication.phase,
-      rows_written: stage.publication.rows_written,
-      chunks: stage.publication.next_chunk_index,
+      phase: stage.publication?.phase || (stage.publication_status ? 'status-ready' : 'initializing'),
+      rows_written: Number(stage.publication?.rows_written || 0),
+      chunks: Number(stage.publication?.next_chunk_index || 0),
     },
   };
 }
 
-async function initializePublication(env, stage, timestamp, dependencies = {}) {
+async function beginPublicationInitialization(env, stage, timestamp, dependencies = {}, reason = 'start') {
+  stage.published = false;
+  stage.published_at = null;
+  stage.publication_initializing_at = timestamp;
+  stage.updated_at = timestamp;
+  const save = dependencies.saveStage || saveTrackHistoryStage;
+  await save(env.MINUTE_DB, stage, timestamp);
+  return dispatchPublication(
+    env,
+    stage,
+    timestamp,
+    TRACK_HISTORY_PUBLICATION_ACTIONS.STATUS,
+    dependencies,
+    reason,
+  );
+}
+
+async function initializePublicationInline(env, stage, timestamp, dependencies = {}) {
   const status = await finalizeTrackHistoryStatus(env, stage, timestamp, dependencies);
   const create = dependencies.createPublication || createTrackHistoryPublication;
   const initialize = dependencies.initializePublication || initializeTrackHistoryPublication;
@@ -64,15 +90,27 @@ async function initializePublication(env, stage, timestamp, dependencies = {}) {
   stage.updated_at = timestamp;
   const save = dependencies.saveStage || saveTrackHistoryStage;
   await save(env.MINUTE_DB, stage, timestamp);
-  if (hasPublicationQueue(env, dependencies)) {
-    return dispatchPublication(env, stage, timestamp, dependencies, 'initialized');
-  }
   const { processTrackHistoryPublicationTask } = await import('./pages-track-history-publication-queue.js');
   return processTrackHistoryPublicationTask(env, {
     message_type: 'stationhead-pages-track-history-publication',
     message_version: 1,
     generation: stage.publication.generation,
   }, dependencies);
+}
+
+function waitResult(timestamp, stage, reason) {
+  return {
+    skipped: true,
+    reason,
+    generated_at: timestamp,
+    task: {
+      kind: 'track-history-publish-wait',
+      key: 'track-history',
+      generation: stage.publication?.generation || stage.generation,
+    },
+    responses: [],
+    failed: 0,
+  };
 }
 
 export async function runSplitTrackHistoryCycleStep(env, now = Date.now(), dependencies = {}) {
@@ -86,10 +124,11 @@ export async function runSplitTrackHistoryCycleStep(env, now = Date.now(), depen
   if (!stage || (stage.published && Number(stage.generation) !== currentGeneration)) {
     return runLegacyTrackHistoryCycleStep(env, timestamp, dependencies);
   }
+  const queued = hasPublicationQueue(env, dependencies);
   if (stage.published && !stage.publication) {
-    stage.published = false;
-    stage.published_at = null;
-    return initializePublication(env, stage, timestamp, dependencies);
+    return queued
+      ? beginPublicationInitialization(env, stage, timestamp, dependencies, 'legacy-stage-migration')
+      : initializePublicationInline(env, stage, timestamp, dependencies);
   }
   if (stage.published) {
     return {
@@ -111,28 +150,31 @@ export async function runSplitTrackHistoryCycleStep(env, now = Date.now(), depen
     }
     return runLateTrackHistoryShard(env, stage, timestamp, dependencies);
   }
-  if (!stage.publication) return initializePublication(env, stage, timestamp, dependencies);
-  if (hasPublicationQueue(env, dependencies)) {
-    if (trackHistoryPublicationStalled(stage, timestamp)) {
-      return dispatchPublication(env, stage, timestamp, dependencies, 'stalled-requeue');
-    }
-    return {
-      skipped: true,
-      reason: 'track-history-publication-queue-active',
-      generated_at: timestamp,
-      task: {
-        kind: 'track-history-publish-wait',
-        key: 'track-history',
-        generation: stage.publication.generation,
-      },
-      responses: [],
-      failed: 0,
-    };
+  if (!queued) {
+    return stage.publication
+      ? initializePublicationInline(env, stage, timestamp, dependencies)
+      : initializePublicationInline(env, stage, timestamp, dependencies);
   }
-  const { processTrackHistoryPublicationTask } = await import('./pages-track-history-publication-queue.js');
-  return processTrackHistoryPublicationTask(env, {
-    message_type: 'stationhead-pages-track-history-publication',
-    message_version: 1,
-    generation: stage.publication.generation,
-  }, dependencies);
+
+  if (!stage.publication && !stage.publication_status && !stage.publication_initializing_at) {
+    return beginPublicationInitialization(env, stage, timestamp, dependencies, 'initialized');
+  }
+  const recoveryAction = trackHistoryPublicationRecoveryAction(stage, timestamp);
+  if (recoveryAction) {
+    if (recoveryAction === TRACK_HISTORY_PUBLICATION_ACTIONS.STATUS) {
+      stage.publication_initializing_at = timestamp;
+      stage.updated_at = timestamp;
+      const save = dependencies.saveStage || saveTrackHistoryStage;
+      await save(env.MINUTE_DB, stage, timestamp);
+    }
+    return dispatchPublication(
+      env,
+      stage,
+      timestamp,
+      recoveryAction,
+      dependencies,
+      `stalled-${recoveryAction}-requeue`,
+    );
+  }
+  return waitResult(timestamp, stage, 'track-history-publication-queue-active');
 }
