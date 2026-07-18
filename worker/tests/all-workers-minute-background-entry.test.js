@@ -31,12 +31,15 @@ test('minute rebuild keeps cached core stages behind the maintenance-aware one-m
   assert.doesNotMatch(wrapper, /fetch\s*\(/);
 });
 
-test('minute maintenance deploys a scheduled-only delayed-gate wrapper', () => {
+test('minute maintenance preserves its public entry while delegating scheduled work to the delayed-gate wrapper', () => {
   const config = source('../wrangler.minute.jsonc');
-  const entry = source('../src/minute-maintenance-optimized-entry.js');
-  assert.match(config, /"main"\s*:\s*"src\/minute-maintenance-optimized-entry\.js"/);
-  assert.match(entry, /const JSON_QUEUE_SEND_OPTIONS = Object\.freeze/);
-  assert.match(entry, /stage: 'maintenance-gate'/);
-  assert.match(entry, /scheduled: runMinuteMaintenanceScheduled/);
-  assert.doesNotMatch(entry, /setTimeout|waitForCollectorCompletion|fetch\s*:/);
+  const entry = source('../src/minute-maintenance-entry.js');
+  const wrapper = source('../src/minute-maintenance-optimized-entry.js');
+  assert.match(config, /"main"\s*:\s*"src\/minute-maintenance-entry\.js"/);
+  assert.match(entry, /import optimizedMaintenanceWorker/);
+  assert.match(entry, /export default optimizedMaintenanceWorker/);
+  assert.match(wrapper, /const JSON_QUEUE_SEND_OPTIONS = Object\.freeze/);
+  assert.match(wrapper, /stage: 'maintenance-gate'/);
+  assert.match(wrapper, /scheduled: runMinuteMaintenanceScheduled/);
+  assert.doesNotMatch(wrapper, /setTimeout|waitForCollectorCompletion|fetch\s*:/);
 });
