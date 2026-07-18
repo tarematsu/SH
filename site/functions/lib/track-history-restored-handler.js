@@ -145,18 +145,23 @@ export const TRACK_HISTORY_SQL = `WITH queue_starts AS (
       FROM state_spans
       WHERE COALESCE(is_paused,0)=0
     ), normalized AS (
-      SELECT q.*,
+      SELECT q.*,queues.next_start_time,
         CASE WHEN json_valid(q.raw_json) THEN q.raw_json ELSE '{}' END AS safe_raw_json,
         CASE
           WHEN q.duration_ms BETWEEN 1000 AND 21600000 THEN q.duration_ms
           ELSE NULL
         END AS normalized_duration_ms
       FROM sh_queue_items q
+      JOIN queue_instances queues
+        ON queues.station_id=q.station_id AND queues.start_time=q.start_time
       JOIN raw_evidence evidence
         ON evidence.station_id=q.station_id AND evidence.start_time=q.start_time
       WHERE q.start_time < ?
     ), timed_offsets AS (
       SELECT n.*,
+        ROW_NUMBER() OVER (
+          PARTITION BY n.station_id,n.start_time ORDER BY n.position
+        ) AS queue_item_rank,
         COALESCE(SUM(n.normalized_duration_ms) OVER (
           PARTITION BY n.station_id,n.start_time ORDER BY n.position
           ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING
@@ -185,6 +190,32 @@ export const TRACK_HISTORY_SQL = `WITH queue_starts AS (
           LIMIT 1
         ) AS played_at
       FROM timed_offsets offsets
+    ), continuation_items AS (
+      SELECT DISTINCT current.id
+      FROM timed current
+      JOIN timed previous
+        ON previous.station_id=current.station_id
+       AND previous.next_start_time=current.start_time
+       AND previous.played_at IS NOT NULL
+       AND previous.played_at<current.start_time
+       AND previous.normalized_duration_ms IS NOT NULL
+       AND previous.played_at+previous.normalized_duration_ms>current.start_time
+       AND previous.invalid_durations_before=0
+       AND (
+         (current.queue_track_id IS NOT NULL
+           AND current.queue_track_id=previous.queue_track_id)
+         OR (current.stationhead_track_id IS NOT NULL
+           AND current.stationhead_track_id=previous.stationhead_track_id)
+         OR (current.spotify_id IS NOT NULL
+           AND current.spotify_id=previous.spotify_id)
+         OR (current.apple_music_id IS NOT NULL
+           AND current.apple_music_id=previous.apple_music_id)
+         OR (current.isrc IS NOT NULL
+           AND UPPER(current.isrc)=UPPER(previous.isrc))
+       )
+      WHERE current.queue_item_rank=1
+        AND current.played_at IS NOT NULL
+        AND current.invalid_durations_before=0
     ), plays AS (
       SELECT
         strftime('%Y-%m-%d', p.played_at / 1000, 'unixepoch') AS play_date,
@@ -209,10 +240,13 @@ export const TRACK_HISTORY_SQL = `WITH queue_starts AS (
           NULLIF(json_extract(p.safe_raw_json, '$.artists[0].name'), '')
         ) AS raw_artist
       FROM timed p
+      LEFT JOIN continuation_items continuation ON continuation.id=p.id
       LEFT JOIN sh_track_metadata m ON m.spotify_id = p.spotify_id
       WHERE p.played_at IS NOT NULL
         AND p.played_at >= ? AND p.played_at < ?
         AND p.invalid_durations_before = 0
+        AND (p.next_start_time IS NULL OR p.played_at<p.next_start_time)
+        AND continuation.id IS NULL
     ), play_days AS (
       SELECT DISTINCT play_date,
         CAST(strftime('%s', play_date) AS INTEGER) * 1000 AS period_start,
@@ -391,7 +425,7 @@ export async function handleTrackHistory({ request, env, waitUntil }) {
       historical_recovery: env.MINUTE_DB
         ? 'facts_downstream_archive_with_wall_clock_pause_mapping'
         : 'channel_snapshots_with_wall_clock_pause_mapping',
-      method: 'queue_checkpoint_terminal_active_span_and_namespaced_like_reachability_utc_sql_preaggregate',
+      method: 'queue_checkpoint_terminal_active_span_revision_boundary_dedup_and_namespaced_like_reachability_utc_sql_preaggregate',
     });
   } catch (error) {
     if (/no such table|no such column/i.test(String(error?.message || ''))) {
