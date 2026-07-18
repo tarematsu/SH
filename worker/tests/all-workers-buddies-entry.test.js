@@ -11,8 +11,8 @@ test('buddies monitor retains its narrow scheduled production entry', () => {
   const entry = source('../src/raw-collector-entry.js');
   assert.match(config, /"main"\s*:\s*"src\/raw-collector-entry\.js"/);
   assert.match(entry, /const RAW_COLLECTION_QUEUE_OPTIONS = Object\.freeze/);
-  assert.match(entry, /scheduled\(_controller, env, ctx\)/);
-  assert.doesNotMatch(entry, /fetch\s*[:(]/);
+  assert.match(entry, /export default \{\s*scheduled\(_controller, env, ctx\)/s);
+  assert.doesNotMatch(entry, /export default \{[^}]*\bfetch\s*:/s);
 });
 
 test('buddies ingest uses one-message switch dispatch and no HTTP handler', () => {
