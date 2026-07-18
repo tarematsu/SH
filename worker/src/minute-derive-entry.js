@@ -6,7 +6,10 @@ export default {
   async queue(batch, env) {
     const messages = batch.messages;
     const messageCount = messages?.length || 0;
-    for (let index = 0; index < messageCount; index += 1) {
+    if (messageCount === 0) return;
+
+    let index = 0;
+    do {
       const message = messages[index];
       try {
         const result = await processMinuteDeriveMessage(env, message.body);
@@ -26,7 +29,8 @@ export default {
         if (error?.code === 'MINUTE_DERIVE_INVALID_TRIGGER') message.ack();
         else message.retry({ delaySeconds: 60 });
       }
-    }
+      index += 1;
+    } while (index < messageCount);
   },
   fetch() {
     return Response.json({ ok: false, error: 'not found' }, { status: 404 });
