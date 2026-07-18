@@ -4,11 +4,14 @@ function validateTask(body) {
     throw new Error('unsupported minute rebuild task');
   }
   const stage = String(body.stage || '');
-  if (!['gap-scan', 'backfill'].includes(stage)) throw new Error(`unsupported minute rebuild stage: ${stage}`);
+  if (!['gap-scan', 'backfill', 'backfill-prepare', 'backfill-commit'].includes(stage)) {
+    throw new Error(`unsupported minute rebuild stage: ${stage}`);
+  }
   return {
     stage,
     runId: String(body.run_id || ''),
     scheduledAt: Number(body.scheduled_at) || Date.now(),
+    prepared: body.prepared || null,
   };
 }
 
@@ -30,7 +33,7 @@ async function recordStage(env, task, result, startedAt, success = true) {
   }, { startedAt, success });
 }
 
-async function enqueueStage(env, task, stage, delaySeconds = 0) {
+async function enqueueStage(env, task, stage, delaySeconds = 0, details = null) {
   if (!env?.MINUTE_REBUILD_QUEUE?.send) throw new Error('MINUTE_REBUILD_QUEUE binding is missing');
   await env.MINUTE_REBUILD_QUEUE.send({
     message_type: 'minute-rebuild-stage',
@@ -38,6 +41,7 @@ async function enqueueStage(env, task, stage, delaySeconds = 0) {
     run_id: task.runId,
     stage,
     scheduled_at: task.scheduledAt,
+    ...(details || {}),
   }, {
     contentType: 'json',
     ...(delaySeconds > 0 ? { delaySeconds } : {}),
@@ -62,17 +66,53 @@ export async function processMinuteRebuildStage(env, body, dependencies = {}) {
       return { stage: task.stage, run_id: task.runId, pending: true, result };
     }
 
-    const run = dependencies.runBackfill
-      || (await import('./minute-facts-backfill.js')).runMinuteFactsBackfill;
-    const result = await run(active, dependencies.backfill || {});
-    await record(env, task, result, startedAt);
-    const pending = Number(result?.pending_candidates || 0) > 0
-      || Number(result?.scanned_snapshots || 0) > 0;
-    if (pending) await enqueue(env, task, 'backfill', 1);
-    return { stage: task.stage, run_id: task.runId, pending, result };
+    // Test and rollout fallback for the former single-invocation backfill.
+    if (task.stage === 'backfill' && dependencies.runBackfill) {
+      const result = await dependencies.runBackfill(active, dependencies.backfill || {});
+      await record(env, task, result, startedAt);
+      const pending = Number(result?.pending_candidates || 0) > 0
+        || Number(result?.scanned_snapshots || 0) > 0;
+      if (pending) await enqueue(env, task, 'backfill', 1);
+      return { stage: task.stage, run_id: task.runId, pending, result };
+    }
+
+    const stages = await import('./minute-facts-backfill-stages.js');
+    if (task.stage === 'backfill') {
+      const scan = dependencies.scanBackfill || stages.scanMinuteFactsBackfill;
+      const result = await scan(active, dependencies.backfill || {});
+      const pending = Number(result?.pending_candidates || 0) > 0;
+      if (pending) {
+        await enqueue(env, task, 'backfill-prepare');
+      } else {
+        await record(env, { ...task, stage: 'backfill' }, result, startedAt);
+      }
+      return { stage: task.stage, run_id: task.runId, pending, result };
+    }
+
+    if (task.stage === 'backfill-prepare') {
+      const prepare = dependencies.prepareBackfill || stages.prepareMinuteFactsBackfillCandidate;
+      const result = await prepare(active, dependencies.backfill || {});
+      const pending = Boolean(result?.prepared);
+      if (pending) {
+        await enqueue(env, task, 'backfill-commit', 0, { prepared: result.prepared });
+      }
+      return { stage: task.stage, run_id: task.runId, pending, result: {
+        pending_candidates: Number(result?.pending_candidates || 0),
+        prepared: pending,
+      } };
+    }
+
+    const commit = dependencies.commitBackfill || stages.commitMinuteFactsBackfillCandidate;
+    const result = await commit(active, task.prepared, dependencies.backfill || {});
+    await record(env, { ...task, stage: 'backfill' }, result, startedAt);
+    const remaining = Number(result?.pending_candidates || 0);
+    if (remaining > 0) await enqueue(env, task, 'backfill-prepare', 1);
+    else await enqueue(env, task, 'backfill', 1);
+    return { stage: task.stage, run_id: task.runId, pending: true, result };
   } catch (error) {
-    await record(env, task, { error: String(error?.message || error).slice(0, 800) }, startedAt, false)
-      .catch(() => {});
+    await record(env, { ...task, stage: task.stage.startsWith('backfill') ? 'backfill' : task.stage }, {
+      error: String(error?.message || error).slice(0, 800),
+    }, startedAt, false).catch(() => {});
     throw error;
   }
 }
