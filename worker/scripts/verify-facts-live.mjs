@@ -94,15 +94,23 @@ function revisionReachSummary(rows) {
 }
 
 function loadRevisionReach() {
+  const revisionColumns = new Set(resultRows(runQuery(
+    "SELECT name FROM pragma_table_info('sh_queue_revisions')",
+  )).map((row) => String(row.name)));
+  const itemCountExpression = revisionColumns.has('total_item_count')
+    ? 'COALESCE(r.total_item_count,r.item_count)'
+    : 'r.item_count';
   const payload = runQuery(`WITH ordered AS (
-      SELECT r.id,r.channel_id,r.session_id,r.effective_at,r.item_count,
+      SELECT r.id,r.channel_id,r.session_id,r.effective_at,
+        ${itemCountExpression} AS item_count,
         s.status AS session_status,
         LEAD(r.effective_at) OVER (
           PARTITION BY r.channel_id ORDER BY r.effective_at,r.id
         ) AS next_effective_at
       FROM sh_queue_revisions r
       LEFT JOIN sh_broadcast_sessions s ON s.id=r.session_id
-      WHERE r.status='complete' AND r.source='live_collector' AND r.item_count>0
+      WHERE r.status='complete' AND r.source='live_collector'
+        AND ${itemCountExpression}>0
     ), reached AS (
       SELECT o.id AS revision_id,o.item_count,
         MAX(c.queue_position)+1 AS reached_tracks,
