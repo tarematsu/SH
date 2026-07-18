@@ -6,12 +6,12 @@ function source(path) {
   return readFileSync(new URL(path, import.meta.url), 'utf8');
 }
 
-test('ingest uses compact completion logs and direct retry classification', () => {
+test('ingest uses compact completion logs and one retry-delay coercion', () => {
   const entry = source('../src/ingest-channel-optimized-entry.js');
   assert.match(entry, /function logIngestResult/);
   assert.doesNotMatch(entry, /console\.log\(JSON\.stringify\(result\)\)/);
   assert.match(entry, /let event = 'raw_collection_ingest_failed'/);
-  assert.match(entry, /typeof retryDelaySeconds === 'number'/);
+  assert.equal(entry.split('Number(error?.retryDelaySeconds)').length - 1, 1);
 });
 
 test('persistence reuses queue options and avoids validation arrays and sender closures', () => {
