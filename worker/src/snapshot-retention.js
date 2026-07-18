@@ -56,22 +56,40 @@ export function shouldRunSnapshotRetention(lastCleanupAt, now = Date.now(), env 
   return now - Number(lastCleanupAt || 0) >= intervalMs(env);
 }
 
-// DELETE FROM <table> WHERE id IN (SELECT id ... LIMIT ?) keeps each statement's
-// row scan bounded (D1/SQLite has no LIMIT clause on a bare DELETE), and the
-// per-table loop below re-runs it until a batch comes back short so a large
-// backlog drains over a few hourly runs instead of timing out in one shot.
-async function pruneTable(db, table, cutoff, size, batches) {
-  let totalDeleted = 0;
-  for (let batch = 0; batch < batches; batch += 1) {
-    const result = await db.prepare(`DELETE FROM ${table.name} WHERE ${table.keyColumn} IN (
-        SELECT ${table.keyColumn} FROM ${table.name}
-        WHERE ${table.timeColumn}<? ORDER BY ${table.timeColumn} ASC LIMIT ?
-      )`).bind(cutoff, size).run();
-    const changes = Number(result?.meta?.changes || 0);
-    totalDeleted += changes;
-    if (changes < size) break;
+function deleteStatement(db, table, cutoff, size) {
+  return db.prepare(`DELETE FROM ${table.name} WHERE ${table.keyColumn} IN (
+      SELECT ${table.keyColumn} FROM ${table.name}
+      WHERE ${table.timeColumn}<? ORDER BY ${table.timeColumn} ASC LIMIT ?
+    )`).bind(cutoff, size);
+}
+
+async function runDeleteRound(db, tables, cutoff, size) {
+  const statements = tables.map((table) => deleteStatement(db, table, cutoff, size));
+  if (typeof db.batch === 'function') return db.batch(statements);
+  const results = [];
+  for (const statement of statements) results.push(await statement.run());
+  return results;
+}
+
+// Delete one bounded batch from every active table per D1 round. Tables that
+// return a short batch are complete for this run; only full batches continue.
+// This preserves each table's deletion cap while collapsing the normal empty or
+// low-volume path from seven D1 awaits to one native batch call.
+async function pruneTables(db, cutoff, size, batches) {
+  const deleted = Object.fromEntries(TABLES.map((table) => [table.name, 0]));
+  let active = TABLES;
+  for (let batch = 0; batch < batches && active.length; batch += 1) {
+    const results = await runDeleteRound(db, active, cutoff, size);
+    const next = [];
+    for (let index = 0; index < active.length; index += 1) {
+      const table = active[index];
+      const changes = Number(results[index]?.meta?.changes || 0);
+      deleted[table.name] += changes;
+      if (changes >= size) next.push(table);
+    }
+    active = next;
   }
-  return totalDeleted;
+  return deleted;
 }
 
 export async function pruneOldSnapshots(env, now = Date.now()) {
@@ -86,16 +104,7 @@ export async function pruneOldSnapshots(env, now = Date.now()) {
   }
 
   const cutoff = now - retentionMs(env);
-  const deleted = {};
-  for (const table of TABLES) {
-    deleted[table.name] = await pruneTable(
-      db,
-      table,
-      cutoff,
-      batchSize(env),
-      maxBatches(env),
-    );
-  }
+  const deleted = await pruneTables(db, cutoff, batchSize(env), maxBatches(env));
   await db.prepare(`INSERT INTO sh_data_maintenance_state(
       id,last_rollup_key,last_cleanup_at,legacy_backfill_id,updated_at
     ) VALUES(?,NULL,?,0,?) ON CONFLICT(id) DO UPDATE SET
