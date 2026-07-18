@@ -71,6 +71,16 @@ export function trackHistoryResponseSuffix(publication) {
   return `],${JSON.stringify(tail).slice(1)}`;
 }
 
+function validatedTrackHistoryRowJson(row) {
+  const raw = String(row?.row_json || 'null');
+  if (row?.row_json_valid == null) {
+    JSON.parse(raw);
+  } else if (Number(row.row_json_valid) !== 1) {
+    throw new Error('track-history row contained invalid JSON');
+  }
+  return raw;
+}
+
 export function splitTrackHistoryPublicationRows(
   rows,
   rowsWritten = 0,
@@ -80,8 +90,7 @@ export function splitTrackHistoryPublicationRows(
   let chunk = '';
   let offset = 0;
   for (const row of rows || []) {
-    const raw = String(row?.row_json || 'null');
-    JSON.parse(raw);
+    const raw = validatedTrackHistoryRowJson(row);
     const piece = `${rowsWritten + offset > 0 ? ',' : ''}${raw}`;
     if (piece.length > maximum) throw new Error('track-history row exceeded response chunk size');
     if (chunk && chunk.length + piece.length > maximum) {

@@ -80,7 +80,8 @@ function cursorClause(cursor) {
 
 async function loadRows(db, publication, limit) {
   const cursor = cursorClause(publication.cursor);
-  const result = await db.prepare(`SELECT row_key,play_date,first_played_at,row_json
+  const result = await db.prepare(`SELECT
+      row_key,play_date,first_played_at,row_json,json_valid(row_json) AS row_json_valid
     FROM sh_pages_track_history_read_model
     WHERE play_date>=? AND play_date<=?
     ${cursor.sql}
@@ -177,8 +178,8 @@ export async function advanceTrackHistoryPublication(db, value, now = Date.now()
 
   const load = dependencies.loadRows || loadRows;
   const rawRows = await load(db, publication, pageRows + 1);
-  const rows = rawRows.slice(0, pageRows);
   const hasMore = rawRows.length > pageRows;
+  const rows = hasMore ? rawRows.slice(0, pageRows) : rawRows;
   const chunks = splitTrackHistoryPublicationRows(rows, Number(publication.rows_written || 0));
   if (Number(publication.next_chunk_index || 1) + chunks.length + 1 > TRACK_HISTORY_RESPONSE_MAX_CHUNKS) {
     throw new Error(`track-history response exceeded ${TRACK_HISTORY_RESPONSE_MAX_CHUNKS} chunks`);
