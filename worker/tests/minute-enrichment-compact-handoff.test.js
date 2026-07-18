@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { processMinuteEnrichment } from '../src/minute-enrichment-entry.js';
+import minuteEnrichmentWorker, { processMinuteEnrichment } from '../src/minute-enrichment-entry.js';
 
 function enrichmentBody(observedAt, tracks) {
   return {
@@ -20,6 +20,7 @@ function enrichmentBody(observedAt, tracks) {
     host_handle: 'host',
     broadcast_start_time: observedAt - 600_000,
     is_broadcasting: 1,
+    playback_only_debug: 'drop-me',
     queue: {
       station_id: 20,
       queue_id: 40,
@@ -33,7 +34,10 @@ function enrichmentBody(observedAt, tracks) {
   };
 }
 
-async function runPlayback(body, playback) {
+async function runPlayback(body, playback, patched = {
+  position: playback.current_position,
+  trackId: playback.current_track_id,
+}) {
   let sent = null;
   const result = await processMinuteEnrichment({
     MINUTE_DB: {},
@@ -46,16 +50,13 @@ async function runPlayback(body, playback) {
   }, body, {
     loadCurrentMinute: async () => ({ id: 1, observed_at: body.observed_at, quality_flags: 0 }),
     updatePlaybackState: async () => playback,
-    patchPlaybackResult: async () => ({
-      position: playback.current_position,
-      trackId: playback.current_track_id,
-    }),
+    patchPlaybackResult: async () => patched,
     requestQueueExpansion: async () => null,
   });
   return { result, sent };
 }
 
-test('playback handoff carries only the current bite track into identity enrichment', async () => {
+test('playback handoff carries only identity fields and the current bite track', async () => {
   const observedAt = 1_784_000_000_000;
   const tracks = Array.from({ length: 40 }, (_value, position) => ({
     position,
@@ -95,7 +96,43 @@ test('playback handoff carries only the current bite track into identity enrichm
     bite_count: 3_027,
   }]);
   assert.equal(Object.hasOwn(sent.value.queue.tracks[0], 'title'), false);
+  assert.equal(Object.hasOwn(sent.value, 'queue_start_time'), false);
+  assert.equal(Object.hasOwn(sent.value, 'is_paused'), false);
+  assert.equal(Object.hasOwn(sent.value, 'schedule_valid'), false);
+  assert.equal(Object.hasOwn(sent.value, 'delayed'), false);
+  assert.equal(Object.hasOwn(sent.value, 'playback_only_debug'), false);
   assert.equal(body.queue.tracks.length, 40);
+});
+
+test('playback handoff uses the normalized patch result instead of re-reading playback', async () => {
+  const observedAt = 1_784_000_030_000;
+  const body = enrichmentBody(observedAt, [
+    { position: 4, queue_track_id: 104, bite_count: 14 },
+    { position: 9, queue_track_id: 109, bite_count: 19 },
+  ]);
+  const { result, sent } = await runPlayback(body, {
+    current_position: 4,
+    current_track_id: 404,
+    current_schedule_valid: 1,
+    delayed: false,
+  }, {
+    position: 9,
+    trackId: 909,
+  });
+
+  assert.equal(result.queue_position, 9);
+  assert.equal(result.track_id, 909);
+  assert.equal(sent.value.queue_position, 9);
+  assert.equal(sent.value.track_id, 909);
+  assert.deepEqual(sent.value.queue.tracks, [{
+    position: 9,
+    queue_track_id: 109,
+    stationhead_track_id: null,
+    spotify_id: null,
+    apple_music_id: null,
+    isrc: null,
+    bite_count: 19,
+  }]);
 });
 
 test('playback handoff drops the queue when no bite position was resolved', async () => {
@@ -111,4 +148,44 @@ test('playback handoff drops the queue when no bite position was resolved', asyn
   assert.equal(sent.value.stage, 'identity');
   assert.equal(sent.value.queue_position, null);
   assert.equal(sent.value.queue, null);
+});
+
+test('queue entry handles the configured one-message batch without changing ack semantics', async () => {
+  let acknowledged = 0;
+  let retried = 0;
+  const body = {
+    message_type: 'minute-fact-enrichment',
+    message_version: 1,
+    stage: 'identity',
+    channel_id: 10,
+    minute_at: 120_000,
+    observed_at: 125_000,
+  };
+  const env = {
+    MINUTE_DB: {
+      prepare() {
+        return {
+          bind() {
+            return {
+              async first() {
+                return { observed_at: 126_000 };
+              },
+            };
+          },
+        };
+      },
+    },
+  };
+
+  await minuteEnrichmentWorker.queue({
+    messages: [{
+      body,
+      ack() { acknowledged += 1; },
+      retry() { retried += 1; },
+    }],
+  }, env);
+  await minuteEnrichmentWorker.queue({ messages: [] }, env);
+
+  assert.equal(acknowledged, 1);
+  assert.equal(retried, 0);
 });
