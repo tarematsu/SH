@@ -6,11 +6,11 @@ function source(path) {
   return readFileSync(new URL(path, import.meta.url), 'utf8');
 }
 
-test('buddies monitor deploys a scheduled-only fixed-dependency wrapper', () => {
+test('buddies monitor retains its narrow scheduled production entry', () => {
   const config = source('../wrangler.jsonc');
-  const entry = source('../src/raw-collector-optimized-entry.js');
-  assert.match(config, /"main"\s*:\s*"src\/raw-collector-optimized-entry\.js"/);
-  assert.match(entry, /const EMPTY_DEPENDENCIES = Object\.freeze/);
+  const entry = source('../src/raw-collector-entry.js');
+  assert.match(config, /"main"\s*:\s*"src\/raw-collector-entry\.js"/);
+  assert.match(entry, /const RAW_COLLECTION_QUEUE_OPTIONS = Object\.freeze/);
   assert.match(entry, /scheduled\(_controller, env, ctx\)/);
   assert.doesNotMatch(entry, /fetch\s*[:(]/);
 });
@@ -34,11 +34,11 @@ test('buddies persist deploys a queue-only one-message wrapper', () => {
   assert.doesNotMatch(entry, /for\s*\(|fetch\s*\(/);
 });
 
-test('buddies comments keeps the cached wrapper and removes HTTP surface', () => {
+test('buddies comments keeps the cached wrapper and fetch contract', () => {
   const config = source('../wrangler.comments.jsonc');
   const entry = source('../src/comments-cpu-entry.js');
   assert.match(config, /"max_batch_size"\s*:\s*1\b/);
   assert.match(entry, /const trackCount = tracks\.length/);
   assert.match(entry, /const activeCommentsEnvs = new WeakMap/);
-  assert.doesNotMatch(entry, /fetch\s*:/);
+  assert.match(entry, /fetch: commentsWorker\.fetch/);
 });
