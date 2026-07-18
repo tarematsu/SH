@@ -3,6 +3,7 @@ import { API_BASE, configFromEnv, shHeaders } from './collector-config.js';
 import { jwtExpiryMs, normalizeBearer } from './shared.js';
 
 const STATE_ID = 'stationhead';
+const RAW_COLLECTION_QUEUE_OPTIONS = Object.freeze({ contentType: 'json' });
 
 function positive(value, fallback) {
   const parsed = Number(value);
@@ -15,6 +16,14 @@ function authConfig(env) {
     refreshBeforeMs: positive(env.AUTH_REFRESH_BEFORE_MS, 3_600_000),
     cooldownMs: positive(env.AUTH_REFRESH_COOLDOWN_MS, 300_000),
     lockMs: positive(env.AUTH_LOCK_MS, 60_000),
+  };
+}
+
+function collectorRequestConfig(env) {
+  return {
+    channelAlias: env.CHANNEL_ALIAS || 'buddies',
+    appVersion: env.STATIONHEAD_APP_VERSION || env.SH_APP_VERSION || '1.0.0',
+    requestTimeoutMs: Math.min(positive(env.REQUEST_TIMEOUT_MS, 15_000), 30_000),
   };
 }
 
@@ -95,11 +104,9 @@ async function ensureSession(env) {
 }
 
 function rawMessage(base, body) {
-  return {
-    ...base,
-    message_version: 1,
-    body,
-  };
+  base.message_version = 1;
+  base.body = body;
+  return base;
 }
 
 async function directPreparedMessage(base, body, config, env) {
@@ -137,20 +144,16 @@ async function directPreparedMessage(base, body, config, env) {
       preparedQueue,
       env,
     );
-    return {
-      ...base,
-      message_version: 3,
-      snapshot,
-      queue: materialized.queue,
-      ...(preparedSnapshot ? { snapshot_analysis: preparedSnapshot } : {}),
-      ...(materialized.analysis ? { queue_analysis: materialized.analysis } : {}),
-    };
+    base.message_version = 3;
+    base.snapshot = snapshot;
+    base.queue = materialized.queue;
+    if (preparedSnapshot) base.snapshot_analysis = preparedSnapshot;
+    if (materialized.analysis) base.queue_analysis = materialized.analysis;
+    return base;
   } catch {
-    return {
-      ...base,
-      message_version: 2,
-      channel,
-    };
+    base.message_version = 2;
+    base.channel = channel;
+    return base;
   }
 }
 
@@ -159,9 +162,14 @@ async function directPreparedMessage(base, body, config, env) {
 // ingest Queue boundaries. The DB-less direct fallback retains the prior v1/v2/v3
 // behavior for tests and compatibility callers outside the deployed topology.
 export async function collectRawChannel(env, dependencies = {}) {
-  if (!env?.RAW_COLLECTION_QUEUE?.send) throw new Error('RAW_COLLECTION_QUEUE binding is missing');
+  const rawCollectionQueue = env?.RAW_COLLECTION_QUEUE;
+  if (typeof rawCollectionQueue?.send !== 'function') {
+    throw new Error('RAW_COLLECTION_QUEUE binding is missing');
+  }
+
   const state = await (dependencies.ensureSession || ensureSession)(env);
-  const config = configFromEnv(env);
+  const inlinePreparation = !env.DB && dependencies.inlinePreparation !== false;
+  const config = inlinePreparation ? configFromEnv(env) : collectorRequestConfig(env);
   const observedAt = Date.now();
   const response = await (dependencies.fetch || fetch)(
     `${API_BASE}/channels/alias/${encodeURIComponent(config.channelAlias)}`,
@@ -170,8 +178,9 @@ export async function collectRawChannel(env, dependencies = {}) {
       signal: AbortSignal.timeout(config.requestTimeoutMs),
     },
   );
-  const body = await response.text();
   if (!response.ok) throw new Error(`Stationhead API ${response.status}: channel`);
+
+  const body = await response.text();
   const refreshed = normalizeBearer(response.headers.get('authorization'));
   const persistCredentials = !state.collectorUpdatedAt
     || Boolean(refreshed && refreshed !== state.authToken);
@@ -191,16 +200,25 @@ export async function collectRawChannel(env, dependencies = {}) {
       collectorStationId: state.collectorStationId,
     },
   };
-  const message = !env?.DB && dependencies.inlinePreparation !== false
+  const message = inlinePreparation
     ? await directPreparedMessage(base, body, config, env)
     : rawMessage(base, body);
-  await env.RAW_COLLECTION_QUEUE.send(message, { contentType: 'json' });
+  await rawCollectionQueue.send(message, RAW_COLLECTION_QUEUE_OPTIONS);
+
+  let queueTotalTracks = 0;
+  let queueMaterializedTracks = 0;
+  if (inlinePreparation) {
+    const queue = message.queue;
+    const trackCount = queue?.tracks?.length || 0;
+    queueTotalTracks = Number(queue?.total_track_count || trackCount);
+    queueMaterializedTracks = Number(queue?.materialized_track_count || trackCount);
+  }
   console.log(JSON.stringify({
     event: 'raw_collection_enqueued',
     observed_at: observedAt,
     payload_chars: body.length,
-    queue_total_tracks: Number(message.queue?.total_track_count || message.queue?.tracks?.length || 0),
-    queue_materialized_tracks: Number(message.queue?.materialized_track_count || message.queue?.tracks?.length || 0),
+    queue_total_tracks: queueTotalTracks,
+    queue_materialized_tracks: queueMaterializedTracks,
   }));
 }
 
