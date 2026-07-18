@@ -1,10 +1,36 @@
+let preparedModulesPromise;
+let rawStagesPromise;
+let legacyIngestPromise;
+let ingestFactStagesPromise;
+let ingestFinalizePromise;
+
+function loadPreparedModules() {
+  return preparedModulesPromise ??= Promise.all([
+    import('./ingest-prepared-channel.js'),
+    import('./queue-analysis-transfer.js'),
+    import('./snapshot-analysis-transfer.js'),
+  ]);
+}
+
+function loadRawStages() {
+  return rawStagesPromise ??= import('./raw-collection-preparation.js');
+}
+
+function loadLegacyIngest() {
+  return legacyIngestPromise ??= import('./ingest-channel-entry.js');
+}
+
+function loadIngestFactStages() {
+  return ingestFactStagesPromise ??= import('./ingest-fact-stage.js');
+}
+
+function loadIngestFinalize() {
+  return ingestFinalizePromise ??= import('./ingest-finalize-entry.js');
+}
+
 export async function ingestRawCollection(env, message, dependencies = {}) {
   if (Number(message?.message_version) === 3) {
-    const [prepared, queueAnalysis, snapshotAnalysis] = await Promise.all([
-      import('./ingest-prepared-channel.js'),
-      import('./queue-analysis-transfer.js'),
-      import('./snapshot-analysis-transfer.js'),
-    ]);
+    const [prepared, queueAnalysis, snapshotAnalysis] = await loadPreparedModules();
     if (message.snapshot) {
       snapshotAnalysis.restoreSnapshotAnalysis(message.snapshot, message.snapshot_analysis);
     }
@@ -12,42 +38,44 @@ export async function ingestRawCollection(env, message, dependencies = {}) {
     return prepared.ingestPreparedRawCollection(env, message);
   }
   if (env?.INGEST_FINALIZE_QUEUE?.send && dependencies.inline !== true) {
-    const stages = await import('./raw-collection-preparation.js');
+    const stages = await loadRawStages();
     return stages.processRawNormalizeStage(env, message, dependencies);
   }
-  const legacy = await import('./ingest-channel-entry.js');
+  const legacy = await loadLegacyIngest();
   return legacy.ingestRawCollection(env, message);
 }
 
 export default {
   async queue(batch, env) {
     for (const message of batch.messages || []) {
-      const type = message.body?.message_type;
+      const body = message.body;
+      const type = body?.message_type;
       try {
         if (type === 'stationhead-ingest-fact') {
-          const { processIngestFactTask } = await import('./ingest-fact-stage.js');
-          const result = await processIngestFactTask(env, message.body);
+          const stages = await loadIngestFactStages();
+          const result = await stages.processIngestFactTask(env, body);
           console.log(JSON.stringify(result));
         } else if (type === 'stationhead-ingest-fact-deliver') {
-          const { processIngestFactDeliveryTask } = await import('./ingest-fact-stage.js');
-          const result = await processIngestFactDeliveryTask(env, message.body);
+          const stages = await loadIngestFactStages();
+          const result = await stages.processIngestFactDeliveryTask(env, body);
           console.log(JSON.stringify(result));
         } else if (type === 'stationhead-ingest-finalize') {
-          const { processIngestFinalizeTask } = await import('./ingest-finalize-entry.js');
-          const result = await processIngestFinalizeTask(env, message.body);
+          const stage = await loadIngestFinalize();
+          const result = await stage.processIngestFinalizeTask(env, body);
           console.log(JSON.stringify(result));
         } else if (type === 'stationhead-raw-analysis') {
-          const { processRawAnalysisStage } = await import('./raw-collection-preparation.js');
-          await processRawAnalysisStage(env, message.body);
+          const stages = await loadRawStages();
+          await stages.processRawAnalysisStage(env, body);
         } else if (type === 'stationhead-raw-materialize') {
-          const { processRawMaterializeStage } = await import('./raw-collection-preparation.js');
-          await processRawMaterializeStage(env, message.body);
+          const stages = await loadRawStages();
+          await stages.processRawMaterializeStage(env, body);
         } else {
-          await ingestRawCollection(env, message.body);
+          await ingestRawCollection(env, body);
         }
         message.ack();
       } catch (error) {
-        const event = ['stationhead-ingest-fact', 'stationhead-ingest-fact-deliver'].includes(type)
+        const event = type === 'stationhead-ingest-fact'
+          || type === 'stationhead-ingest-fact-deliver'
           ? 'ingest_fact_failed'
           : type === 'stationhead-ingest-finalize'
           ? 'ingest_finalize_failed'
@@ -60,8 +88,9 @@ export default {
           event,
           error: String(error?.message || error).slice(0, 800),
         }));
-        if (Number(error?.retryDelaySeconds) > 0) {
-          message.retry({ delaySeconds: Math.max(1, Number(error.retryDelaySeconds)) });
+        const retryDelaySeconds = Number(error?.retryDelaySeconds);
+        if (retryDelaySeconds > 0) {
+          message.retry({ delaySeconds: Math.max(1, retryDelaySeconds) });
         } else {
           message.retry();
         }
