@@ -10,20 +10,41 @@ import {
 
 export const MINUTE_DERIVE_DISPATCH_CRON = '* * * * *';
 
+const EMPTY_DEPENDENCIES = Object.freeze({});
+let deriveDispatchStateDependenciesPromise = null;
+let cronStaggerModulePromise = null;
+
+function defaultDeriveDispatchStateDependencies() {
+  deriveDispatchStateDependenciesPromise ||= Promise.all([
+    import('./minute-facts-inbox.js'),
+    import('./minute-facts-runtime-state.js'),
+  ]).then(([inboxModule, runtimeModule]) => ({
+    stats: inboxModule.minuteFactInboxStats,
+    record: runtimeModule.recordMinuteFactRuntimeState,
+  }));
+  return deriveDispatchStateDependenciesPromise;
+}
+
+function cronStaggerModule() {
+  cronStaggerModulePromise ||= import('./cron-stagger.js');
+  return cronStaggerModulePromise;
+}
+
 function positiveInteger(value, fallback, maximum = Number.MAX_SAFE_INTEGER) {
   const parsed = Math.trunc(Number(value));
   if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
   return Math.min(parsed, maximum);
 }
 
-async function recordDeriveDispatchState(env, summary, startedAt, dependencies = {}) {
+async function recordDeriveDispatchState(env, summary, startedAt, dependencies = EMPTY_DEPENDENCIES) {
   if (!env?.MINUTE_DB) return;
-  const [inboxModule, runtimeModule] = await Promise.all([
-    dependencies.stats ? Promise.resolve(null) : import('./minute-facts-inbox.js'),
-    dependencies.record ? Promise.resolve(null) : import('./minute-facts-runtime-state.js'),
-  ]);
-  const stats = dependencies.stats || inboxModule.minuteFactInboxStats;
-  const record = dependencies.record || runtimeModule.recordMinuteFactRuntimeState;
+  let stats = dependencies.stats;
+  let record = dependencies.record;
+  if (!stats || !record) {
+    const defaults = await defaultDeriveDispatchStateDependencies();
+    stats ||= defaults.stats;
+    record ||= defaults.record;
+  }
   let snapshot = {};
   try { snapshot = await stats(env); } catch {}
   Object.assign(summary, snapshot);
@@ -34,16 +55,41 @@ async function recordDeriveDispatchState(env, summary, startedAt, dependencies =
   }, { startedAt });
 }
 
-async function sendDeriveMessages(env, messages) {
-  if (!messages.length) return;
+async function sendDeriveMessages(env, triggers, revisionRecoveries) {
+  const triggerCount = triggers.length;
+  const recoveryCount = revisionRecoveries.length;
+  const messageCount = triggerCount + recoveryCount;
+  if (!messageCount) return;
+
   if (typeof env.MINUTE_DERIVE_QUEUE.sendBatch === 'function') {
-    await env.MINUTE_DERIVE_QUEUE.sendBatch(messages.map((body) => ({ body, contentType: 'json' })));
+    const batch = new Array(messageCount);
+    let offset = 0;
+    for (let index = 0; index < triggerCount; index += 1) {
+      batch[offset] = { body: triggers[index], contentType: 'json' };
+      offset += 1;
+    }
+    for (let index = 0; index < recoveryCount; index += 1) {
+      batch[offset] = { body: revisionRecoveries[index], contentType: 'json' };
+      offset += 1;
+    }
+    await env.MINUTE_DERIVE_QUEUE.sendBatch(batch);
     return;
   }
-  await Promise.all(messages.map((body) => env.MINUTE_DERIVE_QUEUE.send(body, { contentType: 'json' })));
+
+  const sends = new Array(messageCount);
+  let offset = 0;
+  for (let index = 0; index < triggerCount; index += 1) {
+    sends[offset] = env.MINUTE_DERIVE_QUEUE.send(triggers[index], { contentType: 'json' });
+    offset += 1;
+  }
+  for (let index = 0; index < recoveryCount; index += 1) {
+    sends[offset] = env.MINUTE_DERIVE_QUEUE.send(revisionRecoveries[index], { contentType: 'json' });
+    offset += 1;
+  }
+  await Promise.all(sends);
 }
 
-export async function dispatchPendingMinuteFacts(env, dependencies = {}, ctx = null) {
+export async function dispatchPendingMinuteFacts(env, dependencies = EMPTY_DEPENDENCIES, ctx = null) {
   if (!env?.MINUTE_DERIVE_QUEUE?.send && typeof env?.MINUTE_DERIVE_QUEUE?.sendBatch !== 'function') {
     throw new Error('MINUTE_DERIVE_QUEUE binding is missing');
   }
@@ -56,14 +102,14 @@ export async function dispatchPendingMinuteFacts(env, dependencies = {}, ctx = n
     loadFacts(env, { limit: factLimit }),
     loadRevisions(env, { limit: recoveryLimit, now: startedAt }),
   ]);
-  await sendDeriveMessages(env, [...triggers, ...revisionRecoveries]);
+  await sendDeriveMessages(env, triggers, revisionRecoveries);
   if (revisionRecoveries.length) {
     const mark = dependencies.markRevisionRecovery || markSparseRevisionRecoveryDispatched;
-    await mark(
-      env,
-      revisionRecoveries.map((task) => task?.revision?.revision_id),
-      startedAt,
-    );
+    const revisionIds = new Array(revisionRecoveries.length);
+    for (let index = 0; index < revisionRecoveries.length; index += 1) {
+      revisionIds[index] = revisionRecoveries[index]?.revision?.revision_id;
+    }
+    await mark(env, revisionIds, startedAt);
   }
   const summary = {
     event: 'minute_derive_dispatch',
@@ -84,13 +130,13 @@ export async function dispatchPendingMinuteFacts(env, dependencies = {}, ctx = n
   return summary;
 }
 
-async function dispatchRebuild(controller, env, ctx, dependencies = {}) {
+async function dispatchRebuild(controller, env, ctx, dependencies = EMPTY_DEPENDENCIES) {
   if (!env?.MINUTE_REBUILD_QUEUE?.send) {
     return runMinuteScheduledWithCollectorPriority(controller, env, ctx, dependencies);
   }
-  const cronModule = await import('./cron-stagger.js');
-  await (dependencies.applyStagger || cronModule.applyCronStagger)(env, 'minute');
-  const collector = await (dependencies.waitForCollector || cronModule.waitForCollectorCompletion)(
+  const staggerModule = await cronStaggerModule();
+  await (dependencies.applyStagger || staggerModule.applyCronStagger)(env, 'minute');
+  const collector = await (dependencies.waitForCollector || staggerModule.waitForCollectorCompletion)(
     env,
     controller?.scheduledTime,
   );
@@ -115,11 +161,11 @@ export default {
   fetch: minuteWorker.fetch,
   scheduled(controller, env, ctx) {
     if (String(controller?.cron || '') === MINUTE_DERIVE_DISPATCH_CRON) {
-      return dispatchPendingMinuteFacts(env, {}, ctx);
+      return dispatchPendingMinuteFacts(env, EMPTY_DEPENDENCIES, ctx);
     }
     if (minuteMaintenanceTask(controller) === 'rebuild') {
-      return dispatchRebuild(controller, env, ctx);
+      return dispatchRebuild(controller, env, ctx, EMPTY_DEPENDENCIES);
     }
-    return runMinuteScheduledWithCollectorPriority(controller, env, ctx);
+    return runMinuteScheduledWithCollectorPriority(controller, env, ctx, EMPTY_DEPENDENCIES);
   },
 };
