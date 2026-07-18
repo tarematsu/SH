@@ -79,6 +79,11 @@ CREATE TABLE IF NOT EXISTS sh_queue_revisions (
   received_at INTEGER NOT NULL,
   structural_hash TEXT NOT NULL,
   item_count INTEGER NOT NULL,
+  materialized_item_count INTEGER,
+  coverage_complete INTEGER NOT NULL DEFAULT 1,
+  source_job_id INTEGER,
+  source_visible_count INTEGER,
+  last_materialized_at INTEGER,
   status TEXT NOT NULL CHECK(status IN ('pending','complete','invalid')),
   source TEXT NOT NULL,
   source_priority INTEGER NOT NULL,
@@ -89,6 +94,12 @@ CREATE INDEX IF NOT EXISTS idx_sh_queue_revisions_channel_effective
   ON sh_queue_revisions(channel_id, effective_at DESC);
 CREATE INDEX IF NOT EXISTS idx_sh_queue_revisions_session
   ON sh_queue_revisions(session_id, effective_at);
+CREATE INDEX IF NOT EXISTS idx_sh_queue_revisions_coverage
+  ON sh_queue_revisions(channel_id, coverage_complete, effective_at DESC);
+CREATE INDEX IF NOT EXISTS idx_sh_queue_revisions_source_job
+  ON sh_queue_revisions(source_job_id) WHERE source_job_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_sh_queue_revisions_materialization
+  ON sh_queue_revisions(coverage_complete, last_materialized_at, effective_at);
 
 CREATE TABLE IF NOT EXISTS sh_queue_revision_items (
   revision_id INTEGER NOT NULL,

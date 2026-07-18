@@ -247,7 +247,7 @@ async function commentCounts(env, candidates) {
   return result;
 }
 
-export async function runMinuteFactsGapScan(env, dependencies = {}) {
+export async function prepareMinuteFactsGapScan(env, dependencies = {}) {
   if (!env?.DB || !env?.MINUTE_DB) throw new Error('minute fact gap scan DB binding is missing');
   const now = dependencies.now ? dependencies.now() : Date.now();
   const windowMinutes = positiveInteger(env.GAP_SCAN_WINDOW_MINUTES, DEFAULT_WINDOW_MINUTES, MAX_WINDOW_MINUTES);
@@ -263,16 +263,58 @@ export async function runMinuteFactsGapScan(env, dependencies = {}) {
   let to = integer(state?.next_to);
   if (to == null || to <= earliest || to > cutoff) to = cutoff;
   const from = Math.max(earliest, to - windowMinutes * MINUTE_MS);
+  const rows = await loadGapScanSnapshots(env, from, to);
+  const built = buildExpectedMinuteCandidates(rows, { from, to, maxCarryMinutes });
+  const existing = await existingKeys(env, built.candidates);
+  const missing = built.candidates.filter((item) => !existing.has(`${item.snapshot.channel_id}:${item.minuteAt}`));
 
+  return {
+    event: 'minute_fact_gap_scan_prepared',
+    now,
+    from,
+    to,
+    earliest,
+    cutoff,
+    expected_minutes: built.candidates.length,
+    missing_minutes: missing.length,
+    source_gap_minutes: built.sourceGapMinutes,
+    skipped_existing: existing.size,
+    attempted: missing.slice(0, maxJobs),
+  };
+}
+
+function validatePreparedGapScan(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('minute fact gap scan prepared state is missing');
+  }
+  const prepared = {
+    now: integer(value.now),
+    from: integer(value.from),
+    to: integer(value.to),
+    earliest: integer(value.earliest),
+    cutoff: integer(value.cutoff),
+    expectedMinutes: integer(value.expected_minutes),
+    missingMinutes: integer(value.missing_minutes),
+    sourceGapMinutes: integer(value.source_gap_minutes) ?? 0,
+    skippedExisting: integer(value.skipped_existing) ?? 0,
+    attempted: Array.isArray(value.attempted) ? value.attempted : null,
+  };
+  if ([prepared.now, prepared.from, prepared.to, prepared.earliest, prepared.cutoff,
+    prepared.expectedMinutes, prepared.missingMinutes].some((item) => item == null)
+      || prepared.from >= prepared.to
+      || !prepared.attempted) {
+    throw new Error('minute fact gap scan prepared state is invalid');
+  }
+  return prepared;
+}
+
+export async function commitMinuteFactsGapScan(env, value, dependencies = {}) {
+  if (!env?.DB || !env?.MINUTE_DB) throw new Error('minute fact gap scan DB binding is missing');
+  const prepared = validatePreparedGapScan(value);
   try {
-    const rows = await loadGapScanSnapshots(env, from, to);
-    const built = buildExpectedMinuteCandidates(rows, { from, to, maxCarryMinutes });
-    const existing = await existingKeys(env, built.candidates);
-    const missing = built.candidates.filter((item) => !existing.has(`${item.snapshot.channel_id}:${item.minuteAt}`));
-    const attempted = missing.slice(0, maxJobs);
-    const comments = await commentCounts(env, attempted);
+    const comments = await commentCounts(env, prepared.attempted);
     let enqueued = 0;
-    for (const item of attempted) {
+    for (const item of prepared.attempted) {
       const queue = await loadHistoricalQueue(env, item);
       const commentCount = comments.get(`${item.snapshot.station_id}:${item.minuteAt}`);
       const accepted = await enqueueMinuteFactJob(env, {
@@ -292,40 +334,47 @@ export async function runMinuteFactsGapScan(env, dependencies = {}) {
     }
 
     const nextTo = nextGapScanCursor({
-      from,
-      to,
-      earliest,
-      cutoff,
-      missingCount: missing.length,
+      from: prepared.from,
+      to: prepared.to,
+      earliest: prepared.earliest,
+      cutoff: prepared.cutoff,
+      missingCount: prepared.missingMinutes,
     });
     await env.MINUTE_DB.prepare(`UPDATE sh_minute_fact_gap_scan_state SET
       next_to=?,earliest_source_minute=?,last_from=?,last_to=?,expected_minutes=?,
       missing_minutes=?,source_gap_minutes=?,enqueued_jobs=enqueued_jobs+?,
       skipped_existing=skipped_existing+?,last_error=NULL,updated_at=? WHERE scan_key=?`)
       .bind(
-        nextTo, earliest, from, to, built.candidates.length, missing.length,
-        built.sourceGapMinutes, enqueued, existing.size, now, GAP_SCAN_STATE_KEY,
+        nextTo, prepared.earliest, prepared.from, prepared.to, prepared.expectedMinutes,
+        prepared.missingMinutes, prepared.sourceGapMinutes, enqueued, prepared.skippedExisting,
+        prepared.now, GAP_SCAN_STATE_KEY,
       ).run();
 
     const summary = {
       event: 'minute_fact_gap_scan_summary',
-      from,
-      to,
-      expected_minutes: built.candidates.length,
-      missing_minutes: missing.length,
-      source_gap_minutes: built.sourceGapMinutes,
-      attempted_jobs: attempted.length,
+      from: prepared.from,
+      to: prepared.to,
+      expected_minutes: prepared.expectedMinutes,
+      missing_minutes: prepared.missingMinutes,
+      source_gap_minutes: prepared.sourceGapMinutes,
+      attempted_jobs: prepared.attempted.length,
       enqueued,
-      unattempted_missing: Math.max(0, missing.length - attempted.length),
-      remaining_missing: missing.length,
-      window_blocked: missing.length > 0,
+      unattempted_missing: Math.max(0, prepared.missingMinutes - prepared.attempted.length),
+      remaining_missing: prepared.missingMinutes,
+      window_blocked: prepared.missingMinutes > 0,
       next_to: nextTo,
     };
     console.log(JSON.stringify(summary));
     return summary;
   } catch (error) {
     await env.MINUTE_DB.prepare(`UPDATE sh_minute_fact_gap_scan_state SET last_error=?,updated_at=? WHERE scan_key=?`)
-      .bind(String(error?.message || error).slice(0, 1000), now, GAP_SCAN_STATE_KEY).run().catch(() => {});
+      .bind(String(error?.message || error).slice(0, 1000), prepared.now, GAP_SCAN_STATE_KEY).run().catch(() => {});
     throw error;
   }
+}
+
+export async function runMinuteFactsGapScan(env, dependencies = {}) {
+  const prepared = await prepareMinuteFactsGapScan(env, dependencies);
+  if (prepared?.skipped) return prepared;
+  return commitMinuteFactsGapScan(env, prepared, dependencies);
 }

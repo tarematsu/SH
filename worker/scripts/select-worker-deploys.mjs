@@ -19,12 +19,15 @@ const workerDefinitions = [
   { name: 'sh-pages-read-model', config: 'worker/wrangler.pages-read-model.jsonc', command: 'deploy:pages-read-model' },
   { name: 'sh-monitor-maintenance', config: 'worker/wrangler.monitor-maintenance.jsonc', command: 'deploy:monitor-maintenance' },
   { name: 'sh-monitor-other', config: 'worker/wrangler.other.jsonc', command: 'deploy:other' },
-  { name: 'sh-buddy-playback', config: 'worker/wrangler.buddy-playback.jsonc', command: 'deploy:buddy-playback' },
 ];
 
 const gitConnectedWorkers = new Set([
   'sh-monitor-other',
   'sh-minute-maintenance',
+]);
+
+const deployScriptWorkers = new Map([
+  ['worker/scripts/deploy-other-monitor.mjs', 'sh-monitor-other'],
 ]);
 
 function repositoryPath(path) {
@@ -117,6 +120,12 @@ if (changed.all) {
       continue;
     }
 
+    const deployWorker = deployScriptWorkers.get(changedPath);
+    if (deployWorker) {
+      selected.add(deployWorker);
+      continue;
+    }
+
     let matched = false;
     for (const definition of definitions) {
       if (affectedByPath(definition, changedPath)) {
@@ -128,9 +137,6 @@ if (changed.all) {
     if (!matched
         && changedPath.startsWith('worker/src/')
         && !changedPath.startsWith('worker/src/__fixtures__/')) {
-      // A deleted or newly introduced runtime module may not be reachable from
-      // the current import graph. Fall back to all Workers rather than miss a
-      // production deploy.
       for (const definition of definitions) selected.add(definition.name);
     }
 

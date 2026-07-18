@@ -7,6 +7,8 @@ on:
       - "worker/**"
       - "site/functions/**"
       - "packages/sh-shared/**"
+      - "database/facts-migrations/**"
+      - "database/facts-db.json"
       - ".github/workflows/cloudflare-pr-diagnostics.yml"
       - ".github/scripts/cloudflare-build-diagnostics.mjs"
 
@@ -27,6 +29,7 @@ jobs:
       commands: ${{ steps.targets.outputs.commands }}
       diagnostics: ${{ steps.targets.outputs.diagnostics }}
       topology_rename: ${{ steps.targets.outputs.topology_rename }}
+      facts_schema: ${{ steps.targets.outputs.facts_schema }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -50,14 +53,17 @@ jobs:
           echo "commands=$(jq -c '.commands' <<<"$selection")" >> "$GITHUB_OUTPUT"
           echo "diagnostics=$(jq -c '.diagnostics' <<<"$selection")" >> "$GITHUB_OUTPUT"
           topology_rename=false
-          # New Worker configs are safe to deploy. Only an existing config whose
-          # script name changed needs the topology-rename guard.
           if git diff --diff-filter=M -U0 "$BASE_SHA" "$HEAD_SHA" -- 'worker/wrangler*.jsonc' \
               | grep -Eq '^[+-][[:space:]]*"name"[[:space:]]*:'; then
             topology_rename=true
             echo "::notice::Skipping direct PR deploy because a Worker script name changed."
           fi
           echo "topology_rename=$topology_rename" >> "$GITHUB_OUTPUT"
+          facts_schema=false
+          if grep -Eq '^(database/facts-migrations/|database/facts-db\.json$|worker/scripts/provision-facts-db\.mjs$)' changed-files.txt; then
+            facts_schema=true
+          fi
+          echo "facts_schema=$facts_schema" >> "$GITHUB_OUTPUT"
 
   prepare-workers:
     name: Deploy affected Workers
@@ -80,6 +86,10 @@ jobs:
           cache-dependency-path: worker/package-lock.json
       - run: npm ci --no-audit --no-fund
         working-directory: worker
+      - name: Provision facts schema before dependent Workers
+        if: needs.select-workers.outputs.facts_schema == 'true'
+        working-directory: worker
+        run: node scripts/provision-facts-db.mjs
       - name: Ensure split pipeline queues exist
         shell: bash
         working-directory: worker
@@ -95,7 +105,9 @@ jobs:
             stationhead-minute-derive stationhead-minute-derive-dlq \
             stationhead-minute-enrichment stationhead-minute-enrichment-dlq \
             stationhead-minute-rebuild stationhead-minute-rebuild-dlq \
-            stationhead-buddy-playback stationhead-buddy-playback-dlq
+            stationhead-buddy-playback stationhead-buddy-playback-dlq \
+            stationhead-host-monitor stationhead-host-monitor-dlq \
+            stationhead-pages-read-model-publication stationhead-pages-read-model-publication-dlq
           do
             npx wrangler queues create "$queue" >/dev/null 2>&1 || true
           done

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 
 const deployWorkflow = readFileSync(
   new URL('../.github/workflows/deploy.yml', import.meta.url),
@@ -35,7 +35,15 @@ const splitQueues = [
   'stationhead-minute-enrichment',
   'stationhead-minute-rebuild',
   'stationhead-buddy-playback',
+  'stationhead-host-monitor',
+  'stationhead-pages-read-model-publication',
 ];
+
+function position(source, value) {
+  const index = source.indexOf(value);
+  assert.notEqual(index, -1, `missing expected workflow fragment: ${value}`);
+  return index;
+}
 
 test('manual deploy keeps all Cloudflare targets available', () => {
   const fallback = 'secrets.CLOUDFLARE_BUILDS_API_TOKEN || secrets.CLOUDFLARE_API_TOKEN || secrets.CF_API_TOKEN';
@@ -74,6 +82,17 @@ test('automatic deploys select only affected current Workers and isolate script 
   assert.match(prDiagnosticsWorkflow, /Skipping direct PR deploy because a Worker script name changed/);
   assert.match(prDiagnosticsWorkflow, /needs\.select-workers\.outputs\.topology_rename != 'true'/);
   assert.match(prDiagnosticsWorkflow, /fromJSON\(needs\.select-workers\.outputs\.diagnostics\)/);
+  assert.doesNotMatch(prDiagnosticsWorkflow, /Reinitialize track-history publication/);
+  assert.doesNotMatch(prDiagnosticsWorkflow, /Probe Pages Queue consumer/);
+});
+
+test('PR deploys provision changed facts schemas before dependent Workers', () => {
+  assert.match(prDiagnosticsWorkflow, /database\/facts-migrations\/\*\*/);
+  assert.match(prDiagnosticsWorkflow, /database\/facts-db\.json/);
+  assert.match(prDiagnosticsWorkflow, /facts_schema/);
+  const provision = 'node scripts/provision-facts-db.mjs';
+  const deploy = 'Deploy selected Workers in dependency order';
+  assert.ok(position(prDiagnosticsWorkflow, provision) < position(prDiagnosticsWorkflow, deploy));
 });
 
 test('all deployment paths provision the split Queue boundaries', () => {
@@ -91,9 +110,16 @@ test('Worker package scripts contain only current deployment operations', () => 
   );
   assert.equal(
     workerPackage.scripts['deploy:split-other'],
-    'npm run deploy:pages-read-model && npm run deploy:monitor-maintenance && npm run deploy:other && npm run deploy:buddy-playback',
+    'npm run deploy:pages-read-model && npm run deploy:monitor-maintenance && npm run deploy:other',
   );
   assert.equal(workerPackage.scripts['deploy:persist'], 'wrangler deploy --config wrangler.persist.jsonc');
+  assert.equal(workerPackage.scripts['deploy:other'], 'node scripts/deploy-other-monitor.mjs');
+  assert.equal(workerPackage.scripts['deploy:host-monitor'], undefined);
+  assert.equal(workerPackage.scripts['deploy:buddy-playback'], undefined);
+  assert.equal(workerPackage.scripts['check:host-monitor-bundle'], undefined);
+  assert.equal(workerPackage.scripts['check:buddy-playback-bundle'], undefined);
+  assert.equal(existsSync(new URL('../worker/wrangler.host-monitor.jsonc', import.meta.url)), false);
+  assert.equal(existsSync(new URL('../worker/wrangler.buddy-playback.jsonc', import.meta.url)), false);
 
   for (const key of Object.keys(workerPackage.scripts)) {
     assert.doesNotMatch(key, /detach|retire|cutover|mintue/);
@@ -112,7 +138,7 @@ test('Cloudflare Git diagnostics include only remaining connected Worker depende
   assert.match(diagnosticsWorkflow, /cloudflare-build-diagnostics\.mjs/);
 });
 
-test('R2 observability covers the complete requested object window and split Workers', () => {
+test('R2 observability covers current scripts after monitor consolidation', () => {
   assert.doesNotMatch(observabilityWorkflow, /selected\s*=\s*selected\[:100\]/);
   assert.match(observabilityWorkflow, /objects_selected/);
   assert.match(observabilityWorkflow, /oldest_object_modified/);
@@ -123,8 +149,10 @@ test('R2 observability covers the complete requested object window and split Wor
     'sh-track-metadata',
     'sh-minute-enrichment',
     'sh-minute-rebuild',
-    'sh-buddy-playback',
+    'sh-monitor-other',
   ]) {
     assert.match(observabilityWorkflow, new RegExp(worker));
   }
+  assert.doesNotMatch(observabilityWorkflow, /sh-host-monitor/);
+  assert.doesNotMatch(observabilityWorkflow, /sh-buddy-playback/);
 });

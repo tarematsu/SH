@@ -1,4 +1,6 @@
 import './fetch-guard.js';
+import { runBuddyPlaybackQueue } from './buddy-playback-entry.js';
+import { runHostMonitorQueue } from './host-monitor-entry.js';
 import {
   officialNewsProbeDue,
   runOfficialNewsWithReconcile,
@@ -33,20 +35,39 @@ async function defaultRunner(name) {
   throw new Error(`unsupported other monitor task: ${name}`);
 }
 
+async function dispatchQueue(env, binding, body) {
+  if (!env?.[binding]?.send) return null;
+  await env[binding].send(body, { contentType: 'json' });
+  return body;
+}
+
 async function dispatchBuddyPlayback(env, now) {
-  if (!env?.BUDDY_PLAYBACK_QUEUE?.send) return null;
-  await env.BUDDY_PLAYBACK_QUEUE.send({
+  const body = await dispatchQueue(env, 'BUDDY_PLAYBACK_QUEUE', {
     message_type: 'buddy-playback-stage',
     message_version: 1,
     scheduled_at: now,
     observed_at: Date.now(),
-  }, { contentType: 'json' });
-  return { dispatched: true, task: 'buddy', scheduled_at: now };
+  });
+  return body ? { dispatched: true, task: 'buddy', scheduled_at: now } : null;
+}
+
+async function dispatchHostMonitor(env, now) {
+  const body = await dispatchQueue(env, 'HOST_MONITOR_QUEUE', {
+    message_type: 'host-monitor-task',
+    message_version: 1,
+    scheduled_at: now,
+    observed_at: Date.now(),
+  });
+  return body ? { dispatched: true, task: 'host', scheduled_at: now } : null;
 }
 
 async function runTask(name, env, ctx, now, dependencies = {}) {
   if (name === 'buddy') {
     const dispatched = await dispatchBuddyPlayback(env, now);
+    if (dispatched) return dispatched;
+  }
+  if (name === 'host') {
+    const dispatched = await dispatchHostMonitor(env, now);
     if (dispatched) return dispatched;
   }
   const runner = dependencies[name] || await defaultRunner(name);
@@ -97,6 +118,23 @@ export async function runOtherMonitorCron(controller, env, ctx, options = {}) {
   }
 }
 
+export async function runOtherMonitorQueue(batch, env) {
+  const messageType = String(batch?.messages?.[0]?.body?.message_type || '');
+  if (messageType === 'buddy-playback-stage') {
+    return runBuddyPlaybackQueue(batch, env);
+  }
+  if (messageType === 'host-monitor-task') {
+    return runHostMonitorQueue(batch, env);
+  }
+  for (const message of batch?.messages || []) {
+    console.error(JSON.stringify({
+      event: 'other_monitor_queue_task_failed',
+      error: `unsupported monitor queue task: ${String(message?.body?.message_type || 'unknown')}`,
+    }));
+    message.retry();
+  }
+}
+
 async function healthApp() {
   if (!loadedHealthApp) loadedHealthApp = (await import('./other-health.js')).createOtherHealthApp();
   return loadedHealthApp;
@@ -104,6 +142,7 @@ async function healthApp() {
 
 export default {
   scheduled: runOtherMonitorCron,
+  queue: runOtherMonitorQueue,
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
     if (request.method === 'GET' && (url.pathname === '/' || url.pathname === '/health')) {

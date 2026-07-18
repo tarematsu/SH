@@ -152,5 +152,7 @@ test('track metadata migration creates both Spotify and ISRC repair paths', () =
   assert.match(provision, /014_backfill_track_metadata\.sql/);
   assert.match(provision, /materialized_item_count/);
   assert.match(provision, /coverage_complete/);
-  assert.equal(metadata.schema, 'database/facts-migrations/017_partial_queue_revision_coverage.sql');
+  assert.match(provision, /source_job_id/);
+  assert.match(provision, /source_visible_count/);
+  assert.equal(metadata.schema, 'database/facts-migrations/018_sparse_revision_sources.sql');
 });

@@ -8,7 +8,10 @@ import {
 } from '../src/comments-entry.js';
 import { processIngestFinalizeTask } from '../src/ingest-finalize-entry.js';
 import { processIngestFactTask } from '../src/ingest-prepared-channel.js';
-import { minuteFactQueueMessage } from '../src/minute-facts-queue.js';
+import {
+  minuteFactQueueMessage,
+  parseMinuteFactQueueMessage,
+} from '../src/minute-facts-queue.js';
 import { processTrackMetadataTask } from '../src/track-metadata-entry.js';
 
 function minuteFact() {
@@ -34,15 +37,27 @@ function commentsTask() {
   };
 }
 
-test('comment collection, persistence and forwarding use separate Queue invocations', async () => {
+test('comment collection, persistence and forwarding reuse one minute-fact validation', async () => {
   const sent = [];
+  let parseCalls = 0;
+  let forwarded = null;
+  const parseMinuteFact = (body) => {
+    parseCalls += 1;
+    return parseMinuteFactQueueMessage(body);
+  };
   const env = {
     COMMENTS_QUEUE: {
       async send(body, options) { sent.push({ body, options }); },
     },
   };
   const task = commentsTask();
+  const expectedValidation = {
+    job_id: task.minute_fact.job_id,
+    channel_id: task.minute_fact.channel_id,
+    minute_at: task.minute_fact.minute_at,
+  };
   const fetched = await processCommentsTask(env, task, {
+    parseMinuteFact,
     fetchComments: async () => ({
       comments: [{ comment_id: 1 }, { comment_id: 2 }, { comment_id: 3 }],
       rawMeta: { next: 'cursor' },
@@ -52,35 +67,62 @@ test('comment collection, persistence and forwarding use separate Queue invocati
 
   assert.equal(fetched.persist_deferred, true);
   assert.equal(fetched.forwarded, false);
+  assert.equal(parseCalls, 1);
   assert.equal(sent.length, 1);
   assert.equal(sent[0].body.message_type, 'stationhead-comments-persist');
   assert.equal(sent[0].body.minute_fact, task.minute_fact);
+  assert.deepEqual(sent[0].body.minute_fact_validation, expectedValidation);
   assert.equal(sent[0].body.collected.comments.length, 3);
 
   const persisted = await processCommentsPersistTask(env, sent.shift().body, {
+    parseMinuteFact,
     persistComments: async () => ({ commentsSaved: 3, degraded: false, errorStage: null }),
   });
   assert.equal(persisted.forward_deferred, true);
+  assert.equal(parseCalls, 1);
   assert.equal(sent.length, 1);
   assert.equal(sent[0].body.message_type, 'stationhead-comments-forward');
+  assert.deepEqual(sent[0].body.minute_fact_validation, expectedValidation);
   assert.equal(sent[0].body.comments.commentsSaved, 3);
+
+  const forwarding = await processCommentsForwardTask({}, sent.shift().body, {
+    parseMinuteFact,
+    loadCommentFacts: async () => ({ commentCount: 3, commentTotal: 9 }),
+    sendMinuteFact: async (body) => { forwarded = body; },
+  });
+  assert.equal(forwarding.forwarded, true);
+  assert.equal(parseCalls, 1);
+  assert.equal(forwarded.payload.comments.commentCount, 3);
+  assert.equal(forwarded.payload.comments.commentTotal, 9);
 });
 
-test('comment forwarding performs fact lookup and durable minute handoff separately', async () => {
+test('comment forwarding fully validates legacy or mismatched continuation messages', async () => {
   let forwarded = null;
+  let parseCalls = 0;
+  const fact = minuteFact();
   const result = await processCommentsForwardTask({}, {
     message_type: 'stationhead-comments-forward',
     message_version: 1,
     observed_at: 1_784_000_000_000,
     station_id: 20,
-    minute_fact: minuteFact(),
+    minute_fact: fact,
+    minute_fact_validation: {
+      job_id: fact.job_id,
+      channel_id: fact.channel_id + 1,
+      minute_at: fact.minute_at,
+    },
     comments: { commentsSaved: 3, degraded: false },
   }, {
+    parseMinuteFact: (body) => {
+      parseCalls += 1;
+      return parseMinuteFactQueueMessage(body);
+    },
     loadCommentFacts: async () => ({ commentCount: 3, commentTotal: 9 }),
     sendMinuteFact: async (body) => { forwarded = body; },
   });
 
   assert.equal(result.forwarded, true);
+  assert.equal(parseCalls, 1);
   assert.equal(forwarded.payload.comments.commentCount, 3);
   assert.equal(forwarded.payload.comments.commentTotal, 9);
 });

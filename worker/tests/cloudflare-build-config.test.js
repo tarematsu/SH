@@ -19,7 +19,7 @@ test('current Worker names map to their Wrangler configs', () => {
   assert.equal(cloudflareBuildConfig('sh-pages-read-model'), 'wrangler.pages-read-model.jsonc');
   assert.equal(cloudflareBuildConfig('sh-monitor-maintenance'), 'wrangler.monitor-maintenance.jsonc');
   assert.equal(cloudflareBuildConfig('sh-monitor-other'), 'wrangler.other.jsonc');
-  assert.equal(cloudflareBuildConfig('sh-buddy-playback'), 'wrangler.buddy-playback.jsonc');
+  assert.equal(cloudflareBuildConfig('sh-buddy-playback'), null);
   assert.equal(cloudflareBuildConfig('sh-minute-maintenance'), 'wrangler.minute.jsonc');
   assert.equal(cloudflareBuildConfig('sh-minute-derive'), 'wrangler.minute-derive.jsonc');
   assert.equal(cloudflareBuildConfig('sh-minute-enrichment'), 'wrangler.minute-enrichment.jsonc');

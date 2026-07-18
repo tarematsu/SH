@@ -2,5 +2,5 @@
   "binding": "MINUTE_DB",
   "database_name": "stationhead-minute",
   "database_id": "43c12c1e-886d-4496-9c37-61bc8a15bbd7",
-  "schema": "database/facts-migrations/017_partial_queue_revision_coverage.sql"
+  "schema": "database/facts-migrations/018_sparse_revision_sources.sql"
 }

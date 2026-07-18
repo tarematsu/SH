@@ -21,29 +21,12 @@ async function resolveIngestResult(result, type, options) {
   return options?.returnDetails === true ? directResult : null;
 }
 
-async function queueChangeState(env, data, analysis) {
-  const stationId = Number(data?.station_id);
-  if (!Number.isFinite(stationId) || !analysis?.structural_hash) {
-    return { structureChanged: false, likesChanged: false };
-  }
-  const current = await env.DB.prepare(`SELECT structural_hash,likes_hash
-    FROM sh_queue_current WHERE station_id IS ?`).bind(stationId).first();
-  return {
-    structureChanged: current?.structural_hash !== analysis.structural_hash,
-    likesChanged: Boolean(analysis.likes_hash && current?.likes_hash !== analysis.likes_hash),
-  };
-}
-
-async function deferPersistence(env, type, data, observedAt) {
+async function deferPersistence(env, type, data, observedAt, options = null) {
   if (!env?.PERSIST_QUEUE?.send || !['snapshot', 'queue'].includes(type)) return null;
   const collectorId = env?.COLLECTOR_ID || 'cloudflare-worker';
   let analysis = null;
-  let changes = { structureChanged: false, likesChanged: false };
   if (type === 'snapshot') analysis = data?.[SNAPSHOT_ANALYSIS] || null;
-  if (type === 'queue') {
-    analysis = serializedQueueAnalysis(data);
-    changes = await queueChangeState(env, data, analysis);
-  }
+  if (type === 'queue') analysis = serializedQueueAnalysis(data);
   await env.PERSIST_QUEUE.send({
     message_type: 'stationhead-persistence-task',
     message_version: 1,
@@ -52,6 +35,7 @@ async function deferPersistence(env, type, data, observedAt) {
     collector_id: collectorId,
     data,
     analysis,
+    metadata_requested: type === 'queue' && options?.metadataRequested === true,
   }, { contentType: 'json' });
   if (type === 'snapshot') {
     return { ok: true, type, accepted: true, deferred: true, inserted: false, skipped: false };
@@ -62,15 +46,15 @@ async function deferPersistence(env, type, data, observedAt) {
     accepted: true,
     deferred: true,
     queue_inspected: false,
-    structure_changed: changes.structureChanged,
-    likes_changed: changes.likesChanged,
+    structure_changed: false,
+    likes_changed: false,
     queue_items_written: 0,
     like_observations_written: 0,
   };
 }
 
-async function optimizedIngest(env, type, data, observedAt) {
-  const deferred = await deferPersistence(env, type, data, observedAt);
+async function optimizedIngest(env, type, data, observedAt, options = null) {
+  const deferred = await deferPersistence(env, type, data, observedAt, options);
   if (deferred) return deferred;
   if (type === 'snapshot' && env?.DB) {
     return savePreparedSnapshot(env.DB, observedAt, data).then((details) => ({
@@ -89,7 +73,7 @@ async function optimizedIngest(env, type, data, observedAt) {
 }
 
 export function ingest(env, type, data, observedAt, options = null) {
-  const result = optimizedIngest(env, type, data, observedAt);
+  const result = optimizedIngest(env, type, data, observedAt, options);
   if (env?.DB && (type === 'queue' || type === 'comments')) return result;
   return resolveIngestResult(result, type, options);
 }

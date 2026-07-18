@@ -74,12 +74,31 @@ async function enqueueMinuteEnrichment(env, input) {
   return true;
 }
 
+function preparedRevision(input) {
+  const value = input?.prepared_revision;
+  const revisionId = integer(value?.revision_id);
+  if (revisionId == null) return null;
+  return {
+    revisionId,
+    sessionId: integer(value?.enrichment?.provisional_session_id),
+    materializedCount: Math.max(0, integer(value?.materialized_item_count) ?? 0),
+    totalCount: Math.max(
+      0,
+      integer(value?.total_item_count)
+        ?? integer(input?.queue?.total_track_count)
+        ?? input?.queue?.tracks?.length
+        ?? 0,
+    ),
+  };
+}
+
 export async function saveOptimizedLiveMinuteFact(env, input) {
   const db = env?.MINUTE_DB;
   if (!db) return { skipped: true, reason: 'minute-db-binding-missing' };
   const snapshot = input.snapshot || {};
   const queue = input.queue || null;
   const tracks = Array.isArray(queue?.tracks) ? queue.tracks : null;
+  const prepared = preparedRevision(input);
   const observedAt = integer(input.observedAt) ?? Date.now();
   const receivedAt = Date.now();
   const channelId = integer(snapshot.channel_id);
@@ -94,7 +113,7 @@ export async function saveOptimizedLiveMinuteFact(env, input) {
     channelId,
     minuteAt,
     queueTracks: tracks?.length || 0,
-    revisionId: null,
+    revisionId: prepared?.revisionId ?? null,
   };
 
   const hostId = deferred ? null : await timedStage('resolve_host', context, () => resolveHost(db, {
@@ -102,9 +121,9 @@ export async function saveOptimizedLiveMinuteFact(env, input) {
     handle: snapshot.host_handle,
   }, observedAt));
   // Keep session identity on the ordered derive path so queue revision identity
-  // remains stable. Host resolution may complete later without changing the
-  // durable revision key used by subsequent minute jobs.
-  const sessionId = await timedStage('resolve_session', context, () => resolveLiveSession(db, {
+  // remains stable. A prepared sparse revision already resolved this identity,
+  // so the fact writer must not repeat the same D1 lookup.
+  const sessionId = prepared?.sessionId ?? await timedStage('resolve_session', context, () => resolveLiveSession(db, {
     channelId,
     stationId,
     hostId,
@@ -117,13 +136,18 @@ export async function saveOptimizedLiveMinuteFact(env, input) {
   let playback = null;
   let revisionCoverage = null;
   if (queue && tracks && broadcasting !== 0) {
-    const revision = await timedStage('create_or_resume_revision', context, () => createPartialRevision(
-      db,
-      env.DB,
-      { channelId, stationId, sessionId, queue, observedAt, receivedAt },
-    ));
-    revisionId = revision.revisionId;
-    revisionCoverage = revision;
+    if (prepared) {
+      revisionId = prepared.revisionId;
+      revisionCoverage = prepared;
+    } else {
+      const revision = await timedStage('create_or_resume_revision', context, () => createPartialRevision(
+        db,
+        env.DB,
+        { channelId, stationId, sessionId, queue, observedAt, receivedAt },
+      ));
+      revisionId = revision.revisionId;
+      revisionCoverage = revision;
+    }
     context.revisionId = revisionId;
     if (!deferred) {
       playback = await timedStage('update_playback', context, () => updatePlaybackState(db, {

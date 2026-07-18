@@ -14,6 +14,50 @@ function positiveInteger(value, fallback, maximum = Number.MAX_SAFE_INTEGER) {
   return Math.min(parsed, maximum);
 }
 
+function integer(value) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? Math.trunc(parsed) : null;
+}
+
+function minuteFactValidation(value) {
+  const jobId = String(value?.job_id || '');
+  const channelId = integer(value?.channel_id);
+  const minuteAt = integer(value?.minute_at);
+  if (!jobId || channelId == null || minuteAt == null) return null;
+  if (jobId !== `minute-fact:${channelId}:${minuteAt}`) return null;
+  return {
+    job_id: jobId,
+    channel_id: channelId,
+    minute_at: minuteAt,
+  };
+}
+
+function carriedMinuteFactValidation(task) {
+  const validation = minuteFactValidation(task?.minute_fact_validation);
+  const source = task?.minute_fact;
+  if (!validation
+      || source?.message_type !== 'minute-fact-job'
+      || integer(source?.message_version) !== 1
+      || source.job_id !== validation.job_id
+      || source.idempotency_key !== validation.job_id
+      || integer(source.channel_id) !== validation.channel_id
+      || integer(source.minute_at) !== validation.minute_at) return null;
+  return validation;
+}
+
+function validateMinuteFactForTask(task, dependencies = {}) {
+  // Continuation messages are emitted only after the initial task completed the
+  // full payload validation. Carrying the stable identity avoids repeating the
+  // payload normalization and read-model hydration in every Queue invocation.
+  // Old messages and mismatched identities still take the full validation path.
+  return carriedMinuteFactValidation(task)
+    || (dependencies.parseMinuteFact || parseMinuteFactQueueMessage)(task.minute_fact);
+}
+
+function continuationValidation(task, validatedMinuteFact = null) {
+  return minuteFactValidation(validatedMinuteFact) || carriedMinuteFactValidation(task);
+}
+
 function retryDelaySeconds(attempts) {
   const exponent = Math.max(0, Math.min(5, positiveInteger(attempts, 1) - 1));
   return Math.min(60, 5 * (2 ** exponent));
@@ -89,8 +133,8 @@ export async function forwardMinuteFact(
     throw new Error('MINUTE_FACT_QUEUE binding is missing');
   }
 
-  const parse = dependencies.parseMinuteFact || parseMinuteFactQueueMessage;
-  const parsed = validatedMinuteFact || parse(task.minute_fact);
+  const parsed = validatedMinuteFact
+    || (dependencies.parseMinuteFact || parseMinuteFactQueueMessage)(task.minute_fact);
   const loadFacts = dependencies.loadCommentFacts || loadMinuteCommentFacts;
   const facts = await loadFacts(
     env?.DB,
@@ -116,9 +160,16 @@ export async function forwardMinuteFact(
   };
 }
 
-async function enqueuePersist(env, task, collected, dependencies = {}) {
+async function enqueuePersist(
+  env,
+  task,
+  collected,
+  dependencies = {},
+  validatedMinuteFact = null,
+) {
+  const validation = continuationValidation(task, validatedMinuteFact);
   if (dependencies.enqueuePersist) {
-    await dependencies.enqueuePersist(task, collected);
+    await dependencies.enqueuePersist(task, collected, validation);
     return true;
   }
   if (!env?.COMMENTS_QUEUE?.send || !task?.minute_fact) return false;
@@ -128,14 +179,22 @@ async function enqueuePersist(env, task, collected, dependencies = {}) {
     observed_at: task.observed_at,
     station_id: task.station_id,
     minute_fact: task.minute_fact,
+    ...(validation ? { minute_fact_validation: validation } : {}),
     collected,
   }, { contentType: 'json' });
   return true;
 }
 
-async function enqueueForward(env, task, comments, dependencies = {}) {
+async function enqueueForward(
+  env,
+  task,
+  comments,
+  dependencies = {},
+  validatedMinuteFact = null,
+) {
+  const validation = continuationValidation(task, validatedMinuteFact);
   if (dependencies.enqueueForward) {
-    await dependencies.enqueueForward(task, comments);
+    await dependencies.enqueueForward(task, comments, validation);
     return true;
   }
   if (!env?.COMMENTS_QUEUE?.send || !task?.minute_fact) return false;
@@ -145,6 +204,7 @@ async function enqueueForward(env, task, comments, dependencies = {}) {
     observed_at: task.observed_at,
     station_id: task.station_id,
     minute_fact: task.minute_fact,
+    ...(validation ? { minute_fact_validation: validation } : {}),
     comments,
   }, { contentType: 'json' });
   return true;
@@ -156,7 +216,14 @@ export async function processCommentsForwardTask(env, task, dependencies = {}) {
       || !task.minute_fact) {
     throw new Error('unsupported comments forward task');
   }
-  return forwardMinuteFact(env, task, task.comments || {}, dependencies);
+  const validatedMinuteFact = validateMinuteFactForTask(task, dependencies);
+  return forwardMinuteFact(
+    env,
+    task,
+    task.comments || {},
+    dependencies,
+    validatedMinuteFact,
+  );
 }
 
 export async function processCommentsPersistTask(env, task, dependencies = {}) {
@@ -165,8 +232,7 @@ export async function processCommentsPersistTask(env, task, dependencies = {}) {
       || !task.minute_fact) {
     throw new Error('unsupported comments persist task');
   }
-  const parse = dependencies.parseMinuteFact || parseMinuteFactQueueMessage;
-  const validatedMinuteFact = parse(task.minute_fact);
+  const validatedMinuteFact = validateMinuteFactForTask(task, dependencies);
   const persist = dependencies.persistComments || persistOptionalComments;
   const result = await persist(
     env,
@@ -176,7 +242,7 @@ export async function processCommentsPersistTask(env, task, dependencies = {}) {
     dependencies.persistence || null,
   );
   const comments = { ...result, degraded: false };
-  if (await enqueueForward(env, task, comments, dependencies)) {
+  if (await enqueueForward(env, task, comments, dependencies, validatedMinuteFact)) {
     console.log(JSON.stringify({
       event: 'comments_persist_completed',
       comments_saved: Number(result?.commentsSaved || 0),
@@ -212,7 +278,7 @@ export async function processCommentsTask(env, task, dependencies = {}) {
   if (task.minute_fact && (env?.COMMENTS_QUEUE?.send || dependencies.enqueuePersist)) {
     const fetchComments = dependencies.fetchComments || fetchOptionalComments;
     const collected = await fetchComments(state, config, dependencies.fetching || null);
-    await enqueuePersist(env, task, collected, dependencies);
+    await enqueuePersist(env, task, collected, dependencies, validatedMinuteFact);
     console.log(JSON.stringify({
       event: 'comments_task_completed',
       comments_fetched: Number(collected?.comments?.length || 0),
@@ -242,7 +308,7 @@ export async function processCommentsTask(env, task, dependencies = {}) {
   }
 
   const comments = { ...result, degraded: false };
-  if (await enqueueForward(env, task, comments, dependencies)) {
+  if (await enqueueForward(env, task, comments, dependencies, validatedMinuteFact)) {
     console.log(JSON.stringify({
       event: 'comments_task_completed',
       comments_saved: Number(result?.commentsSaved || 0),
@@ -311,7 +377,13 @@ export default {
               message.ack();
               continue;
             }
-            const forwarding = await forwardMinuteFact(env, message.body, comments);
+            const forwarding = await forwardMinuteFact(
+              env,
+              message.body,
+              comments,
+              {},
+              carriedMinuteFactValidation(message.body),
+            );
             await enqueueMetadata(env, ctx, forwarding);
             console.warn(JSON.stringify({
               event: 'comments_task_degraded_forward',

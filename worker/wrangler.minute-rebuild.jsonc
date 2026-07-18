@@ -33,7 +33,8 @@
       }
     ],
     "producers": [
-      { "binding": "MINUTE_REBUILD_QUEUE", "queue": "stationhead-minute-rebuild" }
+      { "binding": "MINUTE_REBUILD_QUEUE", "queue": "stationhead-minute-rebuild" },
+      { "binding": "MINUTE_DERIVE_QUEUE", "queue": "stationhead-minute-derive" }
     ]
   }
 }
