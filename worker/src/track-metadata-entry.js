@@ -1,3 +1,18 @@
+const EMPTY_DEPENDENCIES = Object.freeze({});
+const JSON_QUEUE_SEND_OPTIONS = Object.freeze({ contentType: 'json' });
+let committedEnrichmentModulePromise;
+let readModelStagesModulePromise;
+
+function loadCommittedEnrichmentModule() {
+  committedEnrichmentModulePromise ||= import('./committed-metadata-enrichment.js');
+  return committedEnrichmentModulePromise;
+}
+
+function loadReadModelStagesModule() {
+  readModelStagesModulePromise ||= import('./read-model-stages.js');
+  return readModelStagesModulePromise;
+}
+
 function taskKind(body) {
   if (body?.message_type !== 'stationhead-track-metadata'
       || Number(body?.message_version) !== 1) {
@@ -23,17 +38,17 @@ async function enqueueReadModelStage(env, body, readModel, task, dependencies) {
     job_id: body.job_id,
     observed_at: body.observed_at ?? null,
     read_model: readModel,
-  }, { contentType: 'json' });
+  }, JSON_QUEUE_SEND_OPTIONS);
 }
 
-export async function processTrackMetadataTask(env, body, dependencies = {}) {
+export async function processTrackMetadataTask(env, body, dependencies = EMPTY_DEPENDENCIES) {
   const kind = taskKind(body);
   if (kind === 'committed-enrichment') {
     const job = body.job;
     if (!job?.jobId || !job?.payload) throw new Error('committed metadata job is invalid');
     const runner = dependencies.runCommittedMetadataEnrichment
-      || (await import('./committed-metadata-enrichment.js')).runCommittedMetadataEnrichment;
-    await runner(env, [job], dependencies.enrichment || {});
+      || (await loadCommittedEnrichmentModule()).runCommittedMetadataEnrichment;
+    await runner(env, [job], dependencies.enrichment || EMPTY_DEPENDENCIES);
     return { task: kind, job_id: job.jobId };
   }
 
@@ -49,7 +64,7 @@ export async function processTrackMetadataTask(env, body, dependencies = {}) {
       return { task: kind, job_id: body.job_id, pending: true, next_task: 'read-model-write' };
     }
     const hydrate = dependencies.hydrateReadModelMetadata
-      || (await import('./read-model-stages.js')).hydrateReadModelMetadata;
+      || (await loadReadModelStagesModule()).hydrateReadModelMetadata;
     const readModel = await hydrate(env, body.read_model);
     await enqueueReadModelStage(env, body, readModel, 'read-model-preserve', dependencies);
     return { task: kind, job_id: body.job_id, pending: true, next_task: 'read-model-preserve' };
@@ -58,7 +73,7 @@ export async function processTrackMetadataTask(env, body, dependencies = {}) {
   if (kind === 'read-model-preserve') {
     if (!body.read_model || !body.job_id) throw new Error('read-model preserve task is invalid');
     const preserve = dependencies.preserveReadModelForWrite
-      || (await import('./read-model-stages.js')).preserveReadModelForWrite;
+      || (await loadReadModelStagesModule()).preserveReadModelForWrite;
     const readModel = await preserve(env, body.read_model);
     await enqueueReadModelStage(env, body, readModel, 'read-model-write', dependencies);
     return { task: kind, job_id: body.job_id, pending: true, next_task: 'read-model-write' };
@@ -67,7 +82,7 @@ export async function processTrackMetadataTask(env, body, dependencies = {}) {
   if (kind === 'read-model-write') {
     if (!body.read_model || !body.job_id) throw new Error('read-model write task is invalid');
     const write = dependencies.writePreparedReadModel
-      || (await import('./read-model-stages.js')).writePreparedReadModel;
+      || (await loadReadModelStagesModule()).writePreparedReadModel;
     await write(env, body.read_model);
     return { task: kind, job_id: body.job_id, pending: false };
   }
@@ -75,23 +90,23 @@ export async function processTrackMetadataTask(env, body, dependencies = {}) {
   throw new Error(`unsupported track metadata task: ${kind || 'missing'}`);
 }
 
+async function processTrackMetadataBatch(batch, env) {
+  const messages = batch.messages;
+  if (!messages?.length) return;
+  const message = messages[0];
+  try {
+    const result = await processTrackMetadataTask(env, message.body, EMPTY_DEPENDENCIES);
+    console.log(JSON.stringify({ event: 'track_metadata_task_completed', ...result }));
+    message.ack();
+  } catch (error) {
+    console.error(JSON.stringify({
+      event: 'track_metadata_task_failed',
+      error: String(error?.message || error).slice(0, 800),
+    }));
+    message.retry();
+  }
+}
+
 export default {
-  async queue(batch, env) {
-    for (const message of batch.messages || []) {
-      try {
-        const result = await processTrackMetadataTask(env, message.body);
-        console.log(JSON.stringify({ event: 'track_metadata_task_completed', ...result }));
-        message.ack();
-      } catch (error) {
-        console.error(JSON.stringify({
-          event: 'track_metadata_task_failed',
-          error: String(error?.message || error).slice(0, 800),
-        }));
-        message.retry();
-      }
-    }
-  },
-  fetch() {
-    return Response.json({ ok: false, error: 'not found' }, { status: 404 });
-  },
+  queue: processTrackMetadataBatch,
 };
