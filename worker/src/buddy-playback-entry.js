@@ -1,9 +1,22 @@
 import { buddyPlaybackConfig } from './buddy-playback.js';
 import { recordBuddyFailure, recordBuddySuccess } from './buddy-health.js';
+import {
+  BUDDY_PARSE_COMPUTE_STAGE,
+  BUDDY_PARSE_STORE_STAGE,
+  processBuddyParseCompute,
+  processBuddyParseStore,
+} from './buddy-playback-parse-stages.js';
 import { advanceBuddyPlaybackPipeline } from './buddy-playback-pipeline.js';
 
-const BENIGN_SKIP_REASONS = new Set(['not-due', 'pipeline-busy', 'retry-not-due']);
+const BENIGN_SKIP_REASONS = new Set([
+  'not-due',
+  'pipeline-busy',
+  'retry-not-due',
+  'stage-advanced',
+  'stale-cycle',
+]);
 const PIPELINE_STAGES = new Set(['fetch', 'parse', 'parse-store', 'metadata', 'commit']);
+const DIRECT_STAGES = new Set([BUDDY_PARSE_COMPUTE_STAGE, BUDDY_PARSE_STORE_STAGE]);
 const NEXT_STAGE_OPTIONS = Object.freeze({ contentType: 'json', delaySeconds: 1 });
 const RETRY_60_SECONDS = Object.freeze({ delaySeconds: 60 });
 const EMPTY_DEPENDENCIES = Object.freeze({});
@@ -22,11 +35,16 @@ function validateTask(body) {
   const expectedStage = typeof body.expected_stage === 'string'
     ? body.expected_stage
     : String(body.expected_stage || '');
+  const directStage = typeof body.direct_stage === 'string'
+    ? body.direct_stage
+    : String(body.direct_stage || '');
   const cycleAt = Number(body.cycle_at);
   return {
     scheduledAt: validTimestamp(body.scheduled_at),
     observedAt: validTimestamp(body.observed_at),
     expectedStage: PIPELINE_STAGES.has(expectedStage) ? expectedStage : null,
+    directStage: DIRECT_STAGES.has(directStage) ? directStage : null,
+    channelAlias: String(body.channel_alias || '').trim() || null,
     cycleAt: Number.isFinite(cycleAt) ? cycleAt : null,
     preparedParse: body.prepared_parse && typeof body.prepared_parse === 'object'
       ? body.prepared_parse
@@ -37,14 +55,19 @@ function validateTask(body) {
 async function enqueueNextStage(env, task, result = null) {
   if (!env?.BUDDY_PLAYBACK_QUEUE?.send) throw new Error('BUDDY_PLAYBACK_QUEUE binding is missing');
   const stage = result?.stage;
+  const directStage = result?.direct_stage
+    || (stage === 'parse' ? BUDDY_PARSE_COMPUTE_STAGE : null);
   const cycleAt = Number(result?.cycle_at);
+  const channelAlias = task.channelAlias || buddyPlaybackConfig(env).alias;
   const message = {
     message_type: 'buddy-playback-stage',
     message_version: 1,
     scheduled_at: task.scheduledAt,
     observed_at: Date.now(),
+    channel_alias: channelAlias,
   };
-  if (PIPELINE_STAGES.has(stage)) message.expected_stage = stage;
+  if (DIRECT_STAGES.has(directStage)) message.direct_stage = directStage;
+  else if (PIPELINE_STAGES.has(stage)) message.expected_stage = stage;
   if (Number.isFinite(cycleAt)) message.cycle_at = cycleAt;
   if (result?.prepared_parse) message.prepared_parse = result.prepared_parse;
   await env.BUDDY_PLAYBACK_QUEUE.send(message, NEXT_STAGE_OPTIONS);
@@ -58,15 +81,28 @@ function pipelineDependencies(task, dependencies) {
   return active;
 }
 
-export async function processBuddyPlaybackStage(env, body, dependencies = EMPTY_DEPENDENCIES) {
-  const task = validateTask(body);
+async function runTask(env, task, dependencies) {
+  const channelAlias = task.channelAlias || buddyPlaybackConfig(env).alias;
+  if (task.directStage === BUDDY_PARSE_COMPUTE_STAGE) {
+    const run = dependencies.parseCompute || processBuddyParseCompute;
+    return run(env, { ...task, channelAlias });
+  }
+  if (task.directStage === BUDDY_PARSE_STORE_STAGE) {
+    const run = dependencies.parseStore || processBuddyParseStore;
+    return run(env, { ...task, channelAlias });
+  }
   const run = dependencies.advance || advanceBuddyPlaybackPipeline;
-  const result = await run(
+  return run(
     env,
     task.scheduledAt,
     task.observedAt,
     pipelineDependencies(task, dependencies),
   );
+}
+
+export async function processBuddyPlaybackStage(env, body, dependencies = EMPTY_DEPENDENCIES) {
+  const task = validateTask(body);
+  const result = await runTask(env, task, dependencies);
 
   if (result?.pending) {
     await enqueueNextStage(env, task, result);
@@ -92,9 +128,11 @@ function logBuddyPlaybackResult(result) {
     reason: result?.reason,
     pending: result?.pending === true,
     stage: result?.stage,
+    direct_stage: result?.direct_stage,
     cycle_at: result?.cycle_at,
     checked_at: result?.checked_at,
     requeued: result?.requeued === true,
+    replayed_handoff: result?.replayed_handoff === true,
     tracks: result?.tracks,
     metadata_remaining: result?.metadata_remaining,
     changed: result?.changed,
