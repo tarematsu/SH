@@ -8,7 +8,7 @@
   "logpush": true,
   "observability": { "enabled": true },
   "vars": {
-    "DERIVE_DISPATCH_LIMIT": 20,
+    "DERIVE_DISPATCH_LIMIT": 10,
     "DERIVE_REVISION_RECOVERY_LIMIT": 1,
     "DERIVE_REVISION_RECOVERY_STALE_MS": 120000,
     "REBUILD_SOURCE_ROWS": 20,
