@@ -112,3 +112,46 @@ test('playback repair completes partial local metadata from the source database'
   assert.equal(saved.tracks[0].artist, 'Fresh Artist');
   assert.equal(saved.tracks[0].thumbnail_url, 'https://img.example/fresh.jpg');
 });
+
+test('playback repair scans incomplete tracks once and preserves first-seen unique keys', async () => {
+  const metadataCalls = [];
+  const queue = {
+    tracks: [
+      {
+        spotify_id: 'complete',
+        isrc: 'DONE1',
+        title: 'Complete',
+        artist: 'Artist',
+        thumbnail_url: 'https://img.example/complete.jpg',
+      },
+      { spotify_id: 'sp1', isrc: 'jpx1', title: null, artist: null, thumbnail_url: null },
+      { spotify_id: 'sp1', isrc: 'JPX1', title: null, artist: null, thumbnail_url: null },
+      { spotify_id: null, isrc: 'jpx2', title: null, artist: null, thumbnail_url: null },
+      { spotify_id: 'sp2', isrc: null, title: null, artist: null, thumbnail_url: null },
+    ],
+  };
+  const minuteDb = {
+    prepare(sql) {
+      const statement = {
+        bindings: [],
+        bind(...bindings) { this.bindings = bindings; return this; },
+        async all() {
+          if (/FROM sh_queue_read_model_current/.test(sql)) {
+            return { results: [{ channel_id: 1, queue_json: JSON.stringify(queue) }] };
+          }
+          if (/FROM sh_track_metadata/.test(sql)) {
+            metadataCalls.push(this.bindings);
+            return { results: [] };
+          }
+          return { results: [] };
+        },
+      };
+      return statement;
+    },
+  };
+
+  const result = await repairPlaybackReadModels({ MINUTE_DB: minuteDb });
+
+  assert.deepEqual(result, { repaired: 0, skipped: false });
+  assert.deepEqual(metadataCalls, [['JPX1', 'JPX2', 'sp1', 'sp2']]);
+});
