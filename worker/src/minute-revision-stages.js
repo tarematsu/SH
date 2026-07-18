@@ -89,6 +89,10 @@ export async function prepareLiveRevisionStage(env, payload, dependencies = {}) 
   });
   const structure = queueStructurePayload(queue);
   const targetCount = structure.tracks.length;
+  const totalCount = Math.max(
+    targetCount,
+    integer(queue.total_track_count) ?? targetCount,
+  );
   const structuralHash = await queueStructuralHash(queue, structure);
   const queueStart = timestampMs(queue.start_time);
   const findRevision = dependencies.findReusableRevision || findReusableRevision;
@@ -113,7 +117,7 @@ export async function prepareLiveRevisionStage(env, payload, dependencies = {}) 
         observedAt,
         receivedAt,
         structuralHash,
-        targetCount,
+        totalCount,
       )
       .run());
     await insertRevision();
@@ -135,6 +139,7 @@ export async function prepareLiveRevisionStage(env, payload, dependencies = {}) 
       complete: true,
       revision_id: revisionId,
       materialized_count: progress.cursor,
+      total_item_count: totalCount,
     };
   }
 
@@ -148,10 +153,7 @@ export async function prepareLiveRevisionStage(env, payload, dependencies = {}) 
     playback_offset_ms: progress.playbackOffset,
     schedule_valid: progress.scheduleValid,
     item_count: targetCount,
-    total_item_count: Math.max(
-      targetCount,
-      integer(queue.total_track_count) ?? targetCount,
-    ),
+    total_item_count: totalCount,
   };
 }
 
@@ -249,15 +251,16 @@ async function markRevisionCoverage(db, revisionId, materializedCount, totalCoun
   const coverageComplete = materializedCount >= totalCount ? 1 : 0;
   try {
     await db.prepare(`UPDATE sh_queue_revisions SET
-        item_count=MAX(item_count,?),total_item_count=MAX(COALESCE(total_item_count,0),?),
+        item_count=MAX(item_count,?),
+        materialized_item_count=MAX(COALESCE(materialized_item_count,0),?),
         coverage_complete=?,status='complete'
       WHERE id=?`)
-      .bind(materializedCount, totalCount, coverageComplete, revisionId)
+      .bind(totalCount, materializedCount, coverageComplete, revisionId)
       .run();
   } catch (error) {
     if (!/no such column/i.test(String(error?.message || ''))) throw error;
     await db.prepare("UPDATE sh_queue_revisions SET item_count=MAX(item_count,?),status='complete' WHERE id=?")
-      .bind(materializedCount, revisionId)
+      .bind(totalCount, revisionId)
       .run();
   }
 }
@@ -281,8 +284,8 @@ export async function completeLiveRevisionStage(env, payload, revisionState) {
   );
   return {
     revision_id: state.revisionId,
-    item_count: materializedCount,
-    total_item_count: state.totalItemCount,
+    item_count: state.totalItemCount,
+    materialized_item_count: materializedCount,
     coverage_complete: materializedCount >= state.totalItemCount,
     complete: true,
   };
