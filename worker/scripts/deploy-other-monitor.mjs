@@ -71,15 +71,17 @@ function restoreOldConsumer(item) {
   ]);
 }
 
-async function deleteOldWorker(scriptName) {
+function credentials() {
   const accountId = process.env.CLOUDFLARE_ACCOUNT_ID || process.env.CF_ACCOUNT_ID;
   const token = process.env.CLOUDFLARE_API_TOKEN
     || process.env.CLOUDFLARE_BUILDS_API_TOKEN
     || process.env.CF_API_TOKEN;
-  if (!accountId || !token) {
-    console.warn(`Skipping retired Worker deletion for ${scriptName}: account credentials are unavailable`);
-    return false;
-  }
+  if (!accountId || !token) throw new Error('Cloudflare account credentials are unavailable');
+  return { accountId, token };
+}
+
+async function deleteOldWorker(scriptName) {
+  const { accountId, token } = credentials();
   const response = await fetch(
     `https://api.cloudflare.com/client/v4/accounts/${accountId}/workers/scripts/${scriptName}?force=true`,
     { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } },
@@ -88,15 +90,15 @@ async function deleteOldWorker(scriptName) {
   const notFound = response.status === 404
     || body?.errors?.some((error) => /not found/i.test(String(error?.message || '')));
   if (!response.ok && !notFound) {
-    console.warn(`Retired Worker ${scriptName} was not deleted: HTTP ${response.status}`);
-    return false;
+    const detail = body?.errors?.map((error) => error?.message).filter(Boolean).join('; ')
+      || `HTTP ${response.status}`;
+    throw new Error(`retired Worker ${scriptName} deletion failed: ${detail}`);
   }
   console.log(JSON.stringify({
     event: 'retired_monitor_worker_absent',
     script: scriptName,
     already_absent: notFound,
   }));
-  return true;
 }
 
 const activeMigrations = migrations.filter((item) => hasConsumer(item.queue, item.oldScript));
