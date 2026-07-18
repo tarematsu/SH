@@ -2,6 +2,11 @@ import './fetch-guard.js';
 import { runBuddyPlaybackQueue } from './buddy-playback-entry.js';
 import { runHostMonitorQueue } from './host-monitor-entry.js';
 import {
+  OFFICIAL_NEWS_STAGE_MESSAGE,
+  officialNewsStageTask,
+  processOfficialNewsStage,
+} from './other-official-news-stages.js';
+import {
   officialNewsProbeDue,
   runOfficialNewsWithReconcile,
   scheduledTimestamp,
@@ -234,11 +239,15 @@ async function processDeferredTask(message, env, ctx) {
   }
   const now = scheduledTimestamp({ scheduledTime: body?.scheduled_at });
   try {
-    const result = await runDirectTask(task, env, ctx, now, EMPTY_DEPENDENCIES);
+    const result = task === 'officialNews'
+      ? await processOfficialNewsStage(env, { stage: 'probe', scheduledAt: now })
+      : await runDirectTask(task, env, ctx, now, EMPTY_DEPENDENCIES);
     console.log(JSON.stringify({
       event: 'other_monitor_task_completed',
       task,
+      stage: result?.stage ?? null,
       scheduled_at: now,
+      pending: result?.pending === true,
       skipped: result?.skipped === true,
       reason: result?.reason ?? null,
     }));
@@ -247,6 +256,28 @@ async function processDeferredTask(message, env, ctx) {
     console.error(JSON.stringify({
       event: 'other_monitor_task_failed',
       task,
+      error: String(error?.message || error).slice(0, 800),
+    }));
+    message.retry();
+  }
+}
+
+async function processOfficialNewsStageMessage(message, env) {
+  try {
+    const task = officialNewsStageTask(message.body);
+    const result = await processOfficialNewsStage(env, task);
+    console.log(JSON.stringify({
+      event: 'other_official_news_stage_completed',
+      stage: result?.stage || task.stage,
+      scheduled_at: task.scheduledAt,
+      pending: result?.pending === true,
+      skipped: result?.skipped === true,
+      reason: result?.reason ?? null,
+    }));
+    message.ack();
+  } catch (error) {
+    console.error(JSON.stringify({
+      event: 'other_official_news_stage_failed',
       error: String(error?.message || error).slice(0, 800),
     }));
     message.retry();
@@ -275,6 +306,7 @@ export async function runOtherMonitorQueue(batch, env, ctx) {
   if (messageType === 'host-monitor-task') return runHostMonitorQueue(batch, env);
   if (messageType === OTHER_SELECT_MESSAGE) return processHostSelection(message, env);
   if (messageType === OTHER_TASK_MESSAGE) return processDeferredTask(message, env, ctx);
+  if (messageType === OFFICIAL_NEWS_STAGE_MESSAGE) return processOfficialNewsStageMessage(message, env);
   if (messageType === OTHER_SUCCESS_MESSAGE) return processSuccessRecord(message, env);
   console.error(JSON.stringify({
     event: 'other_monitor_queue_task_failed',
