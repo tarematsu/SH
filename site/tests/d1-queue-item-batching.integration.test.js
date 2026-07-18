@@ -25,8 +25,8 @@ function queue(trackCount) {
   };
 }
 
-test('22 new queue rows use four grouped upserts without redundant bite updates', async () => {
-  const db = new FakeD1Database([{
+function currentRoute() {
+  return {
     kind: 'first',
     matcher: 'FROM sh_queue_current',
     result: {
@@ -35,7 +35,11 @@ test('22 new queue rows use four grouped upserts without redundant bite updates'
       start_time: 3,
       observed_at: 0,
     },
-  }]);
+  };
+}
+
+test('22 new queue rows use four grouped upserts without redundant bite updates', async () => {
+  const db = new FakeD1Database([currentRoute()]);
 
   const result = await saveLeanQueue(db, 1_700_000_000_000, {
     collector_id: 'cloudflare-worker',
@@ -57,4 +61,46 @@ test('22 new queue rows use four grouped upserts without redundant bite updates'
     statement.params.length <= D1_SINGLE_STATEMENT_VARIABLE_LIMIT
   )));
   assert.equal(redundantLikeUpdates.length, 0);
+});
+
+test('a changed track at an existing position keeps its separate bite update', async () => {
+  const data = queue(1);
+  const db = new FakeD1Database([
+    currentRoute(),
+    {
+      kind: 'all',
+      matcher: 'FROM sh_queue_items',
+      result: {
+        results: [{
+          position: 0,
+          queue_id: 2,
+          queue_track_id: 900,
+          stationhead_track_id: 1_900,
+          spotify_id: 'old-spotify',
+          isrc: 'JPOLD000000',
+          duration_ms: 180_000,
+          preview_url: null,
+          observed_at: 1_699_999_000_000,
+        }],
+      },
+    },
+  ]);
+
+  const result = await saveLeanQueue(db, 1_700_000_000_000, {
+    collector_id: 'cloudflare-worker',
+    data,
+  });
+  const statements = db.batches.flat();
+  const itemUpserts = statements.filter((statement) => (
+    statement.sql.includes('INSERT INTO sh_queue_items')
+  ));
+  const likeUpdates = statements.filter((statement) => (
+    statement.sql.includes('UPDATE sh_queue_items')
+    && statement.sql.includes('SET bite_count=')
+  ));
+
+  assert.equal(result.itemsWritten, 1);
+  assert.equal(itemUpserts.length, 1);
+  assert.equal(likeUpdates.length, 1);
+  assert.equal(likeUpdates[0].params[0], 0);
 });
