@@ -12,25 +12,31 @@ test('minute enrichment deploys the queue-only one-message wrapper', () => {
   assert.match(config, /"main"\s*:\s*"src\/minute-enrichment-optimized-entry\.js"/);
   assert.match(config, /"max_batch_size"\s*:\s*1\b/);
   assert.match(entry, /const message = messages\[0\]/);
+  assert.match(entry, /function logMinuteEnrichmentResult/);
   assert.doesNotMatch(entry, /for\s*\(|Symbol\.iterator|fetch\s*\(/);
 });
 
-test('minute rebuild caches stage modules and uses one-message dispatch', () => {
+test('minute rebuild keeps cached core stages behind the maintenance-aware one-message wrapper', () => {
   const config = source('../wrangler.minute-rebuild.jsonc');
-  const entry = source('../src/minute-rebuild-entry.js');
+  const wrapper = source('../src/minute-rebuild-maintenance-entry.js');
+  const core = source('../src/minute-rebuild-entry.js');
+  assert.match(config, /"main"\s*:\s*"src\/minute-rebuild-maintenance-entry\.js"/);
   assert.match(config, /"max_batch_size"\s*:\s*1\b/);
-  assert.match(entry, /runtimeStateModulePromise \|\|=/);
-  assert.match(entry, /gapScanModulePromise \|\|=/);
-  assert.match(entry, /backfillModulePromise \|\|=/);
-  assert.match(entry, /const message = messages\[0\]/);
-  assert.doesNotMatch(entry, /\['gap-scan'.*\.includes\(stage\)/s);
-  assert.doesNotMatch(entry, /fetch\s*\(/);
+  assert.match(core, /runtimeStateModulePromise \|\|=/);
+  assert.match(core, /gapScanModulePromise \|\|=/);
+  assert.match(core, /backfillModulePromise \|\|=/);
+  assert.match(wrapper, /const message = messages\[0\]/);
+  assert.match(wrapper, /processMinuteMaintenanceGate/);
+  assert.doesNotMatch(core, /\['gap-scan'.*\.includes\(stage\)/s);
+  assert.doesNotMatch(wrapper, /fetch\s*\(/);
 });
 
-test('minute maintenance exposes only scheduled work and reuses Queue options', () => {
-  const entry = source('../src/minute-maintenance-entry.js');
+test('minute maintenance deploys a scheduled-only delayed-gate wrapper', () => {
+  const config = source('../wrangler.minute.jsonc');
+  const entry = source('../src/minute-maintenance-optimized-entry.js');
+  assert.match(config, /"main"\s*:\s*"src\/minute-maintenance-optimized-entry\.js"/);
   assert.match(entry, /const JSON_QUEUE_SEND_OPTIONS = Object\.freeze/);
-  assert.match(entry, /function isDeriveDispatchCron/);
-  assert.match(entry, /export default \{\s*scheduled\(/s);
-  assert.doesNotMatch(entry, /fetch\s*:/);
+  assert.match(entry, /stage: 'maintenance-gate'/);
+  assert.match(entry, /scheduled: runMinuteMaintenanceScheduled/);
+  assert.doesNotMatch(entry, /setTimeout|waitForCollectorCompletion|fetch\s*:/);
 });
