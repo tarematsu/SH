@@ -30,7 +30,12 @@ function queueAnalysisEnvelope(queue, serialized = null) {
 }
 
 function attachPreparedQueueAnalysis(queue, prepared) {
-  if (queue) Object.defineProperty(queue, QUEUE_TRANSFER_ANALYSIS, { value: prepared });
+  if (queue) {
+    Object.defineProperty(queue, QUEUE_TRANSFER_ANALYSIS, {
+      value: prepared,
+      configurable: true,
+    });
+  }
   return prepared;
 }
 
@@ -107,7 +112,10 @@ export function restoreQueueAnalysis(queue, envelope) {
   if (structural
       && Array.isArray(structural.tracks)
       && structural.tracks.length === trackCount) {
-    Object.defineProperty(queue, QUEUE_STRUCTURAL_PAYLOAD, { value: structural });
+    Object.defineProperty(queue, QUEUE_STRUCTURAL_PAYLOAD, {
+      value: structural,
+      configurable: true,
+    });
   }
   if (likes && Array.isArray(likes.payload) && Array.isArray(queue.tracks)) {
     Object.defineProperty(queue.tracks, QUEUE_LIKE_ANALYSIS, {
@@ -115,6 +123,7 @@ export function restoreQueueAnalysis(queue, envelope) {
         complete: likes.complete !== false,
         payload: likes.payload,
       },
+      configurable: true,
     });
   }
   const metadata = transferMetadata(envelope);
@@ -133,6 +142,7 @@ export function restoreQueueAnalysis(queue, envelope) {
       likes_hash: typeof envelope.likes_hash === 'string' ? envelope.likes_hash : null,
       ...metadata,
     },
+    configurable: true,
   });
   return queue;
 }
