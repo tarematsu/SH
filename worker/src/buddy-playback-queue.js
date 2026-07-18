@@ -73,33 +73,28 @@ export function validateBuddyChannelPayload(channel, expectedAlias = DEFAULT_ALI
   return channel;
 }
 
-function firstText(maximum, ...values) {
+function firstPresent(...values) {
   for (let index = 0; index < values.length; index += 1) {
     const value = values[index];
-    if (value !== undefined && value !== null && value !== '') {
-      const parsed = String(value).trim();
-      if (parsed) return parsed.slice(0, maximum);
-    }
+    if (value !== undefined && value !== null && value !== '') return value;
   }
   return null;
 }
 
 function trackThumbnail(item, track) {
-  return firstText(
-    2_048,
-    track?.thumbnail_url,
-    track?.image_url,
-    track?.album_art_url,
-    track?.artwork_url,
-    track?.album?.thumbnail_url,
-    track?.album?.image_url,
-    track?.album?.artwork_url,
-    track?.album?.images?.[0]?.url,
-    item?.thumbnail_url,
-    item?.image_url,
-    item?.album_art_url,
-    item?.artwork_url,
-  );
+  let value = track?.thumbnail_url;
+  if (value === undefined || value === null || value === '') value = track?.image_url;
+  if (value === undefined || value === null || value === '') value = track?.album_art_url;
+  if (value === undefined || value === null || value === '') value = track?.artwork_url;
+  if (value === undefined || value === null || value === '') value = track?.album?.thumbnail_url;
+  if (value === undefined || value === null || value === '') value = track?.album?.image_url;
+  if (value === undefined || value === null || value === '') value = track?.album?.artwork_url;
+  if (value === undefined || value === null || value === '') value = track?.album?.images?.[0]?.url;
+  if (value === undefined || value === null || value === '') value = item?.thumbnail_url;
+  if (value === undefined || value === null || value === '') value = item?.image_url;
+  if (value === undefined || value === null || value === '') value = item?.album_art_url;
+  if (value === undefined || value === null || value === '') value = item?.artwork_url;
+  return text(value, 2_048);
 }
 
 function hostBroadcaster(broadcast) {
