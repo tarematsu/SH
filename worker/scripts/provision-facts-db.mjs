@@ -264,10 +264,29 @@ wrangler([
   '--file', trackHistoryViewRepairMigrationPath,
 ]);
 
+let revisionColumns = tableColumnNames(databaseName, 'sh_queue_revisions');
+if (revisionColumns.size > 0 && !revisionColumns.has('total_item_count')) {
+  console.log('Adding total queue size for partial revision coverage...');
+  executeCommand('ALTER TABLE sh_queue_revisions ADD COLUMN total_item_count INTEGER');
+  revisionColumns = tableColumnNames(databaseName, 'sh_queue_revisions');
+}
+if (revisionColumns.size > 0 && !revisionColumns.has('coverage_complete')) {
+  console.log('Adding partial revision coverage status...');
+  executeCommand('ALTER TABLE sh_queue_revisions ADD COLUMN coverage_complete INTEGER NOT NULL DEFAULT 1');
+  revisionColumns = tableColumnNames(databaseName, 'sh_queue_revisions');
+}
+if (revisionColumns.size > 0
+    && (!revisionColumns.has('total_item_count') || !revisionColumns.has('coverage_complete'))) {
+  throw new Error('partial queue revision coverage migration did not complete');
+}
+executeCommand('UPDATE sh_queue_revisions SET total_item_count=item_count WHERE total_item_count IS NULL');
+executeCommand(`CREATE INDEX IF NOT EXISTS idx_sh_queue_revisions_coverage
+  ON sh_queue_revisions(channel_id,coverage_complete,effective_at DESC)`);
+
 writeFileSync(metadataPath, `${JSON.stringify({
   binding: 'MINUTE_DB',
   database_name: databaseName,
   database_id: databaseId,
-  schema: 'database/facts-migrations/016_track_metadata_isrc.sql',
+  schema: 'database/facts-migrations/017_partial_queue_revision_coverage.sql',
 }, null, 2)}\n`);
 console.log(JSON.stringify({ ok: true, database_name: databaseName, database_id: databaseId }));
