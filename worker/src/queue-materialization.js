@@ -224,32 +224,47 @@ export function expansionRequest(queue, currentPosition, env = {}) {
   return Math.min(total, Math.max(materialized, position + 1) + cfg.expandTracks);
 }
 
+async function updateExpansionRequest(db, queue, requested, currentPosition, observedAt) {
+  const identity = queueIdentity(queue);
+  const sourceHash = String(queue?.source_structural_hash || '');
+  const result = await db.prepare(`UPDATE sh_queue_materialization_state SET
+      requested_count=MAX(requested_count,?),last_position=?,
+      observed_at=MAX(observed_at,?),updated_at=?
+    WHERE station_id=? AND queue_id IS ? AND start_time IS ?
+      AND source_structural_hash=?`)
+    .bind(
+      requested,
+      integer(currentPosition),
+      integer(observedAt) ?? Date.now(),
+      Date.now(),
+      identity.stationId,
+      identity.queueId,
+      identity.startTime,
+      sourceHash,
+    ).run();
+  return Number(result?.meta?.changes || 0) > 0;
+}
+
 export async function requestQueueExpansion(db, queue, currentPosition, observedAt = Date.now(), env = {}) {
   const requested = expansionRequest(queue, currentPosition, env);
   const identity = queueIdentity(queue);
   const sourceHash = String(queue?.source_structural_hash || '');
   if (!db?.prepare || requested == null || identity.stationId == null || !sourceHash) return null;
   try {
-    const result = await db.prepare(`UPDATE sh_queue_materialization_state SET
-        requested_count=MAX(requested_count,?),last_position=?,
-        observed_at=MAX(observed_at,?),updated_at=?
-      WHERE station_id=? AND queue_id IS ? AND start_time IS ?
-        AND source_structural_hash=?`)
-      .bind(
-        requested,
-        integer(currentPosition),
-        integer(observedAt) ?? Date.now(),
-        Date.now(),
-        identity.stationId,
-        identity.queueId,
-        identity.startTime,
-        sourceHash,
-      ).run();
-    return Number(result?.meta?.changes || 0) > 0 ? requested : null;
+    if (await updateExpansionRequest(db, queue, requested, currentPosition, observedAt)) return requested;
+    // Persistence and playback use different Queues. If playback wins the race,
+    // establish the state row from its compact queue and then apply the request.
+    await recordQueueMaterialization(db, queue, null, observedAt);
+    return await updateExpansionRequest(db, queue, requested, currentPosition, observedAt)
+      ? requested
+      : null;
   } catch (error) {
     if (!/no such table/i.test(String(error?.message || ''))) throw error;
     await installStateTable(db);
-    return null;
+    await recordQueueMaterialization(db, queue, null, observedAt);
+    return await updateExpansionRequest(db, queue, requested, currentPosition, observedAt)
+      ? requested
+      : null;
   }
 }
 
