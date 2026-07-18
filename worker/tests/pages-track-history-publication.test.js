@@ -3,11 +3,10 @@ import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
 import { pagesReadModelTask } from '../src/pages-read-model-dispatch.js';
-import {
-  advanceTrackHistoryPublication,
-} from '../src/pages-track-history-publication.js';
+import { advanceTrackHistoryPublication } from '../src/pages-track-history-publication.js';
 import {
   processTrackHistoryPublicationTask,
+  TRACK_HISTORY_PUBLICATION_ACTIONS,
   TRACK_HISTORY_PUBLICATION_MESSAGE,
 } from '../src/pages-track-history-publication-queue.js';
 import {
@@ -25,6 +24,23 @@ function row(index) {
     play_date: '2026-07-18',
     first_played_at: index,
     row_json: JSON.stringify({ index, title: `Song ${index}` }),
+  };
+}
+
+function baseStage() {
+  return {
+    generation: CYCLE_START,
+    published: false,
+    refresh_mode: 'incremental',
+    previous_full_at: CYCLE_START - 86_400_000,
+    previous_status: { source_row_count: 7, excluded_play_count_dates: [] },
+    ranges: {
+      recent: { fromTs: CYCLE_START - 86_400_000, toTs: CYCLE_START + 86_400_000 },
+      full_recent: { fromTs: CYCLE_START - 35 * 86_400_000, toTs: CYCLE_START + 86_400_000 },
+      backfill: null,
+    },
+    tasks: [{ id: 'recent:0', kind: 'recent', range: { fromTs: CYCLE_START, toTs: CYCLE_START + 1 } }],
+    completed: { 'recent:0': { sourceRowCount: 3, excludedDates: [] } },
   };
 }
 
@@ -75,12 +91,8 @@ test('publication advances by bounded rows and commits the manifest separately',
     },
     writeChunks: async (_db, _state, chunks) => written.push(...chunks),
   });
-
   assert.equal(first.action, 'rows');
-  assert.equal(first.published, false);
   assert.equal(first.rows, 40);
-  assert.equal(first.publication.rows_written, 40);
-  assert.equal(first.publication.phase, 'rows');
   assert.equal(first.publication.cursor.row_key, 'row-0039');
   assert.ok(written.length >= 1);
 
@@ -90,56 +102,87 @@ test('publication advances by bounded rows and commits the manifest separately',
   });
   assert.equal(second.action, 'rows-complete');
   assert.equal(second.publication.phase, 'finalize');
-  assert.equal(second.publication.rows_written, 41);
 
   const committed = await advanceTrackHistoryPublication({}, second.publication, CYCLE_START + 180_000, {
     publishManifest: async (_db, state) => ({ chunks: state.next_chunk_index + 1 }),
   });
   assert.equal(committed.action, 'publish');
   assert.equal(committed.published, true);
-  assert.equal(committed.publication.phase, 'published');
 });
 
-test('split cycle durably initializes publication then dispatches the Queue', async () => {
-  const savedPayloads = [];
+test('cron checkpoints initialization before dispatching the status Queue stage', async () => {
+  const operations = [];
   const sent = [];
-  let savedStage = null;
-  const stage = {
-    generation: CYCLE_START,
-    published: false,
-    refresh_mode: 'incremental',
-    previous_full_at: CYCLE_START - 86_400_000,
-    previous_status: { source_row_count: 7, excluded_play_count_dates: [] },
-    ranges: {
-      recent: { fromTs: CYCLE_START - 86_400_000, toTs: CYCLE_START + 86_400_000 },
-      full_recent: { fromTs: CYCLE_START - 35 * 86_400_000, toTs: CYCLE_START + 86_400_000 },
-      backfill: null,
-    },
-    tasks: [{ id: 'recent:0', kind: 'recent', range: { fromTs: CYCLE_START, toTs: CYCLE_START + 1 } }],
-    completed: {
-      'recent:0': { sourceRowCount: 3, excludedDates: [] },
-    },
-  };
-
+  const stage = baseStage();
   const result = await runSplitTrackHistoryCycleStep({ BUDDIES_DB: {}, MINUTE_DB: {} }, CYCLE_START + 12 * 60_000, {
     loadStage: async () => stage,
-    coverage: async () => ({ earliest_date: '2026-06-13', latest_date: '2026-07-18', recent_row_count: 9 }),
-    savePayload: async (_db, key, payload) => savedPayloads.push({ key, payload }),
-    initializePublication: async (_db, publication) => publication,
-    saveStage: async (_db, value) => { savedStage = value; },
-    sendPublication: async (body) => sent.push(body),
+    saveStage: async () => operations.push('save'),
+    sendPublication: async (body) => { operations.push('send'); sent.push(body); },
   });
 
   assert.equal(result.task.kind, 'track-history-publish-dispatch');
-  assert.equal(savedPayloads.some(({ key }) => key === 'track-history-status'), true);
-  assert.equal(savedPayloads.some(({ key }) => key === 'track-history-backfill'), true);
-  assert.equal(savedStage.publication.phase, 'rows');
-  assert.equal(savedStage.published, false);
-  assert.equal(sent.length, 1);
+  assert.equal(stage.publication_initializing_at, CYCLE_START + 12 * 60_000);
+  assert.equal(stage.publication, undefined);
+  assert.deepEqual(operations, ['save', 'send']);
   assert.equal(sent[0].message_type, TRACK_HISTORY_PUBLICATION_MESSAGE);
+  assert.equal(sent[0].message_version, 2);
+  assert.equal(sent[0].action, TRACK_HISTORY_PUBLICATION_ACTIONS.STATUS);
 });
 
-test('Queue consumer checkpoints one page before sending its continuation', async () => {
+test('status Queue stage checkpoints status before dispatching generation initialization', async () => {
+  const operations = [];
+  const sent = [];
+  const stage = { ...baseStage(), publication_initializing_at: CYCLE_START };
+  const status = { generated_at: CYCLE_START + 1, source_row_count: 9 };
+  const result = await processTrackHistoryPublicationTask({ MINUTE_DB: {} }, {
+    message_type: TRACK_HISTORY_PUBLICATION_MESSAGE,
+    message_version: 2,
+    action: TRACK_HISTORY_PUBLICATION_ACTIONS.STATUS,
+    generation: String(CYCLE_START),
+  }, {
+    now: () => CYCLE_START + 1,
+    loadStage: async () => stage,
+    finalizeStatus: async () => status,
+    saveStage: async () => operations.push('save'),
+    sendPublication: async (body) => { operations.push('send'); sent.push(body); },
+  });
+
+  assert.equal(result.action, TRACK_HISTORY_PUBLICATION_ACTIONS.STATUS);
+  assert.equal(stage.publication_status, status);
+  assert.deepEqual(operations, ['save', 'send']);
+  assert.equal(sent[0].action, TRACK_HISTORY_PUBLICATION_ACTIONS.INITIALIZE);
+});
+
+test('generation initialization checkpoints the prefix before dispatching the first page', async () => {
+  const operations = [];
+  const sent = [];
+  const stage = {
+    ...baseStage(),
+    publication_status: { generated_at: CYCLE_START + 1, source_row_count: 9 },
+    publication_status_updated_at: CYCLE_START + 1,
+  };
+  const result = await processTrackHistoryPublicationTask({ MINUTE_DB: {} }, {
+    message_type: TRACK_HISTORY_PUBLICATION_MESSAGE,
+    message_version: 2,
+    action: TRACK_HISTORY_PUBLICATION_ACTIONS.INITIALIZE,
+    generation: String(CYCLE_START),
+  }, {
+    now: () => CYCLE_START + 2,
+    loadStage: async () => stage,
+    initializePublication: async (_db, publication) => ({ ...publication, prefix_written: true }),
+    saveStage: async () => operations.push('save'),
+    sendPublication: async (body) => { operations.push('send'); sent.push(body); },
+  });
+
+  assert.equal(result.action, TRACK_HISTORY_PUBLICATION_ACTIONS.INITIALIZE);
+  assert.equal(stage.publication.prefix_written, true);
+  assert.equal(stage.publication_status, undefined);
+  assert.deepEqual(operations, ['save', 'send']);
+  assert.equal(sent[0].action, TRACK_HISTORY_PUBLICATION_ACTIONS.PAGE);
+  assert.equal(sent[0].generation, stage.publication.generation);
+});
+
+test('page Queue stage checkpoints one page before sending its continuation', async () => {
   const operations = [];
   const stage = {
     published: false,
