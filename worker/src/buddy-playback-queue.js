@@ -12,8 +12,8 @@ function booleanValue(value, fallback = false) {
   if (typeof value === 'boolean') return value;
   if (typeof value === 'number') return value !== 0;
   const normalized = String(value).trim().toLowerCase();
-  if (['true', '1', 'yes', 'on'].includes(normalized)) return true;
-  if (['false', '0', 'no', 'off'].includes(normalized)) return false;
+  if (normalized === 'true' || normalized === '1' || normalized === 'yes' || normalized === 'on') return true;
+  if (normalized === 'false' || normalized === '0' || normalized === 'no' || normalized === 'off') return false;
   return Boolean(value);
 }
 
@@ -26,20 +26,22 @@ function handleMatches(value, expectedAlias) {
   return String(value || '').trim().toLowerCase() === String(expectedAlias || '').trim().toLowerCase();
 }
 
+function broadcastersMatch(items, expectedAlias) {
+  if (!Array.isArray(items)) return false;
+  for (let index = 0; index < items.length; index += 1) {
+    const item = items[index];
+    if (handleMatches(item?.account?.handle || item?.handle, expectedAlias)) return true;
+  }
+  return false;
+}
+
 function channelMatchesExpectedHandle(channel, expectedAlias) {
   if (!channel || typeof channel !== 'object' || Array.isArray(channel)) return false;
   if (handleMatches(channel.account?.handle, expectedAlias)) return true;
   if (handleMatches(channel.host?.handle, expectedAlias)) return true;
   if (handleMatches(channel.host?.account?.handle, expectedAlias)) return true;
-  const broadcasters = [
-    ...(Array.isArray(channel.broadcast?.broadcasters) ? channel.broadcast.broadcasters : []),
-    ...(Array.isArray(channel.current_station?.broadcast?.broadcasters)
-      ? channel.current_station.broadcast.broadcasters : []),
-  ];
-  return broadcasters.some((item) => handleMatches(
-    item?.account?.handle || item?.handle,
-    expectedAlias,
-  ));
+  return broadcastersMatch(channel.broadcast?.broadcasters, expectedAlias)
+    || broadcastersMatch(channel.current_station?.broadcast?.broadcasters, expectedAlias);
 }
 
 function channelAliasMatchesHandleStation(actualAlias, expectedAlias) {
@@ -71,8 +73,20 @@ export function validateBuddyChannelPayload(channel, expectedAlias = DEFAULT_ALI
   return channel;
 }
 
+function firstText(maximum, ...values) {
+  for (let index = 0; index < values.length; index += 1) {
+    const value = values[index];
+    if (value !== undefined && value !== null && value !== '') {
+      const parsed = String(value).trim();
+      if (parsed) return parsed.slice(0, maximum);
+    }
+  }
+  return null;
+}
+
 function trackThumbnail(item, track) {
-  const candidates = [
+  return firstText(
+    2_048,
     track?.thumbnail_url,
     track?.image_url,
     track?.album_art_url,
@@ -85,26 +99,35 @@ function trackThumbnail(item, track) {
     item?.image_url,
     item?.album_art_url,
     item?.artwork_url,
-  ];
-  return text(candidates.find((value) => String(value || '').trim()), 2_048);
+  );
+}
+
+function hostBroadcaster(broadcast) {
+  const broadcasters = broadcast?.broadcasters;
+  if (!Array.isArray(broadcasters) || !broadcasters.length) return null;
+  for (let index = 0; index < broadcasters.length; index += 1) {
+    if (broadcasters[index]?.is_host) return broadcasters[index];
+  }
+  return broadcasters[0];
 }
 
 export function extractBuddyPlayback(channel, alias = DEFAULT_ALIAS, maxTracks = DEFAULT_MAX_TRACKS) {
   const station = channel?.current_station || {};
   const queue = station?.queue || channel?.queue || null;
   const broadcast = station?.broadcast || channel?.broadcast || null;
-  const host = broadcast?.broadcasters?.find((item) => item?.is_host)
-    || broadcast?.broadcasters?.[0]
-    || null;
+  const host = hostBroadcaster(broadcast);
   const rawTracks = queue?.queue_tracks ?? queue?.tracks ?? [];
   if (!Array.isArray(rawTracks)) {
     throw new Error('Stationhead buddy playback queue tracks are not an array');
   }
-  const tracks = rawTracks.slice(0, maxTracks).map((item, index) => {
+  const limit = Math.min(rawTracks.length, Math.max(0, Math.trunc(Number(maxTracks) || 0)));
+  const tracks = new Array(limit);
+  for (let index = 0; index < limit; index += 1) {
+    const item = rawTracks[index];
     const track = item?.track || item || {};
     const artist = track?.artist || track?.artists?.[0] || {};
     const album = track?.album || {};
-    return {
+    tracks[index] = {
       position: finiteNumber(item?.position, index),
       queue_track_id: finiteNumber(item?.id),
       stationhead_track_id: finiteNumber(track?.id),
@@ -114,13 +137,11 @@ export function extractBuddyPlayback(channel, alias = DEFAULT_ALIAS, maxTracks =
       duration_ms: Math.max(0, finiteNumber(track?.duration_ms ?? track?.duration, 0)),
       preview_url: text(track?.preview_url ?? track?.preview, 2_048),
       title: text(track?.title ?? track?.name),
-      artist: text(
-        typeof artist === 'string' ? artist : (artist?.name ?? track?.artist_name),
-      ),
+      artist: text(typeof artist === 'string' ? artist : (artist?.name ?? track?.artist_name)),
       album_name: text(album?.name ?? track?.album_name),
       thumbnail_url: trackThumbnail(item, track),
     };
-  });
+  }
   return {
     channel_alias: alias,
     station_id: finiteNumber(queue?.station_id ?? station?.id ?? channel?.current_station_id ?? channel?.id ?? broadcast?.station_id),
@@ -135,14 +156,16 @@ export function extractBuddyPlayback(channel, alias = DEFAULT_ALIAS, maxTracks =
 }
 
 export function currentIndex(queue, now) {
-  if (!queue.tracks.length) return -1;
+  const tracks = queue.tracks;
+  const length = tracks.length;
+  if (!length) return -1;
   if (!queue.start_time) return 0;
   const elapsed = Math.max(0, now - queue.start_time);
   let cursor = 0;
-  for (let index = 0; index < queue.tracks.length; index += 1) {
-    const duration = Math.max(0, finiteNumber(queue.tracks[index]?.duration_ms, 0));
-    if (elapsed < cursor + duration || index === queue.tracks.length - 1) return index;
+  for (let index = 0; index < length; index += 1) {
+    const duration = Math.max(0, finiteNumber(tracks[index]?.duration_ms, 0));
+    if (elapsed < cursor + duration || index === length - 1) return index;
     cursor += duration;
   }
-  return queue.tracks.length - 1;
+  return length - 1;
 }
