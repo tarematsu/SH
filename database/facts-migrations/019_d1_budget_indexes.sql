@@ -9,6 +9,10 @@ WHERE source_code=1;
 CREATE INDEX IF NOT EXISTS idx_sh_broadcast_sessions_channel_start
 ON sh_broadcast_sessions(channel_id, broadcast_start_time, first_observed_at, id);
 
+CREATE INDEX IF NOT EXISTS idx_sh_tracks_stationhead_id
+ON sh_tracks(stationhead_track_id)
+WHERE stationhead_track_id IS NOT NULL;
+
 CREATE INDEX IF NOT EXISTS idx_sh_minute_fact_jobs_due
 ON sh_minute_fact_jobs(next_attempt_at, job_priority DESC, minute_at, id)
 WHERE status='pending';
