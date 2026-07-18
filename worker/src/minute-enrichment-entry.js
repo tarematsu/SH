@@ -10,6 +10,9 @@ import { integer } from './minute-facts-track-descriptor.js';
 import { updatePlaybackState, writeCurrentBite } from './minute-facts-legacy-revision.js';
 import { requestQueueExpansion } from './queue-materialization.js';
 
+const EMPTY_DEPENDENCIES = Object.freeze({});
+const EMPTY_TRACKS = Object.freeze([]);
+
 function validateTask(body) {
   if (body?.message_type !== 'minute-fact-enrichment'
       || Number(body?.message_version) !== 1) {
@@ -22,7 +25,7 @@ function validateTask(body) {
     throw new Error('minute enrichment identity is missing');
   }
   const stage = String(body.stage || 'identity');
-  if (!['playback', 'identity'].includes(stage)) {
+  if (stage !== 'playback' && stage !== 'identity') {
     throw new Error(`unsupported minute enrichment stage: ${stage}`);
   }
   return { channelId, minuteAt, observedAt, stage };
@@ -129,15 +132,62 @@ async function patchPlaybackResult(db, current, identity, playback) {
   return { trackId, position, flags, confidenceCode, detectionCode };
 }
 
-async function enqueueIdentityStage(env, body, playback) {
+function compactCurrentBiteQueue(queue, position) {
+  if (!queue || position == null) return null;
+  const tracks = Array.isArray(queue.tracks) ? queue.tracks : EMPTY_TRACKS;
+  let sourceTrack = tracks[position];
+  if (!sourceTrack || (integer(sourceTrack.position) ?? position) !== position) {
+    sourceTrack = null;
+    for (let index = 0; index < tracks.length; index += 1) {
+      const candidate = tracks[index];
+      if ((integer(candidate?.position) ?? index) === position) {
+        sourceTrack = candidate;
+        break;
+      }
+    }
+  }
+  const compactTracks = sourceTrack ? [{
+    position,
+    queue_track_id: sourceTrack.queue_track_id ?? null,
+    stationhead_track_id: sourceTrack.stationhead_track_id ?? null,
+    spotify_id: sourceTrack.spotify_id ?? null,
+    apple_music_id: sourceTrack.apple_music_id ?? null,
+    isrc: sourceTrack.isrc ?? null,
+    bite_count: sourceTrack.bite_count ?? null,
+  }] : EMPTY_TRACKS;
+  return {
+    station_id: queue.station_id ?? null,
+    queue_id: queue.queue_id ?? null,
+    start_time: queue.start_time ?? null,
+    total_track_count: integer(queue.total_track_count) ?? tracks.length,
+    materialized_track_count: integer(queue.materialized_track_count) ?? tracks.length,
+    source_structural_hash: queue.source_structural_hash ?? null,
+    source_likes_hash: queue.source_likes_hash ?? null,
+    tracks: compactTracks,
+  };
+}
+
+async function enqueueIdentityStage(env, body, playback, patched) {
   if (!env?.MINUTE_ENRICHMENT_QUEUE?.send) throw new Error('MINUTE_ENRICHMENT_QUEUE binding is missing');
+  const position = integer(patched == null ? playback?.current_position : patched.position);
+  const trackId = integer(patched == null ? playback?.current_track_id : patched.trackId);
   await env.MINUTE_ENRICHMENT_QUEUE.send({
-    ...body,
+    message_type: 'minute-fact-enrichment',
+    message_version: 1,
     stage: 'identity',
-    queue_position: integer(playback?.current_position),
-    track_id: integer(playback?.current_track_id),
-    schedule_valid: Number(playback?.current_schedule_valid || 0),
-    delayed: Boolean(playback?.delayed),
+    channel_id: body.channel_id,
+    station_id: body.station_id,
+    minute_at: body.minute_at,
+    observed_at: body.observed_at,
+    provisional_session_id: body.provisional_session_id,
+    revision_id: body.revision_id,
+    host_account_id: body.host_account_id,
+    host_handle: body.host_handle,
+    broadcast_start_time: body.broadcast_start_time,
+    is_broadcasting: body.is_broadcasting,
+    queue: compactCurrentBiteQueue(body.queue, position),
+    queue_position: position,
+    track_id: trackId,
   }, { contentType: 'json' });
 }
 
@@ -201,7 +251,7 @@ async function processPlaybackStage(env, body, identity, current, dependencies) 
     dependencies,
   );
   const enqueue = dependencies.enqueueIdentityStage || enqueueIdentityStage;
-  await enqueue(env, body, playback);
+  await enqueue(env, body, playback, patched);
   return {
     skipped: false,
     pending: true,
@@ -252,7 +302,7 @@ async function processIdentityStage(env, body, identity, dependencies) {
   };
 }
 
-export async function processMinuteEnrichment(env, body, dependencies = {}) {
+export async function processMinuteEnrichment(env, body, dependencies = EMPTY_DEPENDENCIES) {
   const identity = validateTask(body);
   const db = env?.MINUTE_DB;
   if (!db?.prepare && !dependencies.loadCurrentMinute) throw new Error('MINUTE_DB binding is missing');
@@ -271,7 +321,12 @@ export async function processMinuteEnrichment(env, body, dependencies = {}) {
 
 export default {
   async queue(batch, env) {
-    for (const message of batch.messages || []) {
+    const messages = batch?.messages;
+    const count = messages?.length || 0;
+    if (!count) return;
+    let index = 0;
+    do {
+      const message = messages[index];
       try {
         const result = await processMinuteEnrichment(env, message.body);
         console.log(JSON.stringify({ event: 'minute_enrichment_completed', ...result }));
@@ -283,7 +338,8 @@ export default {
         }));
         message.retry({ delaySeconds: 30 });
       }
-    }
+      index += 1;
+    } while (index < count);
   },
   fetch() {
     return Response.json({ ok: false, error: 'not found' }, { status: 404 });
