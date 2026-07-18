@@ -3,6 +3,10 @@ import minuteWorker, {
   runMinuteScheduledWithCollectorPriority,
 } from './minute-entry.js';
 import { pendingMinuteDeriveTriggers } from './minute-derive-trigger.js';
+import {
+  markSparseRevisionRecoveryDispatched,
+  pendingSparseRevisionTasks,
+} from './minute-revision-recovery.js';
 
 export const MINUTE_DERIVE_DISPATCH_CRON = '* * * * *';
 
@@ -30,23 +34,43 @@ async function recordDeriveDispatchState(env, summary, startedAt, dependencies =
   }, { startedAt });
 }
 
+async function sendDeriveMessages(env, messages) {
+  if (!messages.length) return;
+  if (typeof env.MINUTE_DERIVE_QUEUE.sendBatch === 'function') {
+    await env.MINUTE_DERIVE_QUEUE.sendBatch(messages.map((body) => ({ body, contentType: 'json' })));
+    return;
+  }
+  await Promise.all(messages.map((body) => env.MINUTE_DERIVE_QUEUE.send(body, { contentType: 'json' })));
+}
+
 export async function dispatchPendingMinuteFacts(env, dependencies = {}, ctx = null) {
-  if (!env?.MINUTE_DERIVE_QUEUE?.send) throw new Error('MINUTE_DERIVE_QUEUE binding is missing');
+  if (!env?.MINUTE_DERIVE_QUEUE?.send && typeof env?.MINUTE_DERIVE_QUEUE?.sendBatch !== 'function') {
+    throw new Error('MINUTE_DERIVE_QUEUE binding is missing');
+  }
   const startedAt = Date.now();
-  const load = dependencies.load || pendingMinuteDeriveTriggers;
-  const limit = positiveInteger(env.DERIVE_DISPATCH_LIMIT, 5, 20);
-  const triggers = await load(env, { limit });
-  if (triggers.length) {
-    if (typeof env.MINUTE_DERIVE_QUEUE.sendBatch === 'function') {
-      await env.MINUTE_DERIVE_QUEUE.sendBatch(triggers.map((body) => ({ body, contentType: 'json' })));
-    } else {
-      await Promise.all(triggers.map((body) => env.MINUTE_DERIVE_QUEUE.send(body, { contentType: 'json' })));
-    }
+  const loadFacts = dependencies.load || pendingMinuteDeriveTriggers;
+  const loadRevisions = dependencies.loadRevisionRecovery || pendingSparseRevisionTasks;
+  const factLimit = positiveInteger(env.DERIVE_DISPATCH_LIMIT, 5, 20);
+  const recoveryLimit = positiveInteger(env.DERIVE_REVISION_RECOVERY_LIMIT, 1, 5);
+  const [triggers, revisionRecoveries] = await Promise.all([
+    loadFacts(env, { limit: factLimit }),
+    loadRevisions(env, { limit: recoveryLimit, now: startedAt }),
+  ]);
+  await sendDeriveMessages(env, [...triggers, ...revisionRecoveries]);
+  if (revisionRecoveries.length) {
+    const mark = dependencies.markRevisionRecovery || markSparseRevisionRecoveryDispatched;
+    await mark(
+      env,
+      revisionRecoveries.map((task) => task?.revision?.revision_id),
+      startedAt,
+    );
   }
   const summary = {
     event: 'minute_derive_dispatch',
     dispatched: triggers.length,
-    limit,
+    revision_recoveries: revisionRecoveries.length,
+    limit: factLimit,
+    recovery_limit: recoveryLimit,
   };
   const stateTask = recordDeriveDispatchState(env, summary, startedAt, dependencies).catch((error) => {
     console.warn(JSON.stringify({
