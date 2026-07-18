@@ -10,6 +10,8 @@ function logPersistenceResult(result) {
     observed_at: result?.observed_at ?? null,
     total_track_count: result?.total_track_count ?? null,
     materialized_track_count: result?.materialized_track_count ?? null,
+    structure_write_deferred: result?.structure_write_deferred === true,
+    likes_deferred: result?.likes_deferred === true,
     materialization_recorded: result?.materialization_recorded === true,
     metadata_deferred: result?.metadata_deferred === true,
     finalization_deferred: result?.finalization_deferred === true,
