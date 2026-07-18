@@ -17,6 +17,7 @@ import { jwtExpiryMs } from './shared.js';
 
 const RAW_D1_STATEMENT = Symbol('prepared-collector-raw-d1-statement');
 const PREPARED_COLLECTOR_FINALIZE = Symbol('prepared-collector-finalize');
+const PREPARED_COLLECTOR_FACT = Symbol('prepared-collector-fact');
 const NO_COMMENTS_RESULT = Object.freeze({
   commentsSaved: 0,
   degraded: false,
@@ -32,6 +33,10 @@ const NO_PLANNED_COMMENTS_RESULT = Object.freeze({
 
 export function preparedCollectorFinalizeState(result) {
   return result?.[PREPARED_COLLECTOR_FINALIZE] || null;
+}
+
+export function preparedCollectorFactStage(result) {
+  return result?.[PREPARED_COLLECTOR_FACT] || null;
 }
 
 function signalFrom(value) {
@@ -150,6 +155,10 @@ function finalizeState(state, observedAt, lastSuccessAt) {
   };
 }
 
+function minuteAt(observedAt) {
+  return Math.floor(Number(observedAt) / 60_000) * 60_000;
+}
+
 export async function collectPreparedOnce(env, source = 'raw-collection-queue') {
   const observedAt = Date.now();
   let stage = 'collector_start';
@@ -206,14 +215,7 @@ export async function collectPreparedOnce(env, source = 'raw-collection-queue') 
       is_paused: factQueue?.is_paused ?? null,
     };
     if (factQueue === null) factQueueReadModel.value = null;
-
-    stage = 'd1_outbox_minute_fact';
-    const minuteFactJob = await handoffMinuteFactJob(activeEnv, {
-      observedAt,
-      snapshot: factSnapshot,
-      queue: factQueue,
-      comments: commentResult,
-    }, {
+    const factOptions = {
       enrichTrackMetadata: metadataPlanned,
       collectComments: false,
       readModelPresentationOnly: true,
@@ -232,11 +234,36 @@ export async function collectPreparedOnce(env, source = 'raw-collection-queue') 
           updated_at: observedAt,
         },
       },
-    });
-
+    };
     const lastSuccessAt = Date.now();
     const deferredState = finalizeState(state, observedAt, lastSuccessAt);
-    if (!activeEnv?.INGEST_FINALIZE_QUEUE?.send) {
+    let minuteFactJob = null;
+    let factStage = null;
+
+    if (activeEnv?.INGEST_FINALIZE_QUEUE?.send) {
+      factStage = {
+        observedAt,
+        snapshot: factSnapshot,
+        queue: factQueue,
+        comments: commentResult,
+        options: factOptions,
+        collectorState: deferredState,
+        auth: activeEnv.__shAuthState || {},
+      };
+      minuteFactJob = {
+        enqueued: false,
+        outbox_pending: false,
+        minute_at: minuteAt(observedAt),
+      };
+    } else {
+      stage = 'd1_outbox_minute_fact';
+      minuteFactJob = await handoffMinuteFactJob(activeEnv, {
+        observedAt,
+        snapshot: factSnapshot,
+        queue: factQueue,
+        comments: commentResult,
+      }, factOptions);
+
       stage = 'd1_write_collector_state';
       throwIfAborted(activeEnv, stage);
       await saveCollectorStateAndClearFailure(activeEnv, state, {
@@ -270,11 +297,13 @@ export async function collectPreparedOnce(env, source = 'raw-collection-queue') 
       minute_fact_job_enqueued: Boolean(minuteFactJob?.enqueued),
       minute_fact_outbox_pending: Boolean(minuteFactJob?.outbox_pending),
       minute_fact_job_minute_at: minuteFactJob?.minute_at ?? null,
+      minute_fact_stage_deferred: Boolean(factStage),
       heartbeat_written: false,
       token_expires_at: state.tokenExpiresAt || null,
-      finalize_deferred: Boolean(activeEnv?.INGEST_FINALIZE_QUEUE?.send),
+      finalize_deferred: Boolean(factStage),
     };
     Object.defineProperty(summary, PREPARED_COLLECTOR_FINALIZE, { value: deferredState });
+    if (factStage) Object.defineProperty(summary, PREPARED_COLLECTOR_FACT, { value: factStage });
     return summary;
   } catch (error) {
     const failure = asCollectorFailure(error, stage, Date.now());
