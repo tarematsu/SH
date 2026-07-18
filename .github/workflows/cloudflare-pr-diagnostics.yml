@@ -139,9 +139,8 @@ jobs:
             jq -e --arg script 'sh-monitor-other' '[.result[]?.script_name] | index($script) != null' consumers.json >/dev/null
             jq -e --arg script "$old_script" '[.result[]?.script_name] | index($script) == null' consumers.json >/dev/null
           done
-          current_status="$(curl --silent --show-error -o current-worker.json -w '%{http_code}' "${auth[@]}" "$base/workers/scripts/sh-monitor-other")"
+          current_status="$(curl --silent --show-error -o current-worker.bin -w '%{http_code}' "${auth[@]}" "$base/workers/scripts/sh-monitor-other")"
           test "$current_status" = 200
-          jq -e '.success == true' current-worker.json >/dev/null
           for old_script in sh-buddy-playback sh-host-monitor
           do
             old_status="$(curl --silent --show-error -o "${old_script}.json" -w '%{http_code}' "${auth[@]}" "$base/workers/scripts/$old_script")"
