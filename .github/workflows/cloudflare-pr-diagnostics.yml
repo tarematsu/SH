@@ -120,46 +120,6 @@ jobs:
             echo "Deploying $command"
             npm run "$command"
           done < <(jq -r '.[]' <<<"$DEPLOY_COMMANDS")
-      - name: Reinitialize track-history publication for one CPU probe
-        working-directory: worker
-        shell: bash
-        run: |
-          set -euo pipefail
-          npx wrangler d1 execute stationhead-minute --remote --config wrangler.pages-read-model.jsonc --command \
-            "UPDATE sh_pages_payload_read_model SET payload_json=json_remove(json_set(payload_json,'$.published',json('false'),'$.published_at',NULL),'$.publication'),updated_at=CAST(unixepoch('subsec')*1000 AS INTEGER) WHERE model_key='track-history-stage';"
-          npx wrangler d1 execute stationhead-minute --remote --config wrangler.pages-read-model.jsonc --command \
-            "SELECT model_key,json_extract(payload_json,'$.published') AS published,json_type(payload_json,'$.publication') AS publication_type,updated_at FROM sh_pages_payload_read_model WHERE model_key='track-history-stage';"
-      - name: Probe Pages Queue consumer and send one stale message
-        working-directory: worker
-        shell: bash
-        run: |
-          set -euo pipefail
-          auth=(-H "Authorization: Bearer $CLOUDFLARE_API_TOKEN")
-          base="https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID"
-          curl -fsS "${auth[@]}" "$base/queues" > pages-queues.json
-          queue_id="$(jq -r '.result[] | select((.queue_name // .name)=="stationhead-pages-read-model-publication") | (.queue_id // .id)' pages-queues.json | head -1)"
-          test -n "$queue_id" && test "$queue_id" != null
-          curl -fsS "${auth[@]}" "$base/queues/$queue_id/consumers" > pages-consumers.json
-          curl -fsS -X POST "${auth[@]}" -H 'Content-Type: application/json' \
-            "$base/queues/$queue_id/messages" \
-            --data '{"body":{"message_type":"stationhead-pages-track-history-publication","message_version":2,"action":"status","generation":"stale-probe"}}' \
-            > pages-push.json
-          jq -n \
-            --arg queue_id "$queue_id" \
-            --slurpfile queues pages-queues.json \
-            --slurpfile consumers pages-consumers.json \
-            --slurpfile push pages-push.json \
-            '{queue_id:$queue_id,queues:$queues[0],consumers:$consumers[0],push:$push[0]}' \
-            > pages-queue-probe.json
-          jq '{queue_id,consumer_count:(.consumers.result|length),consumer_scripts:[.consumers.result[]?.script_name],push_success:.push.success}' pages-queue-probe.json
-      - name: Upload Pages Queue probe
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: pages-queue-probe-${{ github.event.pull_request.head.sha }}
-          path: worker/pages-queue-probe.json
-          if-no-files-found: warn
-          retention-days: 2
 
   diagnose:
     name: Diagnose ${{ matrix.worker }}
