@@ -2,12 +2,24 @@ import './fetch-guard.js';
 import { runBuddyPlaybackQueue } from './buddy-playback-entry.js';
 import { runHostMonitorQueue } from './host-monitor-entry.js';
 import {
+  OFFICIAL_NEWS_STAGE_MESSAGE,
+  officialNewsStageTask,
+  processOfficialNewsStage,
+} from './other-official-news-stages.js';
+import {
   officialNewsProbeDue,
   runOfficialNewsWithReconcile,
   scheduledTimestamp,
 } from './other-monitor-support.js';
 
 export const OTHER_MONITOR_CRON = '*/5 * * * *';
+const MINUTE_MS = 60_000;
+const EMPTY_DEPENDENCIES = Object.freeze({});
+const EMPTY_OPTIONS = Object.freeze({});
+const JSON_QUEUE_SEND_OPTIONS = Object.freeze({ contentType: 'json' });
+const OTHER_TASK_MESSAGE = 'other-monitor-task';
+const OTHER_SELECT_MESSAGE = 'other-monitor-select';
+const OTHER_SUCCESS_MESSAGE = 'other-monitor-success';
 const OTHER_CRON_SUCCESS_SQL = `INSERT INTO sh_collector_status (
     collector_id,status,last_attempt_at,last_success_at,last_error,
     failure_code,failure_stage,failure_summary,failure_hint,tracks,changed,updated_at
@@ -17,9 +29,33 @@ const OTHER_CRON_SUCCESS_SQL = `INSERT INTO sh_collector_status (
     last_error=NULL,failure_code=NULL,failure_stage=NULL,failure_summary=NULL,failure_hint=NULL,
     updated_at=excluded.updated_at`;
 let loadedHealthApp = null;
+let buddyPipelineModulePromise;
+let hostMonitorModulePromise;
+let predictionModulePromise;
+let buddyHealthModulePromise;
+
+function loadBuddyPipelineModule() {
+  buddyPipelineModulePromise ||= import('./buddy-playback-pipeline.js');
+  return buddyPipelineModulePromise;
+}
+
+function loadHostMonitorModule() {
+  hostMonitorModulePromise ||= import('./cloud-host-monitor.js');
+  return hostMonitorModulePromise;
+}
+
+function loadPredictionModule() {
+  predictionModulePromise ||= import('./stream-goal-prediction.js');
+  return predictionModulePromise;
+}
+
+function loadBuddyHealthModule() {
+  buddyHealthModulePromise ||= import('./buddy-health.js');
+  return buddyHealthModulePromise;
+}
 
 export function otherMonitorTask(now) {
-  const minute = new Date(now).getUTCMinutes();
+  const minute = Math.floor(now / MINUTE_MS) % 60;
   const buddySlot = minute % 30;
   if (buddySlot === 0 || buddySlot === 5 || buddySlot === 15) return 'buddy';
   if (minute === 10 || minute === 40) return 'prediction';
@@ -28,62 +64,92 @@ export function otherMonitorTask(now) {
 }
 
 async function defaultRunner(name) {
-  if (name === 'buddy') return (await import('./buddy-playback-pipeline.js')).scheduleBuddyPlaybackPipeline;
-  if (name === 'host') return (await import('./cloud-host-monitor.js')).runCloudHostMonitor;
-  if (name === 'prediction') return (await import('./stream-goal-prediction.js')).runStreamGoalPrediction;
+  if (name === 'buddy') return (await loadBuddyPipelineModule()).scheduleBuddyPlaybackPipeline;
+  if (name === 'host') return (await loadHostMonitorModule()).runCloudHostMonitor;
+  if (name === 'prediction') return (await loadPredictionModule()).runStreamGoalPrediction;
   if (name === 'officialNews') return runOfficialNewsWithReconcile;
   throw new Error(`unsupported other monitor task: ${name}`);
 }
 
-async function dispatchQueue(env, binding, body) {
-  if (!env?.[binding]?.send) return null;
-  await env[binding].send(body, { contentType: 'json' });
+async function dispatchQueue(queue, body) {
+  if (!queue?.send) return null;
+  await queue.send(body, JSON_QUEUE_SEND_OPTIONS);
   return body;
 }
 
 async function dispatchBuddyPlayback(env, now) {
-  const body = await dispatchQueue(env, 'BUDDY_PLAYBACK_QUEUE', {
+  const body = await dispatchQueue(env?.BUDDY_PLAYBACK_QUEUE, {
     message_type: 'buddy-playback-stage',
     message_version: 1,
     scheduled_at: now,
-    observed_at: Date.now(),
+    observed_at: now,
   });
   return body ? { dispatched: true, task: 'buddy', scheduled_at: now } : null;
 }
 
 async function dispatchHostMonitor(env, now) {
-  const body = await dispatchQueue(env, 'HOST_MONITOR_QUEUE', {
+  const body = await dispatchQueue(env?.HOST_MONITOR_QUEUE, {
     message_type: 'host-monitor-task',
     message_version: 1,
     scheduled_at: now,
-    observed_at: Date.now(),
+    observed_at: now,
   });
   return body ? { dispatched: true, task: 'host', scheduled_at: now } : null;
 }
 
-async function runTask(name, env, ctx, now, dependencies = {}) {
-  if (name === 'buddy') {
-    const dispatched = await dispatchBuddyPlayback(env, now);
-    if (dispatched) return dispatched;
-  }
-  if (name === 'host') {
-    const dispatched = await dispatchHostMonitor(env, now);
-    if (dispatched) return dispatched;
-  }
+async function dispatchDeferredTask(env, task, now) {
+  const body = await dispatchQueue(env?.HOST_MONITOR_QUEUE, {
+    message_type: OTHER_TASK_MESSAGE,
+    message_version: 1,
+    task,
+    scheduled_at: now,
+  });
+  return body ? { dispatched: true, task, scheduled_at: now } : null;
+}
+
+async function dispatchHostSelection(env, now) {
+  const body = await dispatchQueue(env?.HOST_MONITOR_QUEUE, {
+    message_type: OTHER_SELECT_MESSAGE,
+    message_version: 1,
+    scheduled_at: now,
+  });
+  return body ? { dispatched: true, task: 'host-or-official-news', scheduled_at: now } : null;
+}
+
+async function runDirectTask(name, env, ctx, now, dependencies = EMPTY_DEPENDENCIES) {
   const runner = dependencies[name] || await defaultRunner(name);
   if (name === 'buddy') return runner(env, ctx, now);
   if (name === 'host') return runner(env);
   return runner(env, now);
 }
 
-export async function runOtherMonitorScheduled(controller, env, ctx, dependencies = {}) {
-  if (String(controller?.cron || '') !== OTHER_MONITOR_CRON) {
-    return [{ skipped: true, reason: 'unsupported-other-monitor-cron', cron: String(controller?.cron || '') }];
+async function runTask(name, env, ctx, now, dependencies = EMPTY_DEPENDENCIES) {
+  let dispatched = null;
+  if (name === 'buddy') dispatched = await dispatchBuddyPlayback(env, now);
+  else if (name === 'host') dispatched = await dispatchHostMonitor(env, now);
+  else if (dependencies[name]) return runDirectTask(name, env, ctx, now, dependencies);
+  else if (name === 'prediction' || name === 'officialNews') {
+    dispatched = await dispatchDeferredTask(env, name, now);
+  }
+  return dispatched || runDirectTask(name, env, ctx, now, dependencies);
+}
+
+export async function runOtherMonitorScheduled(controller, env, ctx, dependencies = EMPTY_DEPENDENCIES) {
+  const rawCron = controller?.cron;
+  const cron = rawCron === OTHER_MONITOR_CRON ? rawCron : String(rawCron || '');
+  if (cron !== OTHER_MONITOR_CRON) {
+    return [{ skipped: true, reason: 'unsupported-other-monitor-cron', cron }];
   }
   const now = scheduledTimestamp(controller);
   let task = otherMonitorTask(now);
-  const due = dependencies.officialNewsDue || officialNewsProbeDue;
-  if (task === 'host' && await due(env, now)) task = 'officialNews';
+  if (task === 'host') {
+    if (dependencies === EMPTY_DEPENDENCIES) {
+      const selected = await dispatchHostSelection(env, now);
+      if (selected) return [selected];
+    }
+    const due = dependencies.officialNewsDue || officialNewsProbeDue;
+    if (await due(env, now)) task = 'officialNews';
+  }
   return [await runTask(task, env, ctx, now, dependencies)];
 }
 
@@ -94,21 +160,39 @@ async function recordOtherCronSuccessFast(env, at = Date.now()) {
     return true;
   } catch (error) {
     if (!/no such table/i.test(String(error?.message || error))) throw error;
-    return (await import('./buddy-health.js')).recordOtherCronSuccess(env, at);
+    return (await loadBuddyHealthModule()).recordOtherCronSuccess(env, at);
   }
 }
 
 async function recordOtherCronFailureLazy(env, error) {
-  return (await import('./buddy-health.js')).recordOtherCronFailure(env, error);
+  return (await loadBuddyHealthModule()).recordOtherCronFailure(env, error);
 }
 
-export async function runOtherMonitorCron(controller, env, ctx, options = {}) {
+async function dispatchSuccessRecord(env, at) {
+  return dispatchQueue(env?.HOST_MONITOR_QUEUE, {
+    message_type: OTHER_SUCCESS_MESSAGE,
+    message_version: 1,
+    at,
+  });
+}
+
+export async function runOtherMonitorCron(controller, env, ctx, options = EMPTY_OPTIONS) {
   const health = options.healthApp || loadedHealthApp;
   const recordSuccess = options.recordSuccess || recordOtherCronSuccessFast;
   const recordFailure = options.recordFailure || recordOtherCronFailureLazy;
   try {
-    const result = await runOtherMonitorScheduled(controller, env, ctx, options.dependencies);
-    await recordSuccess(env);
+    const result = await runOtherMonitorScheduled(
+      controller,
+      env,
+      ctx,
+      options.dependencies || EMPTY_DEPENDENCIES,
+    );
+    const first = result?.[0];
+    const scheduledAt = scheduledTimestamp(controller);
+    const deferredHeartbeat = options === EMPTY_OPTIONS
+      && first?.dispatched === true
+      && await dispatchSuccessRecord(env, scheduledAt);
+    if (!deferredHeartbeat) await recordSuccess(env, scheduledAt);
     return result;
   } catch (error) {
     await recordFailure(env, error).catch(() => {});
@@ -118,21 +202,117 @@ export async function runOtherMonitorCron(controller, env, ctx, options = {}) {
   }
 }
 
-export async function runOtherMonitorQueue(batch, env) {
-  const messageType = String(batch?.messages?.[0]?.body?.message_type || '');
-  if (messageType === 'buddy-playback-stage') {
-    return runBuddyPlaybackQueue(batch, env);
-  }
-  if (messageType === 'host-monitor-task') {
-    return runHostMonitorQueue(batch, env);
-  }
-  for (const message of batch?.messages || []) {
+async function processHostSelection(message, env) {
+  const body = message.body;
+  const now = scheduledTimestamp({ scheduledTime: body?.scheduled_at });
+  try {
+    const due = await officialNewsProbeDue(env, now);
+    const dispatched = due
+      ? await dispatchDeferredTask(env, 'officialNews', now)
+      : await dispatchHostMonitor(env, now);
+    if (!dispatched) throw new Error('HOST_MONITOR_QUEUE binding is missing');
+    console.log(JSON.stringify({
+      event: 'other_monitor_selection_dispatched',
+      task: dispatched.task,
+      scheduled_at: now,
+    }));
+    message.ack();
+  } catch (error) {
     console.error(JSON.stringify({
-      event: 'other_monitor_queue_task_failed',
-      error: `unsupported monitor queue task: ${String(message?.body?.message_type || 'unknown')}`,
+      event: 'other_monitor_selection_failed',
+      error: String(error?.message || error).slice(0, 800),
     }));
     message.retry();
   }
+}
+
+async function processDeferredTask(message, env, ctx) {
+  const body = message.body;
+  const task = body?.task;
+  if (task !== 'prediction' && task !== 'officialNews') {
+    console.error(JSON.stringify({
+      event: 'other_monitor_queue_task_failed',
+      error: `unsupported deferred monitor task: ${String(task || 'unknown')}`,
+    }));
+    message.retry();
+    return;
+  }
+  const now = scheduledTimestamp({ scheduledTime: body?.scheduled_at });
+  try {
+    const result = task === 'officialNews'
+      ? await processOfficialNewsStage(env, { stage: 'probe', scheduledAt: now })
+      : await runDirectTask(task, env, ctx, now, EMPTY_DEPENDENCIES);
+    console.log(JSON.stringify({
+      event: 'other_monitor_task_completed',
+      task,
+      stage: result?.stage ?? null,
+      scheduled_at: now,
+      pending: result?.pending === true,
+      skipped: result?.skipped === true,
+      reason: result?.reason ?? null,
+    }));
+    message.ack();
+  } catch (error) {
+    console.error(JSON.stringify({
+      event: 'other_monitor_task_failed',
+      task,
+      error: String(error?.message || error).slice(0, 800),
+    }));
+    message.retry();
+  }
+}
+
+async function processOfficialNewsStageMessage(message, env) {
+  try {
+    const task = officialNewsStageTask(message.body);
+    const result = await processOfficialNewsStage(env, task);
+    console.log(JSON.stringify({
+      event: 'other_official_news_stage_completed',
+      stage: result?.stage || task.stage,
+      scheduled_at: task.scheduledAt,
+      pending: result?.pending === true,
+      skipped: result?.skipped === true,
+      reason: result?.reason ?? null,
+    }));
+    message.ack();
+  } catch (error) {
+    console.error(JSON.stringify({
+      event: 'other_official_news_stage_failed',
+      error: String(error?.message || error).slice(0, 800),
+    }));
+    message.retry();
+  }
+}
+
+async function processSuccessRecord(message, env) {
+  try {
+    await recordOtherCronSuccessFast(env, Number(message.body?.at) || Date.now());
+    message.ack();
+  } catch (error) {
+    console.error(JSON.stringify({
+      event: 'other_monitor_success_record_failed',
+      error: String(error?.message || error).slice(0, 800),
+    }));
+    message.retry();
+  }
+}
+
+export async function runOtherMonitorQueue(batch, env, ctx) {
+  const messages = batch?.messages;
+  if (!messages?.length) return;
+  const message = messages[0];
+  const messageType = message?.body?.message_type;
+  if (messageType === 'buddy-playback-stage') return runBuddyPlaybackQueue(batch, env);
+  if (messageType === 'host-monitor-task') return runHostMonitorQueue(batch, env);
+  if (messageType === OTHER_SELECT_MESSAGE) return processHostSelection(message, env);
+  if (messageType === OTHER_TASK_MESSAGE) return processDeferredTask(message, env, ctx);
+  if (messageType === OFFICIAL_NEWS_STAGE_MESSAGE) return processOfficialNewsStageMessage(message, env);
+  if (messageType === OTHER_SUCCESS_MESSAGE) return processSuccessRecord(message, env);
+  console.error(JSON.stringify({
+    event: 'other_monitor_queue_task_failed',
+    error: `unsupported monitor queue task: ${String(messageType || 'unknown')}`,
+  }));
+  message.retry();
 }
 
 async function healthApp() {

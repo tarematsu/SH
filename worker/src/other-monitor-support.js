@@ -3,14 +3,42 @@ const OFFICIAL_NEWS_DUE_SQL = `SELECT 1 AS due FROM sh_official_news_announcemen
     (status='scheduled' AND scheduled_at>=? AND scheduled_at<=?) OR status='active'
   ) LIMIT 1`;
 
+let officialNewsProbeModulePromise;
+let officialNewsReconcileModulePromise;
+let officialNewsUtilsModulePromise;
+
+function loadOfficialNewsProbeModule() {
+  officialNewsProbeModulePromise ||= import('./official-news-probe.js');
+  return officialNewsProbeModulePromise;
+}
+
+function loadOfficialNewsReconcileModule() {
+  officialNewsReconcileModulePromise ||= import('./official-news-reconcile.js');
+  return officialNewsReconcileModulePromise;
+}
+
+function loadOfficialNewsUtilsModule() {
+  officialNewsUtilsModulePromise ||= import('./official-news-utils.js');
+  return officialNewsUtilsModulePromise;
+}
+
 function positiveMs(value, fallback) {
+  if (typeof value === 'number') {
+    return Number.isFinite(value) && value > 0 ? value : fallback;
+  }
   const number = Number(value);
   return Number.isFinite(number) && number > 0 ? number : fallback;
 }
 
-export function scheduledTimestamp(controller, fallback = Date.now()) {
-  const value = Number(controller?.scheduledTime);
-  return Number.isFinite(value) && value >= 0 ? value : fallback;
+export function scheduledTimestamp(controller, fallback) {
+  const raw = controller?.scheduledTime;
+  if (typeof raw === 'number') {
+    if (Number.isFinite(raw) && raw >= 0) return raw;
+  } else {
+    const value = Number(raw);
+    if (Number.isFinite(value) && value >= 0) return value;
+  }
+  return fallback ?? Date.now();
 }
 
 export async function officialNewsProbeDue(env, now = Date.now()) {
@@ -32,9 +60,9 @@ export async function officialNewsProbeDue(env, now = Date.now()) {
 }
 
 export async function runOfficialNewsWithReconcile(env, now, probe = null, reconcile = null) {
-  const activeProbe = probe || (await import('./official-news-probe.js')).runOfficialNewsMonitor;
-  const activeReconcile = reconcile || (await import('./official-news-reconcile.js')).reconcileOfficialAnnouncements;
-  const { officialNewsConfig } = await import('./official-news-utils.js');
+  const activeProbe = probe || (await loadOfficialNewsProbeModule()).runOfficialNewsMonitor;
+  const activeReconcile = reconcile || (await loadOfficialNewsReconcileModule()).reconcileOfficialAnnouncements;
+  const { officialNewsConfig } = await loadOfficialNewsUtilsModule();
   const probeEnv = probe ? Object.create(env || null) : env;
   const result = await activeProbe(probeEnv, officialNewsConfig(env), now);
   await activeReconcile(env, now);
