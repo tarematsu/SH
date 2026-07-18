@@ -1,5 +1,6 @@
 import { ingestOptimizedBody } from '../../site/functions/api/ingest.js';
 import { restoreQueueAnalysis } from './queue-analysis-transfer.js';
+import { recordQueueMaterialization } from './queue-materialization.js';
 import { restoreSnapshotAnalysis, savePreparedSnapshot } from './snapshot-analysis-transfer.js';
 
 function validateTask(body) {
@@ -30,7 +31,20 @@ export async function processPersistenceTask(env, body) {
     collector_id: body.collector_id || 'cloudflare-worker',
     data: body.data,
   });
-  return { task, observed_at: observedAt, ...result };
+  const materializationRecorded = await recordQueueMaterialization(
+    env.DB,
+    body.data,
+    body.analysis,
+    observedAt,
+  );
+  return {
+    task,
+    observed_at: observedAt,
+    ...result,
+    total_track_count: Number(body.data?.total_track_count || body.data?.tracks?.length || 0),
+    materialized_track_count: Number(body.data?.materialized_track_count || body.data?.tracks?.length || 0),
+    materialization_recorded: materializationRecorded,
+  };
 }
 
 export default {
