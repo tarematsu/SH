@@ -71,7 +71,7 @@ export async function processTrackMetadataTask(env, body, dependencies = EMPTY_D
         [job],
         dependencies.enrichment || EMPTY_DEPENDENCIES,
       );
-      return { task: kind, job_id: job.jobId, pending: false };
+      return { task: kind, job_id: job.jobId };
     }
     const runner = dependencies.runCommittedSpotifyMetadataEnrichment
       || module.runCommittedSpotifyMetadataEnrichment;
