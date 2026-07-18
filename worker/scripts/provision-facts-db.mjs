@@ -135,31 +135,6 @@ function tableColumnNames(databaseName, table) {
   return new Set(rows.map((row) => String(row.name)));
 }
 
-function refreshPartialRevisionViews() {
-  executeCommand(`DROP VIEW IF EXISTS sh_minute_fact_context_resolved;
-    DROP VIEW IF EXISTS sh_minute_fact_context;
-    CREATE VIEW sh_minute_fact_context AS
-    SELECT v.fact_id,
-      COALESCE(v.station_id_override,s.station_id) AS station_id,
-      COALESCE(v.host_id_override,s.host_id) AS host_id,
-      COALESCE(v.broadcast_start_time_override,s.broadcast_start_time) AS broadcast_start_time,
-      v.queue_revision_id,r.queue_id,r.queue_start_time,
-      COALESCE(r.total_item_count,r.item_count) AS queue_track_count,
-      v.queue_available,i.track_id,v.queue_position,
-      COALESCE((SELECT cc.count_value FROM sh_track_counter_changes cc
-        WHERE cc.occurrence_key='revision:'||CAST(v.queue_revision_id AS TEXT)||':'||CAST(v.queue_position AS TEXT)
-        ORDER BY cc.observed_at DESC,cc.id DESC LIMIT 1),i.bite_count) AS track_bite_count
-    FROM sh_minute_fact_context_v2 v
-    LEFT JOIN sh_minute_facts f ON f.id=v.fact_id
-    LEFT JOIN sh_broadcast_sessions s ON s.id=f.broadcast_session_id
-    LEFT JOIN sh_queue_revisions r ON r.id=v.queue_revision_id
-    LEFT JOIN sh_queue_revision_items i
-      ON i.revision_id=v.queue_revision_id AND i.position=v.queue_position;
-    CREATE VIEW sh_minute_fact_context_resolved AS
-    SELECT fact_id,station_id,host_id,broadcast_start_time
-    FROM sh_minute_fact_context`);
-}
-
 let database = listDatabases().find((item) => item.name === databaseName);
 if (!database) {
   wrangler(['d1', 'create', databaseName]);
@@ -290,9 +265,9 @@ wrangler([
 ]);
 
 let revisionColumns = tableColumnNames(databaseName, 'sh_queue_revisions');
-if (revisionColumns.size > 0 && !revisionColumns.has('total_item_count')) {
-  console.log('Adding total queue size for partial revision coverage...');
-  executeCommand('ALTER TABLE sh_queue_revisions ADD COLUMN total_item_count INTEGER');
+if (revisionColumns.size > 0 && !revisionColumns.has('materialized_item_count')) {
+  console.log('Adding materialized queue coverage count...');
+  executeCommand('ALTER TABLE sh_queue_revisions ADD COLUMN materialized_item_count INTEGER');
   revisionColumns = tableColumnNames(databaseName, 'sh_queue_revisions');
 }
 if (revisionColumns.size > 0 && !revisionColumns.has('coverage_complete')) {
@@ -301,13 +276,14 @@ if (revisionColumns.size > 0 && !revisionColumns.has('coverage_complete')) {
   revisionColumns = tableColumnNames(databaseName, 'sh_queue_revisions');
 }
 if (revisionColumns.size > 0
-    && (!revisionColumns.has('total_item_count') || !revisionColumns.has('coverage_complete'))) {
+    && (!revisionColumns.has('materialized_item_count') || !revisionColumns.has('coverage_complete'))) {
   throw new Error('partial queue revision coverage migration did not complete');
 }
-executeCommand('UPDATE sh_queue_revisions SET total_item_count=item_count WHERE total_item_count IS NULL');
+executeCommand(`UPDATE sh_queue_revisions
+  SET materialized_item_count=item_count
+  WHERE materialized_item_count IS NULL`);
 executeCommand(`CREATE INDEX IF NOT EXISTS idx_sh_queue_revisions_coverage
   ON sh_queue_revisions(channel_id,coverage_complete,effective_at DESC)`);
-refreshPartialRevisionViews();
 
 writeFileSync(metadataPath, `${JSON.stringify({
   binding: 'MINUTE_DB',
