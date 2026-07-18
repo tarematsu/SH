@@ -1,4 +1,4 @@
-name: Apply host monitor split
+name: Diagnose host monitor split
 
 on:
   pull_request:
@@ -8,7 +8,7 @@ permissions:
   contents: write
 
 jobs:
-  apply:
+  diagnose:
     if: github.head_ref == 'agent/cpu-under-10-root-rework'
     runs-on: ubuntu-latest
     steps:
@@ -16,19 +16,20 @@ jobs:
         with:
           ref: ${{ github.head_ref }}
           fetch-depth: 0
-      - name: Apply reviewed patch
+      - name: Capture patch diagnostics
         shell: bash
         run: |
-          set -euo pipefail
+          set -u
           cat .github/agent-host-split.patch.*.b64 > /tmp/agent-host-split.patch.b64
-          base64 -d /tmp/agent-host-split.patch.b64 > /tmp/agent-host-split.patch
-          echo "9fdb3cda4a9cac265165ffdd3192fdf2b28d40897e6b4c6d671c98656488cdee  /tmp/agent-host-split.patch" | sha256sum -c -
-          git apply --check /tmp/agent-host-split.patch
-          git apply /tmp/agent-host-split.patch
-          sed -i '/^# Temporary R2-only verification trigger;/d' .github/workflows/fetch-cloudflare-observability.yml
-          rm .github/agent-host-split.patch.*.b64 .github/workflows/agent-host-split.yml
+          base64 -d /tmp/agent-host-split.patch.b64 > /tmp/agent-host-split.patch 2>/tmp/base64-error.txt
+          {
+            wc -c /tmp/agent-host-split.patch.b64 /tmp/agent-host-split.patch
+            sha256sum /tmp/agent-host-split.patch
+            cat /tmp/base64-error.txt
+            git apply --check /tmp/agent-host-split.patch
+          } > .github/agent-host-split-debug.txt 2>&1
           git config user.name "openai-agent"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -A
-          git commit -m "Isolate host monitor CPU work"
+          git add .github/agent-host-split-debug.txt
+          git commit -m "Capture host split patch diagnostics"
           git push origin HEAD:${{ github.head_ref }}
