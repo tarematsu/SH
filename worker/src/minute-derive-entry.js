@@ -4,7 +4,10 @@ import {
 
 export default {
   async queue(batch, env) {
-    for (const message of batch.messages || []) {
+    const messages = batch.messages;
+    const messageCount = messages?.length || 0;
+    for (let index = 0; index < messageCount; index += 1) {
+      const message = messages[index];
       try {
         const result = await processMinuteDeriveMessage(env, message.body);
         console.log(JSON.stringify(result));
