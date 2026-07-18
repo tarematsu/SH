@@ -17,6 +17,7 @@ const DEFAULT_JOB_TIMEOUT_MS = 18_000;
 const DEFAULT_LEASE_MS = 60_000;
 const DEFAULT_MAX_ATTEMPTS = 8;
 const DEFAULT_RUN_BUDGET_MS = 50_000;
+const DEFAULT_STATS_INTERVAL_MS = 60 * 60_000;
 
 function positiveInteger(value, fallback, maximum = Number.MAX_SAFE_INTEGER) {
   const parsed = Math.trunc(Number(value));
@@ -31,6 +32,7 @@ export function deriveConfig(env = {}) {
     leaseMs: positiveInteger(env.DERIVE_LEASE_MS, DEFAULT_LEASE_MS, 10 * 60_000),
     maxAttempts: positiveInteger(env.DERIVE_MAX_ATTEMPTS, DEFAULT_MAX_ATTEMPTS, 100),
     runBudgetMs: positiveInteger(env.DERIVE_RUN_BUDGET_MS, DEFAULT_RUN_BUDGET_MS, 55_000),
+    statsIntervalMs: positiveInteger(env.DERIVE_STATS_INTERVAL_MS, DEFAULT_STATS_INTERVAL_MS, 24 * 60 * 60_000),
   };
 }
 
@@ -152,13 +154,19 @@ export async function runMinuteFactDeriveCron(env, dependencies = {}) {
     if (jobs.length < claimLimit) break;
   }
 
-  try {
-    Object.assign(summary, await stats(env));
-  } catch (error) {
-    console.warn(JSON.stringify({
-      event: 'minute_fact_inbox_stats_failed',
-      error: sanitizeFailureDetail(error?.message || error),
-    }));
+  const statsDue = Boolean(dependencies.stats)
+    || startedAt % config.statsIntervalMs < 60_000;
+  if (statsDue) {
+    try {
+      Object.assign(summary, await stats(env));
+    } catch (error) {
+      console.warn(JSON.stringify({
+        event: 'minute_fact_inbox_stats_failed',
+        error: sanitizeFailureDetail(error?.message || error),
+      }));
+    }
+  } else {
+    summary.stats_skipped = true;
   }
 
   summary.duration_ms = Math.max(0, nowFn() - startedAt);
