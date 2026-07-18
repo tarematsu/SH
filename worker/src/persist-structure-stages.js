@@ -271,6 +271,28 @@ function queueCurrentStatement(db, data, plan, observedAt) {
     ), 8);
 }
 
+function queueSnapshotStatement(db, data, structuralPayload, observedAt, plan) {
+  return prepared(db.prepare(`INSERT INTO sh_queue_snapshots (
+      observed_at,station_id,queue_id,start_time,is_paused,raw_json
+    ) SELECT ?,?,?,?,?,?
+    WHERE NOT EXISTS (
+      SELECT 1 FROM sh_queue_snapshots
+      WHERE observed_at=? AND station_id IS ? AND queue_id IS ? AND start_time IS ?
+      LIMIT 1
+    )`).bind(
+    observedAt,
+    plan.station_id,
+    plan.queue_id,
+    plan.start_time,
+    bool(data?.is_paused),
+    rawJson(structuralPayload),
+    observedAt,
+    plan.station_id,
+    plan.queue_id,
+    plan.start_time,
+  ), 10);
+}
+
 export async function commitQueueStructurePersistence(db, body, observedAt, plan) {
   if (!plan?.structure_changed || plan?.blocked) {
     return {
@@ -297,16 +319,7 @@ export async function commitQueueStructurePersistence(db, body, observedAt, plan
   statements.push(...queueItemStatements(db, changedTracks, observedAt, plan));
   if (!plan.stale_current) statements.push(queueCurrentStatement(db, data, plan, observedAt));
   if (plan.claim?.accepted) {
-    statements.unshift(prepared(db.prepare(`INSERT INTO sh_queue_snapshots (
-        observed_at,station_id,queue_id,start_time,is_paused,raw_json
-      ) VALUES (?,?,?,?,?,?)`).bind(
-      observedAt,
-      plan.station_id,
-      plan.queue_id,
-      plan.start_time,
-      bool(data?.is_paused),
-      rawJson(structuralPayload),
-    ), 6));
+    statements.unshift(queueSnapshotStatement(db, data, structuralPayload, observedAt, plan));
   }
   await runPreparedD1Batches(db, statements, {
     variableLimit: VARIABLE_LIMIT,
