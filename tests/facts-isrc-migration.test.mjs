@@ -30,7 +30,7 @@ test('facts provisioner adds both required ISRC columns before partial revision 
   assert.match(provisioner, /!trackMetadataColumns\.has\('isrc'\)/);
   assert.match(provisioner, /sh_track_metadata\.isrc migration did not complete/);
   assert.match(provisioner, /016_track_metadata_isrc\.sql/);
-  assert.match(provisioner, /total_item_count/);
+  assert.match(provisioner, /materialized_item_count/);
   assert.match(provisioner, /coverage_complete/);
 
   assert.ok(position(provisioner, tracksColumnCheck) < position(provisioner, tracksAlter));
