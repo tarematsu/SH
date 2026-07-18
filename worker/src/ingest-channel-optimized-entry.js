@@ -116,8 +116,8 @@ async function processIngestBatch(batch, env) {
       event,
       error: String(error?.message || error).slice(0, 800),
     }));
-    const retryDelaySeconds = error?.retryDelaySeconds;
-    if (typeof retryDelaySeconds === 'number' && retryDelaySeconds > 0) {
+    const retryDelaySeconds = Number(error?.retryDelaySeconds);
+    if (retryDelaySeconds > 0) {
       message.retry({ delaySeconds: Math.max(1, retryDelaySeconds) });
     } else {
       message.retry();
