@@ -65,16 +65,16 @@ test('track history ranges split into one-day shards', () => {
   assert.deepEqual(splitTrackHistoryRange(null), []);
 });
 
-test('full daily stage fits inside the first cycle hour free slots', () => {
+test('monthly full reconciliation and bounded backfill fit inside the first cycle hour', () => {
   const stage = createTrackHistoryCycleStage(BASE, null, {});
   assert.equal(stage.generation, BASE);
   assert.equal(stage.refresh_mode, 'full');
   assert.equal(stage.tasks.filter(({ kind }) => kind === 'recent').length, 36);
-  assert.equal(stage.tasks.filter(({ kind }) => kind === 'backfill').length, 7);
-  assert.equal(stage.tasks.length + 1 <= 57, true, '43 shards plus one publication must fit');
+  assert.equal(stage.tasks.filter(({ kind }) => kind === 'backfill').length, 1);
+  assert.equal(stage.tasks.length + 1 <= 57, true, '37 shards plus one publication must fit');
 });
 
-test('same-day stage refreshes four recent days when backfill is complete', () => {
+test('same-month stage refreshes two recent days when backfill is complete', () => {
   const initial = incrementalState();
   const stage = createTrackHistoryCycleStage(
     BASE,
@@ -82,7 +82,7 @@ test('same-day stage refreshes four recent days when backfill is complete', () =
     initial[STATUS_KEY],
   );
   assert.equal(stage.refresh_mode, 'incremental');
-  assert.equal(stage.tasks.length, 4);
+  assert.equal(stage.tasks.length, 2);
   assert.equal(stage.tasks.every(({ kind }) => kind === 'recent'), true);
 });
 
@@ -115,27 +115,22 @@ test('unfinished stage is adopted by the next cycle and publishes once', async (
   const first = await runTrackHistoryCycleStep(env, BASE + MINUTE_MS, dependencies);
   assert.equal(first.task.generation, BASE);
   assert.equal(first.completed, 1);
-  await runTrackHistoryCycleStep(env, BASE + 2 * MINUTE_MS, dependencies);
+  const second = await runTrackHistoryCycleStep(env, BASE + 2 * MINUTE_MS, dependencies);
+  assert.equal(second.completed, 2);
 
   const nextCycle = BASE + TRACK_HISTORY_CYCLE_MS;
-  const third = await runTrackHistoryCycleStep(env, nextCycle + MINUTE_MS, dependencies);
-  const fourth = await runTrackHistoryCycleStep(env, nextCycle + 2 * MINUTE_MS, dependencies);
-  assert.equal(third.task.generation, nextCycle);
-  assert.equal(fourth.completed, 4);
-  assert.equal(published.length, 0);
-
-  const publication = await runTrackHistoryCycleStep(env, nextCycle + 3 * MINUTE_MS, dependencies);
+  const publication = await runTrackHistoryCycleStep(env, nextCycle + MINUTE_MS, dependencies);
   assert.equal(publication.task.kind, 'track-history-publish');
   assert.equal(publication.task.generation, nextCycle);
   assert.equal(publication.failed, 0);
   assert.equal(published.length, 1);
-  assert.equal(refreshed.length, 4);
+  assert.equal(refreshed.length, 2);
   assert.equal(memory.state.get(TRACK_HISTORY_STAGE_KEY).published, true);
   assert.equal(memory.state.get(TRACK_HISTORY_STAGE_KEY).generation, nextCycle);
   assert.equal(memory.state.get(STATUS_KEY).row_count, 99);
   assert.equal(memory.state.get(BACKFILL_KEY).completed, true);
 
-  const sameCycle = await runTrackHistoryCycleStep(env, nextCycle + 4 * MINUTE_MS, dependencies);
+  const sameCycle = await runTrackHistoryCycleStep(env, nextCycle + 2 * MINUTE_MS, dependencies);
   assert.equal(sameCycle.skipped, true);
   assert.equal(sameCycle.reason, 'track-history-cycle-already-published');
 });
@@ -151,7 +146,7 @@ test('failed publication retries without repeating completed shards', async () =
       refreshCalls += 1;
       return shardResult(range);
     },
-    coverage: async () => ({ recent_row_count: 4 }),
+    coverage: async () => ({ recent_row_count: 2 }),
     publish: async () => {
       publishCalls += 1;
       return publishCalls === 1
@@ -160,16 +155,16 @@ test('failed publication retries without repeating completed shards', async () =
     },
   };
 
-  for (let minute = 1; minute <= 4; minute += 1) {
+  for (let minute = 1; minute <= 2; minute += 1) {
     await runTrackHistoryCycleStep(env, BASE + minute * MINUTE_MS, dependencies);
   }
-  const failed = await runTrackHistoryCycleStep(env, BASE + 5 * MINUTE_MS, dependencies);
+  const failed = await runTrackHistoryCycleStep(env, BASE + 3 * MINUTE_MS, dependencies);
   assert.equal(failed.failed, 1);
   assert.equal(memory.state.get(TRACK_HISTORY_STAGE_KEY).published, false);
 
-  const retried = await runTrackHistoryCycleStep(env, BASE + 6 * MINUTE_MS, dependencies);
+  const retried = await runTrackHistoryCycleStep(env, BASE + 4 * MINUTE_MS, dependencies);
   assert.equal(retried.failed, 0);
   assert.equal(memory.state.get(TRACK_HISTORY_STAGE_KEY).published, true);
-  assert.equal(refreshCalls, 4);
+  assert.equal(refreshCalls, 2);
   assert.equal(publishCalls, 2);
 });
