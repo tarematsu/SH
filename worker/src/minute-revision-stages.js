@@ -66,7 +66,7 @@ async function revisionProgress(db, revisionId) {
   };
 }
 
-export async function prepareLiveRevisionStage(env, payload) {
+export async function prepareLiveRevisionStage(env, payload, dependencies = {}) {
   const db = env?.MINUTE_DB;
   if (!db) throw new Error('minute revision stage MINUTE_DB binding is missing');
   if (!shouldStageLiveRevision(env, payload)) return { staged: false };
@@ -78,7 +78,8 @@ export async function prepareLiveRevisionStage(env, payload) {
   const channelId = integer(snapshot.channel_id);
   if (channelId == null) throw new Error('minute revision stage channel identity is missing');
   const stationId = integer(snapshot.station_id ?? queue.station_id);
-  const sessionId = await resolveLiveSession(db, {
+  const resolveSession = dependencies.resolveLiveSession || resolveLiveSession;
+  const sessionId = await resolveSession(db, {
     channelId,
     stationId,
     hostId: null,
@@ -90,7 +91,8 @@ export async function prepareLiveRevisionStage(env, payload) {
   const targetCount = structure.tracks.length;
   const structuralHash = await queueStructuralHash(queue, structure);
   const queueStart = timestampMs(queue.start_time);
-  let revision = await findReusableRevision(db, {
+  const findRevision = dependencies.findReusableRevision || findReusableRevision;
+  let revision = await findRevision(db, {
     channelId,
     sessionId,
     queueStart,
@@ -98,7 +100,7 @@ export async function prepareLiveRevisionStage(env, payload) {
   });
 
   if (!revision) {
-    await db.prepare(`INSERT OR IGNORE INTO sh_queue_revisions(
+    const insertRevision = dependencies.insertRevision || (async () => db.prepare(`INSERT OR IGNORE INTO sh_queue_revisions(
         session_id,channel_id,station_id,queue_id,queue_start_time,effective_at,received_at,
         structural_hash,item_count,status,source,source_priority
       ) VALUES(?,?,?,?,?,?,?,?,?,'pending','live_collector',100)`)
@@ -113,8 +115,9 @@ export async function prepareLiveRevisionStage(env, payload) {
         structuralHash,
         targetCount,
       )
-      .run();
-    revision = await findReusableRevision(db, {
+      .run());
+    await insertRevision();
+    revision = await findRevision(db, {
       channelId,
       sessionId,
       queueStart,
@@ -124,7 +127,8 @@ export async function prepareLiveRevisionStage(env, payload) {
 
   const revisionId = Number(revision?.id);
   if (!Number.isFinite(revisionId)) throw new Error('failed to create or resume staged queue revision');
-  const progress = await revisionProgress(db, revisionId);
+  const loadProgress = dependencies.revisionProgress || revisionProgress;
+  const progress = await loadProgress(db, revisionId);
   if (progress.cursor >= targetCount) {
     return {
       staged: false,
