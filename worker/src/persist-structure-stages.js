@@ -63,6 +63,11 @@ function compactClaim(claim, structuralHash) {
   };
 }
 
+function claimNeedsSnapshot(claim, observedAt) {
+  return claim?.accepted === true
+    || (claim?.duplicate === true && num(claim?.existing?.observed_at) === observedAt);
+}
+
 export async function prepareQueueStructurePersistence(db, body, observedAt) {
   const data = body?.data || {};
   const structuralPayload = body?.analysis?.structural || queueStructuralPayload(data);
@@ -88,6 +93,7 @@ export async function prepareQueueStructurePersistence(db, body, observedAt) {
   if (current?.structural_hash === structuralHash) {
     return {
       structure_changed: false,
+      snapshot_required: false,
       stale_current: staleCurrent,
       station_id: stationId,
       queue_id: queueId,
@@ -117,6 +123,7 @@ export async function prepareQueueStructurePersistence(db, body, observedAt) {
   if (!claim.accepted && !claim.duplicate) {
     return {
       structure_changed: false,
+      snapshot_required: false,
       blocked: true,
       stale_current: staleCurrent,
       station_id: stationId,
@@ -135,6 +142,7 @@ export async function prepareQueueStructurePersistence(db, body, observedAt) {
   const changedTracks = queueItemsToWriteLean(tracks, existingRows, queueId);
   return {
     structure_changed: true,
+    snapshot_required: claimNeedsSnapshot(claim, observedAt),
     stale_current: staleCurrent,
     station_id: stationId,
     queue_id: queueId,
@@ -318,7 +326,7 @@ export async function commitQueueStructurePersistence(db, body, observedAt, plan
   }
   statements.push(...queueItemStatements(db, changedTracks, observedAt, plan));
   if (!plan.stale_current) statements.push(queueCurrentStatement(db, data, plan, observedAt));
-  if (plan.claim?.accepted) {
+  if (plan.snapshot_required === true) {
     statements.unshift(queueSnapshotStatement(db, data, structuralPayload, observedAt, plan));
   }
   await runPreparedD1Batches(db, statements, {
