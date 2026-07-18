@@ -1,9 +1,14 @@
 import { ingestOptimizedBody } from '../../site/functions/api/ingest.js';
 import { restoreQueueAnalysis } from './queue-analysis-transfer.js';
 import { recordQueueMaterialization } from './queue-materialization.js';
+import {
+  commitQueueStructurePersistence,
+  prepareQueueStructurePersistence,
+} from './persist-structure-stages.js';
 import { restoreSnapshotAnalysis, savePreparedSnapshot } from './snapshot-analysis-transfer.js';
 
 const QUEUE_STAGE_PERSIST = 'persist';
+const QUEUE_STAGE_STRUCTURE_WRITE = 'structure-write';
 const QUEUE_STAGE_LIKES = 'likes';
 const QUEUE_STAGE_FINALIZE = 'finalize';
 const EMPTY_DEPENDENCIES = Object.freeze({});
@@ -28,6 +33,7 @@ function validateTask(body) {
   if (task !== 'queue') return { task, observedAt, stage: null };
   const stage = body.stage == null ? QUEUE_STAGE_PERSIST : body.stage;
   if (stage !== QUEUE_STAGE_PERSIST
+      && stage !== QUEUE_STAGE_STRUCTURE_WRITE
       && stage !== QUEUE_STAGE_LIKES
       && stage !== QUEUE_STAGE_FINALIZE) {
     throw new Error(`unsupported persistence queue stage: ${String(stage)}`);
@@ -82,27 +88,6 @@ function compactMetadataQueue(data) {
   };
 }
 
-function structuralQueueData(data, analysis) {
-  const preparedTracks = analysis?.structural?.tracks;
-  if (Array.isArray(preparedTracks)) return { ...data, tracks: preparedTracks };
-  const sourceTracks = Array.isArray(data?.tracks) ? data.tracks : EMPTY_TRACKS;
-  const tracks = new Array(sourceTracks.length);
-  for (let index = 0; index < sourceTracks.length; index += 1) {
-    const source = sourceTracks[index] || {};
-    tracks[index] = {
-      position: source.position ?? index,
-      queue_track_id: source.queue_track_id ?? null,
-      stationhead_track_id: source.stationhead_track_id ?? null,
-      spotify_id: source.spotify_id ?? null,
-      deezer_id: source.deezer_id ?? null,
-      isrc: source.isrc ?? null,
-      duration_ms: source.duration_ms ?? null,
-      preview_url: source.preview_url ?? null,
-    };
-  }
-  return { ...data, tracks };
-}
-
 async function enqueueQueueMetadata(env, body, observedAt, result, dependencies = EMPTY_DEPENDENCIES) {
   const requested = body.metadata_requested === true || result?.structure_changed === true;
   const queue = body.metadata_queue || body.data;
@@ -144,6 +129,21 @@ async function sendPersistenceContinuation(env, continuation, dependencies) {
   return true;
 }
 
+async function enqueueStructureWrite(env, body, observedAt, plan, dependencies = EMPTY_DEPENDENCIES) {
+  return sendPersistenceContinuation(env, {
+    message_type: 'stationhead-persistence-task',
+    message_version: 1,
+    task: 'queue',
+    stage: QUEUE_STAGE_STRUCTURE_WRITE,
+    observed_at: observedAt,
+    collector_id: body.collector_id || 'cloudflare-worker',
+    data: body.data,
+    analysis: body.analysis || null,
+    structure_plan: plan,
+    metadata_requested: body.metadata_requested === true || plan?.structure_changed === true,
+  }, dependencies);
+}
+
 async function enqueueQueueLikes(env, body, observedAt, result, dependencies = EMPTY_DEPENDENCIES) {
   return sendPersistenceContinuation(env, {
     message_type: 'stationhead-persistence-task',
@@ -154,12 +154,15 @@ async function enqueueQueueLikes(env, body, observedAt, result, dependencies = E
     collector_id: body.collector_id || 'cloudflare-worker',
     data: body.data,
     analysis: body.analysis || null,
-    metadata_requested: body.metadata_requested === true || result?.structure_changed === true,
+    metadata_requested: body.metadata_requested === true || result?.structureChanged === true
+      || result?.structure_changed === true,
   }, dependencies);
 }
 
 async function enqueueQueueFinalization(env, body, observedAt, result, dependencies = EMPTY_DEPENDENCIES) {
-  const metadataRequested = body.metadata_requested === true || result?.structure_changed === true;
+  const metadataRequested = body.metadata_requested === true
+    || result?.structureChanged === true
+    || result?.structure_changed === true;
   const continuation = {
     message_type: 'stationhead-persistence-task',
     message_version: 1,
@@ -195,14 +198,38 @@ async function finalizeQueuePersistence(env, body, observedAt, result, dependenc
   };
 }
 
-async function runQueueIngest(env, body, observedAt, data, dependencies) {
+async function runQueueLikesIngest(env, body, observedAt, dependencies) {
   const runIngest = dependencies.ingestOptimizedBody || ingestOptimizedBody;
+  restoreQueueAnalysis(body.data, body.analysis);
   return runIngest(env, {
     type: 'queue',
     observed_at: observedAt,
     collector_id: body.collector_id || 'cloudflare-worker',
-    data,
+    data: body.data,
   });
+}
+
+async function finishLikesStage(env, body, observedAt, dependencies) {
+  const result = await runQueueLikesIngest(env, body, observedAt, dependencies);
+  const finalizationDeferred = await enqueueQueueFinalization(
+    env,
+    body,
+    observedAt,
+    result,
+    dependencies,
+  );
+  if (finalizationDeferred) {
+    return {
+      result,
+      finalizationDeferred,
+      finalized: queueCounts(body.data),
+    };
+  }
+  return {
+    result,
+    finalizationDeferred,
+    finalized: await finalizeQueuePersistence(env, body, observedAt, result, dependencies),
+  };
 }
 
 export async function processPersistenceTask(env, body, dependencies = EMPTY_DEPENDENCIES) {
@@ -224,77 +251,79 @@ export async function processPersistenceTask(env, body, dependencies = EMPTY_DEP
       finalization_deferred: false,
     };
   }
-
   if (stage === QUEUE_STAGE_LIKES) {
-    restoreQueueAnalysis(body.data, body.analysis);
-    const result = await runQueueIngest(env, body, observedAt, body.data, dependencies);
-    const finalizationDeferred = await enqueueQueueFinalization(
-      env,
-      body,
-      observedAt,
-      result,
-      dependencies,
-    );
-    if (finalizationDeferred) {
-      const counts = queueCounts(body.data);
+    const finished = await finishLikesStage(env, body, observedAt, dependencies);
+    return {
+      task,
+      stage,
+      observed_at: observedAt,
+      ...finished.result,
+      ...finished.finalized,
+      finalization_deferred: finished.finalizationDeferred,
+    };
+  }
+  if (stage === QUEUE_STAGE_STRUCTURE_WRITE) {
+    const commit = dependencies.commitQueueStructurePersistence || commitQueueStructurePersistence;
+    const result = await commit(env.DB, body, observedAt, body.structure_plan || null);
+    const likesDeferred = await enqueueQueueLikes(env, body, observedAt, result, dependencies);
+    if (likesDeferred) {
       return {
         task,
         stage,
         observed_at: observedAt,
         ...result,
-        total_track_count: counts.total_track_count,
-        materialized_track_count: counts.materialized_track_count,
+        ...queueCounts(body.data),
+        likes_deferred: true,
         finalization_deferred: true,
       };
     }
-    const finalized = await finalizeQueuePersistence(env, body, observedAt, result, dependencies);
+    const finished = await finishLikesStage(env, {
+      ...body,
+      metadata_requested: body.metadata_requested === true || result?.structureChanged === true,
+    }, observedAt, dependencies);
     return {
       task,
       stage,
       observed_at: observedAt,
       ...result,
-      ...finalized,
-      finalization_deferred: false,
+      ...finished.result,
+      ...finished.finalized,
+      likes_deferred: false,
+      finalization_deferred: finished.finalizationDeferred,
     };
   }
 
-  const result = await runQueueIngest(
-    env,
-    body,
-    observedAt,
-    structuralQueueData(body.data, body.analysis),
-    dependencies,
-  );
-  const likesDeferred = await enqueueQueueLikes(env, body, observedAt, result, dependencies);
-  if (likesDeferred) {
-    const counts = queueCounts(body.data);
+  const prepare = dependencies.prepareQueueStructurePersistence || prepareQueueStructurePersistence;
+  const plan = await prepare(env.DB, body, observedAt);
+  const writeDeferred = await enqueueStructureWrite(env, body, observedAt, plan, dependencies);
+  if (writeDeferred) {
     return {
       task,
       stage,
       observed_at: observedAt,
-      ...result,
-      total_track_count: counts.total_track_count,
-      materialized_track_count: counts.materialized_track_count,
-      likes_deferred: true,
+      ...queueCounts(body.data),
+      structure_changed: plan?.structure_changed === true,
+      structure_write_deferred: true,
       finalization_deferred: true,
     };
   }
 
-  restoreQueueAnalysis(body.data, body.analysis);
-  const likesResult = await runQueueIngest(env, body, observedAt, body.data, dependencies);
-  const finalized = await finalizeQueuePersistence(env, body, observedAt, {
-    ...likesResult,
-    structure_changed: result?.structure_changed === true,
-  }, dependencies);
+  const commit = dependencies.commitQueueStructurePersistence || commitQueueStructurePersistence;
+  const structureResult = await commit(env.DB, body, observedAt, plan);
+  const finished = await finishLikesStage(env, {
+    ...body,
+    metadata_requested: body.metadata_requested === true || structureResult?.structureChanged === true,
+  }, observedAt, dependencies);
   return {
     task,
     stage,
     observed_at: observedAt,
-    ...result,
-    ...likesResult,
-    ...finalized,
+    ...structureResult,
+    ...finished.result,
+    ...finished.finalized,
+    structure_write_deferred: false,
     likes_deferred: false,
-    finalization_deferred: false,
+    finalization_deferred: finished.finalizationDeferred,
   };
 }
 
