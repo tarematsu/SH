@@ -19,9 +19,11 @@ test('persistence reuses queue options and avoids validation arrays and sender c
   assert.match(entry, /const EMPTY_DEPENDENCIES = Object\.freeze/);
   assert.match(entry, /const JSON_QUEUE_SEND_OPTIONS = Object\.freeze/);
   assert.doesNotMatch(entry, /\['snapshot', 'queue'\]\.includes/);
-  assert.doesNotMatch(entry, /\[QUEUE_STAGE_PERSIST, QUEUE_STAGE_FINALIZE\]\.includes/);
+  assert.doesNotMatch(entry, /\[QUEUE_STAGE_PERSIST, QUEUE_STAGE_LIKES, QUEUE_STAGE_FINALIZE\]\.includes/);
   assert.match(entry, /const tracks = new Array\(sourceTracks\.length\)/);
-  assert.match(entry, /persistQueue\.send\(continuation, JSON_QUEUE_SEND_OPTIONS\)/);
+  assert.match(entry, /async function sendPersistenceContinuation/);
+  assert.match(entry, /env\.PERSIST_QUEUE\.send\(continuation, JSON_QUEUE_SEND_OPTIONS\)/);
+  assert.equal(entry.split('JSON_QUEUE_SEND_OPTIONS').length - 1, 3);
 });
 
 test('deployed persistence wrapper logs stable compact fields', () => {
