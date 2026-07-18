@@ -4,7 +4,7 @@ function validateTask(body) {
     throw new Error('unsupported minute rebuild task');
   }
   const stage = String(body.stage || '');
-  if (!['gap-scan', 'backfill', 'backfill-prepare', 'backfill-commit'].includes(stage)) {
+  if (!['gap-scan', 'gap-commit', 'backfill', 'backfill-prepare', 'backfill-commit'].includes(stage)) {
     throw new Error(`unsupported minute rebuild stage: ${stage}`);
   }
   return {
@@ -58,10 +58,44 @@ export async function processMinuteRebuildStage(env, body, dependencies = {}) {
 
   try {
     if (task.stage === 'gap-scan') {
-      const run = dependencies.runGapScan
-        || (await import('./minute-facts-gap-scan.js')).runMinuteFactsGapScan;
-      const result = await run(active, dependencies.gapScan || {});
-      await record(env, task, result, startedAt);
+      // Compatibility path for tests and rollback callers that still inject the
+      // former single-invocation scanner.
+      if (dependencies.runGapScan) {
+        const result = await dependencies.runGapScan(active, dependencies.gapScan || {});
+        await record(env, task, result, startedAt);
+        await enqueue(env, task, 'backfill');
+        return { stage: task.stage, run_id: task.runId, pending: true, result };
+      }
+
+      const stages = await import('./minute-facts-gap-scan.js');
+      const prepare = dependencies.prepareGapScan || stages.prepareMinuteFactsGapScan;
+      const prepared = await prepare(active, dependencies.gapScan || {});
+      if (prepared?.skipped) {
+        await record(env, task, prepared, startedAt);
+        await enqueue(env, task, 'backfill');
+        return { stage: task.stage, run_id: task.runId, pending: true, result: prepared };
+      }
+      await enqueue(env, task, 'gap-commit', 0, { prepared });
+      return {
+        stage: task.stage,
+        run_id: task.runId,
+        pending: true,
+        result: {
+          event: 'minute_fact_gap_scan_prepared',
+          from: prepared.from,
+          to: prepared.to,
+          expected_minutes: prepared.expected_minutes,
+          missing_minutes: prepared.missing_minutes,
+          attempted_jobs: prepared.attempted?.length || 0,
+        },
+      };
+    }
+
+    if (task.stage === 'gap-commit') {
+      const stages = await import('./minute-facts-gap-scan.js');
+      const commit = dependencies.commitGapScan || stages.commitMinuteFactsGapScan;
+      const result = await commit(active, task.prepared, dependencies.gapScan || {});
+      await record(env, { ...task, stage: 'gap-scan' }, result, startedAt);
       await enqueue(env, task, 'backfill');
       return { stage: task.stage, run_id: task.runId, pending: true, result };
     }
@@ -110,7 +144,7 @@ export async function processMinuteRebuildStage(env, body, dependencies = {}) {
     else await enqueue(env, task, 'backfill', 1);
     return { stage: task.stage, run_id: task.runId, pending: true, result };
   } catch (error) {
-    await record(env, { ...task, stage: task.stage.startsWith('backfill') ? 'backfill' : task.stage }, {
+    await record(env, { ...task, stage: task.stage.startsWith('backfill') ? 'backfill' : task.stage === 'gap-commit' ? 'gap-scan' : task.stage }, {
       error: String(error?.message || error).slice(0, 800),
     }, startedAt, false).catch(() => {});
     throw error;
