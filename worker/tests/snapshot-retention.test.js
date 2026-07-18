@@ -13,6 +13,7 @@ class FakeDb {
     this.lastCleanupAt = lastCleanupAt;
     this.deleteChanges = [...deleteChanges];
     this.calls = [];
+    this.batchCalls = [];
   }
 
   prepare(sql) {
@@ -28,6 +29,13 @@ class FakeDb {
       }),
     };
   }
+
+  async batch(statements) {
+    this.batchCalls.push(statements.length);
+    const results = [];
+    for (const statement of statements) results.push(await statement.run());
+    return results;
+  }
 }
 
 test('snapshotRetentionEnabled defaults to true and honors explicit disable', () => {
@@ -40,7 +48,7 @@ test('shouldRunSnapshotRetention preserves the interval calculation', () => {
   assert.equal(shouldRunSnapshotRetention(3_500_000, 3_600_000, {}), false);
 });
 
-test('retention deletes old raw snapshots in the shared BUDDIES_DB', async () => {
+test('retention deletes old raw snapshots in one normal-path D1 batch', async () => {
   const db = new FakeDb();
   const result = await pruneOldSnapshots({
     BUDDIES_DB: db,
@@ -62,8 +70,21 @@ test('retention deletes old raw snapshots in the shared BUDDIES_DB', async () =>
       sh_ingest_conflicts: 0,
     },
   });
+  assert.deepEqual(db.batchCalls, [7]);
   assert.equal(db.calls.filter((sql) => sql.startsWith('DELETE FROM')).length, 7);
   assert.equal(db.calls.filter((sql) => sql.includes('INSERT INTO sh_data_maintenance_state')).length, 1);
+});
+
+test('retention continues only tables that fill the previous batch', async () => {
+  const db = new FakeDb(0, [100, 0, 0, 0, 0, 0, 0, 100, 50]);
+  const result = await pruneOldSnapshots({
+    BUDDIES_DB: db,
+    SNAPSHOT_RETENTION_BATCH_SIZE: 100,
+    SNAPSHOT_RETENTION_MAX_BATCHES: 5,
+  }, 100_000_000);
+
+  assert.equal(result.deleted.sh_channel_snapshots, 250);
+  assert.deepEqual(db.batchCalls, [7, 1, 1]);
 });
 
 test('retention observes the cleanup interval', async () => {
@@ -73,6 +94,7 @@ test('retention observes the cleanup interval', async () => {
     { skipped: true, reason: 'not-due' },
   );
   assert.equal(db.calls.filter((sql) => sql.startsWith('DELETE FROM')).length, 0);
+  assert.deepEqual(db.batchCalls, []);
 });
 
 test('missing binding is reported safely', async () => {
