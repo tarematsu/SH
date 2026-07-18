@@ -99,7 +99,7 @@ function queryTracks(db, day) {
   );
 }
 
-test('does not count a playing track again when the queue changes mid-song', () => {
+test('does not count a playing track again and preserves the next track wall time', () => {
   const db = createDatabase();
   const firstStart = Date.parse('2026-07-18T12:00:00Z');
   const secondStart = firstStart + 60_000;
@@ -121,11 +121,49 @@ test('does not count a playing track again when the queue changes mid-song', () 
   });
 
   const rows = queryTracks(db, '2026-07-18');
-  const counts = new Map(rows.map((row) => [row.spotify_id, row.play_count]));
+  const byId = new Map(rows.map((row) => [row.spotify_id, row]));
 
-  assert.equal(counts.get('song-a'), 1);
-  assert.equal(counts.get('replacement-song'), 1);
-  assert.equal(counts.has('removed-song'), false);
+  assert.equal(byId.get('song-a').play_count, 1);
+  assert.equal(byId.get('replacement-song').played_at, firstStart + 3 * 60_000);
+  assert.equal(byId.has('removed-song'), false);
+});
+
+test('preserves the original playback origin across multiple queue changes', () => {
+  const db = createDatabase();
+  const firstStart = Date.parse('2026-07-18T12:00:00Z');
+  const secondStart = firstStart + 60_000;
+  const thirdStart = firstStart + 2 * 60_000;
+
+  addQueue(db, {
+    start: firstStart,
+    tracks: [
+      { spotifyId: 'song-a', queueTrackId: 101, duration: 4 * 60_000 },
+      { spotifyId: 'removed-one', duration: 60_000 },
+    ],
+  });
+  addQueue(db, {
+    start: secondStart,
+    tracks: [
+      { spotifyId: 'song-a', queueTrackId: 201, duration: 4 * 60_000 },
+      { spotifyId: 'removed-two', duration: 60_000 },
+    ],
+  });
+  addQueue(db, {
+    start: thirdStart,
+    evidenceAt: thirdStart + 3 * 60_000,
+    tracks: [
+      { spotifyId: 'song-a', queueTrackId: 301, duration: 4 * 60_000 },
+      { spotifyId: 'replacement-song', duration: 60_000 },
+    ],
+  });
+
+  const rows = queryTracks(db, '2026-07-18');
+  const byId = new Map(rows.map((row) => [row.spotify_id, row]));
+
+  assert.equal(byId.get('song-a').play_count, 1);
+  assert.equal(byId.get('replacement-song').played_at, firstStart + 4 * 60_000);
+  assert.equal(byId.has('removed-one'), false);
+  assert.equal(byId.has('removed-two'), false);
 });
 
 test('still counts the same song twice when the first play ended at the boundary', () => {
