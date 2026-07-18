@@ -1,0 +1,36 @@
+name: Probe Pages Queue publication
+
+on:
+  push:
+    branches: [agent/cpu-under-10-root-rework]
+    paths:
+      - '.github/workflows/pages-publication-probe.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  republish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets['CLOUDFLARE_BUILDS_API_TOKEN'] || secrets['CLOUDFLARE_API_TOKEN'] || secrets['CF_API_TOKEN'] }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets['CLOUDFLARE_ACCOUNT_ID'] || secrets['CF_ACCOUNT_ID'] || '0500f25c2f74e7e76c94a8bcb6c7008b' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: worker/package-lock.json
+      - run: npm ci --no-audit --no-fund
+        working-directory: worker
+      - name: Reinitialize the current track-history publication safely
+        working-directory: worker
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx wrangler d1 execute stationhead-minute --remote --config wrangler.pages-read-model.jsonc --command \
+            "UPDATE sh_pages_payload_read_model SET payload_json=json_remove(json_set(payload_json,'$.published',json('false'),'$.published_at',NULL),'$.publication'),updated_at=CAST(unixepoch('subsec')*1000 AS INTEGER) WHERE model_key='track-history-stage';"
+          npx wrangler d1 execute stationhead-minute --remote --config wrangler.pages-read-model.jsonc --command \
+            "SELECT model_key,json_extract(payload_json,'$.published') AS published,json_type(payload_json,'$.publication') AS publication_type,updated_at FROM sh_pages_payload_read_model WHERE model_key='track-history-stage';"
