@@ -12,9 +12,13 @@ function loadPublicationModule() {
   return publicationModulePromise;
 }
 
-function scheduledTimestamp(controller, fallback = Date.now()) {
-  const value = Number(controller?.scheduledTime);
-  return Number.isFinite(value) && value >= 0 ? value : fallback;
+function scheduledTimestamp(controller) {
+  const value = controller?.scheduledTime;
+  if (typeof value === 'number') {
+    return Number.isFinite(value) && value >= 0 ? value : Date.now();
+  }
+  const timestamp = Number(value);
+  return Number.isFinite(timestamp) && timestamp >= 0 ? timestamp : Date.now();
 }
 
 function assertRefreshSucceeded(result) {
@@ -46,9 +50,13 @@ function assertRefreshSucceeded(result) {
 }
 
 export async function runPagesReadModelCron(controller, env, dependencies = EMPTY_DEPENDENCIES) {
-  const cron = String(controller?.cron || '');
+  const rawCron = controller?.cron;
+  let cron = rawCron;
   if (cron !== PAGES_READ_MODEL_CRON) {
-    return { skipped: true, reason: 'unsupported-pages-read-model-cron', cron };
+    cron = String(rawCron || '');
+    if (cron !== PAGES_READ_MODEL_CRON) {
+      return { skipped: true, reason: 'unsupported-pages-read-model-cron', cron };
+    }
   }
   const now = scheduledTimestamp(controller);
   const runTask = dependencies.runTask || runDispatchedPagesReadModelTask;
