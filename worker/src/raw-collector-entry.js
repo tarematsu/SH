@@ -7,6 +7,7 @@ import {
   validateChannelPayload,
 } from './collector-payload.js';
 import { prepareQueueAnalysis } from './queue-analysis-transfer.js';
+import { prepareMaterializedQueue } from './queue-materialization.js';
 import { jwtExpiryMs, normalizeBearer } from './shared.js';
 import { prepareSnapshotAnalysis } from './snapshot-analysis-transfer.js';
 
@@ -113,7 +114,7 @@ function legacyRawCollectionMessage(message, body, channel = null) {
   return message;
 }
 
-async function rawCollectionQueueMessage(message, body, config) {
+async function rawCollectionQueueMessage(message, body, config, env) {
   let channel;
   try {
     channel = JSON.parse(body);
@@ -138,16 +139,22 @@ async function rawCollectionQueueMessage(message, body, config) {
         || !Number.isFinite(Number(snapshot.station_id))) {
       throw new Error('compact collection identity is missing');
     }
-    const queue = extractQueue(channel, state.stationId);
-    const [snapshotAnalysis, queueAnalysis] = await Promise.all([
+    const fullQueue = extractQueue(channel, state.stationId);
+    const [snapshotAnalysis, fullQueueAnalysis] = await Promise.all([
       prepareSnapshotAnalysis(snapshot),
-      prepareQueueAnalysis(queue),
+      prepareQueueAnalysis(fullQueue),
     ]);
+    const materialized = await prepareMaterializedQueue(
+      env?.DB,
+      fullQueue,
+      fullQueueAnalysis,
+      env,
+    );
     message.message_version = 3;
     message.snapshot = snapshot;
-    message.queue = queue;
+    message.queue = materialized.queue;
     if (snapshotAnalysis) message.snapshot_analysis = snapshotAnalysis;
-    if (queueAnalysis) message.queue_analysis = queueAnalysis;
+    if (materialized.analysis) message.queue_analysis = materialized.analysis;
     return message;
   } catch {
     // Keep valid-but-unexpected upstream objects on the established ingest
@@ -191,12 +198,14 @@ export async function collectRawChannel(env, dependencies = {}) {
       collectorChannelId: state.collectorChannelId,
       collectorStationId: state.collectorStationId,
     },
-  }, body, config);
+  }, body, config, env);
   await env.RAW_COLLECTION_QUEUE.send(rawMessage, { contentType: 'json' });
   console.log(JSON.stringify({
     event: 'raw_collection_enqueued',
     observed_at: observedAt,
     payload_chars: body.length,
+    queue_total_tracks: Number(rawMessage.queue?.total_track_count || rawMessage.queue?.tracks?.length || 0),
+    queue_materialized_tracks: Number(rawMessage.queue?.materialized_track_count || rawMessage.queue?.tracks?.length || 0),
   }));
 }
 
