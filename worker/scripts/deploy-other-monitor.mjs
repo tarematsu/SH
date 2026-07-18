@@ -45,6 +45,19 @@ function hasConsumer(queue, scriptName) {
   return result.ok && result.output.includes(scriptName);
 }
 
+function assertConsolidatedConsumers() {
+  for (const item of migrations) {
+    const result = consumerList(item.queue);
+    if (!result.ok) throw new Error(`consumer list failed for ${item.queue}`);
+    if (!result.output.includes(consolidatedScript)) {
+      throw new Error(`consolidated monitor consumer missing for ${item.queue}`);
+    }
+    if (result.output.includes(item.oldScript)) {
+      throw new Error(`retired monitor consumer still attached: ${item.oldScript}`);
+    }
+  }
+}
+
 function pause(queue) {
   runWrangler(['queues', 'pause-delivery', queue]);
 }
@@ -80,19 +93,28 @@ function credentials() {
   return { accountId, token };
 }
 
-async function deleteOldWorker(scriptName) {
+async function workerRequest(scriptName, method = 'GET') {
   const { accountId, token } = credentials();
-  const response = await fetch(
-    `https://api.cloudflare.com/client/v4/accounts/${accountId}/workers/scripts/${scriptName}?force=true`,
-    { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } },
+  return fetch(
+    `https://api.cloudflare.com/client/v4/accounts/${accountId}/workers/scripts/${scriptName}${method === 'DELETE' ? '?force=true' : ''}`,
+    { method, headers: { Authorization: `Bearer ${token}` } },
   );
+}
+
+async function deleteOldWorker(scriptName) {
+  const response = await workerRequest(scriptName, 'DELETE');
   const body = await response.json().catch(() => null);
   const notFound = response.status === 404
     || body?.errors?.some((error) => /not found/i.test(String(error?.message || '')));
-  if (!response.ok && !notFound) {
+  if ((!response.ok || body?.success === false) && !notFound) {
     const detail = body?.errors?.map((error) => error?.message).filter(Boolean).join('; ')
       || `HTTP ${response.status}`;
     throw new Error(`retired Worker ${scriptName} deletion failed: ${detail}`);
+  }
+
+  const verification = await workerRequest(scriptName);
+  if (verification.status !== 404) {
+    throw new Error(`retired Worker ${scriptName} is still reachable: HTTP ${verification.status}`);
   }
   console.log(JSON.stringify({
     event: 'retired_monitor_worker_absent',
@@ -114,22 +136,10 @@ try {
   }
 
   runWrangler(['deploy', '--config', 'wrangler.other.jsonc']);
-
-  const missingConsumers = migrations.filter((item) => !hasConsumer(item.queue, consolidatedScript));
-  if (missingConsumers.length) {
-    throw new Error(`consolidated monitor consumer missing for: ${missingConsumers.map((item) => item.queue).join(', ')}`);
-  }
+  assertConsolidatedConsumers();
 
   for (const item of paused) resume(item.queue);
   paused.length = 0;
-
-  for (const item of migrations) await deleteOldWorker(item.oldScript);
-
-  console.log(JSON.stringify({
-    event: 'monitor_worker_consolidation_completed',
-    script: consolidatedScript,
-    queues: migrations.map((item) => item.queue),
-  }));
 } catch (error) {
   for (const item of migrations.toReversed()) {
     if (hasConsumer(item.queue, consolidatedScript)) {
@@ -152,3 +162,12 @@ try {
   }
   throw error;
 }
+
+for (const item of migrations) await deleteOldWorker(item.oldScript);
+assertConsolidatedConsumers();
+
+console.log(JSON.stringify({
+  event: 'monitor_worker_consolidation_completed',
+  script: consolidatedScript,
+  queues: migrations.map((item) => item.queue),
+}));
