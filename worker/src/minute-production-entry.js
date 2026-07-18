@@ -1,6 +1,7 @@
 import { enqueueMinuteDeriveTrigger } from './minute-derive-trigger.js';
 
 const EMPTY_DEPENDENCIES = Object.freeze({});
+const SKIPPED_COMMENT_TASK = Object.freeze({ created: false, skipped: true });
 let productionModulesPromise = null;
 let productionConsumeMinuteFactBatch = null;
 let productionEnqueueMinuteFactJob = null;
@@ -14,7 +15,7 @@ function noReceipt() {
 function ignoreReceipt() {}
 
 function skipCommentTask() {
-  return { created: false, skipped: true };
+  return SKIPPED_COMMENT_TASK;
 }
 
 async function enqueueProductionMinute(activeEnv, payload, options) {
@@ -26,13 +27,18 @@ async function enqueueProductionMinute(activeEnv, payload, options) {
   return accepted;
 }
 
-async function saveDefaultReadModels(activeEnv, readModel, jobId) {
-  if (!readModel) return;
-  if (!defaultSaveMinuteFactReadModels) {
-    const module = await (readModelModulePromise ||= import('./minute-facts-read-model.js'));
-    defaultSaveMinuteFactReadModels = module.saveMinuteFactReadModels;
+async function saveColdDefaultReadModels(activeEnv, readModel, jobId) {
+  const module = await (readModelModulePromise ||= import('./minute-facts-read-model.js'));
+  defaultSaveMinuteFactReadModels = module.saveMinuteFactReadModels;
+  return defaultSaveMinuteFactReadModels(activeEnv, readModel, jobId);
+}
+
+function saveDefaultReadModels(activeEnv, readModel, jobId) {
+  if (!readModel) return undefined;
+  if (defaultSaveMinuteFactReadModels) {
+    return defaultSaveMinuteFactReadModels(activeEnv, readModel, jobId);
   }
-  await defaultSaveMinuteFactReadModels(activeEnv, readModel, jobId);
+  return saveColdDefaultReadModels(activeEnv, readModel, jobId);
 }
 
 const PRODUCTION_HANDLERS = Object.freeze({
@@ -45,16 +51,21 @@ const PRODUCTION_HANDLERS = Object.freeze({
   saveReadModels: saveDefaultReadModels,
 });
 
-async function consumeProductionMinuteQueue(batch, env) {
-  if (!productionConsumeMinuteFactBatch || !productionEnqueueMinuteFactJob) {
-    const [queueModule, inboxModule] = await (productionModulesPromise ||= Promise.all([
-      import('./minute-facts-queue.js'),
-      import('./minute-facts-inbox.js'),
-    ]));
-    productionConsumeMinuteFactBatch = queueModule.consumeMinuteFactBatch;
-    productionEnqueueMinuteFactJob = inboxModule.enqueueMinuteFactJob;
-  }
+async function consumeColdProductionMinuteQueue(batch, env) {
+  const [queueModule, inboxModule] = await (productionModulesPromise ||= Promise.all([
+    import('./minute-facts-queue.js'),
+    import('./minute-facts-inbox.js'),
+  ]));
+  productionEnqueueMinuteFactJob = inboxModule.enqueueMinuteFactJob;
+  productionConsumeMinuteFactBatch = queueModule.consumeMinuteFactBatch;
   return productionConsumeMinuteFactBatch(batch, env, PRODUCTION_HANDLERS);
+}
+
+function consumeProductionMinuteQueue(batch, env) {
+  if (productionConsumeMinuteFactBatch) {
+    return productionConsumeMinuteFactBatch(batch, env, PRODUCTION_HANDLERS);
+  }
+  return consumeColdProductionMinuteQueue(batch, env);
 }
 
 function injectedHandlers(dependencies, enqueueMinuteFactJob, enqueueDerive) {
@@ -75,11 +86,7 @@ function injectedHandlers(dependencies, enqueueMinuteFactJob, enqueueDerive) {
   };
 }
 
-export async function consumeMinuteQueue(batch, env, _ctx, dependencies = EMPTY_DEPENDENCIES) {
-  if (dependencies === EMPTY_DEPENDENCIES) {
-    return consumeProductionMinuteQueue(batch, env);
-  }
-
+async function consumeInjectedMinuteQueue(batch, env, dependencies) {
   const [queueModule, inboxModule] = await Promise.all([
     dependencies.consumeMinuteFactBatch ? null : import('./minute-facts-queue.js'),
     dependencies.enqueueMinuteFactJob ? null : import('./minute-facts-inbox.js'),
@@ -94,8 +101,15 @@ export async function consumeMinuteQueue(batch, env, _ctx, dependencies = EMPTY_
   );
 }
 
+export function consumeMinuteQueue(batch, env, _ctx, dependencies = EMPTY_DEPENDENCIES) {
+  if (dependencies === EMPTY_DEPENDENCIES) {
+    return consumeProductionMinuteQueue(batch, env);
+  }
+  return consumeInjectedMinuteQueue(batch, env, dependencies);
+}
+
 export default {
-  queue: consumeMinuteQueue,
+  queue: consumeProductionMinuteQueue,
   fetch() {
     return Response.json({ ok: false, error: 'not found' }, { status: 404 });
   },
