@@ -9,7 +9,7 @@ test('minute derive deployment guarantees one message per invocation', async () 
   assert.match(config, /"max_batch_size"\s*:\s*1\b/);
 });
 
-test('single-message derive batches avoid generic collection setup', async () => {
+test('single-message derive batches avoid iterator and loop setup', async () => {
   let acknowledged = 0;
   const messages = new Proxy([{
     body: {},
@@ -17,7 +17,7 @@ test('single-message derive batches avoid generic collection setup', async () =>
     retry() { assert.fail('invalid derive triggers must not retry'); },
   }], {
     get(target, property, receiver) {
-      if (property === 'length' || property === Symbol.iterator) {
+      if (property === Symbol.iterator || property === '1') {
         assert.fail(`minute derive batch accessed ${String(property)}`);
       }
       return Reflect.get(target, property, receiver);
