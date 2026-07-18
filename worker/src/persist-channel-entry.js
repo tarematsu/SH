@@ -6,27 +6,36 @@ import { restoreSnapshotAnalysis, savePreparedSnapshot } from './snapshot-analys
 
 const QUEUE_STAGE_PERSIST = 'persist';
 const QUEUE_STAGE_FINALIZE = 'finalize';
+const EMPTY_DEPENDENCIES = Object.freeze({});
+const EMPTY_TRACKS = Object.freeze([]);
+const JSON_QUEUE_SEND_OPTIONS = Object.freeze({ contentType: 'json' });
 
 function validateTask(body) {
-  if (body?.message_type !== 'stationhead-persistence-task'
-      || Number(body?.message_version) !== 1) {
+  if (body?.message_type !== 'stationhead-persistence-task') {
     throw new Error('unsupported persistence task');
   }
-  const task = String(body.task || '');
-  if (!['snapshot', 'queue'].includes(task)) throw new Error(`unsupported persistence task: ${task}`);
+  const version = body.message_version;
+  if (version !== 1 && Number(version) !== 1) {
+    throw new Error('unsupported persistence task');
+  }
+  const task = body.task;
+  if (task !== 'snapshot' && task !== 'queue') {
+    throw new Error(`unsupported persistence task: ${String(task || '')}`);
+  }
   const observedAt = Number(body.observed_at);
   if (!Number.isFinite(observedAt)) throw new Error('persistence observed_at is missing');
   if (!body.data || typeof body.data !== 'object') throw new Error('persistence data is missing');
   if (task !== 'queue') return { task, observedAt, stage: null };
-  const stage = body.stage == null ? QUEUE_STAGE_PERSIST : String(body.stage);
-  if (![QUEUE_STAGE_PERSIST, QUEUE_STAGE_FINALIZE].includes(stage)) {
-    throw new Error(`unsupported persistence queue stage: ${stage}`);
+  const stage = body.stage == null ? QUEUE_STAGE_PERSIST : body.stage;
+  if (stage !== QUEUE_STAGE_PERSIST && stage !== QUEUE_STAGE_FINALIZE) {
+    throw new Error(`unsupported persistence queue stage: ${String(stage)}`);
   }
   return { task, observedAt, stage };
 }
 
 function queueCounts(data) {
-  const trackCount = Array.isArray(data?.tracks) ? data.tracks.length : 0;
+  const tracks = Array.isArray(data?.tracks) ? data.tracks : EMPTY_TRACKS;
+  const trackCount = tracks.length;
   return {
     total_track_count: Number(data?.total_track_count || trackCount || 0),
     materialized_track_count: Number(data?.materialized_track_count || trackCount || 0),
@@ -51,13 +60,18 @@ function compactMaterializationData(data, analysis) {
 }
 
 function compactMetadataQueue(data) {
-  const tracks = [];
-  for (const track of Array.isArray(data?.tracks) ? data.tracks : []) {
+  const sourceTracks = Array.isArray(data?.tracks) ? data.tracks : EMPTY_TRACKS;
+  const tracks = new Array(sourceTracks.length);
+  let count = 0;
+  for (let index = 0; index < sourceTracks.length; index += 1) {
+    const track = sourceTracks[index];
     const spotifyId = track?.spotify_id ?? null;
     const isrc = track?.isrc ?? null;
     if (!spotifyId && !isrc) continue;
-    tracks.push({ spotify_id: spotifyId, isrc });
+    tracks[count] = { spotify_id: spotifyId, isrc };
+    count += 1;
   }
+  tracks.length = count;
   return {
     station_id: data?.station_id ?? null,
     queue_id: data?.queue_id ?? null,
@@ -66,24 +80,18 @@ function compactMetadataQueue(data) {
   };
 }
 
-async function enqueueQueueMetadata(env, body, observedAt, result, dependencies = {}) {
+async function enqueueQueueMetadata(env, body, observedAt, result, dependencies = EMPTY_DEPENDENCIES) {
   const requested = body.metadata_requested === true || result?.structure_changed === true;
   const queue = body.metadata_queue || body.data;
-  const tracks = Array.isArray(queue?.tracks) ? queue.tracks : [];
-  if (!requested || !tracks.length) return false;
-  const send = dependencies.sendTrackMetadata
-    || ((message) => env.TRACK_METADATA_QUEUE.send(message, { contentType: 'json' }));
-  if (!dependencies.sendTrackMetadata && !env?.TRACK_METADATA_QUEUE?.send) {
-    throw new Error('TRACK_METADATA_QUEUE binding is missing');
-  }
+  const tracks = Array.isArray(queue?.tracks) ? queue.tracks : EMPTY_TRACKS;
+  if (!requested || tracks.length === 0) return false;
   const stationId = Number(body.data?.station_id ?? queue?.station_id);
-  const jobId = `queue-metadata:${Number.isFinite(stationId) ? Math.trunc(stationId) : 'unknown'}:${Math.trunc(observedAt)}`;
-  await send({
+  const message = {
     message_type: 'stationhead-track-metadata',
     message_version: 1,
     task: 'committed-enrichment',
     job: {
-      jobId,
+      jobId: `queue-metadata:${Number.isFinite(stationId) ? Math.trunc(stationId) : 'unknown'}:${Math.trunc(observedAt)}`,
       payload: {
         observedAt,
         queue,
@@ -92,16 +100,21 @@ async function enqueueQueueMetadata(env, body, observedAt, result, dependencies 
         enrichTrackMetadata: true,
       },
     },
-  });
+  };
+  if (dependencies.sendTrackMetadata) {
+    await dependencies.sendTrackMetadata(message);
+    return true;
+  }
+  const metadataQueue = env?.TRACK_METADATA_QUEUE;
+  if (!metadataQueue?.send) throw new Error('TRACK_METADATA_QUEUE binding is missing');
+  await metadataQueue.send(message, JSON_QUEUE_SEND_OPTIONS);
   return true;
 }
 
-async function enqueueQueueFinalization(env, body, observedAt, result, dependencies = {}) {
-  const send = dependencies.sendPersistenceContinuation
-    || (env?.PERSIST_QUEUE?.send
-      ? (message) => env.PERSIST_QUEUE.send(message, { contentType: 'json' })
-      : null);
-  if (!send) return false;
+async function enqueueQueueFinalization(env, body, observedAt, result, dependencies = EMPTY_DEPENDENCIES) {
+  const injectedSend = dependencies.sendPersistenceContinuation;
+  const persistQueue = env?.PERSIST_QUEUE;
+  if (!injectedSend && !persistQueue?.send) return false;
   const metadataRequested = body.metadata_requested === true || result?.structure_changed === true;
   const continuation = {
     message_type: 'stationhead-persistence-task',
@@ -117,11 +130,12 @@ async function enqueueQueueFinalization(env, body, observedAt, result, dependenc
     const queue = compactMetadataQueue(body.data);
     if (queue.tracks.length) continuation.metadata_queue = queue;
   }
-  await send(continuation);
+  if (injectedSend) await injectedSend(continuation);
+  else await persistQueue.send(continuation, JSON_QUEUE_SEND_OPTIONS);
   return true;
 }
 
-async function finalizeQueuePersistence(env, body, observedAt, result, dependencies = {}) {
+async function finalizeQueuePersistence(env, body, observedAt, result, dependencies = EMPTY_DEPENDENCIES) {
   const recordMaterialization = dependencies.recordQueueMaterialization || recordQueueMaterialization;
   const materializationRecorded = await recordMaterialization(
     env.DB,
@@ -130,14 +144,16 @@ async function finalizeQueuePersistence(env, body, observedAt, result, dependenc
     observedAt,
   );
   const metadataDeferred = await enqueueQueueMetadata(env, body, observedAt, result, dependencies);
+  const counts = queueCounts(body.data);
   return {
-    ...queueCounts(body.data),
+    total_track_count: counts.total_track_count,
+    materialized_track_count: counts.materialized_track_count,
     materialization_recorded: materializationRecorded,
     metadata_deferred: metadataDeferred,
   };
 }
 
-export async function processPersistenceTask(env, body, dependencies = {}) {
+export async function processPersistenceTask(env, body, dependencies = EMPTY_DEPENDENCIES) {
   const { task, observedAt, stage } = validateTask(body);
   if (!env?.DB?.prepare) throw new Error('DB binding is missing');
   if (task === 'snapshot') {
@@ -158,8 +174,6 @@ export async function processPersistenceTask(env, body, dependencies = {}) {
   }
 
   restoreQueueAnalysis(body.data, body.analysis);
-  // The queue hash cache predates partial materialization and its signature only
-  // covers visible track fields. A changed omitted tail must force a fresh hash.
   if (body.data?.source_structural_hash) resetQueueHashCacheForTests();
   const runIngest = dependencies.ingestOptimizedBody || ingestOptimizedBody;
   const result = await runIngest(env, {
@@ -176,18 +190,18 @@ export async function processPersistenceTask(env, body, dependencies = {}) {
     dependencies,
   );
   if (finalizationDeferred) {
+    const counts = queueCounts(body.data);
     return {
       task,
       stage,
       observed_at: observedAt,
       ...result,
-      ...queueCounts(body.data),
+      total_track_count: counts.total_track_count,
+      materialized_track_count: counts.materialized_track_count,
       finalization_deferred: true,
     };
   }
 
-  // Keep direct callers and partially rolled-out environments compatible. The
-  // production Worker always has PERSIST_QUEUE and therefore takes the split path.
   const finalized = await finalizeQueuePersistence(env, body, observedAt, result, dependencies);
   return {
     task,
@@ -201,9 +215,9 @@ export async function processPersistenceTask(env, body, dependencies = {}) {
 
 export default {
   async queue(batch, env) {
-    for (const message of batch.messages || []) {
+    for (const message of batch.messages || EMPTY_TRACKS) {
       try {
-        const result = await processPersistenceTask(env, message.body);
+        const result = await processPersistenceTask(env, message.body, EMPTY_DEPENDENCIES);
         console.log(JSON.stringify({ event: 'persistence_task_completed', ...result }));
         message.ack();
       } catch (error) {
