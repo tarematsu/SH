@@ -73,9 +73,8 @@ function queueBody(trackCount = 2) {
   };
 }
 
-test('likes planning combines null queue-item positions with changed-like positions', async () => {
-  const body = queueBody(2);
-  const state = {
+function stateWithCurrent(body, likesHash = 'old-likes-hash') {
+  return {
     firsts: [],
     alls: [],
     runs: [],
@@ -83,7 +82,7 @@ test('likes planning combines null queue-item positions with changed-like positi
       if (entry.sql.includes('FROM sh_queue_current')) {
         return {
           structural_hash: 'structure-hash',
-          likes_hash: 'old-likes-hash',
+          likes_hash: likesHash,
           observed_at: 120_000,
           latest_reachability_at: 120_000,
         };
@@ -91,7 +90,13 @@ test('likes planning combines null queue-item positions with changed-like positi
       throw new Error(`unexpected first SQL: ${entry.sql}`);
     },
     all() { return { results: [] }; },
+    body,
   };
+}
+
+test('likes planning combines null queue-item positions with changed-like positions', async () => {
+  const body = queueBody(2);
+  const state = stateWithCurrent(body);
   const db = {
     prepare(sql) { return statement(sql, state); },
     async batch(statements) {
@@ -99,13 +104,13 @@ test('likes planning combines null queue-item positions with changed-like positi
         if (index === 0) return { success: true, results: [{ position: 0 }] };
         return {
           success: true,
-          results: [{
-            track_key: body.analysis.likes.payload[1].track_key,
-            isrc: body.data.tracks[1].isrc,
-            spotify_id: body.data.tracks[1].spotify_id,
-            like_count: 1,
+          results: body.data.tracks.map((track, trackIndex) => ({
+            track_key: `isrc:${track.isrc}`,
+            isrc: track.isrc,
+            spotify_id: track.spotify_id,
+            like_count: trackIndex === 0 ? track.bite_count : 1,
             observed_at: 100_000,
-          }],
+          })),
         };
       });
     },
@@ -122,23 +127,7 @@ test('likes planning combines null queue-item positions with changed-like positi
 
 test('unchanged likes still repair structurally inserted null bite counts', async () => {
   const body = queueBody(1);
-  const state = {
-    firsts: [],
-    alls: [],
-    runs: [],
-    first(entry) {
-      if (entry.sql.includes('FROM sh_queue_current')) {
-        return {
-          structural_hash: 'structure-hash',
-          likes_hash: 'new-likes-hash',
-          observed_at: 120_000,
-          latest_reachability_at: 120_000,
-        };
-      }
-      throw new Error(`unexpected first SQL: ${entry.sql}`);
-    },
-    all() { return { results: [] }; },
-  };
+  const state = stateWithCurrent(body, 'new-likes-hash');
   const db = {
     prepare(sql) { return statement(sql, state); },
     async batch(statements) {
@@ -154,7 +143,7 @@ test('unchanged likes still repair structurally inserted null bite counts', asyn
   assert.deepEqual(plan.queue_item_positions, [0]);
 });
 
-test('likes writes are bounded to the configured track chunk', async () => {
+test('likes writes are bounded to the configured track chunk and D1 variable limit', async () => {
   const body = queueBody(30);
   body.stage = QUEUE_STAGE_LIKES_WRITE;
   const batches = [];
@@ -187,13 +176,9 @@ test('likes writes are bounded to the configured track chunk', async () => {
     queue_item_positions: body.data.tracks.map((track) => track.position),
   };
 
-  const first = await commitQueueLikesPersistenceChunk(
-    db,
-    body,
-    body.observed_at,
-    plan,
-    0,
-  );
+  const first = await commitQueueLikesPersistenceChunk(db, body, body.observed_at, plan, 0);
+  const firstStatementCount = batches.flat().length;
+  const firstBatchSizes = batches.map((batch) => batch.length);
   const second = await commitQueueLikesPersistenceChunk(
     db,
     body,
@@ -206,11 +191,12 @@ test('likes writes are bounded to the configured track chunk', async () => {
   assert.equal(first.itemsWritten, 24);
   assert.equal(first.next_cursor, 24);
   assert.equal(first.likes_write_complete, false);
+  assert.equal(firstStatementCount, 24);
+  assert.deepEqual(firstBatchSizes, [11, 11, 2]);
   assert.equal(second.itemsWritten, 6);
   assert.equal(second.next_cursor, null);
   assert.equal(second.likes_write_complete, true);
-  assert.equal(batches[0].length, 24);
-  assert.equal(batches[1].length, 6);
+  assert.equal(batches.flat().length, 30);
 });
 
 test('observation writes are idempotent for at-least-once redelivery', async () => {
@@ -248,7 +234,9 @@ test('observation writes are idempotent for at-least-once redelivery', async () 
     queue_item_positions: [0],
   });
 
-  assert.equal(sql.some((text) => text.includes('ON CONFLICT(observed_at,station_id,track_key) DO UPDATE SET')), true);
+  assert.equal(sql.some((text) => text.includes(
+    'ON CONFLICT(observed_at,station_id,track_key) DO UPDATE SET',
+  )), true);
 });
 
 test('likes plan and write stages preserve durable ordering through the same Queue', async () => {
