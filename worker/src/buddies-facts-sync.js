@@ -141,18 +141,21 @@ async function syncOne(env, syncKey, now, limit) {
       .bind(now, now, now, syncKey).run();
     return { syncKey, skipped: false, rows: 0, caught_up: true };
   }
-  const statements = rows.map((row) => syncKey === 'track-likes'
-    ? likeStatement(minuteDb, row)
-    : metadataStatement(minuteDb, row));
-  const last = rows.at(-1);
-  statements.push(saveStateStatement(minuteDb, syncKey, {
+  const statements = new Array(rows.length + 1);
+  for (let index = 0; index < rows.length; index += 1) {
+    statements[index] = syncKey === 'track-likes'
+      ? likeStatement(minuteDb, rows[index])
+      : metadataStatement(minuteDb, rows[index]);
+  }
+  const last = rows[rows.length - 1];
+  statements[rows.length] = saveStateStatement(minuteDb, syncKey, {
     cursorObservedAt: integer(last.observed_at ?? last.fetched_at) || 0,
     cursorSourceId: integer(last.id) || 0,
     cursorSourceText: text(last.spotify_id),
     rowsProcessed: rows.length,
     lastRunAt: now,
     lastSuccessAt: now,
-  }));
+  });
   await minuteDb.batch(statements);
   return { syncKey, skipped: false, rows: rows.length, caught_up: rows.length < limit };
 }
@@ -180,11 +183,42 @@ function safeQueue(value) {
   }
 }
 
+function incompletePlaybackMetadataKeys(queue) {
+  const tracks = queue?.tracks;
+  if (!Array.isArray(tracks) || !tracks.length) return null;
+
+  const spotifyIds = [];
+  const isrcs = [];
+  const seenSpotifyIds = new Set();
+  const seenIsrcs = new Set();
+  let incomplete = false;
+
+  for (let index = 0; index < tracks.length; index += 1) {
+    const track = tracks[index];
+    if (track?.title && track?.artist && track?.thumbnail_url) continue;
+    incomplete = true;
+
+    const spotifyId = text(track?.spotify_id);
+    if (spotifyId && !seenSpotifyIds.has(spotifyId)) {
+      seenSpotifyIds.add(spotifyId);
+      spotifyIds.push(spotifyId);
+    }
+
+    const isrc = text(track?.isrc)?.toUpperCase() || null;
+    if (isrc && !seenIsrcs.has(isrc)) {
+      seenIsrcs.add(isrc);
+      isrcs.push(isrc);
+    }
+  }
+
+  return incomplete ? { spotifyIds, isrcs } : null;
+}
+
 async function playbackMetadataRows(env, spotifyIds, isrcs) {
   const localRows = await loadReadModelTrackMetadata({ MINUTE_DB: env?.MINUTE_DB }, spotifyIds, isrcs);
   if (!env?.BUDDIES_DB || env.BUDDIES_DB === env.MINUTE_DB) return localRows;
   const sourceRows = await loadReadModelTrackMetadata({ MINUTE_DB: env.BUDDIES_DB }, spotifyIds, isrcs);
-  return [...localRows, ...sourceRows];
+  return localRows.concat(sourceRows);
 }
 
 export async function repairPlaybackReadModels(env) {
@@ -195,12 +229,9 @@ export async function repairPlaybackReadModels(env) {
   let repaired = 0;
   for (const row of current.results || []) {
     const queue = safeQueue(row.queue_json);
-    const incomplete = queue?.tracks?.filter((track) => !track?.title || !track?.artist || !track?.thumbnail_url) || [];
-    if (!incomplete.length) continue;
-    const spotifyIds = [...new Set(incomplete.map((track) => text(track.spotify_id)).filter(Boolean))];
-    const isrcs = [...new Set(incomplete.map((track) => text(track.isrc)?.toUpperCase()).filter(Boolean))];
-    if (!spotifyIds.length && !isrcs.length) continue;
-    const metadataRows = await playbackMetadataRows(env, spotifyIds, isrcs);
+    const keys = incompletePlaybackMetadataKeys(queue);
+    if (!keys || (!keys.spotifyIds.length && !keys.isrcs.length)) continue;
+    const metadataRows = await playbackMetadataRows(env, keys.spotifyIds, keys.isrcs);
     const hydrated = attachReadModelTrackMetadata(queue, metadataRows);
     if (hydrated === queue) continue;
     await db.prepare(`UPDATE sh_queue_read_model_current SET queue_json=? WHERE channel_id=?`)
