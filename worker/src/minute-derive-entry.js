@@ -1,6 +1,6 @@
 import {
   processMinuteDeriveMessage,
-} from './minute-derive-queue.js';
+} from './minute-derive-router.js';
 
 export default {
   async queue(batch, env) {
