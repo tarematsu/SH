@@ -95,7 +95,8 @@ jobs:
             stationhead-minute-derive stationhead-minute-derive-dlq \
             stationhead-minute-enrichment stationhead-minute-enrichment-dlq \
             stationhead-minute-rebuild stationhead-minute-rebuild-dlq \
-            stationhead-buddy-playback stationhead-buddy-playback-dlq
+            stationhead-buddy-playback stationhead-buddy-playback-dlq \
+            stationhead-host-monitor stationhead-host-monitor-dlq
           do
             npx wrangler queues create "$queue" >/dev/null 2>&1 || true
           done
