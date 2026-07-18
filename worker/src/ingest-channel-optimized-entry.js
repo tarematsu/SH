@@ -1,4 +1,7 @@
-import { ingestPreparedRawCollection } from './ingest-prepared-channel.js';
+import {
+  ingestPreparedRawCollection,
+  processIngestFactTask,
+} from './ingest-prepared-channel.js';
 import { processIngestFinalizeTask } from './ingest-finalize-entry.js';
 import { restoreQueueAnalysis } from './queue-analysis-transfer.js';
 import { restoreSnapshotAnalysis } from './snapshot-analysis-transfer.js';
@@ -16,8 +19,12 @@ export async function ingestRawCollection(env, message) {
 export default {
   async queue(batch, env) {
     for (const message of batch.messages || []) {
+      const type = message.body?.message_type;
       try {
-        if (message.body?.message_type === 'stationhead-ingest-finalize') {
+        if (type === 'stationhead-ingest-fact') {
+          const result = await processIngestFactTask(env, message.body);
+          console.log(JSON.stringify(result));
+        } else if (type === 'stationhead-ingest-finalize') {
           const result = await processIngestFinalizeTask(env, message.body);
           console.log(JSON.stringify(result));
         } else {
@@ -25,10 +32,13 @@ export default {
         }
         message.ack();
       } catch (error) {
+        const event = type === 'stationhead-ingest-fact'
+          ? 'ingest_fact_failed'
+          : type === 'stationhead-ingest-finalize'
+          ? 'ingest_finalize_failed'
+          : 'raw_collection_ingest_failed';
         console.error(JSON.stringify({
-          event: message.body?.message_type === 'stationhead-ingest-finalize'
-            ? 'ingest_finalize_failed'
-            : 'raw_collection_ingest_failed',
+          event,
           error: String(error?.message || error).slice(0, 800),
         }));
         message.retry();
