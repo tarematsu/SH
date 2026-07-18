@@ -43,21 +43,47 @@ test('cron success and failure behavior is preserved', async () => {
   );
 });
 
-test('dispatch preserves task selection and idle behavior', async () => {
+test('cron retains coercion compatibility outside the primitive-string hot path', async () => {
+  const success = { responses: [], failed: 0 };
+  const boxedCron = new String(PAGES_READ_MODEL_CRON);
+  assert.equal(await runPagesReadModelCron(
+    { cron: boxedCron, scheduledTime: String(BASE) },
+    {},
+    { runTask: async (_env, now) => (assert.equal(now, BASE), success) },
+  ), success);
+  assert.deepEqual(await runPagesReadModelCron({ cron: 123 }, {}), {
+    skipped: true,
+    reason: 'unsupported-pages-read-model-cron',
+    cron: '123',
+  });
+});
+
+test('dispatch preserves task selection and background behavior', async () => {
   assert.equal(pagesReadModelTask(BASE).key, 'dashboard-history');
   assert.equal(pagesReadModelTask(BASE + 60 * 60_000).kind, 'track-history-step');
   assert.equal(pagesReadModelTask(BASE + 176 * 60_000).kind, 'idle');
   const idle = await runDispatchedPagesReadModelTask({}, BASE + 176 * 60_000);
   assert.equal(idle.reason, 'six-hour-cycle-idle');
+
+  const sentinel = { ok: true };
+  assert.equal(await runDispatchedPagesReadModelTask(
+    { BUDDIES_DB: {}, MINUTE_DB: {} },
+    BASE + 60 * 60_000,
+    { runTrackHistoryStep: async () => sentinel },
+  ), sentinel);
 });
 
-test('hot paths cache lazy modules and avoid success-path callback allocations', () => {
+test('hot paths cache lazy modules and avoid eager fallback or task allocations', () => {
   assert.match(entrySource, /publicationModulePromise \|\|=/);
   assert.doesNotMatch(entrySource, /responses\.filter\(/);
   assert.doesNotMatch(entrySource, /failures\.map\(/);
+  assert.doesNotMatch(entrySource, /fallback = Date\.now\(\)/);
+  assert.match(entrySource, /if \(cron !== PAGES_READ_MODEL_CRON\)/);
   assert.match(dispatchSource, /trackHistoryModulePromise \|\|=/);
   assert.match(dispatchSource, /sixHourModulePromise \|\|=/);
   assert.match(dispatchSource, /switch \(cycleMinute\)/);
   assert.doesNotMatch(dispatchSource, /new Map\(/);
   assert.doesNotMatch(dispatchSource, /new Date\(cycleStart\)/);
+  assert.doesNotMatch(dispatchSource, /fallback = Date\.now\(\)/);
+  assert.doesNotMatch(dispatchSource, /const task = pagesReadModelTaskAt\(timestamp\)/);
 });
