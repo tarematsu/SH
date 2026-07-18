@@ -17,13 +17,13 @@ function position(source, value) {
   return index;
 }
 
-test('facts provisioner adds both required ISRC columns before partial revision coverage', () => {
+test('facts provisioner adds both required ISRC columns before sparse revision state', () => {
   const tracksColumnCheck = "tableColumnNames(databaseName, 'sh_tracks')";
   const tracksAlter = 'ALTER TABLE sh_tracks ADD COLUMN isrc TEXT';
   const metadataColumnCheck = "tableColumnNames(databaseName, 'sh_track_metadata')";
   const metadataMigration = "'--file', trackMetadataIsrcMigrationPath";
   const revisionColumnCheck = "tableColumnNames(databaseName, 'sh_queue_revisions')";
-  const schemaMarker = "schema: 'database/facts-migrations/017_partial_queue_revision_coverage.sql'";
+  const schemaMarker = "schema: 'database/facts-migrations/018_sparse_revision_sources.sql'";
 
   assert.match(provisioner, /!trackColumns\.has\('isrc'\)/);
   assert.match(provisioner, /sh_tracks\.isrc migration did not complete/);
@@ -32,6 +32,8 @@ test('facts provisioner adds both required ISRC columns before partial revision 
   assert.match(provisioner, /016_track_metadata_isrc\.sql/);
   assert.match(provisioner, /materialized_item_count/);
   assert.match(provisioner, /coverage_complete/);
+  assert.match(provisioner, /source_job_id/);
+  assert.match(provisioner, /source_visible_count/);
 
   assert.ok(position(provisioner, tracksColumnCheck) < position(provisioner, tracksAlter));
   assert.ok(position(provisioner, tracksAlter) < position(provisioner, metadataColumnCheck));
