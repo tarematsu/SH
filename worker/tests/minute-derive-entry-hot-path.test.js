@@ -11,17 +11,18 @@ test('minute derive deployment guarantees one message per invocation', async () 
 
 test('single-message derive batches avoid iterator and loop setup', async () => {
   let acknowledged = 0;
-  const messages = new Proxy([{
+  const messages = [{
     body: {},
     ack() { acknowledged += 1; },
     retry() { assert.fail('invalid derive triggers must not retry'); },
-  }], {
-    get(target, property, receiver) {
-      if (property === Symbol.iterator || property === '1') {
-        assert.fail(`minute derive batch accessed ${String(property)}`);
-      }
-      return Reflect.get(target, property, receiver);
-    },
+  }, {
+    get body() { assert.fail('single-message dispatch must not read a second body'); },
+    ack() { assert.fail('single-message dispatch must not acknowledge a second message'); },
+    retry() { assert.fail('single-message dispatch must not retry a second message'); },
+  }];
+  Object.defineProperty(messages, Symbol.iterator, {
+    configurable: true,
+    get() { assert.fail('minute derive batch iterator was accessed'); },
   });
 
   const originalError = console.error;
