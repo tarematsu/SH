@@ -38,6 +38,12 @@ const splitQueues = [
   'stationhead-host-monitor',
 ];
 
+function position(source, value) {
+  const index = source.indexOf(value);
+  assert.notEqual(index, -1, `missing expected workflow fragment: ${value}`);
+  return index;
+}
+
 test('manual deploy keeps all Cloudflare targets available', () => {
   const fallback = 'secrets.CLOUDFLARE_BUILDS_API_TOKEN || secrets.CLOUDFLARE_API_TOKEN || secrets.CF_API_TOKEN';
   const occurrences = deployWorkflow.split(fallback).length - 1;
@@ -75,6 +81,15 @@ test('automatic deploys select only affected current Workers and isolate script 
   assert.match(prDiagnosticsWorkflow, /Skipping direct PR deploy because a Worker script name changed/);
   assert.match(prDiagnosticsWorkflow, /needs\.select-workers\.outputs\.topology_rename != 'true'/);
   assert.match(prDiagnosticsWorkflow, /fromJSON\(needs\.select-workers\.outputs\.diagnostics\)/);
+});
+
+test('PR deploys provision changed facts schemas before dependent Workers', () => {
+  assert.match(prDiagnosticsWorkflow, /database\/facts-migrations\/\*\*/);
+  assert.match(prDiagnosticsWorkflow, /database\/facts-db\.json/);
+  assert.match(prDiagnosticsWorkflow, /facts_schema/);
+  const provision = 'node scripts/provision-facts-db.mjs';
+  const deploy = 'Deploy selected Workers in dependency order';
+  assert.ok(position(prDiagnosticsWorkflow, provision) < position(prDiagnosticsWorkflow, deploy));
 });
 
 test('all deployment paths provision the split Queue boundaries', () => {
