@@ -115,7 +115,7 @@ test('live fact write completes before compact revision materialization is queue
   assert.equal(result.revision_pending, true);
 });
 
-test('sparse chunk requeues one minute later and refreshes playback only for the preferred window', async () => {
+test('sparse chunk requeues twenty seconds later and refreshes playback for one preferred track', async () => {
   const sent = [];
   const enrichment = [];
   const revision = {
@@ -143,7 +143,7 @@ test('sparse chunk requeues one minute later and refreshes playback only for the
     },
   };
   const result = await processMinuteDeriveMessage({
-    DERIVE_REVISION_INTERVAL_SECONDS: 60,
+    DERIVE_REVISION_INTERVAL_SECONDS: 20,
   }, {
     message_type: 'minute-fact-derive-stage',
     message_version: 1,
@@ -156,10 +156,10 @@ test('sparse chunk requeues one minute later and refreshes playback only for the
       ...revision,
       complete: false,
       coverage_complete: false,
-      materialized_item_count: 3,
-      chunk_tracks: 3,
+      materialized_item_count: 1,
+      chunk_tracks: 1,
       preferred_resolved: true,
-      source_tracks: payload.queue.tracks.slice(3, 6),
+      source_tracks: payload.queue.tracks.slice(3, 4),
     }),
     sendStage: async (message, options = {}) => sent.push({ message, options }),
     sendEnrichment: async (message) => enrichment.push(message),
@@ -168,14 +168,14 @@ test('sparse chunk requeues one minute later and refreshes playback only for the
   assert.equal(sent.length, 1);
   assert.equal(sent[0].message.stage, 'revision-materialize');
   assert.equal(sent[0].message.payload, undefined);
-  assert.equal(sent[0].options.delaySeconds, 60);
+  assert.equal(sent[0].options.delaySeconds, 20);
   assert.equal(enrichment.length, 1);
   assert.equal(enrichment[0].stage, 'playback');
-  assert.deepEqual(enrichment[0].queue.tracks.map((track) => track.position), [3, 4, 5]);
+  assert.deepEqual(enrichment[0].queue.tracks.map((track) => track.position), [3]);
   assert.equal(result.pending, true);
 });
 
-test('sparse materialization accepts non-contiguous preferred positions', async () => {
+test('single-track materialization accepts a non-contiguous preferred position', async () => {
   const inserted = [];
   const db = {
     prepare(sql) {
@@ -183,7 +183,7 @@ test('sparse materialization accepts non-contiguous preferred positions', async 
         sql,
         args: [],
         bind(...args) { this.args = args; return this; },
-        async first() { return { item_count: 3 }; },
+        async first() { return { item_count: 1 }; },
         async run() { inserted.push(this.args); return { meta: { changes: 1 } }; },
       };
     },
@@ -194,7 +194,7 @@ test('sparse materialization accepts non-contiguous preferred positions', async 
   };
   const result = await writeSparseLiveRevisionChunk({
     MINUTE_DB: db,
-    DERIVE_REVISION_CHUNK_TRACKS: 3,
+    DERIVE_REVISION_CHUNK_TRACKS: 1,
   }, {
     sparse: true,
     revision_id: 60,
@@ -204,7 +204,7 @@ test('sparse materialization accepts non-contiguous preferred positions', async 
     preferred_position: 3,
     enrichment: { channel_id: 10, minute_at: 360_000, observed_at: 370_000 },
   }, {
-    loadSourceTracks: async () => payload.queue.tracks.slice(3, 6).map((track) => ({
+    loadSourceTracks: async (_db, _state, limit) => payload.queue.tracks.slice(3, 3 + limit).map((track) => ({
       ...track,
       playback_offset_ms: track.position * 120_000,
       schedule_valid: 1,
@@ -213,14 +213,14 @@ test('sparse materialization accepts non-contiguous preferred positions', async 
       ...track,
       trackId: 1_000 + track.position,
     })),
-    materializedCount: async () => ({ item_count: 3 }),
+    materializedCount: async () => ({ item_count: 1 }),
     updateCoverage: async () => {},
   });
 
-  assert.equal(result.chunk_tracks, 3);
-  assert.equal(result.materialized_item_count, 3);
+  assert.equal(result.chunk_tracks, 1);
+  assert.equal(result.materialized_item_count, 1);
   assert.equal(result.complete, false);
   assert.equal(result.preferred_resolved, true);
-  assert.equal(inserted.length, 3);
-  assert.deepEqual(inserted.map((args) => args[1]), [3, 4, 5]);
+  assert.equal(inserted.length, 1);
+  assert.deepEqual(inserted.map((args) => args[1]), [3]);
 });
