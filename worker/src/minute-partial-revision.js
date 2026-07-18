@@ -13,45 +13,16 @@ import {
 } from './minute-facts-track-resolution.js';
 
 async function findReusableRevision(db, input) {
-  try {
-    return await db.prepare(`SELECT id,status,effective_at,item_count,
-        materialized_item_count,coverage_complete
-      FROM sh_queue_revisions
-      WHERE channel_id=? AND structural_hash=? AND session_id IS ? AND queue_start_time IS ?
-        AND status IN ('complete','pending')
-      ORDER BY CASE status WHEN 'complete' THEN 0 ELSE 1 END,effective_at DESC,id DESC
-      LIMIT 1`)
-      .bind(input.channelId, input.structuralHash, input.sessionId, input.queueStart)
-      .first();
-  } catch (error) {
-    if (!/no such column/i.test(String(error?.message || ''))) throw error;
-    return db.prepare(`SELECT id,status,effective_at,item_count
-      FROM sh_queue_revisions
-      WHERE channel_id=? AND structural_hash=? AND session_id IS ? AND queue_start_time IS ?
-        AND status IN ('complete','pending')
-      ORDER BY CASE status WHEN 'complete' THEN 0 ELSE 1 END,effective_at DESC,id DESC
-      LIMIT 1`)
-      .bind(input.channelId, input.structuralHash, input.sessionId, input.queueStart)
-      .first();
-  }
-}
-
-async function storedMaterializedCount(db, revision) {
-  if (!revision) return 0;
-  if (Object.hasOwn(revision, 'materialized_item_count')) {
-    return Number(revision.materialized_item_count || 0);
-  }
-  const row = await db.prepare(
-    'SELECT COUNT(*) AS item_count FROM sh_queue_revision_items WHERE revision_id=?',
-  ).bind(revision.id).first();
-  return Number(row?.item_count || 0);
-}
-
-function coverageStored(revision, materializedCount, totalCount) {
-  if (!revision || !Object.hasOwn(revision, 'materialized_item_count')) return true;
-  return Number(revision.item_count || 0) === totalCount
-    && Number(revision.materialized_item_count || 0) === materializedCount
-    && Number(revision.coverage_complete || 0) === Number(materializedCount >= totalCount);
+  return db.prepare(`SELECT r.id,r.status,r.effective_at,r.item_count,
+      (SELECT COUNT(*) FROM sh_queue_revision_items i WHERE i.revision_id=r.id)
+        AS materialized_item_count
+    FROM sh_queue_revisions r
+    WHERE r.channel_id=? AND r.structural_hash=? AND r.session_id IS ? AND r.queue_start_time IS ?
+      AND r.status IN ('complete','pending')
+    ORDER BY CASE r.status WHEN 'complete' THEN 0 ELSE 1 END,r.effective_at DESC,r.id DESC
+    LIMIT 1`)
+    .bind(input.channelId, input.structuralHash, input.sessionId, input.queueStart)
+    .first();
 }
 
 async function updateRevisionCoverage(db, revisionId, materializedCount, totalCount) {
@@ -108,21 +79,16 @@ export async function createPartialRevision(db, oldDb, input) {
     structuralHash,
   }));
   const created = !revision;
-  if (revision?.status === 'complete') {
-    const materializedCount = await storedMaterializedCount(db, revision);
-    if (materializedCount >= visibleCount) {
-      if (!coverageStored(revision, materializedCount, totalCount)) {
-        await updateRevisionCoverage(db, Number(revision.id), materializedCount, totalCount);
-      }
-      return {
-        revisionId: Number(revision.id),
-        created: false,
-        resumed: false,
-        materializedCount,
-        totalCount,
-        coverageComplete: materializedCount >= totalCount,
-      };
-    }
+  const storedMaterializedCount = Number(revision?.materialized_item_count || 0);
+  if (revision?.status === 'complete' && storedMaterializedCount >= visibleCount) {
+    return {
+      revisionId: Number(revision.id),
+      created: false,
+      resumed: false,
+      materializedCount: storedMaterializedCount,
+      totalCount,
+      coverageComplete: storedMaterializedCount >= totalCount,
+    };
   }
 
   if (!revision) {
