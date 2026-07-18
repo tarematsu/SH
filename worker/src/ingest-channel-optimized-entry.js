@@ -91,6 +91,16 @@ async function processIngestBatch(batch, env) {
         await stages.processRawAnalysisStage(env, body);
         break;
       }
+      case 'stationhead-raw-structural-analysis': {
+        const stages = await loadRawStages();
+        await stages.processRawStructuralStage(env, body);
+        break;
+      }
+      case 'stationhead-raw-likes-analysis': {
+        const stages = await loadRawStages();
+        await stages.processRawLikesStage(env, body);
+        break;
+      }
       case 'stationhead-raw-materialize': {
         const stages = await loadRawStages();
         await stages.processRawMaterializeStage(env, body);
@@ -107,7 +117,9 @@ async function processIngestBatch(batch, env) {
       event = 'ingest_fact_failed';
     } else if (type === 'stationhead-ingest-finalize') {
       event = 'ingest_finalize_failed';
-    } else if (type === 'stationhead-raw-analysis') {
+    } else if (type === 'stationhead-raw-analysis'
+        || type === 'stationhead-raw-structural-analysis'
+        || type === 'stationhead-raw-likes-analysis') {
       event = 'raw_collection_analysis_failed';
     } else if (type === 'stationhead-raw-materialize') {
       event = 'raw_collection_materialization_failed';
