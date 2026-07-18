@@ -9,11 +9,13 @@ import { pagesSixHourTask } from '../src/pages-six-hour-read-model.js';
 
 const cycleStart = Date.UTC(2026, 6, 18, 0, 0, 0);
 
-test('lightweight Pages dispatch preserves six-hour slot selection', () => {
-  for (const minute of [0, 1, 35, 50, 59, 60, 70, 105, 140, 175, 210, 245, 246, 359]) {
+test('lightweight Pages dispatch preserves reserved six-hour slot selection', () => {
+  for (const minute of [0, 1, 35, 50, 59, 70, 105, 140, 175, 210, 245, 246, 359]) {
     const now = cycleStart + minute * 60_000;
     assert.deepEqual(pagesReadModelTask(now), pagesSixHourTask(now));
   }
+  assert.equal(pagesReadModelTask(cycleStart + 60 * 60_000).kind, 'track-history-step');
+  assert.equal(pagesReadModelTask(cycleStart + 174 * 60_000).kind, 'track-history-step');
 });
 
 test('track-history minutes call only the injected shard runner', async () => {
@@ -35,7 +37,7 @@ test('track-history minutes call only the injected shard runner', async () => {
 });
 
 test('idle Pages minutes return without loading a materializer', async () => {
-  const now = cycleStart + 61 * 60_000;
+  const now = cycleStart + 176 * 60_000;
   const result = await runDispatchedPagesReadModelTask({}, now);
   assert.equal(result.skipped, true);
   assert.equal(result.reason, 'six-hour-cycle-idle');
