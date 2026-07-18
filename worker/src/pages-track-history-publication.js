@@ -2,6 +2,7 @@ import {
   splitTrackHistoryPublicationRows,
   TRACK_HISTORY_MODEL_KEY,
   TRACK_HISTORY_RESPONSE_LIMIT,
+  TRACK_HISTORY_RESPONSE_MAX_CHUNKS,
   trackHistoryResponsePrefix,
   trackHistoryResponseSuffix,
 } from './pages-track-history-response.js';
@@ -108,6 +109,9 @@ async function writeChunks(db, publication, chunks) {
 async function publishManifest(db, publication, now) {
   const suffixIndex = publication.next_chunk_index;
   const chunkCount = suffixIndex + 1;
+  if (chunkCount > TRACK_HISTORY_RESPONSE_MAX_CHUNKS) {
+    throw new Error(`track-history response exceeded ${TRACK_HISTORY_RESPONSE_MAX_CHUNKS} chunks`);
+  }
   await db.batch([
     db.prepare(`INSERT INTO sh_pages_response_chunks(
         model_key,generation,chunk_index,payload_chunk
@@ -176,6 +180,9 @@ export async function advanceTrackHistoryPublication(db, value, now = Date.now()
   const rows = rawRows.slice(0, pageRows);
   const hasMore = rawRows.length > pageRows;
   const chunks = splitTrackHistoryPublicationRows(rows, Number(publication.rows_written || 0));
+  if (Number(publication.next_chunk_index || 1) + chunks.length + 1 > TRACK_HISTORY_RESPONSE_MAX_CHUNKS) {
+    throw new Error(`track-history response exceeded ${TRACK_HISTORY_RESPONSE_MAX_CHUNKS} chunks`);
+  }
   const write = dependencies.writeChunks || writeChunks;
   await write(db, publication, chunks);
 
