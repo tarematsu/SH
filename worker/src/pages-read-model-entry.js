@@ -3,7 +3,6 @@ import { runDispatchedPagesReadModelTask } from './pages-read-model-dispatch.js'
 
 export const PAGES_READ_MODEL_CRON = '* * * * *';
 const EMPTY_DEPENDENCIES = Object.freeze({});
-const EMPTY_MESSAGES = Object.freeze([]);
 
 let publicationModulePromise;
 
@@ -23,10 +22,14 @@ function scheduledTimestamp(controller) {
 
 function assertRefreshSucceeded(result) {
   if (!result || typeof result !== 'object') return result;
+  const declaredFailed = Number(result.failed);
+  if (declaredFailed === 0) return result;
+
   const responses = result.responses;
   let failures = null;
   if (Array.isArray(responses)) {
-    for (let index = 0; index < responses.length; index += 1) {
+    const responseCount = responses.length;
+    for (let index = 0; index < responseCount; index += 1) {
       const item = responses[index];
       if (item?.ok !== false) continue;
       if (failures) failures.push(item);
@@ -34,7 +37,7 @@ function assertRefreshSucceeded(result) {
     }
   }
   const responseFailureCount = failures?.length || 0;
-  if (Number(result.failed || responseFailureCount) > 0) {
+  if (declaredFailed > 0 || responseFailureCount > 0) {
     const task = result.task?.key || result.task?.kind || 'unknown';
     const errors = new Array(responseFailureCount);
     for (let index = 0; index < responseFailureCount; index += 1) {
@@ -43,7 +46,7 @@ function assertRefreshSucceeded(result) {
     }
     throw new AggregateError(
       errors,
-      `Pages read-model task ${task} failed for ${responseFailureCount || result.failed} response(s)`,
+      `Pages read-model task ${task} failed for ${responseFailureCount || declaredFailed} response(s)`,
     );
   }
   return result;
@@ -64,21 +67,20 @@ export async function runPagesReadModelCron(controller, env, dependencies = EMPT
 }
 
 export async function runPagesReadModelQueue(batch, env, dependencies = EMPTY_DEPENDENCIES) {
+  const messages = batch.messages;
+  if (!messages?.length) return;
+  const message = messages[0];
   const { processTrackHistoryPublicationTask } = await loadPublicationModule();
-  const messages = batch.messages || EMPTY_MESSAGES;
-  for (let index = 0; index < messages.length; index += 1) {
-    const message = messages[index];
-    try {
-      const result = await processTrackHistoryPublicationTask(env, message.body, dependencies);
-      console.log(JSON.stringify(result));
-      message.ack();
-    } catch (error) {
-      console.error(JSON.stringify({
-        event: 'track_history_publication_step_failed',
-        error: String(error?.message || error).slice(0, 800),
-      }));
-      message.retry();
-    }
+  try {
+    const result = await processTrackHistoryPublicationTask(env, message.body, dependencies);
+    console.log(JSON.stringify(result));
+    message.ack();
+  } catch (error) {
+    console.error(JSON.stringify({
+      event: 'track_history_publication_step_failed',
+      error: String(error?.message || error).slice(0, 800),
+    }));
+    message.retry();
   }
 }
 
