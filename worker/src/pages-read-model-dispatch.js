@@ -1,31 +1,31 @@
 const MINUTE_MS = 60_000;
-const CYCLE_MS = 6 * 60 * MINUTE_MS;
+const HOUR_MS = 60 * MINUTE_MS;
+const CYCLE_MS = 6 * HOUR_MS;
 const TRACK_HISTORY_WINDOW_MINUTES = 175;
+const EMPTY_DEPENDENCIES = Object.freeze({});
 
-const CYCLE_SLOT_TASKS = new Map([
-  [0, 'dashboard-history'],
-  [35, 'history:daily'],
-  [50, 'host-history:summary'],
-  [70, 'history:weekly'],
-  [105, 'history:monthly'],
-  [140, 'history:broadcasts'],
-  [175, 'minute-facts-current'],
-  [210, 'track-likes'],
-  [245, 'source:like-ranking'],
-  [246, 'like-ranking'],
-]);
+let trackHistoryModulePromise;
+let sixHourModulePromise;
+
+function cycleSlotKey(cycleMinute) {
+  switch (cycleMinute) {
+    case 0: return 'dashboard-history';
+    case 35: return 'history:daily';
+    case 50: return 'host-history:summary';
+    case 70: return 'history:weekly';
+    case 105: return 'history:monthly';
+    case 140: return 'history:broadcasts';
+    case 175: return 'minute-facts-current';
+    case 210: return 'track-likes';
+    case 245: return 'source:like-ranking';
+    case 246: return 'like-ranking';
+    default: return null;
+  }
+}
 
 function validTimestamp(value, fallback = Date.now()) {
   const timestamp = Number(value);
   return Number.isFinite(timestamp) && timestamp >= 0 ? timestamp : fallback;
-}
-
-function cyclePosition(timestamp) {
-  const cycleStart = Math.floor(timestamp / CYCLE_MS) * CYCLE_MS;
-  return {
-    cycleStart,
-    cycleMinute: Math.floor((timestamp - cycleStart) / MINUTE_MS),
-  };
 }
 
 function backgroundTask(cycleMinute, cycleStart) {
@@ -45,12 +45,12 @@ function backgroundTask(cycleMinute, cycleStart) {
   };
 }
 
-export function pagesReadModelTask(now = Date.now()) {
-  const timestamp = validTimestamp(now);
-  const { cycleStart, cycleMinute } = cyclePosition(timestamp);
-  const key = CYCLE_SLOT_TASKS.get(cycleMinute) || null;
+function pagesReadModelTaskAt(timestamp) {
+  const cycleStart = Math.floor(timestamp / CYCLE_MS) * CYCLE_MS;
+  const cycleMinute = Math.floor((timestamp - cycleStart) / MINUTE_MS);
+  const key = cycleSlotKey(cycleMinute);
   if (!key) return backgroundTask(cycleMinute, cycleStart);
-  if (key === 'host-history:summary' && new Date(cycleStart).getUTCHours() !== 0) {
+  if (key === 'host-history:summary' && Math.floor(cycleStart / HOUR_MS) % 24 !== 0) {
     return backgroundTask(cycleMinute, cycleStart);
   }
   return {
@@ -61,9 +61,23 @@ export function pagesReadModelTask(now = Date.now()) {
   };
 }
 
-export async function runDispatchedPagesReadModelTask(env, now = Date.now(), dependencies = {}) {
+function loadTrackHistoryModule() {
+  trackHistoryModulePromise ||= import('./pages-track-history-split-cycle.js');
+  return trackHistoryModulePromise;
+}
+
+function loadSixHourModule() {
+  sixHourModulePromise ||= import('./pages-six-hour-read-model.js');
+  return sixHourModulePromise;
+}
+
+export function pagesReadModelTask(now = Date.now()) {
+  return pagesReadModelTaskAt(validTimestamp(now));
+}
+
+export async function runDispatchedPagesReadModelTask(env, now = Date.now(), dependencies = EMPTY_DEPENDENCIES) {
   const timestamp = validTimestamp(now);
-  const task = pagesReadModelTask(timestamp);
+  const task = pagesReadModelTaskAt(timestamp);
   if (task.kind === 'idle') {
     return {
       skipped: true,
@@ -79,9 +93,9 @@ export async function runDispatchedPagesReadModelTask(env, now = Date.now(), dep
       throw new Error('Pages read-model task is missing D1 binding(s): BUDDIES_DB, MINUTE_DB');
     }
     const run = dependencies.runTrackHistoryStep
-      || (await import('./pages-track-history-split-cycle.js')).runSplitTrackHistoryCycleStep;
+      || (await loadTrackHistoryModule()).runSplitTrackHistoryCycleStep;
     return run(env, timestamp, dependencies);
   }
-  const legacy = await import('./pages-six-hour-read-model.js');
+  const legacy = await loadSixHourModule();
   return legacy.runPagesSixHourTask(env, timestamp, dependencies);
 }
