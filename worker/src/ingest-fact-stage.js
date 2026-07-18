@@ -1,4 +1,8 @@
-import { handoffMinuteFactJob } from './minute-facts-queue.js';
+import {
+  flushMinuteFactOutbox,
+  handoffMinuteFactJob,
+  stageMinuteFactOutboxJob,
+} from './minute-facts-queue.js';
 
 function integer(value) {
   const parsed = Number(value);
@@ -23,6 +27,44 @@ function validateFactTask(body) {
     throw new Error('ingest fact identity is invalid');
   }
   return fact;
+}
+
+function validateDeliveryTask(body) {
+  const minuteFact = objectValue(body?.minute_fact);
+  const collectorState = objectValue(body?.collector_state);
+  if (body?.message_type !== 'stationhead-ingest-fact-deliver'
+      || integer(body?.message_version) !== 1
+      || !minuteFact
+      || !collectorState
+      || !objectValue(minuteFact.payload)
+      || !objectValue(minuteFact.payload.snapshot)) {
+    throw new Error('unsupported ingest fact delivery task');
+  }
+  const observedAt = integer(body.observed_at ?? minuteFact.payload.observedAt);
+  const channelId = integer(body.channel_id ?? minuteFact.channel_id);
+  if (observedAt == null || channelId == null) throw new Error('ingest fact delivery identity is invalid');
+  return {
+    observedAt,
+    channelId,
+    minuteFact,
+    fact: {
+      observedAt,
+      snapshot: minuteFact.payload.snapshot,
+      queue: minuteFact.payload.queue ?? null,
+      comments: minuteFact.payload.comments || {},
+      auth: objectValue(body.auth) || {
+        authToken: collectorState.authToken,
+        deviceUid: collectorState.deviceUid,
+        tokenExpiresAt: collectorState.tokenExpiresAt,
+      },
+      collectorState,
+      options: {
+        ...(objectValue(minuteFact.options) || {}),
+        readModel: objectValue(minuteFact.read_model),
+        readModelPresentationOnly: true,
+      },
+    },
+  };
 }
 
 function commentsTask(fact, body) {
@@ -127,8 +169,72 @@ async function enqueueFinalize(env, fact, envelope, dependencies = {}) {
   });
 }
 
+async function enqueueDelivery(env, fact, minuteFact, dependencies = {}) {
+  const send = dependencies.sendDelivery
+    || ((message) => env.INGEST_FINALIZE_QUEUE.send(message, { contentType: 'json' }));
+  if (!dependencies.sendDelivery && !env?.INGEST_FINALIZE_QUEUE?.send) {
+    throw new Error('INGEST_FINALIZE_QUEUE binding is missing');
+  }
+  await send({
+    message_type: 'stationhead-ingest-fact-deliver',
+    message_version: 1,
+    observed_at: integer(fact.observedAt),
+    channel_id: integer(fact.snapshot?.channel_id),
+    collector_state: fact.collectorState,
+    minute_fact: minuteFact,
+  });
+}
+
+export async function processIngestFactDeliveryTask(env, body, dependencies = {}) {
+  const delivery = validateDeliveryTask(body);
+  const capture = { envelope: null };
+  const active = activeFactEnv(env, delivery.fact, capture);
+  const flush = dependencies.flushMinuteFactOutbox || flushMinuteFactOutbox;
+  const result = await flush(active, {
+    limit: 1,
+    currentJobId: delivery.minuteFact.job_id,
+    currentMessage: delivery.minuteFact,
+  });
+  if (!result?.current_sent) {
+    const error = new Error('minute fact delivery is waiting for an older outbox job');
+    error.code = 'MINUTE_FACT_DELIVERY_PENDING';
+    error.retryDelaySeconds = result?.failed ? 30 : 1;
+    throw error;
+  }
+  const envelope = capture.envelope || readModelEnvelope(delivery.fact, delivery.minuteFact);
+  await enqueueFinalize(env, delivery.fact, envelope, dependencies);
+  return {
+    event: 'ingest_fact_completed',
+    observed_at: delivery.observedAt,
+    channel_id: delivery.channelId,
+    minute_at: integer(delivery.minuteFact.minute_at),
+    minute_fact_job_enqueued: true,
+    minute_fact_outbox_pending: Boolean(result.pending),
+  };
+}
+
 export async function processIngestFactTask(env, body, dependencies = {}) {
   const fact = validateFactTask(body);
+  if (env?.INGEST_FINALIZE_QUEUE?.send && dependencies.inline !== true) {
+    const stage = dependencies.stageMinuteFactOutboxJob || stageMinuteFactOutboxJob;
+    const staged = await stage(env, {
+      observedAt: fact.observedAt,
+      snapshot: fact.snapshot,
+      queue: fact.queue ?? null,
+      comments: fact.comments || {},
+    }, fact.options);
+    await enqueueDelivery(env, fact, staged.message, dependencies);
+    return {
+      event: 'ingest_fact_staged',
+      observed_at: integer(fact.observedAt),
+      channel_id: integer(fact.snapshot.channel_id),
+      minute_at: integer(staged.minute_at),
+      minute_fact_job_enqueued: false,
+      minute_fact_outbox_pending: true,
+      delivery_deferred: true,
+    };
+  }
+
   const capture = { envelope: null };
   const active = activeFactEnv(env, fact, capture);
   const handoff = dependencies.handoffMinuteFactJob || handoffMinuteFactJob;

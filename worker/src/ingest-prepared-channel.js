@@ -8,7 +8,6 @@ import {
   preparedCollectorFinalizeState,
 } from './prepared-collector-runner.js';
 import {
-  handoffMinuteFactJob,
   parseMinuteFactQueueMessage,
 } from './minute-facts-queue.js';
 
@@ -268,55 +267,7 @@ async function finalizePreparedIngest(env, result, envelope) {
   return true;
 }
 
-function validateFactTask(body) {
-  const fact = objectValue(body?.fact);
-  if (body?.message_type !== 'stationhead-ingest-fact'
-      || integer(body?.message_version) !== 1
-      || !fact
-      || !objectValue(fact.snapshot)
-      || !objectValue(fact.options)
-      || !objectValue(fact.collectorState)) {
-    throw new Error('unsupported ingest fact task');
-  }
-  if (integer(fact.observedAt) == null || integer(fact.snapshot.channel_id) == null) {
-    throw new Error('ingest fact identity is invalid');
-  }
-  return fact;
-}
-
-export async function processIngestFactTask(env, body, dependencies = {}) {
-  const fact = validateFactTask(body);
-  const rawMessage = {
-    observed_at: fact.observedAt,
-    auth: fact.auth || {},
-  };
-  const collection = { snapshot: fact.snapshot, queue: fact.queue ?? null };
-  const capture = { channelId: null, minuteAt: null, envelope: null };
-  const active = activeIngestEnv(env, rawMessage, collection, capture);
-  const handoff = dependencies.handoffMinuteFactJob || handoffMinuteFactJob;
-  const minuteFactJob = await handoff(active, {
-    observedAt: fact.observedAt,
-    snapshot: fact.snapshot,
-    queue: fact.queue ?? null,
-    comments: fact.comments || {},
-  }, fact.options);
-  const identity = {
-    observed_at: integer(fact.observedAt),
-    channel_id: integer(fact.snapshot.channel_id),
-    minute_fact_job_minute_at: integer(minuteFactJob?.minute_at),
-  };
-  const envelope = capturedReadModelEnvelope(identity, capture)
-    || await recoverCurrentReadModelEnvelope(env, rawMessage, collection, identity);
-  await enqueueFinalize(env, identity, fact.collectorState, envelope, dependencies);
-  return {
-    event: 'ingest_fact_completed',
-    observed_at: identity.observed_at,
-    channel_id: identity.channel_id,
-    minute_at: identity.minute_fact_job_minute_at,
-    minute_fact_job_enqueued: Boolean(minuteFactJob?.enqueued),
-    minute_fact_outbox_pending: Boolean(minuteFactJob?.outbox_pending),
-  };
-}
+export { processIngestFactTask } from './ingest-fact-stage.js';
 
 export async function ingestPreparedRawCollection(env, message) {
   const collection = preparedCollection(message);

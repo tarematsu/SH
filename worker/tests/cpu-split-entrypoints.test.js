@@ -230,3 +230,36 @@ test('identity enrichment preserves host, session, bite and compact fact update 
   assert.equal(result.host_id, 60);
   assert.equal(result.bite_count, 6);
 });
+
+
+test('buddy parse output is carried to a separate durable store invocation', async () => {
+  const sent = [];
+  const prepared = {
+    channel_alias: 'buddy46',
+    cycle_at: 1_800_000,
+    queue: { tracks: [] },
+  };
+  let received = null;
+  const result = await processBuddyPlaybackStage({
+    BUDDY_PLAYBACK_ENABLED: true,
+    BUDDY_PLAYBACK_QUEUE: {
+      async send(body) { sent.push(body); },
+    },
+  }, {
+    message_type: 'buddy-playback-stage',
+    message_version: 1,
+    scheduled_at: 1_800_000,
+    observed_at: 1_800_123,
+    prepared_parse: prepared,
+  }, {
+    advance: async (_env, _scheduledAt, _observedAt, dependencies) => {
+      received = dependencies.preparedParse;
+      return { pending: true, stage: 'metadata', cycle_at: 1_800_000 };
+    },
+  });
+
+  assert.equal(received, prepared);
+  assert.equal(result.requeued, true);
+  assert.equal(sent.length, 1);
+  assert.equal(sent[0].prepared_parse, undefined);
+});

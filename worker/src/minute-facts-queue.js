@@ -214,6 +214,23 @@ async function saveMinuteFactOutboxJob(env, message, now = Date.now(), serialize
     .run();
 }
 
+export async function stageMinuteFactOutboxJob(env, input = {}, options = {}) {
+  if (!env?.DB?.prepare) throw new Error('minute fact outbox DB binding is missing');
+  const message = minuteFactQueueMessage(input, options);
+  const now = Date.now();
+  await saveMinuteFactOutboxJob(env, message, now, serializedMessages.get(message));
+  return {
+    message,
+    staged_at: now,
+    enqueued: false,
+    outbox_pending: true,
+    channel_id: message.channel_id,
+    minute_at: message.minute_at,
+    job_kind: message.options.jobKind,
+    job_priority: message.options.jobPriority,
+  };
+}
+
 export async function flushMinuteFactOutbox(env, options = {}) {
   if (!env?.MINUTE_FACT_QUEUE?.send) {
     return { sent: 0, failed: 0, pending: true, reason: 'queue-binding-missing' };
@@ -284,9 +301,9 @@ export async function flushMinuteFactOutbox(env, options = {}) {
 }
 
 export async function handoffMinuteFactJob(env, input = {}, options = {}) {
-  const message = minuteFactQueueMessage(input, options);
-  const now = Date.now();
-  await saveMinuteFactOutboxJob(env, message, now, serializedMessages.get(message));
+  const staged = await stageMinuteFactOutboxJob(env, input, options);
+  const { message } = staged;
+  const now = staged.staged_at;
   const delivery = await flushMinuteFactOutbox(env, {
     limit: options.flushLimit,
     currentJobId: message.job_id,

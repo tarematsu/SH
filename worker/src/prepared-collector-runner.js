@@ -199,8 +199,11 @@ export async function collectPreparedOnce(env, source = 'raw-collection-queue') 
     let metadataPlanned = false;
     if (plan.queue) {
       stage = 'd1_write_queue';
-      queueResult = await ingest(activeEnv, 'queue', queue, observedAt);
-      metadataPlanned = plan.metadataDue || queueResult?.structure_changed === true;
+      queueResult = await ingest(activeEnv, 'queue', queue, observedAt, {
+        metadataRequested: plan.metadataDue,
+      });
+      metadataPlanned = !activeEnv?.PERSIST_QUEUE?.send
+        && (plan.metadataDue || queueResult?.structure_changed === true);
     }
 
     const commentResult = plan.comments

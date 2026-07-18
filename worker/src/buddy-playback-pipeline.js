@@ -71,12 +71,15 @@ const PIPELINE_FETCHED_SQL = `UPDATE sh_buddy_playback_pipeline SET
     observed_at=?,stage='parse',raw_json=?,next_attempt_at=0,lease_until=0,
     last_error=NULL,updated_at=?
   WHERE channel_alias=? AND cycle_at=? AND stage='fetch'`;
+const PIPELINE_PARSE_READY_SQL = `UPDATE sh_buddy_playback_pipeline SET
+    stage='parse-store',next_attempt_at=0,lease_until=0,last_error=NULL,updated_at=?
+  WHERE channel_alias=? AND cycle_at=? AND stage='parse'`;
 const PIPELINE_PARSED_SQL = `UPDATE sh_buddy_playback_pipeline SET
     stage='metadata',raw_json=NULL,parsed_queue_json=?,state_json=?,
     final_queue_json=NULL,station_id=?,queue_id=?,start_time=?,is_paused=?,
     is_broadcasting=?,host_account_id=?,host_handle=?,track_count=?,metadata_attempts=0,
     next_attempt_at=0,lease_until=0,last_error=NULL,updated_at=?
-  WHERE channel_alias=? AND cycle_at=? AND stage='parse'`;
+  WHERE channel_alias=? AND cycle_at=? AND stage='parse-store'`;
 const PIPELINE_METADATA_SQL = `UPDATE sh_buddy_playback_pipeline SET
     stage=?,final_queue_json=?,metadata_attempts=metadata_attempts+?,next_attempt_at=0,
     lease_until=CASE WHEN ?='commit' THEN lease_until ELSE 0 END,last_error=NULL,updated_at=?
@@ -228,10 +231,13 @@ export async function buddyPlaybackStateHash(stateJson) {
   return result;
 }
 
-export function parseBuddyPlaybackPipelinePayload(rawJson, config) {
+function parseBuddyPlaybackPipelineQueue(rawJson, config) {
   const normalized = normalizeBuddyQueuePayload(JSON.parse(rawJson), config.alias);
   validateBuddyChannelPayload(normalized, config.alias);
-  const queue = extractBuddyPlayback(normalized, config.alias, config.maxTracks);
+  return extractBuddyPlayback(normalized, config.alias, config.maxTracks);
+}
+
+function serializeBuddyPlaybackPipelineQueue(queue) {
   const playbackState = {
     station_id: queue.station_id,
     queue_id: queue.queue_id,
@@ -244,6 +250,10 @@ export function parseBuddyPlaybackPipelinePayload(rawJson, config) {
     parsedQueueJson: JSON.stringify(queue),
     stateJson: JSON.stringify(playbackState),
   };
+}
+
+export function parseBuddyPlaybackPipelinePayload(rawJson, config) {
+  return serializeBuddyPlaybackPipelineQueue(parseBuddyPlaybackPipelineQueue(rawJson, config));
 }
 
 async function preparePipelineJob(env, config, scheduledAt, observedAt) {
@@ -292,9 +302,56 @@ async function runFetchStage(env, row, observedAt, dependencies) {
   });
 }
 
+function preparedParsePayload(row, queue) {
+  return {
+    channel_alias: row.channel_alias,
+    cycle_at: finiteNumber(row.cycle_at),
+    observed_at: finiteNumber(row.observed_at),
+    queue,
+  };
+}
+
+function validPreparedParse(value, row) {
+  return value
+    && typeof value === 'object'
+    && !Array.isArray(value)
+    && String(value.channel_alias || '') === String(row.channel_alias || '')
+    && finiteNumber(value.cycle_at) === finiteNumber(row.cycle_at)
+    && value.queue
+    && typeof value.queue === 'object'
+    && !Array.isArray(value.queue)
+    && Array.isArray(value.queue.tracks);
+}
+
 async function runParseStage(env, row, observedAt) {
   const config = buddyPlaybackConfig(env);
-  const parsed = parseBuddyPlaybackPipelinePayload(row.raw_json, config);
+  const queue = parseBuddyPlaybackPipelineQueue(row.raw_json, config);
+  const preparedParse = preparedParsePayload(row, queue);
+  const result = await env.OTHER_DB.prepare(PIPELINE_PARSE_READY_SQL)
+    .bind(observedAt, row.channel_alias, row.cycle_at)
+    .run();
+  requireChanged(result, 'parse');
+  return {
+    skipped: false,
+    pending: true,
+    stage: 'parse-store',
+    cycle_at: row.cycle_at,
+    tracks: queue.tracks.length,
+    checked_at: row.observed_at,
+    prepared_parse: preparedParse,
+  };
+}
+
+async function runParseStoreStage(env, row, observedAt, dependencies) {
+  let prepared = dependencies.preparedParse;
+  if (!validPreparedParse(prepared, row)) {
+    const config = buddyPlaybackConfig(env);
+    prepared = preparedParsePayload(
+      row,
+      parseBuddyPlaybackPipelineQueue(row.raw_json, config),
+    );
+  }
+  const parsed = serializeBuddyPlaybackPipelineQueue(prepared.queue);
   const queue = parsed.queue;
   const result = await env.OTHER_DB.prepare(PIPELINE_PARSED_SQL).bind(
     parsed.parsedQueueJson,
@@ -311,7 +368,7 @@ async function runParseStage(env, row, observedAt) {
     row.channel_alias,
     row.cycle_at,
   ).run();
-  requireChanged(result, 'parse');
+  requireChanged(result, 'parse-store');
   return {
     skipped: false,
     pending: true,
@@ -466,6 +523,7 @@ export async function advanceBuddyPlaybackPipeline(
   try {
     if (row.stage === 'fetch') return await runFetchStage(env, row, observedAt, dependencies);
     if (row.stage === 'parse') return await runParseStage(env, row, observedAt);
+    if (row.stage === 'parse-store') return await runParseStoreStage(env, row, observedAt, dependencies);
     if (row.stage === 'metadata') return await runMetadataStage(env, row, observedAt, dependencies);
     if (row.stage === 'commit') return await runCommitStage(env, row, observedAt, dependencies);
     throw new Error(`unsupported buddy46 pipeline stage: ${row.stage}`);

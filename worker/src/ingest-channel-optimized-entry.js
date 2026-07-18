@@ -24,6 +24,10 @@ export default {
           const { processIngestFactTask } = await import('./ingest-fact-stage.js');
           const result = await processIngestFactTask(env, message.body);
           console.log(JSON.stringify(result));
+        } else if (type === 'stationhead-ingest-fact-deliver') {
+          const { processIngestFactDeliveryTask } = await import('./ingest-fact-stage.js');
+          const result = await processIngestFactDeliveryTask(env, message.body);
+          console.log(JSON.stringify(result));
         } else if (type === 'stationhead-ingest-finalize') {
           const { processIngestFinalizeTask } = await import('./ingest-finalize-entry.js');
           const result = await processIngestFinalizeTask(env, message.body);
@@ -33,7 +37,7 @@ export default {
         }
         message.ack();
       } catch (error) {
-        const event = type === 'stationhead-ingest-fact'
+        const event = ['stationhead-ingest-fact', 'stationhead-ingest-fact-deliver'].includes(type)
           ? 'ingest_fact_failed'
           : type === 'stationhead-ingest-finalize'
           ? 'ingest_finalize_failed'
@@ -42,7 +46,11 @@ export default {
           event,
           error: String(error?.message || error).slice(0, 800),
         }));
-        message.retry();
+        if (Number(error?.retryDelaySeconds) > 0) {
+          message.retry({ delaySeconds: Math.max(1, Number(error.retryDelaySeconds)) });
+        } else {
+          message.retry();
+        }
       }
     }
   },

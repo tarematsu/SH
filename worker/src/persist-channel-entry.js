@@ -17,30 +17,64 @@ function validateTask(body) {
   return { task, observedAt };
 }
 
-export async function processPersistenceTask(env, body) {
+
+async function enqueueQueueMetadata(env, body, observedAt, result, dependencies = {}) {
+  const requested = body.metadata_requested === true || result?.structure_changed === true;
+  const tracks = Array.isArray(body.data?.tracks) ? body.data.tracks : [];
+  if (!requested || !tracks.length) return false;
+  const send = dependencies.sendTrackMetadata
+    || ((message) => env.TRACK_METADATA_QUEUE.send(message, { contentType: 'json' }));
+  if (!dependencies.sendTrackMetadata && !env?.TRACK_METADATA_QUEUE?.send) {
+    throw new Error('TRACK_METADATA_QUEUE binding is missing');
+  }
+  const stationId = Number(body.data?.station_id);
+  const jobId = `queue-metadata:${Number.isFinite(stationId) ? Math.trunc(stationId) : 'unknown'}:${Math.trunc(observedAt)}`;
+  await send({
+    message_type: 'stationhead-track-metadata',
+    message_version: 1,
+    task: 'committed-enrichment',
+    job: {
+      jobId,
+      payload: {
+        observedAt,
+        queue: body.data,
+      },
+      options: {
+        enrichTrackMetadata: true,
+      },
+    },
+  });
+  return true;
+}
+
+export async function processPersistenceTask(env, body, dependencies = {}) {
   const { task, observedAt } = validateTask(body);
   if (!env?.DB?.prepare) throw new Error('DB binding is missing');
   if (task === 'snapshot') {
     restoreSnapshotAnalysis(body.data, body.analysis);
-    const result = await savePreparedSnapshot(env.DB, observedAt, body.data);
+    const saveSnapshot = dependencies.savePreparedSnapshot || savePreparedSnapshot;
+    const result = await saveSnapshot(env.DB, observedAt, body.data);
     return { task, observed_at: observedAt, ...result };
   }
   restoreQueueAnalysis(body.data, body.analysis);
   // The queue hash cache predates partial materialization and its signature only
   // covers visible track fields. A changed omitted tail must force a fresh hash.
   if (body.data?.source_structural_hash) resetQueueHashCacheForTests();
-  const result = await ingestOptimizedBody(env, {
+  const runIngest = dependencies.ingestOptimizedBody || ingestOptimizedBody;
+  const result = await runIngest(env, {
     type: 'queue',
     observed_at: observedAt,
     collector_id: body.collector_id || 'cloudflare-worker',
     data: body.data,
   });
-  const materializationRecorded = await recordQueueMaterialization(
+  const recordMaterialization = dependencies.recordQueueMaterialization || recordQueueMaterialization;
+  const materializationRecorded = await recordMaterialization(
     env.DB,
     body.data,
     body.analysis,
     observedAt,
   );
+  const metadataDeferred = await enqueueQueueMetadata(env, body, observedAt, result, dependencies);
   return {
     task,
     observed_at: observedAt,
@@ -48,6 +82,7 @@ export async function processPersistenceTask(env, body) {
     total_track_count: Number(body.data?.total_track_count || body.data?.tracks?.length || 0),
     materialized_track_count: Number(body.data?.materialized_track_count || body.data?.tracks?.length || 0),
     materialization_recorded: materializationRecorded,
+    metadata_deferred: metadataDeferred,
   };
 }
 

@@ -6,7 +6,9 @@
   "workers_dev": false,
   "preview_urls": false,
   "logpush": true,
-  "observability": { "enabled": true },
+  "observability": {
+    "enabled": true
+  },
   "vars": {
     "COLLECTOR_ID": "cloudflare-worker"
   },
@@ -26,6 +28,12 @@
         "max_retries": 8,
         "dead_letter_queue": "stationhead-buddies-persist-dlq",
         "max_concurrency": 1
+      }
+    ],
+    "producers": [
+      {
+        "binding": "TRACK_METADATA_QUEUE",
+        "queue": "stationhead-track-metadata"
       }
     ]
   }
