@@ -47,6 +47,25 @@ async function findReusableRevision(db, input) {
     .first();
 }
 
+async function revisionProgress(db, revisionId) {
+  const row = await db.prepare(`SELECT COUNT(*) AS item_count,MAX(position) AS max_position,
+      MAX(CASE WHEN schedule_valid=1 THEN playback_offset_ms+duration_ms END) AS playback_end,
+      MIN(schedule_valid) AS schedule_valid
+    FROM sh_queue_revision_items WHERE revision_id=?`)
+    .bind(revisionId)
+    .first();
+  const count = Number(row?.item_count || 0);
+  const maxPosition = integer(row?.max_position);
+  if (count > 0 && maxPosition !== count - 1) {
+    throw new Error(`queue revision ${revisionId} has non-contiguous materialization: ${count}/${maxPosition}`);
+  }
+  return {
+    cursor: count,
+    playbackOffset: integer(row?.playback_end) ?? 0,
+    scheduleValid: count === 0 || Number(row?.schedule_valid || 0) === 1,
+  };
+}
+
 export async function prepareLiveRevisionStage(env, payload) {
   const db = env?.MINUTE_DB;
   if (!db) throw new Error('minute revision stage MINUTE_DB binding is missing');
@@ -68,6 +87,7 @@ export async function prepareLiveRevisionStage(env, payload) {
     observedAt,
   });
   const structure = queueStructurePayload(queue);
+  const targetCount = structure.tracks.length;
   const structuralHash = await queueStructuralHash(queue, structure);
   const queueStart = timestampMs(queue.start_time);
   let revision = await findReusableRevision(db, {
@@ -76,13 +96,6 @@ export async function prepareLiveRevisionStage(env, payload) {
     queueStart,
     structuralHash,
   });
-  if (revision?.status === 'complete') {
-    return {
-      staged: false,
-      complete: true,
-      revision_id: Number(revision.id),
-    };
-  }
 
   if (!revision) {
     await db.prepare(`INSERT OR IGNORE INTO sh_queue_revisions(
@@ -98,27 +111,43 @@ export async function prepareLiveRevisionStage(env, payload) {
         observedAt,
         receivedAt,
         structuralHash,
-        structure.tracks.length,
+        targetCount,
       )
       .run();
-    revision = await db.prepare(`SELECT id,status,effective_at,item_count FROM sh_queue_revisions
-      WHERE channel_id=? AND effective_at=? AND structural_hash=?`)
-      .bind(channelId, observedAt, structuralHash)
-      .first();
+    revision = await findReusableRevision(db, {
+      channelId,
+      sessionId,
+      queueStart,
+      structuralHash,
+    });
   }
 
   const revisionId = Number(revision?.id);
   if (!Number.isFinite(revisionId)) throw new Error('failed to create or resume staged queue revision');
+  const progress = await revisionProgress(db, revisionId);
+  if (progress.cursor >= targetCount) {
+    return {
+      staged: false,
+      complete: true,
+      revision_id: revisionId,
+      materialized_count: progress.cursor,
+    };
+  }
+
   return {
     staged: true,
     complete: false,
     revision_id: revisionId,
     channel_id: channelId,
     minute_at: Math.floor(observedAt / 60_000) * 60_000,
-    cursor: 0,
-    playback_offset_ms: 0,
-    schedule_valid: true,
-    item_count: structure.tracks.length,
+    cursor: progress.cursor,
+    playback_offset_ms: progress.playbackOffset,
+    schedule_valid: progress.scheduleValid,
+    item_count: targetCount,
+    total_item_count: Math.max(
+      targetCount,
+      integer(queue.total_track_count) ?? targetCount,
+    ),
   };
 }
 
@@ -134,6 +163,10 @@ function validateRevisionState(state, payload) {
     revisionId,
     cursor,
     itemCount,
+    totalItemCount: Math.max(
+      itemCount,
+      integer(state.total_item_count) ?? integer(payload?.queue?.total_track_count) ?? itemCount,
+    ),
     playbackOffset: integer(state.playback_offset_ms) ?? 0,
     scheduleValid: state.schedule_valid !== false,
   };
@@ -208,6 +241,23 @@ export async function writeLiveRevisionChunk(env, payload, revisionState) {
   };
 }
 
+async function markRevisionCoverage(db, revisionId, materializedCount, totalCount) {
+  const coverageComplete = materializedCount >= totalCount ? 1 : 0;
+  try {
+    await db.prepare(`UPDATE sh_queue_revisions SET
+        item_count=MAX(item_count,?),total_item_count=MAX(COALESCE(total_item_count,0),?),
+        coverage_complete=?,status='complete'
+      WHERE id=?`)
+      .bind(materializedCount, totalCount, coverageComplete, revisionId)
+      .run();
+  } catch (error) {
+    if (!/no such column/i.test(String(error?.message || ''))) throw error;
+    await db.prepare("UPDATE sh_queue_revisions SET item_count=MAX(item_count,?),status='complete' WHERE id=?")
+      .bind(materializedCount, revisionId)
+      .run();
+  }
+}
+
 export async function completeLiveRevisionStage(env, payload, revisionState) {
   const db = env?.MINUTE_DB;
   if (!db) throw new Error('minute revision stage MINUTE_DB binding is missing');
@@ -215,16 +265,21 @@ export async function completeLiveRevisionStage(env, payload, revisionState) {
   const count = await db.prepare(
     'SELECT COUNT(*) AS item_count FROM sh_queue_revision_items WHERE revision_id=?',
   ).bind(state.revisionId).first();
-  const itemCount = Number(count?.item_count || 0);
-  if (itemCount !== state.itemCount) {
-    throw new Error(`queue revision ${state.revisionId} incomplete: ${itemCount}/${state.itemCount}`);
+  const materializedCount = Number(count?.item_count || 0);
+  if (materializedCount < state.itemCount) {
+    throw new Error(`queue revision ${state.revisionId} incomplete: ${materializedCount}/${state.itemCount}`);
   }
-  await db.prepare("UPDATE sh_queue_revisions SET status='complete' WHERE id=?")
-    .bind(state.revisionId)
-    .run();
+  await markRevisionCoverage(
+    db,
+    state.revisionId,
+    materializedCount,
+    state.totalItemCount,
+  );
   return {
     revision_id: state.revisionId,
-    item_count: itemCount,
+    item_count: materializedCount,
+    total_item_count: state.totalItemCount,
+    coverage_complete: materializedCount >= state.totalItemCount,
     complete: true,
   };
 }
