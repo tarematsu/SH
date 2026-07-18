@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 
 const deployWorkflow = readFileSync(
   new URL('../.github/workflows/deploy.yml', import.meta.url),
@@ -82,6 +82,8 @@ test('automatic deploys select only affected current Workers and isolate script 
   assert.match(prDiagnosticsWorkflow, /Skipping direct PR deploy because a Worker script name changed/);
   assert.match(prDiagnosticsWorkflow, /needs\.select-workers\.outputs\.topology_rename != 'true'/);
   assert.match(prDiagnosticsWorkflow, /fromJSON\(needs\.select-workers\.outputs\.diagnostics\)/);
+  assert.doesNotMatch(prDiagnosticsWorkflow, /Reinitialize track-history publication/);
+  assert.doesNotMatch(prDiagnosticsWorkflow, /Probe Pages Queue consumer/);
 });
 
 test('PR deploys provision changed facts schemas before dependent Workers', () => {
@@ -111,10 +113,13 @@ test('Worker package scripts contain only current deployment operations', () => 
     'npm run deploy:pages-read-model && npm run deploy:monitor-maintenance && npm run deploy:other',
   );
   assert.equal(workerPackage.scripts['deploy:persist'], 'wrangler deploy --config wrangler.persist.jsonc');
+  assert.equal(workerPackage.scripts['deploy:other'], 'node scripts/deploy-other-monitor.mjs');
   assert.equal(workerPackage.scripts['deploy:host-monitor'], undefined);
   assert.equal(workerPackage.scripts['deploy:buddy-playback'], undefined);
   assert.equal(workerPackage.scripts['check:host-monitor-bundle'], undefined);
   assert.equal(workerPackage.scripts['check:buddy-playback-bundle'], undefined);
+  assert.equal(existsSync(new URL('../worker/wrangler.host-monitor.jsonc', import.meta.url)), false);
+  assert.equal(existsSync(new URL('../worker/wrangler.buddy-playback.jsonc', import.meta.url)), false);
 
   for (const key of Object.keys(workerPackage.scripts)) {
     assert.doesNotMatch(key, /detach|retire|cutover|mintue/);
