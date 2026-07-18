@@ -36,6 +36,14 @@ function queueIdentity(queue) {
   };
 }
 
+function sameGeneration(state, identity, sourceHash) {
+  return Boolean(state)
+    && integer(state.station_id) === identity.stationId
+    && integer(state.queue_id) === identity.queueId
+    && integer(state.start_time) === identity.startTime
+    && String(state.source_structural_hash || '') === sourceHash;
+}
+
 async function installStateTable(db) {
   await db.prepare(`CREATE TABLE IF NOT EXISTS sh_queue_materialization_state (
       station_id INTEGER PRIMARY KEY,
@@ -72,12 +80,7 @@ export function chooseMaterializedTrackCount(queue, analysis, state = null, env 
   const cfg = config(env);
   const identity = queueIdentity(queue);
   const sourceHash = String(analysis?.structural_hash || '');
-  const sameGeneration = state
-    && integer(state.station_id) === identity.stationId
-    && integer(state.queue_id) === identity.queueId
-    && integer(state.start_time) === identity.startTime
-    && String(state.source_structural_hash || '') === sourceHash;
-  const requested = sameGeneration
+  const requested = sameGeneration(state, identity, sourceHash)
     ? positiveInteger(state.requested_count, cfg.initialTracks)
     : cfg.initialTracks;
   return Math.min(total, Math.max(cfg.initialTracks, requested));
@@ -173,7 +176,13 @@ export async function recordQueueMaterialization(db, queue, analysis, observedAt
         source_structural_hash=excluded.source_structural_hash,
         source_likes_hash=excluded.source_likes_hash,
         total_track_count=excluded.total_track_count,
-        materialized_count=excluded.materialized_count,
+        materialized_count=CASE
+          WHEN sh_queue_materialization_state.queue_id IS excluded.queue_id
+            AND sh_queue_materialization_state.start_time IS excluded.start_time
+            AND sh_queue_materialization_state.source_structural_hash=excluded.source_structural_hash
+          THEN MAX(sh_queue_materialization_state.materialized_count,excluded.materialized_count)
+          ELSE excluded.materialized_count
+        END,
         requested_count=CASE
           WHEN sh_queue_materialization_state.queue_id IS excluded.queue_id
             AND sh_queue_materialization_state.start_time IS excluded.start_time
@@ -189,7 +198,13 @@ export async function recordQueueMaterialization(db, queue, analysis, observedAt
           ELSE NULL
         END,
         observed_at=MAX(sh_queue_materialization_state.observed_at,excluded.observed_at),
-        updated_at=excluded.updated_at`)
+        updated_at=excluded.updated_at
+      WHERE excluded.observed_at>=sh_queue_materialization_state.observed_at
+        OR (
+          sh_queue_materialization_state.queue_id IS excluded.queue_id
+          AND sh_queue_materialization_state.start_time IS excluded.start_time
+          AND sh_queue_materialization_state.source_structural_hash=excluded.source_structural_hash
+        )`)
       .bind(
         identity.stationId,
         identity.queueId,
@@ -252,9 +267,11 @@ export async function requestQueueExpansion(db, queue, currentPosition, observed
   if (!db?.prepare || requested == null || identity.stationId == null || !sourceHash) return null;
   try {
     if (await updateExpansionRequest(db, queue, requested, currentPosition, observedAt)) return requested;
+    const state = await loadState(db, identity.stationId);
+    if (state && !sameGeneration(state, identity, sourceHash)) return null;
     // Persistence and playback use different Queues. If playback wins the race,
-    // establish the state row from its compact queue and then apply the request.
-    await recordQueueMaterialization(db, queue, null, observedAt);
+    // establish the absent state row from its compact queue and then apply it.
+    if (!state) await recordQueueMaterialization(db, queue, null, observedAt);
     return await updateExpansionRequest(db, queue, requested, currentPosition, observedAt)
       ? requested
       : null;
