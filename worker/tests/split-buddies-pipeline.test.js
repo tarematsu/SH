@@ -42,7 +42,7 @@ test('ordered comments and three minute Workers have one owner per queue boundar
 
   assert.equal(buddies.main, 'src/raw-collector-entry.js');
   assert.equal(ingest.main, 'src/ingest-channel-optimized-entry.js');
-  assert.equal(comments.main, 'src/comments-entry.js');
+  assert.equal(comments.main, 'src/comments-cpu-entry.js');
   assert.equal(readModel.main, 'src/read-model-entry.js');
   assert.equal(minuteIngest.main, 'src/minute-production-entry.js');
   assert.equal(minuteDerive.main, 'src/minute-derive-entry.js');
