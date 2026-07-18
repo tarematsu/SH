@@ -119,10 +119,10 @@ async function runDirectTask(name, env, ctx, now, dependencies = EMPTY_DEPENDENC
 }
 
 async function runTask(name, env, ctx, now, dependencies = EMPTY_DEPENDENCIES) {
-  if (dependencies[name]) return runDirectTask(name, env, ctx, now, dependencies);
   let dispatched = null;
   if (name === 'buddy') dispatched = await dispatchBuddyPlayback(env, now);
   else if (name === 'host') dispatched = await dispatchHostMonitor(env, now);
+  else if (dependencies[name]) return runDirectTask(name, env, ctx, now, dependencies);
   else if (name === 'prediction' || name === 'officialNews') {
     dispatched = await dispatchDeferredTask(env, name, now);
   }
