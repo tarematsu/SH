@@ -7,6 +7,7 @@ import {
   processCommentsTask,
 } from '../src/comments-entry.js';
 import { processIngestFinalizeTask } from '../src/ingest-finalize-entry.js';
+import { processIngestFactTask } from '../src/ingest-prepared-channel.js';
 import { minuteFactQueueMessage } from '../src/minute-facts-queue.js';
 import { processTrackMetadataTask } from '../src/track-metadata-entry.js';
 
@@ -126,6 +127,59 @@ test('read-model hydration, preservation and writes run as separate metadata sta
   assert.equal(write.pending, false);
   assert.equal(written.hydrated, true);
   assert.equal(written.preserved, true);
+});
+
+test('minute fact handoff queues finalization as a separate ingest invocation', async () => {
+  const comments = [];
+  const finalized = [];
+  const observedAt = 1_784_000_000_000;
+  const collectorState = {
+    authToken: 'token',
+    deviceUid: 'device',
+    lastRunAt: observedAt,
+    lastSuccessAt: observedAt + 1,
+  };
+  const result = await processIngestFactTask({
+    DB: {},
+    COMMENTS_QUEUE: {
+      async send(body) { comments.push(body); },
+    },
+  }, {
+    message_type: 'stationhead-ingest-fact',
+    message_version: 1,
+    fact: {
+      observedAt,
+      snapshot: { channel_id: 10, station_id: 20 },
+      queue: { station_id: 20, tracks: [] },
+      comments: { commentsSaved: 0, degraded: false },
+      auth: { authToken: 'token', deviceUid: 'device' },
+      collectorState,
+      options: {
+        collectComments: false,
+        readModelPresentationOnly: true,
+        readModel: {
+          channel: { channel_id: 10, observed_at: observedAt, presentation: {} },
+          queue: { station_id: 20 },
+          collector: { collector_id: 'cloudflare-worker', updated_at: observedAt },
+        },
+      },
+    },
+  }, {
+    async handoffMinuteFactJob(activeEnv, input, options) {
+      const message = minuteFactQueueMessage(input, options);
+      await activeEnv.MINUTE_FACT_QUEUE.send(message, { contentType: 'json' });
+      return { enqueued: true, outbox_pending: false, minute_at: message.minute_at };
+    },
+    async sendFinalize(body) { finalized.push(body); },
+  });
+
+  assert.equal(comments.length, 1);
+  assert.equal(comments[0].message_type, 'stationhead-comments-task');
+  assert.equal(finalized.length, 1);
+  assert.equal(finalized[0].message_type, 'stationhead-ingest-finalize');
+  assert.equal(finalized[0].collector_state, collectorState);
+  assert.equal(finalized[0].read_model.message_type, 'stationhead-read-model');
+  assert.equal(result.event, 'ingest_fact_completed');
 });
 
 test('ingest finalization preserves collector state before read-model handoff', async () => {
