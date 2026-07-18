@@ -599,10 +599,15 @@ export async function saveLeanQueue(db, observedAt, body) {
   const changedTracks = structureChanged
     ? queueItemsToWriteLean(tracks, existingRows, queueId)
     : [];
+  const existingPositions = new Set(
+    existingRows
+      .map((row) => num(row?.position))
+      .filter((position) => position != null),
+  );
   const insertedPositions = new Set(
     changedTracks
       .map((track) => num(track?.position))
-      .filter((position) => position != null),
+      .filter((position) => position != null && !existingPositions.has(position)),
   );
   const likeChanges = likesChanged ? planLikeChanges(tracks, latestRows) : null;
   const observations = likeChanges?.observations || [];
