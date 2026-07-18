@@ -49,7 +49,7 @@ test('legacy probe stage performs only the list scan and queues the first detail
   assert.deepEqual(sent[0].candidates, CANDIDATES);
 });
 
-test('empty or not-due list result queues completion without article work', async () => {
+test('not-due list result goes directly to station probe without recording completion', async () => {
   const sent = [];
   const result = await processOfficialNewsStage({}, {
     stage: 'probe',
@@ -59,8 +59,8 @@ test('empty or not-due list result queues completion without article work', asyn
     list: async () => ({ skipped: true, failed: false, reason: 'not-due', candidates: [] }),
     send: async (message) => sent.push(message),
   });
-  assert.equal(result.next_stage, 'news-complete');
-  assert.equal(sent[0].stage, 'news-complete');
+  assert.equal(result.next_stage, 'station-probe');
+  assert.equal(sent[0].stage, 'station-probe');
 });
 
 test('list failure continues to station probe but never marks a successful check', async () => {
