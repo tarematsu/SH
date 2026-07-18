@@ -1,8 +1,5 @@
 import { buddyPlaybackConfig, shouldRunBuddyPlayback } from './buddy-playback.js';
-import {
-  BUDDY_PARSE_COMPUTE_STAGE,
-  BUDDY_PARSE_STORE_STAGE,
-} from './buddy-playback-parse-stages.js';
+import { BUDDY_PARSE_COMPUTE_STAGE } from './buddy-playback-parse-stages.js';
 import {
   BUDDY_PLAYBACK_PIPELINE_SCHEMA_SQL,
   buddyPlaybackPipelineSlot,
@@ -87,7 +84,6 @@ function stageHandoff(row, options = {}) {
   };
   if (stage === 'fetch') result.direct_stage = BUDDY_FETCH_COMPUTE_STAGE;
   else if (stage === 'parse') result.direct_stage = BUDDY_PARSE_COMPUTE_STAGE;
-  else if (stage === 'parse-store') result.direct_stage = BUDDY_PARSE_STORE_STAGE;
   return result;
 }
 
