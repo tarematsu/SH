@@ -53,24 +53,26 @@ export async function processBuddyPlaybackStage(env, body, dependencies = {}) {
   return result;
 }
 
-export default {
-  async queue(batch, env) {
-    for (const message of batch.messages || []) {
-      try {
-        const result = await processBuddyPlaybackStage(env, message.body);
-        console.log(JSON.stringify({ event: 'buddy_playback_stage_completed', ...result }));
-        message.ack();
-      } catch (error) {
-        const config = buddyPlaybackConfig(env);
-        await recordBuddyFailure(env, config.alias, error, Date.now()).catch(() => {});
-        console.error(JSON.stringify({
-          event: 'buddy_playback_stage_failed',
-          error: String(error?.message || error).slice(0, 800),
-        }));
-        message.retry({ delaySeconds: 60 });
-      }
+export async function runBuddyPlaybackQueue(batch, env, dependencies = {}) {
+  for (const message of batch.messages || []) {
+    try {
+      const result = await processBuddyPlaybackStage(env, message.body, dependencies);
+      console.log(JSON.stringify({ event: 'buddy_playback_stage_completed', ...result }));
+      message.ack();
+    } catch (error) {
+      const config = buddyPlaybackConfig(env);
+      await recordBuddyFailure(env, config.alias, error, Date.now()).catch(() => {});
+      console.error(JSON.stringify({
+        event: 'buddy_playback_stage_failed',
+        error: String(error?.message || error).slice(0, 800),
+      }));
+      message.retry({ delaySeconds: 60 });
     }
-  },
+  }
+}
+
+export default {
+  queue: runBuddyPlaybackQueue,
   fetch() {
     return Response.json({ ok: false, error: 'not found' }, { status: 404 });
   },
