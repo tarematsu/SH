@@ -39,10 +39,10 @@ async function stageConfig(env, dependencies) {
 async function runCheck(env, scheduledAt, dependencies) {
   const check = dependencies.check || (await loadSplitModule()).runOfficialNewsCheckOnly;
   const result = await check(env, await stageConfig(env, dependencies), scheduledAt);
-  const nextStage = result?.reason === 'check-failed' ? 'reconcile' : 'probe';
+  const nextStage = result?.reason === 'check-failed' ? 'reconcile' : 'station-probe';
   await sendStage(env, nextStage, scheduledAt, dependencies);
   return {
-    stage: 'check',
+    stage: 'probe',
     pending: true,
     next_stage: nextStage,
     skipped: result?.skipped === true,
@@ -50,12 +50,12 @@ async function runCheck(env, scheduledAt, dependencies) {
   };
 }
 
-async function runProbe(env, scheduledAt, dependencies) {
+async function runStationProbe(env, scheduledAt, dependencies) {
   const probe = dependencies.probe || (await loadSplitModule()).runOfficialNewsProbeOnly;
   const result = await probe(env, await stageConfig(env, dependencies), scheduledAt);
   await sendStage(env, 'reconcile', scheduledAt, dependencies);
   return {
-    stage: 'probe',
+    stage: 'station-probe',
     pending: true,
     next_stage: 'reconcile',
     skipped: result?.skipped === true,
@@ -82,14 +82,14 @@ export function officialNewsStageTask(body) {
   }
   const scheduledAt = Number(body.scheduled_at);
   if (!Number.isFinite(scheduledAt)) throw new Error('official news stage timestamp is invalid');
-  let stage = 'check';
-  if (body.stage === 'probe') stage = 'probe';
+  let stage = 'probe';
+  if (body.stage === 'station-probe') stage = 'station-probe';
   else if (body.stage === 'reconcile') stage = 'reconcile';
   return { stage, scheduledAt };
 }
 
 export async function processOfficialNewsStage(env, task, dependencies = {}) {
   if (task.stage === 'reconcile') return runReconcile(env, task.scheduledAt, dependencies);
-  if (task.stage === 'probe') return runProbe(env, task.scheduledAt, dependencies);
+  if (task.stage === 'station-probe') return runStationProbe(env, task.scheduledAt, dependencies);
   return runCheck(env, task.scheduledAt, dependencies);
 }
