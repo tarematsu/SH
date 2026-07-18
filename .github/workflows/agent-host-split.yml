@@ -21,7 +21,6 @@ jobs:
         run: |
           set -euo pipefail
           cat .github/agent-host-split.patch.*.b64 > /tmp/agent-host-split.patch.b64
-          test "$(git hash-object /tmp/agent-host-split.patch.b64)" = "036110e0f0108dee19509a8dd7d1dc688cf48cc6"
           base64 -d /tmp/agent-host-split.patch.b64 > /tmp/agent-host-split.patch
           echo "9fdb3cda4a9cac265165ffdd3192fdf2b28d40897e6b4c6d671c98656488cdee  /tmp/agent-host-split.patch" | sha256sum -c -
           git apply --check /tmp/agent-host-split.patch
