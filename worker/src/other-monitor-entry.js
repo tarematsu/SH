@@ -1,4 +1,6 @@
 import './fetch-guard.js';
+import { runBuddyPlaybackQueue } from './buddy-playback-entry.js';
+import { runHostMonitorQueue } from './host-monitor-entry.js';
 import {
   officialNewsProbeDue,
   runOfficialNewsWithReconcile,
@@ -119,10 +121,10 @@ export async function runOtherMonitorCron(controller, env, ctx, options = {}) {
 export async function runOtherMonitorQueue(batch, env) {
   const messageType = String(batch?.messages?.[0]?.body?.message_type || '');
   if (messageType === 'buddy-playback-stage') {
-    return (await import('./buddy-playback-entry.js')).runBuddyPlaybackQueue(batch, env);
+    return runBuddyPlaybackQueue(batch, env);
   }
   if (messageType === 'host-monitor-task') {
-    return (await import('./host-monitor-entry.js')).runHostMonitorQueue(batch, env);
+    return runHostMonitorQueue(batch, env);
   }
   for (const message of batch?.messages || []) {
     console.error(JSON.stringify({
