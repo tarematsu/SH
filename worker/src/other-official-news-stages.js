@@ -1,4 +1,4 @@
-const OFFICIAL_NEWS_STAGE_MESSAGE = 'other-official-news-stage';
+export const OFFICIAL_NEWS_STAGE_MESSAGE = 'other-official-news-stage';
 const JSON_QUEUE_SEND_OPTIONS = Object.freeze({ contentType: 'json' });
 let probeModulePromise;
 let reconcileModulePromise;
@@ -73,5 +73,3 @@ export async function processOfficialNewsStage(env, task, dependencies = {}) {
   if (task.stage === 'reconcile') return runReconcile(env, task.scheduledAt, dependencies);
   return runProbe(env, task.scheduledAt, dependencies);
 }
-
-export const OFFICIAL_NEWS_STAGE_MESSAGE = OFFICIAL_NEWS_STAGE_MESSAGE;
