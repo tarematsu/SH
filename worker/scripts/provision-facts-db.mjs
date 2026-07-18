@@ -280,8 +280,16 @@ if (revisionColumns.size > 0
   throw new Error('partial queue revision coverage migration did not complete');
 }
 executeCommand(`UPDATE sh_queue_revisions
-  SET materialized_item_count=item_count
+  SET materialized_item_count=(
+    SELECT COUNT(*) FROM sh_queue_revision_items i
+    WHERE i.revision_id=sh_queue_revisions.id
+  )
   WHERE materialized_item_count IS NULL`);
+executeCommand(`UPDATE sh_queue_revisions
+  SET coverage_complete=CASE
+    WHEN COALESCE(materialized_item_count,0)>=item_count THEN 1
+    ELSE 0
+  END`);
 executeCommand(`CREATE INDEX IF NOT EXISTS idx_sh_queue_revisions_coverage
   ON sh_queue_revisions(channel_id,coverage_complete,effective_at DESC)`);
 
