@@ -7,11 +7,21 @@ import {
   shouldMaterializeLiveRevision,
   writeSparseLiveRevisionChunk,
 } from './minute-revision-materializer.js';
+import {
+  prepareSparseRebuildRevision,
+  shouldMaterializeRebuildRevision,
+} from './minute-rebuild-revision.js';
 import { integer } from './minute-facts-track-descriptor.js';
 
 const SPARSE_STAGE = 'revision-materialize';
+const REBUILD_PREFERRED_STAGE = 'rebuild-preferred';
+const REBUILD_WRITE_STAGE = 'rebuild-write';
 
 async function defaultWrite(env, payload) {
+  if (payload?.rebuild && payload?.prepared_revision?.rebuild === true) {
+    const { saveSparseReconstructedMinuteFactWithinBudget } = await import('./minute-facts-sparse-rebuild-store.js');
+    return saveSparseReconstructedMinuteFactWithinBudget(env, payload);
+  }
   if (payload?.rebuild) {
     const { saveReconstructedMinuteFactWithinBudget } = await import('./minute-facts-rebuild-store.js');
     return saveReconstructedMinuteFactWithinBudget(env, payload);
@@ -48,21 +58,67 @@ async function sendStage(env, body, dependencies = {}, options = {}) {
   });
 }
 
-function isSparseWrite(env, body) {
+function isStage(body, stage) {
   return body?.message_type === 'minute-fact-derive-stage'
     && Number(body?.message_version) === 1
-    && body?.stage === 'write'
-    && shouldMaterializeLiveRevision(env, body?.payload);
+    && body?.stage === stage;
+}
+
+function isSparseLiveWrite(env, body) {
+  return isStage(body, 'write') && shouldMaterializeLiveRevision(env, body?.payload);
+}
+
+function isSparseRebuildStart(env, body) {
+  return isStage(body, 'write') && shouldMaterializeRebuildRevision(env, body?.payload);
+}
+
+function isSparseRebuildPreferred(body) {
+  return isStage(body, REBUILD_PREFERRED_STAGE)
+    && body?.revision?.sparse === true
+    && body?.revision?.rebuild === true;
+}
+
+function isSparseRebuildWrite(body) {
+  return isStage(body, REBUILD_WRITE_STAGE)
+    && body?.revision?.sparse === true
+    && body?.revision?.rebuild === true;
 }
 
 function isSparseChunk(body) {
-  return body?.message_type === 'minute-fact-derive-stage'
-    && Number(body?.message_version) === 1
-    && body?.stage === SPARSE_STAGE
-    && body?.revision?.sparse === true;
+  return isStage(body, SPARSE_STAGE) && body?.revision?.sparse === true;
 }
 
-async function processSparseWrite(env, body, dependencies = {}) {
+async function loadDurablePayload(env, job, dependencies = {}) {
+  if (dependencies.loadPayload) return dependencies.loadPayload(env, job);
+  if (!env?.MINUTE_DB?.prepare) throw new Error('minute derive MINUTE_DB binding is missing');
+  const row = await env.MINUTE_DB.prepare(`SELECT payload_json,payload_version
+    FROM sh_minute_fact_jobs WHERE id=? LIMIT 1`).bind(job.id).first();
+  if (!row) throw new Error(`minute fact job ${job.id} source payload is missing`);
+  let payload;
+  try {
+    payload = JSON.parse(String(row.payload_json || ''));
+  } catch (error) {
+    throw new Error(`invalid minute fact job payload: ${error?.message || error}`);
+  }
+  if (Number(payload?.payload_version || row.payload_version || job.payload_version || 0) !== 1) {
+    throw new Error(`unsupported minute fact payload version: ${payload?.payload_version || row.payload_version}`);
+  }
+  return payload;
+}
+
+async function preferredPositionExists(env, revision, dependencies = {}) {
+  if (dependencies.preferredPositionExists) {
+    return dependencies.preferredPositionExists(env, revision);
+  }
+  const position = integer(revision?.fact_position);
+  const revisionId = integer(revision?.revision_id);
+  if (position == null || revisionId == null) return true;
+  const row = await env?.MINUTE_DB?.prepare(`SELECT 1 AS present FROM sh_queue_revision_items
+    WHERE revision_id=? AND position=? LIMIT 1`).bind(revisionId, position).first();
+  return Boolean(row);
+}
+
+async function processSparseLiveWrite(env, body, dependencies = {}) {
   let preparedRevision = null;
   const write = dependencies.write || defaultWrite;
   const result = await processMinuteDeriveWriteStage(env, body, {
@@ -101,6 +157,106 @@ async function processSparseWrite(env, body, dependencies = {}) {
   };
 }
 
+async function processSparseRebuildStart(env, body, dependencies = {}) {
+  const prepare = dependencies.prepareSparseRebuildRevision || prepareSparseRebuildRevision;
+  const revision = await prepare(env, body.payload, {
+    sourceJobId: body?.job?.id,
+  }, dependencies.materializer || {});
+  if (integer(revision?.revision_id) == null) {
+    throw new Error('sparse rebuild revision preparation failed');
+  }
+  const needsPreferred = integer(revision.fact_position) != null
+    && revision.preferred_materialized !== true;
+  await sendStage(env, {
+    stage: needsPreferred ? REBUILD_PREFERRED_STAGE : REBUILD_WRITE_STAGE,
+    job: compactJob(body.job),
+    revision,
+    started_at: integer(body.started_at) ?? Date.now(),
+  }, dependencies);
+  return {
+    event: 'minute_fact_rebuild_revision_prepared',
+    processed: 0,
+    failed: 0,
+    pending: true,
+    job_id: integer(body?.job?.id),
+    revision_id: revision.revision_id,
+    preferred_pending: needsPreferred,
+    materialized_item_count: revision.materialized_item_count,
+    visible_item_count: revision.visible_item_count,
+  };
+}
+
+async function processSparseRebuildPreferred(env, body, dependencies = {}) {
+  const writeChunk = dependencies.writeSparseRevisionChunk || writeSparseLiveRevisionChunk;
+  const result = await writeChunk(env, body.revision, dependencies.materializer || {});
+  if (integer(body.revision.fact_position) != null && !result.preferred_resolved) {
+    // A retried preferred-stage message may arrive after its first invocation
+    // inserted the preferred item but before the Queue ack became durable.
+    if (!await preferredPositionExists(env, body.revision, dependencies)) {
+      throw new Error(`rebuild revision ${body.revision.revision_id} preferred position is unavailable`);
+    }
+  }
+  const revision = {
+    ...body.revision,
+    materialized_item_count: result.materialized_item_count,
+    preferred_materialized: true,
+  };
+  await sendStage(env, {
+    stage: REBUILD_WRITE_STAGE,
+    job: compactJob(body.job),
+    revision,
+    started_at: integer(body.started_at) ?? Date.now(),
+  }, dependencies);
+  return {
+    event: 'minute_fact_rebuild_preferred_materialized',
+    processed: 0,
+    failed: 0,
+    pending: true,
+    job_id: integer(body?.job?.id),
+    revision_id: result.revision_id,
+    chunk_tracks: result.chunk_tracks,
+    materialized_item_count: result.materialized_item_count,
+  };
+}
+
+async function processSparseRebuildWrite(env, body, dependencies = {}) {
+  const job = compactJob(body.job);
+  const payload = await loadDurablePayload(env, job, dependencies);
+  const write = dependencies.write || defaultWrite;
+  const result = await processMinuteDeriveWriteStage(env, {
+    ...body,
+    stage: 'write',
+    job,
+    payload,
+  }, {
+    ...dependencies,
+    stageRevision: false,
+    write: (activeEnv, value) => write(activeEnv, {
+      ...value,
+      prepared_revision: body.revision,
+    }),
+  });
+  if (result?.failed) return result;
+
+  const materialized = Math.max(0, integer(body.revision.materialized_item_count) ?? 0);
+  const visible = Math.max(0, integer(body.revision.visible_item_count) ?? 0);
+  const revisionPending = materialized < visible;
+  if (revisionPending) {
+    await sendStage(env, {
+      stage: SPARSE_STAGE,
+      job,
+      revision: body.revision,
+      started_at: integer(body.started_at) ?? Date.now(),
+    }, dependencies);
+  }
+  return {
+    ...result,
+    revision_id: body.revision.revision_id,
+    revision_pending: revisionPending,
+    revision_complete: !revisionPending,
+  };
+}
+
 function compactPlaybackQueue(revision, result) {
   return {
     ...revision.queue_identity,
@@ -120,7 +276,7 @@ function compactPlaybackQueue(revision, result) {
 }
 
 async function refreshPreferredPlayback(env, revision, result, dependencies = {}) {
-  if (!result?.preferred_resolved) return false;
+  if (!result?.preferred_resolved || revision?.rebuild === true) return false;
   const send = dependencies.sendEnrichment
     || ((message) => env?.MINUTE_ENRICHMENT_QUEUE?.send(message, { contentType: 'json' }));
   if (!dependencies.sendEnrichment && !env?.MINUTE_ENRICHMENT_QUEUE?.send) return false;
@@ -145,10 +301,10 @@ async function processSparseChunk(env, body, dependencies = {}) {
     dependencies,
   );
   if (!result.complete) {
-    const delaySeconds = Math.max(
-      1,
-      Math.min(3600, integer(env?.DERIVE_REVISION_INTERVAL_SECONDS) ?? 60),
-    );
+    const configured = body.revision?.rebuild === true
+      ? integer(env?.DERIVE_REBUILD_REVISION_INTERVAL_SECONDS) ?? 1
+      : integer(env?.DERIVE_REVISION_INTERVAL_SECONDS) ?? 60;
+    const delaySeconds = Math.max(1, Math.min(3600, configured));
     await sendStage(env, {
       stage: SPARSE_STAGE,
       job: compactJob(body.job),
@@ -176,7 +332,10 @@ async function processSparseChunk(env, body, dependencies = {}) {
 }
 
 export function processMinuteDeriveMessage(env, body, dependencies = {}) {
-  if (isSparseWrite(env, body)) return processSparseWrite(env, body, dependencies);
+  if (isSparseRebuildStart(env, body)) return processSparseRebuildStart(env, body, dependencies);
+  if (isSparseRebuildPreferred(body)) return processSparseRebuildPreferred(env, body, dependencies);
+  if (isSparseRebuildWrite(body)) return processSparseRebuildWrite(env, body, dependencies);
+  if (isSparseLiveWrite(env, body)) return processSparseLiveWrite(env, body, dependencies);
   if (isSparseChunk(body)) return processSparseChunk(env, body, dependencies);
   return processLegacyMinuteDeriveMessage(env, body, dependencies);
 }
