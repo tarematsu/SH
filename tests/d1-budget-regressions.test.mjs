@@ -3,8 +3,10 @@ import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
 import { deriveConfig } from '../worker/src/minute-facts-derive.js';
+import { boundedTrackHistorySql } from '../worker/src/pages-track-history-stage.js';
 import { streamGoalPredictionIntervalMs } from '../worker/src/stream-goal-prediction.js';
 import { trackHistoryRefreshRanges } from '../worker/src/pages-track-history-support.js';
+import { TRACK_HISTORY_SQL } from '../site/functions/lib/track-history-restored-handler.js';
 
 function source(path) {
   return readFileSync(new URL(path, import.meta.url), 'utf8');
@@ -50,6 +52,14 @@ test('track-history refresh scans one recent and one backfill day per cycle', ()
   assert.equal(monthly.recent.fromTs, currentDay - 35 * DAY_MS);
 });
 
+test('Pages track-history shards limit queue starts to two days without changing binds', () => {
+  const bounded = boundedTrackHistorySql();
+  assert.match(bounded, /queue_bounds AS \(\s*SELECT \? AS range_end/);
+  assert.match(bounded, /items\.start_time>=bounds\.range_end-172800000/);
+  assert.doesNotMatch(bounded, /WHERE start_time IS NOT NULL AND start_time < \?/);
+  assert.equal((bounded.match(/\?/g) || []).length, (TRACK_HISTORY_SQL.match(/\?/g) || []).length);
+});
+
 test('minute derive samples full inbox statistics hourly by default', () => {
   assert.equal(deriveConfig({}).statsIntervalMs, 60 * 60_000);
   const text = source('../worker/src/minute-facts-derive.js');
@@ -78,7 +88,10 @@ test('D1 budget indexes stay selective', () => {
   const facts = source('../database/facts-migrations/019_d1_budget_indexes.sql');
   assert.match(buddies, /sh_channel_snapshots\(observed_at, id\)/);
   assert.match(buddies, /sh_queue_items\(start_time, station_id\)/);
+  assert.match(buddies, /sh_queue_snapshots\(station_id, observed_at DESC, id DESC\)/);
   assert.match(facts, /WHERE reported_current_stream_count IS NOT NULL/);
+  assert.match(facts, /WHERE source_code=1/);
+  assert.match(facts, /sh_broadcast_sessions\(channel_id, broadcast_start_time/);
   assert.match(facts, /WHERE status='pending'/);
   assert.match(facts, /WHERE status='processing'/);
   assert.match(facts, /WHERE status='complete' AND source='live_collector'/);
