@@ -13,13 +13,33 @@ import {
 } from './minute-facts-track-resolution.js';
 
 async function findReusableRevision(db, input) {
-  return db.prepare(`SELECT id,status,effective_at,item_count FROM sh_queue_revisions
-    WHERE channel_id=? AND structural_hash=? AND session_id IS ? AND queue_start_time IS ?
-      AND status IN ('complete','pending')
-    ORDER BY CASE status WHEN 'complete' THEN 0 ELSE 1 END,effective_at DESC,id DESC
-    LIMIT 1`)
-    .bind(input.channelId, input.structuralHash, input.sessionId, input.queueStart)
-    .first();
+  try {
+    return await db.prepare(`SELECT id,status,effective_at,item_count,total_item_count,coverage_complete
+      FROM sh_queue_revisions
+      WHERE channel_id=? AND structural_hash=? AND session_id IS ? AND queue_start_time IS ?
+        AND status IN ('complete','pending')
+      ORDER BY CASE status WHEN 'complete' THEN 0 ELSE 1 END,effective_at DESC,id DESC
+      LIMIT 1`)
+      .bind(input.channelId, input.structuralHash, input.sessionId, input.queueStart)
+      .first();
+  } catch (error) {
+    if (!/no such column/i.test(String(error?.message || ''))) throw error;
+    return db.prepare(`SELECT id,status,effective_at,item_count
+      FROM sh_queue_revisions
+      WHERE channel_id=? AND structural_hash=? AND session_id IS ? AND queue_start_time IS ?
+        AND status IN ('complete','pending')
+      ORDER BY CASE status WHEN 'complete' THEN 0 ELSE 1 END,effective_at DESC,id DESC
+      LIMIT 1`)
+      .bind(input.channelId, input.structuralHash, input.sessionId, input.queueStart)
+      .first();
+  }
+}
+
+function coverageStored(revision, materializedCount, totalCount) {
+  if (!revision || !Object.hasOwn(revision, 'total_item_count')) return true;
+  return Number(revision.item_count || 0) === materializedCount
+    && Number(revision.total_item_count || 0) === totalCount
+    && Number(revision.coverage_complete || 0) === Number(materializedCount >= totalCount);
 }
 
 async function updateRevisionCoverage(db, revisionId, materializedCount, totalCount) {
@@ -27,13 +47,25 @@ async function updateRevisionCoverage(db, revisionId, materializedCount, totalCo
   try {
     await db.prepare(`UPDATE sh_queue_revisions SET
         item_count=?,total_item_count=?,coverage_complete=?,status='complete'
-      WHERE id=?`)
-      .bind(materializedCount, totalCount, complete, revisionId)
+      WHERE id=? AND (
+        item_count IS NOT ? OR total_item_count IS NOT ?
+        OR coverage_complete IS NOT ? OR status IS NOT 'complete'
+      )`)
+      .bind(
+        materializedCount,
+        totalCount,
+        complete,
+        revisionId,
+        materializedCount,
+        totalCount,
+        complete,
+      )
       .run();
   } catch (error) {
     if (!/no such column/i.test(String(error?.message || ''))) throw error;
-    await db.prepare("UPDATE sh_queue_revisions SET item_count=?,status='complete' WHERE id=?")
-      .bind(materializedCount, revisionId)
+    await db.prepare(`UPDATE sh_queue_revisions SET item_count=?,status='complete'
+      WHERE id=? AND (item_count IS NOT ? OR status IS NOT 'complete')`)
+      .bind(materializedCount, revisionId, materializedCount)
       .run();
   }
 }
@@ -64,7 +96,9 @@ export async function createPartialRevision(db, oldDb, input) {
   const created = !revision;
   if (revision?.status === 'complete' && Number(revision.item_count || 0) >= visibleCount) {
     const materializedCount = Number(revision.item_count || 0);
-    await updateRevisionCoverage(db, Number(revision.id), materializedCount, totalCount);
+    if (!coverageStored(revision, materializedCount, totalCount)) {
+      await updateRevisionCoverage(db, Number(revision.id), materializedCount, totalCount);
+    }
     return {
       revisionId: Number(revision.id),
       created: false,
@@ -92,10 +126,12 @@ export async function createPartialRevision(db, oldDb, input) {
         visibleCount,
       )
       .run());
-    revision = await db.prepare(`SELECT id,status,effective_at,item_count FROM sh_queue_revisions
-      WHERE channel_id=? AND effective_at=? AND structural_hash=?`)
-      .bind(channelId, observedAt, structuralHash)
-      .first();
+    revision = await findReusableRevision(db, {
+      channelId,
+      sessionId,
+      queueStart,
+      structuralHash,
+    });
   }
 
   const revisionId = Number(revision?.id);
