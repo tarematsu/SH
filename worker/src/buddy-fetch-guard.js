@@ -3,8 +3,8 @@ function booleanValue(value, fallback = false) {
   if (typeof value === 'boolean') return value;
   if (typeof value === 'number') return value !== 0;
   const normalized = String(value).trim().toLowerCase();
-  if (['true', '1', 'yes', 'on'].includes(normalized)) return true;
-  if (['false', '0', 'no', 'off'].includes(normalized)) return false;
+  if (normalized === 'true' || normalized === '1' || normalized === 'yes' || normalized === 'on') return true;
+  if (normalized === 'false' || normalized === '0' || normalized === 'no' || normalized === 'off') return false;
   return Boolean(value);
 }
 
@@ -43,33 +43,33 @@ function broadcasterAccount(item) {
   return item?.account || (item?.handle ? item : null) || null;
 }
 
+function broadcasterHandleMatch(items, expectedAlias) {
+  if (!Array.isArray(items)) return null;
+  for (let index = 0; index < items.length; index += 1) {
+    const item = items[index];
+    if (accountHandleMatches(broadcasterAccount(item)?.handle, expectedAlias)) return item;
+  }
+  return null;
+}
+
 function hasExpectedAccountHandle(source, expectedAlias) {
   if (!source || typeof source !== 'object' || Array.isArray(source)) return false;
   if (accountHandleMatches(source.account?.handle, expectedAlias)) return true;
   if (accountHandleMatches(source.host?.handle, expectedAlias)) return true;
   if (accountHandleMatches(source.host?.account?.handle, expectedAlias)) return true;
-  const broadcasters = [
-    ...(Array.isArray(source.broadcast?.broadcasters) ? source.broadcast.broadcasters : []),
-    ...(Array.isArray(source.current_station?.broadcast?.broadcasters)
-      ? source.current_station.broadcast.broadcasters : []),
-  ];
-  return broadcasters.some((item) => accountHandleMatches(
-    broadcasterAccount(item)?.handle,
-    expectedAlias,
-  ));
+  return Boolean(
+    broadcasterHandleMatch(source.broadcast?.broadcasters, expectedAlias)
+    || broadcasterHandleMatch(source.current_station?.broadcast?.broadcasters, expectedAlias),
+  );
 }
 
 function hostBroadcaster(source, expectedAlias) {
-  const candidates = [
-    ...(Array.isArray(source?.broadcast?.broadcasters) ? source.broadcast.broadcasters : []),
-    ...(Array.isArray(source?.current_station?.broadcast?.broadcasters)
-      ? source.current_station.broadcast.broadcasters : []),
-  ];
-  const matched = candidates.find((item) => accountHandleMatches(
-    broadcasterAccount(item)?.handle,
-    expectedAlias,
-  ));
-  if (matched) return { ...matched, is_host: matched.is_host ?? true };
+  const matched = broadcasterHandleMatch(source?.broadcast?.broadcasters, expectedAlias)
+    || broadcasterHandleMatch(source?.current_station?.broadcast?.broadcasters, expectedAlias);
+  if (matched) {
+    if (matched.is_host !== undefined) return matched;
+    return { ...matched, is_host: true };
+  }
   const account = source?.account || source?.host?.account || (source?.host?.handle ? source.host : null);
   if (!account) return null;
   return {
@@ -84,85 +84,73 @@ function stationIdFromShareUrl(value) {
   return match ? Number(match[1]) : null;
 }
 
+function attachHostBroadcaster(station, source, expectedAlias) {
+  const broadcaster = hostBroadcaster(source, expectedAlias);
+  if (!broadcaster) return;
+  const broadcast = station.broadcast || source.broadcast || {};
+  const broadcasters = Array.isArray(broadcast.broadcasters) ? broadcast.broadcasters : null;
+  if (!broadcasters?.length) {
+    broadcast.broadcasters = [broadcaster];
+  } else if (!broadcasterHandleMatch(broadcasters, expectedAlias)) {
+    broadcast.broadcasters = [broadcaster, ...broadcasters];
+  }
+  station.broadcast = broadcast;
+}
+
 function adaptHandleStationPayload(source, expectedAlias) {
   const expected = String(expectedAlias || 'buddy46').trim().toLowerCase() || 'buddy46';
   const queue = source?.current_station?.queue || source?.queue || null;
-  const sourceStation = source?.current_station
+  const station = source?.current_station
     || source?.station
     || source?.broadcast?.station
     || {};
-  const stationId = sourceStation.id
+  const stationId = station.id
     ?? source.current_station_id
     ?? queue?.station_id
     ?? source.station_id
     ?? source.id
     ?? stationIdFromShareUrl(source.share_url);
-  const station = {
-    ...sourceStation,
-    id: stationId,
-    is_broadcasting: sourceStation.is_broadcasting ?? source.is_broadcasting,
-    queue: sourceStation.queue || queue,
-  };
-  const broadcaster = hostBroadcaster(source, expected);
-  const broadcast = station.broadcast || source.broadcast || {};
-  if (broadcaster) {
-    station.broadcast = {
-      ...broadcast,
-      broadcasters: [
-        broadcaster,
-        ...(Array.isArray(broadcast.broadcasters)
-          ? broadcast.broadcasters.filter((item) => !accountHandleMatches(
-            broadcasterAccount(item)?.handle,
-            expected,
-          ))
-          : []),
-      ],
-    };
-  } else if (broadcast && Object.keys(broadcast).length) {
-    station.broadcast = broadcast;
+  station.id = stationId;
+  if (!present(station.is_broadcasting) && present(source.is_broadcasting)) {
+    station.is_broadcasting = source.is_broadcasting;
   }
-
-  return {
-    ...source,
-    alias: expected,
-    channel_alias: expected,
-    current_station_id: source.current_station_id ?? stationId,
-    current_station: station,
-  };
+  if (!station.queue && queue) station.queue = queue;
+  attachHostBroadcaster(station, source, expected);
+  source.alias = expected;
+  source.channel_alias = expected;
+  if (!present(source.current_station_id)) source.current_station_id = stationId;
+  source.current_station = station;
+  return source;
 }
 
 export function normalizeBuddyQueuePayload(payload, expectedAlias = 'buddy46') {
   const source = unwrapPayload(payload);
   if (!source || typeof source !== 'object' || Array.isArray(source)) return source;
   const expected = String(expectedAlias || 'buddy46').trim().toLowerCase() || 'buddy46';
-  const normalized = hasExpectedAccountHandle(source, expected)
-    ? adaptHandleStationPayload(source, expected)
-    : { ...source };
+  const expectedHandle = hasExpectedAccountHandle(source, expected);
+  const normalized = expectedHandle ? adaptHandleStationPayload(source, expected) : source;
   const sourceAlias = String(
     normalized.alias
       || normalized.channel_alias
       || normalized.slug
       || expected,
   ).trim().toLowerCase() || expected;
-  normalized.alias = hasExpectedAccountHandle(normalized, expected) ? expected : sourceAlias;
+  normalized.alias = expectedHandle ? expected : sourceAlias;
   normalized.channel_alias = normalized.alias;
 
-  const sourceStation = normalized.current_station
+  let station = normalized.current_station
     || normalized.station
     || normalized.broadcast?.station
     || null;
-  if (sourceStation && typeof sourceStation === 'object' && !Array.isArray(sourceStation)) {
-    normalized.current_station = { ...sourceStation };
-  } else if (!normalized.current_station && (normalized.current_station_id || normalized.queue || normalized.id)) {
-    normalized.current_station = {
+  if (!station && (normalized.current_station_id || normalized.queue || normalized.id)) {
+    station = {
       id: normalized.current_station_id ?? normalized.queue?.station_id ?? normalized.id,
       is_broadcasting: normalized.is_broadcasting,
       queue: normalized.queue,
     };
   }
 
-  if (normalized.current_station && typeof normalized.current_station === 'object') {
-    const station = { ...normalized.current_station };
+  if (station && typeof station === 'object' && !Array.isArray(station)) {
     if (!station.queue && normalized.queue) station.queue = normalized.queue;
     if (!present(station.id)) {
       station.id = normalized.current_station_id
