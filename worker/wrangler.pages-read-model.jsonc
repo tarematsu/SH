@@ -7,6 +7,9 @@
   "preview_urls": false,
   "logpush": true,
   "observability": { "enabled": true },
+  "vars": {
+    "PAGES_TRACK_HISTORY_ROWS_PER_STEP": 100
+  },
   "triggers": { "crons": ["* * * * *"] },
   "d1_databases": [
     { "binding": "BUDDIES_DB", "database_name": "stationhead-buddies", "database_id": "f361aae0-05f0-42bc-8784-77100e80133d" },
