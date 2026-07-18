@@ -4,6 +4,49 @@ import test from 'node:test';
 import { ingest } from '../src/collector-ingest.js';
 import { processPersistenceTask } from '../src/persist-channel-entry.js';
 
+function queueBody() {
+  return {
+    message_type: 'stationhead-persistence-task',
+    message_version: 1,
+    task: 'queue',
+    observed_at: 123_456,
+    collector_id: 'cloudflare-worker',
+    metadata_requested: false,
+    data: {
+      station_id: 20,
+      queue_id: 30,
+      start_time: 40,
+      source_structural_hash: 'source-structure',
+      source_likes_hash: 'source-likes',
+      total_track_count: 45,
+      materialized_track_count: 32,
+      tracks: [{
+        position: 0,
+        spotify_id: 'sp1',
+        isrc: 'JPABC1234567',
+        bite_count: 9,
+        title: 'unused title',
+        raw: { unused: true },
+      }],
+    },
+    analysis: {
+      structural: {
+        tracks: [{
+          position: 0,
+          spotify_id: 'sp1',
+          isrc: 'JPABC1234567',
+        }],
+      },
+      likes: {
+        complete: true,
+        payload: [{ track_key: 'isrc:JPABC1234567', like_count: 9 }],
+      },
+      structural_hash: 'materialized-structure',
+      likes_hash: 'materialized-likes',
+    },
+  };
+}
+
 test('raw ingest defers queue state inspection without reading D1', async () => {
   const sent = [];
   const env = {
@@ -30,39 +73,16 @@ test('raw ingest defers queue state inspection without reading D1', async () => 
   assert.equal(sent[0].data, queue);
 });
 
-test('persistence moves post-write work to a compact durable continuation', async () => {
+test('queue structure persistence defers likes with the full durable payload', async () => {
   const calls = [];
   let continuation = null;
-  const body = {
-    message_type: 'stationhead-persistence-task',
-    message_version: 1,
-    task: 'queue',
-    observed_at: 123_456,
-    collector_id: 'cloudflare-worker',
-    metadata_requested: false,
-    data: {
-      station_id: 20,
-      queue_id: 30,
-      start_time: 40,
-      source_structural_hash: 'source-structure',
-      source_likes_hash: 'source-likes',
-      total_track_count: 45,
-      materialized_track_count: 32,
-      tracks: [{
-        position: 0,
-        spotify_id: 'sp1',
-        isrc: 'JPABC1234567',
-        title: 'unused title',
-        raw: { unused: true },
-      }],
-    },
-    analysis: null,
-  };
+  const body = queueBody();
   const result = await processPersistenceTask({
     DB: { prepare() {} },
   }, body, {
-    async ingestOptimizedBody() {
-      calls.push('persist');
+    async ingestOptimizedBody(_env, message) {
+      calls.push('structure');
+      assert.equal(message.data.tracks[0].bite_count, undefined);
       return { structure_changed: true, likes_changed: false };
     },
     async sendPersistenceContinuation(message) {
@@ -70,18 +90,41 @@ test('persistence moves post-write work to a compact durable continuation', asyn
       continuation = message;
     },
     async recordQueueMaterialization() {
-      throw new Error('materialization must run in the continuation');
-    },
-    async sendTrackMetadata() {
-      throw new Error('metadata must run in the continuation');
+      throw new Error('materialization must run after likes');
     },
   });
 
-  assert.deepEqual(calls, ['persist', 'continuation']);
+  assert.deepEqual(calls, ['structure', 'continuation']);
   assert.equal(result.stage, 'persist');
+  assert.equal(result.likes_deferred, true);
   assert.equal(result.finalization_deferred, true);
-  assert.equal(continuation.stage, 'finalize');
-  assert.deepEqual(continuation.data, {
+  assert.equal(continuation.stage, 'likes');
+  assert.equal(continuation.data, body.data);
+  assert.equal(continuation.analysis, body.analysis);
+  assert.equal(continuation.metadata_requested, true);
+});
+
+test('queue likes persistence emits a compact durable finalization', async () => {
+  const initial = queueBody();
+  let likes = null;
+  await processPersistenceTask({ DB: { prepare() {} } }, initial, {
+    ingestOptimizedBody: async () => ({ structure_changed: true }),
+    sendPersistenceContinuation: async (message) => { likes = message; },
+  });
+
+  let finalize = null;
+  const result = await processPersistenceTask({ DB: { prepare() {} } }, likes, {
+    async ingestOptimizedBody(_env, message) {
+      assert.equal(message.data, initial.data);
+      return { structure_changed: false, likes_changed: true };
+    },
+    sendPersistenceContinuation: async (message) => { finalize = message; },
+  });
+
+  assert.equal(result.stage, 'likes');
+  assert.equal(result.finalization_deferred, true);
+  assert.equal(finalize.stage, 'finalize');
+  assert.deepEqual(finalize.data, {
     station_id: 20,
     queue_id: 30,
     start_time: 40,
@@ -90,7 +133,7 @@ test('persistence moves post-write work to a compact durable continuation', asyn
     total_track_count: 45,
     materialized_track_count: 32,
   });
-  assert.deepEqual(continuation.metadata_queue, {
+  assert.deepEqual(finalize.metadata_queue, {
     station_id: 20,
     queue_id: 30,
     start_time: 40,
@@ -150,35 +193,26 @@ test('persistence continuation records materialization before metadata delegatio
   assert.equal(result.finalization_deferred, false);
 });
 
-test('unchanged queues finalize without redundant metadata work', async () => {
-  let continuation = null;
-  const initial = {
-    message_type: 'stationhead-persistence-task',
-    message_version: 1,
-    task: 'queue',
-    observed_at: 123_456,
-    metadata_requested: false,
-    data: {
-      station_id: 20,
-      queue_id: 30,
-      start_time: 40,
-      source_structural_hash: 'source-structure',
-      total_track_count: 1,
-      materialized_track_count: 1,
-      tracks: [{ position: 0, spotify_id: 'sp1' }],
-    },
-    analysis: null,
-  };
+test('unchanged queues traverse likes and finalize without redundant metadata work', async () => {
+  const initial = queueBody();
+  initial.metadata_requested = false;
+  let likes = null;
   await processPersistenceTask({ DB: { prepare() {} } }, initial, {
     ingestOptimizedBody: async () => ({ structure_changed: false }),
-    sendPersistenceContinuation: async (message) => { continuation = message; },
+    sendPersistenceContinuation: async (message) => { likes = message; },
   });
+  assert.equal(likes.metadata_requested, false);
 
-  assert.equal(continuation.metadata_requested, false);
-  assert.equal(Object.hasOwn(continuation, 'metadata_queue'), false);
+  let finalize = null;
+  await processPersistenceTask({ DB: { prepare() {} } }, likes, {
+    ingestOptimizedBody: async () => ({ structure_changed: false, likes_changed: false }),
+    sendPersistenceContinuation: async (message) => { finalize = message; },
+  });
+  assert.equal(finalize.metadata_requested, false);
+  assert.equal(Object.hasOwn(finalize, 'metadata_queue'), false);
 
   let sent = 0;
-  const result = await processPersistenceTask({ DB: { prepare() {} } }, continuation, {
+  const result = await processPersistenceTask({ DB: { prepare() {} } }, finalize, {
     recordQueueMaterialization: async () => true,
     sendTrackMetadata: async () => { sent += 1; },
   });
@@ -200,7 +234,7 @@ test('direct persistence callers retain inline finalization without the self que
     data: {
       station_id: 20,
       queue_id: 30,
-      tracks: [{ position: 0, spotify_id: 'sp1' }],
+      tracks: [{ position: 0, spotify_id: 'sp1', bite_count: 3 }],
     },
     analysis: null,
   }, {
@@ -217,7 +251,7 @@ test('direct persistence callers retain inline finalization without the self que
     },
   });
 
-  assert.deepEqual(calls, ['persist', 'materialization', 'metadata']);
+  assert.deepEqual(calls, ['persist', 'persist', 'materialization', 'metadata']);
   assert.equal(result.finalization_deferred, false);
   assert.equal(result.metadata_deferred, true);
 });
