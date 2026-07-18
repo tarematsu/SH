@@ -1,16 +1,15 @@
-import {
-  ingestPreparedRawCollection,
-  processIngestFactTask,
-} from './ingest-prepared-channel.js';
-import { processIngestFinalizeTask } from './ingest-finalize-entry.js';
-import { restoreQueueAnalysis } from './queue-analysis-transfer.js';
-import { restoreSnapshotAnalysis } from './snapshot-analysis-transfer.js';
-
 export async function ingestRawCollection(env, message) {
   if (Number(message?.message_version) === 3) {
-    if (message.snapshot) restoreSnapshotAnalysis(message.snapshot, message.snapshot_analysis);
-    if (message.queue) restoreQueueAnalysis(message.queue, message.queue_analysis);
-    return ingestPreparedRawCollection(env, message);
+    const [prepared, queueAnalysis, snapshotAnalysis] = await Promise.all([
+      import('./ingest-prepared-channel.js'),
+      import('./queue-analysis-transfer.js'),
+      import('./snapshot-analysis-transfer.js'),
+    ]);
+    if (message.snapshot) {
+      snapshotAnalysis.restoreSnapshotAnalysis(message.snapshot, message.snapshot_analysis);
+    }
+    if (message.queue) queueAnalysis.restoreQueueAnalysis(message.queue, message.queue_analysis);
+    return prepared.ingestPreparedRawCollection(env, message);
   }
   const legacy = await import('./ingest-channel-entry.js');
   return legacy.ingestRawCollection(env, message);
@@ -22,9 +21,11 @@ export default {
       const type = message.body?.message_type;
       try {
         if (type === 'stationhead-ingest-fact') {
+          const { processIngestFactTask } = await import('./ingest-fact-stage.js');
           const result = await processIngestFactTask(env, message.body);
           console.log(JSON.stringify(result));
         } else if (type === 'stationhead-ingest-finalize') {
+          const { processIngestFinalizeTask } = await import('./ingest-finalize-entry.js');
           const result = await processIngestFinalizeTask(env, message.body);
           console.log(JSON.stringify(result));
         } else {
