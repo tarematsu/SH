@@ -3,15 +3,20 @@ import { recordBuddyFailure, recordBuddySuccess } from './buddy-health.js';
 import { advanceBuddyPlaybackPipeline } from './buddy-playback-pipeline.js';
 
 const BENIGN_SKIP_REASONS = new Set(['not-due', 'pipeline-busy', 'retry-not-due']);
+const PIPELINE_STAGES = new Set(['fetch', 'parse', 'parse-store', 'metadata', 'commit']);
 
 function validateTask(body) {
   if (body?.message_type !== 'buddy-playback-stage'
       || Number(body?.message_version) !== 1) {
     throw new Error('unsupported buddy playback task');
   }
+  const expectedStage = String(body.expected_stage || '');
+  const cycleAt = Number(body.cycle_at);
   return {
     scheduledAt: Number(body.scheduled_at) || Date.now(),
     observedAt: Number(body.observed_at) || Date.now(),
+    expectedStage: PIPELINE_STAGES.has(expectedStage) ? expectedStage : null,
+    cycleAt: Number.isFinite(cycleAt) ? cycleAt : null,
     preparedParse: body.prepared_parse && typeof body.prepared_parse === 'object'
       ? body.prepared_parse
       : null,
@@ -20,11 +25,15 @@ function validateTask(body) {
 
 async function enqueueNextStage(env, task, result = null) {
   if (!env?.BUDDY_PLAYBACK_QUEUE?.send) throw new Error('BUDDY_PLAYBACK_QUEUE binding is missing');
+  const stage = String(result?.stage || '');
+  const cycleAt = Number(result?.cycle_at);
   await env.BUDDY_PLAYBACK_QUEUE.send({
     message_type: 'buddy-playback-stage',
     message_version: 1,
     scheduled_at: task.scheduledAt,
     observed_at: Date.now(),
+    ...(PIPELINE_STAGES.has(stage) ? { expected_stage: stage } : {}),
+    ...(Number.isFinite(cycleAt) ? { cycle_at: cycleAt } : {}),
     ...(result?.prepared_parse ? { prepared_parse: result.prepared_parse } : {}),
   }, { contentType: 'json', delaySeconds: 1 });
 }
@@ -34,6 +43,8 @@ export async function processBuddyPlaybackStage(env, body, dependencies = {}) {
   const run = dependencies.advance || advanceBuddyPlaybackPipeline;
   const result = await run(env, task.scheduledAt, task.observedAt, {
     ...(dependencies.pipeline || {}),
+    ...(task.expectedStage ? { expectedStage: task.expectedStage } : {}),
+    ...(task.cycleAt !== null ? { cycleAt: task.cycleAt } : {}),
     ...(task.preparedParse ? { preparedParse: task.preparedParse } : {}),
   });
   const config = buddyPlaybackConfig(env);
