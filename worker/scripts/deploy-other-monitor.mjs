@@ -1,5 +1,6 @@
 import { spawnSync } from 'node:child_process';
 
+const consolidatedScript = 'sh-monitor-other';
 const migrations = [
   {
     queue: 'stationhead-buddy-playback',
@@ -28,13 +29,20 @@ function runWrangler(args, { capture = false, allowFailure = false } = {}) {
   return result;
 }
 
-function hasConsumer(queue, scriptName) {
+function consumerList(queue) {
   const result = runWrangler(
     ['queues', 'consumer', 'worker', 'list', queue, '--json'],
     { capture: true, allowFailure: true },
   );
-  const output = `${result.stdout || ''}\n${result.stderr || ''}`;
-  return result.status === 0 && output.includes(scriptName);
+  return {
+    ok: result.status === 0,
+    output: `${result.stdout || ''}\n${result.stderr || ''}`,
+  };
+}
+
+function hasConsumer(queue, scriptName) {
+  const result = consumerList(queue);
+  return result.ok && result.output.includes(scriptName);
 }
 
 function pause(queue) {
@@ -45,10 +53,10 @@ function resume(queue) {
   runWrangler(['queues', 'resume-delivery', queue]);
 }
 
-function removeOldConsumer(item) {
+function removeConsumer(queue, scriptName, { allowFailure = false } = {}) {
   runWrangler(
-    ['queues', 'consumer', 'worker', 'remove', item.queue, item.oldScript],
-    { allowFailure: false },
+    ['queues', 'consumer', 'worker', 'remove', queue, scriptName],
+    { allowFailure },
   );
 }
 
@@ -70,17 +78,25 @@ async function deleteOldWorker(scriptName) {
     || process.env.CF_API_TOKEN;
   if (!accountId || !token) {
     console.warn(`Skipping retired Worker deletion for ${scriptName}: account credentials are unavailable`);
-    return;
+    return false;
   }
   const response = await fetch(
     `https://api.cloudflare.com/client/v4/accounts/${accountId}/workers/scripts/${scriptName}?force=true`,
     { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } },
   );
   const body = await response.json().catch(() => null);
-  const notFound = response.status === 404 || body?.errors?.some((error) => /not found/i.test(String(error?.message || '')));
+  const notFound = response.status === 404
+    || body?.errors?.some((error) => /not found/i.test(String(error?.message || '')));
   if (!response.ok && !notFound) {
     console.warn(`Retired Worker ${scriptName} was not deleted: HTTP ${response.status}`);
+    return false;
   }
+  console.log(JSON.stringify({
+    event: 'retired_monitor_worker_absent',
+    script: scriptName,
+    already_absent: notFound,
+  }));
+  return true;
 }
 
 const activeMigrations = migrations.filter((item) => hasConsumer(item.queue, item.oldScript));
@@ -91,20 +107,36 @@ try {
   for (const item of activeMigrations) {
     pause(item.queue);
     paused.push(item);
-    removeOldConsumer(item);
+    removeConsumer(item.queue, item.oldScript);
     removed.push(item);
   }
 
   runWrangler(['deploy', '--config', 'wrangler.other.jsonc']);
 
+  const missingConsumers = migrations.filter((item) => !hasConsumer(item.queue, consolidatedScript));
+  if (missingConsumers.length) {
+    throw new Error(`consolidated monitor consumer missing for: ${missingConsumers.map((item) => item.queue).join(', ')}`);
+  }
+
   for (const item of paused) resume(item.queue);
   paused.length = 0;
 
-  for (const item of removed) await deleteOldWorker(item.oldScript);
+  for (const item of migrations) await deleteOldWorker(item.oldScript);
+
+  console.log(JSON.stringify({
+    event: 'monitor_worker_consolidation_completed',
+    script: consolidatedScript,
+    queues: migrations.map((item) => item.queue),
+  }));
 } catch (error) {
+  for (const item of migrations.toReversed()) {
+    if (hasConsumer(item.queue, consolidatedScript)) {
+      removeConsumer(item.queue, consolidatedScript, { allowFailure: true });
+    }
+  }
   for (const item of removed.toReversed()) {
     try {
-      restoreOldConsumer(item);
+      if (!hasConsumer(item.queue, item.oldScript)) restoreOldConsumer(item);
     } catch (rollbackError) {
       console.error(`Failed to restore ${item.oldScript}: ${rollbackError.message}`);
     }
