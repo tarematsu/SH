@@ -89,7 +89,7 @@ function revisionReachSummary(rows) {
     suggested_initial_tracks: samples.length >= 20 && p95 != null
       ? Math.max(10, Math.min(40, p95 + 2))
       : 20,
-    suggestion_basis: samples.length >= 20 ? 'closed-revision-p95-plus-2' : 'insufficient-samples-fallback',
+    suggestion_basis: samples.length >= 20 ? 'recent-closed-revision-p95-plus-2' : 'insufficient-samples-fallback',
   };
 }
 
@@ -100,17 +100,22 @@ function loadRevisionReach() {
   const itemCountExpression = revisionColumns.has('total_item_count')
     ? 'COALESCE(r.total_item_count,r.item_count)'
     : 'r.item_count';
-  const payload = runQuery(`WITH ordered AS (
+  const payload = runQuery(`WITH recent_revisions AS (
       SELECT r.id,r.channel_id,r.session_id,r.effective_at,
         ${itemCountExpression} AS item_count,
-        s.status AS session_status,
-        LEAD(r.effective_at) OVER (
-          PARTITION BY r.channel_id ORDER BY r.effective_at,r.id
-        ) AS next_effective_at
+        s.status AS session_status
       FROM sh_queue_revisions r
       LEFT JOIN sh_broadcast_sessions s ON s.id=r.session_id
       WHERE r.status='complete' AND r.source='live_collector'
         AND ${itemCountExpression}>0
+      ORDER BY r.effective_at DESC,r.id DESC
+      LIMIT 500
+    ), ordered AS (
+      SELECT recent_revisions.*,
+        LEAD(effective_at) OVER (
+          PARTITION BY channel_id ORDER BY effective_at,id
+        ) AS next_effective_at
+      FROM recent_revisions
     ), reached AS (
       SELECT o.id AS revision_id,o.item_count,
         MAX(c.queue_position)+1 AS reached_tracks,
@@ -125,7 +130,7 @@ function loadRevisionReach() {
     FROM reached
     WHERE reached_tracks IS NOT NULL AND reached_tracks>0
     ORDER BY revision_id DESC
-    LIMIT 5000`);
+    LIMIT 500`);
   return revisionReachSummary(resultRows(payload));
 }
 
@@ -141,19 +146,30 @@ function sleep(milliseconds) {
 let last = null;
 for (let attempt = 1; attempt <= attempts; attempt += 1) {
   try {
-    const payload = runQuery(`SELECT
-        COUNT(*) AS fact_count,
-        MAX(observed_at) AS last_observed_at,
-        MAX(minute_at) AS last_minute_at,
-        SUM(CASE WHEN source_code=1 THEN 1 ELSE 0 END) AS live_fact_count,
+    const payload = runQuery(`WITH latest AS (
+        SELECT observed_at,minute_at,source_code
+        FROM sh_minute_facts
+        ORDER BY observed_at DESC,id DESC
+        LIMIT 1
+      ), live AS (
+        SELECT 1 AS present
+        FROM sh_minute_facts
+        WHERE source_code=1
+        ORDER BY id DESC
+        LIMIT 1
+      )
+      SELECT
+        COALESCE((SELECT MAX(id) FROM sh_minute_facts),0) AS fact_count,
+        (SELECT observed_at FROM latest) AS last_observed_at,
+        (SELECT minute_at FROM latest) AS last_minute_at,
+        COALESCE((SELECT present FROM live),0) AS live_fact_count,
         (SELECT COUNT(*) FROM pragma_table_info('sh_tracks') WHERE name='isrc') AS sh_tracks_isrc_column_count,
         (SELECT COUNT(*) FROM pragma_table_info('sh_track_metadata') WHERE name='isrc') AS sh_track_metadata_isrc_column_count,
         (SELECT COUNT(*) FROM pragma_table_info('sh_queue_revisions') WHERE name='materialized_item_count') AS revision_materialized_count_column_count,
         (SELECT COUNT(*) FROM pragma_table_info('sh_queue_revisions') WHERE name='coverage_complete') AS revision_coverage_column_count,
         (SELECT COUNT(*) FROM pragma_table_info('sh_queue_revisions') WHERE name='source_job_id') AS revision_source_job_column_count,
         (SELECT COUNT(*) FROM pragma_table_info('sh_queue_revisions') WHERE name='source_visible_count') AS revision_source_visible_column_count,
-        (SELECT COUNT(*) FROM pragma_table_info('sh_queue_revisions') WHERE name='last_materialized_at') AS revision_checkpoint_column_count
-      FROM sh_minute_facts`);
+        (SELECT COUNT(*) FROM pragma_table_info('sh_queue_revisions') WHERE name='last_materialized_at') AS revision_checkpoint_column_count`);
     const row = firstResult(payload) || {};
     const now = Date.now();
     let revisionReach = null;
