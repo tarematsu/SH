@@ -86,13 +86,14 @@ test('automatic deploys select only affected current Workers and isolate script 
   assert.doesNotMatch(prDiagnosticsWorkflow, /Probe Pages Queue consumer/);
 });
 
-test('PR deploys provision changed facts schemas before dependent Workers', () => {
+test('PR deploys apply only the current facts schema before dependent Workers', () => {
   assert.match(prDiagnosticsWorkflow, /database\/facts-migrations\/\*\*/);
   assert.match(prDiagnosticsWorkflow, /database\/facts-db\.json/);
   assert.match(prDiagnosticsWorkflow, /facts_schema/);
-  const provision = 'node scripts/provision-facts-db.mjs';
+  const provision = 'node scripts/apply-facts-pr-schema.mjs';
   const deploy = 'Deploy selected Workers in dependency order';
   assert.ok(position(prDiagnosticsWorkflow, provision) < position(prDiagnosticsWorkflow, deploy));
+  assert.doesNotMatch(prDiagnosticsWorkflow, /node scripts\/provision-facts-db\.mjs/);
 });
 
 test('all deployment paths provision the split Queue boundaries', () => {
