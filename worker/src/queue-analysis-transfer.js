@@ -8,6 +8,23 @@ function objectValue(value) {
   return value && typeof value === 'object' && !Array.isArray(value) ? value : null;
 }
 
+function transferMetadata(transfer = {}) {
+  return {
+    source_structural_hash: typeof transfer.source_structural_hash === 'string'
+      ? transfer.source_structural_hash
+      : null,
+    source_likes_hash: typeof transfer.source_likes_hash === 'string'
+      ? transfer.source_likes_hash
+      : null,
+    total_track_count: Number.isFinite(Number(transfer.total_track_count))
+      ? Number(transfer.total_track_count)
+      : null,
+    materialized_track_count: Number.isFinite(Number(transfer.materialized_track_count))
+      ? Number(transfer.materialized_track_count)
+      : null,
+  };
+}
+
 export function serializedQueueAnalysis(queue) {
   if (!queue) return null;
   const transfer = objectValue(queue[QUEUE_TRANSFER_ANALYSIS]);
@@ -19,6 +36,13 @@ export function serializedQueueAnalysis(queue) {
     likes: likes || transfer?.likes || null,
     structural_hash: transfer?.structural_hash || null,
     likes_hash: transfer?.likes_hash || null,
+    ...transferMetadata({
+      ...transfer,
+      source_structural_hash: queue.source_structural_hash ?? transfer?.source_structural_hash,
+      source_likes_hash: queue.source_likes_hash ?? transfer?.source_likes_hash,
+      total_track_count: queue.total_track_count ?? transfer?.total_track_count,
+      materialized_track_count: queue.materialized_track_count ?? transfer?.materialized_track_count,
+    }),
   };
 }
 
@@ -62,12 +86,21 @@ export function restoreQueueAnalysis(queue, envelope) {
       },
     });
   }
+  const metadata = transferMetadata(envelope);
+  if (metadata.source_structural_hash) queue.source_structural_hash = metadata.source_structural_hash;
+  if (metadata.source_likes_hash) queue.source_likes_hash = metadata.source_likes_hash;
+  if (metadata.total_track_count != null) queue.total_track_count = metadata.total_track_count;
+  if (metadata.materialized_track_count != null) {
+    queue.materialized_track_count = metadata.materialized_track_count;
+    queue.materialization_complete = metadata.materialized_track_count >= (metadata.total_track_count ?? trackCount);
+  }
   Object.defineProperty(queue, QUEUE_TRANSFER_ANALYSIS, {
     value: {
       structural,
       likes,
       structural_hash: typeof envelope.structural_hash === 'string' ? envelope.structural_hash : null,
       likes_hash: typeof envelope.likes_hash === 'string' ? envelope.likes_hash : null,
+      ...metadata,
     },
   });
   return queue;
