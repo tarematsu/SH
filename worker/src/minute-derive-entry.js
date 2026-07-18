@@ -1,14 +1,14 @@
 import {
-  processMinuteDeriveTrigger,
+  processMinuteDeriveMessage,
 } from './minute-derive-queue.js';
 
 export default {
   async queue(batch, env) {
     for (const message of batch.messages || []) {
       try {
-        const result = await processMinuteDeriveTrigger(env, message.body);
+        const result = await processMinuteDeriveMessage(env, message.body);
         console.log(JSON.stringify(result));
-        if (result?.failed && !result?.terminal) {
+        if (result?.failed && !result?.terminal && result?.retry_message !== false) {
           message.retry({
             delaySeconds: Math.max(1, Math.ceil(Number(result.retry_delay_ms || 60_000) / 1000)),
           });
