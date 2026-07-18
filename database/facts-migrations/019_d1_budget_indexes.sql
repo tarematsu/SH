@@ -24,3 +24,14 @@ WHERE status='processing';
 CREATE INDEX IF NOT EXISTS idx_sh_queue_revisions_recent_complete
 ON sh_queue_revisions(effective_at DESC, id DESC)
 WHERE status='complete' AND source='live_collector';
+
+CREATE INDEX IF NOT EXISTS idx_sh_queue_revisions_reuse
+ON sh_queue_revisions(
+  channel_id,
+  structural_hash,
+  session_id,
+  queue_start_time,
+  effective_at DESC,
+  id DESC
+)
+WHERE status IN ('complete','pending');
