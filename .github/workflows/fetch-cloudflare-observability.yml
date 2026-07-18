@@ -1,4 +1,5 @@
 name: Check Cloudflare observability logs
+# Temporary R2-only verification trigger; this comment is removed after the artifact is captured.
 
 on:
   pull_request:
