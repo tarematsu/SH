@@ -1,7 +1,7 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "sh-minute-enrichment",
-  "main": "src/minute-enrichment-entry.js",
+  "main": "src/minute-enrichment-optimized-entry.js",
   "compatibility_date": "2026-06-24",
   "workers_dev": false,
   "preview_urls": false,
