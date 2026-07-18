@@ -94,9 +94,70 @@ async function ensureSession(env) {
   }
 }
 
-// The cron Worker owns network collection only. JSON parsing, normalization,
-// hashing and queue-window materialization run behind durable ingest Queue
-// boundaries so one upstream response cannot consume the whole CPU budget.
+function rawMessage(base, body) {
+  return {
+    ...base,
+    message_version: 1,
+    body,
+  };
+}
+
+async function directPreparedMessage(base, body, config, env) {
+  let channel;
+  try {
+    channel = JSON.parse(body);
+  } catch {
+    return rawMessage(base, body);
+  }
+  if (!channel || typeof channel !== 'object' || Array.isArray(channel)) {
+    return rawMessage(base, body);
+  }
+  try {
+    const [payload, queueAnalysis, materialization, snapshotAnalysis] = await Promise.all([
+      import('./collector-payload.js'),
+      import('./queue-analysis-transfer.js'),
+      import('./queue-materialization.js'),
+      import('./snapshot-analysis-transfer.js'),
+    ]);
+    const state = {
+      channelId: base.auth?.collectorChannelId ?? null,
+      stationId: base.auth?.collectorStationId ?? null,
+    };
+    payload.validateChannelPayload(channel, config.channelAlias);
+    payload.extractIds(channel, state);
+    const snapshot = payload.normalizeSnapshot(channel, state, config);
+    const fullQueue = payload.extractQueue(channel, state.stationId);
+    const [preparedSnapshot, preparedQueue] = await Promise.all([
+      snapshotAnalysis.prepareSnapshotAnalysis(snapshot),
+      queueAnalysis.prepareQueueAnalysis(fullQueue),
+    ]);
+    const materialized = await materialization.prepareMaterializedQueue(
+      env?.DB,
+      fullQueue,
+      preparedQueue,
+      env,
+    );
+    return {
+      ...base,
+      message_version: 3,
+      snapshot,
+      queue: materialized.queue,
+      ...(preparedSnapshot ? { snapshot_analysis: preparedSnapshot } : {}),
+      ...(materialized.analysis ? { queue_analysis: materialized.analysis } : {}),
+    };
+  } catch {
+    return {
+      ...base,
+      message_version: 2,
+      channel,
+    };
+  }
+}
+
+// The production cron Worker owns network collection only. JSON parsing,
+// normalization, hashing and queue-window materialization run behind durable
+// ingest Queue boundaries. The DB-less direct fallback retains the prior v1/v2/v3
+// behavior for tests and compatibility callers outside the deployed topology.
 export async function collectRawChannel(env, dependencies = {}) {
   if (!env?.RAW_COLLECTION_QUEUE?.send) throw new Error('RAW_COLLECTION_QUEUE binding is missing');
   const state = await (dependencies.ensureSession || ensureSession)(env);
@@ -114,9 +175,8 @@ export async function collectRawChannel(env, dependencies = {}) {
   const refreshed = normalizeBearer(response.headers.get('authorization'));
   const persistCredentials = !state.collectorUpdatedAt
     || Boolean(refreshed && refreshed !== state.authToken);
-  await env.RAW_COLLECTION_QUEUE.send({
+  const base = {
     message_type: 'stationhead-raw-channel',
-    message_version: 1,
     observed_at: observedAt,
     channel_alias: config.channelAlias,
     persist_credentials: persistCredentials,
@@ -130,12 +190,17 @@ export async function collectRawChannel(env, dependencies = {}) {
       collectorChannelId: state.collectorChannelId,
       collectorStationId: state.collectorStationId,
     },
-    body,
-  }, { contentType: 'json' });
+  };
+  const message = !env?.DB && dependencies.inlinePreparation !== false
+    ? await directPreparedMessage(base, body, config, env)
+    : rawMessage(base, body);
+  await env.RAW_COLLECTION_QUEUE.send(message, { contentType: 'json' });
   console.log(JSON.stringify({
     event: 'raw_collection_enqueued',
     observed_at: observedAt,
     payload_chars: body.length,
+    queue_total_tracks: Number(message.queue?.total_track_count || message.queue?.tracks?.length || 0),
+    queue_materialized_tracks: Number(message.queue?.materialized_track_count || message.queue?.tracks?.length || 0),
   }));
 }
 
