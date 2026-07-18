@@ -1,10 +1,10 @@
 import { ingestOptimizedBody } from '../../site/functions/api/ingest.js';
-import { resetQueueHashCacheForTests } from '../../site/functions/lib/d1-optimized-ingest.js';
 import { restoreQueueAnalysis } from './queue-analysis-transfer.js';
 import { recordQueueMaterialization } from './queue-materialization.js';
 import { restoreSnapshotAnalysis, savePreparedSnapshot } from './snapshot-analysis-transfer.js';
 
 const QUEUE_STAGE_PERSIST = 'persist';
+const QUEUE_STAGE_LIKES = 'likes';
 const QUEUE_STAGE_FINALIZE = 'finalize';
 const EMPTY_DEPENDENCIES = Object.freeze({});
 const EMPTY_TRACKS = Object.freeze([]);
@@ -27,7 +27,9 @@ function validateTask(body) {
   if (!body.data || typeof body.data !== 'object') throw new Error('persistence data is missing');
   if (task !== 'queue') return { task, observedAt, stage: null };
   const stage = body.stage == null ? QUEUE_STAGE_PERSIST : body.stage;
-  if (stage !== QUEUE_STAGE_PERSIST && stage !== QUEUE_STAGE_FINALIZE) {
+  if (stage !== QUEUE_STAGE_PERSIST
+      && stage !== QUEUE_STAGE_LIKES
+      && stage !== QUEUE_STAGE_FINALIZE) {
     throw new Error(`unsupported persistence queue stage: ${String(stage)}`);
   }
   return { task, observedAt, stage };
@@ -80,6 +82,27 @@ function compactMetadataQueue(data) {
   };
 }
 
+function structuralQueueData(data, analysis) {
+  const preparedTracks = analysis?.structural?.tracks;
+  if (Array.isArray(preparedTracks)) return { ...data, tracks: preparedTracks };
+  const sourceTracks = Array.isArray(data?.tracks) ? data.tracks : EMPTY_TRACKS;
+  const tracks = new Array(sourceTracks.length);
+  for (let index = 0; index < sourceTracks.length; index += 1) {
+    const source = sourceTracks[index] || {};
+    tracks[index] = {
+      position: source.position ?? index,
+      queue_track_id: source.queue_track_id ?? null,
+      stationhead_track_id: source.stationhead_track_id ?? null,
+      spotify_id: source.spotify_id ?? null,
+      deezer_id: source.deezer_id ?? null,
+      isrc: source.isrc ?? null,
+      duration_ms: source.duration_ms ?? null,
+      preview_url: source.preview_url ?? null,
+    };
+  }
+  return { ...data, tracks };
+}
+
 async function enqueueQueueMetadata(env, body, observedAt, result, dependencies = EMPTY_DEPENDENCIES) {
   const requested = body.metadata_requested === true || result?.structure_changed === true;
   const queue = body.metadata_queue || body.data;
@@ -111,10 +134,31 @@ async function enqueueQueueMetadata(env, body, observedAt, result, dependencies 
   return true;
 }
 
+async function sendPersistenceContinuation(env, continuation, dependencies) {
+  if (dependencies.sendPersistenceContinuation) {
+    await dependencies.sendPersistenceContinuation(continuation);
+    return true;
+  }
+  if (!env?.PERSIST_QUEUE?.send) return false;
+  await env.PERSIST_QUEUE.send(continuation, JSON_QUEUE_SEND_OPTIONS);
+  return true;
+}
+
+async function enqueueQueueLikes(env, body, observedAt, result, dependencies = EMPTY_DEPENDENCIES) {
+  return sendPersistenceContinuation(env, {
+    message_type: 'stationhead-persistence-task',
+    message_version: 1,
+    task: 'queue',
+    stage: QUEUE_STAGE_LIKES,
+    observed_at: observedAt,
+    collector_id: body.collector_id || 'cloudflare-worker',
+    data: body.data,
+    analysis: body.analysis || null,
+    metadata_requested: body.metadata_requested === true || result?.structure_changed === true,
+  }, dependencies);
+}
+
 async function enqueueQueueFinalization(env, body, observedAt, result, dependencies = EMPTY_DEPENDENCIES) {
-  const injectedSend = dependencies.sendPersistenceContinuation;
-  const persistQueue = env?.PERSIST_QUEUE;
-  if (!injectedSend && !persistQueue?.send) return false;
   const metadataRequested = body.metadata_requested === true || result?.structure_changed === true;
   const continuation = {
     message_type: 'stationhead-persistence-task',
@@ -130,9 +174,7 @@ async function enqueueQueueFinalization(env, body, observedAt, result, dependenc
     const queue = compactMetadataQueue(body.data);
     if (queue.tracks.length) continuation.metadata_queue = queue;
   }
-  if (injectedSend) await injectedSend(continuation);
-  else await persistQueue.send(continuation, JSON_QUEUE_SEND_OPTIONS);
-  return true;
+  return sendPersistenceContinuation(env, continuation, dependencies);
 }
 
 async function finalizeQueuePersistence(env, body, observedAt, result, dependencies = EMPTY_DEPENDENCIES) {
@@ -151,6 +193,16 @@ async function finalizeQueuePersistence(env, body, observedAt, result, dependenc
     materialization_recorded: materializationRecorded,
     metadata_deferred: metadataDeferred,
   };
+}
+
+async function runQueueIngest(env, body, observedAt, data, dependencies) {
+  const runIngest = dependencies.ingestOptimizedBody || ingestOptimizedBody;
+  return runIngest(env, {
+    type: 'queue',
+    observed_at: observedAt,
+    collector_id: body.collector_id || 'cloudflare-worker',
+    data,
+  });
 }
 
 export async function processPersistenceTask(env, body, dependencies = EMPTY_DEPENDENCIES) {
@@ -173,23 +225,48 @@ export async function processPersistenceTask(env, body, dependencies = EMPTY_DEP
     };
   }
 
-  restoreQueueAnalysis(body.data, body.analysis);
-  if (body.data?.source_structural_hash) resetQueueHashCacheForTests();
-  const runIngest = dependencies.ingestOptimizedBody || ingestOptimizedBody;
-  const result = await runIngest(env, {
-    type: 'queue',
-    observed_at: observedAt,
-    collector_id: body.collector_id || 'cloudflare-worker',
-    data: body.data,
-  });
-  const finalizationDeferred = await enqueueQueueFinalization(
+  if (stage === QUEUE_STAGE_LIKES) {
+    restoreQueueAnalysis(body.data, body.analysis);
+    const result = await runQueueIngest(env, body, observedAt, body.data, dependencies);
+    const finalizationDeferred = await enqueueQueueFinalization(
+      env,
+      body,
+      observedAt,
+      result,
+      dependencies,
+    );
+    if (finalizationDeferred) {
+      const counts = queueCounts(body.data);
+      return {
+        task,
+        stage,
+        observed_at: observedAt,
+        ...result,
+        total_track_count: counts.total_track_count,
+        materialized_track_count: counts.materialized_track_count,
+        finalization_deferred: true,
+      };
+    }
+    const finalized = await finalizeQueuePersistence(env, body, observedAt, result, dependencies);
+    return {
+      task,
+      stage,
+      observed_at: observedAt,
+      ...result,
+      ...finalized,
+      finalization_deferred: false,
+    };
+  }
+
+  const result = await runQueueIngest(
     env,
     body,
     observedAt,
-    result,
+    structuralQueueData(body.data, body.analysis),
     dependencies,
   );
-  if (finalizationDeferred) {
+  const likesDeferred = await enqueueQueueLikes(env, body, observedAt, result, dependencies);
+  if (likesDeferred) {
     const counts = queueCounts(body.data);
     return {
       task,
@@ -198,17 +275,25 @@ export async function processPersistenceTask(env, body, dependencies = EMPTY_DEP
       ...result,
       total_track_count: counts.total_track_count,
       materialized_track_count: counts.materialized_track_count,
+      likes_deferred: true,
       finalization_deferred: true,
     };
   }
 
-  const finalized = await finalizeQueuePersistence(env, body, observedAt, result, dependencies);
+  restoreQueueAnalysis(body.data, body.analysis);
+  const likesResult = await runQueueIngest(env, body, observedAt, body.data, dependencies);
+  const finalized = await finalizeQueuePersistence(env, body, observedAt, {
+    ...likesResult,
+    structure_changed: result?.structure_changed === true,
+  }, dependencies);
   return {
     task,
     stage,
     observed_at: observedAt,
     ...result,
+    ...likesResult,
     ...finalized,
+    likes_deferred: false,
     finalization_deferred: false,
   };
 }
