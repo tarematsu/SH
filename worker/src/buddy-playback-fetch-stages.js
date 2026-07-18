@@ -5,8 +5,8 @@ import {
   buddyPlaybackPipelineSlot,
   fetchBuddyPlaybackText,
 } from './buddy-playback-pipeline.js';
-import { collectBuddyPlaybackReady } from './buddy-runtime.js';
 
+export const BUDDY_FETCH_AUTH_STAGE = 'fetch-auth';
 export const BUDDY_FETCH_COMPUTE_STAGE = 'fetch-compute';
 
 const PIPELINE_INDEX_SQL = `CREATE INDEX IF NOT EXISTS idx_sh_buddy_playback_pipeline_due
@@ -20,6 +20,13 @@ const PIPELINE_RESET_STALE_SQL = `UPDATE sh_buddy_playback_pipeline SET
 const PIPELINE_PLAN_SELECT_SQL = `SELECT channel_alias,cycle_at,observed_at,stage,
     next_attempt_at,lease_until,updated_at
   FROM sh_buddy_playback_pipeline WHERE channel_alias=? LIMIT 1`;
+const PIPELINE_FETCH_RUNTIME_SQL = `SELECT
+    pipeline.channel_alias,pipeline.cycle_at,pipeline.observed_at,pipeline.stage,
+    pipeline.next_attempt_at,pipeline.lease_until,pipeline.updated_at,
+    collector.auth_token,collector.device_uid,collector.token_expires_at
+  FROM sh_buddy_playback_pipeline pipeline
+  LEFT JOIN sh_worker_collector_state collector ON collector.id=?
+  WHERE pipeline.channel_alias=? LIMIT 1`;
 const PIPELINE_INSERT_SQL = `INSERT OR IGNORE INTO sh_buddy_playback_pipeline (
     channel_alias,cycle_at,stage,updated_at
   ) VALUES (?,?,'fetch',?)`;
@@ -38,6 +45,7 @@ const PIPELINE_FAILURE_SQL = `UPDATE sh_buddy_playback_pipeline SET
 const PIPELINE_LEASE_MS = 90_000;
 const PIPELINE_RETRY_MS = 5 * 60_000;
 const PIPELINE_MAX_AGE_MS = 2 * 60 * 60_000;
+const AUTH_REFRESH_MARGIN_MS = 5 * 60_000;
 let pipelineSchemaReady = false;
 
 function finiteNumber(value, fallback = null) {
@@ -72,6 +80,12 @@ async function loadPlanRow(env, alias) {
   return env.OTHER_DB.prepare(PIPELINE_PLAN_SELECT_SQL).bind(alias).first();
 }
 
+async function loadFetchRuntimeRow(env, config, alias) {
+  return env.OTHER_DB.prepare(PIPELINE_FETCH_RUNTIME_SQL)
+    .bind(config.authStateId, alias)
+    .first();
+}
+
 function stageHandoff(row, options = {}) {
   const stage = String(row?.stage || '');
   const result = {
@@ -82,7 +96,7 @@ function stageHandoff(row, options = {}) {
     channel_alias: String(row?.channel_alias || ''),
     ...(options.replayed ? { replayed_handoff: true } : {}),
   };
-  if (stage === 'fetch') result.direct_stage = BUDDY_FETCH_COMPUTE_STAGE;
+  if (stage === 'fetch') result.direct_stage = BUDDY_FETCH_AUTH_STAGE;
   else if (stage === 'parse') result.direct_stage = BUDDY_PARSE_COMPUTE_STAGE;
   return result;
 }
@@ -146,9 +160,7 @@ async function recordFetchFailure(env, task, error) {
   ).run();
 }
 
-export async function processBuddyFetchCompute(env, task, dependencies = {}) {
-  if (!env?.OTHER_DB?.prepare) throw new Error('OTHER_DB binding is missing');
-  const row = await loadPlanRow(env, task.channelAlias);
+function replayForRow(row, task) {
   if (!rowMatchesTask(row, task)) {
     return { skipped: true, reason: 'stale-cycle', pending: false, cycle_at: task.cycleAt };
   }
@@ -157,36 +169,102 @@ export async function processBuddyFetchCompute(env, task, dependencies = {}) {
   }
   if (row.stage === 'parse') return stageHandoff(row, { replayed: true });
   if (row.stage !== 'fetch') return stageHandoff(row, { replayed: true });
+  return null;
+}
 
-  const ready = dependencies.collectReady || collectBuddyPlaybackReady;
-  const fetchText = dependencies.fetchText || fetchBuddyPlaybackText;
+export async function processBuddyFetchAuth(env, task, dependencies = {}) {
+  if (!env?.OTHER_DB?.prepare) throw new Error('OTHER_DB binding is missing');
+  const row = await loadPlanRow(env, task.channelAlias);
+  const replay = replayForRow(row, task);
+  if (replay) return replay;
   try {
+    const ready = dependencies.collectReady
+      || (await import('./buddy-runtime.js')).collectBuddyPlaybackReady;
     return await ready(env, task.observedAt, {
       ...dependencies,
-      collect: async (runtimeEnv, stageObservedAt, runtimeDependencies = {}) => {
-        const config = buddyPlaybackConfig(runtimeEnv);
-        const rawJson = await fetchText(runtimeEnv, config, runtimeDependencies.fetch);
-        const result = await env.OTHER_DB.prepare(PIPELINE_FETCHED_SQL)
-          .bind(stageObservedAt, rawJson, stageObservedAt, task.channelAlias, task.cycleAt)
-          .run();
-        if (changedRows(result) <= 0) {
-          const advanced = await loadPlanRow(env, task.channelAlias);
-          if (!rowMatchesTask(advanced, task)) {
-            return { skipped: true, reason: 'stale-cycle', pending: false, cycle_at: task.cycleAt };
-          }
-          return stageHandoff(advanced, { replayed: true });
-        }
-        return {
-          skipped: false,
-          pending: true,
-          stage: 'parse',
-          direct_stage: BUDDY_PARSE_COMPUTE_STAGE,
-          cycle_at: task.cycleAt,
-          channel_alias: task.channelAlias,
-          checked_at: stageObservedAt,
-        };
-      },
+      collect: async () => ({
+        skipped: false,
+        pending: true,
+        stage: 'fetch',
+        direct_stage: BUDDY_FETCH_COMPUTE_STAGE,
+        cycle_at: task.cycleAt,
+        channel_alias: task.channelAlias,
+        auth_prepared: true,
+      }),
     });
+  } catch (error) {
+    await recordFetchFailure(env, task, error).catch(() => {});
+    throw error;
+  }
+}
+
+function fallbackAuthState(env, row) {
+  return {
+    authToken: row?.auth_token || env?.BUDDY_PLAYBACK_AUTH_TOKEN || env?.BUDDY46_AUTH_TOKEN,
+    deviceUid: row?.device_uid || env?.BUDDY_PLAYBACK_DEVICE_UID || env?.BUDDY46_DEVICE_UID,
+    tokenExpiresAt: finiteNumber(row?.token_expires_at, 0),
+  };
+}
+
+function usablePreparedSession(state, now) {
+  if (!state.authToken || !state.deviceUid) return false;
+  return !state.tokenExpiresAt || state.tokenExpiresAt - now > AUTH_REFRESH_MARGIN_MS;
+}
+
+function envWithPreparedSession(env, state) {
+  const runtimeEnv = Object.create(env || null);
+  Object.defineProperty(runtimeEnv, '__buddyAuthState', {
+    value: state,
+    enumerable: false,
+  });
+  return runtimeEnv;
+}
+
+export async function processBuddyFetchCompute(env, task, dependencies = {}) {
+  if (!env?.OTHER_DB?.prepare) throw new Error('OTHER_DB binding is missing');
+  const config = buddyPlaybackConfig(env);
+  const row = await loadFetchRuntimeRow(env, config, task.channelAlias);
+  const replay = replayForRow(row, task);
+  if (replay) return replay;
+  const authState = fallbackAuthState(env, row);
+  if (!usablePreparedSession(authState, task.observedAt)) {
+    return {
+      skipped: false,
+      pending: true,
+      stage: 'fetch',
+      direct_stage: BUDDY_FETCH_AUTH_STAGE,
+      cycle_at: task.cycleAt,
+      channel_alias: task.channelAlias,
+      replayed_handoff: true,
+    };
+  }
+
+  const fetchText = dependencies.fetchText || fetchBuddyPlaybackText;
+  try {
+    const rawJson = await fetchText(
+      envWithPreparedSession(env, authState),
+      config,
+      dependencies.fetch,
+    );
+    const result = await env.OTHER_DB.prepare(PIPELINE_FETCHED_SQL)
+      .bind(task.observedAt, rawJson, task.observedAt, task.channelAlias, task.cycleAt)
+      .run();
+    if (changedRows(result) <= 0) {
+      const advanced = await loadPlanRow(env, task.channelAlias);
+      if (!rowMatchesTask(advanced, task)) {
+        return { skipped: true, reason: 'stale-cycle', pending: false, cycle_at: task.cycleAt };
+      }
+      return stageHandoff(advanced, { replayed: true });
+    }
+    return {
+      skipped: false,
+      pending: true,
+      stage: 'parse',
+      direct_stage: BUDDY_PARSE_COMPUTE_STAGE,
+      cycle_at: task.cycleAt,
+      channel_alias: task.channelAlias,
+      checked_at: task.observedAt,
+    };
   } catch (error) {
     await recordFetchFailure(env, task, error).catch(() => {});
     throw error;
