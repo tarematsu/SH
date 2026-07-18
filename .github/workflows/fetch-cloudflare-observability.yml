@@ -125,8 +125,7 @@ jobs:
               'sh-minute-read-model', 'sh-track-metadata',
               'sh-pages-read-model', 'sh-monitor-maintenance',
               'sh-minute-ingest', 'sh-minute-derive', 'sh-minute-enrichment',
-              'sh-minute-rebuild', 'sh-minute-maintenance',
-              'sh-monitor-other', 'sh-host-monitor', 'sh-buddy-playback',
+              'sh-minute-rebuild', 'sh-minute-maintenance', 'sh-monitor-other',
           }
           output_dir = pathlib.Path('observability-logs')
           full_path = output_dir / 'sh-workers.ndjson'
