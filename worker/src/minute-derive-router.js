@@ -48,11 +48,11 @@ async function sendStage(env, body, dependencies = {}, options = {}) {
   });
 }
 
-function isSparseWrite(body) {
+function isSparseWrite(env, body) {
   return body?.message_type === 'minute-fact-derive-stage'
     && Number(body?.message_version) === 1
     && body?.stage === 'write'
-    && shouldMaterializeLiveRevision({}, body?.payload);
+    && shouldMaterializeLiveRevision(env, body?.payload);
 }
 
 function isSparseChunk(body) {
@@ -176,7 +176,7 @@ async function processSparseChunk(env, body, dependencies = {}) {
 }
 
 export function processMinuteDeriveMessage(env, body, dependencies = {}) {
-  if (isSparseWrite(body)) return processSparseWrite(env, body, dependencies);
+  if (isSparseWrite(env, body)) return processSparseWrite(env, body, dependencies);
   if (isSparseChunk(body)) return processSparseChunk(env, body, dependencies);
   return processLegacyMinuteDeriveMessage(env, body, dependencies);
 }
