@@ -36,6 +36,7 @@ const splitQueues = [
   'stationhead-minute-rebuild',
   'stationhead-buddy-playback',
   'stationhead-host-monitor',
+  'stationhead-pages-read-model-publication',
 ];
 
 function position(source, value) {
