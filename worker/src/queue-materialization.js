@@ -1,3 +1,5 @@
+import { payloadHash } from '../../site/functions/lib/ingest-claim.js';
+
 const DEFAULT_INITIAL_TRACKS = 22;
 const DEFAULT_LOW_WATER_TRACKS = 5;
 const DEFAULT_EXPAND_TRACKS = 10;
@@ -141,12 +143,25 @@ export function materializeQueueWindow(queue, analysis, requestedCount) {
   return { queue: materialized, analysis: materializedAnalysis };
 }
 
+async function hashMaterializedAnalysis(result) {
+  if (!result?.analysis?.structural) return result;
+  const [structuralHash, likesHash] = await Promise.all([
+    payloadHash(result.analysis.structural),
+    result.analysis.likes?.complete !== false && Array.isArray(result.analysis.likes?.payload)
+      ? payloadHash(result.analysis.likes.payload)
+      : null,
+  ]);
+  result.analysis.structural_hash = structuralHash;
+  result.analysis.likes_hash = likesHash;
+  return result;
+}
+
 export async function prepareMaterializedQueue(db, queue, analysis, env = {}) {
   if (!queue || !analysis?.structural_hash) return { queue, analysis };
   const identity = queueIdentity(queue);
   const state = await loadState(db, identity.stationId);
   const count = chooseMaterializedTrackCount(queue, analysis, state, env);
-  return materializeQueueWindow(queue, analysis, count);
+  return hashMaterializedAnalysis(materializeQueueWindow(queue, analysis, count));
 }
 
 export async function recordQueueMaterialization(db, queue, analysis, observedAt = Date.now()) {
