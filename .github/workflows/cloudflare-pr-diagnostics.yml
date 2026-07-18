@@ -53,8 +53,6 @@ jobs:
           echo "commands=$(jq -c '.commands' <<<"$selection")" >> "$GITHUB_OUTPUT"
           echo "diagnostics=$(jq -c '.diagnostics' <<<"$selection")" >> "$GITHUB_OUTPUT"
           topology_rename=false
-          # New Worker configs are safe to deploy. Only an existing config whose
-          # script name changed needs the topology-rename guard.
           if git diff --diff-filter=M -U0 "$BASE_SHA" "$HEAD_SHA" -- 'worker/wrangler*.jsonc' \
               | grep -Eq '^[+-][[:space:]]*"name"[[:space:]]*:'; then
             topology_rename=true
@@ -122,6 +120,15 @@ jobs:
             echo "Deploying $command"
             npm run "$command"
           done < <(jq -r '.[]' <<<"$DEPLOY_COMMANDS")
+      - name: Reinitialize track-history publication for one CPU probe
+        working-directory: worker
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx wrangler d1 execute stationhead-minute --remote --config wrangler.pages-read-model.jsonc --command \
+            "UPDATE sh_pages_payload_read_model SET payload_json=json_remove(json_set(payload_json,'$.published',json('false'),'$.published_at',NULL),'$.publication'),updated_at=CAST(unixepoch('subsec')*1000 AS INTEGER) WHERE model_key='track-history-stage';"
+          npx wrangler d1 execute stationhead-minute --remote --config wrangler.pages-read-model.jsonc --command \
+            "SELECT model_key,json_extract(payload_json,'$.published') AS published,json_type(payload_json,'$.publication') AS publication_type,updated_at FROM sh_pages_payload_read_model WHERE model_key='track-history-stage';"
 
   diagnose:
     name: Diagnose ${{ matrix.worker }}
