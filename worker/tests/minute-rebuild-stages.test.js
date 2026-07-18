@@ -189,11 +189,11 @@ test('gap commit dispatches at most the first prepared candidate per invocation'
   assert.deepEqual(sent.map((body) => body.minute_at), [60_000]);
 });
 
-test('recovery throughput raises only dispatch breadth while keeping Queue invocations isolated', () => {
+test('recovery throughput uses direct dispatch while keeping fallback and Queue invocations bounded', () => {
   const maintenance = JSON.parse(readFileSync(new URL('../wrangler.minute.jsonc', import.meta.url), 'utf8'));
   const rebuild = JSON.parse(readFileSync(new URL('../wrangler.minute-rebuild.jsonc', import.meta.url), 'utf8'));
 
-  assert.equal(maintenance.vars.DERIVE_DISPATCH_LIMIT, 20);
+  assert.equal(maintenance.vars.DERIVE_DISPATCH_LIMIT, 10);
   assert.equal(rebuild.vars.REBUILD_SOURCE_ROWS, 1);
   assert.equal(rebuild.vars.REBUILD_MAX_JOBS, 1);
   assert.equal(rebuild.vars.GAP_SCAN_MAX_JOBS, 1);
