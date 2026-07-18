@@ -65,7 +65,6 @@ test('legacy injected combined enrichment remains a direct-call compatibility pa
   assert.deepEqual(result, {
     task: 'committed-enrichment',
     job_id: body.job.jobId,
-    pending: false,
   });
 });
 
