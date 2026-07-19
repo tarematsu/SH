@@ -73,6 +73,26 @@ function structuralTrack(track) {
   return structural;
 }
 
+function likeAnalysisForTracks(tracks) {
+  const values = new Map();
+  let identifiable = 0;
+  let complete = true;
+  for (const track of tracks) {
+    const key = metadataKey(track);
+    if (!key) continue;
+    identifiable += 1;
+    const likeCount = integer(track?.bite_count);
+    if (likeCount == null) complete = false;
+    else values.set(key, likeCount);
+  }
+  return {
+    complete: identifiable === 0 || complete,
+    payload: [...values.entries()]
+      .map(([track_key, like_count]) => ({ track_key, like_count }))
+      .sort((left, right) => left.track_key.localeCompare(right.track_key)),
+  };
+}
+
 export function compactCollectedQueue(queue) {
   if (!queue || !Array.isArray(queue.tracks)) return { queue, metadata: [] };
   const metadataByKey = new Map();
@@ -97,8 +117,9 @@ export function compactCollectedQueue(queue) {
       tracks: tracks.map(structuralTrack),
     },
   });
-  const likeAnalysis = queue.tracks[QUEUE_LIKE_ANALYSIS];
-  if (likeAnalysis) Object.defineProperty(compact.tracks, QUEUE_LIKE_ANALYSIS, { value: likeAnalysis });
+  Object.defineProperty(compact.tracks, QUEUE_LIKE_ANALYSIS, {
+    value: likeAnalysisForTracks(tracks),
+  });
   return { queue: compact, metadata: [...metadataByKey.values()] };
 }
 
