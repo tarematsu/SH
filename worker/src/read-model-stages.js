@@ -5,6 +5,8 @@ import {
   queueNeedsPreviousTrackMetadata,
 } from './minute-facts-read-model.js';
 
+const READ_MODEL_CHECKPOINT_MS = 5 * 60_000;
+
 function integer(value) {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? Math.trunc(parsed) : null;
@@ -122,14 +124,24 @@ export async function writePreparedReadModel(env, readModel) {
     env.MINUTE_DB.prepare(`INSERT INTO sh_channel_read_model(channel_id,observed_at,presentation_json)
       VALUES(?,?,?) ON CONFLICT(channel_id) DO UPDATE SET
         observed_at=excluded.observed_at,presentation_json=excluded.presentation_json
-      WHERE excluded.observed_at>=sh_channel_read_model.observed_at`)
+      WHERE excluded.observed_at>=sh_channel_read_model.observed_at AND (
+        excluded.presentation_json IS NOT sh_channel_read_model.presentation_json
+        OR excluded.observed_at-sh_channel_read_model.observed_at>=${READ_MODEL_CHECKPOINT_MS}
+      )`)
       .bind(channelId, observedAt, JSON.stringify(channel.presentation || {})),
     env.MINUTE_DB.prepare(`INSERT INTO sh_queue_read_model_current(
         channel_id,observed_at,station_id,queue_id,start_time,is_paused,queue_json
       ) VALUES(?,?,?,?,?,?,?) ON CONFLICT(channel_id) DO UPDATE SET
         observed_at=excluded.observed_at,station_id=excluded.station_id,queue_id=excluded.queue_id,
         start_time=excluded.start_time,is_paused=excluded.is_paused,queue_json=excluded.queue_json
-      WHERE excluded.observed_at>=sh_queue_read_model_current.observed_at`)
+      WHERE excluded.observed_at>=sh_queue_read_model_current.observed_at AND (
+        excluded.station_id IS NOT sh_queue_read_model_current.station_id
+        OR excluded.queue_id IS NOT sh_queue_read_model_current.queue_id
+        OR excluded.start_time IS NOT sh_queue_read_model_current.start_time
+        OR excluded.is_paused IS NOT sh_queue_read_model_current.is_paused
+        OR excluded.queue_json IS NOT sh_queue_read_model_current.queue_json
+        OR excluded.observed_at-sh_queue_read_model_current.observed_at>=${READ_MODEL_CHECKPOINT_MS}
+      )`)
       .bind(
         channelId,
         observedAt,
@@ -144,7 +156,11 @@ export async function writePreparedReadModel(env, readModel) {
       ) VALUES(?,?,?,?,?) ON CONFLICT(collector_id) DO UPDATE SET
         last_run_at=excluded.last_run_at,last_success_at=excluded.last_success_at,
         last_error_present=excluded.last_error_present,updated_at=excluded.updated_at
-      WHERE excluded.updated_at>=sh_collector_read_model.updated_at`)
+      WHERE excluded.updated_at>=sh_collector_read_model.updated_at AND (
+        excluded.last_error_present IS NOT sh_collector_read_model.last_error_present
+        OR (sh_collector_read_model.last_success_at IS NULL AND excluded.last_success_at IS NOT NULL)
+        OR excluded.updated_at-sh_collector_read_model.updated_at>=${READ_MODEL_CHECKPOINT_MS}
+      )`)
       .bind(
         collectorId,
         integer(collector.last_run_at),
