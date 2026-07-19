@@ -52,7 +52,7 @@ jobs:
           BASE_BRANCH: ${{ github.event.pull_request.base.ref }}
         run: |
           set -euo pipefail
-          runtime_changed_at="$(git log -1 --format=%cI "origin/${BASE_BRANCH}..HEAD" -- \
+          runtime_changed_at="$(git log --no-merges -1 --format=%cI "origin/${BASE_BRANCH}..HEAD" -- \
             worker/src worker/scripts 'worker/wrangler*.jsonc' \
             worker/package.json worker/package-lock.json)"
           if [[ -z "$runtime_changed_at" ]]; then
