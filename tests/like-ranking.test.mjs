@@ -61,7 +61,7 @@ test('like ranking keeps only the latest like or bite count for each eligible tr
   assert.ok(!Object.hasOwn(rows[0], 'average_like_count'));
 });
 
-test('FACTS schema publishes an observed-time index for cached ranking reads', () => {
+test('FACTS schema publishes observed-time indexes for cached reads', () => {
   const migration = readFileSync(
     new URL('../database/facts-migrations/012_counter_current_read_index.sql', import.meta.url),
     'utf8',
@@ -72,5 +72,5 @@ test('FACTS schema publishes an observed-time index for cached ranking reads', (
   ));
   assert.match(migration, /idx_sh_counter_current_observed_count/);
   assert.match(migration, /sh_track_counter_current\(observed_at DESC,count_value DESC\)/);
-  assert.equal(descriptor.schema, 'database/facts-migrations/021_minute_job_dispatch_indexes.sql');
+  assert.equal(descriptor.schema, 'database/facts-migrations/022_total_listens_baseline_index.sql');
 });
