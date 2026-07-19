@@ -82,9 +82,11 @@ test('rebuild batch logic preserves independent acknowledgements for future roll
 test('production batches only live derive while recovery and rebuild stay isolated', () => {
   const derive = config('wrangler.minute-derive.jsonc');
   const rebuild = config('wrangler.minute-rebuild.jsonc');
+  const entry = readFileSync(new URL('../src/minute-derive-entry.js', import.meta.url), 'utf8');
   assert.deepEqual(derive.queues.consumers.map(({ max_batch_size }) => max_batch_size), [1, 2]);
   assert.equal(derive.vars.DERIVE_REVISION_CHUNK_TRACKS, 2);
   assert.equal(rebuild.queues.consumers[0].max_batch_size, 1);
+  assert.match(entry, /const LIVE_REVISION_CHUNK_TRACKS = 1/);
 });
 
 test('batched derive composes with the merged CPU and Pages KV contracts', () => {
