@@ -12,7 +12,10 @@ import {
   processMinutePlaybackPatch,
   processMinutePlaybackResolve,
 } from './minute-enrichment-playback-stages.js';
+import { processTrackMetadataTask } from './track-metadata-entry.js';
 
+export const TRACK_METADATA_QUEUE_NAME = 'stationhead-track-metadata';
+const TRACK_METADATA_MESSAGE_TYPE = 'stationhead-track-metadata';
 const RETRY_30_SECONDS = Object.freeze({ delaySeconds: 30 });
 const EMPTY_DEPENDENCIES = Object.freeze({});
 const SUCCESS_LOG_SAMPLE_MODULUS = 32;
@@ -98,20 +101,34 @@ async function processOptimizedMinuteEnrichment(env, body, dependencies = EMPTY_
   return run(env, activeBody, dependencies.core || EMPTY_DEPENDENCIES);
 }
 
+function isTrackMetadataDelivery(batch, body) {
+  return String(batch?.queue || '') === TRACK_METADATA_QUEUE_NAME
+    || body?.message_type === TRACK_METADATA_MESSAGE_TYPE;
+}
+
 async function processMinuteEnrichmentBatch(batch, env, dependencies = EMPTY_DEPENDENCIES) {
   const messages = batch.messages;
   if (!messages?.length) return;
   const message = messages[0];
-  const activeEnv = dependencies === EMPTY_DEPENDENCIES
-    ? productionEnrichmentEnv(env)
-    : env;
+  const metadata = isTrackMetadataDelivery(batch, message.body);
+  const activeEnv = metadata
+    ? env
+    : dependencies === EMPTY_DEPENDENCIES
+      ? productionEnrichmentEnv(env)
+      : env;
   try {
-    const result = await processOptimizedMinuteEnrichment(activeEnv, message.body, dependencies);
-    logMinuteEnrichmentResult(result);
+    if (metadata) {
+      const run = dependencies.processTrackMetadataTask || processTrackMetadataTask;
+      const result = await run(activeEnv, message.body, dependencies.metadata || EMPTY_DEPENDENCIES);
+      console.log(JSON.stringify({ event: 'track_metadata_task_completed', ...result }));
+    } else {
+      const result = await processOptimizedMinuteEnrichment(activeEnv, message.body, dependencies);
+      logMinuteEnrichmentResult(result);
+    }
     message.ack();
   } catch (error) {
     console.error(JSON.stringify({
-      event: 'minute_enrichment_failed',
+      event: metadata ? 'track_metadata_task_failed' : 'minute_enrichment_failed',
       error: String(error?.message || error).slice(0, 800),
     }));
     message.retry(RETRY_30_SECONDS);
@@ -120,6 +137,7 @@ async function processMinuteEnrichmentBatch(batch, env, dependencies = EMPTY_DEP
 
 export {
   activeEnrichmentBody,
+  isTrackMetadataDelivery,
   processMinuteEnrichmentBatch,
   processOptimizedMinuteEnrichment,
   productionEnrichmentEnv,
