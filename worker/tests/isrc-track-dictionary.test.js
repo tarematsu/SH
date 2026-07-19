@@ -57,7 +57,7 @@ test('minute metadata hydration reads the ISRC dictionary before legacy metadata
   );
   assert.match(sql, /FROM sh_track_dictionary/);
   assert.match(sql, /UNION ALL/);
-  assert.deepEqual(bindings, ['USABC1234567', 'USABC1234567', 'new-sp']);
+  assert.deepEqual(bindings, ['USABC1234567', 'new-sp']);
 
   const hydrated = attachReadModelTrackMetadata({
     tracks: [{
