@@ -22,6 +22,10 @@ const observabilityWorkflow = readFileSync(
   new URL('../.github/workflows/fetch-cloudflare-observability.yml', import.meta.url),
   'utf8',
 );
+const observabilityFetcher = readFileSync(
+  new URL('../.github/scripts/fetch-r2-worker-logs.py', import.meta.url),
+  'utf8',
+);
 const observabilityAnalyzer = readFileSync(
   new URL('../.github/scripts/analyze-worker-observability.py', import.meta.url),
   'utf8',
@@ -152,14 +156,20 @@ test('Cloudflare Git diagnostics include only remaining connected Worker depende
 });
 
 test('R2 observability audits every current script and fails on real faults', () => {
-  assert.doesNotMatch(observabilityWorkflow, /selected\s*=\s*selected\[:100\]/);
-  assert.match(observabilityWorkflow, /objects_selected/);
-  assert.match(observabilityWorkflow, /oldest_object_modified/);
-  assert.match(observabilityWorkflow, /newest_object_modified/);
-  assert.match(observabilityWorkflow, /Downloaded \$downloaded_count of \$selected_count selected R2 objects/);
+  assert.match(observabilityWorkflow, /fetch-r2-worker-logs\.py/);
   assert.match(observabilityWorkflow, /analyze-worker-observability\.py/);
   assert.match(observabilityWorkflow, /default: "90"/);
   assert.match(observabilityWorkflow, /if: always\(\)/);
+
+  assert.doesNotMatch(observabilityFetcher, /selected\s*=\s*selected\[:100\]/);
+  assert.match(observabilityFetcher, /objects_selected/);
+  assert.match(observabilityFetcher, /oldest_object_modified/);
+  assert.match(observabilityFetcher, /newest_object_modified/);
+  assert.match(observabilityFetcher, /NextContinuationToken/);
+  assert.match(observabilityFetcher, /SUMMARY_PATH\.unlink\(\)/);
+  assert.match(observabilityFetcher, /Downloaded \{downloaded\} of \{len\(selected\)\} selected R2 objects/);
+  assert.match(observabilityFetcher, /events > 0/);
+  assert.match(observabilityFetcher, /No post-deployment Worker events arrived/);
 
   for (const worker of [
     'sh-buddies-persist',

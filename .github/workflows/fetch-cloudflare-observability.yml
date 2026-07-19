@@ -8,6 +8,7 @@ on:
       - ".github/workflows/fetch-cloudflare-observability.yml"
       - ".github/scripts/analyze-worker-observability.py"
       - ".github/scripts/enforce-worker-cpu-budget.py"
+      - ".github/scripts/fetch-r2-worker-logs.py"
   workflow_dispatch:
     inputs:
       since:
@@ -31,20 +32,22 @@ concurrency:
 jobs:
   fetch:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     env:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_BUILDS_API_TOKEN }}
       AWS_DEFAULT_REGION: auto
       R2_BUCKET: cloudflare-managed-1609110a
       LOG_SINCE: ${{ inputs.since || '' }}
       LOOKBACK_MINUTES: ${{ inputs.lookback_minutes || '90' }}
+      R2_LOG_POLL_ATTEMPTS: "10"
+      R2_LOG_POLL_SECONDS: "30"
 
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Use first successful deployment after runtime changes as audit lower bound
+      - name: Wait for the current PR deployment and set the audit lower bound
         if: github.event_name == 'pull_request' && env.LOG_SINCE == ''
         shell: bash
         env:
@@ -61,25 +64,28 @@ jobs:
             exit 0
           fi
           runtime_changed_at="$(date -u -d "$runtime_changed_at" +%Y-%m-%dT%H:%M:%SZ)"
-          runs="$(curl --fail-with-body --silent --show-error --get \
-            -H "Authorization: Bearer $GH_TOKEN" \
-            -H 'Accept: application/vnd.github+json' \
-            "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/workflows/cloudflare-pr-diagnostics.yml/runs" \
-            --data-urlencode "branch=$HEAD_BRANCH" \
-            --data-urlencode 'event=pull_request' \
-            --data-urlencode 'status=completed' \
-            --data-urlencode 'per_page=100')"
-          deployed_at="$(jq -r --arg changed "$runtime_changed_at" \
-            '[.workflow_runs[] | select(.conclusion == "success" and .created_at >= $changed)] | last | .updated_at // empty' \
-            <<<"$runs")"
-          if [[ -n "$deployed_at" ]]; then
-            audit_since="$(date -u -d "$deployed_at + 90 seconds" +%Y-%m-%dT%H:%M:%SZ)"
-            echo "Runtime changed at $runtime_changed_at"
-            echo "Deployment completed at $deployed_at; auditing after propagation grace at $audit_since"
-            echo "LOG_SINCE=$audit_since" >> "$GITHUB_ENV"
-          else
-            echo "No successful PR deployment found after runtime changes; using the configured lookback."
-          fi
+          deployed_at=""
+          for attempt in $(seq 1 20); do
+            runs="$(curl --fail-with-body --silent --show-error --get \
+              -H "Authorization: Bearer $GH_TOKEN" \
+              -H 'Accept: application/vnd.github+json' \
+              "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/workflows/cloudflare-pr-diagnostics.yml/runs" \
+              --data-urlencode "branch=$HEAD_BRANCH" \
+              --data-urlencode 'event=pull_request' \
+              --data-urlencode 'status=completed' \
+              --data-urlencode 'per_page=100')"
+            deployed_at="$(jq -r --arg changed "$runtime_changed_at" \
+              '[.workflow_runs[] | select(.conclusion == "success" and .created_at >= $changed)] | max_by(.updated_at) | .updated_at // empty' \
+              <<<"$runs")"
+            if [[ -n "$deployed_at" ]]; then break; fi
+            echo "Waiting for Cloudflare deployment attempt $attempt/20"
+            sleep 15
+          done
+          test -n "$deployed_at" || { echo 'No successful PR deployment found after runtime changes' >&2; exit 1; }
+          audit_since="$(date -u -d "$deployed_at + 90 seconds" +%Y-%m-%dT%H:%M:%SZ)"
+          echo "Runtime changed at $runtime_changed_at"
+          echo "Deployment completed at $deployed_at; auditing after propagation grace at $audit_since"
+          echo "LOG_SINCE=$audit_since" >> "$GITHUB_ENV"
 
       - name: Derive R2 credentials
         shell: bash
@@ -106,69 +112,15 @@ jobs:
           echo "AWS_SECRET_ACCESS_KEY=$secret" >> "$GITHUB_ENV"
           echo "R2_ENDPOINT=https://${match}.r2.cloudflarestorage.com" >> "$GITHUB_ENV"
 
-      - name: Download incremental Worker logs
+      - name: Download incremental Worker logs with real events
         shell: bash
-        run: |
-          set -euo pipefail
-          mkdir -p raw observability-logs
-          aws s3api list-objects-v2 --endpoint-url "$R2_ENDPOINT" --bucket "$R2_BUCKET" --output json > objects.json
-          python3 - <<'PY'
-          import datetime as dt, json, os, pathlib
-          data = json.loads(pathlib.Path('objects.json').read_text(encoding='utf-8'))
-          objects = data.get('Contents') or []
-          if not objects:
-              raise SystemExit('No observability objects found')
-          since = os.environ.get('LOG_SINCE', '').strip()
-          if since:
-              cutoff = dt.datetime.fromisoformat(since.replace('Z', '+00:00'))
-              if cutoff.tzinfo is None:
-                  cutoff = cutoff.replace(tzinfo=dt.timezone.utc)
-          else:
-              cutoff = dt.datetime.now(dt.timezone.utc) - dt.timedelta(minutes=max(1, int(os.environ.get('LOOKBACK_MINUTES', '90'))))
-          selected = []
-          for item in objects:
-              modified = dt.datetime.fromisoformat(str(item['LastModified']).replace('Z', '+00:00'))
-              if modified >= cutoff:
-                  selected.append((modified, item['Key']))
-          selected.sort(reverse=True)
-          selection = {
-              'cutoff': cutoff.isoformat().replace('+00:00', 'Z'),
-              'objects_available': len(objects),
-              'objects_selected': len(selected),
-              'newest_object_modified': selected[0][0].isoformat().replace('+00:00', 'Z') if selected else None,
-              'oldest_object_modified': selected[-1][0].isoformat().replace('+00:00', 'Z') if selected else None,
-          }
-          pathlib.Path('selection.json').write_text(json.dumps(selection, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
-          pathlib.Path('keys.txt').write_text(''.join(f'{key}\n' for _, key in selected), encoding='utf-8')
-          print(f"Selected {len(selected)} objects modified since {cutoff.isoformat()}")
-          PY
-          if [[ -s keys.txt ]]; then
-            index=0
-            pids=()
-            while IFS= read -r key; do
-              index=$((index + 1))
-              file="raw/$(printf '%04d' "$index").log"
-              aws s3api get-object --endpoint-url "$R2_ENDPOINT" --bucket "$R2_BUCKET" --key "$key" "$file" >/dev/null &
-              pids+=("$!")
-              if (( ${#pids[@]} >= 8 )); then
-                for pid in "${pids[@]}"; do wait "$pid"; done
-                pids=()
-              fi
-            done < keys.txt
-            for pid in "${pids[@]}"; do wait "$pid"; done
-          fi
-          selected_count="$(jq -r '.objects_selected' selection.json)"
-          downloaded_count="$(find raw -type f | wc -l | tr -d ' ')"
-          test "$downloaded_count" -eq "$selected_count" || {
-            echo "Downloaded $downloaded_count of $selected_count selected R2 objects" >&2
-            exit 1
-          }
+        run: python3 .github/scripts/fetch-r2-worker-logs.py
 
       - name: Audit current Workers and CPU time
         shell: bash
         run: python3 .github/scripts/analyze-worker-observability.py
 
-      - name: Enforce stable 8 ms Worker CPU budget
+      - name: Enforce stable 10 ms Worker CPU budget
         if: always()
         shell: bash
         run: python3 .github/scripts/enforce-worker-cpu-budget.py

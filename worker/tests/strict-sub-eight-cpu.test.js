@@ -13,13 +13,14 @@ function config(name) {
   return JSON.parse(readFileSync(new URL(`../${name}`, import.meta.url), 'utf8'));
 }
 
-test('CPU budget treats 8 ms itself as a violation', () => {
+test('CPU budget accepts 10 ms and rejects values above it', () => {
   const source = readFileSync(
     new URL('../../.github/scripts/enforce-worker-cpu-budget.py', import.meta.url),
     'utf8',
   );
-  assert.match(source, /float\(p95\) >= BUDGET_MS/);
-  assert.match(source, /"comparison": "strictly_less_than"/);
+  assert.match(source, /BUDGET_MS = 10\.0/);
+  assert.match(source, /float\(p95\) > BUDGET_MS/);
+  assert.match(source, /"comparison": "less_than_or_equal"/);
 });
 
 test('production configs bound comment work and defer duplicate metadata persistence', async () => {

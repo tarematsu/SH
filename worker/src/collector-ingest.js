@@ -6,6 +6,21 @@ import { serializedQueueAnalysis } from './queue-analysis-transfer.js';
 import { savePreparedSnapshot } from './snapshot-analysis-transfer.js';
 
 const SNAPSHOT_ANALYSIS = Symbol.for('stationhead.snapshot.analysis');
+const MINUTE_MS = 60_000;
+
+function snapshotPersistenceIntervalMs(env) {
+  const parsed = Number(env?.SNAPSHOT_PERSIST_INTERVAL_MS);
+  if (!Number.isFinite(parsed) || parsed < MINUTE_MS) return MINUTE_MS;
+  return Math.min(Math.trunc(parsed), 60 * MINUTE_MS);
+}
+
+export function snapshotPersistenceDue(env, observedAt) {
+  const interval = snapshotPersistenceIntervalMs(env);
+  if (interval <= MINUTE_MS) return true;
+  const timestamp = Number(observedAt);
+  if (!Number.isFinite(timestamp) || timestamp < 0) return true;
+  return Math.floor(timestamp / interval) !== Math.floor((timestamp - MINUTE_MS) / interval);
+}
 
 async function resolveIngestResult(result, type, options) {
   let directResult = null;
@@ -23,6 +38,17 @@ async function resolveIngestResult(result, type, options) {
 
 async function deferPersistence(env, type, data, observedAt, options = null) {
   if (!env?.PERSIST_QUEUE?.send || !['snapshot', 'queue'].includes(type)) return null;
+  if (type === 'snapshot' && !snapshotPersistenceDue(env, observedAt)) {
+    return {
+      ok: true,
+      type,
+      accepted: true,
+      deferred: false,
+      inserted: false,
+      skipped: true,
+      reason: 'snapshot-persistence-not-due',
+    };
+  }
   const collectorId = env?.COLLECTOR_ID || 'cloudflare-worker';
   let analysis = null;
   if (type === 'snapshot') analysis = data?.[SNAPSHOT_ANALYSIS] || null;
