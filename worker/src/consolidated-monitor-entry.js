@@ -8,9 +8,12 @@ import {
   SNAPSHOT_RETENTION_CRON,
   runMonitorMaintenanceCron,
 } from './monitor-maintenance-entry.js';
+import { collectRawChannel } from './raw-collector-entry.js';
 
 const EMPTY_OPTIONS = Object.freeze({});
 const JSON_QUEUE_SEND_OPTIONS = Object.freeze({ contentType: 'json' });
+const OTHER_MONITOR_INTERVAL_MINUTES = 5;
+export const CONSOLIDATED_MONITOR_CRON = '* * * * *';
 export const MONITOR_MAINTENANCE_MESSAGE = 'monitor-maintenance-task';
 
 export {
@@ -24,6 +27,11 @@ export function maintenanceCronFor(timestamp) {
   if (minute === 30) return ROLLUP_MAINTENANCE_CRON;
   if (minute === 50) return SNAPSHOT_RETENTION_CRON;
   return null;
+}
+
+export function otherMonitorDue(timestamp) {
+  const minute = new Date(Number(timestamp) || 0).getUTCMinutes();
+  return minute % OTHER_MONITOR_INTERVAL_MINUTES === 0;
 }
 
 async function dispatchMaintenance(env, scheduledAt) {
@@ -48,18 +56,37 @@ export async function runConsolidatedMonitorScheduled(
   options = EMPTY_OPTIONS,
 ) {
   const cron = String(controller?.cron || '');
-  if (cron !== OTHER_MONITOR_CRON) {
+  if (cron !== CONSOLIDATED_MONITOR_CRON && cron !== OTHER_MONITOR_CRON) {
     return { skipped: true, reason: 'unsupported-consolidated-monitor-cron', cron };
   }
-  const result = await runOtherMonitorCron(
-    controller,
-    env,
-    ctx,
-    options.otherOptions || EMPTY_OPTIONS,
-  );
   const scheduledAt = Number(controller?.scheduledTime) || Date.now();
+  const collect = options.collectRawChannel || collectRawChannel;
+  const collection = collect(env, options.collectionDependencies || EMPTY_OPTIONS);
+  if (!otherMonitorDue(scheduledAt)) {
+    await collection;
+    return [{ collected: true, scheduled_at: scheduledAt }];
+  }
+
+  const monitorController = {
+    ...controller,
+    cron: OTHER_MONITOR_CRON,
+    scheduledTime: scheduledAt,
+  };
+  const [, result] = await Promise.all([
+    collection,
+    runOtherMonitorCron(
+      monitorController,
+      env,
+      ctx,
+      options.otherOptions || EMPTY_OPTIONS,
+    ),
+  ]);
   const maintenance = await dispatchMaintenance(env, scheduledAt);
-  return maintenance ? [...result, maintenance] : result;
+  return [
+    { collected: true, scheduled_at: scheduledAt },
+    ...result,
+    ...(maintenance ? [maintenance] : []),
+  ];
 }
 
 async function processMaintenanceMessage(message, env, options = EMPTY_OPTIONS) {
