@@ -64,13 +64,14 @@ test('paired revision materialization caps each message at one track', async () 
   assert.deepEqual(events, ['ack:1', 'ack:2']);
 });
 
-test('production batches only live derive while recovery and rebuild stay isolated', () => {
+test('production batches live derive and rebuild while recovery derive stays isolated', () => {
   const derive = config('wrangler.minute-derive.jsonc');
   const rebuild = config('wrangler.minute-rebuild.jsonc');
   const entry = readFileSync(new URL('../src/minute-derive-entry.js', import.meta.url), 'utf8');
   assert.deepEqual(derive.queues.consumers.map(({ max_batch_size }) => max_batch_size), [1, 2]);
   assert.equal(derive.vars.DERIVE_REVISION_CHUNK_TRACKS, 2);
-  assert.equal(rebuild.queues.consumers[0].max_batch_size, 1);
+  assert.equal(rebuild.queues.consumers[0].max_batch_size, 2);
+  assert.equal(rebuild.queues.consumers[0].max_concurrency, 1);
   assert.match(entry, /const LIVE_REVISION_CHUNK_TRACKS = 1/);
   assert.match(entry, /minute_derive_queue_overloaded/);
 });
