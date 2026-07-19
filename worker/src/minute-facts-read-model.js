@@ -172,17 +172,14 @@ async function runMetadataQuery(db, sql, bindings) {
   return result.results || [];
 }
 
-function legacyMetadataQuery(spotifyIds, isrcs) {
+function metadataQuery(spotifyIds, isrcs) {
+  const bindings = [...isrcs, ...spotifyIds];
+  let parameter = 1;
+  const isrcPlaceholders = isrcs.map(() => `?${parameter++}`).join(',');
+  const spotifyPlaceholders = spotifyIds.map(() => `?${parameter++}`).join(',');
   const clauses = [];
-  const bindings = [];
-  if (isrcs.length) {
-    clauses.push(`isrc IN (${isrcs.map(() => '?').join(',')})`);
-    bindings.push(...isrcs);
-  }
-  if (spotifyIds.length) {
-    clauses.push(`spotify_id IN (${spotifyIds.map(() => '?').join(',')})`);
-    bindings.push(...spotifyIds);
-  }
+  if (isrcPlaceholders) clauses.push(`isrc IN (${isrcPlaceholders})`);
+  if (spotifyPlaceholders) clauses.push(`spotify_id IN (${spotifyPlaceholders})`);
   if (!clauses.length) return null;
   const whereSql = clauses.join(' OR ');
   return {
@@ -191,40 +188,36 @@ function legacyMetadataQuery(spotifyIds, isrcs) {
       WHERE ${whereSql}
       ORDER BY fetched_at DESC`,
     whereSql,
+    isrcPlaceholders,
     bindings,
   };
 }
 
 async function queryTrackMetadata(db, spotifyIds, isrcs, includeDictionary = false) {
   if (!db || typeof db.prepare !== 'function') return [];
-  const legacy = legacyMetadataQuery(spotifyIds, isrcs);
-  if (!legacy) return [];
-  if (!includeDictionary || !isrcs.length) {
-    return runMetadataQuery(db, legacy.sql, legacy.bindings);
+  const query = metadataQuery(spotifyIds, isrcs);
+  if (!query) return [];
+  if (!includeDictionary || !query.isrcPlaceholders) {
+    return runMetadataQuery(db, query.sql, query.bindings);
   }
 
-  const dictionaryPlaceholders = isrcs.map(() => '?').join(',');
   const dictionarySql = `SELECT spotify_id,isrc,title,artist,thumbnail_url,fetched_at
     FROM (
       SELECT 0 AS source_priority,spotify_id,isrc,title,artist,thumbnail_url,
         metadata_fetched_at AS fetched_at
       FROM sh_track_dictionary
-      WHERE isrc IN (${dictionaryPlaceholders})
+      WHERE isrc IN (${query.isrcPlaceholders})
       UNION ALL
       SELECT 1 AS source_priority,spotify_id,isrc,title,artist,thumbnail_url,fetched_at
       FROM sh_track_metadata
-      WHERE ${legacy.whereSql}
+      WHERE ${query.whereSql}
     )
     ORDER BY source_priority,fetched_at DESC`;
   try {
-    return await runMetadataQuery(
-      db,
-      dictionarySql,
-      [...isrcs, ...legacy.bindings],
-    );
+    return await runMetadataQuery(db, dictionarySql, query.bindings);
   } catch (error) {
     if (!/no such table|no such column/i.test(String(error?.message || ''))) throw error;
-    return runMetadataQuery(db, legacy.sql, legacy.bindings);
+    return runMetadataQuery(db, query.sql, query.bindings);
   }
 }
 
