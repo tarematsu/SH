@@ -9,6 +9,7 @@ import {
 } from '../src/pages-response-store.js';
 import { runPagesSixHourTask } from '../src/pages-six-hour-read-model.js';
 import {
+  ensurePagesResponseNamespace,
   namespaceIdFromList,
   pagesReadModelConfigWithNamespaceId,
 } from '../scripts/pages-response-kv-namespace.mjs';
@@ -110,4 +111,34 @@ test('deployment resolves the exact namespace and replaces the placeholder id', 
     kv_namespaces: [{ binding: 'PAGES_RESPONSE_KV', id: 'placeholder' }],
   }), 'pages-id'));
   assert.equal(rendered.kv_namespaces[0].id, 'pages-id');
+});
+
+test('deployment searches every namespace page before creating a new namespace', async () => {
+  const title = 'sh-pages-read-model-pages-response-kv';
+  const requests = [];
+  const fetch = async (url, init) => {
+    requests.push({ url: String(url), method: init?.method });
+    const page = Number(new URL(url).searchParams.get('page'));
+    if (page === 1) {
+      return Response.json({
+        success: true,
+        result: Array.from({ length: 1000 }, (_, index) => ({ id: `other-${index}`, title: `other-${index}` })),
+        result_info: { page: 1, per_page: 1000, total_count: 1001 },
+      });
+    }
+    return Response.json({
+      success: true,
+      result: [{ id: 'pages-id', title }],
+      result_info: { page: 2, per_page: 1000, total_count: 1001 },
+    });
+  };
+  const namespace = await ensurePagesResponseNamespace({
+    accountId: 'account',
+    apiToken: 'token',
+    fetch,
+  });
+  assert.deepEqual(namespace, { id: 'pages-id', title, created: false });
+  assert.equal(requests.length, 2);
+  assert.deepEqual(requests.map(({ method }) => method), ['GET', 'GET']);
+  assert.match(requests[1].url, /page=2/);
 });
