@@ -5,6 +5,12 @@ import {
   validateChannelPayload,
 } from './collector-payload.js';
 import {
+  attachCollectedTrackMetadata,
+  compactCollectedQueue,
+  metadataForCollectedQueue,
+  persistCollectedTrackMetadata,
+} from './collected-track-metadata.js';
+import {
   prepareQueueLikesAnalysis,
   prepareQueueStructuralAnalysis,
   serializedQueueAnalysis,
@@ -68,6 +74,7 @@ function validatePreparedStage(body, expectedType) {
   }
   const snapshot = objectValue(body.snapshot);
   const queue = body.queue == null ? null : objectValue(body.queue);
+  const trackMetadata = Array.isArray(body.track_metadata) ? body.track_metadata : [];
   if (!snapshot || integer(snapshot.channel_id) == null || integer(snapshot.station_id) == null) {
     throw new Error('prepared raw collection snapshot is missing');
   }
@@ -75,7 +82,12 @@ function validatePreparedStage(body, expectedType) {
   if (queue && !Array.isArray(queue.tracks)) {
     throw new Error('prepared raw collection queue tracks are invalid');
   }
-  return { snapshot, queue, common: commonTask(body) };
+  return {
+    snapshot,
+    queue,
+    trackMetadata,
+    common: commonTask(body),
+  };
 }
 
 function preparedMessage(type, common, snapshot, queue, details = null) {
@@ -106,31 +118,41 @@ export async function processRawNormalizeStage(env, body, dependencies = {}) {
   if (integer(snapshot.channel_id) == null || integer(snapshot.station_id) == null) {
     throw new Error('normalized raw collection identity is missing');
   }
-  const queue = extractQueue(channel, state.stationId);
-  // extractQueue caches structural/like payloads on non-enumerable Symbols.
-  // Serialize that seed before the Queue boundary; hashes stay in later
-  // invocations, while the structural walk is not repeated.
-  const queueAnalysisSeed = serializedQueueAnalysis(queue);
+  const extractedQueue = extractQueue(channel, state.stationId);
+  const compacted = compactCollectedQueue(extractedQueue);
+  // The structural and like seed is serialized after compaction. Provider IDs,
+  // preview URLs and repeated presentation fields therefore never cross the
+  // raw-analysis Queue boundary unless they are required as a fallback.
+  const queueAnalysisSeed = serializedQueueAnalysis(compacted.queue);
   await sendNext(env, preparedMessage(
     RAW_ANALYSIS_MESSAGE,
     common,
     snapshot,
-    queue,
-    { queue_analysis_seed: queueAnalysisSeed },
+    compacted.queue,
+    {
+      queue_analysis_seed: queueAnalysisSeed,
+      track_metadata: compacted.metadata,
+    },
   ), dependencies);
   const result = {
     event: 'raw_collection_normalized',
     observed_at: common.observed_at,
     channel_id: integer(snapshot.channel_id),
     station_id: integer(snapshot.station_id),
-    queue_tracks: Array.isArray(queue?.tracks) ? queue.tracks.length : 0,
+    queue_tracks: Array.isArray(compacted.queue?.tracks) ? compacted.queue.tracks.length : 0,
+    track_metadata_rows: compacted.metadata.length,
   };
   console.log(JSON.stringify(result));
   return result;
 }
 
 export async function processRawAnalysisStage(env, body, dependencies = {}) {
-  const { snapshot, queue, common } = validatePreparedStage(body, RAW_ANALYSIS_MESSAGE);
+  const {
+    snapshot,
+    queue,
+    trackMetadata,
+    common,
+  } = validatePreparedStage(body, RAW_ANALYSIS_MESSAGE);
   const prepareSnapshot = dependencies.prepareSnapshot || prepareSnapshotAnalysis;
   const snapshotAnalysis = await prepareSnapshot(snapshot);
   await sendNext(env, preparedMessage(
@@ -141,6 +163,7 @@ export async function processRawAnalysisStage(env, body, dependencies = {}) {
     {
       snapshot_analysis: snapshotAnalysis,
       queue_analysis_seed: body.queue_analysis_seed || null,
+      track_metadata: trackMetadata,
     },
   ), dependencies);
   const result = {
@@ -154,7 +177,12 @@ export async function processRawAnalysisStage(env, body, dependencies = {}) {
 }
 
 export async function processRawStructuralStage(env, body, dependencies = {}) {
-  const { snapshot, queue, common } = validatePreparedStage(body, RAW_STRUCTURAL_MESSAGE);
+  const {
+    snapshot,
+    queue,
+    trackMetadata,
+    common,
+  } = validatePreparedStage(body, RAW_STRUCTURAL_MESSAGE);
   const prepareStructural = dependencies.prepareStructural || prepareQueueStructuralAnalysis;
   const queueAnalysis = await prepareStructural(queue, body.queue_analysis_seed || null);
   await sendNext(env, preparedMessage(
@@ -165,6 +193,7 @@ export async function processRawStructuralStage(env, body, dependencies = {}) {
     {
       snapshot_analysis: body.snapshot_analysis || null,
       queue_analysis: queueAnalysis,
+      track_metadata: trackMetadata,
     },
   ), dependencies);
   const result = {
@@ -178,7 +207,12 @@ export async function processRawStructuralStage(env, body, dependencies = {}) {
 }
 
 export async function processRawLikesStage(env, body, dependencies = {}) {
-  const { snapshot, queue, common } = validatePreparedStage(body, RAW_LIKES_MESSAGE);
+  const {
+    snapshot,
+    queue,
+    trackMetadata,
+    common,
+  } = validatePreparedStage(body, RAW_LIKES_MESSAGE);
   const prepareLikes = dependencies.prepareLikes || prepareQueueLikesAnalysis;
   const queueAnalysis = await prepareLikes(queue, body.queue_analysis || null);
   await sendNext(env, preparedMessage(
@@ -189,6 +223,7 @@ export async function processRawLikesStage(env, body, dependencies = {}) {
     {
       snapshot_analysis: body.snapshot_analysis || null,
       queue_analysis: queueAnalysis,
+      track_metadata: trackMetadata,
     },
   ), dependencies);
   const result = {
@@ -202,15 +237,24 @@ export async function processRawLikesStage(env, body, dependencies = {}) {
 }
 
 export async function processRawMaterializeStage(env, body, dependencies = {}) {
-  const { snapshot, queue, common } = validatePreparedStage(body, RAW_MATERIALIZE_MESSAGE);
+  const {
+    snapshot,
+    queue,
+    trackMetadata,
+    common,
+  } = validatePreparedStage(body, RAW_MATERIALIZE_MESSAGE);
   const materialize = dependencies.materialize || prepareMaterializedQueue;
   const materialized = await materialize(env?.DB, queue, body.queue_analysis || null, env);
+  const visibleMetadata = metadataForCollectedQueue(trackMetadata, materialized.queue);
+  const persistMetadata = dependencies.persistTrackMetadata || persistCollectedTrackMetadata;
+  const metadataResult = await persistMetadata(env?.MINUTE_DB, visibleMetadata, common.observed_at);
+  const hydratedQueue = attachCollectedTrackMetadata(materialized.queue, visibleMetadata);
   const next = {
     message_type: 'stationhead-raw-channel',
     message_version: 3,
     ...common,
     snapshot,
-    queue: materialized.queue,
+    queue: hydratedQueue,
     ...(body.snapshot_analysis ? { snapshot_analysis: body.snapshot_analysis } : {}),
     ...(materialized.analysis ? { queue_analysis: materialized.analysis } : {}),
   };
@@ -221,6 +265,9 @@ export async function processRawMaterializeStage(env, body, dependencies = {}) {
     channel_id: integer(snapshot.channel_id),
     queue_total_tracks: Number(next.queue?.total_track_count || next.queue?.tracks?.length || 0),
     queue_materialized_tracks: Number(next.queue?.materialized_track_count || next.queue?.tracks?.length || 0),
+    track_metadata_rows: visibleMetadata.length,
+    track_dictionary_changed: Number(metadataResult?.changed || 0),
+    track_dictionary_skipped: metadataResult?.skipped || null,
   };
   console.log(JSON.stringify(result));
   return result;
