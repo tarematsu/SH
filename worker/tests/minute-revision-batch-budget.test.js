@@ -10,6 +10,15 @@ test('production derive batches two revision tracks while keeping one-message qu
   assert.deepEqual(config.queues.consumers.map(({ max_batch_size }) => max_batch_size), [1, 1]);
 });
 
+test('the current main CPU contract remains inclusive at 10 ms', () => {
+  const source = readFileSync(
+    new URL('../../.github/scripts/enforce-worker-cpu-budget.py', import.meta.url),
+    'utf8',
+  );
+  assert.match(source, /BUDGET_MS = 10\.0/);
+  assert.match(source, /"comparison": "less_than_or_equal"/);
+});
+
 test('sparse materializer respects the bounded two-track chunk', async () => {
   let requestedLimit = null;
   const result = await writeSparseLiveRevisionChunk({
