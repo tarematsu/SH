@@ -7,7 +7,7 @@ import json
 import pathlib
 import sys
 
-BUDGET_MS = 10.0
+BUDGET_MS = 9.0
 SUMMARY_PATH = pathlib.Path("observability-logs/summary.json")
 OUTPUT_PATH = pathlib.Path("observability-logs/cpu-budget.json")
 
