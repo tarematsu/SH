@@ -21,6 +21,9 @@
     "OFFICIAL_NEWS_STALE_MS": 7200000,
     "CLOUD_HOST_STALE_MS": 7200000
   },
+  "services": [
+    { "binding": "PAGES_READ_MODEL_SERVICE", "service": "sh-pages-read-model" }
+  ],
   "d1_databases": [
     {
       "binding": "DB",
