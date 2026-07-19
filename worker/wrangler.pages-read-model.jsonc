@@ -31,7 +31,8 @@
       }
     ],
     "producers": [
-      { "binding": "PAGES_READ_MODEL_QUEUE", "queue": "stationhead-pages-read-model-publication" }
+      { "binding": "PAGES_READ_MODEL_QUEUE", "queue": "stationhead-pages-read-model-publication" },
+      { "binding": "TRACK_METADATA_QUEUE", "queue": "stationhead-track-metadata" }
     ]
   }
 }
