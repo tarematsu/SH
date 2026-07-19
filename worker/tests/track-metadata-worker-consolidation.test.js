@@ -6,6 +6,7 @@ import {
   TRACK_METADATA_QUEUE_NAME,
   isTrackMetadataDelivery,
   processMinuteEnrichmentBatch,
+  shouldLogTrackMetadataResult,
 } from '../src/minute-enrichment-optimized-entry.js';
 
 function message(body, events) {
@@ -39,6 +40,18 @@ test('metadata routing also recognizes the Queue name during migration', () => {
   assert.equal(isTrackMetadataDelivery({ queue: TRACK_METADATA_QUEUE_NAME }, {}), true);
   assert.equal(isTrackMetadataDelivery({}, { message_type: 'stationhead-track-metadata' }), true);
   assert.equal(isTrackMetadataDelivery({}, { stage: 'identity' }), false);
+});
+
+test('successful metadata logs are deterministically sampled instead of emitted for every task', () => {
+  const first = shouldLogTrackMetadataResult({ job_id: 'job-42', pending: false });
+  assert.equal(shouldLogTrackMetadataResult({ job_id: 'job-42', pending: false }), first);
+  const sampled = Array.from({ length: 256 }, (_value, index) => (
+    shouldLogTrackMetadataResult({ job_id: `job-${index}`, pending: false })
+  )).filter(Boolean).length;
+  assert.ok(sampled > 0);
+  assert.ok(sampled < 32);
+  assert.equal(shouldLogTrackMetadataResult({ pending: false }), false);
+  assert.equal(shouldLogTrackMetadataResult({ job_id: 'job-error', reason: 'degraded' }), true);
 });
 
 test('production config has two consumers and the retired Worker config is absent', () => {
