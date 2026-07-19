@@ -75,6 +75,8 @@ test('dispatch preserves task selection and background behavior', async () => {
 
 test('hot paths cache lazy modules and avoid eager fallback or task allocations', () => {
   assert.match(entrySource, /publicationModulePromise \|\|=/);
+  assert.match(entrySource, /minuteReadModelModulePromise \|\|=/);
+  assert.doesNotMatch(entrySource, /import \{ processReadModelBatch \}/);
   assert.doesNotMatch(entrySource, /responses\.filter\(/);
   assert.doesNotMatch(entrySource, /failures\.map\(/);
   assert.doesNotMatch(entrySource, /fallback = Date\.now\(\)/);
