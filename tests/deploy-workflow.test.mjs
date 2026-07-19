@@ -22,6 +22,10 @@ const observabilityWorkflow = readFileSync(
   new URL('../.github/workflows/fetch-cloudflare-observability.yml', import.meta.url),
   'utf8',
 );
+const observabilityAnalyzer = readFileSync(
+  new URL('../.github/scripts/analyze-worker-observability.py', import.meta.url),
+  'utf8',
+);
 const workerPackage = JSON.parse(readFileSync(
   new URL('../worker/package.json', import.meta.url),
   'utf8',
@@ -139,12 +143,16 @@ test('Cloudflare Git diagnostics include only remaining connected Worker depende
   assert.match(diagnosticsWorkflow, /cloudflare-build-diagnostics\.mjs/);
 });
 
-test('R2 observability covers current scripts after monitor consolidation', () => {
+test('R2 observability audits every current script and fails on real faults', () => {
   assert.doesNotMatch(observabilityWorkflow, /selected\s*=\s*selected\[:100\]/);
   assert.match(observabilityWorkflow, /objects_selected/);
   assert.match(observabilityWorkflow, /oldest_object_modified/);
   assert.match(observabilityWorkflow, /newest_object_modified/);
   assert.match(observabilityWorkflow, /Downloaded \$downloaded_count of \$selected_count selected R2 objects/);
+  assert.match(observabilityWorkflow, /analyze-worker-observability\.py/);
+  assert.match(observabilityWorkflow, /default: "90"/);
+  assert.match(observabilityWorkflow, /if: always\(\)/);
+
   for (const worker of [
     'sh-buddies-persist',
     'sh-track-metadata',
@@ -152,8 +160,14 @@ test('R2 observability covers current scripts after monitor consolidation', () =
     'sh-minute-rebuild',
     'sh-monitor-other',
   ]) {
-    assert.match(observabilityWorkflow, new RegExp(worker));
+    assert.match(observabilityAnalyzer, new RegExp(worker));
   }
-  assert.doesNotMatch(observabilityWorkflow, /sh-host-monitor/);
-  assert.doesNotMatch(observabilityWorkflow, /sh-buddy-playback/);
+  assert.doesNotMatch(observabilityAnalyzer, /sh-host-monitor/);
+  assert.doesNotMatch(observabilityAnalyzer, /sh-buddy-playback/);
+  assert.match(observabilityAnalyzer, /CPUTimeMs/);
+  assert.match(observabilityAnalyzer, /Outcome/);
+  assert.match(observabilityAnalyzer, /Exceptions/);
+  assert.match(observabilityAnalyzer, /unexpected_scripts/);
+  assert.match(observabilityAnalyzer, /missing_required_scripts/);
+  assert.match(observabilityAnalyzer, /return 0 if ok else 1/);
 });
