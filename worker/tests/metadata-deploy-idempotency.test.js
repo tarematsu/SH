@@ -25,3 +25,12 @@ test('metadata consolidation is validated against the merged 10 ms CPU contract'
   assert.match(budget, /BUDGET_MS = 10\.0/);
   assert.match(budget, /"comparison": "less_than_or_equal"/);
 });
+
+test('metadata consolidation composes with the merged paginated Pages KV deploy', () => {
+  const pagesKv = readFileSync(
+    new URL('../scripts/pages-response-kv-namespace.mjs', import.meta.url),
+    'utf8',
+  );
+  assert.match(pagesKv, /NextContinuationToken|page=\$\{page\}/);
+  assert.match(pagesKv, /NAMESPACE_PAGE_SIZE = 1000/);
+});
