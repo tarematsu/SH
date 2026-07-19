@@ -135,6 +135,10 @@ export function stripAppleMusicFields(value) {
   return stripPlaybackFields(value);
 }
 
+function playbackJsonReplacer(key, child) {
+  return shouldStripPlaybackKey(key) ? undefined : child;
+}
+
 export function rawJson(value) {
-  return JSON.stringify(stripPlaybackFields(value) ?? null);
+  return JSON.stringify(value ?? null, playbackJsonReplacer);
 }
