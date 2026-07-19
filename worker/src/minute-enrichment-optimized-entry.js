@@ -1,3 +1,5 @@
+import { withAppleMusicFreeRuntime } from '../../site/functions/lib/apple-music-d1-pruner.js';
+import { stripAppleMusicFields } from '../../site/functions/lib/api-utils.js';
 import { withMinuteD1WriteThrottling } from './minute-d1-write-throttle.js';
 import { processMinuteEnrichment } from './minute-enrichment-entry.js';
 import {
@@ -30,16 +32,17 @@ function logMinuteEnrichmentResult(result) {
 }
 
 async function processOptimizedMinuteEnrichment(env, body, dependencies = EMPTY_DEPENDENCIES) {
-  if (body?.stage === 'playback') {
+  const activeBody = stripAppleMusicFields(body);
+  if (activeBody?.stage === 'playback') {
     const run = dependencies.processMinutePlaybackResolve || processMinutePlaybackResolve;
-    return run(env, body, dependencies.playback || EMPTY_DEPENDENCIES);
+    return run(env, activeBody, dependencies.playback || EMPTY_DEPENDENCIES);
   }
-  if (body?.stage === PLAYBACK_PATCH_STAGE) {
+  if (activeBody?.stage === PLAYBACK_PATCH_STAGE) {
     const run = dependencies.processMinutePlaybackPatch || processMinutePlaybackPatch;
-    return run(env, body, dependencies.playback || EMPTY_DEPENDENCIES);
+    return run(env, activeBody, dependencies.playback || EMPTY_DEPENDENCIES);
   }
   const run = dependencies.processMinuteEnrichment || processMinuteEnrichment;
-  return run(env, body, dependencies.core || EMPTY_DEPENDENCIES);
+  return run(env, activeBody, dependencies.core || EMPTY_DEPENDENCIES);
 }
 
 async function processMinuteEnrichmentBatch(batch, env, dependencies = EMPTY_DEPENDENCIES) {
@@ -47,7 +50,7 @@ async function processMinuteEnrichmentBatch(batch, env, dependencies = EMPTY_DEP
   if (!messages?.length) return;
   const message = messages[0];
   const activeEnv = dependencies === EMPTY_DEPENDENCIES
-    ? withMinuteD1WriteThrottling(env)
+    ? withMinuteD1WriteThrottling(withAppleMusicFreeRuntime(env))
     : env;
   try {
     const result = await processOptimizedMinuteEnrichment(activeEnv, message.body, dependencies);

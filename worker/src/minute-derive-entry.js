@@ -1,3 +1,4 @@
+import { withAppleMusicFreeRuntime } from '../../site/functions/lib/apple-music-d1-pruner.js';
 import { withMinuteD1WriteThrottling } from './minute-d1-write-throttle.js';
 import {
   processMinuteDeriveMessage,
@@ -21,7 +22,7 @@ async function processMinuteDeriveBatch(batch, env) {
   const messages = batch.messages;
   if (!messages?.length) return;
   const message = messages[0];
-  const activeEnv = withMinuteD1WriteThrottling(env);
+  const activeEnv = withMinuteD1WriteThrottling(withAppleMusicFreeRuntime(env));
 
   try {
     const result = await processMinuteDeriveMessage(activeEnv, message.body);

@@ -124,6 +124,6 @@ test('rebuild runtime diagnostics checkpoint only unchanged successful state', (
 test('production derive and enrichment entrypoints install the write throttle', () => {
   const derive = readFileSync(new URL('../src/minute-derive-entry.js', import.meta.url), 'utf8');
   const enrichment = readFileSync(new URL('../src/minute-enrichment-optimized-entry.js', import.meta.url), 'utf8');
-  assert.match(derive, /withMinuteD1WriteThrottling\(env\)/);
-  assert.match(enrichment, /withMinuteD1WriteThrottling\(env\)/);
+  assert.match(derive, /withMinuteD1WriteThrottling\(withAppleMusicFreeRuntime\(env\)\)/);
+  assert.match(enrichment, /withMinuteD1WriteThrottling\(withAppleMusicFreeRuntime\(env\)\)/);
 });
