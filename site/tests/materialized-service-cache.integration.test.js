@@ -140,3 +140,33 @@ test('KV service misses fall back to the existing D1 materialized response', asy
     globalThis.caches = previousCaches;
   }
 });
+
+test('D1-only track history does not spend a KV read or service subrequest', async () => {
+  const previousCaches = globalThis.caches;
+  globalThis.caches = { default: fakeCache() };
+  const waits = [];
+  const now = Date.now();
+  const db = new MaterializedDb(now);
+  let serviceCalls = 0;
+
+  try {
+    const response = await request(
+      'https://skrzk.test/api/track-history',
+      {
+        PAGES_READ_MODEL_SERVICE: {
+          fetch: async () => {
+            serviceCalls += 1;
+            return new Response(null, { status: 404 });
+          },
+        },
+        MINUTE_DB: db,
+      },
+      waits,
+    );
+    assert.equal(response.headers.get('x-api-source'), 'worker-materialized');
+    assert.equal(serviceCalls, 0);
+    assert.equal(db.calls, 2);
+  } finally {
+    globalThis.caches = previousCaches;
+  }
+});
