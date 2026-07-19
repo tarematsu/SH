@@ -45,6 +45,7 @@ const recoveryRow = {
   revision_id: 60,
   source_job_id: 7,
   source_visible_count: 6,
+  materialized_item_count: 3,
   item_count: 80,
   channel_id: 10,
   station_id: 20,
@@ -64,7 +65,7 @@ const recoveryRow = {
   is_paused: 0,
 };
 
-test('recovery reconstructs a compact materialization task from the durable minute job', async () => {
+test('recovery reconstructs a compact materialization task from stored progress', async () => {
   const db = new FakeDb([recoveryRow]);
   const tasks = await pendingSparseRevisionTasks({ MINUTE_DB: db }, {
     now: 1_000_000,
@@ -78,10 +79,13 @@ test('recovery reconstructs a compact materialization task from the durable minu
   assert.equal(tasks[0].revision.revision_id, 60);
   assert.equal(tasks[0].revision.visible_item_count, 6);
   assert.equal(tasks[0].revision.total_item_count, 80);
+  assert.equal(tasks[0].revision.materialized_item_count, 3);
+  assert.equal(tasks[0].revision.preferred_position, 3);
   assert.equal(tasks[0].revision.queue_identity.source_structural_hash, 'hash-1');
   assert.equal(Object.hasOwn(tasks[0], 'payload'), false);
   assert.equal(db.reads.length, 1);
-  assert.match(db.reads[0].sql, /coverage_complete/);
+  assert.match(db.reads[0].sql, /materialized_item_count/);
+  assert.doesNotMatch(db.reads[0].sql, /SELECT COUNT\(\*\) FROM sh_queue_revision_items/);
   assert.match(db.reads[0].sql, /sh_minute_fact_jobs/);
 });
 
