@@ -6,13 +6,17 @@ function source(path) {
   return readFileSync(new URL(path, import.meta.url), 'utf8');
 }
 
-test('buddies monitor retains its narrow scheduled production entry', () => {
+test('the default production entry is the consolidated monitor with raw collection', () => {
   const config = source('../wrangler.jsonc');
-  const entry = source('../src/raw-collector-entry.js');
-  assert.match(config, /"main"\s*:\s*"src\/raw-collector-entry\.js"/);
-  assert.match(entry, /const RAW_COLLECTION_QUEUE_OPTIONS = Object\.freeze/);
-  assert.match(entry, /export default \{\s*scheduled\(_controller, env, ctx\)/s);
-  assert.doesNotMatch(entry, /export default \{[^}]*\bfetch\s*:/s);
+  const consolidated = source('../src/consolidated-monitor-entry.js');
+  const collector = source('../src/raw-collector-entry.js');
+  assert.match(config, /"name"\s*:\s*"sh-monitor-other"/);
+  assert.match(config, /"main"\s*:\s*"src\/other-entry\.js"/);
+  assert.match(config, /"binding"\s*:\s*"RAW_COLLECTION_QUEUE"/);
+  assert.match(consolidated, /collectRawChannel/);
+  assert.match(consolidated, /rawCollectorEnv/);
+  assert.match(collector, /const RAW_COLLECTION_QUEUE_OPTIONS = Object\.freeze/);
+  assert.doesNotMatch(collector, /export default \{[^}]*\bfetch\s*:/s);
 });
 
 test('buddies ingest uses one-message switch dispatch and no HTTP handler', () => {
