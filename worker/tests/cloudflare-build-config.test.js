@@ -10,7 +10,7 @@ import {
 } from '../scripts/select-cloudflare-build-config.mjs';
 
 test('current Worker names map to their Wrangler configs', () => {
-  assert.equal(cloudflareBuildConfig('sh-buddies-monitor'), 'wrangler.jsonc');
+  assert.equal(cloudflareBuildConfig('sh-buddies-monitor'), null);
   assert.equal(cloudflareBuildConfig('sh-buddies-persist'), 'wrangler.persist.jsonc');
   assert.equal(cloudflareBuildConfig('sh-buddies-ingest'), 'wrangler.ingest.jsonc');
   assert.equal(cloudflareBuildConfig('sh-buddies-comments'), 'wrangler.comments.jsonc');
@@ -32,7 +32,7 @@ test('current Worker names map to their Wrangler configs', () => {
 test('minute connected build replaces only the ephemeral default config', async () => {
   const workerRoot = await mkdtemp(join(tmpdir(), 'sh-worker-config-'));
   try {
-    await writeFile(join(workerRoot, 'wrangler.jsonc'), '{"name":"sh-buddies-monitor"}\n');
+    await writeFile(join(workerRoot, 'wrangler.jsonc'), '{"name":"sh-monitor-other"}\n');
     await writeFile(join(workerRoot, 'wrangler.minute.jsonc'), '{"name":"sh-minute-maintenance"}\n');
 
     const result = await selectCloudflareBuildConfig({
