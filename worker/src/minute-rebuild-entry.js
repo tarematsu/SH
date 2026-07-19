@@ -33,6 +33,7 @@ function validateTask(body) {
     runId: String(body.run_id || ''),
     scheduledAt: Number(body.scheduled_at) || Date.now(),
     prepared: body.prepared || null,
+    allowBackfill: body.allow_backfill !== false,
   };
 }
 
@@ -77,6 +78,7 @@ async function enqueueStage(env, task, stage, delaySeconds = 0, details = null) 
     run_id: task.runId,
     stage,
     scheduled_at: task.scheduledAt,
+    allow_backfill: task.allowBackfill,
     ...(details || {}),
   };
   const options = delaySeconds > 0
@@ -125,6 +127,12 @@ async function dispatchPreparedDerive(env, task, result, dependencies = EMPTY_DE
   }
 }
 
+async function finishGapStage(env, task, result, startedAt, record, enqueue) {
+  await record(env, { ...task, stage: 'gap-scan' }, result, startedAt);
+  if (task.allowBackfill) await enqueue(env, task, 'backfill');
+  return task.allowBackfill;
+}
+
 export async function processMinuteRebuildStage(env, body, dependencies = EMPTY_DEPENDENCIES) {
   const task = validateTask(body);
   if (!env?.BUDDIES_DB || !env?.MINUTE_DB) throw new Error('minute rebuild database binding is missing');
@@ -139,18 +147,16 @@ export async function processMinuteRebuildStage(env, body, dependencies = EMPTY_
       // former single-invocation scanner.
       if (dependencies.runGapScan) {
         const result = await dependencies.runGapScan(active, dependencies.gapScan || EMPTY_DEPENDENCIES);
-        await record(env, task, result, startedAt);
-        await enqueue(env, task, 'backfill');
-        return { stage: task.stage, run_id: task.runId, pending: true, result };
+        const pending = await finishGapStage(env, task, result, startedAt, record, enqueue);
+        return { stage: task.stage, run_id: task.runId, pending, result };
       }
 
       const stages = await loadGapScanModule();
       const prepare = dependencies.prepareGapScan || stages.prepareMinuteFactsGapScan;
       const prepared = await prepare(active, dependencies.gapScan || EMPTY_DEPENDENCIES);
       if (prepared?.skipped) {
-        await record(env, task, prepared, startedAt);
-        await enqueue(env, task, 'backfill');
-        return { stage: task.stage, run_id: task.runId, pending: true, result: prepared };
+        const pending = await finishGapStage(env, task, prepared, startedAt, record, enqueue);
+        return { stage: task.stage, run_id: task.runId, pending, result: prepared };
       }
       await enqueue(env, task, 'gap-commit', 0, { prepared });
       return {
@@ -176,9 +182,8 @@ export async function processMinuteRebuildStage(env, body, dependencies = EMPTY_
         ...result,
         derive_dispatched: await dispatchPreparedDerive(env, task, result, dependencies),
       };
-      await record(env, { ...task, stage: 'gap-scan' }, reported, startedAt);
-      await enqueue(env, task, 'backfill');
-      return { stage: task.stage, run_id: task.runId, pending: true, result: reported };
+      const pending = await finishGapStage(env, task, reported, startedAt, record, enqueue);
+      return { stage: task.stage, run_id: task.runId, pending, result: reported };
     }
 
     // Test and rollout fallback for the former single-invocation backfill.
