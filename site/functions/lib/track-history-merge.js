@@ -3,7 +3,6 @@ import { bestText, canonical, cleanText, looksLikeId, looksLikePlaceholder } fro
 const ID_FIELDS = [
   ['isrc', 'isrc'],
   ['spotify_id', 'spotify'],
-  ['apple_music_id', 'apple'],
   ['stationhead_track_id', 'stationhead'],
   ['queue_track_id', 'queue'],
 ];
@@ -111,20 +110,17 @@ function aggregateEntries(entries, unionFindState) {
   return [...merged.values()].map((current) => {
     const isrc = firstValue(current.ids.get('isrc'));
     const spotifyId = firstValue(current.ids.get('spotify_id'));
-    const appleMusicId = firstValue(current.ids.get('apple_music_id'));
     const stationheadTrackId = firstValue(current.ids.get('stationhead_track_id'));
     const queueTrackId = firstValue(current.ids.get('queue_track_id'));
     const strongest = isrc
       ? `isrc:${isrc}`
       : spotifyId
         ? `spotify:${spotifyId}`
-        : appleMusicId
-          ? `apple:${appleMusicId}`
-          : stationheadTrackId
-            ? `stationhead:${stationheadTrackId}`
-            : queueTrackId
-              ? `queue:${queueTrackId}`
-              : `name:${canonical(current.title)}|artist:${canonical(current.artist)}`;
+        : stationheadTrackId
+          ? `stationhead:${stationheadTrackId}`
+          : queueTrackId
+            ? `queue:${queueTrackId}`
+            : `name:${canonical(current.title)}|artist:${canonical(current.artist)}`;
     const sourceKeys = ID_FIELDS.flatMap(([field, prefix]) =>
       [...current.ids.get(field)].map((value) => `${prefix}:${value}`));
     return {
@@ -133,7 +129,6 @@ function aggregateEntries(entries, unionFindState) {
       title: current.title,
       artist: current.artist,
       spotify_id: spotifyId,
-      apple_music_id: appleMusicId,
       isrc,
       stationhead_track_id: stationheadTrackId,
       queue_track_id: queueTrackId,
@@ -144,7 +139,6 @@ function aggregateEntries(entries, unionFindState) {
       last_played_at: current.last_played_at,
       source_ids: [
         ...current.ids.get('spotify_id'),
-        ...current.ids.get('apple_music_id'),
         ...current.ids.get('isrc'),
       ],
       source_keys: sourceKeys,
