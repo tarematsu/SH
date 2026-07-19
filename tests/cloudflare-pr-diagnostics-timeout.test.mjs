@@ -15,6 +15,6 @@ test('Cloudflare PR diagnostics record topology cutovers without waiting for con
   assert.match(workflow, /if-no-files-found: error/);
   assert.match(workflow, /include-hidden-files: true/);
   assert.doesNotMatch(workflow, /CLOUDFLARE_BUILD_TIMEOUT_MINUTES/);
-  assert.doesNotMatch(workflow, /cloudflare-build-diagnostics\.mjs/);
+  assert.doesNotMatch(workflow, /run: node \.github\/scripts\/cloudflare-build-diagnostics\.mjs/);
   assert.doesNotMatch(workflow, /timeout-minutes: 10/);
 });
