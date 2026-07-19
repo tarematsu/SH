@@ -25,8 +25,15 @@ INSERT INTO sh_track_dictionary(
 SELECT
   UPPER(REPLACE(REPLACE(TRIM(isrc),'-',''),' ','')),
   NULLIF(TRIM(spotify_id),''),
-  NULLIF(TRIM(title),''),
-  NULLIF(TRIM(artist),''),
+  CASE
+    WHEN title IS NULL OR TRIM(title)='' OR TRIM(title)=TRIM(spotify_id) THEN NULL
+    ELSE TRIM(title)
+  END,
+  CASE
+    WHEN artist IS NULL OR TRIM(artist)='' OR TRIM(artist)=TRIM(spotify_id)
+      OR TRIM(artist) GLOB 'JP[A-Z0-9]*' THEN NULL
+    ELSE TRIM(artist)
+  END,
   NULL,
   'track_identity',
   COALESCE(last_seen_at,0),
@@ -74,8 +81,15 @@ INSERT INTO sh_track_dictionary(
 SELECT
   UPPER(REPLACE(REPLACE(TRIM(isrc),'-',''),' ','')),
   NULLIF(TRIM(spotify_id),''),
-  NULLIF(TRIM(title),''),
-  NULLIF(TRIM(artist),''),
+  CASE
+    WHEN title IS NULL OR TRIM(title)='' OR TRIM(title)=TRIM(spotify_id) THEN NULL
+    ELSE TRIM(title)
+  END,
+  CASE
+    WHEN artist IS NULL OR TRIM(artist)='' OR TRIM(artist)=TRIM(spotify_id)
+      OR TRIM(artist) GLOB 'JP[A-Z0-9]*' THEN NULL
+    ELSE TRIM(artist)
+  END,
   NULLIF(TRIM(thumbnail_url),''),
   source,
   fetched_at,
@@ -108,8 +122,17 @@ BEGIN
   ) VALUES(
     UPPER(REPLACE(REPLACE(TRIM(NEW.isrc),'-',''),' ','')),
     NULLIF(TRIM(NEW.spotify_id),''),
-    NULLIF(TRIM(NEW.title),''),
-    NULLIF(TRIM(NEW.artist),''),
+    CASE
+      WHEN NEW.title IS NULL OR TRIM(NEW.title)=''
+        OR TRIM(NEW.title)=TRIM(NEW.spotify_id) THEN NULL
+      ELSE TRIM(NEW.title)
+    END,
+    CASE
+      WHEN NEW.artist IS NULL OR TRIM(NEW.artist)=''
+        OR TRIM(NEW.artist)=TRIM(NEW.spotify_id)
+        OR TRIM(NEW.artist) GLOB 'JP[A-Z0-9]*' THEN NULL
+      ELSE TRIM(NEW.artist)
+    END,
     NULLIF(TRIM(NEW.thumbnail_url),''),
     NEW.source,
     NEW.fetched_at,
@@ -133,6 +156,15 @@ CREATE TRIGGER IF NOT EXISTS trg_sh_track_dictionary_metadata_update
 AFTER UPDATE OF isrc,spotify_id,title,artist,thumbnail_url,source,fetched_at ON sh_track_metadata
 WHEN NEW.isrc IS NOT NULL
   AND LENGTH(UPPER(REPLACE(REPLACE(TRIM(NEW.isrc),'-',''),' ','')))=12
+  AND (
+    OLD.isrc IS NOT NEW.isrc
+    OR OLD.spotify_id IS NOT NEW.spotify_id
+    OR OLD.title IS NOT NEW.title
+    OR OLD.artist IS NOT NEW.artist
+    OR OLD.thumbnail_url IS NOT NEW.thumbnail_url
+    OR OLD.source IS NOT NEW.source
+    OR OLD.fetched_at IS NOT NEW.fetched_at
+  )
 BEGIN
   INSERT INTO sh_track_dictionary(
     isrc,spotify_id,title,artist,thumbnail_url,
@@ -140,8 +172,17 @@ BEGIN
   ) VALUES(
     UPPER(REPLACE(REPLACE(TRIM(NEW.isrc),'-',''),' ','')),
     NULLIF(TRIM(NEW.spotify_id),''),
-    NULLIF(TRIM(NEW.title),''),
-    NULLIF(TRIM(NEW.artist),''),
+    CASE
+      WHEN NEW.title IS NULL OR TRIM(NEW.title)=''
+        OR TRIM(NEW.title)=TRIM(NEW.spotify_id) THEN NULL
+      ELSE TRIM(NEW.title)
+    END,
+    CASE
+      WHEN NEW.artist IS NULL OR TRIM(NEW.artist)=''
+        OR TRIM(NEW.artist)=TRIM(NEW.spotify_id)
+        OR TRIM(NEW.artist) GLOB 'JP[A-Z0-9]*' THEN NULL
+      ELSE TRIM(NEW.artist)
+    END,
     NULLIF(TRIM(NEW.thumbnail_url),''),
     NEW.source,
     NEW.fetched_at,
@@ -180,10 +221,21 @@ BEGIN
     NEW.fetched_at
   )
   ON CONFLICT(isrc) DO UPDATE SET
-    title=COALESCE(sh_track_dictionary.title,excluded.title),
-    artist=COALESCE(sh_track_dictionary.artist,excluded.artist),
+    title=CASE
+      WHEN sh_track_dictionary.title IS NULL OR TRIM(sh_track_dictionary.title)=''
+        OR sh_track_dictionary.title=sh_track_dictionary.spotify_id
+        THEN COALESCE(excluded.title,sh_track_dictionary.title)
+      ELSE sh_track_dictionary.title
+    END,
+    artist=CASE
+      WHEN sh_track_dictionary.artist IS NULL OR TRIM(sh_track_dictionary.artist)=''
+        OR sh_track_dictionary.artist=sh_track_dictionary.spotify_id
+        OR sh_track_dictionary.artist GLOB 'JP[A-Z0-9]*'
+        THEN COALESCE(excluded.artist,sh_track_dictionary.artist)
+      ELSE sh_track_dictionary.artist
+    END,
     metadata_source=CASE
-      WHEN sh_track_dictionary.metadata_source='unknown'
+      WHEN sh_track_dictionary.metadata_source IN ('unknown','track_identity')
         THEN excluded.metadata_source
       ELSE sh_track_dictionary.metadata_source
     END,
@@ -195,6 +247,12 @@ CREATE TRIGGER IF NOT EXISTS trg_sh_track_dictionary_isrc_metadata_update
 AFTER UPDATE OF title,artist,source,fetched_at ON sh_isrc_metadata
 WHEN NEW.isrc IS NOT NULL
   AND LENGTH(UPPER(REPLACE(REPLACE(TRIM(NEW.isrc),'-',''),' ','')))=12
+  AND (
+    OLD.title IS NOT NEW.title
+    OR OLD.artist IS NOT NEW.artist
+    OR OLD.source IS NOT NEW.source
+    OR OLD.fetched_at IS NOT NEW.fetched_at
+  )
 BEGIN
   INSERT INTO sh_track_dictionary(
     isrc,spotify_id,title,artist,thumbnail_url,
@@ -210,10 +268,21 @@ BEGIN
     NEW.fetched_at
   )
   ON CONFLICT(isrc) DO UPDATE SET
-    title=COALESCE(sh_track_dictionary.title,excluded.title),
-    artist=COALESCE(sh_track_dictionary.artist,excluded.artist),
+    title=CASE
+      WHEN sh_track_dictionary.title IS NULL OR TRIM(sh_track_dictionary.title)=''
+        OR sh_track_dictionary.title=sh_track_dictionary.spotify_id
+        THEN COALESCE(excluded.title,sh_track_dictionary.title)
+      ELSE sh_track_dictionary.title
+    END,
+    artist=CASE
+      WHEN sh_track_dictionary.artist IS NULL OR TRIM(sh_track_dictionary.artist)=''
+        OR sh_track_dictionary.artist=sh_track_dictionary.spotify_id
+        OR sh_track_dictionary.artist GLOB 'JP[A-Z0-9]*'
+        THEN COALESCE(excluded.artist,sh_track_dictionary.artist)
+      ELSE sh_track_dictionary.artist
+    END,
     metadata_source=CASE
-      WHEN sh_track_dictionary.metadata_source='unknown'
+      WHEN sh_track_dictionary.metadata_source IN ('unknown','track_identity')
         THEN excluded.metadata_source
       ELSE sh_track_dictionary.metadata_source
     END,
@@ -232,8 +301,17 @@ BEGIN
   ) VALUES(
     UPPER(REPLACE(REPLACE(TRIM(NEW.isrc),'-',''),' ','')),
     NULLIF(TRIM(NEW.spotify_id),''),
-    NULLIF(TRIM(NEW.title),''),
-    NULLIF(TRIM(NEW.artist),''),
+    CASE
+      WHEN NEW.title IS NULL OR TRIM(NEW.title)=''
+        OR TRIM(NEW.title)=TRIM(NEW.spotify_id) THEN NULL
+      ELSE TRIM(NEW.title)
+    END,
+    CASE
+      WHEN NEW.artist IS NULL OR TRIM(NEW.artist)=''
+        OR TRIM(NEW.artist)=TRIM(NEW.spotify_id)
+        OR TRIM(NEW.artist) GLOB 'JP[A-Z0-9]*' THEN NULL
+      ELSE TRIM(NEW.artist)
+    END,
     NULL,
     'track_identity',
     COALESCE(NEW.last_seen_at,0),
@@ -258,8 +336,17 @@ BEGIN
   ) VALUES(
     UPPER(REPLACE(REPLACE(TRIM(NEW.isrc),'-',''),' ','')),
     NULLIF(TRIM(NEW.spotify_id),''),
-    NULLIF(TRIM(NEW.title),''),
-    NULLIF(TRIM(NEW.artist),''),
+    CASE
+      WHEN NEW.title IS NULL OR TRIM(NEW.title)=''
+        OR TRIM(NEW.title)=TRIM(NEW.spotify_id) THEN NULL
+      ELSE TRIM(NEW.title)
+    END,
+    CASE
+      WHEN NEW.artist IS NULL OR TRIM(NEW.artist)=''
+        OR TRIM(NEW.artist)=TRIM(NEW.spotify_id)
+        OR TRIM(NEW.artist) GLOB 'JP[A-Z0-9]*' THEN NULL
+      ELSE TRIM(NEW.artist)
+    END,
     NULL,
     'track_identity',
     COALESCE(NEW.last_seen_at,0),
