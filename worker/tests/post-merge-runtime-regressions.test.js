@@ -4,6 +4,12 @@ import test from 'node:test';
 
 import { snapshotPersistenceDue } from '../src/collector-ingest.js';
 import { compactMaterializeMessage } from '../src/ingest-channel-optimized-entry.js';
+import {
+  activeDeriveEnv,
+  LIVE_DERIVE_QUEUE_NAME,
+  REBUILD_DERIVE_QUEUE_NAME,
+  shouldLogMinuteDeriveResult,
+} from '../src/minute-derive-entry.js';
 import { runPagesReadModelQueue } from '../src/pages-read-model-entry.js';
 
 const MINUTE = 60_000;
@@ -68,4 +74,26 @@ test('ingest drops duplicate collected metadata when the dedicated pipeline owns
   assert.deepEqual(compact.track_metadata, []);
   assert.equal(compact.queue, body.queue);
   assert.equal(compactMaterializeMessage({ COLLECTED_METADATA_PERSIST_ENABLED: true }, body), body);
+});
+
+test('live derive uses one-track chunks while rebuild keeps the configured batch', () => {
+  const liveQueue = { send() {} };
+  const rebuildQueue = { send() {} };
+  const env = {
+    DERIVE_REVISION_CHUNK_TRACKS: 2,
+    MINUTE_LIVE_DERIVE_QUEUE: liveQueue,
+    MINUTE_DERIVE_QUEUE: rebuildQueue,
+  };
+  const live = activeDeriveEnv({ queue: LIVE_DERIVE_QUEUE_NAME }, env);
+  const rebuild = activeDeriveEnv({ queue: REBUILD_DERIVE_QUEUE_NAME }, env);
+  assert.equal(live.DERIVE_REVISION_CHUNK_TRACKS, 1);
+  assert.equal(live.MINUTE_DERIVE_QUEUE, liveQueue);
+  assert.equal(rebuild.DERIVE_REVISION_CHUNK_TRACKS, 2);
+  assert.equal(rebuild.MINUTE_DERIVE_QUEUE, rebuildQueue);
+});
+
+test('minute derive success logs are sampled but failures are always retained', () => {
+  assert.equal(shouldLogMinuteDeriveResult({ job_id: 16, failed: 0 }), true);
+  assert.equal(shouldLogMinuteDeriveResult({ job_id: 17, failed: 0 }), false);
+  assert.equal(shouldLogMinuteDeriveResult({ job_id: 17, failed: 1 }), true);
 });
