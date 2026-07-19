@@ -51,27 +51,35 @@ test('new live facts prefer the empty live derive lane', async () => {
   }]);
 });
 
-test('maintenance recovery preserves durable job kind on derive triggers', async () => {
-  let sql = '';
-  let bindings = [];
-  const rows = [
-    { channel_id: 10, minute_at: 120_000, job_kind: 'live' },
-    { channel_id: 10, minute_at: 60_000, job_kind: 'rebuild' },
+test('maintenance recovery scans pending and expired leases through separate indexed queries', async () => {
+  const calls = [];
+  const responses = [
+    [
+      { id: 4, channel_id: 10, minute_at: 120_000, job_kind: 'live', job_priority: 100 },
+      { id: 5, channel_id: 10, minute_at: 180_000, job_kind: 'live', job_priority: 100 },
+    ],
+    [
+      { id: 2, channel_id: 10, minute_at: 60_000, job_kind: 'rebuild', job_priority: 20 },
+    ],
   ];
   const MINUTE_DB = {
-    prepare(value) {
-      sql = value;
+    prepare(sql) {
+      const call = { sql, bindings: [] };
+      calls.push(call);
       return {
-        bind(...values) { bindings = values; return this; },
-        async all() { return { results: rows }; },
+        bind(...values) { call.bindings = values; return this; },
+        async all() { return { results: responses[calls.indexOf(call)] }; },
       };
     },
   };
 
   const triggers = await pendingMinuteDeriveTriggers({ MINUTE_DB }, { now: 200_000, limit: 2 });
-  assert.match(sql, /SELECT channel_id,minute_at,job_kind/);
-  assert.deepEqual(bindings, [200_000, 200_000, 2]);
-  assert.deepEqual(triggers.map(({ job_kind }) => job_kind), ['live', 'rebuild']);
+  assert.equal(calls.length, 2);
+  assert.match(calls[0].sql, /status='pending' AND next_attempt_at<=\?/);
+  assert.match(calls[1].sql, /status='processing' AND lease_until<\?/);
+  assert.doesNotMatch(calls.map(({ sql }) => sql).join('\n'), /\sOR\s/);
+  assert.deepEqual(calls.map(({ bindings }) => bindings), [[200_000, 2], [200_000, 2]]);
+  assert.deepEqual(triggers.map(({ job_kind }) => job_kind), ['live', 'live']);
 });
 
 test('all deploy paths provision the live derive queue and DLQ', () => {
