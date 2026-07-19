@@ -1,6 +1,7 @@
 import { spawnSync } from 'node:child_process';
 
 const consolidatedScript = 'sh-monitor-other';
+const collectorScript = 'sh-buddies-monitor';
 const migrations = [
   {
     queue: 'stationhead-buddy-playback',
@@ -13,11 +14,10 @@ const migrations = [
     deadLetterQueue: 'stationhead-host-monitor-dlq',
   },
 ];
-const retiredScripts = [
+const retiredBeforeCollector = [
   ...migrations.map(({ oldScript }) => oldScript),
   'sh-buddies-read-model',
   'sh-monitor-maintenance',
-  'sh-buddies-monitor',
 ];
 
 function runWrangler(args, { capture = false, allowFailure = false } = {}) {
@@ -89,6 +89,14 @@ function restoreOldConsumer(item) {
   ]);
 }
 
+function rollbackConsolidated() {
+  runWrangler([
+    'rollback',
+    '--name', consolidatedScript,
+    '--message', 'Automatic rollback after monitor consolidation cutover failure',
+  ]);
+}
+
 function credentials() {
   const accountId = process.env.CLOUDFLARE_ACCOUNT_ID || process.env.CF_ACCOUNT_ID;
   const token = process.env.CLOUDFLARE_API_TOKEN
@@ -110,21 +118,34 @@ async function workerRequest(scriptName, method = 'GET') {
   );
 }
 
+function workerNotFound(response, body) {
+  return response.status === 404
+    || body?.errors?.some((error) => /not found/i.test(String(error?.message || '')));
+}
+
+async function verifyWorkerAbsent(scriptName, attempts = 3) {
+  let lastStatus = null;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    const verification = await workerRequest(scriptName);
+    lastStatus = verification.status;
+    if (verification.status === 404) return;
+    if (verification.status < 500 || attempt === attempts) break;
+    await new Promise((resolve) => setTimeout(resolve, attempt * 1_000));
+  }
+  throw new Error(`retired Worker ${scriptName} is still reachable or unverifiable: HTTP ${lastStatus}`);
+}
+
 async function deleteOldWorker(scriptName) {
   const response = await workerRequest(scriptName, 'DELETE');
   const body = await response.json().catch(() => null);
-  const notFound = response.status === 404
-    || body?.errors?.some((error) => /not found/i.test(String(error?.message || '')));
+  const notFound = workerNotFound(response, body);
   if ((!response.ok || body?.success === false) && !notFound) {
     const detail = body?.errors?.map((error) => error?.message).filter(Boolean).join('; ')
       || `HTTP ${response.status}`;
     throw new Error(`retired Worker ${scriptName} deletion failed: ${detail}`);
   }
 
-  const verification = await workerRequest(scriptName);
-  if (verification.status !== 404) {
-    throw new Error(`retired Worker ${scriptName} is still reachable: HTTP ${verification.status}`);
-  }
+  await verifyWorkerAbsent(scriptName);
   console.log(JSON.stringify({
     event: 'retired_monitor_worker_absent',
     script: scriptName,
@@ -138,6 +159,8 @@ const consolidatedBefore = new Map(
 const activeMigrations = migrations.filter((item) => hasConsumer(item.queue, item.oldScript));
 const paused = [];
 const removed = [];
+let consolidatedDeployed = false;
+let collectorRetired = false;
 
 try {
   for (const item of activeMigrations) {
@@ -148,39 +171,64 @@ try {
   }
 
   runWrangler(['deploy', '--config', 'wrangler.other.jsonc']);
+  consolidatedDeployed = true;
+  assertConsolidatedConsumers();
+
+  for (const scriptName of retiredBeforeCollector) await deleteOldWorker(scriptName);
   assertConsolidatedConsumers();
 
   for (const item of paused) resume(item.queue);
   paused.length = 0;
+
+  // Retire the every-minute collector last. Nothing that can trigger a rollback
+  // is allowed after this succeeds, otherwise a rollback could leave collection
+  // with neither the old nor consolidated Worker active.
+  await deleteOldWorker(collectorScript);
+  collectorRetired = true;
 } catch (error) {
+  const rollbackErrors = [];
+  if (consolidatedDeployed && !collectorRetired) {
+    try {
+      rollbackConsolidated();
+    } catch (rollbackError) {
+      rollbackErrors.push(`Worker rollback failed: ${rollbackError.message}`);
+    }
+  }
   for (const item of migrations.toReversed()) {
-    if (!consolidatedBefore.get(item.queue) && hasConsumer(item.queue, consolidatedScript)) {
-      removeConsumer(item.queue, consolidatedScript, { allowFailure: true });
+    try {
+      if (!consolidatedBefore.get(item.queue) && hasConsumer(item.queue, consolidatedScript)) {
+        removeConsumer(item.queue, consolidatedScript, { allowFailure: true });
+      }
+    } catch (consumerError) {
+      rollbackErrors.push(`Failed to remove ${consolidatedScript} from ${item.queue}: ${consumerError.message}`);
     }
   }
   for (const item of removed.toReversed()) {
     try {
       if (!hasConsumer(item.queue, item.oldScript)) restoreOldConsumer(item);
     } catch (rollbackError) {
-      console.error(`Failed to restore ${item.oldScript}: ${rollbackError.message}`);
+      rollbackErrors.push(`Failed to restore ${item.oldScript}: ${rollbackError.message}`);
     }
   }
   for (const item of paused.toReversed()) {
     try {
       resume(item.queue);
     } catch (resumeError) {
-      console.error(`Failed to resume ${item.queue}: ${resumeError.message}`);
+      rollbackErrors.push(`Failed to resume ${item.queue}: ${resumeError.message}`);
     }
+  }
+  if (rollbackErrors.length) {
+    throw new AggregateError(
+      [error, ...rollbackErrors.map((message) => new Error(message))],
+      'monitor consolidation failed and rollback was incomplete',
+    );
   }
   throw error;
 }
-
-for (const scriptName of retiredScripts) await deleteOldWorker(scriptName);
-assertConsolidatedConsumers();
 
 console.log(JSON.stringify({
   event: 'monitor_worker_consolidation_completed',
   script: consolidatedScript,
   queues: migrations.map((item) => item.queue),
-  retired_scripts: retiredScripts,
+  retired_scripts: [...retiredBeforeCollector, collectorScript],
 }));
