@@ -4,6 +4,7 @@ import { processReadModelBatch } from './read-model-entry.js';
 
 export const PAGES_READ_MODEL_CRON = '* * * * *';
 export const MINUTE_READ_MODEL_QUEUE = 'stationhead-read-model';
+const MINUTE_READ_MODEL_MESSAGE = 'stationhead-read-model';
 const EMPTY_DEPENDENCIES = Object.freeze({});
 
 let publicationModulePromise;
@@ -54,6 +55,12 @@ function assertRefreshSucceeded(result) {
   return result;
 }
 
+function minuteReadModelBatch(batch) {
+  if (String(batch?.queue || '') === MINUTE_READ_MODEL_QUEUE) return true;
+  const body = batch?.messages?.[0]?.body;
+  return body?.message_type === MINUTE_READ_MODEL_MESSAGE;
+}
+
 export async function runPagesReadModelCron(controller, env, dependencies = EMPTY_DEPENDENCIES) {
   const rawCron = controller?.cron;
   let cron = rawCron;
@@ -69,7 +76,10 @@ export async function runPagesReadModelCron(controller, env, dependencies = EMPT
 }
 
 export async function runPagesReadModelQueue(batch, env, dependencies = EMPTY_DEPENDENCIES) {
-  if (String(batch?.queue || '') === MINUTE_READ_MODEL_QUEUE) {
+  // Some Queue deliveries omit batch.queue after a consumer cutover. The
+  // durable message type remains authoritative and prevents minute read-model
+  // work from being misclassified as track-history publication work.
+  if (minuteReadModelBatch(batch)) {
     return processReadModelBatch(batch, env);
   }
   const messages = batch.messages;
