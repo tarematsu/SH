@@ -40,8 +40,10 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-      - name: Use latest successful PR deployment as audit lower bound
+      - name: Use first successful deployment after runtime changes as audit lower bound
         if: github.event_name == 'pull_request' && env.LOG_SINCE == ''
         shell: bash
         env:
@@ -49,6 +51,10 @@ jobs:
           HEAD_BRANCH: ${{ github.event.pull_request.head.ref }}
         run: |
           set -euo pipefail
+          runtime_changed_at="$(git log -1 --format=%cI -- \
+            worker/src worker/scripts 'worker/wrangler*.jsonc' \
+            worker/package.json worker/package-lock.json)"
+          runtime_changed_at="$(date -u -d "$runtime_changed_at" +%Y-%m-%dT%H:%M:%SZ)"
           runs="$(curl --fail-with-body --silent --show-error --get \
             -H "Authorization: Bearer $GH_TOKEN" \
             -H 'Accept: application/vnd.github+json' \
@@ -56,13 +62,15 @@ jobs:
             --data-urlencode "branch=$HEAD_BRANCH" \
             --data-urlencode 'event=pull_request' \
             --data-urlencode 'status=completed' \
-            --data-urlencode 'per_page=20')"
-          since="$(jq -r '[.workflow_runs[] | select(.conclusion == "success")][0].updated_at // empty' <<<"$runs")"
+            --data-urlencode 'per_page=100')"
+          since="$(jq -r --arg changed "$runtime_changed_at" \
+            '[.workflow_runs[] | select(.conclusion == "success" and .created_at >= $changed)] | last | .updated_at // empty' \
+            <<<"$runs")"
           if [[ -n "$since" ]]; then
-            echo "Auditing Worker events after successful PR deployment at $since"
+            echo "Auditing Worker events after the first successful remediation deployment at $since"
             echo "LOG_SINCE=$since" >> "$GITHUB_ENV"
           else
-            echo "No successful PR deployment found; using the configured lookback."
+            echo "No successful PR deployment found after runtime changes; using the configured lookback."
           fi
 
       - name: Derive R2 credentials
