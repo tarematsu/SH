@@ -1,3 +1,4 @@
+import { withBackfillCursorSeek } from './backfill-cursor-seek.js';
 import rebuildWorker from './minute-rebuild-entry.js';
 import { runMinuteScheduled } from './minute-entry.js';
 
@@ -157,7 +158,7 @@ async function processMinuteRebuildBatch(batch, env, ctx) {
   if (!messages?.length) return;
   const message = messages[0];
   const stage = maintenanceStage(message.body);
-  if (!stage) return rebuildWorker.queue(batch, env, ctx);
+  if (!stage) return rebuildWorker.queue(batch, withBackfillCursorSeek(env), ctx);
   try {
     const result = stage === 'maintenance-sync'
       ? await processMinuteMaintenanceSync(env, message.body)
