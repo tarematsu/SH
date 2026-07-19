@@ -10,6 +10,7 @@ import {
   metadataForCollectedQueue,
   persistCollectedTrackMetadata,
 } from './collected-track-metadata.js';
+import { metadataRefreshDue } from './collector-plan.js';
 import {
   prepareQueueLikesAnalysis,
   prepareQueueStructuralAnalysis,
@@ -22,6 +23,10 @@ export const RAW_ANALYSIS_MESSAGE = 'stationhead-raw-analysis';
 export const RAW_STRUCTURAL_MESSAGE = 'stationhead-raw-structural-analysis';
 export const RAW_LIKES_MESSAGE = 'stationhead-raw-likes-analysis';
 export const RAW_MATERIALIZE_MESSAGE = 'stationhead-raw-materialize';
+
+const DEFAULT_METADATA_REFRESH_MS = 15 * 60_000;
+const MATERIALIZATION_HASH_CACHE_LIMIT = 16;
+const materializationHashCache = new Map();
 
 function integer(value) {
   const parsed = Number(value);
@@ -39,6 +44,58 @@ function commonTask(body) {
     persist_credentials: body?.persist_credentials !== false,
     auth: objectValue(body?.auth) || {},
   };
+}
+
+function rememberMaterializationHash(stationId, hash) {
+  if (stationId == null || !hash) return;
+  materializationHashCache.delete(stationId);
+  materializationHashCache.set(stationId, hash);
+  while (materializationHashCache.size > MATERIALIZATION_HASH_CACHE_LIMIT) {
+    materializationHashCache.delete(materializationHashCache.keys().next().value);
+  }
+}
+
+function metadataInterval(env) {
+  return Math.max(
+    60_000,
+    Number(env?.METADATA_REFRESH_INTERVAL_MS || env?.TRACK_METADATA_REFRESH_INTERVAL_MS)
+      || DEFAULT_METADATA_REFRESH_MS,
+  );
+}
+
+async function collectedMetadataDue(env, common, queue, analysis) {
+  if (metadataRefreshDue(
+    common.auth?.collectorLastRunAt,
+    common.observed_at,
+    metadataInterval(env),
+  )) return true;
+
+  const stationId = integer(queue?.station_id);
+  const sourceHash = String(
+    queue?.source_structural_hash
+      || analysis?.source_structural_hash
+      || analysis?.structural_hash
+      || '',
+  );
+  if (stationId == null || !sourceHash) return true;
+  if (materializationHashCache.get(stationId) === sourceHash) return false;
+  if (!env?.DB?.prepare) {
+    rememberMaterializationHash(stationId, sourceHash);
+    return true;
+  }
+
+  try {
+    const row = await env.DB.prepare(`SELECT source_structural_hash
+      FROM sh_queue_materialization_state WHERE station_id=? LIMIT 1`)
+      .bind(stationId).first();
+    const previousHash = String(row?.source_structural_hash || '');
+    rememberMaterializationHash(stationId, sourceHash);
+    return previousHash !== sourceHash;
+  } catch (error) {
+    if (!/no such table|no such column/i.test(String(error?.message || ''))) throw error;
+    rememberMaterializationHash(stationId, sourceHash);
+    return true;
+  }
 }
 
 async function sendNext(env, body, dependencies = {}) {
@@ -246,8 +303,16 @@ export async function processRawMaterializeStage(env, body, dependencies = {}) {
   const materialize = dependencies.materialize || prepareMaterializedQueue;
   const materialized = await materialize(env?.DB, queue, body.queue_analysis || null, env);
   const visibleMetadata = metadataForCollectedQueue(trackMetadata, materialized.queue);
+  const metadataDue = await (dependencies.collectedMetadataDue || collectedMetadataDue)(
+    env,
+    common,
+    materialized.queue,
+    materialized.analysis || body.queue_analysis || null,
+  );
   const persistMetadata = dependencies.persistTrackMetadata || persistCollectedTrackMetadata;
-  const metadataResult = await persistMetadata(env?.MINUTE_DB, visibleMetadata, common.observed_at);
+  const metadataResult = metadataDue
+    ? await persistMetadata(env?.MINUTE_DB, visibleMetadata, common.observed_at)
+    : { attempted: 0, changed: 0, skipped: 'metadata-not-due' };
   const hydratedQueue = attachCollectedTrackMetadata(materialized.queue, visibleMetadata);
   const next = {
     message_type: 'stationhead-raw-channel',
@@ -266,6 +331,7 @@ export async function processRawMaterializeStage(env, body, dependencies = {}) {
     queue_total_tracks: Number(next.queue?.total_track_count || next.queue?.tracks?.length || 0),
     queue_materialized_tracks: Number(next.queue?.materialized_track_count || next.queue?.tracks?.length || 0),
     track_metadata_rows: visibleMetadata.length,
+    track_metadata_due: metadataDue,
     track_dictionary_changed: Number(metadataResult?.changed || 0),
     track_dictionary_skipped: metadataResult?.skipped || null,
   };
