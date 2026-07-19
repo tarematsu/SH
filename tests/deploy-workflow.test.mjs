@@ -115,16 +115,19 @@ test('Worker package scripts contain only current deployment operations', () => 
   );
   assert.equal(
     workerPackage.scripts['deploy:split-other'],
-    'npm run deploy:pages-read-model && npm run deploy:monitor-maintenance && npm run deploy:other',
+    'npm run deploy:pages-read-model && npm run deploy:other',
   );
+  assert.equal(workerPackage.scripts['deploy:monitor-maintenance'], undefined);
   assert.equal(workerPackage.scripts['deploy:persist'], 'wrangler deploy --config wrangler.persist.jsonc');
   assert.equal(workerPackage.scripts['deploy:other'], 'node scripts/deploy-other-monitor.mjs');
   assert.equal(workerPackage.scripts['deploy:host-monitor'], undefined);
   assert.equal(workerPackage.scripts['deploy:buddy-playback'], undefined);
   assert.equal(workerPackage.scripts['check:host-monitor-bundle'], undefined);
   assert.equal(workerPackage.scripts['check:buddy-playback-bundle'], undefined);
+  assert.equal(workerPackage.scripts['check:monitor-maintenance-bundle'], undefined);
   assert.equal(existsSync(new URL('../worker/wrangler.host-monitor.jsonc', import.meta.url)), false);
   assert.equal(existsSync(new URL('../worker/wrangler.buddy-playback.jsonc', import.meta.url)), false);
+  assert.equal(existsSync(new URL('../worker/wrangler.monitor-maintenance.jsonc', import.meta.url)), false);
 
   for (const key of Object.keys(workerPackage.scripts)) {
     assert.doesNotMatch(key, /detach|retire|cutover|mintue/);
@@ -164,6 +167,7 @@ test('R2 observability audits every current script and fails on real faults', ()
   }
   assert.doesNotMatch(observabilityAnalyzer, /sh-host-monitor/);
   assert.doesNotMatch(observabilityAnalyzer, /sh-buddy-playback/);
+  assert.doesNotMatch(observabilityAnalyzer, /sh-monitor-maintenance/);
   assert.match(observabilityAnalyzer, /CPUTimeMs/);
   assert.match(observabilityAnalyzer, /Outcome/);
   assert.match(observabilityAnalyzer, /Exceptions/);
