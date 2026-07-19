@@ -189,7 +189,7 @@ test('gap commit dispatches at most the first prepared candidate per invocation'
   assert.deepEqual(sent.map((body) => body.minute_at), [60_000]);
 });
 
-test('recovery throughput uses direct dispatch while keeping fallback and Queue invocations bounded', () => {
+test('recovery throughput uses direct dispatch while bounding work per message and delivery', () => {
   const maintenance = JSON.parse(readFileSync(new URL('../wrangler.minute.jsonc', import.meta.url), 'utf8'));
   const rebuild = JSON.parse(readFileSync(new URL('../wrangler.minute-rebuild.jsonc', import.meta.url), 'utf8'));
 
@@ -197,7 +197,7 @@ test('recovery throughput uses direct dispatch while keeping fallback and Queue 
   assert.equal(rebuild.vars.REBUILD_SOURCE_ROWS, 1);
   assert.equal(rebuild.vars.REBUILD_MAX_JOBS, 1);
   assert.equal(rebuild.vars.GAP_SCAN_MAX_JOBS, 1);
-  assert.equal(rebuild.queues.consumers[0].max_batch_size, 1);
+  assert.equal(rebuild.queues.consumers[0].max_batch_size, 2);
   assert.equal(rebuild.queues.consumers[0].max_concurrency, 1);
   assert.equal(
     rebuild.queues.producers.some(({ binding }) => binding === 'MINUTE_DERIVE_QUEUE'),

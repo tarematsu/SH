@@ -16,17 +16,19 @@ test('minute enrichment deploys the queue-only one-message wrapper', () => {
   assert.doesNotMatch(entry, /for\s*\(|Symbol\.iterator|fetch\s*\(/);
 });
 
-test('minute rebuild keeps cached core stages behind the maintenance-aware one-message wrapper', () => {
+test('minute rebuild batches two deliveries while preserving cached one-job core stages', () => {
   const config = source('../wrangler.minute-rebuild.jsonc');
-  const wrapper = source('../src/minute-rebuild-maintenance-entry.js');
+  const wrapper = source('../src/minute-rebuild-batched-entry.js');
   const core = source('../src/minute-rebuild-entry.js');
-  assert.match(config, /"main"\s*:\s*"src\/minute-rebuild-maintenance-entry\.js"/);
-  assert.match(config, /"max_batch_size"\s*:\s*1\b/);
+  assert.match(config, /"main"\s*:\s*"src\/minute-rebuild-batched-entry\.js"/);
+  assert.match(config, /"max_batch_size"\s*:\s*2\b/);
+  assert.match(config, /"max_concurrency"\s*:\s*1\b/);
   assert.match(core, /runtimeStateModulePromise \|\|=/);
   assert.match(core, /gapScanModulePromise \|\|=/);
   assert.match(core, /backfillModulePromise \|\|=/);
-  assert.match(wrapper, /const message = messages\[0\]/);
+  assert.match(wrapper, /for \(const message of messages\)/);
   assert.match(wrapper, /processMinuteMaintenanceGate/);
+  assert.match(wrapper, /processMinuteRebuildStage/);
   assert.doesNotMatch(core, /\['gap-scan'.*\.includes\(stage\)/s);
   assert.doesNotMatch(wrapper, /fetch\s*\(/);
 });
