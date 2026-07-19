@@ -61,6 +61,7 @@ jobs:
     timeout-minutes: 30
     env:
       CLOUDFLARE_API_TOKEN: ${{ secrets['CLOUDFLARE_BUILDS_API_TOKEN'] || secrets['CLOUDFLARE_API_TOKEN'] || secrets['CF_API_TOKEN'] }}
+      CLOUDFLARE_KV_API_TOKEN: ${{ secrets['CLOUDFLARE_API_TOKEN'] || secrets['CF_API_TOKEN'] || secrets['CLOUDFLARE_BUILDS_API_TOKEN'] }}
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets['CLOUDFLARE_ACCOUNT_ID'] || secrets['CF_ACCOUNT_ID'] }}
       DEPLOY_COMMANDS: ${{ needs.select-workers.outputs.commands }}
     steps:
@@ -101,5 +102,9 @@ jobs:
           set -euo pipefail
           while IFS= read -r command; do
             echo "Deploying $command"
-            npm run "$command"
+            if [[ "$command" == "deploy:pages-read-model" ]]; then
+              CLOUDFLARE_API_TOKEN="$CLOUDFLARE_KV_API_TOKEN" npm run "$command"
+            else
+              npm run "$command"
+            fi
           done < <(jq -r '.[]' <<<"$DEPLOY_COMMANDS")
