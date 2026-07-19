@@ -17,6 +17,7 @@ const retiredScripts = [
   ...migrations.map(({ oldScript }) => oldScript),
   'sh-buddies-read-model',
   'sh-monitor-maintenance',
+  'sh-buddies-monitor',
 ];
 
 function runWrangler(args, { capture = false, allowFailure = false } = {}) {
@@ -39,25 +40,24 @@ function consumerList(queue) {
     ['queues', 'consumer', 'worker', 'list', queue, '--json'],
     { capture: true, allowFailure: true },
   );
-  return {
-    ok: result.status === 0,
-    output: `${result.stdout || ''}\n${result.stderr || ''}`,
-  };
+  if (result.status !== 0) {
+    const detail = String(result.stderr || result.stdout || '').trim();
+    throw new Error(`consumer list failed for ${queue}${detail ? `: ${detail}` : ''}`);
+  }
+  return `${result.stdout || ''}\n${result.stderr || ''}`;
 }
 
 function hasConsumer(queue, scriptName) {
-  const result = consumerList(queue);
-  return result.ok && result.output.includes(scriptName);
+  return consumerList(queue).includes(scriptName);
 }
 
 function assertConsolidatedConsumers() {
   for (const item of migrations) {
-    const result = consumerList(item.queue);
-    if (!result.ok) throw new Error(`consumer list failed for ${item.queue}`);
-    if (!result.output.includes(consolidatedScript)) {
+    const output = consumerList(item.queue);
+    if (!output.includes(consolidatedScript)) {
       throw new Error(`consolidated monitor consumer missing for ${item.queue}`);
     }
-    if (result.output.includes(item.oldScript)) {
+    if (output.includes(item.oldScript)) {
       throw new Error(`retired monitor consumer still attached: ${item.oldScript}`);
     }
   }
@@ -102,7 +102,11 @@ async function workerRequest(scriptName, method = 'GET') {
   const { accountId, token } = credentials();
   return fetch(
     `https://api.cloudflare.com/client/v4/accounts/${accountId}/workers/scripts/${scriptName}${method === 'DELETE' ? '?force=true' : ''}`,
-    { method, headers: { Authorization: `Bearer ${token}` } },
+    {
+      method,
+      headers: { Authorization: `Bearer ${token}` },
+      signal: AbortSignal.timeout(20_000),
+    },
   );
 }
 
@@ -128,6 +132,9 @@ async function deleteOldWorker(scriptName) {
   }));
 }
 
+const consolidatedBefore = new Map(
+  migrations.map((item) => [item.queue, hasConsumer(item.queue, consolidatedScript)]),
+);
 const activeMigrations = migrations.filter((item) => hasConsumer(item.queue, item.oldScript));
 const paused = [];
 const removed = [];
@@ -147,7 +154,7 @@ try {
   paused.length = 0;
 } catch (error) {
   for (const item of migrations.toReversed()) {
-    if (hasConsumer(item.queue, consolidatedScript)) {
+    if (!consolidatedBefore.get(item.queue) && hasConsumer(item.queue, consolidatedScript)) {
       removeConsumer(item.queue, consolidatedScript, { allowFailure: true });
     }
   }
