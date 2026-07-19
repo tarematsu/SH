@@ -2,6 +2,8 @@ import { stripAppleMusicFields } from './api-utils.js';
 
 const wrappedDatabases = new WeakMap();
 const wrappedQueues = new WeakMap();
+let wrappedD1Environments = new WeakMap();
+let wrappedRuntimeEnvironments = new WeakMap();
 const CURRENT_BITE_APPLE_BIND_INDEX = 10;
 const APPLE_FREE_QUEUE_BINDINGS = new Set([
   'MINUTE_DERIVE_QUEUE',
@@ -106,12 +108,18 @@ export function appleMusicFreeQueue(queue) {
   return wrapped;
 }
 
+function cacheableEnvironment(env) {
+  return env && (typeof env === 'object' || typeof env === 'function');
+}
+
 export function withAppleMusicFreeD1(env) {
-  if (!env) return env;
+  if (!cacheableEnvironment(env)) return env;
+  const cached = wrappedD1Environments.get(env);
+  if (cached) return cached;
   const db = appleMusicFreeD1(env.DB);
   const minuteDb = appleMusicFreeD1(env.MINUTE_DB);
   const buddiesDb = appleMusicFreeD1(env.BUDDIES_DB);
-  return new Proxy(env, {
+  const wrapped = new Proxy(env, {
     get(target, property, receiver) {
       if (property === 'DB') return db;
       if (property === 'MINUTE_DB') return minuteDb;
@@ -119,12 +127,16 @@ export function withAppleMusicFreeD1(env) {
       return Reflect.get(target, property, receiver);
     },
   });
+  wrappedD1Environments.set(env, wrapped);
+  return wrapped;
 }
 
 export function withAppleMusicFreeRuntime(env) {
+  if (!cacheableEnvironment(env)) return env;
+  const cached = wrappedRuntimeEnvironments.get(env);
+  if (cached) return cached;
   const d1Env = withAppleMusicFreeD1(env);
-  if (!d1Env) return d1Env;
-  return new Proxy(d1Env, {
+  const wrapped = new Proxy(d1Env, {
     get(target, property, receiver) {
       if (APPLE_FREE_QUEUE_BINDINGS.has(property)) {
         return appleMusicFreeQueue(Reflect.get(target, property, receiver));
@@ -132,4 +144,11 @@ export function withAppleMusicFreeRuntime(env) {
       return Reflect.get(target, property, receiver);
     },
   });
+  wrappedRuntimeEnvironments.set(env, wrapped);
+  return wrapped;
+}
+
+export function resetAppleMusicRuntimeCachesForTests() {
+  wrappedD1Environments = new WeakMap();
+  wrappedRuntimeEnvironments = new WeakMap();
 }
