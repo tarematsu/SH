@@ -8,8 +8,18 @@ export const LIVE_DERIVE_QUEUE_NAME = 'stationhead-minute-live-derive';
 export const REBUILD_DERIVE_QUEUE_NAME = 'stationhead-minute-derive';
 
 const RETRY_60_SECONDS = Object.freeze({ delaySeconds: 60 });
+const SUCCESS_LOG_SAMPLE_MODULUS = 16;
+const LIVE_REVISION_CHUNK_TRACKS = 1;
+
+export function shouldLogMinuteDeriveResult(result) {
+  if (Number(result?.failed || 0) > 0 || result?.terminal === true || result?.reason) return true;
+  const identity = Number(result?.job_id ?? result?.revision_id);
+  if (!Number.isFinite(identity)) return false;
+  return Math.abs(Math.trunc(identity)) % SUCCESS_LOG_SAMPLE_MODULUS === 0;
+}
 
 function logMinuteDeriveResult(result, queueName = null) {
+  if (!shouldLogMinuteDeriveResult(result)) return;
   console.log(JSON.stringify({
     event: result?.event || 'minute_derive_completed',
     processed: result?.processed ?? 0,
@@ -22,7 +32,7 @@ function logMinuteDeriveResult(result, queueName = null) {
   }));
 }
 
-function activeDeriveEnv(batch, env) {
+export function activeDeriveEnv(batch, env) {
   const active = withMinuteD1WriteThrottling(withAppleMusicFreeRuntime(env));
   const sourceQueue = String(batch?.queue || '');
   const continuation = sourceQueue === LIVE_DERIVE_QUEUE_NAME
@@ -37,7 +47,18 @@ function activeDeriveEnv(batch, env) {
       configurable: true,
     });
   }
+  if (sourceQueue === LIVE_DERIVE_QUEUE_NAME) {
+    Object.defineProperty(active, 'DERIVE_REVISION_CHUNK_TRACKS', {
+      value: LIVE_REVISION_CHUNK_TRACKS,
+      enumerable: false,
+      configurable: true,
+    });
+  }
   return active;
+}
+
+function importInProgress(error) {
+  return /currently processing a long-running import/i.test(String(error?.message || error));
 }
 
 export async function processMinuteDeriveBatch(batch, env) {
@@ -59,11 +80,13 @@ export async function processMinuteDeriveBatch(batch, env) {
       message.ack();
     }
   } catch (error) {
-    console.error(JSON.stringify({
-      event: 'minute_derive_message_failed',
+    const detail = {
+      event: importInProgress(error) ? 'minute_derive_import_deferred' : 'minute_derive_message_failed',
       derive_queue: batch?.queue || null,
       error: String(error?.message || error).slice(0, 800),
-    }));
+    };
+    if (importInProgress(error)) console.warn(JSON.stringify(detail));
+    else console.error(JSON.stringify(detail));
     if (error?.code === 'MINUTE_DERIVE_INVALID_TRIGGER') message.ack();
     else message.retry(RETRY_60_SECONDS);
   }
