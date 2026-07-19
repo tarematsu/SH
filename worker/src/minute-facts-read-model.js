@@ -46,7 +46,7 @@ function booleanCode(value) {
 }
 
 function normalizedIsrc(value) {
-  return String(value || '').trim().toUpperCase();
+  return String(value || '').replace(/[^A-Za-z0-9]/g, '').toUpperCase();
 }
 
 function boundedText(value, maximum) {
@@ -165,8 +165,14 @@ export function queueNeedsPreviousTrackMetadata(queue) {
   )));
 }
 
-async function queryTrackMetadata(db, spotifyIds, isrcs) {
-  if (!db || typeof db.prepare !== 'function') return [];
+async function runMetadataQuery(db, sql, bindings) {
+  const statement = db.prepare(sql).bind(...bindings);
+  if (typeof statement?.all !== 'function') return [];
+  const result = await statement.all();
+  return result.results || [];
+}
+
+function legacyMetadataQuery(spotifyIds, isrcs) {
   const clauses = [];
   const bindings = [];
   if (isrcs.length) {
@@ -177,14 +183,49 @@ async function queryTrackMetadata(db, spotifyIds, isrcs) {
     clauses.push(`spotify_id IN (${spotifyIds.map(() => '?').join(',')})`);
     bindings.push(...spotifyIds);
   }
-  if (!clauses.length) return [];
-  const statement = db.prepare(`SELECT spotify_id,isrc,title,artist,thumbnail_url,fetched_at
-    FROM sh_track_metadata
-    WHERE ${clauses.join(' OR ')}
-    ORDER BY fetched_at DESC`).bind(...bindings);
-  if (typeof statement?.all !== 'function') return [];
-  const result = await statement.all();
-  return result.results || [];
+  if (!clauses.length) return null;
+  const whereSql = clauses.join(' OR ');
+  return {
+    sql: `SELECT spotify_id,isrc,title,artist,thumbnail_url,fetched_at
+      FROM sh_track_metadata
+      WHERE ${whereSql}
+      ORDER BY fetched_at DESC`,
+    whereSql,
+    bindings,
+  };
+}
+
+async function queryTrackMetadata(db, spotifyIds, isrcs, includeDictionary = false) {
+  if (!db || typeof db.prepare !== 'function') return [];
+  const legacy = legacyMetadataQuery(spotifyIds, isrcs);
+  if (!legacy) return [];
+  if (!includeDictionary || !isrcs.length) {
+    return runMetadataQuery(db, legacy.sql, legacy.bindings);
+  }
+
+  const dictionaryPlaceholders = isrcs.map(() => '?').join(',');
+  const dictionarySql = `SELECT spotify_id,isrc,title,artist,thumbnail_url,fetched_at
+    FROM (
+      SELECT 0 AS source_priority,spotify_id,isrc,title,artist,thumbnail_url,
+        metadata_fetched_at AS fetched_at
+      FROM sh_track_dictionary
+      WHERE isrc IN (${dictionaryPlaceholders})
+      UNION ALL
+      SELECT 1 AS source_priority,spotify_id,isrc,title,artist,thumbnail_url,fetched_at
+      FROM sh_track_metadata
+      WHERE ${legacy.whereSql}
+    )
+    ORDER BY source_priority,fetched_at DESC`;
+  try {
+    return await runMetadataQuery(
+      db,
+      dictionarySql,
+      [...isrcs, ...legacy.bindings],
+    );
+  } catch (error) {
+    if (!/no such table|no such column/i.test(String(error?.message || ''))) throw error;
+    return runMetadataQuery(db, legacy.sql, legacy.bindings);
+  }
 }
 
 export async function loadReadModelTrackMetadata(env, spotifyIds, isrcs) {
@@ -192,7 +233,7 @@ export async function loadReadModelTrackMetadata(env, spotifyIds, isrcs) {
   const fallback = env?.BUDDIES_DB;
   let rows = [];
   try {
-    rows = await queryTrackMetadata(primary, spotifyIds, isrcs);
+    rows = await queryTrackMetadata(primary, spotifyIds, isrcs, true);
   } catch (error) {
     if (!/no such table|no such column/i.test(String(error?.message || ''))) throw error;
   }
