@@ -20,7 +20,7 @@ function likeIdentity(row) {
 export const TRACK_LIKE_REALTIME_SQL = `WITH prepared AS (
   SELECT
     id,strftime('%Y-%m-%d',observed_at/1000,'unixepoch') AS play_date,
-    spotify_id,apple_music_id,isrc,stationhead_track_id,queue_track_id,
+    spotify_id,isrc,stationhead_track_id,queue_track_id,
     track_key,NULL AS title,NULL AS artist,like_count,observed_at,source
   FROM sh_track_like_observations
   WHERE observed_at>=? AND observed_at<?
@@ -34,14 +34,14 @@ export const TRACK_LIKE_REALTIME_SQL = `WITH prepared AS (
     ) AS row_rank
   FROM prepared
 )
-SELECT play_date,spotify_id,apple_music_id,isrc,stationhead_track_id,queue_track_id,
+SELECT play_date,spotify_id,isrc,stationhead_track_id,queue_track_id,
   title,artist,like_count,observed_at,source
 FROM ranked WHERE row_rank=1`;
 
 export const TRACK_LIKE_QUEUE_SQL = `WITH ranked AS (
   SELECT
     strftime('%Y-%m-%d',q.start_time/1000,'unixepoch') AS play_date,
-    q.spotify_id,q.apple_music_id,q.isrc,q.stationhead_track_id,q.queue_track_id,
+    q.spotify_id,q.isrc,q.stationhead_track_id,q.queue_track_id,
     m.title,m.artist,q.bite_count AS like_count,q.observed_at,'queue' AS source,
     ROW_NUMBER() OVER (
       PARTITION BY
@@ -61,12 +61,12 @@ export const TRACK_LIKE_QUEUE_SQL = `WITH ranked AS (
       OR (q.spotify_id IS NOT NULL AND TRIM(q.spotify_id)<>'')
     )
 )
-SELECT play_date,spotify_id,apple_music_id,isrc,stationhead_track_id,queue_track_id,
+SELECT play_date,spotify_id,isrc,stationhead_track_id,queue_track_id,
   title,artist,like_count,observed_at,source
 FROM ranked WHERE row_rank=1`;
 
 export const TRACK_LIKE_HISTORY_SQL = `SELECT
-  NULL AS play_date,NULL AS spotify_id,NULL AS apple_music_id,NULL AS isrc,
+  NULL AS play_date,NULL AS spotify_id,NULL AS isrc,
   NULL AS stationhead_track_id,NULL AS queue_track_id,
   NULL AS title,NULL AS artist,NULL AS like_count,NULL AS observed_at,
   'sheet' AS source
@@ -91,8 +91,9 @@ export function compactTrackLikeSources(sources) {
       const key = `${row.play_date}|${identity}`;
       const previous = compact.get(key);
       if (!previous || Number(row?.observed_at || 0) >= Number(previous?.observed_at || 0)) {
+        const { apple_music_id: _unusedAppleMusicId, ...cleanRow } = row;
         compact.set(key, {
-          ...row,
+          ...cleanRow,
           isrc: normalizedIsrc(row.isrc),
           spotify_id: normalizedSpotifyId(row.spotify_id),
         });
