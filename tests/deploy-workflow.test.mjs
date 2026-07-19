@@ -61,7 +61,7 @@ test('manual deploy keeps all Cloudflare targets available', () => {
   assert.match(deployWorkflow, /^\s{2}workflow_dispatch:/m);
   assert.doesNotMatch(deployWorkflow, /^\s{2}push:/m);
   assert.match(deployWorkflow, /wrangler pages deploy/);
-  assert.match(deployWorkflow, /npm run deploy:buddies/);
+  assert.doesNotMatch(deployWorkflow, /npm run deploy:buddies/);
   assert.match(deployWorkflow, /npm run deploy:persist/);
   assert.match(deployWorkflow, /npm run deploy:ingest/);
   assert.match(deployWorkflow, /npm run deploy:comments/);
@@ -122,6 +122,7 @@ test('Worker package scripts contain only current deployment operations', () => 
     workerPackage.scripts['deploy:split-other'],
     'npm run deploy:pages-read-model && npm run deploy:other',
   );
+  assert.equal(workerPackage.scripts['deploy:buddies'], undefined);
   assert.equal(workerPackage.scripts['deploy:monitor-maintenance'], undefined);
   assert.equal(workerPackage.scripts['deploy:persist'], 'wrangler deploy --config wrangler.persist.jsonc');
   assert.equal(workerPackage.scripts['deploy:pages-read-model'], 'node scripts/deploy-pages-read-model.mjs');
@@ -184,6 +185,7 @@ test('R2 observability audits every current script and fails on real faults', ()
   ]) {
     assert.match(observabilityAnalyzer, new RegExp(worker));
   }
+  assert.doesNotMatch(observabilityAnalyzer, /sh-buddies-monitor/);
   assert.doesNotMatch(observabilityAnalyzer, /sh-track-metadata/);
   assert.doesNotMatch(observabilityAnalyzer, /sh-minute-read-model/);
   assert.doesNotMatch(observabilityAnalyzer, /sh-host-monitor/);
