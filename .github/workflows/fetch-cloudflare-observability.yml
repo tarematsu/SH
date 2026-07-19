@@ -10,7 +10,7 @@ on:
   workflow_dispatch:
     inputs:
       since:
-        description: Optional ISO-8601 lower bound for R2 object LastModified
+        description: Optional ISO-8601 lower bound for R2 event timestamps
         required: false
         type: string
       lookback_minutes:
@@ -20,6 +20,7 @@ on:
         type: string
 
 permissions:
+  actions: read
   contents: read
 
 concurrency:
@@ -39,6 +40,30 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+
+      - name: Use latest successful PR deployment as audit lower bound
+        if: github.event_name == 'pull_request' && env.LOG_SINCE == ''
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEAD_BRANCH: ${{ github.event.pull_request.head.ref }}
+        run: |
+          set -euo pipefail
+          runs="$(curl --fail-with-body --silent --show-error --get \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H 'Accept: application/vnd.github+json' \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/workflows/cloudflare-pr-diagnostics.yml/runs" \
+            --data-urlencode "branch=$HEAD_BRANCH" \
+            --data-urlencode 'event=pull_request' \
+            --data-urlencode 'status=completed' \
+            --data-urlencode 'per_page=20')"
+          since="$(jq -r '[.workflow_runs[] | select(.conclusion == "success")][0].updated_at // empty' <<<"$runs")"
+          if [[ -n "$since" ]]; then
+            echo "Auditing Worker events after successful PR deployment at $since"
+            echo "LOG_SINCE=$since" >> "$GITHUB_ENV"
+          else
+            echo "No successful PR deployment found; using the configured lookback."
+          fi
 
       - name: Derive R2 credentials
         shell: bash
@@ -140,6 +165,7 @@ jobs:
           print(f"## R2 Worker audit: {'OK' if summary['ok'] else 'FAILED'}")
           print()
           print(f"- Window start: `{summary['since']}`")
+          print(f"- Newest event: `{summary['newest_event_timestamp']}`")
           print(f"- Worker events: `{summary['events']}`")
           print(f"- Error events: `{summary['error_events']}`")
           print(f"- Unexpected Workers: `{', '.join(summary['unexpected_scripts']) or 'none'}`")
