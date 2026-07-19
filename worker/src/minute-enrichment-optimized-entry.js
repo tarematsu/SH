@@ -1,4 +1,4 @@
-import { withAppleMusicFreeD1 } from '../../site/functions/lib/apple-music-d1-pruner.js';
+import { withAppleMusicFreeRuntime } from '../../site/functions/lib/apple-music-d1-pruner.js';
 import { stripAppleMusicFields } from '../../site/functions/lib/api-utils.js';
 import { withMinuteD1WriteThrottling } from './minute-d1-write-throttle.js';
 import { processMinuteEnrichment } from './minute-enrichment-entry.js';
@@ -50,7 +50,7 @@ async function processMinuteEnrichmentBatch(batch, env, dependencies = EMPTY_DEP
   if (!messages?.length) return;
   const message = messages[0];
   const activeEnv = dependencies === EMPTY_DEPENDENCIES
-    ? withMinuteD1WriteThrottling(withAppleMusicFreeD1(env))
+    ? withMinuteD1WriteThrottling(withAppleMusicFreeRuntime(env))
     : env;
   try {
     const result = await processOptimizedMinuteEnrichment(activeEnv, message.body, dependencies);
