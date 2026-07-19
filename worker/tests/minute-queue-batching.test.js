@@ -12,9 +12,9 @@ function config(name) {
   return JSON.parse(readFileSync(new URL(`../${name}`, import.meta.url), 'utf8'));
 }
 
-function queueMessage(id, events) {
+function queueMessage(id, events, body = { id }) {
   return {
-    body: { id },
+    body,
     ack() { events.push(`ack:${id}`); },
     retry() { events.push(`retry:${id}`); },
   };
@@ -34,6 +34,34 @@ test('derive processes and acknowledges every message in a two-message delivery'
     },
   });
   assert.deepEqual(processed, [1, 2]);
+  assert.deepEqual(events, ['ack:1', 'ack:2']);
+});
+
+test('paired revision materialization caps each message at one track', async () => {
+  const events = [];
+  const chunkTracks = [];
+  const revisionBody = (id) => ({
+    id,
+    message_type: 'minute-fact-derive-stage',
+    message_version: 1,
+    stage: 'revision-materialize',
+    revision: { revision_id: id },
+  });
+  const messages = [
+    queueMessage(1, events, revisionBody(1)),
+    queueMessage(2, events, revisionBody(2)),
+  ];
+  await processMinuteDeriveBatch({ queue: LIVE_DERIVE_QUEUE_NAME, messages }, {
+    DERIVE_REVISION_CHUNK_TRACKS: 2,
+    MINUTE_LIVE_DERIVE_QUEUE: { send() {} },
+    MINUTE_DERIVE_QUEUE: { send() {} },
+  }, {
+    async processMessage(activeEnv, body) {
+      chunkTracks.push(activeEnv.DERIVE_REVISION_CHUNK_TRACKS);
+      return { processed: 1, failed: 0, job_id: body.id };
+    },
+  });
+  assert.deepEqual(chunkTracks, [1, 1]);
   assert.deepEqual(events, ['ack:1', 'ack:2']);
 });
 
