@@ -26,17 +26,13 @@ function runWrangler(args, { capture = false, allowFailure = false } = {}) {
 function consumerList() {
   const result = runWrangler(
     ['queues', 'consumer', 'worker', 'list', queue, '--json'],
-    { capture: true, allowFailure: true },
+    { capture: true },
   );
-  return {
-    ok: result.status === 0,
-    output: `${result.stdout || ''}\n${result.stderr || ''}`,
-  };
+  return `${result.stdout || ''}\n${result.stderr || ''}`;
 }
 
 function hasConsumer(scriptName) {
-  const result = consumerList();
-  return result.ok && result.output.includes(scriptName);
+  return consumerList().includes(scriptName);
 }
 
 function removeConsumer(scriptName, allowFailure = false) {
@@ -67,7 +63,11 @@ async function workerRequest(scriptName, method = 'GET') {
   const { accountId, token } = credentials();
   return fetch(
     `https://api.cloudflare.com/client/v4/accounts/${accountId}/workers/scripts/${scriptName}${method === 'DELETE' ? '?force=true' : ''}`,
-    { method, headers: { Authorization: `Bearer ${token}` } },
+    {
+      method,
+      headers: { Authorization: `Bearer ${token}` },
+      signal: AbortSignal.timeout(20_000),
+    },
   );
 }
 
@@ -96,6 +96,7 @@ console.log(JSON.stringify({
 }));
 
 const migrating = hasConsumer(retiredScript);
+const consolidatedBefore = hasConsumer(consolidatedScript);
 let paused = false;
 let removed = false;
 try {
@@ -118,7 +119,9 @@ try {
       paused = false;
     }
   } catch (error) {
-    if (hasConsumer(consolidatedScript)) removeConsumer(consolidatedScript, true);
+    if (!consolidatedBefore && hasConsumer(consolidatedScript)) {
+      removeConsumer(consolidatedScript, true);
+    }
     if (removed && !hasConsumer(retiredScript)) {
       try { restoreRetiredConsumer(); } catch (rollbackError) {
         console.error(`Failed to restore ${retiredScript}: ${rollbackError.message}`);
