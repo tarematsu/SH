@@ -4,6 +4,7 @@ import test from 'node:test';
 
 import {
   appleMusicFreeD1,
+  appleMusicFreeQueue,
   appleMusicStatementPlan,
   withoutAppleMusicHotPathSql,
 } from '../../site/functions/lib/apple-music-d1-pruner.js';
@@ -59,6 +60,30 @@ test('current bite insert removes the Apple column and matching bind only', () =
   assert.equal(bound[10], 'v12');
 });
 
+test('Queue adapter strips Apple fields immediately before continuation send', async () => {
+  let sent = null;
+  let sentOptions = null;
+  const queue = {
+    async send(message, options) {
+      sent = message;
+      sentOptions = options;
+    },
+  };
+  const source = {
+    stage: 'playback',
+    queue: {
+      tracks: [{ spotify_id: 'spotify-track', apple_music_id: 'legacy-apple' }],
+    },
+  };
+  const options = { contentType: 'json', delaySeconds: 1 };
+  await appleMusicFreeQueue(queue).send(source, options);
+  assert.equal(sent.queue.tracks[0].spotify_id, 'spotify-track');
+  assert.equal('apple_music_id' in sent.queue.tracks[0], false);
+  assert.equal(source.queue.tracks[0].apple_music_id, 'legacy-apple');
+  assert.equal(sentOptions, options);
+  assert.equal(appleMusicFreeQueue(queue), appleMusicFreeQueue(queue));
+});
+
 test('D1 adapter prepares pruned SQL and preserves database methods', () => {
   let preparedSql = null;
   const db = {
@@ -81,8 +106,8 @@ test('production ingest, persistence, derive and enrichment install the adapter'
   const derive = readFileSync(new URL('../src/minute-derive-entry.js', import.meta.url), 'utf8');
   const enrichment = readFileSync(new URL('../src/minute-enrichment-optimized-entry.js', import.meta.url), 'utf8');
   assert.match(ingest, /withAppleMusicFreeD1\(env\)/);
-  assert.match(persist, /withAppleMusicFreeD1\(env\)/);
-  assert.match(derive, /withMinuteD1WriteThrottling\(withAppleMusicFreeD1\(env\)\)/);
-  assert.match(enrichment, /withMinuteD1WriteThrottling\(withAppleMusicFreeD1\(env\)\)/);
+  assert.match(persist, /withAppleMusicFreeRuntime\(env\)/);
+  assert.match(derive, /withMinuteD1WriteThrottling\(withAppleMusicFreeRuntime\(env\)\)/);
+  assert.match(enrichment, /withMinuteD1WriteThrottling\(withAppleMusicFreeRuntime\(env\)\)/);
   assert.match(enrichment, /stripAppleMusicFields\(body\)/);
 });
