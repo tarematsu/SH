@@ -103,11 +103,18 @@ jobs:
           PY
           if [[ -s keys.txt ]]; then
             index=0
+            pids=()
             while IFS= read -r key; do
               index=$((index + 1))
               file="raw/$(printf '%04d' "$index").log"
-              aws s3api get-object --endpoint-url "$R2_ENDPOINT" --bucket "$R2_BUCKET" --key "$key" "$file" >/dev/null
+              aws s3api get-object --endpoint-url "$R2_ENDPOINT" --bucket "$R2_BUCKET" --key "$key" "$file" >/dev/null &
+              pids+=("$!")
+              if (( ${#pids[@]} >= 8 )); then
+                for pid in "${pids[@]}"; do wait "$pid"; done
+                pids=()
+              fi
             done < keys.txt
+            for pid in "${pids[@]}"; do wait "$pid"; done
           fi
           selected_count="$(jq -r '.objects_selected' selection.json)"
           downloaded_count="$(find raw -type f | wc -l | tr -d ' ')"
