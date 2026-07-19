@@ -1,5 +1,6 @@
 import {
   API_BROWSER_TTL_SECONDS,
+  MATERIALIZED_API_VARIANTS,
   apiCacheTtlSeconds,
   canonicalApiCacheRequest,
   edgeCacheableApiRequest,
@@ -10,6 +11,11 @@ import {
 
 const MATERIALIZED_RETRY_TTL_SECONDS = 30;
 const MATERIALIZED_EDGE_TTL_MAX_SECONDS = 30 * 60;
+const KV_MATERIALIZED_MODEL_KEYS = new Set(
+  MATERIALIZED_API_VARIANTS
+    .filter(({ key }) => key !== 'track-history')
+    .map(({ key }) => key),
+);
 
 function tagged(response, cacheState) {
   const clone = response.clone();
@@ -35,7 +41,7 @@ function safeHeaders(value) {
 
 async function serviceMaterializedResponse(context, modelKey) {
   const service = context.env?.PAGES_READ_MODEL_SERVICE;
-  if (!modelKey || typeof service?.fetch !== 'function') return null;
+  if (!KV_MATERIALIZED_MODEL_KEYS.has(modelKey) || typeof service?.fetch !== 'function') return null;
   try {
     const url = new URL('https://pages-read-model.internal/_internal/pages-response');
     url.searchParams.set('key', modelKey);
