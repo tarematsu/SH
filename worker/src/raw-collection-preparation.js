@@ -46,6 +46,15 @@ function commonTask(body) {
   };
 }
 
+function materializationSourceHash(queue, analysis) {
+  return String(
+    queue?.source_structural_hash
+      || analysis?.source_structural_hash
+      || analysis?.structural_hash
+      || '',
+  );
+}
+
 function rememberMaterializationHash(stationId, hash) {
   if (stationId == null || !hash) return;
   materializationHashCache.delete(stationId);
@@ -71,29 +80,23 @@ async function collectedMetadataDue(env, common, queue, analysis) {
   )) return true;
 
   const stationId = integer(queue?.station_id);
-  const sourceHash = String(
-    queue?.source_structural_hash
-      || analysis?.source_structural_hash
-      || analysis?.structural_hash
-      || '',
-  );
+  const sourceHash = materializationSourceHash(queue, analysis);
   if (stationId == null || !sourceHash) return true;
   if (materializationHashCache.get(stationId) === sourceHash) return false;
-  if (!env?.DB?.prepare) {
-    rememberMaterializationHash(stationId, sourceHash);
-    return true;
-  }
+  if (!env?.DB?.prepare) return true;
 
   try {
     const row = await env.DB.prepare(`SELECT source_structural_hash
       FROM sh_queue_materialization_state WHERE station_id=? LIMIT 1`)
       .bind(stationId).first();
     const previousHash = String(row?.source_structural_hash || '');
-    rememberMaterializationHash(stationId, sourceHash);
-    return previousHash !== sourceHash;
+    if (previousHash === sourceHash) {
+      rememberMaterializationHash(stationId, sourceHash);
+      return false;
+    }
+    return true;
   } catch (error) {
     if (!/no such table|no such column/i.test(String(error?.message || ''))) throw error;
-    rememberMaterializationHash(stationId, sourceHash);
     return true;
   }
 }
@@ -313,6 +316,12 @@ export async function processRawMaterializeStage(env, body, dependencies = {}) {
   const metadataResult = metadataDue
     ? await persistMetadata(env?.MINUTE_DB, visibleMetadata, common.observed_at)
     : { attempted: 0, changed: 0, skipped: 'metadata-not-due' };
+  if (metadataDue && env?.MINUTE_DB && !metadataResult?.skipped) {
+    rememberMaterializationHash(
+      integer(materialized.queue?.station_id),
+      materializationSourceHash(materialized.queue, materialized.analysis || body.queue_analysis || null),
+    );
+  }
   const hydratedQueue = attachCollectedTrackMetadata(materialized.queue, visibleMetadata);
   const next = {
     message_type: 'stationhead-raw-channel',
