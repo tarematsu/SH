@@ -137,8 +137,11 @@ export async function onRequest(context) {
   // edge cache entry without sharing request-scoped I/O objects.
   const now = Date.now();
   const modelKey = materializedApiKey(new URL(request.url));
-  const serviceResponse = await serviceMaterializedResponse(context, modelKey);
-  const prebuilt = serviceResponse || await d1MaterializedResponse(context, modelKey, now);
+  let prebuilt = null;
+  if (modelKey) {
+    const serviceResponse = await serviceMaterializedResponse(context, modelKey);
+    prebuilt = serviceResponse || await d1MaterializedResponse(context, modelKey, now);
+  }
   const origin = prebuilt || await context.next();
   const ttlSeconds = responseCacheTtl(
     origin,
