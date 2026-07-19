@@ -9,7 +9,7 @@
   "observability": { "enabled": true },
   "vars": {
     "CHANNEL_ALIAS": "buddies",
-    "CHAT_LIMIT": 40,
+    "CHAT_LIMIT": 25,
     "COMMENT_CHAIN_MAX_ATTEMPTS": 3,
     "SH_APP_VERSION": "1.0.0",
     "COLLECTOR_ID": "cloudflare-worker",
