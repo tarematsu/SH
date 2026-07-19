@@ -20,7 +20,9 @@ import {
   runOtherMonitorScheduled,
 } from '../src/other-monitor-entry.js';
 import {
+  CONSOLIDATED_MONITOR_CRON,
   MONITOR_MAINTENANCE_MESSAGE,
+  otherMonitorDue,
   runConsolidatedMonitorQueue,
   runConsolidatedMonitorScheduled,
 } from '../src/consolidated-monitor-entry.js';
@@ -80,6 +82,36 @@ test('Pages read-model Worker surfaces single-task materialization failures', as
   );
 });
 
+test('consolidated monitor collects every minute and runs other work every five minutes', async () => {
+  const calls = [];
+  const collect = async () => { calls.push('collect'); return { collected: true }; };
+  const otherOptions = {
+    dependencies: { buddy: async () => { calls.push('buddy'); return 'buddy'; } },
+    recordSuccess: async () => calls.push('heartbeat'),
+    healthApp: { invalidateHealthCache: () => calls.push('invalidate') },
+  };
+
+  assert.equal(otherMonitorDue(BASE), true);
+  assert.equal(otherMonitorDue(BASE + 60_000), false);
+
+  await runConsolidatedMonitorScheduled(
+    { cron: CONSOLIDATED_MONITOR_CRON, scheduledTime: BASE + 60_000 },
+    {},
+    {},
+    { collectRawChannel: collect, otherOptions },
+  );
+  assert.deepEqual(calls, ['collect']);
+
+  calls.length = 0;
+  await runConsolidatedMonitorScheduled(
+    { cron: CONSOLIDATED_MONITOR_CRON, scheduledTime: BASE + 5 * 60_000 },
+    {},
+    {},
+    { collectRawChannel: collect, otherOptions },
+  );
+  assert.deepEqual(calls, ['collect', 'buddy', 'heartbeat', 'invalidate']);
+});
+
 test('consolidated monitor dispatches maintenance to Queue and preserves the Cron budget', async () => {
   const sent = [];
   const scheduledTime = BASE + 30 * 60_000;
@@ -89,10 +121,11 @@ test('consolidated monitor dispatches maintenance to Queue and preserves the Cro
     },
   };
   const result = await runConsolidatedMonitorScheduled(
-    { cron: OTHER_MONITOR_CRON, scheduledTime },
+    { cron: CONSOLIDATED_MONITOR_CRON, scheduledTime },
     env,
     {},
     {
+      collectRawChannel: async () => ({ collected: true }),
       otherOptions: {
         dependencies: { buddy: async () => 'buddy' },
         recordSuccess: async () => {},
@@ -134,10 +167,11 @@ test('consolidated monitor dispatches maintenance to Queue and preserves the Cro
   const worker = config('wrangler.other.jsonc');
   assert.equal(worker.name, 'sh-monitor-other');
   assert.equal(worker.main, 'src/other-entry.js');
-  assert.deepEqual(worker.triggers.crons, [OTHER_MONITOR_CRON]);
+  assert.deepEqual(worker.triggers.crons, [CONSOLIDATED_MONITOR_CRON]);
   assert.equal(worker.vars.CRON_STAGGER_OTHER_MS, 25_000);
   assert.equal(worker.vars.COLLECTOR_PRIORITY_WAIT_MS, 15_000);
   assert.equal(worker.vars.SNAPSHOT_RETENTION_ENABLED, true);
+  assert.equal(worker.queues.producers.some(({ binding }) => binding === 'RAW_COLLECTION_QUEUE'), true);
 });
 
 test('maintenance path reports swallowed D1 failures as failed Queue retries', async () => {
@@ -185,16 +219,14 @@ test('direct maintenance runner preserves collector gating', async () => {
   assert.deepEqual(skipped, { skipped: true, reason: 'collector-not-ready', targetMinute: BASE });
 });
 
-test('other monitor reserves buddy46 stages and runs only one workload per tick', async () => {
+test('other monitor reserves buddy46 stages and runs only one workload per due tick', async () => {
+  assert.equal(OTHER_MONITOR_CRON, '*/5 * * * *');
   assert.equal(otherMonitorTask(BASE), 'buddy');
   assert.equal(otherMonitorTask(BASE + 5 * 60_000), 'buddy');
   assert.equal(otherMonitorTask(BASE + 10 * 60_000), 'prediction');
   assert.equal(otherMonitorTask(BASE + 15 * 60_000), 'buddy');
   assert.equal(otherMonitorTask(BASE + 20 * 60_000), 'officialNews');
   assert.equal(otherMonitorTask(BASE + 25 * 60_000), 'host');
-  assert.equal(otherMonitorTask(BASE + 30 * 60_000), 'buddy');
-  assert.equal(otherMonitorTask(BASE + 40 * 60_000), 'prediction');
-  assert.equal(otherMonitorTask(BASE + 50 * 60_000), 'host');
 
   const calls = [];
   const dependencies = {
@@ -211,16 +243,6 @@ test('other monitor reserves buddy46 stages and runs only one workload per tick'
   );
   assert.deepEqual(buddyResult, ['buddy']);
   assert.deepEqual(calls, ['buddy']);
-
-  calls.length = 0;
-  const dueNewsResult = await runOtherMonitorScheduled(
-    { cron: OTHER_MONITOR_CRON, scheduledTime: BASE + 25 * 60_000 },
-    {},
-    {},
-    dependencies,
-  );
-  assert.deepEqual(dueNewsResult, ['news']);
-  assert.deepEqual(calls, ['officialNews']);
 
   const events = [];
   await runOtherMonitorCron(
