@@ -56,6 +56,11 @@ jobs:
           BASE_BRANCH: ${{ github.event.pull_request.base.ref }}
         run: |
           set -euo pipefail
+          if git diff --diff-filter=M -U0 "origin/${BASE_BRANCH}..HEAD" -- 'worker/wrangler*.jsonc' \
+              | grep -Eq '^[+-][[:space:]]*"name"[[:space:]]*:'; then
+            echo "Topology rename has no direct PR deployment; using the configured pre-cutover lookback."
+            exit 0
+          fi
           runtime_changed_at="$(git log --no-merges -1 --format=%cI "origin/${BASE_BRANCH}..HEAD" -- \
             worker/src worker/scripts 'worker/wrangler*.jsonc' \
             worker/package.json worker/package-lock.json)"
