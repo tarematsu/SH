@@ -10,7 +10,8 @@ import {
 
 const RETRY_30_SECONDS = Object.freeze({ delaySeconds: 30 });
 const EMPTY_DEPENDENCIES = Object.freeze({});
-const SUCCESS_LOG_SAMPLE_MODULUS = 16;
+const SUCCESS_LOG_SAMPLE_MODULUS = 32;
+const activeEnrichmentEnvs = new WeakMap();
 
 function shouldLogMinuteEnrichmentResult(result) {
   if (result?.skipped === true || result?.reason) return true;
@@ -61,6 +62,14 @@ function activeEnrichmentBody(body) {
     : stripAppleMusicFields(body);
 }
 
+function productionEnrichmentEnv(env) {
+  const cached = activeEnrichmentEnvs.get(env);
+  if (cached) return cached;
+  const active = withMinuteD1WriteThrottling(withAppleMusicFreeRuntime(env));
+  activeEnrichmentEnvs.set(env, active);
+  return active;
+}
+
 async function processOptimizedMinuteEnrichment(env, body, dependencies = EMPTY_DEPENDENCIES) {
   const activeBody = activeEnrichmentBody(body);
   if (activeBody?.stage === 'playback') {
@@ -80,7 +89,7 @@ async function processMinuteEnrichmentBatch(batch, env, dependencies = EMPTY_DEP
   if (!messages?.length) return;
   const message = messages[0];
   const activeEnv = dependencies === EMPTY_DEPENDENCIES
-    ? withMinuteD1WriteThrottling(withAppleMusicFreeRuntime(env))
+    ? productionEnrichmentEnv(env)
     : env;
   try {
     const result = await processOptimizedMinuteEnrichment(activeEnv, message.body, dependencies);
@@ -99,6 +108,7 @@ export {
   activeEnrichmentBody,
   processMinuteEnrichmentBatch,
   processOptimizedMinuteEnrichment,
+  productionEnrichmentEnv,
   shouldLogMinuteEnrichmentResult,
 };
 
