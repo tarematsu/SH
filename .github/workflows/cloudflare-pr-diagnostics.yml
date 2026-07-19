@@ -74,6 +74,7 @@ jobs:
     env:
       CLOUDFLARE_ACCOUNT_ID: "0500f25c2f74e7e76c94a8bcb6c7008b"
       CLOUDFLARE_API_TOKEN: ${{ secrets['CLOUDFLARE_BUILDS_API_TOKEN'] || secrets['CLOUDFLARE_API_TOKEN'] || secrets['CF_API_TOKEN'] }}
+      CLOUDFLARE_KV_API_TOKEN: ${{ secrets['CLOUDFLARE_API_TOKEN'] || secrets['CF_API_TOKEN'] || secrets['CLOUDFLARE_BUILDS_API_TOKEN'] }}
       DEPLOY_COMMANDS: ${{ needs.select-workers.outputs.commands }}
     steps:
       - uses: actions/checkout@v4
@@ -123,7 +124,11 @@ jobs:
           status=0
           while IFS= read -r command; do
             echo "Deploying $command" | tee -a "$log"
-            npm run "$command" 2>&1 | tee -a "$log"
+            if [[ "$command" == "deploy:pages-read-model" ]]; then
+              CLOUDFLARE_API_TOKEN="$CLOUDFLARE_KV_API_TOKEN" npm run "$command" 2>&1 | tee -a "$log"
+            else
+              npm run "$command" 2>&1 | tee -a "$log"
+            fi
             status=${PIPESTATUS[0]}
             if [[ "$status" -ne 0 ]]; then
               break
