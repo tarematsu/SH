@@ -23,11 +23,12 @@ test('direct PR deploys do not launch a second Cloudflare build watcher', () => 
   assert.doesNotMatch(workflow, /direct PR deploy already succeeded/);
 });
 
-test('topology renames keep strict external build verification', () => {
+test('topology renames record a serialized cutover requirement instead of polling a nonexistent PR build', () => {
   assert.match(workflow, /Skipping direct PR deploy because a Worker script name changed/);
-  assert.match(workflow, /run: node \.github\/scripts\/cloudflare-build-diagnostics\.mjs/);
-  assert.doesNotMatch(workflow, /status=\$\?/);
-  assert.doesNotMatch(workflow, /exit 0/);
+  assert.match(workflow, /topology-rename-requires-serialized-cutover/);
+  assert.match(workflow, /Connected PR build polling is skipped for topology renames/);
+  assert.match(workflow, /include-hidden-files: true/);
+  assert.doesNotMatch(workflow, /run: node \.github\/scripts\/cloudflare-build-diagnostics\.mjs/);
 });
 
 test('observability extraction uses the dedicated strict analyzer', () => {
@@ -35,6 +36,7 @@ test('observability extraction uses the dedicated strict analyzer', () => {
   assert.match(observabilityAnalyzer, /for event in iter_events\(raw_dir\):/);
   assert.match(observabilityAnalyzer, /event_failure\(event\)/);
   assert.match(observabilityAnalyzer, /event\.get\("CPUTimeMs"\)/);
+  assert.match(observabilityAnalyzer, /transitional_scripts\(\)/);
   assert.match(observabilityAnalyzer, /return 0 if ok else 1/);
   assert.doesNotMatch(observability, /def event_metrics\(event\):/);
 });
