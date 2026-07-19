@@ -89,8 +89,6 @@ jobs:
         working-directory: worker
       - run: npm run deploy:ingest
         working-directory: worker
-      - run: npm run deploy:buddies
-        working-directory: worker
       - run: npm run deploy:split-other
         working-directory: worker
 
