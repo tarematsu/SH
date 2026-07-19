@@ -1,8 +1,11 @@
 import './fetch-guard.js';
+import { materializedResponseMaximumAge } from '../../site/functions/lib/api-contract.js';
 import { runDispatchedPagesReadModelTask } from './pages-read-model-dispatch.js';
+import { loadMaterializedResponse } from './pages-response-store.js';
 
 export const PAGES_READ_MODEL_CRON = '* * * * *';
 const EMPTY_DEPENDENCIES = Object.freeze({});
+const INTERNAL_RESPONSE_PATH = '/_internal/pages-response';
 
 let publicationModulePromise;
 
@@ -52,6 +55,39 @@ function assertRefreshSucceeded(result) {
   return result;
 }
 
+export async function runPagesReadModelFetch(request, env, dependencies = EMPTY_DEPENDENCIES) {
+  const url = new URL(request.url);
+  if (request.method !== 'GET' || url.pathname !== INTERNAL_RESPONSE_PATH) {
+    return new Response(null, { status: 404 });
+  }
+  const modelKey = String(url.searchParams.get('key') || '').trim();
+  if (!modelKey) return new Response(null, { status: 400 });
+  const now = dependencies.now?.() ?? Date.now();
+  const load = dependencies.loadResponse || loadMaterializedResponse;
+  try {
+    const response = await load(
+      env?.PAGES_RESPONSE_KV,
+      modelKey,
+      now,
+      materializedResponseMaximumAge(modelKey, env),
+    );
+    return response || new Response(null, {
+      status: 404,
+      headers: { 'cache-control': 'no-store' },
+    });
+  } catch (error) {
+    console.error(JSON.stringify({
+      event: 'pages_response_kv_read_failed',
+      model_key: modelKey,
+      error: String(error?.message || error).slice(0, 500),
+    }));
+    return new Response(null, {
+      status: 503,
+      headers: { 'cache-control': 'no-store' },
+    });
+  }
+}
+
 export async function runPagesReadModelCron(controller, env, dependencies = EMPTY_DEPENDENCIES) {
   const rawCron = controller?.cron;
   let cron = rawCron;
@@ -85,6 +121,7 @@ export async function runPagesReadModelQueue(batch, env, dependencies = EMPTY_DE
 }
 
 export default {
+  fetch: runPagesReadModelFetch,
   scheduled: runPagesReadModelCron,
   queue: runPagesReadModelQueue,
 };
