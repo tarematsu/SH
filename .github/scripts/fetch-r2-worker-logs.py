@@ -11,6 +11,7 @@ import pathlib
 import shutil
 import subprocess
 import time
+from typing import Any
 
 ROOT = pathlib.Path.cwd()
 RAW_DIR = ROOT / "raw"
@@ -41,7 +42,7 @@ def cutoff_time() -> dt.datetime:
     return dt.datetime.now(dt.timezone.utc) - dt.timedelta(minutes=minutes)
 
 
-def aws_json(*args: str) -> dict[str, object]:
+def aws_json(*args: str) -> dict[str, Any]:
     completed = subprocess.run(
         ["aws", *args],
         check=True,
@@ -49,32 +50,62 @@ def aws_json(*args: str) -> dict[str, object]:
         text=True,
         encoding="utf-8",
     )
-    return json.loads(completed.stdout or "{}")
+    payload = json.loads(completed.stdout or "{}")
+    if not isinstance(payload, dict):
+        raise RuntimeError("AWS CLI returned a non-object JSON payload")
+    return payload
+
+
+def list_all_objects(endpoint: str, bucket: str) -> tuple[list[dict[str, Any]], int]:
+    objects: list[dict[str, Any]] = []
+    continuation_token: str | None = None
+    page_count = 0
+    while True:
+        args = [
+            "s3api",
+            "list-objects-v2",
+            "--endpoint-url",
+            endpoint,
+            "--bucket",
+            bucket,
+            "--output",
+            "json",
+        ]
+        if continuation_token:
+            args.extend(["--continuation-token", continuation_token])
+        payload = aws_json(*args)
+        page_count += 1
+        page_objects = payload.get("Contents") or []
+        if not isinstance(page_objects, list):
+            raise RuntimeError("R2 object listing returned an invalid Contents value")
+        objects.extend(item for item in page_objects if isinstance(item, dict))
+        if not payload.get("IsTruncated"):
+            break
+        next_token = str(payload.get("NextContinuationToken") or "").strip()
+        if not next_token or next_token == continuation_token:
+            raise RuntimeError("R2 object listing was truncated without a usable continuation token")
+        continuation_token = next_token
+    return objects, page_count
 
 
 def list_objects(endpoint: str, bucket: str) -> list[tuple[dt.datetime, str]]:
-    payload = aws_json(
-        "s3api",
-        "list-objects-v2",
-        "--endpoint-url",
-        endpoint,
-        "--bucket",
-        bucket,
-        "--output",
-        "json",
+    objects, page_count = list_all_objects(endpoint, bucket)
+    OBJECTS_PATH.write_text(
+        json.dumps({"Contents": objects, "pages": page_count}, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
     )
-    OBJECTS_PATH.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     cutoff = cutoff_time()
     selected: list[tuple[dt.datetime, str]] = []
-    for item in payload.get("Contents") or []:
+    for item in objects:
         modified = dt.datetime.fromisoformat(str(item["LastModified"]).replace("Z", "+00:00"))
         if modified >= cutoff:
             selected.append((modified, str(item["Key"])))
     selected.sort(reverse=True)
     selection = {
         "cutoff": cutoff.isoformat().replace("+00:00", "Z"),
-        "objects_available": len(payload.get("Contents") or []),
+        "objects_available": len(objects),
         "objects_selected": len(selected),
+        "object_listing_pages": page_count,
         "newest_object_modified": selected[0][0].isoformat().replace("+00:00", "Z") if selected else None,
         "oldest_object_modified": selected[-1][0].isoformat().replace("+00:00", "Z") if selected else None,
     }
@@ -119,6 +150,10 @@ def download_selected(endpoint: str, bucket: str, selected: list[tuple[dt.dateti
 
 def observed_events() -> int:
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    try:
+        SUMMARY_PATH.unlink()
+    except FileNotFoundError:
+        pass
     subprocess.run(["python3", str(ANALYZER_PATH)], check=False)
     if not SUMMARY_PATH.exists():
         return 0
