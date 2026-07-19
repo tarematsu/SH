@@ -85,7 +85,7 @@ test('batched derive composes with the merged CPU, KV, and Worker topology contr
     'utf8',
   );
   const enrichment = config('wrangler.minute-enrichment.jsonc');
-  assert.match(budget, /BUDGET_MS = 10\.0/);
+  assert.match(budget, /BUDGET_MS = 9\.0/);
   assert.match(budget, /"comparison": "less_than_or_equal"/);
   assert.match(pagesKv, /NAMESPACE_PAGE_SIZE = 1000/);
   assert.deepEqual(
