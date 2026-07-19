@@ -1,11 +1,14 @@
 import './fetch-guard.js';
+import { materializedResponseMaximumAge } from '../../site/functions/lib/api-contract.js';
 import { runDispatchedPagesReadModelTask } from './pages-read-model-dispatch.js';
 import { processReadModelBatch } from './read-model-entry.js';
+import { loadMaterializedResponse } from './pages-response-store.js';
 
 export const PAGES_READ_MODEL_CRON = '* * * * *';
 export const MINUTE_READ_MODEL_QUEUE = 'stationhead-read-model';
 const MINUTE_READ_MODEL_MESSAGE = 'stationhead-read-model';
 const EMPTY_DEPENDENCIES = Object.freeze({});
+const INTERNAL_RESPONSE_PATH = '/_internal/pages-response';
 
 let publicationModulePromise;
 
@@ -61,6 +64,39 @@ function minuteReadModelBatch(batch) {
   return body?.message_type === MINUTE_READ_MODEL_MESSAGE;
 }
 
+export async function runPagesReadModelFetch(request, env, dependencies = EMPTY_DEPENDENCIES) {
+  const url = new URL(request.url);
+  if (request.method !== 'GET' || url.pathname !== INTERNAL_RESPONSE_PATH) {
+    return new Response(null, { status: 404 });
+  }
+  const modelKey = String(url.searchParams.get('key') || '').trim();
+  if (!modelKey) return new Response(null, { status: 400 });
+  const now = dependencies.now?.() ?? Date.now();
+  const load = dependencies.loadResponse || loadMaterializedResponse;
+  try {
+    const response = await load(
+      env?.PAGES_RESPONSE_KV,
+      modelKey,
+      now,
+      materializedResponseMaximumAge(modelKey, env),
+    );
+    return response || new Response(null, {
+      status: 404,
+      headers: { 'cache-control': 'no-store' },
+    });
+  } catch (error) {
+    console.error(JSON.stringify({
+      event: 'pages_response_kv_read_failed',
+      model_key: modelKey,
+      error: String(error?.message || error).slice(0, 500),
+    }));
+    return new Response(null, {
+      status: 503,
+      headers: { 'cache-control': 'no-store' },
+    });
+  }
+}
+
 export async function runPagesReadModelCron(controller, env, dependencies = EMPTY_DEPENDENCIES) {
   const rawCron = controller?.cron;
   let cron = rawCron;
@@ -76,18 +112,17 @@ export async function runPagesReadModelCron(controller, env, dependencies = EMPT
 }
 
 export async function runPagesReadModelQueue(batch, env, dependencies = EMPTY_DEPENDENCIES) {
-  // Some Queue deliveries omit batch.queue after a consumer cutover. The
-  // durable message type remains authoritative and prevents minute read-model
-  // work from being misclassified as track-history publication work.
   if (minuteReadModelBatch(batch)) {
-    return processReadModelBatch(batch, env);
+    const runMinuteReadModel = dependencies.processReadModelBatch || processReadModelBatch;
+    return runMinuteReadModel(batch, env);
   }
   const messages = batch.messages;
   if (!messages?.length) return;
   const message = messages[0];
-  const { processTrackHistoryPublicationTask } = await loadPublicationModule();
+  const processPublication = dependencies.processTrackHistoryPublicationTask
+    || (await loadPublicationModule()).processTrackHistoryPublicationTask;
   try {
-    const result = await processTrackHistoryPublicationTask(env, message.body, dependencies);
+    const result = await processPublication(env, message.body, dependencies);
     console.log(JSON.stringify(result));
     message.ack();
   } catch (error) {
@@ -100,6 +135,7 @@ export async function runPagesReadModelQueue(batch, env, dependencies = EMPTY_DE
 }
 
 export default {
+  fetch: runPagesReadModelFetch,
   scheduled: runPagesReadModelCron,
   queue: runPagesReadModelQueue,
 };

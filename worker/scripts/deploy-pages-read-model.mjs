@@ -1,13 +1,16 @@
 import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+import { preparePagesReadModelDeployConfig } from './pages-response-kv-namespace.mjs';
 
 const queue = 'stationhead-read-model';
 const deadLetterQueue = 'stationhead-read-model-dlq';
 const consolidatedScript = 'sh-pages-read-model';
 const retiredScript = 'sh-minute-read-model';
+const workerRoot = fileURLToPath(new URL('..', import.meta.url));
 
 function runWrangler(args, { capture = false, allowFailure = false } = {}) {
   const result = spawnSync('npx', ['wrangler', ...args], {
-    cwd: new URL('..', import.meta.url),
+    cwd: workerRoot,
     encoding: 'utf8',
     stdio: capture ? ['ignore', 'pipe', 'pipe'] : 'inherit',
     env: process.env,
@@ -23,17 +26,13 @@ function runWrangler(args, { capture = false, allowFailure = false } = {}) {
 function consumerList() {
   const result = runWrangler(
     ['queues', 'consumer', 'worker', 'list', queue, '--json'],
-    { capture: true, allowFailure: true },
+    { capture: true },
   );
-  return {
-    ok: result.status === 0,
-    output: `${result.stdout || ''}\n${result.stderr || ''}`,
-  };
+  return `${result.stdout || ''}\n${result.stderr || ''}`;
 }
 
 function hasConsumer(scriptName) {
-  const result = consumerList();
-  return result.ok && result.output.includes(scriptName);
+  return consumerList().includes(scriptName);
 }
 
 function removeConsumer(scriptName, allowFailure = false) {
@@ -64,7 +63,11 @@ async function workerRequest(scriptName, method = 'GET') {
   const { accountId, token } = credentials();
   return fetch(
     `https://api.cloudflare.com/client/v4/accounts/${accountId}/workers/scripts/${scriptName}${method === 'DELETE' ? '?force=true' : ''}`,
-    { method, headers: { Authorization: `Bearer ${token}` } },
+    {
+      method,
+      headers: { Authorization: `Bearer ${token}` },
+      signal: AbortSignal.timeout(20_000),
+    },
   );
 }
 
@@ -84,46 +87,62 @@ async function deleteRetiredWorker() {
   }
 }
 
+const deploy = await preparePagesReadModelDeployConfig(workerRoot);
+console.log(JSON.stringify({
+  event: 'pages_response_kv_namespace_resolved',
+  namespace_id: deploy.namespace.id,
+  namespace_title: deploy.namespace.title,
+  created: deploy.namespace.created,
+}));
+
 const migrating = hasConsumer(retiredScript);
+const consolidatedBefore = hasConsumer(consolidatedScript);
 let paused = false;
 let removed = false;
 try {
-  if (migrating) {
-    runWrangler(['queues', 'pause-delivery', queue]);
-    paused = true;
-    removeConsumer(retiredScript);
-    removed = true;
-  }
-  runWrangler(['deploy', '--config', 'wrangler.pages-read-model.jsonc']);
-  if (!hasConsumer(consolidatedScript)) {
-    throw new Error(`consolidated read-model consumer missing for ${queue}`);
-  }
-  if (hasConsumer(retiredScript)) {
-    throw new Error(`retired read-model consumer still attached: ${retiredScript}`);
-  }
-  if (paused) {
-    runWrangler(['queues', 'resume-delivery', queue]);
-    paused = false;
-  }
-} catch (error) {
-  if (hasConsumer(consolidatedScript)) removeConsumer(consolidatedScript, true);
-  if (removed && !hasConsumer(retiredScript)) {
-    try { restoreRetiredConsumer(); } catch (rollbackError) {
-      console.error(`Failed to restore ${retiredScript}: ${rollbackError.message}`);
+  try {
+    if (migrating) {
+      runWrangler(['queues', 'pause-delivery', queue]);
+      paused = true;
+      removeConsumer(retiredScript);
+      removed = true;
     }
-  }
-  if (paused) {
-    try { runWrangler(['queues', 'resume-delivery', queue]); } catch (resumeError) {
-      console.error(`Failed to resume ${queue}: ${resumeError.message}`);
+    runWrangler(['deploy', '--config', deploy.configPath]);
+    if (!hasConsumer(consolidatedScript)) {
+      throw new Error(`consolidated read-model consumer missing for ${queue}`);
     }
+    if (hasConsumer(retiredScript)) {
+      throw new Error(`retired read-model consumer still attached: ${retiredScript}`);
+    }
+    if (paused) {
+      runWrangler(['queues', 'resume-delivery', queue]);
+      paused = false;
+    }
+  } catch (error) {
+    if (!consolidatedBefore && hasConsumer(consolidatedScript)) {
+      removeConsumer(consolidatedScript, true);
+    }
+    if (removed && !hasConsumer(retiredScript)) {
+      try { restoreRetiredConsumer(); } catch (rollbackError) {
+        console.error(`Failed to restore ${retiredScript}: ${rollbackError.message}`);
+      }
+    }
+    if (paused) {
+      try { runWrangler(['queues', 'resume-delivery', queue]); } catch (resumeError) {
+        console.error(`Failed to resume ${queue}: ${resumeError.message}`);
+      }
+    }
+    throw error;
   }
-  throw error;
-}
 
-await deleteRetiredWorker();
-console.log(JSON.stringify({
-  event: 'read_model_worker_consolidation_completed',
-  script: consolidatedScript,
-  queue,
-  retired_script: retiredScript,
-}));
+  await deleteRetiredWorker();
+  console.log(JSON.stringify({
+    event: 'read_model_worker_consolidation_completed',
+    script: consolidatedScript,
+    queue,
+    retired_script: retiredScript,
+    pages_response_kv_namespace: deploy.namespace.id,
+  }));
+} finally {
+  deploy.cleanup();
+}

@@ -15,8 +15,8 @@ const BASE = Date.UTC(2026, 6, 18, 0, 0, 0);
 const entrySource = readFileSync(new URL('../src/pages-read-model-entry.js', import.meta.url), 'utf8');
 const dispatchSource = readFileSync(new URL('../src/pages-read-model-dispatch.js', import.meta.url), 'utf8');
 
-test('production entry exposes only scheduled and queue handlers', () => {
-  assert.deepEqual(Object.keys(worker).sort(), ['queue', 'scheduled']);
+test('production entry exposes internal fetch, scheduled, and queue handlers', () => {
+  assert.deepEqual(Object.keys(worker).sort(), ['fetch', 'queue', 'scheduled']);
 });
 
 test('cron success and failure behavior is preserved', async () => {
@@ -73,7 +73,7 @@ test('dispatch preserves task selection and background behavior', async () => {
   ), sentinel);
 });
 
-test('hot paths cache lazy modules and avoid eager fallback or task allocations', () => {
+test('hot paths cache publication modules and avoid eager fallback allocations', () => {
   assert.match(entrySource, /publicationModulePromise \|\|=/);
   assert.doesNotMatch(entrySource, /responses\.filter\(/);
   assert.doesNotMatch(entrySource, /failures\.map\(/);
