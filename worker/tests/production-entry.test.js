@@ -7,7 +7,7 @@ import productionApp, {
   runProductionScheduled,
 } from '../src/production-entry.js';
 
- test('production cron delegates only to the primary collection app', async () => {
+test('production cron delegates only to the primary collection app', async () => {
   const calls = [];
   const controller = { scheduledTime: 300_000, cron: '* * * * *' };
   const env = { marker: true };
@@ -45,25 +45,28 @@ test('legacy production entry exposes no HTTP control or health endpoints', asyn
   assert.equal((await productionApp.fetch(new Request('https://buddies.test/favicon.ico'), {}, {})).status, 204);
 });
 
-test('buddies Wrangler configuration owns collection and compact queue preparation only', () => {
+test('default Wrangler configuration consolidates collection and monitor boundaries', () => {
   const config = JSON.parse(readFileSync(new URL('../wrangler.jsonc', import.meta.url), 'utf8'));
-  const source = readFileSync(new URL('../src/raw-collector-entry.js', import.meta.url), 'utf8');
-  assert.equal(config.main, 'src/raw-collector-entry.js');
-  assert.deepEqual(config.triggers?.crons, ['* * * * *']);
-  assert.deepEqual(config.d1_databases.map(({ binding }) => binding), ['DB']);
-  assert.equal(config.d1_databases[0].database_name, 'stationhead-buddies');
-  assert.deepEqual(config.queues?.producers, [{
-    binding: 'RAW_COLLECTION_QUEUE',
-    queue: 'stationhead-raw-collection',
-  }]);
-  assert.match(source, /JSON\.parse/);
-  assert.match(source, /normalizeSnapshot/);
-  assert.match(source, /extractQueue/);
-  assert.doesNotMatch(source, /response\.json|readModelPresentation|handoffMinuteFactJob/);
+  const collector = readFileSync(new URL('../src/raw-collector-entry.js', import.meta.url), 'utf8');
+  const consolidated = readFileSync(new URL('../src/consolidated-monitor-entry.js', import.meta.url), 'utf8');
 
-  const names = Object.keys(config.vars || {});
-  for (const prefix of ['BUDDY_PLAYBACK_', 'HOST_', 'SOLO_', 'OFFICIAL_NEWS_', 'DERIVE_', 'HEALTH_ALERT_']) {
-    assert.equal(names.some((name) => name.startsWith(prefix)), false, prefix);
-  }
-  assert.equal('DATA_MAINTENANCE_ENABLED' in config.vars, false);
+  assert.equal(config.name, 'sh-monitor-other');
+  assert.equal(config.main, 'src/other-entry.js');
+  assert.deepEqual(config.triggers?.crons, ['* * * * *']);
+  assert.deepEqual(
+    config.d1_databases.map(({ binding }) => binding),
+    ['BUDDIES_DB', 'MINUTE_DB', 'OTHER_DB'],
+  );
+  assert.equal(
+    config.queues.producers.some(({ binding, queue }) => (
+      binding === 'RAW_COLLECTION_QUEUE' && queue === 'stationhead-raw-collection'
+    )),
+    true,
+  );
+  assert.match(consolidated, /collectRawChannel/);
+  assert.match(consolidated, /rawCollectorEnv/);
+  assert.match(collector, /JSON\.parse/);
+  assert.match(collector, /normalizeSnapshot/);
+  assert.match(collector, /extractQueue/);
+  assert.doesNotMatch(collector, /response\.json|readModelPresentation|handoffMinuteFactJob/);
 });
