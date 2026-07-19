@@ -22,6 +22,16 @@ export {
   SNAPSHOT_RETENTION_CRON,
 };
 
+function rawCollectorEnv(env) {
+  const active = Object.create(env || null);
+  Object.defineProperty(active, 'DB', {
+    value: env?.BUDDIES_DB,
+    enumerable: false,
+    configurable: true,
+  });
+  return active;
+}
+
 export function maintenanceCronFor(timestamp) {
   const minute = new Date(Number(timestamp) || 0).getUTCMinutes();
   if (minute === 30) return ROLLUP_MAINTENANCE_CRON;
@@ -61,7 +71,7 @@ export async function runConsolidatedMonitorScheduled(
   }
   const scheduledAt = Number(controller?.scheduledTime) || Date.now();
   const collect = options.collectRawChannel || collectRawChannel;
-  const collection = collect(env, options.collectionDependencies || EMPTY_OPTIONS);
+  const collection = collect(rawCollectorEnv(env), options.collectionDependencies || EMPTY_OPTIONS);
   if (!otherMonitorDue(scheduledAt)) {
     await collection;
     return [{ collected: true, scheduled_at: scheduledAt }];
@@ -114,6 +124,10 @@ export async function runConsolidatedMonitorQueue(batch, env, ctx, options = EMP
   }
   return otherMonitor.queue(batch, env, ctx);
 }
+
+export {
+  rawCollectorEnv,
+};
 
 export default {
   ...otherMonitor,
