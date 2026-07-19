@@ -168,8 +168,8 @@ test('minute read-model hydration queries both ISRC and Spotify IDs once', async
     collector: { collector_id: 'cloudflare-worker', updated_at: 123_456 },
   }, 'minute-fact:10:120000');
 
-  assert.match(metadataSql, /isrc IN \(\?\)/);
-  assert.match(metadataSql, /spotify_id IN \(\?\)/);
+  assert.match(metadataSql, /isrc IN \(\?1\)/);
+  assert.match(metadataSql, /spotify_id IN \(\?2\)/);
   assert.deepEqual(metadataBindings, ['JPX123', 'new-sp']);
   assert.match(batches[0][1].params[6], /"title":"Song"/);
   assert.match(batches[0][1].params[6], /"thumbnail_url":"cover"/);

@@ -103,6 +103,7 @@ jobs:
             stationhead-track-metadata stationhead-track-metadata-dlq \
             stationhead-buddies-facts stationhead-buddies-facts-dlq \
             stationhead-minute-derive stationhead-minute-derive-dlq \
+            stationhead-minute-live-derive stationhead-minute-live-derive-dlq \
             stationhead-minute-enrichment stationhead-minute-enrichment-dlq \
             stationhead-minute-rebuild stationhead-minute-rebuild-dlq \
             stationhead-buddy-playback stationhead-buddy-playback-dlq \

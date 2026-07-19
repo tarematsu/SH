@@ -42,6 +42,7 @@
   "queues": {
     "producers": [
       { "binding": "MINUTE_DERIVE_QUEUE", "queue": "stationhead-minute-derive" },
+      { "binding": "MINUTE_LIVE_DERIVE_QUEUE", "queue": "stationhead-minute-live-derive" },
       { "binding": "MINUTE_REBUILD_QUEUE", "queue": "stationhead-minute-rebuild" }
     ]
   }

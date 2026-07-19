@@ -46,7 +46,7 @@ function booleanCode(value) {
 }
 
 function normalizedIsrc(value) {
-  return String(value || '').trim().toUpperCase();
+  return String(value || '').replace(/[^A-Za-z0-9]/g, '').toUpperCase();
 }
 
 function boundedText(value, maximum) {
@@ -165,41 +165,81 @@ export function queueNeedsPreviousTrackMetadata(queue) {
   )));
 }
 
-async function queryTrackMetadata(db, spotifyIds, isrcs) {
-  if (!db || typeof db.prepare !== 'function') return [];
-  const clauses = [];
-  const bindings = [];
-  if (isrcs.length) {
-    clauses.push(`isrc IN (${isrcs.map(() => '?').join(',')})`);
-    bindings.push(...isrcs);
-  }
-  if (spotifyIds.length) {
-    clauses.push(`spotify_id IN (${spotifyIds.map(() => '?').join(',')})`);
-    bindings.push(...spotifyIds);
-  }
-  if (!clauses.length) return [];
-  const statement = db.prepare(`SELECT spotify_id,isrc,title,artist,thumbnail_url,fetched_at
-    FROM sh_track_metadata
-    WHERE ${clauses.join(' OR ')}
-    ORDER BY fetched_at DESC`).bind(...bindings);
+async function runMetadataQuery(db, sql, bindings) {
+  const statement = db.prepare(sql).bind(...bindings);
   if (typeof statement?.all !== 'function') return [];
   const result = await statement.all();
   return result.results || [];
 }
 
+function metadataQuery(spotifyIds, isrcs) {
+  const bindings = [...isrcs, ...spotifyIds];
+  let parameter = 1;
+  const isrcPlaceholders = isrcs.map(() => `?${parameter++}`).join(',');
+  const spotifyPlaceholders = spotifyIds.map(() => `?${parameter++}`).join(',');
+  const clauses = [];
+  if (isrcPlaceholders) clauses.push(`isrc IN (${isrcPlaceholders})`);
+  if (spotifyPlaceholders) clauses.push(`spotify_id IN (${spotifyPlaceholders})`);
+  if (!clauses.length) return null;
+  const whereSql = clauses.join(' OR ');
+  return {
+    sql: `SELECT spotify_id,isrc,title,artist,thumbnail_url,fetched_at
+      FROM sh_track_metadata
+      WHERE ${whereSql}
+      ORDER BY fetched_at DESC`,
+    whereSql,
+    isrcPlaceholders,
+    bindings,
+  };
+}
+
+async function queryTrackMetadata(db, spotifyIds, isrcs, includeDictionary = false) {
+  if (!db || typeof db.prepare !== 'function') return [];
+  const query = metadataQuery(spotifyIds, isrcs);
+  if (!query) return [];
+  if (!includeDictionary || !query.isrcPlaceholders) {
+    return runMetadataQuery(db, query.sql, query.bindings);
+  }
+
+  const dictionarySql = `SELECT spotify_id,isrc,title,artist,thumbnail_url,fetched_at
+    FROM (
+      SELECT 0 AS source_priority,spotify_id,isrc,title,artist,thumbnail_url,
+        metadata_fetched_at AS fetched_at
+      FROM sh_track_dictionary
+      WHERE isrc IN (${query.isrcPlaceholders})
+      UNION ALL
+      SELECT 1 AS source_priority,spotify_id,isrc,title,artist,thumbnail_url,fetched_at
+      FROM sh_track_metadata
+      WHERE ${query.whereSql}
+    )
+    ORDER BY source_priority,fetched_at DESC`;
+  try {
+    return await runMetadataQuery(db, dictionarySql, query.bindings);
+  } catch (error) {
+    if (!/no such table|no such column/i.test(String(error?.message || ''))) throw error;
+    return runMetadataQuery(db, query.sql, query.bindings);
+  }
+}
+
 export async function loadReadModelTrackMetadata(env, spotifyIds, isrcs) {
+  const requestedSpotifyIds = [...new Set(
+    (spotifyIds || []).map((value) => String(value || '').trim()).filter(Boolean),
+  )];
+  const requestedIsrcs = [...new Set(
+    (isrcs || []).map(normalizedIsrc).filter(Boolean),
+  )];
   const primary = env?.MINUTE_DB;
   const fallback = env?.BUDDIES_DB;
   let rows = [];
   try {
-    rows = await queryTrackMetadata(primary, spotifyIds, isrcs);
+    rows = await queryTrackMetadata(primary, requestedSpotifyIds, requestedIsrcs, true);
   } catch (error) {
     if (!/no such table|no such column/i.test(String(error?.message || ''))) throw error;
   }
   const completeSpotifyIds = new Set(rows.map((row) => String(row?.spotify_id || '').trim()).filter(Boolean));
   const completeIsrcs = new Set(rows.map((row) => normalizedIsrc(row?.isrc)).filter(Boolean));
-  const missingSpotifyIds = spotifyIds.filter((value) => !completeSpotifyIds.has(value));
-  const missingIsrcs = isrcs.filter((value) => !completeIsrcs.has(value));
+  const missingSpotifyIds = requestedSpotifyIds.filter((value) => !completeSpotifyIds.has(value));
+  const missingIsrcs = requestedIsrcs.filter((value) => !completeIsrcs.has(value));
   if ((!missingSpotifyIds.length && !missingIsrcs.length) || !fallback || fallback === primary) return rows;
   try {
     const fallbackRows = await queryTrackMetadata(fallback, missingSpotifyIds, missingIsrcs);

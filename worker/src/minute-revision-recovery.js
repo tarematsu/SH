@@ -49,6 +49,7 @@ export async function pendingSparseRevisionTasks(env, options = {}) {
     const sourceJobId = integer(row.source_job_id);
     const visibleItemCount = Math.max(0, integer(row.source_visible_count) ?? 0);
     const totalItemCount = Math.max(visibleItemCount, integer(row.item_count) ?? visibleItemCount);
+    const jobKind = text(row.job_kind) || 'live';
     return {
       message_type: 'minute-fact-derive-stage',
       message_version: 1,
@@ -58,11 +59,12 @@ export async function pendingSparseRevisionTasks(env, options = {}) {
         channel_id: integer(row.channel_id),
         minute_at: integer(row.minute_at),
         payload_version: integer(row.payload_version) ?? 1,
-        job_kind: text(row.job_kind) || 'live',
+        job_kind: jobKind,
         attempts: Math.max(1, integer(row.attempts) ?? 1),
       },
       revision: {
         sparse: true,
+        rebuild: jobKind === 'rebuild',
         revision_id: revisionId,
         source_job_id: sourceJobId,
         visible_item_count: visibleItemCount,
