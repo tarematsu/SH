@@ -17,7 +17,6 @@ const workerDefinitions = [
   { name: 'sh-buddies-ingest', config: 'worker/wrangler.ingest.jsonc', command: 'deploy:ingest' },
   { name: 'sh-buddies-monitor', config: 'worker/wrangler.jsonc', command: 'deploy:buddies' },
   { name: 'sh-pages-read-model', config: 'worker/wrangler.pages-read-model.jsonc', command: 'deploy:pages-read-model' },
-  { name: 'sh-monitor-maintenance', config: 'worker/wrangler.monitor-maintenance.jsonc', command: 'deploy:monitor-maintenance' },
   { name: 'sh-monitor-other', config: 'worker/wrangler.other.jsonc', command: 'deploy:other' },
 ];
 
