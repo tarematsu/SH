@@ -19,6 +19,7 @@ const TRACK_METADATA_MESSAGE_TYPE = 'stationhead-track-metadata';
 const RETRY_30_SECONDS = Object.freeze({ delaySeconds: 30 });
 const EMPTY_DEPENDENCIES = Object.freeze({});
 const SUCCESS_LOG_SAMPLE_MODULUS = 32;
+const TRACK_METADATA_LOG_SAMPLE_MODULUS = 32;
 const activeEnrichmentEnvs = new WeakMap();
 
 function shouldLogMinuteEnrichmentResult(result) {
@@ -48,6 +49,23 @@ function logMinuteEnrichmentResult(result) {
     host_id: result?.host_id,
     bite_count: result?.bite_count,
   }));
+}
+
+function stableSampleIdentity(value) {
+  const text = String(value ?? '');
+  let hash = 2166136261;
+  for (let index = 0; index < text.length; index += 1) {
+    hash ^= text.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return hash >>> 0;
+}
+
+function shouldLogTrackMetadataResult(result) {
+  if (result?.reason || result?.skipped === true) return true;
+  const identity = result?.job_id;
+  if (identity == null || identity === '') return false;
+  return stableSampleIdentity(identity) % TRACK_METADATA_LOG_SAMPLE_MODULUS === 0;
 }
 
 function sanitizeIdentityBody(body) {
@@ -120,7 +138,9 @@ async function processMinuteEnrichmentBatch(batch, env, dependencies = EMPTY_DEP
     if (metadata) {
       const run = dependencies.processTrackMetadataTask || processTrackMetadataTask;
       const result = await run(activeEnv, message.body, dependencies.metadata || EMPTY_DEPENDENCIES);
-      console.log(JSON.stringify({ event: 'track_metadata_task_completed', ...result }));
+      if (shouldLogTrackMetadataResult(result)) {
+        console.log(JSON.stringify({ event: 'track_metadata_task_completed', ...result }));
+      }
     } else {
       const result = await processOptimizedMinuteEnrichment(activeEnv, message.body, dependencies);
       logMinuteEnrichmentResult(result);
@@ -142,6 +162,7 @@ export {
   processOptimizedMinuteEnrichment,
   productionEnrichmentEnv,
   shouldLogMinuteEnrichmentResult,
+  shouldLogTrackMetadataResult,
 };
 
 export default {
