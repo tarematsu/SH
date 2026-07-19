@@ -23,6 +23,7 @@ export async function pendingSparseRevisionTasks(env, options = {}) {
   );
   const result = await db.prepare(`SELECT
       r.id AS revision_id,r.source_job_id,r.source_visible_count,r.item_count,
+      r.materialized_item_count,
       r.channel_id,r.station_id,r.session_id,r.queue_id,r.queue_start_time,r.structural_hash,
       j.minute_at,j.observed_at,j.payload_version,j.job_kind,j.attempts,
       json_extract(j.payload_json,'$.snapshot.host_account_id') AS host_account_id,
@@ -34,9 +35,7 @@ export async function pendingSparseRevisionTasks(env, options = {}) {
     JOIN sh_minute_fact_jobs j ON j.id=r.source_job_id
     WHERE r.source_job_id IS NOT NULL
       AND COALESCE(r.coverage_complete,0)=0
-      AND COALESCE(r.source_visible_count,0)>(
-        SELECT COUNT(*) FROM sh_queue_revision_items i WHERE i.revision_id=r.id
-      )
+      AND COALESCE(r.source_visible_count,0)>COALESCE(r.materialized_item_count,0)
       AND r.effective_at<=?
       AND COALESCE(r.last_materialized_at,r.effective_at)<=?
     ORDER BY COALESCE(r.last_materialized_at,r.effective_at) ASC,r.id ASC
@@ -49,6 +48,10 @@ export async function pendingSparseRevisionTasks(env, options = {}) {
     const sourceJobId = integer(row.source_job_id);
     const visibleItemCount = Math.max(0, integer(row.source_visible_count) ?? 0);
     const totalItemCount = Math.max(visibleItemCount, integer(row.item_count) ?? visibleItemCount);
+    const materializedItemCount = Math.max(
+      0,
+      Math.min(visibleItemCount, integer(row.materialized_item_count) ?? 0),
+    );
     const jobKind = text(row.job_kind) || 'live';
     return {
       message_type: 'minute-fact-derive-stage',
@@ -69,8 +72,8 @@ export async function pendingSparseRevisionTasks(env, options = {}) {
         source_job_id: sourceJobId,
         visible_item_count: visibleItemCount,
         total_item_count: totalItemCount,
-        preferred_position: 0,
-        materialized_item_count: 0,
+        preferred_position: materializedItemCount,
+        materialized_item_count: materializedItemCount,
         enrichment: {
           channel_id: integer(row.channel_id),
           minute_at: integer(row.minute_at),
