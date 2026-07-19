@@ -21,6 +21,20 @@ function taskKind(body) {
   return String(body.task || '');
 }
 
+async function sendTrackMetadataTask(env, body, task, fields, dependencies) {
+  if (dependencies.enqueueTask) {
+    await dependencies.enqueueTask(task, fields, body);
+    return;
+  }
+  if (!env?.TRACK_METADATA_QUEUE?.send) throw new Error('TRACK_METADATA_QUEUE binding is missing');
+  await env.TRACK_METADATA_QUEUE.send({
+    message_type: 'stationhead-track-metadata',
+    message_version: 1,
+    task,
+    ...fields,
+  }, JSON_QUEUE_SEND_OPTIONS);
+}
+
 async function enqueueReadModelStage(env, body, readModel, task, dependencies) {
   if (dependencies.enqueueReadModelStage) {
     await dependencies.enqueueReadModelStage(task, readModel, body);
@@ -30,15 +44,19 @@ async function enqueueReadModelStage(env, body, readModel, task, dependencies) {
     await dependencies.enqueueReadModelWrite(readModel, body);
     return;
   }
-  if (!env?.TRACK_METADATA_QUEUE?.send) throw new Error('TRACK_METADATA_QUEUE binding is missing');
-  await env.TRACK_METADATA_QUEUE.send({
-    message_type: 'stationhead-track-metadata',
-    message_version: 1,
-    task,
+  await sendTrackMetadataTask(env, body, task, {
     job_id: body.job_id,
     observed_at: body.observed_at ?? null,
     read_model: readModel,
-  }, JSON_QUEUE_SEND_OPTIONS);
+  }, dependencies);
+}
+
+async function enqueueCommittedIsrcStage(env, body, job, dependencies) {
+  if (dependencies.enqueueCommittedIsrcStage) {
+    await dependencies.enqueueCommittedIsrcStage(job, body);
+    return;
+  }
+  await sendTrackMetadataTask(env, body, 'committed-enrichment-isrc', { job }, dependencies);
 }
 
 export async function processTrackMetadataTask(env, body, dependencies = EMPTY_DEPENDENCIES) {
@@ -46,10 +64,34 @@ export async function processTrackMetadataTask(env, body, dependencies = EMPTY_D
   if (kind === 'committed-enrichment') {
     const job = body.job;
     if (!job?.jobId || !job?.payload) throw new Error('committed metadata job is invalid');
-    const runner = dependencies.runCommittedMetadataEnrichment
-      || (await loadCommittedEnrichmentModule()).runCommittedMetadataEnrichment;
+    const module = await loadCommittedEnrichmentModule();
+    if (dependencies.runCommittedMetadataEnrichment) {
+      await dependencies.runCommittedMetadataEnrichment(
+        env,
+        [job],
+        dependencies.enrichment || EMPTY_DEPENDENCIES,
+      );
+      return { task: kind, job_id: job.jobId };
+    }
+    const runner = dependencies.runCommittedSpotifyMetadataEnrichment
+      || module.runCommittedSpotifyMetadataEnrichment;
     await runner(env, [job], dependencies.enrichment || EMPTY_DEPENDENCIES);
-    return { task: kind, job_id: job.jobId };
+    await enqueueCommittedIsrcStage(env, body, job, dependencies);
+    return {
+      task: kind,
+      job_id: job.jobId,
+      pending: true,
+      next_task: 'committed-enrichment-isrc',
+    };
+  }
+
+  if (kind === 'committed-enrichment-isrc') {
+    const job = body.job;
+    if (!job?.jobId || !job?.payload) throw new Error('committed ISRC metadata job is invalid');
+    const runner = dependencies.runCommittedIsrcMetadataEnrichment
+      || (await loadCommittedEnrichmentModule()).runCommittedIsrcMetadataEnrichment;
+    await runner(env, [job], dependencies.enrichment || EMPTY_DEPENDENCIES);
+    return { task: kind, job_id: job.jobId, pending: false };
   }
 
   if (kind === 'read-model-hydration') {

@@ -21,7 +21,9 @@ export async function cachedSnapshotCount(db, now = Date.now()) {
   if (snapshotCountCache.value != null && snapshotCountCache.expiresAt > now) {
     return snapshotCountCache.value;
   }
-  const row = await db.prepare('SELECT COUNT(*) AS count FROM sh_minute_facts').first();
+  // Health only needs a monotonic high-water estimate. COUNT(*) scans the complete
+  // facts table on D1, while MAX(id) uses the INTEGER PRIMARY KEY b-tree.
+  const row = await db.prepare('SELECT COALESCE(MAX(id),0) AS count FROM sh_minute_facts').first();
   const value = Number(row?.count || 0);
   snapshotCountCache.value = value;
   snapshotCountCache.expiresAt = Date.now() + CACHE_MS;

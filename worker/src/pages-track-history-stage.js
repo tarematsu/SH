@@ -1,6 +1,7 @@
 import {
   loadTrackHistoryData,
   TRACK_HISTORY_GRACE_MS,
+  TRACK_HISTORY_SQL,
 } from '../../site/functions/lib/track-history-restored-handler.js';
 import { mergeTrackRows } from '../../site/functions/lib/track-history-merge.js';
 import { applyTrackPeriodCompleteness } from '../../site/functions/lib/period-completeness.js';
@@ -12,23 +13,46 @@ const TRACK_HISTORY_LIMIT = 40_000;
 const BACKFILL_KEY = 'track-history-backfill';
 const STATUS_KEY = 'track-history-status';
 const TRACK_HISTORY_EPOCH = Date.UTC(2024, 4, 1);
+const TRACK_HISTORY_QUEUE_LOOKBACK_MS = 2 * 86_400_000;
+const UNBOUNDED_QUEUE_STARTS_SQL = `WITH RECURSIVE queue_starts AS (
+      SELECT DISTINCT station_id,start_time
+      FROM sh_queue_items
+      WHERE start_time IS NOT NULL AND start_time < ?
+    )`;
+const BOUNDED_QUEUE_STARTS_SQL = `WITH RECURSIVE queue_bounds AS (
+      SELECT ? AS range_end
+    ), queue_starts AS (
+      SELECT DISTINCT items.station_id,items.start_time
+      FROM sh_queue_items items
+      CROSS JOIN queue_bounds bounds
+      WHERE items.start_time IS NOT NULL
+        AND items.start_time>=bounds.range_end-${TRACK_HISTORY_QUEUE_LOOKBACK_MS}
+        AND items.start_time<bounds.range_end
+    )`;
+const BOUNDED_TRACK_HISTORY_SQL = TRACK_HISTORY_SQL.replace(
+  UNBOUNDED_QUEUE_STARTS_SQL,
+  BOUNDED_QUEUE_STARTS_SQL,
+);
 
-const SHARD_SCHEMA_SQL = [
-  `CREATE TABLE IF NOT EXISTS sh_pages_payload_read_model (
-    model_key TEXT PRIMARY KEY,
-    payload_json TEXT NOT NULL,
-    updated_at INTEGER NOT NULL
-  )`,
-  `CREATE TABLE IF NOT EXISTS sh_pages_track_history_read_model (
-    row_key TEXT PRIMARY KEY,
-    play_date TEXT NOT NULL,
-    first_played_at INTEGER,
-    row_json TEXT NOT NULL,
-    updated_at INTEGER NOT NULL
-  )`,
-  `CREATE INDEX IF NOT EXISTS idx_sh_pages_track_history_date
-    ON sh_pages_track_history_read_model(play_date,first_played_at,row_key)`,
-];
+if (BOUNDED_TRACK_HISTORY_SQL === TRACK_HISTORY_SQL) {
+  throw new Error('track-history queue-start budget rewrite did not match');
+}
+
+function boundedTrackHistoryDatabase(db) {
+  return new Proxy(db, {
+    get(target, property) {
+      if (property === 'prepare') {
+        return (sql) => target.prepare(sql === TRACK_HISTORY_SQL ? BOUNDED_TRACK_HISTORY_SQL : sql);
+      }
+      const value = Reflect.get(target, property, target);
+      return typeof value === 'function' ? value.bind(target) : value;
+    },
+  });
+}
+
+export function boundedTrackHistorySql() {
+  return BOUNDED_TRACK_HISTORY_SQL;
+}
 
 function validTimestamp(value) {
   const timestamp = Number(value);
@@ -63,6 +87,23 @@ async function ensureShardSchema(db) {
   await db.batch(SHARD_SCHEMA_SQL.map((sql) => db.prepare(sql)));
 }
 
+const SHARD_SCHEMA_SQL = [
+  `CREATE TABLE IF NOT EXISTS sh_pages_payload_read_model (
+    model_key TEXT PRIMARY KEY,
+    payload_json TEXT NOT NULL,
+    updated_at INTEGER NOT NULL
+  )`,
+  `CREATE TABLE IF NOT EXISTS sh_pages_track_history_read_model (
+    row_key TEXT PRIMARY KEY,
+    play_date TEXT NOT NULL,
+    first_played_at INTEGER,
+    row_json TEXT NOT NULL,
+    updated_at INTEGER NOT NULL
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_sh_pages_track_history_date
+    ON sh_pages_track_history_read_model(play_date,first_played_at,row_key)`,
+];
+
 async function payloadRow(db, key) {
   return db.prepare(`SELECT payload_json
     FROM sh_pages_payload_read_model
@@ -93,7 +134,7 @@ export function saveTrackHistoryStage(db, stage, now) {
 
 async function materializeTrackHistoryDay(sourceDb, targetDb, range, now) {
   const { result, likeRows } = await loadTrackHistoryData(
-    sourceDb,
+    boundedTrackHistoryDatabase(sourceDb),
     range.fromTs,
     range.toTs,
     TRACK_HISTORY_LIMIT,

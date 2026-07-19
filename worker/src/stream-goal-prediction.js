@@ -1,8 +1,8 @@
 import { finiteNumber as finite } from './shared.js';
 
 const PREDICTION_STATE_ID = 'stream-goal-24h';
-const PREDICTION_DAY_MS = 24 * 60 * 60_000;
-const DEFAULT_PREDICTION_INTERVAL_MS = 30 * 60_000;
+const PREDICTION_WINDOW_MS = 6 * 60 * 60_000;
+const DEFAULT_PREDICTION_INTERVAL_MS = 6 * 60 * 60_000;
 const MIN_PREDICTION_INTERVAL_MS = 5 * 60_000;
 const MAX_PREDICTION_INTERVAL_MS = 24 * 60 * 60_000;
 const PREDICTION_CLAIM_LEASE_MS = 5 * 60_000;
@@ -153,7 +153,7 @@ export async function runStreamGoalPrediction(env, now = Date.now()) {
 
   try {
     const aggregate = await env.MINUTE_DB.prepare(STREAM_GOAL_PREDICTION_AGGREGATE_SQL)
-      .bind(now - PREDICTION_DAY_MS)
+      .bind(now - PREDICTION_WINDOW_MS)
       .first();
     const prediction = predictionFromAggregate(aggregate, now);
     await savePredictionStatement(env, prediction, now, intervalMs).run();

@@ -66,6 +66,10 @@ const trackMetadataIsrcMigrationPath = resolve(
   repositoryRoot,
   'database/facts-migrations/016_track_metadata_isrc.sql',
 );
+const d1BudgetIndexesMigrationPath = resolve(
+  repositoryRoot,
+  'database/facts-migrations/019_d1_budget_indexes.sql',
+);
 const metadataPath = resolve(repositoryRoot, 'database/facts-db.json');
 const databaseName = process.env.FACTS_DATABASE_NAME || 'stationhead-minute';
 
@@ -123,9 +127,9 @@ function executeCommand(sql) {
   ]);
 }
 
-function tableColumnNames(databaseName, table) {
+function tableColumnNames(activeDatabaseName, table) {
   const output = wrangler([
-    'd1', 'execute', databaseName,
+    'd1', 'execute', activeDatabaseName,
     '--remote', '--yes', '--json',
     '--command', `SELECT name FROM pragma_table_info('${table}')`,
   ]);
@@ -308,9 +312,14 @@ executeCommand(`UPDATE sh_queue_revisions
   SET coverage_complete=CASE
     WHEN COALESCE(materialized_item_count,0)>=item_count THEN 1
     ELSE 0
+  END
+  WHERE coverage_complete IS NOT CASE
+    WHEN COALESCE(materialized_item_count,0)>=item_count THEN 1
+    ELSE 0
   END`);
 executeCommand(`UPDATE sh_queue_revisions
-  SET source_visible_count=COALESCE(source_visible_count,materialized_item_count,item_count)`);
+  SET source_visible_count=COALESCE(materialized_item_count,item_count)
+  WHERE source_visible_count IS NULL`);
 executeCommand(`CREATE INDEX IF NOT EXISTS idx_sh_queue_revisions_coverage
   ON sh_queue_revisions(channel_id,coverage_complete,effective_at DESC)`);
 executeCommand(`CREATE INDEX IF NOT EXISTS idx_sh_queue_revisions_source_job
@@ -319,10 +328,16 @@ executeCommand(`CREATE INDEX IF NOT EXISTS idx_sh_queue_revisions_source_job
 executeCommand(`CREATE INDEX IF NOT EXISTS idx_sh_queue_revisions_materialization
   ON sh_queue_revisions(coverage_complete,last_materialized_at,effective_at)`);
 
+wrangler([
+  'd1', 'execute', databaseName,
+  '--remote', '--yes',
+  '--file', d1BudgetIndexesMigrationPath,
+]);
+
 writeFileSync(metadataPath, `${JSON.stringify({
   binding: 'MINUTE_DB',
   database_name: databaseName,
   database_id: databaseId,
-  schema: 'database/facts-migrations/018_sparse_revision_sources.sql',
+  schema: 'database/facts-migrations/019_d1_budget_indexes.sql',
 }, null, 2)}\n`);
 console.log(JSON.stringify({ ok: true, database_name: databaseName, database_id: databaseId }));

@@ -23,13 +23,14 @@ test('facts provisioner adds both required ISRC columns before sparse revision s
   const metadataColumnCheck = "tableColumnNames(databaseName, 'sh_track_metadata')";
   const metadataMigration = "'--file', trackMetadataIsrcMigrationPath";
   const revisionColumnCheck = "tableColumnNames(databaseName, 'sh_queue_revisions')";
-  const schemaMarker = "schema: 'database/facts-migrations/018_sparse_revision_sources.sql'";
+  const schemaMarker = "schema: 'database/facts-migrations/019_d1_budget_indexes.sql'";
 
   assert.match(provisioner, /!trackColumns\.has\('isrc'\)/);
   assert.match(provisioner, /sh_tracks\.isrc migration did not complete/);
   assert.match(provisioner, /!trackMetadataColumns\.has\('isrc'\)/);
   assert.match(provisioner, /sh_track_metadata\.isrc migration did not complete/);
   assert.match(provisioner, /016_track_metadata_isrc\.sql/);
+  assert.match(provisioner, /019_d1_budget_indexes\.sql/);
   assert.match(provisioner, /materialized_item_count/);
   assert.match(provisioner, /coverage_complete/);
   assert.match(provisioner, /source_job_id/);

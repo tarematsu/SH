@@ -3,7 +3,10 @@ import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
 import { runMinuteMaintenanceScheduled } from '../src/minute-maintenance-optimized-entry.js';
-import { processMinuteMaintenanceGate } from '../src/minute-rebuild-maintenance-entry.js';
+import {
+  processMinuteMaintenanceGate,
+  processMinuteMaintenanceSync,
+} from '../src/minute-rebuild-maintenance-entry.js';
 
 const MAINTENANCE_CRON = '5,7,9,15,17,19,25,27,29,35,37,39,45,47,49,55,57,59 * * * *';
 const BASE = Date.UTC(2026, 0, 1, 0, 0, 0);
@@ -54,7 +57,7 @@ test('maintenance gate performs one collector check and requeues without an in-I
   assert.equal(sent[0].delaySeconds, 4);
 });
 
-test('ready maintenance gates dispatch rebuild or execute sync without the scheduled wait path', async () => {
+test('ready maintenance gate dispatches rebuild or a separate sync Invocation', async () => {
   const sent = [];
   const rebuild = await processMinuteMaintenanceGate({}, gateBody('rebuild'), {
     checkCollector: async () => ({ ready: true }),
@@ -63,15 +66,29 @@ test('ready maintenance gates dispatch rebuild or execute sync without the sched
   assert.equal(rebuild.dispatched_stage, 'gap-scan');
   assert.equal(sent[0].body.stage, 'gap-scan');
 
-  let scheduled = null;
   const sync = await processMinuteMaintenanceGate({}, gateBody('sync'), {
     checkCollector: async () => ({ ready: true }),
+    send: async (body, delaySeconds) => sent.push({ body, delaySeconds }),
+  });
+  assert.equal(sync.pending, true);
+  assert.equal(sync.dispatched_stage, 'maintenance-sync');
+  assert.equal(sent[1].body.stage, 'maintenance-sync');
+  assert.equal(sent[1].delaySeconds, 0);
+});
+
+test('maintenance sync executes only after the collector gate Invocation', async () => {
+  let scheduled = null;
+  const result = await processMinuteMaintenanceSync({}, {
+    ...gateBody('sync'),
+    stage: 'maintenance-sync',
+  }, {
     runScheduled: async (controller, _env, dependencies) => {
       scheduled = { controller, dependencies };
       return { event: 'sync-complete' };
     },
   });
-  assert.equal(sync.pending, false);
+  assert.equal(result.pending, false);
+  assert.equal(result.stage, 'maintenance-sync');
   assert.equal(scheduled.controller.scheduledTime, BASE);
   assert.equal(scheduled.dependencies.collectorReady, true);
 });

@@ -15,7 +15,8 @@ function finiteTimestamp(value) {
 
 function maintenanceStage(body) {
   if (body?.message_type !== 'minute-rebuild-stage' || Number(body?.message_version) !== 1) return null;
-  return body.stage === 'maintenance-gate' ? body.stage : null;
+  if (body.stage === 'maintenance-gate' || body.stage === 'maintenance-sync') return body.stage;
+  return null;
 }
 
 function validateMaintenanceTask(body) {
@@ -107,12 +108,28 @@ export async function processMinuteMaintenanceGate(env, body, dependencies = EMP
     };
   }
 
+  await sendStage(env, {
+    ...body,
+    stage: 'maintenance-sync',
+  }, 0, dependencies);
+  return {
+    stage: 'maintenance-gate',
+    task: task.task,
+    run_id: task.runId,
+    pending: true,
+    dispatched_stage: 'maintenance-sync',
+  };
+}
+
+export async function processMinuteMaintenanceSync(env, body, dependencies = EMPTY_DEPENDENCIES) {
+  const task = validateMaintenanceTask(body);
+  if (task.task !== 'sync') throw new Error('maintenance sync stage requires a sync task');
   const run = dependencies.runScheduled || runMinuteScheduled;
   const result = await run({ cron: task.cron, scheduledTime: task.scheduledAt }, env, {
     collectorReady: true,
   });
   return {
-    stage: 'maintenance-gate',
+    stage: 'maintenance-sync',
     task: task.task,
     run_id: task.runId,
     pending: false,
@@ -139,9 +156,12 @@ async function processMinuteRebuildBatch(batch, env, ctx) {
   const messages = batch?.messages;
   if (!messages?.length) return;
   const message = messages[0];
-  if (!maintenanceStage(message.body)) return rebuildWorker.queue(batch, env, ctx);
+  const stage = maintenanceStage(message.body);
+  if (!stage) return rebuildWorker.queue(batch, env, ctx);
   try {
-    const result = await processMinuteMaintenanceGate(env, message.body);
+    const result = stage === 'maintenance-sync'
+      ? await processMinuteMaintenanceSync(env, message.body)
+      : await processMinuteMaintenanceGate(env, message.body);
     logMaintenanceGateResult(result);
     message.ack();
   } catch (error) {

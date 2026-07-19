@@ -29,6 +29,7 @@ test('derive config applies bounded defaults', () => {
     leaseMs: 60_000,
     maxAttempts: 8,
     runBudgetMs: 50_000,
+    statsIntervalMs: 3_600_000,
   });
   assert.equal(deriveConfig({ DERIVE_MAX_JOBS: 999 }).maxJobs, 999);
   assert.equal(deriveConfig({ DERIVE_MAX_JOBS: 9_999 }).maxJobs, 1_000);
