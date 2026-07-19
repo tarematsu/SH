@@ -13,6 +13,10 @@ const migrations = [
     deadLetterQueue: 'stationhead-host-monitor-dlq',
   },
 ];
+const retiredScripts = [
+  ...migrations.map(({ oldScript }) => oldScript),
+  'sh-buddies-read-model',
+];
 
 function runWrangler(args, { capture = false, allowFailure = false } = {}) {
   const result = spawnSync('npx', ['wrangler', ...args], {
@@ -163,11 +167,12 @@ try {
   throw error;
 }
 
-for (const item of migrations) await deleteOldWorker(item.oldScript);
+for (const scriptName of retiredScripts) await deleteOldWorker(scriptName);
 assertConsolidatedConsumers();
 
 console.log(JSON.stringify({
   event: 'monitor_worker_consolidation_completed',
   script: consolidatedScript,
   queues: migrations.map((item) => item.queue),
+  retired_scripts: retiredScripts,
 }));
