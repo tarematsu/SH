@@ -21,6 +21,7 @@ const BENIGN_SKIP_REASONS = new Set([
   'retry-not-due',
   'stage-advanced',
   'stale-cycle',
+  'station-not-found',
 ]);
 const PIPELINE_STAGES = new Set(['fetch', 'parse', 'parse-store', 'metadata', 'commit']);
 const DIRECT_STAGES = new Set([

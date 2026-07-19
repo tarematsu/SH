@@ -6,19 +6,21 @@ on:
     paths:
       - "worker/**"
       - ".github/workflows/fetch-cloudflare-observability.yml"
+      - ".github/scripts/analyze-worker-observability.py"
   workflow_dispatch:
     inputs:
       since:
-        description: Optional ISO-8601 lower bound for R2 object LastModified
+        description: Optional ISO-8601 lower bound for R2 event timestamps
         required: false
         type: string
       lookback_minutes:
         description: Used when since is omitted
         required: false
-        default: "30"
+        default: "90"
         type: string
 
 permissions:
+  actions: read
   contents: read
 
 concurrency:
@@ -34,9 +36,50 @@ jobs:
       AWS_DEFAULT_REGION: auto
       R2_BUCKET: cloudflare-managed-1609110a
       LOG_SINCE: ${{ inputs.since || '' }}
-      LOOKBACK_MINUTES: ${{ inputs.lookback_minutes || '30' }}
+      LOOKBACK_MINUTES: ${{ inputs.lookback_minutes || '90' }}
 
     steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Use first successful deployment after runtime changes as audit lower bound
+        if: github.event_name == 'pull_request' && env.LOG_SINCE == ''
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEAD_BRANCH: ${{ github.event.pull_request.head.ref }}
+          BASE_BRANCH: ${{ github.event.pull_request.base.ref }}
+        run: |
+          set -euo pipefail
+          runtime_changed_at="$(git log --no-merges -1 --format=%cI "origin/${BASE_BRANCH}..HEAD" -- \
+            worker/src worker/scripts 'worker/wrangler*.jsonc' \
+            worker/package.json worker/package-lock.json)"
+          if [[ -z "$runtime_changed_at" ]]; then
+            echo "No runtime changes in this PR; using the configured lookback."
+            exit 0
+          fi
+          runtime_changed_at="$(date -u -d "$runtime_changed_at" +%Y-%m-%dT%H:%M:%SZ)"
+          runs="$(curl --fail-with-body --silent --show-error --get \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H 'Accept: application/vnd.github+json' \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/workflows/cloudflare-pr-diagnostics.yml/runs" \
+            --data-urlencode "branch=$HEAD_BRANCH" \
+            --data-urlencode 'event=pull_request' \
+            --data-urlencode 'status=completed' \
+            --data-urlencode 'per_page=100')"
+          deployed_at="$(jq -r --arg changed "$runtime_changed_at" \
+            '[.workflow_runs[] | select(.conclusion == "success" and .created_at >= $changed)] | last | .updated_at // empty' \
+            <<<"$runs")"
+          if [[ -n "$deployed_at" ]]; then
+            audit_since="$(date -u -d "$deployed_at + 90 seconds" +%Y-%m-%dT%H:%M:%SZ)"
+            echo "Runtime changed at $runtime_changed_at"
+            echo "Deployment completed at $deployed_at; auditing after propagation grace at $audit_since"
+            echo "LOG_SINCE=$audit_since" >> "$GITHUB_ENV"
+          else
+            echo "No successful PR deployment found after runtime changes; using the configured lookback."
+          fi
+
       - name: Derive R2 credentials
         shell: bash
         run: |
@@ -80,7 +123,7 @@ jobs:
               if cutoff.tzinfo is None:
                   cutoff = cutoff.replace(tzinfo=dt.timezone.utc)
           else:
-              cutoff = dt.datetime.now(dt.timezone.utc) - dt.timedelta(minutes=max(1, int(os.environ.get('LOOKBACK_MINUTES', '30'))))
+              cutoff = dt.datetime.now(dt.timezone.utc) - dt.timedelta(minutes=max(1, int(os.environ.get('LOOKBACK_MINUTES', '90'))))
           selected = []
           for item in objects:
               modified = dt.datetime.fromisoformat(str(item['LastModified']).replace('Z', '+00:00'))
@@ -95,17 +138,23 @@ jobs:
               'oldest_object_modified': selected[-1][0].isoformat().replace('+00:00', 'Z') if selected else None,
           }
           pathlib.Path('selection.json').write_text(json.dumps(selection, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
-          pathlib.Path('cutoff.txt').write_text(selection['cutoff'], encoding='utf-8')
           pathlib.Path('keys.txt').write_text(''.join(f'{key}\n' for _, key in selected), encoding='utf-8')
           print(f"Selected {len(selected)} objects modified since {cutoff.isoformat()}")
           PY
           if [[ -s keys.txt ]]; then
             index=0
+            pids=()
             while IFS= read -r key; do
               index=$((index + 1))
               file="raw/$(printf '%04d' "$index").log"
-              aws s3api get-object --endpoint-url "$R2_ENDPOINT" --bucket "$R2_BUCKET" --key "$key" "$file" >/dev/null
+              aws s3api get-object --endpoint-url "$R2_ENDPOINT" --bucket "$R2_BUCKET" --key "$key" "$file" >/dev/null &
+              pids+=("$!")
+              if (( ${#pids[@]} >= 8 )); then
+                for pid in "${pids[@]}"; do wait "$pid"; done
+                pids=()
+              fi
             done < keys.txt
+            for pid in "${pids[@]}"; do wait "$pid"; done
           fi
           selected_count="$(jq -r '.objects_selected' selection.json)"
           downloaded_count="$(find raw -type f | wc -l | tr -d ' ')"
@@ -114,128 +163,43 @@ jobs:
             exit 1
           }
 
-      - name: Build compact findings and CPU summary
+      - name: Audit current Workers and CPU time
+        shell: bash
+        run: python3 .github/scripts/analyze-worker-observability.py
+
+      - name: Publish compact audit summary
+        if: always()
         shell: bash
         run: |
-          set -euo pipefail
-          python3 - <<'PY'
-          import gzip, json, math, pathlib, statistics
-          targets = {
-              'sh-buddies-monitor', 'sh-buddies-persist', 'sh-buddies-ingest', 'sh-buddies-comments',
-              'sh-minute-read-model', 'sh-track-metadata',
-              'sh-pages-read-model', 'sh-monitor-maintenance',
-              'sh-minute-ingest', 'sh-minute-derive', 'sh-minute-enrichment',
-              'sh-minute-rebuild', 'sh-minute-maintenance', 'sh-monitor-other',
-          }
-          level_names = {'level', 'severity', 'loglevel'}
-          outcome_names = {'outcome', 'status'}
-          error_names = {'error', 'exception', 'stack', 'stacktrace'}
-          bad_levels = {'warn', 'warning', 'error', 'fatal', 'critical'}
-          ok_outcomes = {'ok', 'success', 'succeeded', 'completed', 'true', '200'}
-          output_dir = pathlib.Path('observability-logs')
-          full_path = output_dir / 'sh-workers.ndjson'
-          findings_path = output_dir / 'findings.ndjson'
-          selection = json.loads(pathlib.Path('selection.json').read_text(encoding='utf-8'))
-
-          def walk(value, prefix=''):
-              if isinstance(value, dict):
-                  for key, child in value.items():
-                      name = f'{prefix}.{key}' if prefix else str(key)
-                      yield name, child
-                      yield from walk(child, name)
-              elif isinstance(value, list):
-                  for index, child in enumerate(value):
-                      yield from walk(child, f'{prefix}[{index}]')
-
-          def event_metrics(event):
-              cpu_values = []
-              levels = []
-              outcomes = []
-              errors = False
-              for path, value in walk(event):
-                  if value in (None, '', [], {}):
-                      continue
-                  leaf = path.rsplit('.', 1)[-1].lower()
-                  if 'cpu' in leaf and not isinstance(value, bool):
-                      try:
-                          number = float(value)
-                      except (TypeError, ValueError):
-                          pass
-                      else:
-                          if math.isfinite(number):
-                              cpu_values.append(number)
-                  if leaf in level_names:
-                      levels.append(str(value).lower())
-                  elif leaf in outcome_names:
-                      outcomes.append(str(value).lower())
-                  elif leaf in error_names:
-                      errors = True
-              flagged = (
-                  any(item in bad_levels for item in levels)
-                  or any(item not in ok_outcomes for item in outcomes)
-                  or errors
-              )
-              return cpu_values, flagged
-
-          def percentile(items, fraction):
-              if not items:
-                  return None
-              ordered = sorted(items)
-              return ordered[min(len(ordered) - 1, math.ceil(len(ordered) * fraction) - 1)]
-
-          counts = {name: 0 for name in sorted(targets)}
-          cpu = {name: [] for name in sorted(targets)}
-          findings = total = 0
-          raw_paths = sorted(pathlib.Path('raw').glob('*'))
-          with full_path.open('w', encoding='utf-8') as full, findings_path.open('w', encoding='utf-8') as flagged_file:
-              for path in raw_paths:
-                  data = path.read_bytes()
-                  if data[:2] == b'\x1f\x8b':
-                      data = gzip.decompress(data)
-                  for line in data.decode('utf-8', errors='replace').splitlines():
-                      try:
-                          event = json.loads(line)
-                      except json.JSONDecodeError:
-                          continue
-                      script = event.get('ScriptName')
-                      if script not in targets:
-                          continue
-                      samples, flagged = event_metrics(event)
-                      compact = json.dumps(event, ensure_ascii=False, separators=(',', ':'))
-                      full.write(compact + '\n')
-                      total += 1
-                      counts[script] += 1
-                      cpu[script].extend(samples)
-                      if flagged:
-                          flagged_file.write(compact + '\n')
-                          findings += 1
-          summary = {
-              'ok': True,
-              'since': selection['cutoff'],
-              'objects_available': selection['objects_available'],
-              'objects_selected': selection['objects_selected'],
-              'objects_downloaded': len(raw_paths),
-              'oldest_object_modified': selection['oldest_object_modified'],
-              'newest_object_modified': selection['newest_object_modified'],
-              'events': total,
-              'findings': findings,
-              'scripts': {},
-          }
-          for script in sorted(targets):
-              samples = cpu[script]
-              summary['scripts'][script] = {
-                  'events': counts[script], 'cpu_samples': len(samples),
-                  'cpu_avg': statistics.fmean(samples) if samples else None,
-                  'cpu_p95': percentile(samples, 0.95), 'cpu_max': max(samples) if samples else None,
-              }
-          (output_dir / 'summary.json').write_text(json.dumps(summary, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
-          print(json.dumps(summary, ensure_ascii=False, separators=(',', ':')))
+          if [[ ! -f observability-logs/summary.json ]]; then
+            exit 0
+          fi
+          python3 - <<'PY' >> "$GITHUB_STEP_SUMMARY"
+          import json, pathlib
+          summary = json.loads(pathlib.Path('observability-logs/summary.json').read_text(encoding='utf-8'))
+          print(f"## R2 Worker audit: {'OK' if summary['ok'] else 'FAILED'}")
+          print()
+          print(f"- Window start: `{summary['since']}`")
+          print(f"- Newest event: `{summary['newest_event_timestamp']}`")
+          print(f"- Worker events: `{summary['events']}`")
+          print(f"- Error events: `{summary['error_events']}`")
+          print(f"- Unexpected Workers: `{', '.join(summary['unexpected_scripts']) or 'none'}`")
+          print(f"- Missing scheduled Workers: `{', '.join(summary['missing_required_scripts']) or 'none'}`")
+          cpu = summary['cpu_ms']
+          print(f"- CPU ms: avg `{cpu['avg']}`, p95 `{cpu['p95']}`, max `{cpu['max']}`")
+          print()
+          print('| Worker | events | errors | CPU avg ms | CPU p95 ms | CPU max ms | >10 ms |')
+          print('|---|---:|---:|---:|---:|---:|---:|')
+          for name, item in summary['scripts'].items():
+              metric = item['cpu_ms']
+              print(f"| {name} | {item['events']} | {item['error_events']} | {metric['avg']} | {metric['p95']} | {metric['max']} | {metric['over_10ms']} |")
           PY
 
       - name: Upload filtered logs and compact analysis
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: cloudflare-observability-sh-${{ github.run_id }}
           path: observability-logs/
-          if-no-files-found: error
+          if-no-files-found: warn
           retention-days: 7
