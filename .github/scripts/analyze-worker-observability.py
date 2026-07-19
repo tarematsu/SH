@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import datetime as dt
 import gzip
 import json
 import math
@@ -11,7 +12,7 @@ import pathlib
 import statistics
 import sys
 from collections import Counter
-from typing import Any, Iterable
+from typing import Any, Callable, Iterable
 
 EXPECTED_SCRIPTS = {
     "sh-buddies-monitor",
@@ -30,17 +31,17 @@ EXPECTED_SCRIPTS = {
     "sh-monitor-other",
 }
 
-# These Workers have cron triggers and must appear in a 90-minute audit window.
-REQUIRED_RECENT_SCRIPTS = {
-    "sh-buddies-monitor",
-    "sh-minute-maintenance",
-    "sh-monitor-other",
-    "sh-monitor-maintenance",
+SCHEDULES: dict[str, Callable[[dt.datetime], bool]] = {
+    "sh-buddies-monitor": lambda minute: True,
+    "sh-minute-maintenance": lambda minute: True,
+    "sh-monitor-other": lambda minute: minute.minute % 5 == 0,
+    "sh-monitor-maintenance": lambda minute: minute.minute in {30, 50},
 }
 
 BAD_LOG_LEVELS = {"error", "fatal", "critical"}
 WARNING_LOG_LEVELS = {"warn", "warning"}
 CPU_REPORT_LIMIT_MS = 10.0
+LOG_INGESTION_GRACE_MS = 90_000
 
 
 def finite_number(value: Any) -> float | None:
@@ -51,6 +52,11 @@ def finite_number(value: Any) -> float | None:
     except (TypeError, ValueError):
         return None
     return result if math.isfinite(result) else None
+
+
+def iso_datetime(value: str) -> dt.datetime:
+    parsed = dt.datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=dt.timezone.utc)
 
 
 def percentile(values: list[float], fraction: float) -> float | None:
@@ -115,6 +121,20 @@ def metric_summary(values: list[float]) -> dict[str, float | int | None]:
     }
 
 
+def schedule_due(start_ms: float, end_ms: float, predicate: Callable[[dt.datetime], bool]) -> bool:
+    if end_ms < start_ms:
+        return False
+    cursor = dt.datetime.fromtimestamp(start_ms / 1000, dt.timezone.utc).replace(second=0, microsecond=0)
+    if cursor.timestamp() * 1000 < start_ms:
+        cursor += dt.timedelta(minutes=1)
+    end = dt.datetime.fromtimestamp(end_ms / 1000, dt.timezone.utc)
+    while cursor <= end:
+        if predicate(cursor):
+            return True
+        cursor += dt.timedelta(minutes=1)
+    return False
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--raw-dir", default="raw")
@@ -126,6 +146,7 @@ def main() -> int:
     output_dir = pathlib.Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     selection = json.loads(pathlib.Path(args.selection).read_text(encoding="utf-8"))
+    cutoff_ms = iso_datetime(selection["cutoff"]).timestamp() * 1000
 
     counts = Counter({name: 0 for name in EXPECTED_SCRIPTS})
     outcomes: dict[str, Counter[str]] = {name: Counter() for name in EXPECTED_SCRIPTS}
@@ -137,16 +158,23 @@ def main() -> int:
     observed_sh_scripts: set[str] = set()
     all_cpu: list[float] = []
     all_wall: list[float] = []
+    newest_event_ms: float | None = None
     total = 0
 
     full_path = output_dir / "sh-workers.ndjson"
     findings_path = output_dir / "findings.ndjson"
     with full_path.open("w", encoding="utf-8") as full, findings_path.open("w", encoding="utf-8") as findings:
         for event in iter_events(raw_dir):
+            timestamp_ms = finite_number(event.get("EventTimestampMs"))
+            if timestamp_ms is not None and timestamp_ms < cutoff_ms:
+                continue
+
             script = event.get("ScriptName")
             if not isinstance(script, str) or not script.startswith("sh-"):
                 continue
 
+            if timestamp_ms is not None:
+                newest_event_ms = timestamp_ms if newest_event_ms is None else max(newest_event_ms, timestamp_ms)
             observed_sh_scripts.add(script)
             compact = json.dumps(event, ensure_ascii=False, separators=(",", ":"))
             full.write(compact + "\n")
@@ -181,7 +209,15 @@ def main() -> int:
                 findings.write(json.dumps({"reason": reasons, "event": event}, ensure_ascii=False, separators=(",", ":")) + "\n")
 
     unexpected_scripts = sorted(observed_sh_scripts - EXPECTED_SCRIPTS)
-    missing_required = sorted(name for name in REQUIRED_RECENT_SCRIPTS if counts[name] == 0)
+    audit_end_ms = min(
+        dt.datetime.now(dt.timezone.utc).timestamp() * 1000 - LOG_INGESTION_GRACE_MS,
+        newest_event_ms if newest_event_ms is not None else cutoff_ms,
+    )
+    required_recent = {
+        name for name, predicate in SCHEDULES.items()
+        if schedule_due(cutoff_ms, audit_end_ms, predicate)
+    }
+    missing_required = sorted(name for name in required_recent if counts[name] == 0)
     error_events = sum(errors.values())
 
     scripts: dict[str, Any] = {}
@@ -198,10 +234,14 @@ def main() -> int:
             "wall_ms": metric_summary(wall[script]),
         }
 
-    ok = not unexpected_scripts and not missing_required and error_events == 0
+    ok = total > 0 and not unexpected_scripts and not missing_required and error_events == 0
     summary = {
         "ok": ok,
         "since": selection["cutoff"],
+        "newest_event_timestamp": (
+            dt.datetime.fromtimestamp(newest_event_ms / 1000, dt.timezone.utc).isoformat().replace("+00:00", "Z")
+            if newest_event_ms is not None else None
+        ),
         "objects_available": selection["objects_available"],
         "objects_selected": selection["objects_selected"],
         "objects_downloaded": len(list(raw_dir.glob("*"))),
@@ -210,6 +250,7 @@ def main() -> int:
         "events": total,
         "error_events": error_events,
         "unexpected_scripts": unexpected_scripts,
+        "required_scheduled_scripts": sorted(required_recent),
         "missing_required_scripts": missing_required,
         "cpu_unit": "ms",
         "cpu_ms": metric_summary(all_cpu),
@@ -222,6 +263,8 @@ def main() -> int:
     )
     print(json.dumps(summary, ensure_ascii=False, separators=(",", ":")))
 
+    if total == 0:
+        print("No sh-* Worker events found after the audit cutoff", file=sys.stderr)
     if unexpected_scripts:
         print(f"Unexpected active Workers: {', '.join(unexpected_scripts)}", file=sys.stderr)
     if missing_required:
