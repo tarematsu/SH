@@ -34,6 +34,9 @@ SCHEDULES: dict[str, Callable[[dt.datetime], bool]] = {
     "sh-minute-maintenance": lambda minute: True,
     "sh-monitor-other": lambda minute: True,
 }
+TRANSITION_SCHEDULES: dict[str, Callable[[dt.datetime], bool]] = {
+    "sh-buddies-monitor": lambda minute: True,
+}
 
 BAD_LOG_LEVELS = {"error", "fatal", "critical"}
 WARNING_LOG_LEVELS = {"warn", "warning"}
@@ -186,6 +189,11 @@ def main() -> int:
     cutoff_ms = iso_datetime(selection["cutoff"]).timestamp() * 1000
     transition_scripts = transitional_scripts()
     tracked_scripts = EXPECTED_SCRIPTS | transition_scripts
+    required_schedules = dict(SCHEDULES)
+    for script in transition_scripts:
+        predicate = TRANSITION_SCHEDULES.get(script)
+        if predicate is not None:
+            required_schedules[script] = predicate
 
     counts = Counter({name: 0 for name in tracked_scripts})
     outcomes: dict[str, Counter[str]] = {name: Counter() for name in tracked_scripts}
@@ -253,7 +261,7 @@ def main() -> int:
         newest_event_ms if newest_event_ms is not None else cutoff_ms,
     )
     required_recent = {
-        name for name, predicate in SCHEDULES.items()
+        name for name, predicate in required_schedules.items()
         if schedule_due(cutoff_ms, audit_end_ms, predicate)
     }
     missing_required = sorted(name for name in required_recent if counts[name] == 0)
