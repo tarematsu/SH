@@ -2,7 +2,6 @@ import './fetch-guard.js';
 import { materializedResponseMaximumAge } from '../../site/functions/lib/api-contract.js';
 import { runDispatchedPagesReadModelTask } from './pages-read-model-dispatch.js';
 import { loadMaterializedResponse } from './pages-response-store.js';
-import { processReadModelBatch } from './read-model-entry.js';
 
 export const PAGES_READ_MODEL_CRON = '* * * * *';
 export const MINUTE_READ_MODEL_QUEUE = 'stationhead-read-model';
@@ -10,10 +9,16 @@ const EMPTY_DEPENDENCIES = Object.freeze({});
 const INTERNAL_RESPONSE_PATH = '/_internal/pages-response';
 
 let publicationModulePromise;
+let minuteReadModelModulePromise;
 
 function loadPublicationModule() {
   publicationModulePromise ||= import('./pages-track-history-publication-queue.js');
   return publicationModulePromise;
+}
+
+function loadMinuteReadModelModule() {
+  minuteReadModelModulePromise ||= import('./read-model-entry.js');
+  return minuteReadModelModulePromise;
 }
 
 function scheduledTimestamp(controller) {
@@ -106,7 +111,8 @@ export async function runPagesReadModelCron(controller, env, dependencies = EMPT
 
 export async function runPagesReadModelQueue(batch, env, dependencies = EMPTY_DEPENDENCIES) {
   if (String(batch?.queue || '') === MINUTE_READ_MODEL_QUEUE) {
-    const runMinuteReadModel = dependencies.processReadModelBatch || processReadModelBatch;
+    const runMinuteReadModel = dependencies.processReadModelBatch
+      || (await loadMinuteReadModelModule()).processReadModelBatch;
     return runMinuteReadModel(batch, env);
   }
   const messages = batch.messages;
