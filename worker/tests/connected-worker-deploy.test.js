@@ -13,59 +13,61 @@ import {
 test('connected deploy decision skips an unaffected current Worker', () => {
   assert.deepEqual(
     connectedDeployDecision(
-      'sh-buddies-monitor',
+      'sh-minute-maintenance',
       ['worker/src/other-monitor-entry.js'],
       ['sh-monitor-other'],
     ),
     {
       deploy: false,
       reason: 'worker-unaffected',
-      workerName: 'sh-buddies-monitor',
+      workerName: 'sh-minute-maintenance',
     },
   );
 });
 
-test('unknown connected Worker names never deploy', async () => {
-  const expected = {
-    deploy: false,
-    reason: 'unknown-worker-build',
-    workerName: 'unknown-worker',
-  };
-  assert.deepEqual(connectedDeployDecision('unknown-worker', null, null), expected);
+test('retired and unknown connected Worker names never deploy', async () => {
+  for (const workerName of ['sh-buddies-monitor', 'unknown-worker']) {
+    const expected = {
+      deploy: false,
+      reason: 'unknown-worker-build',
+      workerName,
+    };
+    assert.deepEqual(connectedDeployDecision(workerName, null, null), expected);
 
-  let spawned = false;
-  let fetched = false;
-  const result = await deployConnectedWorker({
-    workerName: 'unknown-worker',
-    fetch: async () => {
-      fetched = true;
-      throw new Error('unexpected fetch');
-    },
-    spawnSync() {
-      spawned = true;
-      return { status: 0 };
-    },
-  });
-  assert.deepEqual(result, expected);
-  assert.equal(fetched, false);
-  assert.equal(spawned, false);
+    let spawned = false;
+    let fetched = false;
+    const result = await deployConnectedWorker({
+      workerName,
+      fetch: async () => {
+        fetched = true;
+        throw new Error('unexpected fetch');
+      },
+      spawnSync() {
+        spawned = true;
+        return { status: 0 };
+      },
+    });
+    assert.deepEqual(result, expected);
+    assert.equal(fetched, false);
+    assert.equal(spawned, false);
+  }
 });
 
 test('connected deploy decision keeps conservative fallbacks for current names', () => {
   assert.equal(
-    connectedDeployDecision('sh-buddies-monitor', null, null).deploy,
+    connectedDeployDecision('sh-monitor-other', null, null).deploy,
     true,
   );
   assert.deepEqual(
     connectedDeployDecision(
-      'sh-buddies-monitor',
+      'sh-monitor-other',
       ['worker/src/other-monitor-entry.js'],
       null,
     ),
     {
       deploy: true,
       reason: 'worker-selection-unavailable',
-      workerName: 'sh-buddies-monitor',
+      workerName: 'sh-monitor-other',
     },
   );
   assert.deepEqual(
@@ -166,7 +168,7 @@ test('non-production connected build exits before diff resolution or Wrangler', 
 test('unaffected connected build exits without invoking Wrangler', async () => {
   let spawned = false;
   const result = await deployConnectedWorker({
-    workerName: 'sh-buddies-monitor',
+    workerName: 'sh-minute-maintenance',
     changedPaths: ['worker/src/other-monitor-entry.js'],
     selectedWorkers: ['sh-monitor-other'],
     spawnSync() {
