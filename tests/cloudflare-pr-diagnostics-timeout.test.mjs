@@ -7,12 +7,14 @@ const workflow = readFileSync(
   'utf8',
 );
 
-test('Cloudflare PR diagnostics poll only when a topology rename prevents direct deploy', () => {
-  assert.match(workflow, /timeout-minutes: 10/);
-  assert.match(workflow, /CLOUDFLARE_BUILD_TIMEOUT_MINUTES: "5"/);
+test('Cloudflare PR diagnostics record topology cutovers without waiting for connected builds', () => {
   assert.match(workflow, /needs\.select-workers\.outputs\.topology_rename == 'true'/);
-  assert.match(workflow, /run: node \.github\/scripts\/cloudflare-build-diagnostics\.mjs/);
-  assert.doesNotMatch(workflow, /if \[\[ "\$status" -eq 4 \]\]/);
-  assert.doesNotMatch(workflow, /direct PR deploy already succeeded/);
-  assert.doesNotMatch(workflow, /exit "\$status"/);
+  assert.match(workflow, /topology-rename-requires-serialized-cutover/);
+  assert.match(workflow, /target_sha/);
+  assert.match(workflow, /target_branch/);
+  assert.match(workflow, /if-no-files-found: error/);
+  assert.match(workflow, /include-hidden-files: true/);
+  assert.doesNotMatch(workflow, /CLOUDFLARE_BUILD_TIMEOUT_MINUTES/);
+  assert.doesNotMatch(workflow, /cloudflare-build-diagnostics\.mjs/);
+  assert.doesNotMatch(workflow, /timeout-minutes: 10/);
 });
