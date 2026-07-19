@@ -9,7 +9,7 @@ export const REBUILD_DERIVE_QUEUE_NAME = 'stationhead-minute-derive';
 
 const RETRY_60_SECONDS = Object.freeze({ delaySeconds: 60 });
 const SUCCESS_LOG_SAMPLE_MODULUS = 16;
-const LIVE_REVISION_CHUNK_TRACKS = 1;
+const LIVE_REVISION_CHUNK_TRACKS = 2;
 const JSON_QUEUE_SEND_OPTIONS = Object.freeze({ contentType: 'json', delaySeconds: 1 });
 const SOURCE_PAYLOAD_ERROR = /queue revision \d+ source payload is unavailable or incomplete/i;
 const activeDeriveEnvs = new WeakMap();
