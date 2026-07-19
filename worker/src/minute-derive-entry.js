@@ -1,3 +1,4 @@
+import { withMinuteD1WriteThrottling } from './minute-d1-write-throttle.js';
 import {
   processMinuteDeriveMessage,
 } from './minute-derive-router.js';
@@ -20,9 +21,10 @@ async function processMinuteDeriveBatch(batch, env) {
   const messages = batch.messages;
   if (!messages?.length) return;
   const message = messages[0];
+  const activeEnv = withMinuteD1WriteThrottling(env);
 
   try {
-    const result = await processMinuteDeriveMessage(env, message.body);
+    const result = await processMinuteDeriveMessage(activeEnv, message.body);
     logMinuteDeriveResult(result);
     if (result?.failed && !result.terminal && result.retry_message !== false) {
       const retryDelayMs = result.retry_delay_ms;

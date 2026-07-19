@@ -21,6 +21,8 @@ export const MINUTE_FACT_RUNTIME_STATE_SCHEMA_SQL = `CREATE TABLE IF NOT EXISTS 
   updated_at INTEGER NOT NULL
 )`;
 
+const REBUILD_RUNTIME_CHECKPOINT_MS = 5 * 60_000;
+
 function finiteInteger(value, fallback = null) {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? Math.trunc(parsed) : fallback;
@@ -86,7 +88,15 @@ export async function recordMinuteFactRuntimeState(env, task, outcome = {}, opti
       last_processed_count=excluded.last_processed_count,last_failed_count=excluded.last_failed_count,
       pending_count=excluded.pending_count,processing_count=excluded.processing_count,
       dead_count=excluded.dead_count,oldest_pending_minute=excluded.oldest_pending_minute,
-      updated_at=excluded.updated_at`)
+      updated_at=excluded.updated_at
+    WHERE excluded.task_name<>'rebuild'
+      OR excluded.failed_total>0
+      OR sh_minute_fact_runtime_state.last_error IS NOT excluded.last_error
+      OR sh_minute_fact_runtime_state.pending_count IS NOT excluded.pending_count
+      OR sh_minute_fact_runtime_state.processing_count IS NOT excluded.processing_count
+      OR sh_minute_fact_runtime_state.dead_count IS NOT excluded.dead_count
+      OR sh_minute_fact_runtime_state.oldest_pending_minute IS NOT excluded.oldest_pending_minute
+      OR excluded.updated_at-COALESCE(sh_minute_fact_runtime_state.updated_at,0)>=${REBUILD_RUNTIME_CHECKPOINT_MS}`)
     .bind(
       name, startedAt, success ? now : null, success ? null : now,
       Math.max(0, now - startedAt), error,

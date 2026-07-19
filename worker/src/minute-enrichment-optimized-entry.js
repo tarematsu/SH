@@ -1,3 +1,4 @@
+import { withMinuteD1WriteThrottling } from './minute-d1-write-throttle.js';
 import { processMinuteEnrichment } from './minute-enrichment-entry.js';
 import {
   PLAYBACK_PATCH_STAGE,
@@ -45,8 +46,11 @@ async function processMinuteEnrichmentBatch(batch, env, dependencies = EMPTY_DEP
   const messages = batch.messages;
   if (!messages?.length) return;
   const message = messages[0];
+  const activeEnv = dependencies === EMPTY_DEPENDENCIES
+    ? withMinuteD1WriteThrottling(env)
+    : env;
   try {
-    const result = await processOptimizedMinuteEnrichment(env, message.body, dependencies);
+    const result = await processOptimizedMinuteEnrichment(activeEnv, message.body, dependencies);
     logMinuteEnrichmentResult(result);
     message.ack();
   } catch (error) {
