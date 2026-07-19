@@ -8,6 +8,7 @@ import {
   activeDeriveEnv,
   LIVE_DERIVE_QUEUE_NAME,
   REBUILD_DERIVE_QUEUE_NAME,
+  refreshSparseRevisionContinuation,
   shouldLogMinuteDeriveResult,
 } from '../src/minute-derive-entry.js';
 import { runPagesReadModelQueue } from '../src/pages-read-model-entry.js';
@@ -95,6 +96,43 @@ test('live derive uses one-track chunks while rebuild keeps the configured batch
     ['live', { id: 1 }],
     ['rebuild', { id: 2 }],
   ]);
+});
+
+test('stale sparse revision continuations refresh from durable revision progress', async () => {
+  const sent = [];
+  const body = {
+    message_type: 'minute-fact-derive-stage',
+    message_version: 1,
+    stage: 'revision-materialize',
+    revision: {
+      revision_id: 860,
+      source_job_id: 10,
+      visible_item_count: 5,
+      total_item_count: 20,
+      materialized_item_count: 2,
+    },
+  };
+  const statement = {
+    bind() { return this; },
+    async first() {
+      return {
+        source_job_id: 11,
+        source_visible_count: 8,
+        item_count: 20,
+        materialized_item_count: 4,
+        coverage_complete: 0,
+      };
+    },
+  };
+  assert.equal(await refreshSparseRevisionContinuation({
+    MINUTE_DB: { prepare: () => statement },
+    MINUTE_DERIVE_QUEUE: { async send(value, options) { sent.push({ value, options }); } },
+  }, body), true);
+  assert.equal(sent.length, 1);
+  assert.equal(sent[0].value.revision.source_job_id, 11);
+  assert.equal(sent[0].value.revision.visible_item_count, 8);
+  assert.equal(sent[0].value.revision.materialized_item_count, 4);
+  assert.deepEqual(sent[0].options, { contentType: 'json', delaySeconds: 1 });
 });
 
 test('minute derive success logs are sampled but failures are always retained', () => {
