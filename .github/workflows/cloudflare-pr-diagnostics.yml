@@ -129,7 +129,7 @@ jobs:
               break
             fi
           done < <(jq -r '.[]' <<<"$DEPLOY_COMMANDS")
-          exit "$status"
+          test "$status" -eq 0
       - name: Upload direct deploy failure log
         if: steps.deploy-workers.outcome == 'failure'
         uses: actions/upload-artifact@v4
