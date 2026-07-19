@@ -127,6 +127,11 @@ jobs:
               'sh-minute-ingest', 'sh-minute-derive', 'sh-minute-enrichment',
               'sh-minute-rebuild', 'sh-minute-maintenance', 'sh-monitor-other',
           }
+          level_names = {'level', 'severity', 'loglevel'}
+          outcome_names = {'outcome', 'status'}
+          error_names = {'error', 'exception', 'stack', 'stacktrace'}
+          bad_levels = {'warn', 'warning', 'error', 'fatal', 'critical'}
+          ok_outcomes = {'ok', 'success', 'succeeded', 'completed', 'true', '200'}
           output_dir = pathlib.Path('observability-logs')
           full_path = output_dir / 'sh-workers.ndjson'
           findings_path = output_dir / 'findings.ndjson'
@@ -142,22 +147,35 @@ jobs:
                   for index, child in enumerate(value):
                       yield from walk(child, f'{prefix}[{index}]')
 
-          def values(event, names):
-              return [str(value) for path, value in walk(event)
-                      if path.rsplit('.', 1)[-1].lower() in names and value not in (None, '', [], {})]
-
-          def cpu_values(event):
-              result = []
+          def event_metrics(event):
+              cpu_values = []
+              levels = []
+              outcomes = []
+              errors = False
               for path, value in walk(event):
-                  if 'cpu' not in path.rsplit('.', 1)[-1].lower() or isinstance(value, bool):
+                  if value in (None, '', [], {}):
                       continue
-                  try:
-                      number = float(value)
-                  except (TypeError, ValueError):
-                      continue
-                  if math.isfinite(number):
-                      result.append(number)
-              return result
+                  leaf = path.rsplit('.', 1)[-1].lower()
+                  if 'cpu' in leaf and not isinstance(value, bool):
+                      try:
+                          number = float(value)
+                      except (TypeError, ValueError):
+                          pass
+                      else:
+                          if math.isfinite(number):
+                              cpu_values.append(number)
+                  if leaf in level_names:
+                      levels.append(str(value).lower())
+                  elif leaf in outcome_names:
+                      outcomes.append(str(value).lower())
+                  elif leaf in error_names:
+                      errors = True
+              flagged = (
+                  any(item in bad_levels for item in levels)
+                  or any(item not in ok_outcomes for item in outcomes)
+                  or errors
+              )
+              return cpu_values, flagged
 
           def percentile(items, fraction):
               if not items:
@@ -169,7 +187,7 @@ jobs:
           cpu = {name: [] for name in sorted(targets)}
           findings = total = 0
           raw_paths = sorted(pathlib.Path('raw').glob('*'))
-          with full_path.open('w', encoding='utf-8') as full, findings_path.open('w', encoding='utf-8') as flagged:
+          with full_path.open('w', encoding='utf-8') as full, findings_path.open('w', encoding='utf-8') as flagged_file:
               for path in raw_paths:
                   data = path.read_bytes()
                   if data[:2] == b'\x1f\x8b':
@@ -182,18 +200,14 @@ jobs:
                       script = event.get('ScriptName')
                       if script not in targets:
                           continue
+                      samples, flagged = event_metrics(event)
                       compact = json.dumps(event, ensure_ascii=False, separators=(',', ':'))
                       full.write(compact + '\n')
                       total += 1
                       counts[script] += 1
-                      cpu[script].extend(cpu_values(event))
-                      levels = [item.lower() for item in values(event, {'level', 'severity', 'loglevel'})]
-                      outcomes = [item.lower() for item in values(event, {'outcome', 'status'})]
-                      errors = values(event, {'error', 'exception', 'stack', 'stacktrace'})
-                      if (any(item in {'warn', 'warning', 'error', 'fatal', 'critical'} for item in levels)
-                              or any(item not in {'ok', 'success', 'succeeded', 'completed', 'true', '200'} for item in outcomes)
-                              or errors):
-                          flagged.write(compact + '\n')
+                      cpu[script].extend(samples)
+                      if flagged:
+                          flagged_file.write(compact + '\n')
                           findings += 1
           summary = {
               'ok': True,
@@ -215,7 +229,7 @@ jobs:
                   'cpu_p95': percentile(samples, 0.95), 'cpu_max': max(samples) if samples else None,
               }
           (output_dir / 'summary.json').write_text(json.dumps(summary, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
-          print(json.dumps(summary, ensure_ascii=False,separators=(',', ':')))
+          print(json.dumps(summary, ensure_ascii=False, separators=(',', ':')))
           PY
 
       - name: Upload filtered logs and compact analysis
