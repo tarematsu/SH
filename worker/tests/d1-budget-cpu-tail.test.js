@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
+import { spotifyEnrichmentConfig } from '../src/committed-metadata-enrichment.js';
 import { processTrackMetadataTask } from '../src/track-metadata-entry.js';
 
 function committedBody(task = 'committed-enrichment') {
@@ -68,6 +69,15 @@ test('legacy injected combined enrichment remains a direct-call compatibility pa
   });
 });
 
+test('committed Spotify enrichment disables queue-history peer repair scans', () => {
+  const original = { metadataLimit: 1, metadataRepairLimit: 1 };
+  const active = spotifyEnrichmentConfig(original);
+  assert.notEqual(active, original);
+  assert.equal(active.metadataLimit, 1);
+  assert.equal(active.metadataRepairLimit, 0);
+  assert.equal(spotifyEnrichmentConfig(active), active);
+});
+
 test('staged revision reuse has a matching partial composite index', () => {
   const migration = readFileSync(
     new URL('../../database/facts-migrations/019_d1_budget_indexes.sql', import.meta.url),
@@ -88,5 +98,6 @@ test('committed metadata caches stage modules instead of allocating import group
   assert.match(source, /isrcModulePromise \|\|=/);
   assert.match(source, /runCommittedSpotifyMetadataEnrichment/);
   assert.match(source, /runCommittedIsrcMetadataEnrichment/);
+  assert.match(source, /metadataRepairLimit: 0/);
   assert.doesNotMatch(source, /Promise\.all\(\[/);
 });
