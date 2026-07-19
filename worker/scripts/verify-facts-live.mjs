@@ -10,6 +10,9 @@ const databaseName = process.env.FACTS_DATABASE_NAME || 'stationhead-minute';
 const attempts = Math.max(1, Math.min(10, Number(process.env.FACTS_VERIFY_ATTEMPTS || 5)));
 const delayMs = Math.max(5_000, Number(process.env.FACTS_VERIFY_DELAY_MS || 20_000));
 const freshnessMs = Math.max(120_000, Number(process.env.FACTS_VERIFY_FRESHNESS_MS || 15 * 60_000));
+const includeRevisionReach = /^(1|true|yes)$/i.test(
+  String(process.env.FACTS_VERIFY_REVISION_REACH || '').trim(),
+);
 
 function wrangler(args) {
   return execFileSync(process.execPath, [wranglerScript, ...args], {
@@ -159,7 +162,7 @@ for (let attempt = 1; attempt <= attempts; attempt += 1) {
         LIMIT 1
       )
       SELECT
-        COALESCE((SELECT MAX(id) FROM sh_minute_facts),0) AS fact_count,
+        COALESCE((SELECT id FROM sh_minute_facts ORDER BY id DESC LIMIT 1),0) AS fact_count,
         (SELECT observed_at FROM latest) AS last_observed_at,
         (SELECT minute_at FROM latest) AS last_minute_at,
         COALESCE((SELECT present FROM live),0) AS live_fact_count,
@@ -177,10 +180,12 @@ for (let attempt = 1; attempt <= attempts; attempt += 1) {
     const now = Date.now();
     let revisionReach = null;
     let revisionReachError = null;
-    try {
-      revisionReach = loadRevisionReach();
-    } catch (error) {
-      revisionReachError = String(error?.message || error).slice(0, 1000);
+    if (includeRevisionReach) {
+      try {
+        revisionReach = loadRevisionReach();
+      } catch (error) {
+        revisionReachError = String(error?.message || error).slice(0, 1000);
+      }
     }
     last = {
       result: 'pending',
@@ -200,6 +205,7 @@ for (let attempt = 1; attempt <= attempts; attempt += 1) {
       revision_source_job_present: Number(row.revision_source_job_column_count || 0) > 0,
       revision_source_visible_present: Number(row.revision_source_visible_column_count || 0) > 0,
       revision_checkpoint_present: Number(row.revision_checkpoint_column_count || 0) > 0,
+      revision_reach_enabled: includeRevisionReach,
       revision_reach: revisionReach,
       revision_reach_error: revisionReachError,
       checked_at: new Date(now).toISOString(),
