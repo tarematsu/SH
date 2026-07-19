@@ -41,6 +41,8 @@ const PIPELINE_FETCHED_SQL = `UPDATE sh_buddy_playback_pipeline SET
 const PIPELINE_FAILURE_SQL = `UPDATE sh_buddy_playback_pipeline SET
     next_attempt_at=?,lease_until=0,last_error=?,updated_at=?
   WHERE channel_alias=? AND cycle_at=? AND stage='fetch'`;
+const PIPELINE_ABORT_SQL = `DELETE FROM sh_buddy_playback_pipeline
+  WHERE channel_alias=? AND cycle_at=?`;
 
 const PIPELINE_LEASE_MS = 90_000;
 const PIPELINE_RETRY_MS = 5 * 60_000;
@@ -60,6 +62,12 @@ function cycleStart(scheduledAt, intervalMs) {
 
 function pipelineTableMissing(error) {
   return /no such table:\s*sh_buddy_playback_pipeline/i.test(String(error?.message || error));
+}
+
+function stationNotFound(error) {
+  const detail = String(error?.message || error);
+  return /Stationhead buddy staged playback API 404:/i.test(detail)
+    && /Not in database|Not found/i.test(detail);
 }
 
 function changedRows(result) {
@@ -158,6 +166,19 @@ async function recordFetchFailure(env, task, error) {
     task.channelAlias,
     task.cycleAt,
   ).run();
+}
+
+async function abortMissingStation(env, task) {
+  await env.OTHER_DB.prepare(PIPELINE_ABORT_SQL)
+    .bind(task.channelAlias, task.cycleAt)
+    .run();
+  return {
+    skipped: true,
+    reason: 'station-not-found',
+    pending: false,
+    cycle_at: task.cycleAt,
+    channel_alias: task.channelAlias,
+  };
 }
 
 function replayForRow(row, task) {
@@ -266,6 +287,7 @@ export async function processBuddyFetchCompute(env, task, dependencies = {}) {
       checked_at: task.observedAt,
     };
   } catch (error) {
+    if (stationNotFound(error)) return abortMissingStation(env, task);
     await recordFetchFailure(env, task, error).catch(() => {});
     throw error;
   }
