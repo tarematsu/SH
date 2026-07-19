@@ -1,5 +1,14 @@
+import { stripAppleMusicFields } from './api-utils.js';
+
 const wrappedDatabases = new WeakMap();
+const wrappedQueues = new WeakMap();
 const CURRENT_BITE_APPLE_BIND_INDEX = 10;
+const APPLE_FREE_QUEUE_BINDINGS = new Set([
+  'MINUTE_DERIVE_QUEUE',
+  'MINUTE_ENRICHMENT_QUEUE',
+  'PERSIST_QUEUE',
+  'TRACK_METADATA_QUEUE',
+]);
 
 function normalizedSql(value) {
   return String(value || '').replace(/\s+/g, ' ').trim().toLowerCase();
@@ -80,6 +89,23 @@ export function appleMusicFreeD1(db) {
   return wrapped;
 }
 
+export function appleMusicFreeQueue(queue) {
+  if (!queue?.send) return queue;
+  const cached = wrappedQueues.get(queue);
+  if (cached) return cached;
+  const wrapped = new Proxy(queue, {
+    get(target, property) {
+      if (property === 'send') {
+        return (message, options) => target.send(stripAppleMusicFields(message), options);
+      }
+      const result = Reflect.get(target, property, target);
+      return typeof result === 'function' ? result.bind(target) : result;
+    },
+  });
+  wrappedQueues.set(queue, wrapped);
+  return wrapped;
+}
+
 export function withAppleMusicFreeD1(env) {
   if (!env) return env;
   const db = appleMusicFreeD1(env.DB);
@@ -90,6 +116,19 @@ export function withAppleMusicFreeD1(env) {
       if (property === 'DB') return db;
       if (property === 'MINUTE_DB') return minuteDb;
       if (property === 'BUDDIES_DB') return buddiesDb;
+      return Reflect.get(target, property, receiver);
+    },
+  });
+}
+
+export function withAppleMusicFreeRuntime(env) {
+  const d1Env = withAppleMusicFreeD1(env);
+  if (!d1Env) return d1Env;
+  return new Proxy(d1Env, {
+    get(target, property, receiver) {
+      if (APPLE_FREE_QUEUE_BINDINGS.has(property)) {
+        return appleMusicFreeQueue(Reflect.get(target, property, receiver));
+      }
       return Reflect.get(target, property, receiver);
     },
   });
