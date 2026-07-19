@@ -10,8 +10,17 @@ import {
 
 const RETRY_30_SECONDS = Object.freeze({ delaySeconds: 30 });
 const EMPTY_DEPENDENCIES = Object.freeze({});
+const SUCCESS_LOG_SAMPLE_MODULUS = 16;
+
+function shouldLogMinuteEnrichmentResult(result) {
+  if (result?.skipped === true || result?.reason) return true;
+  const minuteAt = Number(result?.minuteAt);
+  if (!Number.isFinite(minuteAt)) return false;
+  return Math.abs(Math.floor(minuteAt / 60_000)) % SUCCESS_LOG_SAMPLE_MODULUS === 0;
+}
 
 function logMinuteEnrichmentResult(result) {
+  if (!shouldLogMinuteEnrichmentResult(result)) return;
   console.log(JSON.stringify({
     event: 'minute_enrichment_completed',
     skipped: result?.skipped === true,
@@ -31,8 +40,29 @@ function logMinuteEnrichmentResult(result) {
   }));
 }
 
+function sanitizeIdentityBody(body) {
+  const tracks = body?.queue?.tracks;
+  if (!Array.isArray(tracks) || tracks.length !== 1) return body;
+  const track = tracks[0];
+  if (!track || typeof track !== 'object' || !Object.hasOwn(track, 'apple_music_id')) return body;
+  const { apple_music_id: _removedAppleMusicId, ...activeTrack } = track;
+  return {
+    ...body,
+    queue: {
+      ...body.queue,
+      tracks: [activeTrack],
+    },
+  };
+}
+
+function activeEnrichmentBody(body) {
+  return body?.stage === 'identity'
+    ? sanitizeIdentityBody(body)
+    : stripAppleMusicFields(body);
+}
+
 async function processOptimizedMinuteEnrichment(env, body, dependencies = EMPTY_DEPENDENCIES) {
-  const activeBody = stripAppleMusicFields(body);
+  const activeBody = activeEnrichmentBody(body);
   if (activeBody?.stage === 'playback') {
     const run = dependencies.processMinutePlaybackResolve || processMinutePlaybackResolve;
     return run(env, activeBody, dependencies.playback || EMPTY_DEPENDENCIES);
@@ -65,7 +95,12 @@ async function processMinuteEnrichmentBatch(batch, env, dependencies = EMPTY_DEP
   }
 }
 
-export { processMinuteEnrichmentBatch, processOptimizedMinuteEnrichment };
+export {
+  activeEnrichmentBody,
+  processMinuteEnrichmentBatch,
+  processOptimizedMinuteEnrichment,
+  shouldLogMinuteEnrichmentResult,
+};
 
 export default {
   queue: processMinuteEnrichmentBatch,
