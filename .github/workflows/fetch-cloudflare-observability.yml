@@ -7,6 +7,7 @@ on:
       - "worker/**"
       - ".github/workflows/fetch-cloudflare-observability.yml"
       - ".github/scripts/analyze-worker-observability.py"
+      - ".github/scripts/enforce-worker-cpu-budget.py"
   workflow_dispatch:
     inputs:
       since:
@@ -167,6 +168,10 @@ jobs:
         shell: bash
         run: python3 .github/scripts/analyze-worker-observability.py
 
+      - name: Enforce stable 8 ms Worker CPU budget
+        shell: bash
+        run: python3 .github/scripts/enforce-worker-cpu-budget.py
+
       - name: Publish compact audit summary
         if: always()
         shell: bash
@@ -187,6 +192,11 @@ jobs:
           print(f"- Missing scheduled Workers: `{', '.join(summary['missing_required_scripts']) or 'none'}`")
           cpu = summary['cpu_ms']
           print(f"- CPU ms: avg `{cpu['avg']}`, p95 `{cpu['p95']}`, max `{cpu['max']}`")
+          budget_path = pathlib.Path('observability-logs/cpu-budget.json')
+          if budget_path.exists():
+              budget = json.loads(budget_path.read_text(encoding='utf-8'))
+              violations = ', '.join(item['worker'] for item in budget['violations']) or 'none'
+              print(f"- CPU p95 budget: `<= {budget['budget_ms']} ms`; violations: `{violations}`")
           print()
           print('| Worker | events | errors | CPU avg ms | CPU p95 ms | CPU max ms | >10 ms |')
           print('|---|---:|---:|---:|---:|---:|---:|')
