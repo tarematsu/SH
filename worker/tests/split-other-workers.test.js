@@ -258,10 +258,24 @@ test('Pages read-model Worker owns both Queue boundaries', async () => {
   await runPagesReadModelQueue({
     queue: MINUTE_READ_MODEL_QUEUE,
     messages: [{
-      body: { message_type: 'stationhead-read-model', message_version: 1, read_model: {} },
+      body: {
+        message_type: 'stationhead-read-model',
+        message_version: 1,
+        read_model: {
+          queue: {
+            value: {
+              tracks: [{ title: null, artist: null, album_name: null, thumbnail_url: null }],
+            },
+          },
+        },
+      },
       ack() { events.push('ack'); },
       retry() { events.push('retry'); },
     }],
-  }, {}, {});
-  assert.deepEqual(events, ['ack']);
+  }, {
+    TRACK_METADATA_QUEUE: {
+      async send() { events.push('metadata'); },
+    },
+  }, {});
+  assert.deepEqual(events, ['metadata', 'ack']);
 });
