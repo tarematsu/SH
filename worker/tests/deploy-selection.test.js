@@ -36,7 +36,8 @@ test('minute and Pages read-model modules redeploy the consolidated Pages Worker
   assert.deepEqual(select(['worker/src/pages-read-model-entry.js']).workers, ['sh-pages-read-model']);
 });
 
-test('monitor Queue modules redeploy the consolidated monitor Worker', () => {
+test('monitor and raw collection modules redeploy the consolidated monitor Worker', () => {
+  assert.deepEqual(select(['worker/src/raw-collector-entry.js']).workers, ['sh-monitor-other']);
   assert.deepEqual(select(['worker/src/buddy-playback-entry.js']).workers, ['sh-monitor-other']);
   assert.deepEqual(select(['worker/src/host-monitor-entry.js']).workers, ['sh-monitor-other']);
   assert.deepEqual(select(['worker/src/other-monitor-entry.js']).workers, ['sh-monitor-other']);
@@ -69,7 +70,7 @@ test('bundled site function changes redeploy only the Pages materializer', () =>
   assert.deepEqual(result.diagnostics, []);
 });
 
-test('other monitor changes do not pull Pages or retired maintenance Workers in', () => {
+test('other monitor changes do not pull Pages or retired Workers in', () => {
   const result = select(['worker/src/other-monitor-support.js']);
   assert.deepEqual(result.workers, ['sh-monitor-other']);
   assert.deepEqual(result.commands, ['deploy:other']);
@@ -90,7 +91,8 @@ test('deploy script-only package changes do not redeploy runtime Workers', () =>
 
 test('lockfile changes conservatively redeploy every Worker', () => {
   const result = select(['worker/package-lock.json']);
-  assert.equal(result.workers.length, 11);
+  assert.equal(result.workers.length, 10);
+  assert.equal(result.workers.includes('sh-buddies-monitor'), false);
 });
 
 test('tests and verification scripts do not redeploy runtime Workers', () => {
@@ -104,20 +106,21 @@ test('tests and verification scripts do not redeploy runtime Workers', () => {
 
 test('shared package changes select every Worker that imports sh-shared', () => {
   const result = select(['packages/sh-shared/index.mjs']);
-  assert.ok(result.workers.includes('sh-buddies-monitor'));
+  assert.ok(result.workers.includes('sh-monitor-other'));
   assert.ok(result.workers.includes('sh-buddies-ingest'));
   assert.ok(result.workers.includes('sh-buddies-comments'));
+  assert.equal(result.workers.includes('sh-buddies-monitor'), false);
   assert.ok(result.workers.length >= 3);
 });
 
 test('unresolved runtime source changes fall back to all Workers', () => {
   const result = select(['worker/src/deleted-runtime-module.js']);
-  assert.equal(result.workers.length, 11);
+  assert.equal(result.workers.length, 10);
 });
 
 test('manual selection deploys all Workers in durable order', () => {
   const result = select([], ['--all']);
-  assert.deepEqual(result.workers.slice(0, 9), [
+  assert.deepEqual(result.workers, [
     'sh-minute-derive',
     'sh-minute-enrichment',
     'sh-minute-rebuild',
@@ -126,8 +129,9 @@ test('manual selection deploys all Workers in durable order', () => {
     'sh-buddies-comments',
     'sh-buddies-persist',
     'sh-buddies-ingest',
-    'sh-buddies-monitor',
+    'sh-pages-read-model',
+    'sh-monitor-other',
   ]);
-  assert.equal(result.workers.length, 11);
-  assert.equal(result.workers.at(-1), 'sh-monitor-other');
+  assert.equal(result.commands.includes('deploy:buddies'), false);
+  assert.equal(result.workers.length, 10);
 });
