@@ -8,8 +8,11 @@ import datetime as dt
 import gzip
 import json
 import math
+import os
 import pathlib
+import re
 import statistics
+import subprocess
 import sys
 from collections import Counter
 from typing import Any, Callable, Iterable
@@ -36,6 +39,7 @@ BAD_LOG_LEVELS = {"error", "fatal", "critical"}
 WARNING_LOG_LEVELS = {"warn", "warning"}
 CPU_REPORT_LIMIT_MS = 10.0
 LOG_INGESTION_GRACE_MS = 90_000
+WORKER_NAME_DIFF = re.compile(r'^[+-]\s*"name"\s*:\s*"(sh-[^"]+)"', re.MULTILINE)
 
 
 def finite_number(value: Any) -> float | None:
@@ -129,6 +133,45 @@ def schedule_due(start_ms: float, end_ms: float, predicate: Callable[[dt.datetim
     return False
 
 
+def transitional_scripts() -> set[str]:
+    """Return Worker names removed by a PR topology rename.
+
+    PR validation runs before the cutover, so the old script may still emit logs.
+    Main-branch and scheduled audits remain strict because this allowance is only
+    active for pull_request events with an actual Wrangler name diff.
+    """
+    if os.environ.get("GITHUB_EVENT_NAME") != "pull_request":
+        return set()
+    base_ref = os.environ.get("GITHUB_BASE_REF")
+    if not base_ref:
+        return set()
+    try:
+        result = subprocess.run(
+            [
+                "git", "diff", "--diff-filter=M", "-U0",
+                f"origin/{base_ref}..HEAD", "--", "worker/wrangler*.jsonc",
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return set()
+
+    removed: set[str] = set()
+    added: set[str] = set()
+    for line in result.stdout.splitlines():
+        match = WORKER_NAME_DIFF.match(line)
+        if not match:
+            continue
+        if line.startswith("-"):
+            removed.add(match.group(1))
+        elif line.startswith("+"):
+            added.add(match.group(1))
+    return removed - added
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--raw-dir", default="raw")
@@ -141,6 +184,8 @@ def main() -> int:
     output_dir.mkdir(parents=True, exist_ok=True)
     selection = json.loads(pathlib.Path(args.selection).read_text(encoding="utf-8"))
     cutoff_ms = iso_datetime(selection["cutoff"]).timestamp() * 1000
+    transition_scripts = transitional_scripts()
+    allowed_scripts = EXPECTED_SCRIPTS | transition_scripts
 
     counts = Counter({name: 0 for name in EXPECTED_SCRIPTS})
     outcomes: dict[str, Counter[str]] = {name: Counter() for name in EXPECTED_SCRIPTS}
@@ -174,8 +219,10 @@ def main() -> int:
             full.write(compact + "\n")
             total += 1
 
-            if script not in EXPECTED_SCRIPTS:
+            if script not in allowed_scripts:
                 findings.write(json.dumps({"reason": ["unexpected_script"], "event": event}, ensure_ascii=False, separators=(",", ":")) + "\n")
+                continue
+            if script in transition_scripts:
                 continue
 
             counts[script] += 1
@@ -202,7 +249,7 @@ def main() -> int:
                 errors[script] += 1
                 findings.write(json.dumps({"reason": reasons, "event": event}, ensure_ascii=False, separators=(",", ":")) + "\n")
 
-    unexpected_scripts = sorted(observed_sh_scripts - EXPECTED_SCRIPTS)
+    unexpected_scripts = sorted(observed_sh_scripts - allowed_scripts)
     audit_end_ms = min(
         dt.datetime.now(dt.timezone.utc).timestamp() * 1000 - LOG_INGESTION_GRACE_MS,
         newest_event_ms if newest_event_ms is not None else cutoff_ms,
@@ -243,6 +290,7 @@ def main() -> int:
         "newest_object_modified": selection["newest_object_modified"],
         "events": total,
         "error_events": error_events,
+        "transitional_scripts": sorted(transition_scripts),
         "unexpected_scripts": unexpected_scripts,
         "required_scheduled_scripts": sorted(required_recent),
         "missing_required_scripts": missing_required,
@@ -259,6 +307,8 @@ def main() -> int:
 
     if total == 0:
         print("No sh-* Worker events found after the audit cutoff", file=sys.stderr)
+    if transition_scripts:
+        print(f"Allowed PR transition Workers: {', '.join(sorted(transition_scripts))}", file=sys.stderr)
     if unexpected_scripts:
         print(f"Unexpected active Workers: {', '.join(unexpected_scripts)}", file=sys.stderr)
     if missing_required:
