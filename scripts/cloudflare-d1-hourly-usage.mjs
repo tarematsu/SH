@@ -14,8 +14,8 @@ const outputDir = path.resolve(process.env.D1_USAGE_OUTPUT_DIR || 'd1-usage');
 await mkdir(outputDir, { recursive: true });
 
 function numeric(value) {
-  const number = Number(value || 0);
-  return Number.isFinite(number) ? number : 0;
+  const parsed = Number(value || 0);
+  return Number.isFinite(parsed) ? parsed : 0;
 }
 
 function percentage(value, limit) {
@@ -50,8 +50,8 @@ async function referencedDatabases() {
   const databases = new Map();
   const pattern = /"database_name"\s*:\s*"([^"]+)"[\s\S]{0,300}?"database_id"\s*:\s*"([^"]+)"/g;
   for (const file of files) {
-    const text = await readFile(path.join(workerDir, file), 'utf8');
-    for (const match of text.matchAll(pattern)) {
+    const source = await readFile(path.join(workerDir, file), 'utf8');
+    for (const match of source.matchAll(pattern)) {
       const [, name, id] = match;
       const current = databases.get(id) || { id, name, configs: [] };
       current.configs.push(file);
@@ -63,24 +63,21 @@ async function referencedDatabases() {
 }
 
 async function discoverAccounts(referenced) {
-  const accountsResponse = await api(`${API_ROOT}/accounts?per_page=50`);
-  const matches = [];
-  for (const account of accountsResponse.result || []) {
-    let response;
+  const response = await api(`${API_ROOT}/accounts?per_page=50`);
+  const accounts = [];
+  for (const account of response.result || []) {
+    let listed;
     try {
-      response = await api(`${API_ROOT}/accounts/${account.id}/d1/database?per_page=100`);
+      listed = await api(`${API_ROOT}/accounts/${account.id}/d1/database?per_page=100`);
     } catch (error) {
       console.warn(`Skipping account ${account.id}: ${error.message}`);
       continue;
     }
-    const databases = response.result || [];
-    const referencedHere = databases.filter((database) => referenced.has(database.uuid || database.id));
-    if (referencedHere.length) {
-      matches.push({ id: account.id, name: account.name, databases, referenced: referencedHere });
-    }
+    const matches = (listed.result || []).filter((database) => referenced.has(database.uuid || database.id));
+    if (matches.length) accounts.push({ id: account.id, name: account.name, referenced: matches });
   }
-  if (!matches.length) throw new Error('No accessible Cloudflare account contains the referenced D1 databases');
-  return matches;
+  if (!accounts.length) throw new Error('No accessible account contains repository D1 databases');
+  return accounts;
 }
 
 const query = `query D1HourlyUsage($accountTag: string!, $start: Time!, $end: Time!) {
@@ -91,16 +88,8 @@ const query = `query D1HourlyUsage($accountTag: string!, $start: Time!, $end: Ti
         filter: { datetime_geq: $start, datetime_leq: $end }
         orderBy: [datetimeFifteenMinutes_ASC]
       ) {
-        sum {
-          readQueries
-          writeQueries
-          rowsRead
-          rowsWritten
-        }
-        dimensions {
-          datetimeFifteenMinutes
-          databaseId
-        }
+        sum { readQueries writeQueries rowsRead rowsWritten }
+        dimensions { datetimeFifteenMinutes databaseId }
       }
     }
   }
@@ -114,60 +103,47 @@ async function usageForAccount(accountId, start, end) {
   return body.data?.viewer?.accounts?.[0]?.d1AnalyticsAdaptiveGroups || [];
 }
 
+function emptyUsage(extra = {}) {
+  return { ...extra, rowsRead: 0, rowsWritten: 0, readQueries: 0, writeQueries: 0 };
+}
+
+function addUsage(target, source) {
+  target.rowsRead += numeric(source.rowsRead);
+  target.rowsWritten += numeric(source.rowsWritten);
+  target.readQueries += numeric(source.readQueries);
+  target.writeQueries += numeric(source.writeQueries);
+}
+
 const generatedAt = new Date();
 const end = generatedAt.toISOString();
 const start = new Date(generatedAt.getTime() - WINDOW_MINUTES * 60_000).toISOString();
 const referenced = await referencedDatabases();
 const accounts = await discoverAccounts(referenced);
-const databaseNames = new Map();
-for (const account of accounts) {
-  for (const database of account.databases) {
-    databaseNames.set(database.uuid || database.id, database.name || database.uuid || database.id);
-  }
-}
-for (const database of referenced.values()) databaseNames.set(database.id, database.name);
-
-const groups = [];
-for (const account of accounts) {
-  const rows = await usageForAccount(account.id, start, end);
-  for (const row of rows) groups.push({ ...row, accountId: account.id, accountName: account.name });
-}
-
-const total = { rowsRead: 0, rowsWritten: 0, readQueries: 0, writeQueries: 0 };
+const databaseNames = new Map([...referenced.values()].map(({ id, name }) => [id, name]));
+const total = emptyUsage();
 const byDatabase = new Map();
 const byBucket = new Map();
-for (const group of groups) {
-  const databaseId = String(group.dimensions?.databaseId || 'unknown');
-  const bucket = String(group.dimensions?.datetimeFifteenMinutes || 'unknown');
-  const sum = group.sum || {};
-  const values = {
-    rowsRead: numeric(sum.rowsRead),
-    rowsWritten: numeric(sum.rowsWritten),
-    readQueries: numeric(sum.readQueries),
-    writeQueries: numeric(sum.writeQueries),
-  };
-  for (const key of Object.keys(total)) total[key] += values[key];
 
-  const database = byDatabase.get(databaseId) || {
-    databaseId,
-    databaseName: databaseNames.get(databaseId) || databaseId,
-    rowsRead: 0,
-    rowsWritten: 0,
-    readQueries: 0,
-    writeQueries: 0,
-  };
-  for (const key of Object.keys(total)) database[key] += values[key];
-  byDatabase.set(databaseId, database);
+for (const account of accounts) {
+  const groups = await usageForAccount(account.id, start, end);
+  for (const group of groups) {
+    const databaseId = String(group.dimensions?.databaseId || '');
+    if (!referenced.has(databaseId)) continue;
+    const bucket = String(group.dimensions?.datetimeFifteenMinutes || 'unknown');
+    const values = group.sum || {};
+    addUsage(total, values);
 
-  const interval = byBucket.get(bucket) || {
-    bucket,
-    rowsRead: 0,
-    rowsWritten: 0,
-    readQueries: 0,
-    writeQueries: 0,
-  };
-  for (const key of Object.keys(total)) interval[key] += values[key];
-  byBucket.set(bucket, interval);
+    const database = byDatabase.get(databaseId) || emptyUsage({
+      databaseId,
+      databaseName: databaseNames.get(databaseId) || databaseId,
+    });
+    addUsage(database, values);
+    byDatabase.set(databaseId, database);
+
+    const interval = byBucket.get(bucket) || emptyUsage({ bucket });
+    addUsage(interval, values);
+    byBucket.set(bucket, interval);
+  }
 }
 
 const hourlyTarget = {
@@ -189,10 +165,11 @@ if (total.rowsWritten >= hourlyTarget.rowsWritten) {
 }
 
 const databases = [...byDatabase.values()]
-  .sort((a, b) => (b.rowsRead + b.rowsWritten) - (a.rowsRead + a.rowsWritten));
-const buckets = [...byBucket.values()].sort((a, b) => a.bucket.localeCompare(b.bucket));
+  .sort((left, right) => (right.rowsRead + right.rowsWritten) - (left.rowsRead + left.rowsWritten));
+const buckets = [...byBucket.values()].sort((left, right) => left.bucket.localeCompare(right.bucket));
 const report = {
   generatedAt: generatedAt.toISOString(),
+  scope: 'repository-referenced-databases',
   window: { start, end, minutes: WINDOW_MINUTES },
   limits: {
     freePerDay: { rowsRead: FREE_READ_ROWS_PER_DAY, rowsWritten: FREE_WRITE_ROWS_PER_DAY },
@@ -215,7 +192,7 @@ const report = {
   },
   ok: violations.length === 0,
   violations,
-  accounts: accounts.map((account) => ({ id: account.id, name: account.name })),
+  accounts: accounts.map(({ id, name }) => ({ id, name })),
   databases,
   buckets,
 };
@@ -227,6 +204,7 @@ const lines = [
   '',
   `Generated: ${report.generatedAt}`,
   `Window: ${start} to ${end}`,
+  'Scope: D1 databases referenced by this repository',
   '',
   '| Metric | Observed hour | 50% free-tier hourly target | Utilization | 24h projection | Headroom |',
   '|---|---:|---:|---:|---:|---:|',
@@ -243,4 +221,12 @@ const lines = [
   '',
 ];
 await writeFile(path.join(outputDir, 'hourly-summary.md'), `${lines.join('\n')}\n`);
-console.log(JSON.stringify({ window: report.window, observed: total, projectedDaily, utilization: report.utilization, ok: report.ok, violations }));
+console.log(JSON.stringify({
+  scope: report.scope,
+  window: report.window,
+  observed: total,
+  projectedDaily,
+  utilization: report.utilization,
+  ok: report.ok,
+  violations,
+}));
