@@ -72,43 +72,85 @@ async function recordDeriveDispatchState(env, summary, startedAt, dependencies =
   }, { startedAt });
 }
 
-async function sendDeriveMessages(env, triggers, revisionRecoveries) {
-  const triggerCount = triggers.length;
-  const recoveryCount = revisionRecoveries.length;
-  const messageCount = triggerCount + recoveryCount;
-  if (!messageCount) return;
+function rebuildDeriveMessage(message) {
+  return String(message?.job_kind || message?.job?.job_kind || '').toLowerCase() === 'rebuild'
+    || message?.revision?.rebuild === true;
+}
 
-  if (typeof env.MINUTE_DERIVE_QUEUE.sendBatch === 'function') {
+function appendMessage(target, message) {
+  target[target.length] = message;
+}
+
+function splitDeriveMessages(triggers, revisionRecoveries) {
+  const live = [];
+  const rebuild = [];
+  for (let index = 0; index < triggers.length; index += 1) {
+    const message = triggers[index];
+    appendMessage(rebuildDeriveMessage(message) ? rebuild : live, message);
+  }
+  for (let index = 0; index < revisionRecoveries.length; index += 1) {
+    const message = revisionRecoveries[index];
+    appendMessage(rebuildDeriveMessage(message) ? rebuild : live, message);
+  }
+  return { live, rebuild };
+}
+
+async function sendQueueMessages(queue, messages, bindingName) {
+  const messageCount = messages.length;
+  if (!messageCount) return;
+  if (!queue?.send && typeof queue?.sendBatch !== 'function') {
+    throw new Error(`${bindingName} binding is missing`);
+  }
+
+  if (typeof queue.sendBatch === 'function') {
     const batch = new Array(messageCount);
-    let offset = 0;
-    for (let index = 0; index < triggerCount; index += 1) {
-      batch[offset] = { body: triggers[index], contentType: 'json' };
-      offset += 1;
+    for (let index = 0; index < messageCount; index += 1) {
+      batch[index] = { body: messages[index], contentType: 'json' };
     }
-    for (let index = 0; index < recoveryCount; index += 1) {
-      batch[offset] = { body: revisionRecoveries[index], contentType: 'json' };
-      offset += 1;
-    }
-    await env.MINUTE_DERIVE_QUEUE.sendBatch(batch);
+    await queue.sendBatch(batch);
     return;
   }
 
   const sends = new Array(messageCount);
-  let offset = 0;
-  for (let index = 0; index < triggerCount; index += 1) {
-    sends[offset] = env.MINUTE_DERIVE_QUEUE.send(triggers[index], JSON_QUEUE_SEND_OPTIONS);
-    offset += 1;
-  }
-  for (let index = 0; index < recoveryCount; index += 1) {
-    sends[offset] = env.MINUTE_DERIVE_QUEUE.send(revisionRecoveries[index], JSON_QUEUE_SEND_OPTIONS);
-    offset += 1;
+  for (let index = 0; index < messageCount; index += 1) {
+    sends[index] = queue.send(messages[index], JSON_QUEUE_SEND_OPTIONS);
   }
   await Promise.all(sends);
 }
 
+async function sendDeriveMessages(env, triggers, revisionRecoveries) {
+  const routed = splitDeriveMessages(triggers, revisionRecoveries);
+  const liveQueue = env?.MINUTE_LIVE_DERIVE_QUEUE || env?.MINUTE_DERIVE_QUEUE;
+  const rebuildQueue = env?.MINUTE_DERIVE_QUEUE || liveQueue;
+
+  if (liveQueue === rebuildQueue) {
+    const messageCount = routed.live.length + routed.rebuild.length;
+    const messages = new Array(messageCount);
+    let offset = 0;
+    for (let index = 0; index < routed.live.length; index += 1) {
+      messages[offset] = routed.live[index];
+      offset += 1;
+    }
+    for (let index = 0; index < routed.rebuild.length; index += 1) {
+      messages[offset] = routed.rebuild[index];
+      offset += 1;
+    }
+    await sendQueueMessages(liveQueue, messages, 'MINUTE_DERIVE_QUEUE');
+  } else {
+    await Promise.all([
+      sendQueueMessages(liveQueue, routed.live, 'MINUTE_LIVE_DERIVE_QUEUE'),
+      sendQueueMessages(rebuildQueue, routed.rebuild, 'MINUTE_DERIVE_QUEUE'),
+    ]);
+  }
+  return routed;
+}
+
 export async function dispatchPendingMinuteFacts(env, dependencies = EMPTY_DEPENDENCIES, ctx = null) {
-  if (!env?.MINUTE_DERIVE_QUEUE?.send && typeof env?.MINUTE_DERIVE_QUEUE?.sendBatch !== 'function') {
-    throw new Error('MINUTE_DERIVE_QUEUE binding is missing');
+  if (!env?.MINUTE_LIVE_DERIVE_QUEUE?.send
+      && typeof env?.MINUTE_LIVE_DERIVE_QUEUE?.sendBatch !== 'function'
+      && !env?.MINUTE_DERIVE_QUEUE?.send
+      && typeof env?.MINUTE_DERIVE_QUEUE?.sendBatch !== 'function') {
+    throw new Error('minute derive Queue binding is missing');
   }
   const startedAt = Date.now();
   const loadFacts = dependencies.load || pendingMinuteDeriveTriggers;
@@ -119,7 +161,7 @@ export async function dispatchPendingMinuteFacts(env, dependencies = EMPTY_DEPEN
     loadFacts(env, { limit: factLimit }),
     loadRevisions(env, { limit: recoveryLimit, now: startedAt }),
   ]);
-  await sendDeriveMessages(env, triggers, revisionRecoveries);
+  const routed = await sendDeriveMessages(env, triggers, revisionRecoveries);
   if (revisionRecoveries.length) {
     const mark = dependencies.markRevisionRecovery || markSparseRevisionRecoveryDispatched;
     const revisionIds = new Array(revisionRecoveries.length);
@@ -132,6 +174,8 @@ export async function dispatchPendingMinuteFacts(env, dependencies = EMPTY_DEPEN
     event: 'minute_derive_dispatch',
     dispatched: triggers.length,
     revision_recoveries: revisionRecoveries.length,
+    live_messages: routed.live.length,
+    rebuild_messages: routed.rebuild.length,
     limit: factLimit,
     recovery_limit: recoveryLimit,
   };
