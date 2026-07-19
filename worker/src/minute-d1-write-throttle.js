@@ -1,8 +1,11 @@
 const ORIGINAL_D1_STATEMENT = Symbol('minute-original-d1-statement');
+const STATEMENT_META = Symbol('minute-d1-statement-meta');
 const REWRITE_CACHE_LIMIT = 24;
+const REVISION_PROGRESS_CACHE_LIMIT = 64;
 const CHECKPOINT_MS = 5 * 60_000;
 const rewriteCache = new Map();
 const wrappedDatabases = new WeakMap();
+const revisionProgressCaches = new WeakMap();
 
 const TRACK_UPDATE = `UPDATE sh_tracks SET
       isrc=COALESCE(isrc,?1),spotify_id=COALESCE(spotify_id,?2),
@@ -95,11 +98,79 @@ function rewriteMinuteD1Sql(value) {
     : writeOptimized;
 }
 
-function wrapStatement(statement) {
+function statementKind(sql) {
+  const normalized = compact(sql);
+  if (normalized.startsWith('select id,status,effective_at,item_count,materialized_item_count,')
+      && normalized.includes('from sh_queue_revisions')
+      && normalized.includes("status in ('complete','pending')")) {
+    return 'revision-source';
+  }
+  if (normalized === 'select count(*) as item_count from sh_queue_revision_items where revision_id=?') {
+    return 'revision-count';
+  }
+  if (normalized.startsWith('insert into sh_queue_revision_items(')) return 'revision-item-write';
+  return null;
+}
+
+function progressCacheFor(db) {
+  let cache = revisionProgressCaches.get(db);
+  if (!cache) {
+    cache = new Map();
+    revisionProgressCaches.set(db, cache);
+  }
+  return cache;
+}
+
+function rememberCompleteRevision(cache, row) {
+  const revisionId = Number(row?.id);
+  const rawCount = row?.materialized_item_count;
+  const count = rawCount == null ? Number.NaN : Number(rawCount);
+  const complete = row?.status === 'complete' && Number(row?.coverage_complete) === 1;
+  if (!Number.isFinite(revisionId)) return;
+  if (!complete || !Number.isFinite(count) || count < 0) {
+    cache.delete(revisionId);
+    return;
+  }
+  if (cache.size >= REVISION_PROGRESS_CACHE_LIMIT && !cache.has(revisionId)) {
+    const oldest = cache.keys().next().value;
+    if (oldest !== undefined) cache.delete(oldest);
+  }
+  cache.set(revisionId, Math.trunc(count));
+}
+
+function invalidateRevision(cache, meta) {
+  const revisionId = Number(meta?.binds?.[0]);
+  if (Number.isFinite(revisionId)) cache.delete(revisionId);
+}
+
+function wrapStatement(statement, meta, cache) {
   return new Proxy(statement, {
     get(target, property) {
       if (property === ORIGINAL_D1_STATEMENT) return target;
-      if (property === 'bind') return (...args) => wrapStatement(target.bind(...args));
+      if (property === STATEMENT_META) return meta;
+      if (property === 'bind') {
+        return (...args) => wrapStatement(target.bind(...args), { ...meta, binds: args }, cache);
+      }
+      if (property === 'first') {
+        return async (...args) => {
+          if (meta.kind === 'revision-count') {
+            const revisionId = Number(meta.binds?.[0]);
+            if (Number.isFinite(revisionId) && cache.has(revisionId)) {
+              return { item_count: cache.get(revisionId), cached_revision_progress: true };
+            }
+          }
+          const result = await target.first(...args);
+          if (meta.kind === 'revision-source') rememberCompleteRevision(cache, result);
+          return result;
+        };
+      }
+      if (property === 'run') {
+        return async (...args) => {
+          const result = await target.run(...args);
+          if (meta.kind === 'revision-item-write' && result?.success !== false) invalidateRevision(cache, meta);
+          return result;
+        };
+      }
       const value = Reflect.get(target, property, target);
       return typeof value === 'function' ? value.bind(target) : value;
     },
@@ -109,20 +180,34 @@ function wrapStatement(statement) {
 function wrapDatabase(db) {
   const cached = wrappedDatabases.get(db);
   if (cached) return cached;
+  const progressCache = progressCacheFor(db);
   const wrapped = new Proxy(db, {
     get(target, property) {
       if (property === 'prepare') {
         return (sql) => {
           const original = String(sql || '');
           const rewritten = rewriteMinuteD1Sql(original);
+          const kind = statementKind(rewritten);
           const statement = target.prepare(rewritten);
-          return rewritten === original ? statement : wrapStatement(statement);
+          return rewritten === original && kind === null
+            ? statement
+            : wrapStatement(statement, { kind, binds: [] }, progressCache);
         };
       }
       if (property === 'batch') {
-        return (statements) => target.batch(
-          (statements || []).map((statement) => statement?.[ORIGINAL_D1_STATEMENT] || statement),
-        );
+        return async (statements) => {
+          const list = statements || [];
+          const results = await target.batch(
+            list.map((statement) => statement?.[ORIGINAL_D1_STATEMENT] || statement),
+          );
+          for (let index = 0; index < list.length; index += 1) {
+            const meta = list[index]?.[STATEMENT_META];
+            if (meta?.kind === 'revision-item-write' && results?.[index]?.success !== false) {
+              invalidateRevision(progressCache, meta);
+            }
+          }
+          return results;
+        };
       }
       const value = Reflect.get(target, property, target);
       return typeof value === 'function' ? value.bind(target) : value;
@@ -145,5 +230,8 @@ export function withMinuteD1WriteThrottling(env) {
 
 export function resetMinuteD1WriteRewriteCacheForTests(db) {
   rewriteCache.clear();
-  if (db) wrappedDatabases.delete(db);
+  if (db) {
+    wrappedDatabases.delete(db);
+    revisionProgressCaches.delete(db);
+  }
 }
