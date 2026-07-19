@@ -22,7 +22,7 @@ test('CPU budget treats 8 ms itself as a violation', () => {
 });
 
 test('production configs bound comment work and metadata refresh frequency', () => {
-  assert.equal(config('wrangler.comments.jsonc').vars.CHAT_LIMIT, 40);
+  assert.equal(config('wrangler.comments.jsonc').vars.CHAT_LIMIT, 25);
   assert.equal(config('wrangler.ingest.jsonc').vars.METADATA_REFRESH_INTERVAL_MS, 1_800_000);
 });
 
