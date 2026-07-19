@@ -9,6 +9,7 @@ import {
 } from './lib/api-contract.js';
 
 const MATERIALIZED_RETRY_TTL_SECONDS = 30;
+const MATERIALIZED_EDGE_TTL_MAX_SECONDS = 30 * 60;
 
 function tagged(response, cacheState) {
   const clone = response.clone();
@@ -32,7 +33,24 @@ function safeHeaders(value) {
   }
 }
 
-async function materializedResponse(context, modelKey, now = Date.now()) {
+async function serviceMaterializedResponse(context, modelKey) {
+  const service = context.env?.PAGES_READ_MODEL_SERVICE;
+  if (!modelKey || typeof service?.fetch !== 'function') return null;
+  try {
+    const url = new URL('https://pages-read-model.internal/_internal/pages-response');
+    url.searchParams.set('key', modelKey);
+    const response = await service.fetch(new Request(url, {
+      method: 'GET',
+      headers: { accept: 'application/json' },
+    }));
+    return response?.ok ? response : null;
+  } catch (error) {
+    console.error(error);
+    return null;
+  }
+}
+
+async function d1MaterializedResponse(context, modelKey, now = Date.now()) {
   if (!modelKey || !context.env?.MINUTE_DB) return null;
   const db = context.env.MINUTE_DB;
   try {
@@ -78,7 +96,8 @@ function responseCacheTtl(origin, requestedTtl, modelKey, usedMaterialized, now)
   }
   const remainingSeconds = Math.floor((updatedAt + cadenceSeconds * 1000 - now) / 1000);
   if (remainingSeconds <= 0) return MATERIALIZED_RETRY_TTL_SECONDS;
-  return Math.max(1, Math.min(requestedTtl, remainingSeconds));
+  const materializedTtl = Math.min(MATERIALIZED_EDGE_TTL_MAX_SECONDS, cadenceSeconds);
+  return Math.max(1, Math.min(Math.max(requestedTtl, materializedTtl), remainingSeconds));
 }
 
 function sharedResponse(origin, ttlSeconds) {
@@ -112,7 +131,8 @@ export async function onRequest(context) {
   // edge cache entry without sharing request-scoped I/O objects.
   const now = Date.now();
   const modelKey = materializedApiKey(new URL(request.url));
-  const prebuilt = await materializedResponse(context, modelKey, now);
+  const serviceResponse = await serviceMaterializedResponse(context, modelKey);
+  const prebuilt = serviceResponse || await d1MaterializedResponse(context, modelKey, now);
   const origin = prebuilt || await context.next();
   const ttlSeconds = responseCacheTtl(
     origin,
