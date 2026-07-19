@@ -29,9 +29,52 @@ jobs:
       AWS_DEFAULT_REGION: auto
       R2_BUCKET: cloudflare-managed-1609110a
       LOOKBACK_MINUTES: "60"
+      LOG_SINCE: ""
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Wait for the current PR Worker deployment
+        if: github.event_name == 'pull_request'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEAD_BRANCH: ${{ github.event.pull_request.head.ref }}
+          BASE_BRANCH: ${{ github.event.pull_request.base.ref }}
+        run: |
+          set -euo pipefail
+          runtime_changed_at="$(git log --no-merges -1 --format=%cI "origin/${BASE_BRANCH}..HEAD" -- \
+            worker/src worker/scripts 'worker/wrangler*.jsonc' \
+            worker/package.json worker/package-lock.json)"
+          if [[ -z "$runtime_changed_at" ]]; then
+            echo "No runtime changes in this PR; using the rolling-hour lookback."
+            exit 0
+          fi
+          runtime_changed_at="$(date -u -d "$runtime_changed_at" +%Y-%m-%dT%H:%M:%SZ)"
+          deployed_at=""
+          for attempt in $(seq 1 20); do
+            runs="$(curl --fail-with-body --silent --show-error --get \
+              -H "Authorization: Bearer $GH_TOKEN" \
+              -H 'Accept: application/vnd.github+json' \
+              "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/workflows/cloudflare-pr-diagnostics.yml/runs" \
+              --data-urlencode "branch=$HEAD_BRANCH" \
+              --data-urlencode 'event=pull_request' \
+              --data-urlencode 'status=completed' \
+              --data-urlencode 'per_page=100')"
+            deployed_at="$(jq -r --arg changed "$runtime_changed_at" \
+              '[.workflow_runs[] | select(.conclusion == "success" and .created_at >= $changed)] | max_by(.updated_at) | .updated_at // empty' \
+              <<<"$runs")"
+            if [[ -n "$deployed_at" ]]; then break; fi
+            echo "Waiting for Cloudflare deployment attempt $attempt/20"
+            sleep 15
+          done
+          test -n "$deployed_at" || { echo 'No successful PR deployment found after runtime changes' >&2; exit 1; }
+          audit_since="$(date -u -d "$deployed_at + 90 seconds" +%Y-%m-%dT%H:%M:%SZ)"
+          echo "Runtime changed at $runtime_changed_at"
+          echo "Deployment completed at $deployed_at; auditing after propagation grace at $audit_since"
+          echo "LOG_SINCE=$audit_since" >> "$GITHUB_ENV"
 
       - name: Derive R2 credentials
         shell: bash
@@ -63,12 +106,19 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p raw observability-logs
-          aws s3api list-objects-v2 --endpoint-url "$R2_ENDPOINT" --bucket "$R2_BUCKET" --output json > objects.json
-          python3 - <<'PY'
+          for attempt in $(seq 1 6); do
+            rm -f objects.json keys.txt selection.json
+            aws s3api list-objects-v2 --endpoint-url "$R2_ENDPOINT" --bucket "$R2_BUCKET" --output json > objects.json
+            python3 - <<'PY'
           import datetime as dt, json, os, pathlib
           data = json.loads(pathlib.Path('objects.json').read_text(encoding='utf-8'))
           objects = data.get('Contents') or []
-          cutoff = dt.datetime.now(dt.timezone.utc) - dt.timedelta(minutes=int(os.environ['LOOKBACK_MINUTES']))
+          since = os.environ.get('LOG_SINCE', '').strip()
+          cutoff = dt.datetime.fromisoformat(since.replace('Z', '+00:00')) if since else (
+              dt.datetime.now(dt.timezone.utc) - dt.timedelta(minutes=int(os.environ['LOOKBACK_MINUTES']))
+          )
+          if cutoff.tzinfo is None:
+              cutoff = cutoff.replace(tzinfo=dt.timezone.utc)
           selected = []
           for item in objects:
               modified = dt.datetime.fromisoformat(str(item['LastModified']).replace('Z', '+00:00'))
@@ -86,7 +136,11 @@ jobs:
           pathlib.Path('keys.txt').write_text(''.join(f'{key}\n' for _, key in selected), encoding='utf-8')
           print(f"Selected {len(selected)} objects modified since {cutoff.isoformat()}")
           PY
-          test -s keys.txt || { echo 'No rolling-hour observability objects found' >&2; exit 1; }
+            if [[ -s keys.txt ]]; then break; fi
+            echo "Waiting for R2 log delivery attempt $attempt/6"
+            sleep 30
+          done
+          test -s keys.txt || { echo 'No post-deployment observability objects found' >&2; exit 1; }
           index=0
           pids=()
           while IFS= read -r key; do
