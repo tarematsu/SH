@@ -7,11 +7,34 @@ const JSON_QUEUE_SEND_OPTIONS = Object.freeze({ contentType: 'json' });
 const RETRY_60_SECONDS = Object.freeze({ delaySeconds: 60 });
 const GATE_RETRY_SECONDS = 4;
 const GATE_MAX_ATTEMPTS = 3;
+const REBUILD_SLOT_MS = 10 * 60_000;
+const DEFAULT_HISTORICAL_BACKFILL_INTERVAL_MS = 24 * 60 * 60_000;
+const MAX_HISTORICAL_BACKFILL_INTERVAL_MS = 7 * 24 * 60 * 60_000;
 
 function finiteTimestamp(value) {
   if (typeof value === 'number') return Number.isFinite(value) && value >= 0 ? value : Date.now();
   const parsed = Number(value);
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : Date.now();
+}
+
+function enabled(value, fallback = true) {
+  if (value == null || value === '') return fallback;
+  return !['0', 'false', 'no', 'off'].includes(String(value).trim().toLowerCase());
+}
+
+function historicalBackfillIntervalMs(env = {}) {
+  const parsed = Math.trunc(Number(env.REBUILD_HISTORICAL_BACKFILL_INTERVAL_MS));
+  if (!Number.isFinite(parsed) || parsed < REBUILD_SLOT_MS) {
+    return DEFAULT_HISTORICAL_BACKFILL_INTERVAL_MS;
+  }
+  return Math.min(parsed, MAX_HISTORICAL_BACKFILL_INTERVAL_MS);
+}
+
+export function historicalBackfillDue(env, scheduledAt) {
+  if (!enabled(env?.REBUILD_HISTORICAL_BACKFILL_ENABLED, true)) return false;
+  const timestamp = finiteTimestamp(scheduledAt);
+  const interval = historicalBackfillIntervalMs(env);
+  return Math.floor(timestamp / interval) !== Math.floor((timestamp - REBUILD_SLOT_MS) / interval);
 }
 
 function maintenanceStage(body) {
@@ -93,12 +116,14 @@ export async function processMinuteMaintenanceGate(env, body, dependencies = EMP
   }
 
   if (task.task === 'rebuild') {
+    const allowBackfill = historicalBackfillDue(env, task.scheduledAt);
     await sendStage(env, {
       message_type: 'minute-rebuild-stage',
       message_version: 1,
       run_id: `minute-rebuild:${task.scheduledAt}`,
       stage: 'gap-scan',
       scheduled_at: task.scheduledAt,
+      allow_backfill: allowBackfill,
     }, 0, dependencies);
     return {
       stage: 'maintenance-gate',
@@ -106,6 +131,7 @@ export async function processMinuteMaintenanceGate(env, body, dependencies = EMP
       run_id: task.runId,
       pending: true,
       dispatched_stage: 'gap-scan',
+      historical_backfill_due: allowBackfill,
     };
   }
 
@@ -150,6 +176,7 @@ function logMaintenanceGateResult(result) {
     requeued: result?.requeued === true,
     attempt: result?.attempt,
     dispatched_stage: result?.dispatched_stage,
+    historical_backfill_due: result?.historical_backfill_due,
   }));
 }
 
