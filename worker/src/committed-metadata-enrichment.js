@@ -94,10 +94,15 @@ async function enrichmentQueue(sourceEnv, queue, stage) {
   return filteredQueue(queue, rows, stage);
 }
 
+function spotifyEnrichmentConfig(config) {
+  if (Number(config?.metadataRepairLimit) === 0) return config;
+  return { ...config, metadataRepairLimit: 0 };
+}
+
 export async function runCommittedSpotifyMetadataEnrichment(env, jobs, dependencies = {}) {
   const sourceEnv = sourceDatabaseEnv(env);
   if (!validEnvironment(env, sourceEnv, jobs)) return;
-  const config = await enrichmentConfig(sourceEnv, dependencies);
+  const config = spotifyEnrichmentConfig(await enrichmentConfig(sourceEnv, dependencies));
   const ingest = dependencies.ingest || (await loadIngestModule()).ingest;
   const enrichTracks = dependencies.enrichSpotifyTracks
     || dependencies.enrichTracks
@@ -167,3 +172,5 @@ export async function runCommittedMetadataEnrichment(env, jobs, dependencies = {
   await runCommittedIsrcMetadataEnrichment(env, jobs, dependencies);
   await runCommittedSpotifyMetadataEnrichment(env, jobs, dependencies);
 }
+
+export { spotifyEnrichmentConfig };
