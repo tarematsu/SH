@@ -70,6 +70,10 @@ const d1BudgetIndexesMigrationPath = resolve(
   repositoryRoot,
   'database/facts-migrations/019_d1_budget_indexes.sql',
 );
+const isrcTrackDictionaryMigrationPath = resolve(
+  repositoryRoot,
+  'database/facts-migrations/020_isrc_track_dictionary.sql',
+);
 const metadataPath = resolve(repositoryRoot, 'database/facts-db.json');
 const databaseName = process.env.FACTS_DATABASE_NAME || 'stationhead-minute';
 
@@ -334,10 +338,40 @@ wrangler([
   '--file', d1BudgetIndexesMigrationPath,
 ]);
 
+let dictionaryColumns = tableColumnNames(databaseName, 'sh_track_dictionary');
+if (dictionaryColumns.size === 0) {
+  console.log('Creating the canonical ISRC track dictionary...');
+  wrangler([
+    'd1', 'execute', databaseName,
+    '--remote', '--yes',
+    '--file', isrcTrackDictionaryMigrationPath,
+  ]);
+  dictionaryColumns = tableColumnNames(databaseName, 'sh_track_dictionary');
+}
+const requiredDictionaryColumns = [
+  'isrc',
+  'spotify_id',
+  'title',
+  'artist',
+  'thumbnail_url',
+  'metadata_source',
+  'metadata_fetched_at',
+  'updated_at',
+];
+if (requiredDictionaryColumns.some((column) => !dictionaryColumns.has(column))) {
+  throw new Error('sh_track_dictionary migration did not complete');
+}
+const statsColumns = tableColumnNames(databaseName, 'sh_track_stats_by_isrc');
+if (!statsColumns.has('isrc')
+    || !statsColumns.has('latest_bite_count')
+    || !statsColumns.has('latest_observed_at')) {
+  throw new Error('sh_track_stats_by_isrc view migration did not complete');
+}
+
 writeFileSync(metadataPath, `${JSON.stringify({
   binding: 'MINUTE_DB',
   database_name: databaseName,
   database_id: databaseId,
-  schema: 'database/facts-migrations/019_d1_budget_indexes.sql',
+  schema: 'database/facts-migrations/020_isrc_track_dictionary.sql',
 }, null, 2)}\n`);
 console.log(JSON.stringify({ ok: true, database_name: databaseName, database_id: databaseId }));
