@@ -114,6 +114,9 @@ async function dispatchPreparedDerive(env, task, result, dependencies = EMPTY_DE
     else await env.MINUTE_DERIVE_QUEUE.send(message, JSON_QUEUE_SEND_OPTIONS);
     return true;
   } catch (error) {
+    // The durable inbox row remains pending and the every-minute maintenance
+    // dispatcher will recover it. Do not stall rebuild source scanning merely
+    // because the low-latency Queue handoff failed once.
     console.warn(JSON.stringify({
       event: 'minute_rebuild_derive_dispatch_failed',
       channel_id: Math.trunc(channelId),
@@ -140,6 +143,8 @@ export async function processMinuteRebuildStage(env, body, dependencies = EMPTY_
 
   try {
     if (task.stage === 'gap-scan') {
+      // Compatibility path for tests and rollback callers that still inject the
+      // former single-invocation scanner.
       if (dependencies.runGapScan) {
         const result = await dependencies.runGapScan(active, dependencies.gapScan || EMPTY_DEPENDENCIES);
         const pending = await finishGapStage(env, task, result, startedAt, record, enqueue);
@@ -181,6 +186,7 @@ export async function processMinuteRebuildStage(env, body, dependencies = EMPTY_
       return { stage: task.stage, run_id: task.runId, pending, result: reported };
     }
 
+    // Test and rollout fallback for the former single-invocation backfill.
     if (task.stage === 'backfill' && dependencies.runBackfill) {
       const result = await dependencies.runBackfill(active, dependencies.backfill || EMPTY_DEPENDENCIES);
       await record(env, task, result, startedAt);
@@ -235,22 +241,20 @@ export async function processMinuteRebuildStage(env, body, dependencies = EMPTY_
   }
 }
 
-export async function processMinuteRebuildBatch(batch, env, dependencies = {}) {
-  const messages = batch?.messages;
+async function processMinuteRebuildBatch(batch, env) {
+  const messages = batch.messages;
   if (!messages?.length) return;
-  const processStage = dependencies.processStage || processMinuteRebuildStage;
-  for (const message of messages) {
-    try {
-      const result = await processStage(env, message.body);
-      console.log(JSON.stringify({ event: 'minute_rebuild_stage_completed', ...result }));
-      message.ack();
-    } catch (error) {
-      console.error(JSON.stringify({
-        event: 'minute_rebuild_stage_failed',
-        error: String(error?.message || error).slice(0, 800),
-      }));
-      message.retry({ delaySeconds: 60 });
-    }
+  const message = messages[0];
+  try {
+    const result = await processMinuteRebuildStage(env, message.body);
+    console.log(JSON.stringify({ event: 'minute_rebuild_stage_completed', ...result }));
+    message.ack();
+  } catch (error) {
+    console.error(JSON.stringify({
+      event: 'minute_rebuild_stage_failed',
+      error: String(error?.message || error).slice(0, 800),
+    }));
+    message.retry({ delaySeconds: 60 });
   }
 }
 
