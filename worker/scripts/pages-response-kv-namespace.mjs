@@ -3,6 +3,8 @@ import { resolve } from 'node:path';
 
 export const PAGES_RESPONSE_KV_TITLE = 'sh-pages-read-model-pages-response-kv';
 export const PAGES_RESPONSE_KV_BINDING = 'PAGES_RESPONSE_KV';
+const NAMESPACE_PAGE_SIZE = 1000;
+const MAX_NAMESPACE_PAGES = 1000;
 
 function required(value, name) {
   const normalized = String(value || '').trim();
@@ -56,14 +58,40 @@ export function namespaceIdFromList(payload, title = PAGES_RESPONSE_KV_TITLE) {
   return id || null;
 }
 
+function namespaceListingComplete(payload, requestedPage) {
+  const namespaces = Array.isArray(payload?.result) ? payload.result : [];
+  const resultInfo = payload?.result_info || {};
+  const page = Number(resultInfo.page);
+  const perPage = Number(resultInfo.per_page);
+  const totalCount = Number(resultInfo.total_count);
+  const activePage = Number.isFinite(page) && page >= 1 ? Math.trunc(page) : requestedPage;
+  const activePerPage = Number.isFinite(perPage) && perPage >= 1
+    ? Math.trunc(perPage)
+    : NAMESPACE_PAGE_SIZE;
+  if (namespaces.length === 0 || namespaces.length < activePerPage) return true;
+  if (Number.isFinite(totalCount) && totalCount >= 0) {
+    return activePage * activePerPage >= totalCount;
+  }
+  return false;
+}
+
+export async function findPagesResponseNamespaceId(title, options = {}) {
+  for (let page = 1; page <= MAX_NAMESPACE_PAGES; page += 1) {
+    const listed = await cloudflareRequest(
+      `/storage/kv/namespaces?per_page=${NAMESPACE_PAGE_SIZE}&page=${page}&order=title&direction=asc`,
+      { method: 'GET' },
+      options,
+    );
+    const existingId = namespaceIdFromList(listed, title);
+    if (existingId) return existingId;
+    if (namespaceListingComplete(listed, page)) return null;
+  }
+  throw new Error(`KV namespace listing exceeded ${MAX_NAMESPACE_PAGES} pages`);
+}
+
 export async function ensurePagesResponseNamespace(options = {}) {
   const title = String(options.title || PAGES_RESPONSE_KV_TITLE);
-  const listed = await cloudflareRequest(
-    '/storage/kv/namespaces?per_page=100&order=title&direction=asc',
-    { method: 'GET' },
-    options,
-  );
-  const existingId = namespaceIdFromList(listed, title);
+  const existingId = await findPagesResponseNamespaceId(title, options);
   if (existingId) return { id: existingId, title, created: false };
 
   const created = await cloudflareRequest(
