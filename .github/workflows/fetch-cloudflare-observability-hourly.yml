@@ -8,6 +8,7 @@ on:
       - ".github/workflows/fetch-cloudflare-observability-hourly.yml"
       - ".github/scripts/analyze-worker-observability.py"
       - ".github/scripts/enforce-worker-cpu-budget.py"
+      - ".github/scripts/fetch-r2-worker-logs.py"
   schedule:
     - cron: "23 * * * *"
   workflow_dispatch:
@@ -23,13 +24,15 @@ concurrency:
 jobs:
   fetch:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     env:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_BUILDS_API_TOKEN }}
       AWS_DEFAULT_REGION: auto
       R2_BUCKET: cloudflare-managed-1609110a
       LOOKBACK_MINUTES: "60"
       LOG_SINCE: ""
+      R2_LOG_POLL_ATTEMPTS: "10"
+      R2_LOG_POLL_SECONDS: "30"
 
     steps:
       - uses: actions/checkout@v4
@@ -101,59 +104,9 @@ jobs:
           echo "AWS_SECRET_ACCESS_KEY=$secret" >> "$GITHUB_ENV"
           echo "R2_ENDPOINT=https://${match}.r2.cloudflarestorage.com" >> "$GITHUB_ENV"
 
-      - name: Download rolling-hour Worker logs
+      - name: Download rolling-hour Worker logs with real events
         shell: bash
-        run: |
-          set -euo pipefail
-          mkdir -p raw observability-logs
-          for attempt in $(seq 1 6); do
-            rm -f objects.json keys.txt selection.json
-            aws s3api list-objects-v2 --endpoint-url "$R2_ENDPOINT" --bucket "$R2_BUCKET" --output json > objects.json
-            python3 - <<'PY'
-          import datetime as dt, json, os, pathlib
-          data = json.loads(pathlib.Path('objects.json').read_text(encoding='utf-8'))
-          objects = data.get('Contents') or []
-          since = os.environ.get('LOG_SINCE', '').strip()
-          cutoff = dt.datetime.fromisoformat(since.replace('Z', '+00:00')) if since else (
-              dt.datetime.now(dt.timezone.utc) - dt.timedelta(minutes=int(os.environ['LOOKBACK_MINUTES']))
-          )
-          if cutoff.tzinfo is None:
-              cutoff = cutoff.replace(tzinfo=dt.timezone.utc)
-          selected = []
-          for item in objects:
-              modified = dt.datetime.fromisoformat(str(item['LastModified']).replace('Z', '+00:00'))
-              if modified >= cutoff:
-                  selected.append((modified, item['Key']))
-          selected.sort(reverse=True)
-          selection = {
-              'cutoff': cutoff.isoformat().replace('+00:00', 'Z'),
-              'objects_available': len(objects),
-              'objects_selected': len(selected),
-              'newest_object_modified': selected[0][0].isoformat().replace('+00:00', 'Z') if selected else None,
-              'oldest_object_modified': selected[-1][0].isoformat().replace('+00:00', 'Z') if selected else None,
-          }
-          pathlib.Path('selection.json').write_text(json.dumps(selection, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
-          pathlib.Path('keys.txt').write_text(''.join(f'{key}\n' for _, key in selected), encoding='utf-8')
-          print(f"Selected {len(selected)} objects modified since {cutoff.isoformat()}")
-          PY
-            if [[ -s keys.txt ]]; then break; fi
-            echo "Waiting for R2 log delivery attempt $attempt/6"
-            sleep 30
-          done
-          test -s keys.txt || { echo 'No post-deployment observability objects found' >&2; exit 1; }
-          index=0
-          pids=()
-          while IFS= read -r key; do
-            index=$((index + 1))
-            file="raw/$(printf '%04d' "$index").log"
-            aws s3api get-object --endpoint-url "$R2_ENDPOINT" --bucket "$R2_BUCKET" --key "$key" "$file" >/dev/null &
-            pids+=("$!")
-            if (( ${#pids[@]} >= 8 )); then
-              for pid in "${pids[@]}"; do wait "$pid"; done
-              pids=()
-            fi
-          done < keys.txt
-          for pid in "${pids[@]}"; do wait "$pid"; done
+        run: python3 .github/scripts/fetch-r2-worker-logs.py
 
       - name: Audit rolling-hour Workers and CPU time
         shell: bash
