@@ -1,3 +1,5 @@
+import { withAppleMusicFreeTrackHistoryEnv } from '../../site/functions/lib/apple-music-track-history-sql.js';
+
 const MINUTE_MS = 60_000;
 const HOUR_MS = 60 * MINUTE_MS;
 const CYCLE_MS = 6 * HOUR_MS;
@@ -91,7 +93,7 @@ export async function runDispatchedPagesReadModelTask(env, now = Date.now(), dep
       }
       const run = dependencies.runTrackHistoryStep
         || (await loadTrackHistoryModule()).runSplitTrackHistoryCycleStep;
-      return run(env, timestamp, dependencies);
+      return run(withAppleMusicFreeTrackHistoryEnv(env), timestamp, dependencies);
     }
     const task = backgroundTask(cycleMinute, cycleStart);
     return {
