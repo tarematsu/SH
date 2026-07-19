@@ -1,4 +1,4 @@
-import { withAppleMusicFreeD1 } from '../../site/functions/lib/apple-music-d1-pruner.js';
+import { withAppleMusicFreeRuntime } from '../../site/functions/lib/apple-music-d1-pruner.js';
 import { processPersistenceTask } from './persist-channel-entry.js';
 import {
   processOptimizedQueueLikesTask,
@@ -38,7 +38,7 @@ async function processPersistenceBatch(batch, env, dependencies = EMPTY_DEPENDEN
   const messages = batch.messages;
   if (!messages?.length) return;
   const message = messages[0];
-  const activeEnv = withAppleMusicFreeD1(env);
+  const activeEnv = withAppleMusicFreeRuntime(env);
   try {
     const result = isOptimizedLikesTask(message.body)
       ? await processOptimizedQueueLikesTask(activeEnv, message.body, dependencies)
