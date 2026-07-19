@@ -34,7 +34,7 @@ test('metadata hydration scans incomplete tracks once and preserves key order', 
 
   assert.equal(await hydrateReadModelMetadata(metadataEnv(calls), model), model);
   assert.equal(calls.length, 1);
-  assert.deepEqual(calls[0].bindings, ['US-A', 'GB-B', 'spotify-a', 'spotify-b']);
+  assert.deepEqual(calls[0].bindings, ['USA', 'GBB', 'spotify-a', 'spotify-b']);
 });
 
 test('metadata hydration keeps collecting the second key type after the first reaches its cap', async () => {
@@ -49,7 +49,7 @@ test('metadata hydration keeps collecting the second key type after the first re
   assert.deepEqual(
     calls[0].bindings,
     [
-      ...Array.from({ length: 80 }, (_, index) => `ISRC-${index}`),
+      ...Array.from({ length: 80 }, (_, index) => `ISRC${index}`),
       ...Array.from({ length: 80 }, (_, index) => `spotify-${index}`),
     ],
   );
@@ -70,7 +70,7 @@ test('metadata hydration does not spend key capacity on duplicates', async () =>
   assert.equal(calls.length, 1);
   assert.deepEqual(calls[0].bindings, [
     'DUPLICATE',
-    ...Array.from({ length: 79 }, (_, index) => `ISRC-${index}`),
+    ...Array.from({ length: 79 }, (_, index) => `ISRC${index}`),
     'duplicate',
     ...Array.from({ length: 79 }, (_, index) => `spotify-${index}`),
   ]);
