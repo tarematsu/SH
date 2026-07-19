@@ -25,10 +25,19 @@
         "max_retries": 8,
         "dead_letter_queue": "stationhead-pages-read-model-publication-dlq",
         "max_concurrency": 1
+      },
+      {
+        "queue": "stationhead-read-model",
+        "max_batch_size": 1,
+        "max_batch_timeout": 1,
+        "max_retries": 8,
+        "dead_letter_queue": "stationhead-read-model-dlq",
+        "max_concurrency": 1
       }
     ],
     "producers": [
-      { "binding": "PAGES_READ_MODEL_QUEUE", "queue": "stationhead-pages-read-model-publication" }
+      { "binding": "PAGES_READ_MODEL_QUEUE", "queue": "stationhead-pages-read-model-publication" },
+      { "binding": "TRACK_METADATA_QUEUE", "queue": "stationhead-track-metadata" }
     ]
   }
 }

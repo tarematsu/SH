@@ -35,7 +35,7 @@ test('ordered comments and three minute Workers have one owner per queue boundar
   const buddies = config('wrangler.jsonc');
   const ingest = config('wrangler.ingest.jsonc');
   const comments = config('wrangler.comments.jsonc');
-  const readModel = config('wrangler.read-model.jsonc');
+  const readModel = config('wrangler.pages-read-model.jsonc');
   const minuteIngest = config('wrangler.minute-ingest.jsonc');
   const minuteDerive = config('wrangler.minute-derive.jsonc');
   const minuteMaintenance = config('wrangler.minute.jsonc');
@@ -43,7 +43,7 @@ test('ordered comments and three minute Workers have one owner per queue boundar
   assert.equal(buddies.main, 'src/raw-collector-entry.js');
   assert.equal(ingest.main, 'src/ingest-channel-optimized-entry.js');
   assert.equal(comments.main, 'src/comments-cpu-entry.js');
-  assert.equal(readModel.main, 'src/read-model-entry.js');
+  assert.equal(readModel.main, 'src/pages-read-model-entry.js');
   assert.equal(minuteIngest.main, 'src/minute-production-entry.js');
   assert.equal(minuteDerive.main, 'src/minute-derive-entry.js');
   assert.equal(minuteMaintenance.main, 'src/minute-maintenance-entry.js');
@@ -56,7 +56,7 @@ test('ordered comments and three minute Workers have one owner per queue boundar
   assert.equal(comments.queues.producers.find(({ binding }) => binding === 'MINUTE_FACT_QUEUE').queue, 'stationhead-buddies-facts');
   assert.equal(comments.d1_databases.some(({ binding }) => binding === 'MINUTE_DB'), true);
   assert.equal(ingest.queues.producers.find(({ binding }) => binding === 'READ_MODEL_QUEUE').queue, 'stationhead-read-model');
-  assert.equal(readModel.queues.consumers[0].queue, 'stationhead-read-model');
+  assert.equal(readModel.queues.consumers.find(({ queue }) => queue === 'stationhead-read-model').queue, 'stationhead-read-model');
   assert.equal(minuteIngest.queues.consumers[0].queue, 'stationhead-buddies-facts');
   assert.equal(minuteIngest.queues.consumers[0].max_batch_size, 1);
   assert.deepEqual(minuteIngest.d1_databases.map(({ binding }) => binding), ['MINUTE_DB']);

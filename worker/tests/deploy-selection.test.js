@@ -31,6 +31,11 @@ test('split enrichment entrypoints map to their own Workers', () => {
   assert.deepEqual(select(['worker/src/persist-channel-entry.js']).workers, ['sh-buddies-persist']);
 });
 
+test('minute and Pages read-model modules redeploy the consolidated Pages Worker', () => {
+  assert.deepEqual(select(['worker/src/read-model-entry.js']).workers, ['sh-pages-read-model']);
+  assert.deepEqual(select(['worker/src/pages-read-model-entry.js']).workers, ['sh-pages-read-model']);
+});
+
 test('monitor Queue modules redeploy the consolidated monitor Worker', () => {
   assert.deepEqual(select(['worker/src/buddy-playback-entry.js']).workers, ['sh-monitor-other']);
   assert.deepEqual(select(['worker/src/host-monitor-entry.js']).workers, ['sh-monitor-other']);
@@ -43,6 +48,12 @@ test('monitor cutover script redeploys only the consolidated monitor Worker', ()
   assert.deepEqual(result.workers, ['sh-monitor-other']);
   assert.deepEqual(result.commands, ['deploy:other']);
   assert.deepEqual(result.diagnostics, ['sh-monitor-other']);
+});
+
+test('read-model cutover script redeploys only the consolidated Pages Worker', () => {
+  const result = select(['worker/scripts/deploy-pages-read-model.mjs']);
+  assert.deepEqual(result.workers, ['sh-pages-read-model']);
+  assert.deepEqual(result.commands, ['deploy:pages-read-model']);
 });
 
 test('bundled site function changes redeploy only the Pages materializer', () => {
@@ -73,7 +84,7 @@ test('deploy script-only package changes do not redeploy runtime Workers', () =>
 
 test('lockfile changes conservatively redeploy every Worker', () => {
   const result = select(['worker/package-lock.json']);
-  assert.equal(result.workers.length, 13);
+  assert.equal(result.workers.length, 12);
 });
 
 test('tests and verification scripts do not redeploy runtime Workers', () => {
@@ -95,7 +106,7 @@ test('shared package changes select every Worker that imports sh-shared', () => 
 
 test('unresolved runtime source changes fall back to all Workers', () => {
   const result = select(['worker/src/deleted-runtime-module.js']);
-  assert.equal(result.workers.length, 13);
+  assert.equal(result.workers.length, 12);
 });
 
 test('manual selection deploys all Workers in durable order', () => {
@@ -106,12 +117,12 @@ test('manual selection deploys all Workers in durable order', () => {
     'sh-minute-rebuild',
     'sh-minute-maintenance',
     'sh-minute-ingest',
-    'sh-minute-read-model',
     'sh-track-metadata',
     'sh-buddies-comments',
     'sh-buddies-persist',
     'sh-buddies-ingest',
+    'sh-buddies-monitor',
   ]);
-  assert.equal(result.workers.length, 13);
+  assert.equal(result.workers.length, 12);
   assert.equal(result.workers.at(-1), 'sh-monitor-other');
 });
