@@ -165,6 +165,8 @@ test('R2 observability audits every current script and fails on real faults', ()
   assert.match(observabilityFetcher, /objects_selected/);
   assert.match(observabilityFetcher, /oldest_object_modified/);
   assert.match(observabilityFetcher, /newest_object_modified/);
+  assert.match(observabilityFetcher, /NextContinuationToken/);
+  assert.match(observabilityFetcher, /SUMMARY_PATH\.unlink\(\)/);
   assert.match(observabilityFetcher, /Downloaded \{downloaded\} of \{len\(selected\)\} selected R2 objects/);
   assert.match(observabilityFetcher, /events > 0/);
   assert.match(observabilityFetcher, /No post-deployment Worker events arrived/);
