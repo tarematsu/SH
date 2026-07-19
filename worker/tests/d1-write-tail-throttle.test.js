@@ -65,10 +65,11 @@ test('wrapped batches pass original bound statements to D1', async () => {
 
 test('rebuild runtime diagnostics checkpoint only unchanged successful state', () => {
   const source = readFileSync(new URL('../src/minute-facts-runtime-state.js', import.meta.url), 'utf8');
+  assert.match(source, /REBUILD_RUNTIME_CHECKPOINT_MS = 5 \* 60_000/);
   assert.match(source, /WHERE excluded\.task_name<>'rebuild'/);
   assert.match(source, /OR excluded\.failed_total>0/);
   assert.match(source, /pending_count IS NOT excluded\.pending_count/);
-  assert.match(source, /excluded\.updated_at-COALESCE\(sh_minute_fact_runtime_state\.updated_at,0\)>=300000/);
+  assert.match(source, /excluded\.updated_at-COALESCE\(sh_minute_fact_runtime_state\.updated_at,0\)>=\$\{REBUILD_RUNTIME_CHECKPOINT_MS\}/);
 });
 
 test('production derive and enrichment entrypoints install the write throttle', () => {
