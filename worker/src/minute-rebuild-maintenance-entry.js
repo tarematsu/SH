@@ -180,12 +180,7 @@ function logMaintenanceGateResult(result) {
   }));
 }
 
-async function processMinuteRebuildBatch(batch, env, ctx) {
-  const messages = batch?.messages;
-  if (!messages?.length) return;
-  const message = messages[0];
-  const stage = maintenanceStage(message.body);
-  if (!stage) return rebuildWorker.queue(batch, withBackfillCursorSeek(env), ctx);
+async function processMaintenanceMessage(message, stage, env) {
   try {
     const result = stage === 'maintenance-sync'
       ? await processMinuteMaintenanceSync(env, message.body)
@@ -198,6 +193,20 @@ async function processMinuteRebuildBatch(batch, env, ctx) {
       error: String(error?.message || error).slice(0, 800),
     }));
     message.retry(RETRY_60_SECONDS);
+  }
+}
+
+export async function processMinuteRebuildBatch(batch, env, ctx) {
+  const messages = batch?.messages;
+  if (!messages?.length) return;
+  const rebuildEnv = withBackfillCursorSeek(env);
+  for (const message of messages) {
+    const stage = maintenanceStage(message.body);
+    if (stage) {
+      await processMaintenanceMessage(message, stage, env);
+      continue;
+    }
+    await rebuildWorker.queue({ ...batch, messages: [message] }, rebuildEnv, ctx);
   }
 }
 
