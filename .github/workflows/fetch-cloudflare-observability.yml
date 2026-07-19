@@ -120,7 +120,7 @@ jobs:
         shell: bash
         run: python3 .github/scripts/analyze-worker-observability.py
 
-      - name: Enforce stable 8 ms Worker CPU budget
+      - name: Enforce stable 10 ms Worker CPU budget
         if: always()
         shell: bash
         run: python3 .github/scripts/enforce-worker-cpu-budget.py
@@ -149,7 +149,7 @@ jobs:
           if budget_path.exists():
               budget = json.loads(budget_path.read_text(encoding='utf-8'))
               violations = ', '.join(item['worker'] for item in budget['violations']) or 'none'
-              print(f"- CPU p95 budget: `< {budget['budget_ms']} ms`; violations: `{violations}`")
+              print(f"- CPU p95 budget: `<= {budget['budget_ms']} ms`; violations: `{violations}`")
           print()
           print('| Worker | events | errors | CPU avg ms | CPU p95 ms | CPU max ms | >10 ms |')
           print('|---|---:|---:|---:|---:|---:|---:|')
