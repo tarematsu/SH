@@ -12,6 +12,7 @@ const SUCCESS_LOG_SAMPLE_MODULUS = 16;
 const LIVE_REVISION_CHUNK_TRACKS = 1;
 const JSON_QUEUE_SEND_OPTIONS = Object.freeze({ contentType: 'json', delaySeconds: 1 });
 const SOURCE_PAYLOAD_ERROR = /queue revision \d+ source payload is unavailable or incomplete/i;
+const QUEUE_OVERLOAD_ERROR = /queue is overloaded|\(10250\)/i;
 const activeDeriveEnvs = new WeakMap();
 
 function integer(value) {
@@ -86,6 +87,10 @@ function importInProgress(error) {
   return /currently processing a long-running import/i.test(String(error?.message || error));
 }
 
+export function transientQueueOverload(error) {
+  return QUEUE_OVERLOAD_ERROR.test(String(error?.message || error));
+}
+
 function sourcePayloadUnavailable(error) {
   return SOURCE_PAYLOAD_ERROR.test(String(error?.message || error));
 }
@@ -156,12 +161,18 @@ async function processOneMinuteDeriveMessage(message, activeEnv, queueName, depe
       message.ack();
       return;
     }
+    const importing = importInProgress(error);
+    const overloaded = transientQueueOverload(error);
     const detail = {
-      event: importInProgress(error) ? 'minute_derive_import_deferred' : 'minute_derive_message_failed',
+      event: importing
+        ? 'minute_derive_import_deferred'
+        : overloaded
+          ? 'minute_derive_queue_overloaded'
+          : 'minute_derive_message_failed',
       derive_queue: queueName,
       error: String(error?.message || error).slice(0, 800),
     };
-    if (importInProgress(error)) console.warn(JSON.stringify(detail));
+    if (importing || overloaded) console.warn(JSON.stringify(detail));
     else console.error(JSON.stringify(detail));
     if (error?.code === 'MINUTE_DERIVE_INVALID_TRIGGER') message.ack();
     else message.retry(RETRY_60_SECONDS);
@@ -175,9 +186,6 @@ export async function processMinuteDeriveBatch(batch, env, dependencies = {}) {
   const queueName = batch?.queue || null;
   const containsRevisionMaterialization = messages.length > 1
     && messages.some((message) => revisionMaterializationMessage(message?.body));
-  // Keep the maximum revision work per invocation at two tracks. When #545
-  // raises single-message chunks to two tracks, paired deliveries fall back to
-  // one track per message instead of multiplying both optimizations together.
   const processingEnv = containsRevisionMaterialization
     ? scopedDeriveEnv(activeEnv, null, 1)
     : activeEnv;
