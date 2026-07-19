@@ -124,7 +124,11 @@ jobs:
   diagnose:
     name: Diagnose ${{ matrix.worker }}
     needs: [select-workers, prepare-workers]
-    if: needs.prepare-workers.result == 'success' && needs.select-workers.outputs.diagnostics != '[]'
+    if: >-
+      always()
+      && needs.select-workers.result == 'success'
+      && needs.select-workers.outputs.topology_rename == 'true'
+      && needs.select-workers.outputs.diagnostics != '[]'
     strategy:
       fail-fast: false
       matrix:
@@ -144,16 +148,7 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha }}
       - name: Watch Cloudflare build and collect logs
         shell: bash
-        run: |
-          set +e
-          node .github/scripts/cloudflare-build-diagnostics.mjs
-          status=$?
-          set -e
-          if [[ "$status" -eq 4 ]]; then
-            echo "::notice::No matching finished Cloudflare build appeared; the direct PR deploy already succeeded."
-            exit 0
-          fi
-          exit "$status"
+        run: node .github/scripts/cloudflare-build-diagnostics.mjs
       - name: Upload diagnostics
         if: always()
         uses: actions/upload-artifact@v4
