@@ -185,15 +185,15 @@ def main() -> int:
     selection = json.loads(pathlib.Path(args.selection).read_text(encoding="utf-8"))
     cutoff_ms = iso_datetime(selection["cutoff"]).timestamp() * 1000
     transition_scripts = transitional_scripts()
-    allowed_scripts = EXPECTED_SCRIPTS | transition_scripts
+    tracked_scripts = EXPECTED_SCRIPTS | transition_scripts
 
-    counts = Counter({name: 0 for name in EXPECTED_SCRIPTS})
-    outcomes: dict[str, Counter[str]] = {name: Counter() for name in EXPECTED_SCRIPTS}
-    event_types: dict[str, Counter[str]] = {name: Counter() for name in EXPECTED_SCRIPTS}
-    cpu: dict[str, list[float]] = {name: [] for name in EXPECTED_SCRIPTS}
-    wall: dict[str, list[float]] = {name: [] for name in EXPECTED_SCRIPTS}
-    errors = Counter({name: 0 for name in EXPECTED_SCRIPTS})
-    warnings = Counter({name: 0 for name in EXPECTED_SCRIPTS})
+    counts = Counter({name: 0 for name in tracked_scripts})
+    outcomes: dict[str, Counter[str]] = {name: Counter() for name in tracked_scripts}
+    event_types: dict[str, Counter[str]] = {name: Counter() for name in tracked_scripts}
+    cpu: dict[str, list[float]] = {name: [] for name in tracked_scripts}
+    wall: dict[str, list[float]] = {name: [] for name in tracked_scripts}
+    errors = Counter({name: 0 for name in tracked_scripts})
+    warnings = Counter({name: 0 for name in tracked_scripts})
     observed_sh_scripts: set[str] = set()
     all_cpu: list[float] = []
     all_wall: list[float] = []
@@ -219,10 +219,8 @@ def main() -> int:
             full.write(compact + "\n")
             total += 1
 
-            if script not in allowed_scripts:
+            if script not in tracked_scripts:
                 findings.write(json.dumps({"reason": ["unexpected_script"], "event": event}, ensure_ascii=False, separators=(",", ":")) + "\n")
-                continue
-            if script in transition_scripts:
                 continue
 
             counts[script] += 1
@@ -249,7 +247,7 @@ def main() -> int:
                 errors[script] += 1
                 findings.write(json.dumps({"reason": reasons, "event": event}, ensure_ascii=False, separators=(",", ":")) + "\n")
 
-    unexpected_scripts = sorted(observed_sh_scripts - allowed_scripts)
+    unexpected_scripts = sorted(observed_sh_scripts - tracked_scripts)
     audit_end_ms = min(
         dt.datetime.now(dt.timezone.utc).timestamp() * 1000 - LOG_INGESTION_GRACE_MS,
         newest_event_ms if newest_event_ms is not None else cutoff_ms,
@@ -262,7 +260,7 @@ def main() -> int:
     error_events = sum(errors.values())
 
     scripts: dict[str, Any] = {}
-    for script in sorted(EXPECTED_SCRIPTS):
+    for script in sorted(tracked_scripts):
         cpu_summary = metric_summary(cpu[script])
         cpu_summary["over_10ms"] = sum(value > CPU_REPORT_LIMIT_MS for value in cpu[script])
         scripts[script] = {
@@ -273,6 +271,7 @@ def main() -> int:
             "event_types": dict(sorted(event_types[script].items())),
             "cpu_ms": cpu_summary,
             "wall_ms": metric_summary(wall[script]),
+            "transitional": script in transition_scripts,
         }
 
     ok = total > 0 and not unexpected_scripts and not missing_required and error_events == 0
