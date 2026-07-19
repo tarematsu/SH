@@ -12,6 +12,7 @@ const SUCCESS_LOG_SAMPLE_MODULUS = 16;
 const LIVE_REVISION_CHUNK_TRACKS = 1;
 const JSON_QUEUE_SEND_OPTIONS = Object.freeze({ contentType: 'json', delaySeconds: 1 });
 const SOURCE_PAYLOAD_ERROR = /queue revision \d+ source payload is unavailable or incomplete/i;
+const activeDeriveEnvs = new WeakMap();
 
 function integer(value) {
   const parsed = Number(value);
@@ -39,14 +40,8 @@ function logMinuteDeriveResult(result, queueName = null) {
   }));
 }
 
-export function activeDeriveEnv(batch, env) {
-  const active = withMinuteD1WriteThrottling(withAppleMusicFreeRuntime(env));
-  const sourceQueue = String(batch?.queue || '');
-  const continuation = sourceQueue === LIVE_DERIVE_QUEUE_NAME
-    ? env?.MINUTE_LIVE_DERIVE_QUEUE || env?.MINUTE_DERIVE_QUEUE
-    : sourceQueue === REBUILD_DERIVE_QUEUE_NAME
-      ? env?.MINUTE_DERIVE_QUEUE
-      : env?.MINUTE_LIVE_DERIVE_QUEUE || env?.MINUTE_DERIVE_QUEUE;
+function scopedDeriveEnv(base, continuation, chunkTracks = null) {
+  const active = Object.create(base || null);
   if (continuation) {
     Object.defineProperty(active, 'MINUTE_DERIVE_QUEUE', {
       value: continuation,
@@ -54,14 +49,37 @@ export function activeDeriveEnv(batch, env) {
       configurable: true,
     });
   }
-  if (sourceQueue === LIVE_DERIVE_QUEUE_NAME) {
+  if (chunkTracks != null) {
     Object.defineProperty(active, 'DERIVE_REVISION_CHUNK_TRACKS', {
-      value: LIVE_REVISION_CHUNK_TRACKS,
+      value: chunkTracks,
       enumerable: false,
       configurable: true,
     });
   }
   return active;
+}
+
+function deriveEnvironmentSet(env) {
+  const cached = activeDeriveEnvs.get(env);
+  if (cached) return cached;
+  const base = withMinuteD1WriteThrottling(withAppleMusicFreeRuntime(env));
+  const rebuildQueue = env?.MINUTE_DERIVE_QUEUE;
+  const liveQueue = env?.MINUTE_LIVE_DERIVE_QUEUE || rebuildQueue;
+  const environments = {
+    live: scopedDeriveEnv(base, liveQueue, LIVE_REVISION_CHUNK_TRACKS),
+    rebuild: scopedDeriveEnv(base, rebuildQueue),
+    fallback: scopedDeriveEnv(base, liveQueue),
+  };
+  activeDeriveEnvs.set(env, environments);
+  return environments;
+}
+
+export function activeDeriveEnv(batch, env) {
+  const sourceQueue = String(batch?.queue || '');
+  const environments = deriveEnvironmentSet(env);
+  if (sourceQueue === LIVE_DERIVE_QUEUE_NAME) return environments.live;
+  if (sourceQueue === REBUILD_DERIVE_QUEUE_NAME) return environments.rebuild;
+  return environments.fallback;
 }
 
 function importInProgress(error) {
