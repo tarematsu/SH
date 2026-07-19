@@ -49,11 +49,16 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           HEAD_BRANCH: ${{ github.event.pull_request.head.ref }}
+          BASE_BRANCH: ${{ github.event.pull_request.base.ref }}
         run: |
           set -euo pipefail
-          runtime_changed_at="$(git log -1 --format=%cI -- \
+          runtime_changed_at="$(git log -1 --format=%cI "origin/${BASE_BRANCH}..HEAD" -- \
             worker/src worker/scripts 'worker/wrangler*.jsonc' \
             worker/package.json worker/package-lock.json)"
+          if [[ -z "$runtime_changed_at" ]]; then
+            echo "No runtime changes in this PR; using the configured lookback."
+            exit 0
+          fi
           runtime_changed_at="$(date -u -d "$runtime_changed_at" +%Y-%m-%dT%H:%M:%SZ)"
           runs="$(curl --fail-with-body --silent --show-error --get \
             -H "Authorization: Bearer $GH_TOKEN" \
@@ -67,6 +72,7 @@ jobs:
             '[.workflow_runs[] | select(.conclusion == "success" and .created_at >= $changed)] | last | .updated_at // empty' \
             <<<"$runs")"
           if [[ -n "$since" ]]; then
+            echo "Runtime changed at $runtime_changed_at"
             echo "Auditing Worker events after the first successful remediation deployment at $since"
             echo "LOG_SINCE=$since" >> "$GITHUB_ENV"
           else
