@@ -1,7 +1,9 @@
 import './fetch-guard.js';
 import { runDispatchedPagesReadModelTask } from './pages-read-model-dispatch.js';
+import { processReadModelBatch } from './read-model-entry.js';
 
 export const PAGES_READ_MODEL_CRON = '* * * * *';
+export const MINUTE_READ_MODEL_QUEUE = 'stationhead-read-model';
 const EMPTY_DEPENDENCIES = Object.freeze({});
 
 let publicationModulePromise;
@@ -67,6 +69,9 @@ export async function runPagesReadModelCron(controller, env, dependencies = EMPT
 }
 
 export async function runPagesReadModelQueue(batch, env, dependencies = EMPTY_DEPENDENCIES) {
+  if (String(batch?.queue || '') === MINUTE_READ_MODEL_QUEUE) {
+    return processReadModelBatch(batch, env);
+  }
   const messages = batch.messages;
   if (!messages?.length) return;
   const message = messages[0];

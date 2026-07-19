@@ -19,7 +19,6 @@ EXPECTED_SCRIPTS = {
     "sh-buddies-persist",
     "sh-buddies-ingest",
     "sh-buddies-comments",
-    "sh-minute-read-model",
     "sh-track-metadata",
     "sh-pages-read-model",
     "sh-minute-ingest",

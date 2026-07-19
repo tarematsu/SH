@@ -3,6 +3,8 @@ const OFFICIAL_NEWS_DUE_SQL = `SELECT 1 AS due FROM sh_official_news_announcemen
     (status='scheduled' AND scheduled_at>=? AND scheduled_at<=?) OR status='active'
   ) LIMIT 1`;
 
+const DUE_CACHE_SLOT_MS = 5 * 60_000;
+const officialNewsDueCaches = new WeakMap();
 let officialNewsProbeModulePromise;
 let officialNewsReconcileModulePromise;
 let officialNewsUtilsModulePromise;
@@ -42,14 +44,20 @@ export function scheduledTimestamp(controller, fallback) {
 }
 
 export async function officialNewsProbeDue(env, now = Date.now()) {
-  if (!env?.OTHER_DB?.prepare) return false;
+  const db = env?.OTHER_DB;
+  if (!db?.prepare) return false;
+  const slot = Math.floor(now / DUE_CACHE_SLOT_MS);
+  const cached = officialNewsDueCaches.get(db);
+  if (cached?.slot === slot) return cached.due;
   const earlyMs = positiveMs(env.OFFICIAL_NEWS_EARLY_WINDOW_MS, 10 * 60_000);
   const lateMs = positiveMs(env.OFFICIAL_NEWS_LATE_WINDOW_MS, 90 * 60_000);
   try {
-    const row = await env.OTHER_DB.prepare(OFFICIAL_NEWS_DUE_SQL)
+    const row = await db.prepare(OFFICIAL_NEWS_DUE_SQL)
       .bind(now - lateMs, now + earlyMs)
       .first();
-    return Boolean(row?.due);
+    const due = Boolean(row?.due);
+    officialNewsDueCaches.set(db, { slot, due });
+    return due;
   } catch (error) {
     console.warn(JSON.stringify({
       event: 'official_news_due_check_failed',

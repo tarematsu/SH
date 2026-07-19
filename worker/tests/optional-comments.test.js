@@ -36,14 +36,14 @@ test('zero CHAT_LIMIT disables optional comment collection', async () => {
   assert.equal(requests, 0);
 });
 
-test('deployed split configs disable ingest comments and keep comments Worker collection enabled', () => {
+test('deployed split configs disable ingest comments and bound comments Worker collection', () => {
   const ingest = workerConfig('wrangler.ingest.jsonc');
   const comments = workerConfig('wrangler.comments.jsonc');
 
   assert.equal(ingest.name, 'sh-buddies-ingest');
   assert.equal(configFromEnv(ingest.vars).chatLimit, 0);
   assert.equal(comments.name, 'sh-buddies-comments');
-  assert.equal(configFromEnv(comments.vars).chatLimit, 50);
+  assert.equal(configFromEnv(comments.vars).chatLimit, 25);
 });
 
 test('comment count inputs retain only identity and timestamp fields', () => {

@@ -3,8 +3,10 @@ import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
 import {
+  MINUTE_READ_MODEL_QUEUE,
   PAGES_READ_MODEL_CRON,
   runPagesReadModelCron,
+  runPagesReadModelQueue,
 } from '../src/pages-read-model-entry.js';
 import {
   ROLLUP_MAINTENANCE_CRON,
@@ -244,9 +246,36 @@ test('consolidated monitor rejects unknown schedules', async () => {
   );
 });
 
-test('minute read-model Worker has the renamed single Queue owner', () => {
-  const worker = config('wrangler.read-model.jsonc');
-  assert.equal(worker.name, 'sh-minute-read-model');
-  assert.equal(worker.queues.consumers.length, 1);
-  assert.equal(worker.queues.consumers[0].queue, 'stationhead-read-model');
+test('Pages read-model Worker owns both Queue boundaries', async () => {
+  const worker = config('wrangler.pages-read-model.jsonc');
+  assert.deepEqual(worker.queues.consumers.map(({ queue }) => queue), [
+    'stationhead-pages-read-model-publication',
+    MINUTE_READ_MODEL_QUEUE,
+  ]);
+  assert.equal(worker.queues.producers.some(({ binding }) => binding === 'TRACK_METADATA_QUEUE'), true);
+
+  const events = [];
+  await runPagesReadModelQueue({
+    queue: MINUTE_READ_MODEL_QUEUE,
+    messages: [{
+      body: {
+        message_type: 'stationhead-read-model',
+        message_version: 1,
+        read_model: {
+          queue: {
+            value: {
+              tracks: [{ title: null, artist: null, album_name: null, thumbnail_url: null }],
+            },
+          },
+        },
+      },
+      ack() { events.push('ack'); },
+      retry() { events.push('retry'); },
+    }],
+  }, {
+    TRACK_METADATA_QUEUE: {
+      async send() { events.push('metadata'); },
+    },
+  }, {});
+  assert.deepEqual(events, ['metadata', 'ack']);
 });

@@ -62,17 +62,32 @@ export async function enqueueMinuteDeriveTrigger(env, input) {
   return trigger;
 }
 
+function dispatchOrder(left, right) {
+  const priority = Number(right?.job_priority || 0) - Number(left?.job_priority || 0);
+  if (priority) return priority;
+  const minute = Number(left?.minute_at || 0) - Number(right?.minute_at || 0);
+  if (minute) return minute;
+  return Number(left?.id || 0) - Number(right?.id || 0);
+}
+
 export async function pendingMinuteDeriveTriggers(env, options = {}) {
   if (!env?.MINUTE_DB) throw new Error('minute derive MINUTE_DB binding is missing');
   const now = integer(options.now) ?? Date.now();
   const limit = positiveInteger(options.limit, 5, 20);
-  const result = await env.MINUTE_DB.prepare(`SELECT channel_id,minute_at,job_kind
-    FROM sh_minute_fact_jobs
-    WHERE (status='pending' AND next_attempt_at<=?)
-       OR (status='processing' AND COALESCE(lease_until,0)<?)
-    ORDER BY job_priority DESC,minute_at ASC,id ASC
-    LIMIT ?`)
-    .bind(now, now, limit)
-    .all();
-  return (result.results || []).map(minuteDeriveTrigger);
+  const [pending, expired] = await Promise.all([
+    env.MINUTE_DB.prepare(`SELECT id,channel_id,minute_at,job_kind,job_priority
+      FROM sh_minute_fact_jobs
+      WHERE status='pending' AND next_attempt_at<=?
+      ORDER BY job_priority DESC,minute_at ASC,id ASC
+      LIMIT ?`).bind(now, limit).all(),
+    env.MINUTE_DB.prepare(`SELECT id,channel_id,minute_at,job_kind,job_priority
+      FROM sh_minute_fact_jobs
+      WHERE status='processing' AND lease_until<?
+      ORDER BY lease_until ASC,id ASC
+      LIMIT ?`).bind(now, limit).all(),
+  ]);
+  return [...(pending.results || []), ...(expired.results || [])]
+    .sort(dispatchOrder)
+    .slice(0, limit)
+    .map(minuteDeriveTrigger);
 }

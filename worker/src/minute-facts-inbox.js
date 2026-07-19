@@ -201,13 +201,12 @@ export async function requeueDeadMinuteFactJobs(env, options = {}) {
 export async function minuteFactInboxStats(env) {
   await ensureMinuteFactInboxSchema(env);
   const row = await env.MINUTE_DB.prepare(`SELECT
-      SUM(CASE WHEN status='pending' THEN 1 ELSE 0 END) AS pending_count,
-      SUM(CASE WHEN status='processing' THEN 1 ELSE 0 END) AS processing_count,
-      SUM(CASE WHEN status='dead' THEN 1 ELSE 0 END) AS dead_count,
-      SUM(CASE WHEN status='pending' AND job_kind='rebuild' THEN 1 ELSE 0 END) AS rebuild_pending_count,
-      SUM(CASE WHEN status='pending' AND job_kind='live' THEN 1 ELSE 0 END) AS live_pending_count,
-      MIN(CASE WHEN status='pending' THEN minute_at ELSE NULL END) AS oldest_pending_minute
-    FROM sh_minute_fact_jobs`).first();
+      (SELECT COUNT(*) FROM sh_minute_fact_jobs WHERE status='pending') AS pending_count,
+      (SELECT COUNT(*) FROM sh_minute_fact_jobs WHERE status='processing') AS processing_count,
+      (SELECT COUNT(*) FROM sh_minute_fact_jobs WHERE status='dead') AS dead_count,
+      (SELECT COUNT(*) FROM sh_minute_fact_jobs WHERE status='pending' AND job_kind='rebuild') AS rebuild_pending_count,
+      (SELECT COUNT(*) FROM sh_minute_fact_jobs WHERE status='pending' AND job_kind='live') AS live_pending_count,
+      (SELECT MIN(minute_at) FROM sh_minute_fact_jobs WHERE status='pending') AS oldest_pending_minute`).first();
   return {
     pending_count: Number(row?.pending_count || 0),
     processing_count: Number(row?.processing_count || 0),

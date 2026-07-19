@@ -10,7 +10,6 @@ const workerDefinitions = [
   { name: 'sh-minute-rebuild', config: 'worker/wrangler.minute-rebuild.jsonc', command: 'deploy:minute-rebuild' },
   { name: 'sh-minute-maintenance', config: 'worker/wrangler.minute.jsonc', command: 'deploy:minute-maintenance' },
   { name: 'sh-minute-ingest', config: 'worker/wrangler.minute-ingest.jsonc', command: 'deploy:minute-ingest' },
-  { name: 'sh-minute-read-model', config: 'worker/wrangler.read-model.jsonc', command: 'deploy:minute-read-model' },
   { name: 'sh-track-metadata', config: 'worker/wrangler.track-metadata.jsonc', command: 'deploy:track-metadata' },
   { name: 'sh-buddies-comments', config: 'worker/wrangler.comments.jsonc', command: 'deploy:comments' },
   { name: 'sh-buddies-persist', config: 'worker/wrangler.persist.jsonc', command: 'deploy:persist' },
@@ -27,6 +26,7 @@ const gitConnectedWorkers = new Set([
 
 const deployScriptWorkers = new Map([
   ['worker/scripts/deploy-other-monitor.mjs', 'sh-monitor-other'],
+  ['worker/scripts/deploy-pages-read-model.mjs', 'sh-pages-read-model'],
 ]);
 
 function repositoryPath(path) {
