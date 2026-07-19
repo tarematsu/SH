@@ -3,6 +3,11 @@ import { stripAppleMusicFields } from '../../site/functions/lib/api-utils.js';
 import { withMinuteD1WriteThrottling } from './minute-d1-write-throttle.js';
 import { processMinuteEnrichment } from './minute-enrichment-entry.js';
 import {
+  IDENTITY_BITE_STAGE,
+  processMinuteIdentityBite,
+  processMinuteIdentitySession,
+} from './minute-enrichment-identity-stages.js';
+import {
   PLAYBACK_PATCH_STAGE,
   processMinutePlaybackPatch,
   processMinutePlaybackResolve,
@@ -35,6 +40,7 @@ function logMinuteEnrichmentResult(result) {
     track_id: result?.track_id,
     requested_materialized_tracks: result?.requested_materialized_tracks,
     playback_patch_deferred: result?.playback_patch_deferred === true,
+    bite_deferred: result?.bite_deferred === true,
     session_id: result?.session_id,
     host_id: result?.host_id,
     bite_count: result?.bite_count,
@@ -57,7 +63,7 @@ function sanitizeIdentityBody(body) {
 }
 
 function activeEnrichmentBody(body) {
-  return body?.stage === 'identity'
+  return body?.stage === 'identity' || body?.stage === IDENTITY_BITE_STAGE
     ? sanitizeIdentityBody(body)
     : stripAppleMusicFields(body);
 }
@@ -79,6 +85,14 @@ async function processOptimizedMinuteEnrichment(env, body, dependencies = EMPTY_
   if (activeBody?.stage === PLAYBACK_PATCH_STAGE) {
     const run = dependencies.processMinutePlaybackPatch || processMinutePlaybackPatch;
     return run(env, activeBody, dependencies.playback || EMPTY_DEPENDENCIES);
+  }
+  if (activeBody?.stage === IDENTITY_BITE_STAGE) {
+    const run = dependencies.processMinuteIdentityBite || processMinuteIdentityBite;
+    return run(env, activeBody, dependencies.identity || EMPTY_DEPENDENCIES);
+  }
+  if (activeBody?.stage === 'identity' && !dependencies.processMinuteEnrichment) {
+    const run = dependencies.processMinuteIdentitySession || processMinuteIdentitySession;
+    return run(env, activeBody, dependencies.identity || EMPTY_DEPENDENCIES);
   }
   const run = dependencies.processMinuteEnrichment || processMinuteEnrichment;
   return run(env, activeBody, dependencies.core || EMPTY_DEPENDENCIES);
