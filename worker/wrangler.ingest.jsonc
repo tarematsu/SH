@@ -13,6 +13,8 @@
     "SH_APP_VERSION": "1.0.0",
     "COLLECTOR_ID": "cloudflare-worker",
     "METADATA_LIMIT": 1,
+    "METADATA_REFRESH_INTERVAL_MS": 1800000,
+    "COLLECTED_METADATA_PERSIST_ENABLED": false,
     "REQUEST_TIMEOUT_MS": 8000
   },
   "d1_databases": [

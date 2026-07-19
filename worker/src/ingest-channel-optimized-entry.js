@@ -1,4 +1,7 @@
 const EMPTY_DEPENDENCIES = Object.freeze({});
+const DEFER_COLLECTED_METADATA = Object.freeze({
+  collectedMetadataDue: async () => false,
+});
 
 let preparedModulesPromise;
 let rawStagesPromise;
@@ -28,6 +31,16 @@ function loadIngestFactStages() {
 
 function loadIngestFinalize() {
   return ingestFinalizePromise ??= import('./ingest-finalize-entry.js');
+}
+
+function enabled(value) {
+  return ['1', 'true', 'yes', 'on'].includes(String(value ?? '').trim().toLowerCase());
+}
+
+function materializeDependencies(env) {
+  return enabled(env?.COLLECTED_METADATA_PERSIST_ENABLED)
+    ? EMPTY_DEPENDENCIES
+    : DEFER_COLLECTED_METADATA;
 }
 
 function logIngestResult(result, fallbackEvent) {
@@ -103,7 +116,7 @@ async function processIngestBatch(batch, env) {
       }
       case 'stationhead-raw-materialize': {
         const stages = await loadRawStages();
-        await stages.processRawMaterializeStage(env, body);
+        await stages.processRawMaterializeStage(env, body, materializeDependencies(env));
         break;
       }
       default:
@@ -136,6 +149,8 @@ async function processIngestBatch(batch, env) {
     }
   }
 }
+
+export { materializeDependencies };
 
 export default {
   queue: processIngestBatch,

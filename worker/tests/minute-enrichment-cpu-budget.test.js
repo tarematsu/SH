@@ -28,6 +28,6 @@ test('already clean identity enrichment keeps the original object', () => {
 test('success logs are sampled while skips remain visible', () => {
   assert.equal(shouldLogMinuteEnrichmentResult({ minuteAt: 0 }), true);
   assert.equal(shouldLogMinuteEnrichmentResult({ minuteAt: 60_000 }), false);
-  assert.equal(shouldLogMinuteEnrichmentResult({ minuteAt: 16 * 60_000 }), true);
+  assert.equal(shouldLogMinuteEnrichmentResult({ minuteAt: 32 * 60_000 }), true);
   assert.equal(shouldLogMinuteEnrichmentResult({ skipped: true, minuteAt: 60_000 }), true);
 });
