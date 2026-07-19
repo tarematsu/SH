@@ -26,17 +26,13 @@ function runWrangler(args, { capture = false, allowFailure = false } = {}) {
 function queueConsumers(queue) {
   const result = runWrangler(
     ['queues', 'consumer', 'worker', 'list', queue, '--json'],
-    { capture: true, allowFailure: true },
+    { capture: true },
   );
-  return {
-    ok: result.status === 0,
-    output: `${result.stdout || ''}\n${result.stderr || ''}`,
-  };
+  return `${result.stdout || ''}\n${result.stderr || ''}`;
 }
 
 function hasConsumer(queue, scriptName) {
-  const result = queueConsumers(queue);
-  return result.ok && result.output.includes(scriptName);
+  return queueConsumers(queue).includes(scriptName);
 }
 
 function removeConsumer(queue, scriptName, allowFailure = false) {
@@ -67,7 +63,11 @@ async function workerRequest(scriptName, method = 'GET') {
   const { accountId, token } = credentials();
   return fetch(
     `https://api.cloudflare.com/client/v4/accounts/${accountId}/workers/scripts/${scriptName}${method === 'DELETE' ? '?force=true' : ''}`,
-    { method, headers: { Authorization: `Bearer ${token}` } },
+    {
+      method,
+      headers: { Authorization: `Bearer ${token}` },
+      signal: AbortSignal.timeout(20_000),
+    },
   );
 }
 
@@ -88,6 +88,7 @@ async function deleteRetiredWorker() {
 }
 
 const migrating = hasConsumer(metadataQueue, retiredScript);
+const consolidatedBefore = hasConsumer(metadataQueue, consolidatedScript);
 let paused = false;
 let removed = false;
 try {
@@ -113,7 +114,7 @@ try {
     paused = false;
   }
 } catch (error) {
-  if (hasConsumer(metadataQueue, consolidatedScript)) {
+  if (!consolidatedBefore && hasConsumer(metadataQueue, consolidatedScript)) {
     removeConsumer(metadataQueue, consolidatedScript, true);
   }
   if (removed && !hasConsumer(metadataQueue, retiredScript)) {
