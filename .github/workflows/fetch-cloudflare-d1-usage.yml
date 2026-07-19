@@ -7,6 +7,7 @@ on:
       - "worker/**"
       - "database/**"
       - "scripts/cloudflare-d1-usage.mjs"
+      - "scripts/enforce-d1-half-budget.mjs"
       - ".github/workflows/fetch-cloudflare-d1-usage.yml"
   schedule:
     - cron: "30 1 * * *"
@@ -67,6 +68,10 @@ jobs:
           }
           console.log(`D1 daily budget passed for ${actual.date}`);
           NODE
+
+      - name: Enforce 50 percent planning budget
+        if: github.event_name != 'pull_request'
+        run: node scripts/enforce-d1-half-budget.mjs
 
       - name: Install Wrangler for query insights
         working-directory: worker
