@@ -13,7 +13,6 @@ const workerDefinitions = [
   { name: 'sh-buddies-comments', config: 'worker/wrangler.comments.jsonc', command: 'deploy:comments' },
   { name: 'sh-buddies-persist', config: 'worker/wrangler.persist.jsonc', command: 'deploy:persist' },
   { name: 'sh-buddies-ingest', config: 'worker/wrangler.ingest.jsonc', command: 'deploy:ingest' },
-  { name: 'sh-buddies-monitor', config: 'worker/wrangler.jsonc', command: 'deploy:buddies' },
   { name: 'sh-pages-read-model', config: 'worker/wrangler.pages-read-model.jsonc', command: 'deploy:pages-read-model' },
   { name: 'sh-monitor-other', config: 'worker/wrangler.other.jsonc', command: 'deploy:other' },
 ];
