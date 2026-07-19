@@ -23,7 +23,7 @@ for name, item in sorted((summary.get("scripts") or {}).items()):
     maximum = cpu.get("max")
     over_budget = None
     if samples and p95 is not None:
-        over_budget = float(p95) > BUDGET_MS
+        over_budget = float(p95) >= BUDGET_MS
         if over_budget:
             violations.append({
                 "worker": name,
@@ -38,12 +38,13 @@ for name, item in sorted((summary.get("scripts") or {}).items()):
         "p95_ms": p95,
         "max_ms": maximum,
         "p95_within_budget": None if over_budget is None else not over_budget,
-        "max_over_budget": maximum is not None and float(maximum) > BUDGET_MS,
+        "max_at_or_over_budget": maximum is not None and float(maximum) >= BUDGET_MS,
     }
 
 result = {
     "ok": not violations,
     "budget_ms": BUDGET_MS,
+    "comparison": "strictly_less_than",
     "statistic": "p95",
     "violations": violations,
     "workers": workers,
@@ -53,5 +54,5 @@ print(json.dumps(result, ensure_ascii=False, separators=(",", ":")))
 
 if violations:
     detail = ", ".join(f"{item['worker']} p95={item['p95_ms']}ms" for item in violations)
-    print(f"Worker CPU p95 budget exceeded: {detail}", file=sys.stderr)
+    print(f"Worker CPU p95 must stay below {BUDGET_MS:g} ms: {detail}", file=sys.stderr)
     raise SystemExit(1)
