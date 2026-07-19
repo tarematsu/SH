@@ -83,5 +83,20 @@ test('production batches only live derive while recovery and rebuild stay isolat
   const derive = config('wrangler.minute-derive.jsonc');
   const rebuild = config('wrangler.minute-rebuild.jsonc');
   assert.deepEqual(derive.queues.consumers.map(({ max_batch_size }) => max_batch_size), [1, 2]);
+  assert.equal(derive.vars.DERIVE_REVISION_CHUNK_TRACKS, 2);
   assert.equal(rebuild.queues.consumers[0].max_batch_size, 1);
+});
+
+test('batched derive composes with the merged CPU and Pages KV contracts', () => {
+  const budget = readFileSync(
+    new URL('../../.github/scripts/enforce-worker-cpu-budget.py', import.meta.url),
+    'utf8',
+  );
+  const pagesKv = readFileSync(
+    new URL('../scripts/pages-response-kv-namespace.mjs', import.meta.url),
+    'utf8',
+  );
+  assert.match(budget, /BUDGET_MS = 10\.0/);
+  assert.match(budget, /"comparison": "less_than_or_equal"/);
+  assert.match(pagesKv, /NAMESPACE_PAGE_SIZE = 1000/);
 });
