@@ -76,9 +76,10 @@ test('ingest drops duplicate collected metadata when the dedicated pipeline owns
   assert.equal(compactMaterializeMessage({ COLLECTED_METADATA_PERSIST_ENABLED: true }, body), body);
 });
 
-test('live derive uses one-track chunks while rebuild keeps the configured batch', () => {
-  const liveQueue = { send() {} };
-  const rebuildQueue = { send() {} };
+test('live derive uses one-track chunks while rebuild keeps the configured batch', async () => {
+  const calls = [];
+  const liveQueue = { async send(value) { calls.push(['live', value]); } };
+  const rebuildQueue = { async send(value) { calls.push(['rebuild', value]); } };
   const env = {
     DERIVE_REVISION_CHUNK_TRACKS: 2,
     MINUTE_LIVE_DERIVE_QUEUE: liveQueue,
@@ -87,9 +88,13 @@ test('live derive uses one-track chunks while rebuild keeps the configured batch
   const live = activeDeriveEnv({ queue: LIVE_DERIVE_QUEUE_NAME }, env);
   const rebuild = activeDeriveEnv({ queue: REBUILD_DERIVE_QUEUE_NAME }, env);
   assert.equal(live.DERIVE_REVISION_CHUNK_TRACKS, 1);
-  assert.equal(live.MINUTE_DERIVE_QUEUE, liveQueue);
   assert.equal(rebuild.DERIVE_REVISION_CHUNK_TRACKS, 2);
-  assert.equal(rebuild.MINUTE_DERIVE_QUEUE, rebuildQueue);
+  await live.MINUTE_DERIVE_QUEUE.send({ id: 1 });
+  await rebuild.MINUTE_DERIVE_QUEUE.send({ id: 2 });
+  assert.deepEqual(calls, [
+    ['live', { id: 1 }],
+    ['rebuild', { id: 2 }],
+  ]);
 });
 
 test('minute derive success logs are sampled but failures are always retained', () => {
