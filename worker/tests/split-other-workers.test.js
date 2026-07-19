@@ -17,7 +17,11 @@ import {
   runOtherMonitorCron,
   runOtherMonitorScheduled,
 } from '../src/other-monitor-entry.js';
-import { runConsolidatedMonitorScheduled } from '../src/consolidated-monitor-entry.js';
+import {
+  MONITOR_MAINTENANCE_MESSAGE,
+  runConsolidatedMonitorQueue,
+  runConsolidatedMonitorScheduled,
+} from '../src/consolidated-monitor-entry.js';
 
 function config(name) {
   return JSON.parse(readFileSync(new URL(`../${name}`, import.meta.url), 'utf8'));
@@ -74,33 +78,102 @@ test('Pages read-model Worker surfaces single-task materialization failures', as
   );
 });
 
-test('maintenance path preserves stagger and collector-priority ordering', async () => {
-  const calls = [];
-  const buddies = { prepare() {} };
-  const other = {};
-  const env = { BUDDIES_DB: buddies, OTHER_DB: other };
-  const dependencies = {
-    applyStagger: async (_env, worker) => calls.push(`stagger:${worker}`),
-    waitForCollector: async () => { calls.push('collector'); return { ready: true }; },
-    runRollup: async (sourceDb, targetDb, now) => {
-      calls.push(['rollup', sourceDb, targetDb, now]);
-      return 'rollup';
+test('consolidated monitor dispatches maintenance to Queue and preserves the Cron budget', async () => {
+  const sent = [];
+  const scheduledTime = BASE + 30 * 60_000;
+  const env = {
+    HOST_MONITOR_QUEUE: {
+      async send(body, options) { sent.push({ body, options }); },
     },
   };
   const result = await runConsolidatedMonitorScheduled(
-    { cron: ROLLUP_MAINTENANCE_CRON, scheduledTime: BASE + 30 * 60_000 },
+    { cron: OTHER_MONITOR_CRON, scheduledTime },
     env,
     {},
-    { maintenanceDependencies: dependencies },
+    {
+      otherOptions: {
+        dependencies: { buddy: async () => 'buddy' },
+        recordSuccess: async () => {},
+        healthApp: { invalidateHealthCache() {} },
+      },
+    },
   );
-  assert.equal(result, 'rollup');
-  assert.equal(calls[0], 'stagger:other');
-  assert.equal(calls[1], 'collector');
-  assert.deepEqual(calls[2], ['rollup', buddies, other, BASE + 30 * 60_000]);
 
+  assert.equal(sent.length, 1);
+  assert.deepEqual(sent[0].body, {
+    message_type: MONITOR_MAINTENANCE_MESSAGE,
+    message_version: 1,
+    cron: ROLLUP_MAINTENANCE_CRON,
+    scheduled_at: scheduledTime,
+  });
+  assert.deepEqual(sent[0].options, { contentType: 'json' });
+  assert.equal(result.at(-1).task, 'maintenance');
+
+  const calls = [];
+  const message = {
+    body: sent[0].body,
+    ack() { calls.push('ack'); },
+    retry() { calls.push('retry'); },
+  };
+  await runConsolidatedMonitorQueue(
+    { messages: [message] },
+    { BUDDIES_DB: {}, OTHER_DB: {} },
+    {},
+    {
+      maintenanceDependencies: {
+        applyStagger: async () => calls.push('stagger'),
+        waitForCollector: async () => ({ ready: true }),
+        runRollup: async () => { calls.push('rollup'); return 'rollup'; },
+      },
+    },
+  );
+  assert.deepEqual(calls, ['stagger', 'rollup', 'ack']);
+
+  const worker = config('wrangler.other.jsonc');
+  assert.equal(worker.name, 'sh-monitor-other');
+  assert.equal(worker.main, 'src/other-entry.js');
+  assert.deepEqual(worker.triggers.crons, [OTHER_MONITOR_CRON]);
+  assert.equal(worker.vars.CRON_STAGGER_OTHER_MS, 25_000);
+  assert.equal(worker.vars.COLLECTOR_PRIORITY_WAIT_MS, 15_000);
+  assert.equal(worker.vars.SNAPSHOT_RETENTION_ENABLED, true);
+});
+
+test('maintenance path reports swallowed D1 failures as failed Queue retries', async () => {
+  const events = [];
+  const message = {
+    body: {
+      message_type: MONITOR_MAINTENANCE_MESSAGE,
+      cron: SNAPSHOT_RETENTION_CRON,
+      scheduled_at: BASE + 50 * 60_000,
+    },
+    ack() { events.push('ack'); },
+    retry() { events.push('retry'); },
+  };
+  const originalError = console.error;
+  console.error = () => {};
+  try {
+    await runConsolidatedMonitorQueue(
+      { messages: [message] },
+      { BUDDIES_DB: {}, OTHER_DB: {} },
+      {},
+      {
+        maintenanceDependencies: {
+          applyStagger: async () => {},
+          waitForCollector: async () => ({ ready: true }),
+          pruneSnapshots: async () => ({ skipped: true, reason: 'retention-error', error: 'delete failed' }),
+        },
+      },
+    );
+  } finally {
+    console.error = originalError;
+  }
+  assert.deepEqual(events, ['retry']);
+});
+
+test('direct maintenance runner preserves collector gating', async () => {
   const skipped = await runMonitorMaintenanceCron(
     { cron: SNAPSHOT_RETENTION_CRON, scheduledTime: BASE + 50 * 60_000 },
-    env,
+    { BUDDIES_DB: {}, OTHER_DB: {} },
     {
       applyStagger: async () => {},
       waitForCollector: async () => ({ ready: false, reason: 'collector-not-ready', targetMinute: BASE }),
@@ -108,59 +181,6 @@ test('maintenance path preserves stagger and collector-priority ordering', async
     },
   );
   assert.deepEqual(skipped, { skipped: true, reason: 'collector-not-ready', targetMinute: BASE });
-
-  const worker = config('wrangler.other.jsonc');
-  assert.equal(worker.name, 'sh-monitor-other');
-  assert.equal(worker.main, 'src/consolidated-monitor-entry.js');
-  assert.deepEqual(worker.triggers.crons, [
-    OTHER_MONITOR_CRON,
-    ROLLUP_MAINTENANCE_CRON,
-    SNAPSHOT_RETENTION_CRON,
-  ]);
-  assert.equal(worker.vars.CRON_STAGGER_OTHER_MS, 25_000);
-  assert.equal(worker.vars.COLLECTOR_PRIORITY_WAIT_MS, 15_000);
-  assert.equal(worker.vars.SNAPSHOT_RETENTION_ENABLED, true);
-});
-
-test('maintenance path reports swallowed D1 failures as failed Cron invocations', async () => {
-  const env = { BUDDIES_DB: { prepare() {} }, OTHER_DB: {} };
-  const common = {
-    applyStagger: async () => {},
-    waitForCollector: async () => ({ ready: true }),
-  };
-
-  await assert.rejects(
-    runMonitorMaintenanceCron(
-      { cron: ROLLUP_MAINTENANCE_CRON, scheduledTime: BASE + 30 * 60_000 },
-      {},
-      { applyStagger: async () => {} },
-    ),
-    /rollup maintenance failed: db-binding-missing/,
-  );
-
-  await assert.rejects(
-    runMonitorMaintenanceCron(
-      { cron: ROLLUP_MAINTENANCE_CRON, scheduledTime: BASE + 30 * 60_000 },
-      env,
-      {
-        ...common,
-        runRollup: async () => ({ skipped: true, reason: 'maintenance-error', error: 'D1 unavailable' }),
-      },
-    ),
-    /rollup maintenance failed: D1 unavailable/,
-  );
-
-  await assert.rejects(
-    runMonitorMaintenanceCron(
-      { cron: SNAPSHOT_RETENTION_CRON, scheduledTime: BASE + 50 * 60_000 },
-      env,
-      {
-        ...common,
-        pruneSnapshots: async () => ({ skipped: true, reason: 'retention-error', error: 'delete failed' }),
-      },
-    ),
-    /snapshot retention failed: delete failed/,
-  );
 });
 
 test('other monitor reserves buddy46 stages and runs only one workload per tick', async () => {
@@ -215,13 +235,6 @@ test('other monitor reserves buddy46 stages and runs only one workload per tick'
     },
   );
   assert.deepEqual(events, ['prediction', 'heartbeat', 'invalidate']);
-
-  const worker = config('wrangler.other.jsonc');
-  assert.equal(worker.name, 'sh-monitor-other');
-  assert.equal(worker.main, 'src/consolidated-monitor-entry.js');
-  assert.deepEqual(worker.triggers.crons, [OTHER_MONITOR_CRON, ROLLUP_MAINTENANCE_CRON, SNAPSHOT_RETENTION_CRON]);
-  assert.equal(worker.vars.BUDDY_PLAYBACK_INTERVAL_MS, 1_800_000);
-  assert.equal(worker.vars.BUDDY_PLAYBACK_METADATA_LIMIT, 1);
 });
 
 test('consolidated monitor rejects unknown schedules', async () => {
