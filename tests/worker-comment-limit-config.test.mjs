@@ -6,6 +6,6 @@ const commentsConfig = JSON.parse(await readFile(new URL('../worker/wrangler.com
 const otherConfig = JSON.parse(await readFile(new URL('../worker/wrangler.other.jsonc', import.meta.url), 'utf8'));
 
 test('normal comment collection is bounded below solo collection', () => {
-  assert.equal(commentsConfig.vars.CHAT_LIMIT, 40);
+  assert.equal(commentsConfig.vars.CHAT_LIMIT, 25);
   assert.equal(otherConfig.vars.SOLO_CHAT_LIMIT, 50);
 });
