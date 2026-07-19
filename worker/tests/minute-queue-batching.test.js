@@ -51,9 +51,9 @@ test('rebuild batch logic preserves independent acknowledgements for future roll
   assert.deepEqual(events, ['ack:1', 'ack:2']);
 });
 
-test('production batches derive pairs while rebuild remains isolated', () => {
+test('production batches only live derive while recovery and rebuild stay isolated', () => {
   const derive = config('wrangler.minute-derive.jsonc');
   const rebuild = config('wrangler.minute-rebuild.jsonc');
-  assert.deepEqual(derive.queues.consumers.map(({ max_batch_size }) => max_batch_size), [2, 2]);
+  assert.deepEqual(derive.queues.consumers.map(({ max_batch_size }) => max_batch_size), [1, 2]);
   assert.equal(rebuild.queues.consumers[0].max_batch_size, 1);
 });
