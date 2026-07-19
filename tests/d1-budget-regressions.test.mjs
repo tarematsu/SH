@@ -75,9 +75,12 @@ test('facts provisioning updates only unrepaired revision rows', () => {
   assert.doesNotMatch(text, /SET source_visible_count=COALESCE\(source_visible_count,materialized_item_count,item_count\)`/);
 });
 
-test('live verification uses bounded facts and revision probes', () => {
+test('live verification uses primary-key probes and keeps revision analytics opt-in', () => {
   const text = source('../worker/scripts/verify-facts-live.mjs');
-  assert.match(text, /COALESCE\(\(SELECT MAX\(id\) FROM sh_minute_facts\),0\) AS fact_count/);
+  assert.match(text, /SELECT id FROM sh_minute_facts ORDER BY id DESC LIMIT 1/);
+  assert.doesNotMatch(text, /SELECT MAX\(id\) FROM sh_minute_facts/);
+  assert.match(text, /FACTS_VERIFY_REVISION_REACH/);
+  assert.match(text, /if \(includeRevisionReach\)/);
   assert.match(text, /WITH recent_revisions AS/);
   assert.match(text, /ORDER BY r\.effective_at DESC,r\.id DESC\s+LIMIT 500/);
   assert.doesNotMatch(text, /COUNT\(\*\) AS fact_count,\s+MAX\(observed_at\)/);
