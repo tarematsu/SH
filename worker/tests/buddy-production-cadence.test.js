@@ -50,8 +50,9 @@ test('legacy compatibility runner retains injected five-minute buddy cadence', a
   ]);
 });
 
-test('other-worker production config uses a 30-minute buddy cadence', () => {
+test('consolidated production cron is every minute with a 30-minute buddy cadence', () => {
   const config = JSON.parse(readFileSync(new URL('../wrangler.other.jsonc', import.meta.url), 'utf8'));
+  assert.equal(OTHER_WORKER_CRON, '*/5 * * * *');
   assert.equal(config.vars.BUDDY_PLAYBACK_INTERVAL_MS, 1_800_000);
-  assert.deepEqual(config.triggers.crons, [OTHER_WORKER_CRON]);
+  assert.deepEqual(config.triggers.crons, ['* * * * *']);
 });
