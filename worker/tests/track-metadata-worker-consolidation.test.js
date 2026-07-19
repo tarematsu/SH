@@ -1,0 +1,55 @@
+import assert from 'node:assert/strict';
+import { existsSync, readFileSync } from 'node:fs';
+import test from 'node:test';
+
+import {
+  TRACK_METADATA_QUEUE_NAME,
+  isTrackMetadataDelivery,
+  processMinuteEnrichmentBatch,
+} from '../src/minute-enrichment-optimized-entry.js';
+
+function message(body, events) {
+  return {
+    body,
+    ack() { events.push('ack'); },
+    retry() { events.push('retry'); },
+  };
+}
+
+test('the consolidated enrichment Worker routes metadata by durable message type', async () => {
+  const events = [];
+  const calls = [];
+  await processMinuteEnrichmentBatch({
+    messages: [message({
+      message_type: 'stationhead-track-metadata',
+      message_version: 1,
+      task: 'read-model-write',
+    }, events)],
+  }, {}, {
+    async processTrackMetadataTask(_env, body) {
+      calls.push(body.task);
+      return { task: body.task, pending: false };
+    },
+  });
+  assert.deepEqual(calls, ['read-model-write']);
+  assert.deepEqual(events, ['ack']);
+});
+
+test('metadata routing also recognizes the Queue name during migration', () => {
+  assert.equal(isTrackMetadataDelivery({ queue: TRACK_METADATA_QUEUE_NAME }, {}), true);
+  assert.equal(isTrackMetadataDelivery({}, { message_type: 'stationhead-track-metadata' }), true);
+  assert.equal(isTrackMetadataDelivery({}, { stage: 'identity' }), false);
+});
+
+test('production config has two consumers and the retired Worker config is absent', () => {
+  const config = JSON.parse(readFileSync(
+    new URL('../wrangler.minute-enrichment.jsonc', import.meta.url),
+    'utf8',
+  ));
+  assert.deepEqual(
+    config.queues.consumers.map(({ queue }) => queue),
+    ['stationhead-minute-enrichment', 'stationhead-track-metadata'],
+  );
+  assert.equal(config.queues.producers.some(({ binding }) => binding === 'TRACK_METADATA_QUEUE'), true);
+  assert.equal(existsSync(new URL('../wrangler.track-metadata.jsonc', import.meta.url)), false);
+});
