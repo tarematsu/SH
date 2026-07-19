@@ -1,5 +1,6 @@
 import { FACTS_FRESH_MS } from './dashboard-facts.js';
 import {
+  LATEST_PLAYBACK_WITH_SNAPSHOT_SQL,
   LATEST_QUEUE_WITH_ITEMS_SQL,
   parseLatestQueueRows,
   parseLatestSnapshotRow,
@@ -7,8 +8,6 @@ import {
 import { computePlayback, normalizePlaybackTrack } from './playback.js';
 import { hostIdentity, queueRevision, stateFromQueue } from './queue-state.js';
 
-// Retained for rollback callers that import the legacy query directly. The
-// production fallback now receives these columns from LATEST_QUEUE_WITH_ITEMS_SQL.
 export const CANONICAL_PLAYBACK_SNAPSHOT_SQL = `SELECT
   observed_at,channel_id,station_id,is_broadcasting,host_account_id,host_handle
 FROM sh_channel_snapshots
@@ -31,12 +30,26 @@ function text(value) {
   return parsed || null;
 }
 
+async function loadPlaybackRows(db) {
+  try {
+    const result = await db.prepare(LATEST_PLAYBACK_WITH_SNAPSHOT_SQL).all();
+    const rows = result.results || [];
+    return { snapshot: parseLatestSnapshotRow(rows[0]), rows };
+  } catch (error) {
+    if (!/no such column/i.test(String(error?.message || error))) throw error;
+    const [snapshot, queueResult] = await Promise.all([
+      db.prepare(CANONICAL_PLAYBACK_SNAPSHOT_SQL).first(),
+      db.prepare(LATEST_QUEUE_WITH_ITEMS_SQL).all(),
+    ]);
+    return { snapshot, rows: queueResult.results || [] };
+  }
+}
+
 export async function loadCanonicalPlaybackPayload(db, generatedAt = Date.now()) {
   if (!db) return null;
-  const queueResult = await db.prepare(LATEST_QUEUE_WITH_ITEMS_SQL).all();
-  const rows = queueResult.results || [];
-  const snapshot = parseLatestSnapshotRow(rows[0]);
-  const { latestQueue, queue } = parseLatestQueueRows(rows);
+  const loaded = await loadPlaybackRows(db);
+  const snapshot = loaded.snapshot;
+  const { latestQueue, queue } = parseLatestQueueRows(loaded.rows);
   if (!snapshot || !latestQueue || !queue.length) return null;
 
   const playback = computePlayback(queue, generatedAt);
