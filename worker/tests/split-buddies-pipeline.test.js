@@ -20,7 +20,7 @@ function commentsTask() {
   return {
     message_type: 'stationhead-comments-task',
     message_version: 1,
-    observed_at: 1_784_000_000_000,
+    observed_at: 1_784_000_012_345,
     station_id: 123,
     auth: {
       authToken: 'token',
@@ -211,9 +211,8 @@ test('prepared collector payload preserves compact object identity and planning'
   assert.equal(result.initialPlan.queue, true);
 });
 
-test('outbox retries retain minute timestamp and read-model identity', () => {
-  const rawObservedAt = 1_784_000_000_000;
-  const processingObservedAt = rawObservedAt + 12_345;
+test('outbox retries retain durable minute timestamp and read-model identity', () => {
+  const processingObservedAt = commentsTask().observed_at;
   const queue = {
     station_id: 123,
     queue_id: 456,
@@ -242,10 +241,10 @@ test('outbox retries retain minute timestamp and read-model identity', () => {
   const task = commentsTaskForMinuteFact(commentsTask(), minuteFact);
   const envelope = readModelEnvelopeForMinuteFact(commentsTask(), minuteFact);
 
-  assert.equal(task.observed_at, commentsTask().observed_at);
+  assert.equal(task.observed_at, processingObservedAt);
   assert.equal(task.station_id, 123);
-  assert.equal(envelope.observed_at, commentsTask().observed_at);
-  assert.equal(envelope.job_id, `read-model:10:${commentsTask().observed_at}`);
+  assert.equal(envelope.observed_at, processingObservedAt);
+  assert.equal(envelope.job_id, `read-model:10:${processingObservedAt}`);
   assert.equal(envelope.read_model.queue.value, queue);
   assert.equal(envelope.comment_task.station_id, 123);
 });
