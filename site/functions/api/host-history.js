@@ -260,7 +260,7 @@ export async function onRequestGet({ request, env }) {
           FROM sh_host_queue_snapshots
           WHERE session_id=? ORDER BY observed_at ASC LIMIT 1000`).bind(sessionId),
         env.OTHER_DB.prepare(`SELECT observed_at,queue_start_time,position,queue_track_id,
-          stationhead_track_id,spotify_id,apple_music_id,deezer_id,
+          stationhead_track_id,spotify_id,deezer_id,
           isrc,duration_ms,preview_url,bite_count
           FROM sh_host_queue_items
           WHERE session_id=? ORDER BY queue_start_time ASC,position ASC LIMIT 10000`).bind(sessionId),
