@@ -2,8 +2,10 @@ import './fetch-guard.js';
 import { materializedResponseMaximumAge } from '../../site/functions/lib/api-contract.js';
 import { runDispatchedPagesReadModelTask } from './pages-read-model-dispatch.js';
 import { loadMaterializedResponse } from './pages-response-store.js';
+import { processReadModelBatch } from './read-model-entry.js';
 
 export const PAGES_READ_MODEL_CRON = '* * * * *';
+export const MINUTE_READ_MODEL_QUEUE = 'stationhead-read-model';
 const EMPTY_DEPENDENCIES = Object.freeze({});
 const INTERNAL_RESPONSE_PATH = '/_internal/pages-response';
 
@@ -103,12 +105,17 @@ export async function runPagesReadModelCron(controller, env, dependencies = EMPT
 }
 
 export async function runPagesReadModelQueue(batch, env, dependencies = EMPTY_DEPENDENCIES) {
+  if (String(batch?.queue || '') === MINUTE_READ_MODEL_QUEUE) {
+    const runMinuteReadModel = dependencies.processReadModelBatch || processReadModelBatch;
+    return runMinuteReadModel(batch, env);
+  }
   const messages = batch.messages;
   if (!messages?.length) return;
   const message = messages[0];
-  const { processTrackHistoryPublicationTask } = await loadPublicationModule();
+  const processPublication = dependencies.processTrackHistoryPublicationTask
+    || (await loadPublicationModule()).processTrackHistoryPublicationTask;
   try {
-    const result = await processTrackHistoryPublicationTask(env, message.body, dependencies);
+    const result = await processPublication(env, message.body, dependencies);
     console.log(JSON.stringify(result));
     message.ack();
   } catch (error) {
