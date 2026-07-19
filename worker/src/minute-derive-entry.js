@@ -90,6 +90,11 @@ function sourcePayloadUnavailable(error) {
   return SOURCE_PAYLOAD_ERROR.test(String(error?.message || error));
 }
 
+function revisionMaterializationMessage(body) {
+  return body?.message_type === 'minute-fact-derive-stage'
+    && body?.stage === 'revision-materialize';
+}
+
 export async function refreshSparseRevisionContinuation(env, body) {
   const revisionId = integer(body?.revision?.revision_id);
   const db = env?.MINUTE_DB;
@@ -168,8 +173,16 @@ export async function processMinuteDeriveBatch(batch, env, dependencies = {}) {
   if (!messages?.length) return;
   const activeEnv = activeDeriveEnv(batch, env);
   const queueName = batch?.queue || null;
+  const containsRevisionMaterialization = messages.length > 1
+    && messages.some((message) => revisionMaterializationMessage(message?.body));
+  // Keep the maximum revision work per invocation at two tracks. When #545
+  // raises single-message chunks to two tracks, paired deliveries fall back to
+  // one track per message instead of multiplying both optimizations together.
+  const processingEnv = containsRevisionMaterialization
+    ? scopedDeriveEnv(activeEnv, null, 1)
+    : activeEnv;
   for (const message of messages) {
-    await processOneMinuteDeriveMessage(message, activeEnv, queueName, dependencies);
+    await processOneMinuteDeriveMessage(message, processingEnv, queueName, dependencies);
   }
 }
 
