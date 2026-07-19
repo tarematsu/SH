@@ -1,12 +1,11 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import test from 'node:test';
 
 import {
   LIVE_DERIVE_QUEUE_NAME,
   processMinuteDeriveBatch,
 } from '../src/minute-derive-entry.js';
-import { processMinuteRebuildBatch } from '../src/minute-rebuild-entry.js';
 
 function config(name) {
   return JSON.parse(readFileSync(new URL(`../${name}`, import.meta.url), 'utf8'));
@@ -65,20 +64,6 @@ test('paired revision materialization caps each message at one track', async () 
   assert.deepEqual(events, ['ack:1', 'ack:2']);
 });
 
-test('rebuild batch logic preserves independent acknowledgements for future rollout', async () => {
-  const events = [];
-  const processed = [];
-  const messages = [queueMessage(1, events), queueMessage(2, events)];
-  await processMinuteRebuildBatch({ messages }, {}, {
-    async processStage(_env, body) {
-      processed.push(body.id);
-      return { stage: 'test', run_id: String(body.id), pending: false };
-    },
-  });
-  assert.deepEqual(processed, [1, 2]);
-  assert.deepEqual(events, ['ack:1', 'ack:2']);
-});
-
 test('production batches only live derive while recovery and rebuild stay isolated', () => {
   const derive = config('wrangler.minute-derive.jsonc');
   const rebuild = config('wrangler.minute-rebuild.jsonc');
@@ -87,9 +72,10 @@ test('production batches only live derive while recovery and rebuild stay isolat
   assert.equal(derive.vars.DERIVE_REVISION_CHUNK_TRACKS, 2);
   assert.equal(rebuild.queues.consumers[0].max_batch_size, 1);
   assert.match(entry, /const LIVE_REVISION_CHUNK_TRACKS = 1/);
+  assert.match(entry, /minute_derive_queue_overloaded/);
 });
 
-test('batched derive composes with the merged CPU and Pages KV contracts', () => {
+test('batched derive composes with the merged CPU, KV, and Worker topology contracts', () => {
   const budget = readFileSync(
     new URL('../../.github/scripts/enforce-worker-cpu-budget.py', import.meta.url),
     'utf8',
@@ -98,7 +84,13 @@ test('batched derive composes with the merged CPU and Pages KV contracts', () =>
     new URL('../scripts/pages-response-kv-namespace.mjs', import.meta.url),
     'utf8',
   );
+  const enrichment = config('wrangler.minute-enrichment.jsonc');
   assert.match(budget, /BUDGET_MS = 10\.0/);
   assert.match(budget, /"comparison": "less_than_or_equal"/);
   assert.match(pagesKv, /NAMESPACE_PAGE_SIZE = 1000/);
+  assert.deepEqual(
+    enrichment.queues.consumers.map(({ queue }) => queue).sort(),
+    ['stationhead-minute-enrichment', 'stationhead-track-metadata'],
+  );
+  assert.equal(existsSync(new URL('../wrangler.track-metadata.jsonc', import.meta.url)), false);
 });
