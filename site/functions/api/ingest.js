@@ -8,6 +8,7 @@ import {
   readJsonBody,
   text,
 } from '../lib/api-utils.js';
+import { withAppleMusicFreeD1 } from '../lib/apple-music-d1-pruner.js';
 import { saveCommentCounts } from '../lib/comment-counts.js';
 import { saveLeanHeartbeat, saveLeanQueue, saveLeanSnapshot } from '../lib/d1-optimized-ingest.js';
 import { saveQueueReachability } from '../lib/queue-reachability.js';
@@ -75,9 +76,10 @@ export function supportsOptimizedIngestType(type) {
 
 export function ingestOptimizedBody(env, body) {
   if (!env?.DB) return NO_OPTIMIZED_INGEST;
+  const activeEnv = withAppleMusicFreeD1(env);
   const handler = INGEST_HANDLERS[body?.type];
   if (!handler) return NO_OPTIMIZED_INGEST;
-  return handler(env, body, observedAtFrom(body), body?.data ?? {});
+  return handler(activeEnv, body, observedAtFrom(body), body?.data ?? {});
 }
 
 // Internal entry point used by the collector Worker. It is deliberately not
