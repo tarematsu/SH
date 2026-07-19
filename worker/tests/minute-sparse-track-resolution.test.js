@@ -69,15 +69,27 @@ test('sparse lookup keeps alias precedence in one D1 query', () => {
   assert.equal(shape.direct.stationhead_track_id, 700);
 });
 
-test('one sparse track performs one lookup and one update batch', async () => {
+test('one sparse track performs indexed union probes and one update batch', async () => {
   const db = new FakeDb();
   const [resolved] = await resolveSparseTracks(db, null, [track], 1_000);
 
   assert.equal(resolved.trackId, 42);
   assert.equal(db.lookups.length, 1);
-  assert.match(db.lookups[0].sql, /wanted\(ord,alias_type,alias_value\)/);
-  assert.match(db.lookups[0].sql, /JOIN sh_track_aliases/);
-  assert.match(db.lookups[0].sql, /UNION ALL/);
+  const lookup = db.lookups[0];
+  assert.match(lookup.sql, /wanted\(ord,alias_type,alias_value\)/);
+  assert.match(lookup.sql, /JOIN sh_track_aliases/);
+  assert.match(lookup.sql, /FROM sh_tracks WHERE isrc=\?/);
+  assert.match(lookup.sql, /FROM sh_tracks WHERE spotify_id=\?/);
+  assert.match(lookup.sql, /FROM sh_tracks WHERE stationhead_track_id=\?/);
+  assert.match(lookup.sql, /FROM sh_tracks WHERE canonical_key=\?/);
+  assert.doesNotMatch(lookup.sql, /isrc=\?\s+OR\s+spotify_id=/);
+  assert.ok((lookup.sql.match(/UNION ALL/g) || []).length >= 4);
+  assert.deepEqual(lookup.args.slice(-4), [
+    'JPTEST000700',
+    'spotify-700',
+    700,
+    resolved.canonicalKey,
+  ]);
   assert.equal(db.batches.length, 1);
   assert.equal(db.batches[0][0].args.at(-1), 42);
   assert.equal(db.batches[0].length, 1 + resolved.aliases.length);

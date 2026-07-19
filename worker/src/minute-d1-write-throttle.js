@@ -2,6 +2,7 @@ const ORIGINAL_D1_STATEMENT = Symbol('minute-original-d1-statement');
 const REWRITE_CACHE_LIMIT = 24;
 const CHECKPOINT_MS = 5 * 60_000;
 const rewriteCache = new Map();
+const wrappedDatabases = new WeakMap();
 
 const TRACK_UPDATE = `UPDATE sh_tracks SET
       isrc=COALESCE(isrc,?1),spotify_id=COALESCE(spotify_id,?2),
@@ -15,6 +16,22 @@ const TRACK_UPDATE = `UPDATE sh_tracks SET
       OR (?5 IS NOT NULL AND artist IS NULL)
       OR ?6-COALESCE(last_seen_at,0)>=${CHECKPOINT_MS}
     )`;
+
+const HISTORICAL_SESSION_SEEK = `WITH before_match AS (
+      SELECT id,first_observed_at FROM sh_broadcast_sessions
+      WHERE channel_id=?1 AND broadcast_start_time=?2 AND first_observed_at<=?3
+      ORDER BY first_observed_at DESC,id ASC LIMIT 1
+    ), after_match AS (
+      SELECT id,first_observed_at FROM sh_broadcast_sessions
+      WHERE channel_id=?1 AND broadcast_start_time=?2 AND first_observed_at>?3
+      ORDER BY first_observed_at ASC,id ASC LIMIT 1
+    ), candidates AS (
+      SELECT id,first_observed_at FROM before_match
+      UNION ALL
+      SELECT id,first_observed_at FROM after_match
+    )
+    SELECT id FROM candidates
+    ORDER BY ABS(first_observed_at-?3) ASC,id ASC LIMIT 1`;
 
 function compact(value) {
   return String(value || '').replace(/\s+/g, ' ').trim().toLowerCase();
@@ -40,6 +57,16 @@ function throttleAliasUpsert(sql, table) {
   return `${text}\n      WHERE excluded.last_seen_at-COALESCE(${table}.last_seen_at,0)>=${CHECKPOINT_MS}`;
 }
 
+export function rewriteHistoricalSessionSeekSql(value) {
+  const original = String(value || '');
+  const normalized = compact(original);
+  if (!normalized.startsWith('select id from sh_broadcast_sessions where channel_id=? and broadcast_start_time=?')
+      || !normalized.includes('order by abs(first_observed_at-?) asc,id asc limit 1')) {
+    return original;
+  }
+  return HISTORICAL_SESSION_SEEK;
+}
+
 export function rewriteMinuteD1WriteSql(value) {
   const original = String(value || '');
   const cached = rewriteCache.get(original);
@@ -61,6 +88,13 @@ export function rewriteMinuteD1WriteSql(value) {
   return rewritten;
 }
 
+function rewriteMinuteD1Sql(value) {
+  const writeOptimized = rewriteMinuteD1WriteSql(value);
+  return writeOptimized === String(value || '')
+    ? rewriteHistoricalSessionSeekSql(value)
+    : writeOptimized;
+}
+
 function wrapStatement(statement) {
   return new Proxy(statement, {
     get(target, property) {
@@ -73,12 +107,14 @@ function wrapStatement(statement) {
 }
 
 function wrapDatabase(db) {
-  return new Proxy(db, {
+  const cached = wrappedDatabases.get(db);
+  if (cached) return cached;
+  const wrapped = new Proxy(db, {
     get(target, property) {
       if (property === 'prepare') {
         return (sql) => {
           const original = String(sql || '');
-          const rewritten = rewriteMinuteD1WriteSql(original);
+          const rewritten = rewriteMinuteD1Sql(original);
           const statement = target.prepare(rewritten);
           return rewritten === original ? statement : wrapStatement(statement);
         };
@@ -92,6 +128,8 @@ function wrapDatabase(db) {
       return typeof value === 'function' ? value.bind(target) : value;
     },
   });
+  wrappedDatabases.set(db, wrapped);
+  return wrapped;
 }
 
 export function withMinuteD1WriteThrottling(env) {
@@ -105,6 +143,7 @@ export function withMinuteD1WriteThrottling(env) {
   });
 }
 
-export function resetMinuteD1WriteRewriteCacheForTests() {
+export function resetMinuteD1WriteRewriteCacheForTests(db) {
   rewriteCache.clear();
+  if (db) wrappedDatabases.delete(db);
 }

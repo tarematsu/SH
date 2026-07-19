@@ -23,26 +23,17 @@ function lookupStatement(db, descriptor) {
       FROM wanted w JOIN sh_track_aliases a
         ON a.alias_type=w.alias_type AND a.alias_value=w.alias_value`);
   }
-  const direct = [];
-  if (descriptor.isrc) {
-    direct.push('isrc=?');
-    bindings.push(descriptor.isrc);
-  }
-  if (descriptor.spotify_id) {
-    direct.push('spotify_id=?');
-    bindings.push(descriptor.spotify_id);
-  }
-  if (descriptor.stationhead_track_id != null) {
-    direct.push('stationhead_track_id=?');
-    bindings.push(descriptor.stationhead_track_id);
-  }
-  if (descriptor.canonicalKey) {
-    direct.push('canonical_key=?');
-    bindings.push(descriptor.canonicalKey);
-  }
-  if (direct.length) {
-    candidates.push(`SELECT 100 AS priority,id FROM sh_tracks WHERE ${direct.join(' OR ')}`);
-  }
+  let directPriority = 100;
+  const directCandidate = (column, value) => {
+    if (value == null || value === '') return;
+    candidates.push(`SELECT ${directPriority} AS priority,id FROM sh_tracks WHERE ${column}=?`);
+    bindings.push(value);
+    directPriority += 1;
+  };
+  directCandidate('isrc', descriptor.isrc);
+  directCandidate('spotify_id', descriptor.spotify_id);
+  directCandidate('stationhead_track_id', descriptor.stationhead_track_id);
+  directCandidate('canonical_key', descriptor.canonicalKey);
   if (!candidates.length) return null;
   const withClause = ctes.length ? `WITH ${ctes.join(',')},` : 'WITH';
   return db.prepare(`${withClause} candidates AS (

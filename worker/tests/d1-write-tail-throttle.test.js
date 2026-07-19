@@ -1,9 +1,11 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { DatabaseSync } from 'node:sqlite';
 import test from 'node:test';
 
 import {
   resetMinuteD1WriteRewriteCacheForTests,
+  rewriteHistoricalSessionSeekSql,
   rewriteMinuteD1WriteSql,
   withMinuteD1WriteThrottling,
 } from '../src/minute-d1-write-throttle.js';
@@ -23,6 +25,10 @@ const HOST_ALIAS = TRACK_ALIAS
   .replaceAll('sh_track_aliases', 'sh_host_aliases')
   .replace('track_id', 'host_id');
 
+const HISTORICAL_SESSION = `SELECT id FROM sh_broadcast_sessions
+  WHERE channel_id=? AND broadcast_start_time=?
+  ORDER BY ABS(first_observed_at-?) ASC,id ASC LIMIT 1`;
+
 test('track identity updates fill missing values immediately and checkpoint last_seen', () => {
   resetMinuteD1WriteRewriteCacheForTests();
   const sql = rewriteMinuteD1WriteSql(TRACK_UPDATE);
@@ -38,6 +44,28 @@ test('track and host aliases checkpoint timestamp-only conflict updates', () => 
   assert.match(track, /excluded\.last_seen_at-COALESCE\(sh_track_aliases\.last_seen_at,0\)>=300000/);
   assert.match(host, /excluded\.last_seen_at-COALESCE\(sh_host_aliases\.last_seen_at,0\)>=300000/);
   assert.equal(rewriteMinuteD1WriteSql(track), track);
+});
+
+test('historical session lookup probes one row on each side of the observation', () => {
+  const sql = rewriteHistoricalSessionSeekSql(HISTORICAL_SESSION);
+  assert.match(sql, /before_match/);
+  assert.match(sql, /after_match/);
+  assert.match(sql, /first_observed_at<=\?3/);
+  assert.match(sql, /first_observed_at>\?3/);
+  assert.doesNotMatch(sql, /FROM sh_broadcast_sessions[\s\S]*ORDER BY ABS\(first_observed_at-\?\)/);
+
+  const db = new DatabaseSync(':memory:');
+  db.exec(`CREATE TABLE sh_broadcast_sessions(
+      id INTEGER PRIMARY KEY,channel_id INTEGER,broadcast_start_time INTEGER,first_observed_at INTEGER
+    );
+    CREATE INDEX idx_sh_broadcast_sessions_channel_start
+      ON sh_broadcast_sessions(channel_id,broadcast_start_time,first_observed_at,id);
+    INSERT INTO sh_broadcast_sessions VALUES
+      (1,7,100,120),(2,7,100,150),(3,7,100,190),(4,8,100,151);`);
+  assert.equal(db.prepare(sql).get(7, 100, 166).id, 2);
+  const plan = db.prepare(`EXPLAIN QUERY PLAN ${sql}`).all(7, 100, 166);
+  const searches = plan.filter((row) => /SEARCH sh_broadcast_sessions USING COVERING INDEX idx_sh_broadcast_sessions_channel_start/.test(row.detail));
+  assert.equal(searches.length, 2);
 });
 
 test('wrapped batches pass original bound statements to D1', async () => {
@@ -61,6 +89,27 @@ test('wrapped batches pass original bound statements to D1', async () => {
   await active.MINUTE_DB.batch([statement]);
   assert.match(prepared[0], /excluded\.last_seen_at-COALESCE/);
   assert.deepEqual(batches[0][0].binds, ['isrc', 'A', 1, 1, 1]);
+});
+
+test('wrapped session lookup retains its original three binds', async () => {
+  const prepared = [];
+  const binds = [];
+  const db = {
+    prepare(sql) {
+      prepared.push(sql);
+      return {
+        bind(...values) {
+          binds.push(values);
+          return { first: async () => ({ id: 9 }) };
+        },
+      };
+    },
+  };
+  const active = withMinuteD1WriteThrottling({ MINUTE_DB: db });
+  const row = await active.MINUTE_DB.prepare(HISTORICAL_SESSION).bind(7, 100, 166).first();
+  assert.equal(row.id, 9);
+  assert.match(prepared[0], /before_match/);
+  assert.deepEqual(binds[0], [7, 100, 166]);
 });
 
 test('rebuild runtime diagnostics checkpoint only unchanged successful state', () => {
