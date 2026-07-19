@@ -112,7 +112,7 @@ export async function runPagesReadModelCron(controller, env, dependencies = EMPT
 export async function runPagesReadModelQueue(batch, env, dependencies = EMPTY_DEPENDENCIES) {
   if (String(batch?.queue || '') === MINUTE_READ_MODEL_QUEUE) {
     const runMinuteReadModel = dependencies.processReadModelBatch
-      || (await loadMinuteReadModelModule()).processReadModelBatch;
+      || (await loadMinuteReadModelModule()).default.queue;
     return runMinuteReadModel(batch, env);
   }
   const messages = batch.messages;
