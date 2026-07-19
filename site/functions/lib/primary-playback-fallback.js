@@ -34,7 +34,11 @@ async function loadPlaybackRows(db) {
   try {
     const result = await db.prepare(LATEST_PLAYBACK_WITH_SNAPSHOT_SQL).all();
     const rows = result.results || [];
-    return { snapshot: parseLatestSnapshotRow(rows[0]), rows };
+    let snapshot = parseLatestSnapshotRow(rows[0]);
+    if (!snapshot && rows.length) {
+      snapshot = await db.prepare(CANONICAL_PLAYBACK_SNAPSHOT_SQL).first();
+    }
+    return { snapshot, rows };
   } catch (error) {
     if (!/no such column/i.test(String(error?.message || error))) throw error;
     const [snapshot, queueResult] = await Promise.all([
