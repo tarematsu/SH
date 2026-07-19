@@ -165,6 +165,9 @@ for (let attempt = 1; attempt <= attempts; attempt += 1) {
         COALESCE((SELECT present FROM live),0) AS live_fact_count,
         (SELECT COUNT(*) FROM pragma_table_info('sh_tracks') WHERE name='isrc') AS sh_tracks_isrc_column_count,
         (SELECT COUNT(*) FROM pragma_table_info('sh_track_metadata') WHERE name='isrc') AS sh_track_metadata_isrc_column_count,
+        (SELECT COUNT(*) FROM pragma_table_info('sh_track_dictionary') WHERE name='isrc') AS track_dictionary_isrc_column_count,
+        (SELECT COUNT(*) FROM pragma_table_info('sh_track_dictionary') WHERE name='thumbnail_url') AS track_dictionary_thumbnail_column_count,
+        (SELECT COUNT(*) FROM pragma_table_info('sh_track_stats_by_isrc') WHERE name='latest_bite_count') AS track_stats_bite_column_count,
         (SELECT COUNT(*) FROM pragma_table_info('sh_queue_revisions') WHERE name='materialized_item_count') AS revision_materialized_count_column_count,
         (SELECT COUNT(*) FROM pragma_table_info('sh_queue_revisions') WHERE name='coverage_complete') AS revision_coverage_column_count,
         (SELECT COUNT(*) FROM pragma_table_info('sh_queue_revisions') WHERE name='source_job_id') AS revision_source_job_column_count,
@@ -189,6 +192,9 @@ for (let attempt = 1; attempt <= attempts; attempt += 1) {
       last_minute_at: Number(row.last_minute_at || 0) || null,
       sh_tracks_isrc_present: Number(row.sh_tracks_isrc_column_count || 0) > 0,
       sh_track_metadata_isrc_present: Number(row.sh_track_metadata_isrc_column_count || 0) > 0,
+      track_dictionary_present: Number(row.track_dictionary_isrc_column_count || 0) > 0,
+      track_dictionary_thumbnail_present: Number(row.track_dictionary_thumbnail_column_count || 0) > 0,
+      track_stats_by_isrc_present: Number(row.track_stats_bite_column_count || 0) > 0,
       revision_materialized_count_present: Number(row.revision_materialized_count_column_count || 0) > 0,
       revision_coverage_present: Number(row.revision_coverage_column_count || 0) > 0,
       revision_source_job_present: Number(row.revision_source_job_column_count || 0) > 0,
@@ -201,6 +207,9 @@ for (let attempt = 1; attempt <= attempts; attempt += 1) {
     const recent = last.last_observed_at != null && now - last.last_observed_at <= freshnessMs;
     const requiredSchemaPresent = last.sh_tracks_isrc_present
       && last.sh_track_metadata_isrc_present
+      && last.track_dictionary_present
+      && last.track_dictionary_thumbnail_present
+      && last.track_stats_by_isrc_present
       && last.revision_materialized_count_present
       && last.revision_coverage_present
       && last.revision_source_job_present
