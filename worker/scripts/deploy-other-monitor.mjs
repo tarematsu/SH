@@ -16,6 +16,7 @@ const migrations = [
 const retiredScripts = [
   ...migrations.map(({ oldScript }) => oldScript),
   'sh-buddies-read-model',
+  'sh-monitor-maintenance',
 ];
 
 function runWrangler(args, { capture = false, allowFailure = false } = {}) {

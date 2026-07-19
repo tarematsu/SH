@@ -22,7 +22,6 @@ EXPECTED_SCRIPTS = {
     "sh-minute-read-model",
     "sh-track-metadata",
     "sh-pages-read-model",
-    "sh-monitor-maintenance",
     "sh-minute-ingest",
     "sh-minute-derive",
     "sh-minute-enrichment",
@@ -35,7 +34,6 @@ SCHEDULES: dict[str, Callable[[dt.datetime], bool]] = {
     "sh-buddies-monitor": lambda minute: True,
     "sh-minute-maintenance": lambda minute: True,
     "sh-monitor-other": lambda minute: minute.minute % 5 == 0,
-    "sh-monitor-maintenance": lambda minute: minute.minute in {30, 50},
 }
 
 BAD_LOG_LEVELS = {"error", "fatal", "critical"}

@@ -35,6 +35,7 @@ test('monitor Queue modules redeploy the consolidated monitor Worker', () => {
   assert.deepEqual(select(['worker/src/buddy-playback-entry.js']).workers, ['sh-monitor-other']);
   assert.deepEqual(select(['worker/src/host-monitor-entry.js']).workers, ['sh-monitor-other']);
   assert.deepEqual(select(['worker/src/other-monitor-entry.js']).workers, ['sh-monitor-other']);
+  assert.deepEqual(select(['worker/src/consolidated-monitor-entry.js']).workers, ['sh-monitor-other']);
 });
 
 test('monitor cutover script redeploys only the consolidated monitor Worker', () => {
@@ -51,7 +52,7 @@ test('bundled site function changes redeploy only the Pages materializer', () =>
   assert.deepEqual(result.diagnostics, []);
 });
 
-test('other monitor changes do not pull Pages or maintenance Workers in', () => {
+test('other monitor changes do not pull Pages or retired maintenance Workers in', () => {
   const result = select(['worker/src/other-monitor-support.js']);
   assert.deepEqual(result.workers, ['sh-monitor-other']);
   assert.deepEqual(result.commands, ['deploy:other']);
@@ -72,7 +73,7 @@ test('deploy script-only package changes do not redeploy runtime Workers', () =>
 
 test('lockfile changes conservatively redeploy every Worker', () => {
   const result = select(['worker/package-lock.json']);
-  assert.equal(result.workers.length, 14);
+  assert.equal(result.workers.length, 13);
 });
 
 test('tests and verification scripts do not redeploy runtime Workers', () => {
@@ -94,7 +95,7 @@ test('shared package changes select every Worker that imports sh-shared', () => 
 
 test('unresolved runtime source changes fall back to all Workers', () => {
   const result = select(['worker/src/deleted-runtime-module.js']);
-  assert.equal(result.workers.length, 14);
+  assert.equal(result.workers.length, 13);
 });
 
 test('manual selection deploys all Workers in durable order', () => {
@@ -111,6 +112,6 @@ test('manual selection deploys all Workers in durable order', () => {
     'sh-buddies-persist',
     'sh-buddies-ingest',
   ]);
-  assert.equal(result.workers.length, 14);
+  assert.equal(result.workers.length, 13);
   assert.equal(result.workers.at(-1), 'sh-monitor-other');
 });
