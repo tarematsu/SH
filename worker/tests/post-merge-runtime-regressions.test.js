@@ -10,6 +10,7 @@ import {
   REBUILD_DERIVE_QUEUE_NAME,
   refreshSparseRevisionContinuation,
   shouldLogMinuteDeriveResult,
+  transientQueueOverload,
 } from '../src/minute-derive-entry.js';
 import { runPagesReadModelQueue } from '../src/pages-read-model-entry.js';
 
@@ -133,6 +134,11 @@ test('stale sparse revision continuations refresh from durable revision progress
   assert.equal(sent[0].value.revision.visible_item_count, 8);
   assert.equal(sent[0].value.revision.materialized_item_count, 4);
   assert.deepEqual(sent[0].options, { contentType: 'json', delaySeconds: 1 });
+});
+
+test('Queue overload errors are transient retry warnings', () => {
+  assert.equal(transientQueueOverload(new Error('Queue is overloaded. Please back off. (10250)')), true);
+  assert.equal(transientQueueOverload(new Error('database schema is invalid')), false);
 });
 
 test('minute derive success logs are sampled but failures are always retained', () => {
