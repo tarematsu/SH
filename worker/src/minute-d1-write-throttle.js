@@ -123,7 +123,8 @@ function progressCacheFor(db) {
 
 function rememberCompleteRevision(cache, row) {
   const revisionId = Number(row?.id);
-  const count = Number(row?.materialized_item_count);
+  const rawCount = row?.materialized_item_count;
+  const count = rawCount == null ? Number.NaN : Number(rawCount);
   const complete = row?.status === 'complete' && Number(row?.coverage_complete) === 1;
   if (!Number.isFinite(revisionId)) return;
   if (!complete || !Number.isFinite(count) || count < 0) {
