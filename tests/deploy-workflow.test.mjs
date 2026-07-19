@@ -185,7 +185,9 @@ test('R2 observability audits every current script and fails on real faults', ()
   ]) {
     assert.match(observabilityAnalyzer, new RegExp(worker));
   }
-  assert.doesNotMatch(observabilityAnalyzer, /sh-buddies-monitor/);
+  const expectedScriptsBlock = observabilityAnalyzer.match(/EXPECTED_SCRIPTS = \{([\s\S]*?)\n\}/)?.[1] || '';
+  assert.doesNotMatch(expectedScriptsBlock, /sh-buddies-monitor/);
+  assert.match(observabilityAnalyzer, /TRANSITION_SCHEDULES[\s\S]*sh-buddies-monitor/);
   assert.doesNotMatch(observabilityAnalyzer, /sh-track-metadata/);
   assert.doesNotMatch(observabilityAnalyzer, /sh-minute-read-model/);
   assert.doesNotMatch(observabilityAnalyzer, /sh-host-monitor/);
