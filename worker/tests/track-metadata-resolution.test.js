@@ -128,13 +128,17 @@ test('track resolution fills incomplete MINUTE metadata from the legacy source',
   assert.equal(buddiesDb.metadataQueries, 1);
 });
 
-test('track metadata migration creates both Spotify and ISRC repair paths', () => {
+test('track metadata migration creates Spotify, ISRC and dictionary repair paths', () => {
   const migration = readFileSync(
     new URL('../../database/facts-migrations/014_backfill_track_metadata.sql', import.meta.url),
     'utf8',
   );
   const isrcMigration = readFileSync(
     new URL('../../database/facts-migrations/016_track_metadata_isrc.sql', import.meta.url),
+    'utf8',
+  );
+  const dictionaryMigration = readFileSync(
+    new URL('../../database/facts-migrations/020_isrc_track_dictionary.sql', import.meta.url),
     'utf8',
   );
   const provision = readFileSync(new URL('../scripts/provision-facts-db.mjs', import.meta.url), 'utf8');
@@ -149,11 +153,14 @@ test('track metadata migration creates both Spotify and ISRC repair paths', () =
   assert.match(migration, /FROM sh_isrc_metadata/);
   assert.match(isrcMigration, /ALTER TABLE sh_track_metadata ADD COLUMN isrc TEXT/);
   assert.match(isrcMigration, /idx_sh_track_metadata_isrc/);
+  assert.match(dictionaryMigration, /CREATE TABLE IF NOT EXISTS sh_track_dictionary/);
+  assert.match(dictionaryMigration, /CREATE VIEW sh_track_stats_by_isrc/);
   assert.match(provision, /014_backfill_track_metadata\.sql/);
   assert.match(provision, /019_d1_budget_indexes\.sql/);
+  assert.match(provision, /020_isrc_track_dictionary\.sql/);
   assert.match(provision, /materialized_item_count/);
   assert.match(provision, /coverage_complete/);
   assert.match(provision, /source_job_id/);
   assert.match(provision, /source_visible_count/);
-  assert.equal(metadata.schema, 'database/facts-migrations/019_d1_budget_indexes.sql');
+  assert.equal(metadata.schema, 'database/facts-migrations/020_isrc_track_dictionary.sql');
 });
