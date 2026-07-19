@@ -93,8 +93,6 @@ jobs:
         working-directory: worker
       - run: npm run deploy:split-other
         working-directory: worker
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN || secrets.CF_API_TOKEN || secrets.CLOUDFLARE_BUILDS_API_TOKEN }}
 
   minute:
     name: Minute facts workers
