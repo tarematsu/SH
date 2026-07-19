@@ -10,6 +10,7 @@ export const REBUILD_DERIVE_QUEUE_NAME = 'stationhead-minute-derive';
 const RETRY_60_SECONDS = Object.freeze({ delaySeconds: 60 });
 const SUCCESS_LOG_SAMPLE_MODULUS = 16;
 const LIVE_REVISION_CHUNK_TRACKS = 1;
+const SOURCE_PAYLOAD_GRACE_MS = 5 * 60_000;
 const JSON_QUEUE_SEND_OPTIONS = Object.freeze({ contentType: 'json', delaySeconds: 1 });
 const SOURCE_PAYLOAD_ERROR = /queue revision \d+ source payload is unavailable or incomplete/i;
 const QUEUE_OVERLOAD_ERROR = /queue is overloaded|\(10250\)/i;
@@ -100,6 +101,38 @@ function revisionMaterializationMessage(body) {
     && body?.stage === 'revision-materialize';
 }
 
+function revisionSourceStartedAt(body) {
+  return integer(body?.started_at)
+    ?? integer(body?.revision?.enrichment?.observed_at)
+    ?? integer(body?.job?.minute_at);
+}
+
+export function staleUnavailableRevisionSource(body, now = Date.now(), graceMs = SOURCE_PAYLOAD_GRACE_MS) {
+  if (!revisionMaterializationMessage(body)) return false;
+  const startedAt = revisionSourceStartedAt(body);
+  const grace = Math.max(60_000, integer(graceMs) ?? SOURCE_PAYLOAD_GRACE_MS);
+  return startedAt != null && now - startedAt >= grace;
+}
+
+export async function retireUnavailableRevisionSource(env, body, now = Date.now()) {
+  const revisionId = integer(body?.revision?.revision_id);
+  const sourceJobId = integer(body?.revision?.source_job_id);
+  const db = env?.MINUTE_DB;
+  if (revisionId == null || sourceJobId == null || !db?.prepare) return false;
+  if (!staleUnavailableRevisionSource(body, now)) return false;
+  const result = await db.prepare(`UPDATE sh_queue_revisions SET
+      source_visible_count=COALESCE(materialized_item_count,0),
+      status='complete',
+      coverage_complete=CASE
+        WHEN COALESCE(materialized_item_count,0)>=COALESCE(item_count,0) THEN 1 ELSE 0 END,
+      last_materialized_at=?
+    WHERE id=? AND source_job_id=?
+      AND COALESCE(materialized_item_count,0)<COALESCE(source_visible_count,0)`)
+    .bind(now, revisionId, sourceJobId)
+    .run();
+  return Number(result?.meta?.changes || 0) > 0;
+}
+
 export async function refreshSparseRevisionContinuation(env, body) {
   const revisionId = integer(body?.revision?.revision_id);
   const db = env?.MINUTE_DB;
@@ -138,6 +171,7 @@ export async function refreshSparseRevisionContinuation(env, body) {
 async function processOneMinuteDeriveMessage(message, activeEnv, queueName, dependencies = {}) {
   const processMessage = dependencies.processMessage || processMinuteDeriveMessage;
   const refreshContinuation = dependencies.refreshContinuation || refreshSparseRevisionContinuation;
+  const retireSource = dependencies.retireUnavailableSource || retireUnavailableRevisionSource;
   try {
     const result = await processMessage(activeEnv, message.body);
     logMinuteDeriveResult(result, queueName);
@@ -151,12 +185,26 @@ async function processOneMinuteDeriveMessage(message, activeEnv, queueName, depe
       message.ack();
     }
   } catch (error) {
-    if (sourcePayloadUnavailable(error)
+    const unavailable = sourcePayloadUnavailable(error);
+    if (unavailable
         && await refreshContinuation(activeEnv, message.body).catch(() => false)) {
       console.warn(JSON.stringify({
         event: 'minute_derive_revision_continuation_refreshed',
         derive_queue: queueName,
         revision_id: integer(message.body?.revision?.revision_id),
+      }));
+      message.ack();
+      return;
+    }
+    if (unavailable
+        && await retireSource(activeEnv, message.body).catch(() => false)) {
+      console.warn(JSON.stringify({
+        event: 'minute_derive_revision_source_retired',
+        derive_queue: queueName,
+        revision_id: integer(message.body?.revision?.revision_id),
+        source_job_id: integer(message.body?.revision?.source_job_id),
+        materialized_item_count: integer(message.body?.revision?.materialized_item_count) ?? 0,
+        reason: 'source-payload-unavailable',
       }));
       message.ack();
       return;
@@ -168,11 +216,13 @@ async function processOneMinuteDeriveMessage(message, activeEnv, queueName, depe
         ? 'minute_derive_import_deferred'
         : overloaded
           ? 'minute_derive_queue_overloaded'
-          : 'minute_derive_message_failed',
+          : unavailable
+            ? 'minute_derive_revision_source_waiting'
+            : 'minute_derive_message_failed',
       derive_queue: queueName,
       error: String(error?.message || error).slice(0, 800),
     };
-    if (importing || overloaded) console.warn(JSON.stringify(detail));
+    if (importing || overloaded || unavailable) console.warn(JSON.stringify(detail));
     else console.error(JSON.stringify(detail));
     if (error?.code === 'MINUTE_DERIVE_INVALID_TRIGGER') message.ack();
     else message.retry(RETRY_60_SECONDS);
