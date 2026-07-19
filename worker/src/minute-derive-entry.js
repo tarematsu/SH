@@ -117,8 +117,9 @@ export function staleUnavailableRevisionSource(body, now = Date.now(), graceMs =
 export async function retireUnavailableRevisionSource(env, body, now = Date.now()) {
   const revisionId = integer(body?.revision?.revision_id);
   const sourceJobId = integer(body?.revision?.source_job_id);
+  const staleVisibleItemCount = integer(body?.revision?.visible_item_count);
   const db = env?.MINUTE_DB;
-  if (revisionId == null || sourceJobId == null || !db?.prepare) return false;
+  if (revisionId == null || sourceJobId == null || staleVisibleItemCount == null || !db?.prepare) return false;
   if (!staleUnavailableRevisionSource(body, now)) return false;
   const result = await db.prepare(`UPDATE sh_queue_revisions SET
       source_visible_count=COALESCE(materialized_item_count,0),
@@ -127,10 +128,21 @@ export async function retireUnavailableRevisionSource(env, body, now = Date.now(
         WHEN COALESCE(materialized_item_count,0)>=COALESCE(item_count,0) THEN 1 ELSE 0 END,
       last_materialized_at=?
     WHERE id=? AND source_job_id=?
-      AND COALESCE(materialized_item_count,0)<COALESCE(source_visible_count,0)`)
-    .bind(now, revisionId, sourceJobId)
+      AND COALESCE(materialized_item_count,0)<COALESCE(source_visible_count,0)
+      AND COALESCE(source_visible_count,0)<=?`)
+    .bind(now, revisionId, sourceJobId, Math.max(0, staleVisibleItemCount))
     .run();
-  return Number(result?.meta?.changes || 0) > 0;
+  if (Number(result?.meta?.changes || 0) > 0) return true;
+
+  const row = await db.prepare(`SELECT source_job_id,source_visible_count,
+      materialized_item_count,status
+    FROM sh_queue_revisions WHERE id=? LIMIT 1`)
+    .bind(revisionId)
+    .first();
+  return integer(row?.source_job_id) === sourceJobId
+    && String(row?.status || '') === 'complete'
+    && Math.max(0, integer(row?.source_visible_count) ?? 0)
+      <= Math.max(0, integer(row?.materialized_item_count) ?? 0);
 }
 
 export async function refreshSparseRevisionContinuation(env, body) {
