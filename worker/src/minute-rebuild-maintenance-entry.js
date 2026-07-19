@@ -199,15 +199,10 @@ async function processMaintenanceMessage(message, stage, env) {
 export async function processMinuteRebuildBatch(batch, env, ctx) {
   const messages = batch?.messages;
   if (!messages?.length) return;
-  const rebuildEnv = withBackfillCursorSeek(env);
-  for (const message of messages) {
-    const stage = maintenanceStage(message.body);
-    if (stage) {
-      await processMaintenanceMessage(message, stage, env);
-      continue;
-    }
-    await rebuildWorker.queue({ ...batch, messages: [message] }, rebuildEnv, ctx);
-  }
+  const message = messages[0];
+  const stage = maintenanceStage(message.body);
+  if (stage) return processMaintenanceMessage(message, stage, env);
+  return rebuildWorker.queue(batch, withBackfillCursorSeek(env), ctx);
 }
 
 export default {
