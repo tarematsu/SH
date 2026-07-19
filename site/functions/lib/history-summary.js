@@ -28,6 +28,23 @@ function todayUtcString(now) {
   return new Date(now).toISOString().slice(0, 10);
 }
 
+export function currentSummaryPeriodStart(mode, now = Date.now()) {
+  const date = new Date(now);
+  date.setUTCHours(0, 0, 0, 0);
+  if (mode === 'monthly') {
+    date.setUTCDate(1);
+  } else if (mode !== 'daily') {
+    const daysSinceMonday = (date.getUTCDay() + 6) % 7;
+    date.setUTCDate(date.getUTCDate() - daysSinceMonday);
+  }
+  return date.getTime();
+}
+
+export function boundedLiveSummaryStart(mode, fromTs, lastBaseEnd, now = Date.now()) {
+  const afterBase = lastBaseEnd == null ? fromTs : lastBaseEnd + 1;
+  return Math.max(fromTs, afterBase, currentSummaryPeriodStart(mode, now));
+}
+
 function periodExpression(mode) {
   if (mode === 'daily') return `strftime('%Y-%m-%d', observed_at / 1000, 'unixepoch')`;
   if (mode === 'monthly') return `strftime('%Y-%m', observed_at / 1000, 'unixepoch')`;
@@ -169,7 +186,7 @@ export async function loadSummaryWithLive(env, mode, from, to, now = Date.now())
   const fromTs = parseRangeStart(mode, from, '2024-06-01');
   const toTs = parseRangeStart(mode, to, fallbackTo) + DAY_MS;
   const lastBaseEnd = finiteNumber(baseRows.at(-1)?.period_end);
-  const liveStart = Math.max(fromTs, lastBaseEnd == null ? fromTs : lastBaseEnd + 1);
+  const liveStart = boundedLiveSummaryStart(mode, fromTs, lastBaseEnd, now);
   const liveResult = liveStart < toTs
     ? await env.DB.prepare(liveSummarySql(mode)).bind(liveStart, toTs, limit).all()
     : { results: [] };
