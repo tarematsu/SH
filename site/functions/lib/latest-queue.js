@@ -1,12 +1,22 @@
-export const LATEST_QUEUE_WITH_ITEMS_SQL = `WITH latest_snapshot AS (
-  SELECT observed_at,channel_id,station_id,is_broadcasting,host_account_id,host_handle
-  FROM sh_channel_snapshots
-  ORDER BY observed_at DESC,id DESC
-  LIMIT 1
+function latestQueueSql(includeSnapshot) {
+  const snapshotColumns = includeSnapshot
+    ? 'observed_at,channel_id,station_id,is_broadcasting,host_account_id,host_handle'
+    : 'station_id';
+  const snapshotSelect = includeSnapshot ? `latest_station.observed_at AS snapshot_observed_at,
+  latest_station.channel_id AS snapshot_channel_id,
+  latest_station.station_id AS snapshot_station_id,
+  latest_station.is_broadcasting AS snapshot_is_broadcasting,
+  latest_station.host_account_id AS snapshot_host_account_id,
+  latest_station.host_handle AS snapshot_host_handle,
+  ` : '';
+  const snapshotJoin = includeSnapshot ? '\nCROSS JOIN latest_station' : '';
+  return `WITH latest_station AS (
+  SELECT ${snapshotColumns} FROM sh_channel_snapshots
+  WHERE station_id IS NOT NULL ORDER BY observed_at DESC,id DESC LIMIT 1
 ), station_queue AS (
   SELECT station_id,queue_id,start_time,is_paused,observed_at,0 AS priority
   FROM sh_queue_current
-  WHERE station_id=(SELECT station_id FROM latest_snapshot)
+  WHERE station_id=(SELECT station_id FROM latest_station)
 ), recent_queue AS (
   SELECT station_id,queue_id,start_time,is_paused,observed_at,1 AS priority
   FROM sh_queue_current
@@ -22,13 +32,7 @@ export const LATEST_QUEUE_WITH_ITEMS_SQL = `WITH latest_snapshot AS (
   ORDER BY priority ASC,observed_at DESC
   LIMIT 1
 )
-SELECT snapshot.observed_at AS snapshot_observed_at,
-  snapshot.channel_id AS snapshot_channel_id,
-  snapshot.station_id AS snapshot_station_id,
-  snapshot.is_broadcasting AS snapshot_is_broadcasting,
-  snapshot.host_account_id AS snapshot_host_account_id,
-  snapshot.host_handle AS snapshot_host_handle,
-  lq.station_id AS queue_station_id,lq.queue_id,
+SELECT ${snapshotSelect}lq.station_id AS queue_station_id,lq.queue_id,
   lq.start_time AS queue_start_time,lq.is_paused AS queue_is_paused,
   lq.observed_at AS queue_observed_at,q.observed_at AS item_observed_at,
   q.position,q.queue_track_id,q.stationhead_track_id,q.spotify_id,
@@ -36,8 +40,7 @@ SELECT snapshot.observed_at AS snapshot_observed_at,
   COALESCE(likes.like_count,q.bite_count) AS bite_count,
   m.title,m.artist,m.display_title,m.thumbnail_url,m.spotify_url,
   m.fetched_at AS metadata_fetched_at,m.raw_json AS metadata_raw_json
-FROM latest_queue lq
-CROSS JOIN latest_snapshot snapshot
+FROM latest_queue lq${snapshotJoin}
 LEFT JOIN sh_queue_items q ON q.station_id=lq.station_id AND q.start_time=lq.start_time
 LEFT JOIN sh_track_metadata m ON m.spotify_id=q.spotify_id
 LEFT JOIN sh_track_like_current likes ON likes.station_id IS q.station_id
@@ -45,6 +48,10 @@ LEFT JOIN sh_track_like_current likes ON likes.station_id IS q.station_id
     CAST(q.stationhead_track_id AS TEXT),q.spotify_id,q.isrc,
     'position:'||CAST(q.position AS TEXT))
 ORDER BY q.position ASC LIMIT 80`;
+}
+
+export const LATEST_QUEUE_WITH_ITEMS_SQL = latestQueueSql(false);
+export const LATEST_PLAYBACK_WITH_SNAPSHOT_SQL = latestQueueSql(true);
 
 export function parseLatestSnapshotRow(row = null) {
   if (row?.snapshot_observed_at == null) return null;
