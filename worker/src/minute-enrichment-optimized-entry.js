@@ -53,12 +53,9 @@ function logMinuteEnrichmentResult(result) {
 
 function stableSampleIdentity(value) {
   const text = String(value ?? '');
-  let hash = 2166136261;
-  for (let index = 0; index < text.length; index += 1) {
-    hash ^= text.charCodeAt(index);
-    hash = Math.imul(hash, 16777619);
-  }
-  return hash >>> 0;
+  const trailingNumber = text.match(/(\d+)(?!.*\d)/)?.[1];
+  if (trailingNumber) return Number(trailingNumber);
+  return text.length ? text.charCodeAt(text.length - 1) : 0;
 }
 
 function shouldLogTrackMetadataResult(result) {
