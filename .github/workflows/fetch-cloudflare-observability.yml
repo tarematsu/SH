@@ -68,13 +68,14 @@ jobs:
             --data-urlencode 'event=pull_request' \
             --data-urlencode 'status=completed' \
             --data-urlencode 'per_page=100')"
-          since="$(jq -r --arg changed "$runtime_changed_at" \
+          deployed_at="$(jq -r --arg changed "$runtime_changed_at" \
             '[.workflow_runs[] | select(.conclusion == "success" and .created_at >= $changed)] | last | .updated_at // empty' \
             <<<"$runs")"
-          if [[ -n "$since" ]]; then
+          if [[ -n "$deployed_at" ]]; then
+            audit_since="$(date -u -d "$deployed_at + 90 seconds" +%Y-%m-%dT%H:%M:%SZ)"
             echo "Runtime changed at $runtime_changed_at"
-            echo "Auditing Worker events after the first successful remediation deployment at $since"
-            echo "LOG_SINCE=$since" >> "$GITHUB_ENV"
+            echo "Deployment completed at $deployed_at; auditing after propagation grace at $audit_since"
+            echo "LOG_SINCE=$audit_since" >> "$GITHUB_ENV"
           else
             echo "No successful PR deployment found after runtime changes; using the configured lookback."
           fi
