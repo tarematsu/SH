@@ -148,6 +148,36 @@ SELECT COUNT(*) AS sample_count,MIN(observed_at) AS first_t,
   MAX(CASE WHEN latest_rank=1 THEN y END) AS latest_y
 FROM points`;
 
+const FACTS_LATEST_CHANNEL_CTE = `latest_channel AS (
+  SELECT channel_id
+  FROM sh_minute_facts
+  WHERE source_code=1
+  ORDER BY minute_at DESC,id DESC
+  LIMIT 1
+)`;
+
+export const FACTS_TOTAL_LISTENS_BASELINE_SQL = `WITH ${FACTS_LATEST_CHANNEL_CTE}
+SELECT f.observed_at,f.reported_total_listens AS total_listens
+FROM sh_minute_facts AS f
+WHERE f.channel_id=(SELECT channel_id FROM latest_channel)
+  AND f.minute_at>=? AND f.minute_at<?
+  AND f.source_code=1
+  AND f.reported_total_listens IS NOT NULL
+ORDER BY f.minute_at DESC,f.id DESC
+LIMIT 1`;
+
+export const FACTS_TOTAL_LISTENS_HOST_BASELINE_SQL = `WITH ${FACTS_LATEST_CHANNEL_CTE}
+SELECT f.observed_at,f.reported_total_listens AS total_listens
+FROM sh_minute_facts AS f
+JOIN sh_minute_fact_context AS c ON c.fact_id=f.id
+WHERE f.channel_id=(SELECT channel_id FROM latest_channel)
+  AND f.minute_at>=? AND f.minute_at<?
+  AND f.source_code=1
+  AND f.reported_total_listens IS NOT NULL
+  AND c.host_id=?
+ORDER BY f.minute_at DESC,f.id DESC
+LIMIT 1`;
+
 export function factsAreFresh(latest, now = Date.now(), staleAfterMs = FACTS_FRESH_MS) {
   const observedAt = Number(latest?.observed_at);
   return Number.isFinite(observedAt) && observedAt > 0 && now - observedAt <= staleAfterMs;
@@ -206,24 +236,21 @@ export async function loadFactsBaseline(db, metricColumn, hostId, start, end) {
   }[metricColumn];
   if (!column) throw new Error(`unsupported facts metric: ${metricColumn}`);
   if (metricColumn === 'total_member_count') {
-    const row = await db.prepare(`SELECT d.last_observed_at AS observed_at,
+    const row = await db.prepare(`WITH ${FACTS_LATEST_CHANNEL_CTE}
+      SELECT d.last_observed_at AS observed_at,
         d.last_total_member_count AS total_member_count
       FROM sh_total_member_daily d
-      WHERE d.day_at>=? AND d.day_at<?
+      WHERE d.channel_id=(SELECT channel_id FROM latest_channel)
+        AND d.day_at>=? AND d.day_at<?
         AND (? IS NULL OR d.host_key IN (0,?))
       ORDER BY d.last_observed_at DESC,d.day_at DESC LIMIT 1`)
       .bind(start, end, hostId ?? null, hostId ?? 0)
       .first();
     return row || null;
   }
-  const row = await db.prepare(`SELECT f.observed_at,f.${column} AS ${metricColumn}
-    FROM sh_minute_facts AS f
-    LEFT JOIN sh_minute_fact_context AS c ON c.fact_id=f.id
-    WHERE f.minute_at>=? AND f.minute_at<?
-      AND f.source_code=1
-      AND (? IS NULL OR c.host_id=?)
-    ORDER BY f.observed_at DESC,f.id DESC LIMIT 1`)
-    .bind(start, end, hostId ?? null, hostId ?? null)
-    .first();
+  const statement = hostId == null
+    ? db.prepare(FACTS_TOTAL_LISTENS_BASELINE_SQL).bind(start, end)
+    : db.prepare(FACTS_TOTAL_LISTENS_HOST_BASELINE_SQL).bind(start, end, hostId);
+  const row = await statement.first();
   return row || null;
 }
