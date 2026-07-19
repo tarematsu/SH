@@ -164,4 +164,5 @@ jobs:
           name: cloudflare-pr-diagnostics-${{ matrix.worker }}-${{ github.event.pull_request.head.sha }}
           path: .cloudflare-build-diagnostics/
           if-no-files-found: error
+          include-hidden-files: true
           retention-days: 14
