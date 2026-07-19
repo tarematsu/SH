@@ -12,6 +12,11 @@ function positiveInteger(value, fallback, maximum = Number.MAX_SAFE_INTEGER) {
   return Math.min(parsed, maximum);
 }
 
+function deriveJobKind(value) {
+  const parsed = String(value || '').trim().toLowerCase();
+  return parsed === 'live' || parsed === 'rebuild' ? parsed : null;
+}
+
 function invalidTrigger(detail) {
   const error = new Error(`invalid minute derive trigger: ${detail}`);
   error.code = 'MINUTE_DERIVE_INVALID_TRIGGER';
@@ -23,12 +28,14 @@ export function minuteDeriveTrigger(input = {}) {
   const minuteAt = integer(input.minute_at);
   if (channelId == null) throw invalidTrigger('channel_id is required');
   if (minuteAt == null) throw invalidTrigger('minute_at is required');
+  const jobKind = deriveJobKind(input.job_kind);
   return {
     message_type: MINUTE_DERIVE_MESSAGE_TYPE,
     message_version: MINUTE_DERIVE_MESSAGE_VERSION,
     job_id: `minute-fact:${channelId}:${minuteAt}`,
     channel_id: channelId,
     minute_at: minuteAt,
+    ...(jobKind ? { job_kind: jobKind } : {}),
   };
 }
 
@@ -48,9 +55,10 @@ export function parseMinuteDeriveTrigger(body) {
 }
 
 export async function enqueueMinuteDeriveTrigger(env, input) {
-  if (!env?.MINUTE_DERIVE_QUEUE?.send) throw new Error('MINUTE_DERIVE_QUEUE binding is missing');
-  const trigger = minuteDeriveTrigger(input);
-  await env.MINUTE_DERIVE_QUEUE.send(trigger, { contentType: 'json' });
+  const queue = env?.MINUTE_LIVE_DERIVE_QUEUE || env?.MINUTE_DERIVE_QUEUE;
+  if (!queue?.send) throw new Error('minute live derive Queue binding is missing');
+  const trigger = minuteDeriveTrigger({ ...input, job_kind: input?.job_kind || 'live' });
+  await queue.send(trigger, { contentType: 'json' });
   return trigger;
 }
 
@@ -58,7 +66,7 @@ export async function pendingMinuteDeriveTriggers(env, options = {}) {
   if (!env?.MINUTE_DB) throw new Error('minute derive MINUTE_DB binding is missing');
   const now = integer(options.now) ?? Date.now();
   const limit = positiveInteger(options.limit, 5, 20);
-  const result = await env.MINUTE_DB.prepare(`SELECT channel_id,minute_at
+  const result = await env.MINUTE_DB.prepare(`SELECT channel_id,minute_at,job_kind
     FROM sh_minute_fact_jobs
     WHERE (status='pending' AND next_attempt_at<=?)
        OR (status='processing' AND COALESCE(lease_until,0)<?)
