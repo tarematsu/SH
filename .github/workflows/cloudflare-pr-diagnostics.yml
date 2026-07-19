@@ -113,14 +113,34 @@ jobs:
             npx wrangler queues create "$queue" >/dev/null 2>&1 || true
           done
       - name: Deploy selected Workers in dependency order
+        id: deploy-workers
+        continue-on-error: true
         shell: bash
         working-directory: worker
         run: |
-          set -euo pipefail
+          set -uo pipefail
+          log="$RUNNER_TEMP/cloudflare-pr-deploy.log"
+          status=0
           while IFS= read -r command; do
-            echo "Deploying $command"
-            npm run "$command"
+            echo "Deploying $command" | tee -a "$log"
+            npm run "$command" 2>&1 | tee -a "$log"
+            status=${PIPESTATUS[0]}
+            if [[ "$status" -ne 0 ]]; then
+              break
+            fi
           done < <(jq -r '.[]' <<<"$DEPLOY_COMMANDS")
+          exit "$status"
+      - name: Upload direct deploy failure log
+        if: steps.deploy-workers.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: cloudflare-pr-direct-deploy-${{ github.event.pull_request.head.sha }}
+          path: ${{ runner.temp }}/cloudflare-pr-deploy.log
+          if-no-files-found: error
+          retention-days: 14
+      - name: Fail when direct deploy failed
+        if: steps.deploy-workers.outcome == 'failure'
+        run: exit 1
 
   diagnose:
     name: Diagnose ${{ matrix.worker }}
