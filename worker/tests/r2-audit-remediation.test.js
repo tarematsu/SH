@@ -101,8 +101,14 @@ test('absent buddy station is acknowledged as a benign Queue result', async () =
   assert.match(logs[0], /"reason":"station-not-found"/);
 });
 
-test('monitor deployment retires the orphaned buddies read-model Worker', () => {
+test('monitor deployment retires every orphan before retiring the active collector last', () => {
   const source = readFileSync(new URL('../scripts/deploy-other-monitor.mjs', import.meta.url), 'utf8');
   assert.match(source, /'sh-buddies-read-model'/);
-  assert.match(source, /for \(const scriptName of retiredScripts\) await deleteOldWorker\(scriptName\)/);
+  assert.match(source, /'sh-monitor-maintenance'/);
+  assert.match(source, /for \(const scriptName of retiredBeforeCollector\) await deleteOldWorker\(scriptName\)/);
+  assert.match(source, /await deleteOldWorker\(collectorScript\)/);
+  assert.ok(
+    source.indexOf('await deleteOldWorker(collectorScript)')
+      > source.indexOf('for (const scriptName of retiredBeforeCollector)'),
+  );
 });
