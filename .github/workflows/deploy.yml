@@ -91,12 +91,10 @@ jobs:
         working-directory: worker
       - run: npm run deploy:buddies
         working-directory: worker
-      - run: npm run deploy:pages-read-model
+      - run: npm run deploy:split-other
         working-directory: worker
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN || secrets.CF_API_TOKEN || secrets.CLOUDFLARE_BUILDS_API_TOKEN }}
-      - run: npm run deploy:other
-        working-directory: worker
 
   minute:
     name: Minute facts workers
