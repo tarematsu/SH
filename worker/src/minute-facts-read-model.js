@@ -229,18 +229,24 @@ async function queryTrackMetadata(db, spotifyIds, isrcs, includeDictionary = fal
 }
 
 export async function loadReadModelTrackMetadata(env, spotifyIds, isrcs) {
+  const requestedSpotifyIds = [...new Set(
+    (spotifyIds || []).map((value) => String(value || '').trim()).filter(Boolean),
+  )];
+  const requestedIsrcs = [...new Set(
+    (isrcs || []).map(normalizedIsrc).filter(Boolean),
+  )];
   const primary = env?.MINUTE_DB;
   const fallback = env?.BUDDIES_DB;
   let rows = [];
   try {
-    rows = await queryTrackMetadata(primary, spotifyIds, isrcs, true);
+    rows = await queryTrackMetadata(primary, requestedSpotifyIds, requestedIsrcs, true);
   } catch (error) {
     if (!/no such table|no such column/i.test(String(error?.message || ''))) throw error;
   }
   const completeSpotifyIds = new Set(rows.map((row) => String(row?.spotify_id || '').trim()).filter(Boolean));
   const completeIsrcs = new Set(rows.map((row) => normalizedIsrc(row?.isrc)).filter(Boolean));
-  const missingSpotifyIds = spotifyIds.filter((value) => !completeSpotifyIds.has(value));
-  const missingIsrcs = isrcs.filter((value) => !completeIsrcs.has(value));
+  const missingSpotifyIds = requestedSpotifyIds.filter((value) => !completeSpotifyIds.has(value));
+  const missingIsrcs = requestedIsrcs.filter((value) => !completeIsrcs.has(value));
   if ((!missingSpotifyIds.length && !missingIsrcs.length) || !fallback || fallback === primary) return rows;
   try {
     const fallbackRows = await queryTrackMetadata(fallback, missingSpotifyIds, missingIsrcs);
