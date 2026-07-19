@@ -15,7 +15,6 @@ from collections import Counter
 from typing import Any, Callable, Iterable
 
 EXPECTED_SCRIPTS = {
-    "sh-buddies-monitor",
     "sh-buddies-persist",
     "sh-buddies-ingest",
     "sh-buddies-comments",
@@ -29,9 +28,8 @@ EXPECTED_SCRIPTS = {
 }
 
 SCHEDULES: dict[str, Callable[[dt.datetime], bool]] = {
-    "sh-buddies-monitor": lambda minute: True,
     "sh-minute-maintenance": lambda minute: True,
-    "sh-monitor-other": lambda minute: minute.minute % 5 == 0,
+    "sh-monitor-other": lambda minute: True,
 }
 
 BAD_LOG_LEVELS = {"error", "fatal", "critical"}
