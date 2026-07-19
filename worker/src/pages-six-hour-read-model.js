@@ -1,14 +1,16 @@
-import { MATERIALIZED_API_VARIANTS } from '../../site/functions/lib/api-contract.js';
+import {
+  MATERIALIZED_API_VARIANTS,
+  materializedResponseCadenceSeconds,
+} from '../../site/functions/lib/api-contract.js';
 import { loadLikeRanking } from '../../site/functions/api/like-ranking.js';
 import { runTrackHistoryCycleStep } from './pages-track-history-cycle.js';
+import { saveMaterializedResponse } from './pages-response-store.js';
 
 const MINUTE_MS = 60_000;
 export const PAGES_READ_MODEL_CYCLE_MINUTES = 6 * 60;
 export const PAGES_READ_MODEL_CYCLE_MS = PAGES_READ_MODEL_CYCLE_MINUTES * MINUTE_MS;
 export const TRACK_HISTORY_WINDOW_MINUTES = 60;
 const LIKE_RANKING_LIMIT = 500;
-const RESPONSE_CHUNK_SIZE = 192_000;
-const RESPONSE_MAX_CHUNKS = 80;
 
 const SCHEMA_SQL = [
   `CREATE TABLE IF NOT EXISTS sh_pages_payload_read_model (
@@ -16,23 +18,6 @@ const SCHEMA_SQL = [
     payload_json TEXT NOT NULL,
     updated_at INTEGER NOT NULL
   )`,
-  `CREATE TABLE IF NOT EXISTS sh_pages_response_manifest (
-    model_key TEXT PRIMARY KEY,
-    generation TEXT NOT NULL,
-    status INTEGER NOT NULL,
-    headers_json TEXT NOT NULL,
-    chunk_count INTEGER NOT NULL,
-    updated_at INTEGER NOT NULL
-  )`,
-  `CREATE TABLE IF NOT EXISTS sh_pages_response_chunks (
-    model_key TEXT NOT NULL,
-    generation TEXT NOT NULL,
-    chunk_index INTEGER NOT NULL,
-    payload_chunk TEXT NOT NULL,
-    PRIMARY KEY(model_key,generation,chunk_index)
-  )`,
-  `CREATE INDEX IF NOT EXISTS idx_sh_pages_response_chunks_generation
-    ON sh_pages_response_chunks(model_key,generation,chunk_index)`,
 ];
 
 // One response-generation task per slot. The gaps are intentional: they leave
@@ -147,70 +132,6 @@ function pagesEnvironment(env = {}) {
   return active;
 }
 
-function splitResponseBody(body) {
-  const chunks = [];
-  let offset = 0;
-  while (offset < body.length) {
-    let end = Math.min(body.length, offset + RESPONSE_CHUNK_SIZE);
-    const last = body.charCodeAt(end - 1);
-    if (end < body.length && last >= 0xD800 && last <= 0xDBFF) end -= 1;
-    chunks.push(body.slice(offset, end));
-    offset = end;
-  }
-  return chunks.length ? chunks : [''];
-}
-
-function persistedHeaders(response) {
-  const headers = {};
-  for (const [key, value] of response.headers.entries()) {
-    const normalized = key.toLowerCase();
-    if (normalized === 'cache-control' || normalized === 'content-length' || normalized === 'transfer-encoding') continue;
-    headers[key] = value;
-  }
-  if (!headers['content-type']) headers['content-type'] = 'application/json; charset=utf-8';
-  return headers;
-}
-
-async function saveResponse(db, modelKey, response, now) {
-  const body = await response.text();
-  let payload;
-  try {
-    payload = JSON.parse(body);
-  } catch {
-    throw new Error(`${modelKey} did not return JSON`);
-  }
-  if (!response.ok) throw new Error(`${modelKey} returned HTTP ${response.status}`);
-  if (payload?.setup_required) throw new Error(`${modelKey} read model is not ready`);
-
-  const chunks = splitResponseBody(body);
-  if (chunks.length > RESPONSE_MAX_CHUNKS) {
-    throw new Error(`${modelKey} response exceeded ${RESPONSE_MAX_CHUNKS} chunks`);
-  }
-  const generation = `${now}:${modelKey}`;
-  const statements = chunks.map((chunk, index) => db.prepare(`INSERT INTO sh_pages_response_chunks(
-      model_key,generation,chunk_index,payload_chunk
-    ) VALUES(?,?,?,?) ON CONFLICT(model_key,generation,chunk_index) DO UPDATE SET
-      payload_chunk=excluded.payload_chunk`)
-    .bind(modelKey, generation, index, chunk));
-  statements.push(db.prepare(`INSERT INTO sh_pages_response_manifest(
-      model_key,generation,status,headers_json,chunk_count,updated_at
-    ) VALUES(?,?,?,?,?,?) ON CONFLICT(model_key) DO UPDATE SET
-      generation=excluded.generation,status=excluded.status,headers_json=excluded.headers_json,
-      chunk_count=excluded.chunk_count,updated_at=excluded.updated_at`)
-    .bind(
-      modelKey,
-      generation,
-      response.status,
-      JSON.stringify(persistedHeaders(response)),
-      chunks.length,
-      now,
-    ));
-  statements.push(db.prepare(`DELETE FROM sh_pages_response_chunks
-    WHERE model_key=? AND generation<>?`).bind(modelKey, generation));
-  await db.batch(statements);
-  return { bytes: body.length, chunks: chunks.length };
-}
-
 function variantByKey(key) {
   const variant = MATERIALIZED_API_VARIANTS.find((item) => item.key === key);
   if (!variant) throw new Error(`unsupported six-hour Pages task: ${key}`);
@@ -237,10 +158,25 @@ async function renderVariant(variant, env, dependencies = {}) {
   return handler({ request, env });
 }
 
-async function materializeVariant(variant, targetDb, activeEnv, now, dependencies = {}) {
+async function materializeVariant(
+  variant,
+  targetDb,
+  responseKv,
+  activeEnv,
+  now,
+  dependencies = {},
+) {
   try {
     const response = await renderVariant(variant, activeEnv, dependencies);
-    const saved = await saveResponse(targetDb, variant.key, response, now);
+    const save = dependencies.saveResponse || saveMaterializedResponse;
+    const saved = await save(
+      targetDb,
+      responseKv,
+      variant.key,
+      response,
+      now,
+      materializedResponseCadenceSeconds(variant.key),
+    );
     return { key: variant.key, ok: true, ...saved };
   } catch (error) {
     return {
@@ -315,6 +251,7 @@ export async function runPagesSixHourTask(env, now = Date.now(), dependencies = 
   const response = await materializeVariant(
     variant,
     env.MINUTE_DB,
+    env.PAGES_RESPONSE_KV,
     pagesEnvironment(env),
     timestamp,
     dependencies,
