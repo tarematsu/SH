@@ -125,15 +125,12 @@ export async function refreshSparseRevisionContinuation(env, body) {
   return true;
 }
 
-export async function processMinuteDeriveBatch(batch, env) {
-  const messages = batch.messages;
-  if (!messages?.length) return;
-  const message = messages[0];
-  const activeEnv = activeDeriveEnv(batch, env);
-
+async function processOneMinuteDeriveMessage(message, activeEnv, queueName, dependencies = {}) {
+  const processMessage = dependencies.processMessage || processMinuteDeriveMessage;
+  const refreshContinuation = dependencies.refreshContinuation || refreshSparseRevisionContinuation;
   try {
-    const result = await processMinuteDeriveMessage(activeEnv, message.body);
-    logMinuteDeriveResult(result, batch?.queue || null);
+    const result = await processMessage(activeEnv, message.body);
+    logMinuteDeriveResult(result, queueName);
     if (result?.failed && !result.terminal && result.retry_message !== false) {
       const retryDelayMs = result.retry_delay_ms;
       const delaySeconds = typeof retryDelayMs === 'number' && Number.isFinite(retryDelayMs)
@@ -145,10 +142,10 @@ export async function processMinuteDeriveBatch(batch, env) {
     }
   } catch (error) {
     if (sourcePayloadUnavailable(error)
-        && await refreshSparseRevisionContinuation(activeEnv, message.body).catch(() => false)) {
+        && await refreshContinuation(activeEnv, message.body).catch(() => false)) {
       console.warn(JSON.stringify({
         event: 'minute_derive_revision_continuation_refreshed',
-        derive_queue: batch?.queue || null,
+        derive_queue: queueName,
         revision_id: integer(message.body?.revision?.revision_id),
       }));
       message.ack();
@@ -156,13 +153,23 @@ export async function processMinuteDeriveBatch(batch, env) {
     }
     const detail = {
       event: importInProgress(error) ? 'minute_derive_import_deferred' : 'minute_derive_message_failed',
-      derive_queue: batch?.queue || null,
+      derive_queue: queueName,
       error: String(error?.message || error).slice(0, 800),
     };
     if (importInProgress(error)) console.warn(JSON.stringify(detail));
     else console.error(JSON.stringify(detail));
     if (error?.code === 'MINUTE_DERIVE_INVALID_TRIGGER') message.ack();
     else message.retry(RETRY_60_SECONDS);
+  }
+}
+
+export async function processMinuteDeriveBatch(batch, env, dependencies = {}) {
+  const messages = batch?.messages;
+  if (!messages?.length) return;
+  const activeEnv = activeDeriveEnv(batch, env);
+  const queueName = batch?.queue || null;
+  for (const message of messages) {
+    await processOneMinuteDeriveMessage(message, activeEnv, queueName, dependencies);
   }
 }
 
