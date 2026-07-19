@@ -37,7 +37,7 @@ test('derive processes and acknowledges every message in a two-message delivery'
   assert.deepEqual(events, ['ack:1', 'ack:2']);
 });
 
-test('rebuild processes and acknowledges every message in a two-message delivery', async () => {
+test('rebuild batch logic preserves independent acknowledgements for future rollout', async () => {
   const events = [];
   const processed = [];
   const messages = [queueMessage(1, events), queueMessage(2, events)];
@@ -51,9 +51,9 @@ test('rebuild processes and acknowledges every message in a two-message delivery
   assert.deepEqual(events, ['ack:1', 'ack:2']);
 });
 
-test('production derive and rebuild queues deliver pairs conservatively', () => {
+test('production batches derive pairs while rebuild remains isolated', () => {
   const derive = config('wrangler.minute-derive.jsonc');
   const rebuild = config('wrangler.minute-rebuild.jsonc');
   assert.deepEqual(derive.queues.consumers.map(({ max_batch_size }) => max_batch_size), [2, 2]);
-  assert.equal(rebuild.queues.consumers[0].max_batch_size, 2);
+  assert.equal(rebuild.queues.consumers[0].max_batch_size, 1);
 });
