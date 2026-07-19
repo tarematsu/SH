@@ -43,7 +43,7 @@ export async function processReadModelMessage(env, body) {
   return { deferred: false };
 }
 
-async function processReadModelBatch(batch, env) {
+export async function processReadModelBatch(batch, env) {
   const messages = batch.messages;
   if (!messages?.length) return;
   const message = messages[0];
