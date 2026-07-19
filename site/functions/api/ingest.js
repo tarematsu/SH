@@ -6,11 +6,13 @@ import {
   observedAtFrom,
   rawJson,
   readJsonBody,
+  stripAppleMusicFields,
   text,
 } from '../lib/api-utils.js';
 import { withAppleMusicFreeD1 } from '../lib/apple-music-d1-pruner.js';
 import { saveCommentCounts } from '../lib/comment-counts.js';
 import { saveLeanHeartbeat, saveLeanQueue, saveLeanSnapshot } from '../lib/d1-optimized-ingest.js';
+import { requestWithParsedJson } from '../lib/parsed-request.js';
 import { saveQueueReachability } from '../lib/queue-reachability.js';
 
 export * from './ingest-core.js';
@@ -88,11 +90,17 @@ export async function ingestInternal(context) {
   const { request, env } = context;
   if (!authorized(request, env) || !env.DB) return corePost(context);
   const parsed = await readJsonBody(request, { clone: true });
-  if (!parsed.ok || !supportsOptimizedIngestType(parsed.body?.type)) return corePost(context);
+  if (!parsed.ok) return corePost(context);
+  const body = stripAppleMusicFields(parsed.body);
+  const fallbackContext = {
+    ...context,
+    request: requestWithParsedJson(request, body),
+  };
+  if (!supportsOptimizedIngestType(body?.type)) return corePost(fallbackContext);
   try {
-    return json(await ingestOptimizedBody(env, parsed.body));
+    return json(await ingestOptimizedBody(env, body));
   } catch (error) {
-    if (parsed.body?.type === 'snapshot' && isPendingStreamSchemaError(error)) return corePost(context);
+    if (body?.type === 'snapshot' && isPendingStreamSchemaError(error)) return corePost(fallbackContext);
     console.error(error);
     return json({ ok: false, error: error?.message || 'database error' }, 500);
   }
