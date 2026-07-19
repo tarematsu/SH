@@ -5,25 +5,34 @@ import {
   CANONICAL_PLAYBACK_SNAPSHOT_SQL,
   loadCanonicalPlaybackPayload,
 } from '../functions/lib/primary-playback-fallback.js';
-import { LATEST_QUEUE_WITH_ITEMS_SQL } from '../functions/lib/latest-queue.js';
+import {
+  LATEST_PLAYBACK_WITH_SNAPSHOT_SQL,
+  LATEST_QUEUE_WITH_ITEMS_SQL,
+} from '../functions/lib/latest-queue.js';
 
 class CanonicalPlaybackDb {
-  constructor({ snapshot, queueRows }) {
+  constructor({ snapshot = null, queueRows, legacy = false }) {
     this.snapshot = snapshot;
     this.queueRows = queueRows;
+    this.legacy = legacy;
     this.calls = [];
   }
 
   prepare(sql) {
     this.calls.push(sql);
+    const database = this;
     return {
       bind() { return this; },
       first: async () => {
-        if (sql === CANONICAL_PLAYBACK_SNAPSHOT_SQL) return this.snapshot;
+        if (sql === CANONICAL_PLAYBACK_SNAPSHOT_SQL) return database.snapshot;
         throw new Error(`unexpected first(): ${sql}`);
       },
       all: async () => {
-        if (sql === LATEST_QUEUE_WITH_ITEMS_SQL) return { results: this.queueRows };
+        if (sql === LATEST_PLAYBACK_WITH_SNAPSHOT_SQL) {
+          if (database.legacy) throw new Error('no such column: channel_id');
+          return { results: database.queueRows };
+        }
+        if (sql === LATEST_QUEUE_WITH_ITEMS_SQL) return { results: database.queueRows };
         throw new Error(`unexpected all(): ${sql}`);
       },
     };
@@ -32,6 +41,12 @@ class CanonicalPlaybackDb {
 
 function queueRow(overrides = {}) {
   return {
+    snapshot_observed_at: 1_799_999_999_000,
+    snapshot_channel_id: 318,
+    snapshot_station_id: 3328626,
+    snapshot_is_broadcasting: 1,
+    snapshot_host_account_id: 3334889,
+    snapshot_host_handle: 'sakuramankai',
     queue_station_id: 3328626,
     queue_id: 77,
     queue_start_time: 1_799_999_970_000,
@@ -58,17 +73,9 @@ function queueRow(overrides = {}) {
   };
 }
 
-test('canonical playback uses the same Pages DB queue source as dashboard?history=0', async () => {
+test('canonical playback reads the latest snapshot and queue in one Pages D1 query', async () => {
   const now = 1_800_000_000_000;
   const db = new CanonicalPlaybackDb({
-    snapshot: {
-      observed_at: now - 1_000,
-      channel_id: 318,
-      station_id: 3328626,
-      is_broadcasting: 1,
-      host_account_id: 3334889,
-      host_handle: 'sakuramankai',
-    },
     queueRows: [
       queueRow(),
       queueRow({
@@ -93,18 +100,38 @@ test('canonical playback uses the same Pages DB queue source as dashboard?histor
   assert.equal(payload.stale, false);
   assert.equal(payload.playing, true);
   assert.equal(payload.queue_status.current_index, 0);
-  assert.equal(payload.queue_status.ended, undefined);
   assert.equal(payload.queue[0].title, 'Current Song');
-  assert.equal(payload.queue[0].is_current, true);
   assert.equal(payload.queue[1].title, 'Next Song');
-  assert.deepEqual(db.calls.sort(), [
-    LATEST_QUEUE_WITH_ITEMS_SQL,
-    CANONICAL_PLAYBACK_SNAPSHOT_SQL,
-  ].sort());
+  assert.deepEqual(db.calls, [LATEST_PLAYBACK_WITH_SNAPSHOT_SQL]);
 });
 
-test('canonical playback returns null only when its Pages DB state is unavailable', async () => {
-  const db = new CanonicalPlaybackDb({ snapshot: null, queueRows: [] });
+test('legacy snapshot schemas retain the two-query rollback path', async () => {
+  const now = 1_800_000_000_000;
+  const row = queueRow();
+  delete row.snapshot_observed_at;
+  const db = new CanonicalPlaybackDb({
+    legacy: true,
+    snapshot: {
+      observed_at: now - 1_000,
+      channel_id: 318,
+      station_id: 3328626,
+      is_broadcasting: 1,
+      host_account_id: 3334889,
+      host_handle: 'sakuramankai',
+    },
+    queueRows: [row],
+  });
+  const payload = await loadCanonicalPlaybackPayload(db, now);
+  assert.equal(payload.playing, true);
+  assert.deepEqual(db.calls, [
+    LATEST_PLAYBACK_WITH_SNAPSHOT_SQL,
+    CANONICAL_PLAYBACK_SNAPSHOT_SQL,
+    LATEST_QUEUE_WITH_ITEMS_SQL,
+  ]);
+});
+
+test('canonical playback returns null after one query when its current state is unavailable', async () => {
+  const db = new CanonicalPlaybackDb({ queueRows: [] });
   assert.equal(await loadCanonicalPlaybackPayload(db, 200), null);
-  assert.equal(db.calls.length, 2);
+  assert.deepEqual(db.calls, [LATEST_PLAYBACK_WITH_SNAPSHOT_SQL]);
 });

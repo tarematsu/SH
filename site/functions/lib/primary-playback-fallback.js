@@ -1,5 +1,10 @@
 import { FACTS_FRESH_MS } from './dashboard-facts.js';
-import { LATEST_QUEUE_WITH_ITEMS_SQL, parseLatestQueueRows } from './latest-queue.js';
+import {
+  LATEST_PLAYBACK_WITH_SNAPSHOT_SQL,
+  LATEST_QUEUE_WITH_ITEMS_SQL,
+  parseLatestQueueRows,
+  parseLatestSnapshotRow,
+} from './latest-queue.js';
 import { computePlayback, normalizePlaybackTrack } from './playback.js';
 import { hostIdentity, queueRevision, stateFromQueue } from './queue-state.js';
 
@@ -25,13 +30,30 @@ function text(value) {
   return parsed || null;
 }
 
+async function loadPlaybackRows(db) {
+  try {
+    const result = await db.prepare(LATEST_PLAYBACK_WITH_SNAPSHOT_SQL).all();
+    const rows = result.results || [];
+    let snapshot = parseLatestSnapshotRow(rows[0]);
+    if (!snapshot && rows.length) {
+      snapshot = await db.prepare(CANONICAL_PLAYBACK_SNAPSHOT_SQL).first();
+    }
+    return { snapshot, rows };
+  } catch (error) {
+    if (!/no such column/i.test(String(error?.message || error))) throw error;
+    const [snapshot, queueResult] = await Promise.all([
+      db.prepare(CANONICAL_PLAYBACK_SNAPSHOT_SQL).first(),
+      db.prepare(LATEST_QUEUE_WITH_ITEMS_SQL).all(),
+    ]);
+    return { snapshot, rows: queueResult.results || [] };
+  }
+}
+
 export async function loadCanonicalPlaybackPayload(db, generatedAt = Date.now()) {
   if (!db) return null;
-  const [snapshot, queueResult] = await Promise.all([
-    db.prepare(CANONICAL_PLAYBACK_SNAPSHOT_SQL).first(),
-    db.prepare(LATEST_QUEUE_WITH_ITEMS_SQL).all(),
-  ]);
-  const { latestQueue, queue } = parseLatestQueueRows(queueResult.results || []);
+  const loaded = await loadPlaybackRows(db);
+  const snapshot = loaded.snapshot;
+  const { latestQueue, queue } = parseLatestQueueRows(loaded.rows);
   if (!snapshot || !latestQueue || !queue.length) return null;
 
   const playback = computePlayback(queue, generatedAt);

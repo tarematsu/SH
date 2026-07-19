@@ -28,6 +28,34 @@ function todayUtcString(now) {
   return new Date(now).toISOString().slice(0, 10);
 }
 
+export function currentSummaryPeriodStart(mode, now = Date.now()) {
+  const date = new Date(now);
+  date.setUTCHours(0, 0, 0, 0);
+  if (mode === 'monthly') {
+    date.setUTCDate(1);
+  } else if (mode !== 'daily') {
+    const daysSinceMonday = (date.getUTCDay() + 6) % 7;
+    date.setUTCDate(date.getUTCDate() - daysSinceMonday);
+  }
+  return date.getTime();
+}
+
+export function liveSummaryFallbackStart(mode, now = Date.now()) {
+  const current = currentSummaryPeriodStart(mode, now);
+  if (mode === 'daily') return current - DAY_MS;
+  if (mode === 'monthly') {
+    const date = new Date(current);
+    date.setUTCMonth(date.getUTCMonth() - 2);
+    return date.getTime();
+  }
+  return current - 14 * DAY_MS;
+}
+
+export function boundedLiveSummaryStart(mode, fromTs, lastBaseEnd, now = Date.now()) {
+  const afterBase = lastBaseEnd == null ? fromTs : lastBaseEnd + 1;
+  return Math.max(fromTs, afterBase, liveSummaryFallbackStart(mode, now));
+}
+
 function periodExpression(mode) {
   if (mode === 'daily') return `strftime('%Y-%m-%d', observed_at / 1000, 'unixepoch')`;
   if (mode === 'monthly') return `strftime('%Y-%m', observed_at / 1000, 'unixepoch')`;
@@ -169,7 +197,8 @@ export async function loadSummaryWithLive(env, mode, from, to, now = Date.now())
   const fromTs = parseRangeStart(mode, from, '2024-06-01');
   const toTs = parseRangeStart(mode, to, fallbackTo) + DAY_MS;
   const lastBaseEnd = finiteNumber(baseRows.at(-1)?.period_end);
-  const liveStart = Math.max(fromTs, lastBaseEnd == null ? fromTs : lastBaseEnd + 1);
+  const expectedLiveStart = lastBaseEnd == null ? fromTs : Math.max(fromTs, lastBaseEnd + 1);
+  const liveStart = boundedLiveSummaryStart(mode, fromTs, lastBaseEnd, now);
   const liveResult = liveStart < toTs
     ? await env.DB.prepare(liveSummarySql(mode)).bind(liveStart, toTs, limit).all()
     : { results: [] };
@@ -188,6 +217,6 @@ export async function loadSummaryWithLive(env, mode, from, to, now = Date.now())
     boundary_evidence_count: evidence.size,
     live_overlay_count: liveRows.length,
     latest_live_observed_at: liveRows.at(-1)?.period_end || null,
-    live_truncated: false,
+    live_truncated: liveStart > expectedLiveStart,
   };
 }
