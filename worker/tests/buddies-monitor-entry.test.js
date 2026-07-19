@@ -2,7 +2,12 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
-import buddiesMonitor, { collectRawChannel } from '../src/raw-collector-entry.js';
+import {
+  CONSOLIDATED_MONITOR_CRON,
+  otherMonitorDue,
+  rawCollectorEnv,
+} from '../src/consolidated-monitor-entry.js';
+import { collectRawChannel } from '../src/raw-collector-entry.js';
 
 function session() {
   return {
@@ -13,28 +18,31 @@ function session() {
   };
 }
 
-test('buddies monitor keeps its existing deployment entry', () => {
+test('buddies collection is deployed through the consolidated monitor Worker', () => {
   const config = JSON.parse(readFileSync(
-    new URL('../wrangler.jsonc', import.meta.url),
+    new URL('../wrangler.other.jsonc', import.meta.url),
     'utf8',
   ));
 
-  assert.equal(config.name, 'sh-buddies-monitor');
-  assert.equal(config.main, 'src/raw-collector-entry.js');
+  assert.equal(config.name, 'sh-monitor-other');
+  assert.equal(config.main, 'src/other-entry.js');
+  assert.deepEqual(config.triggers.crons, [CONSOLIDATED_MONITOR_CRON]);
+  assert.equal(
+    config.queues.producers.some(({ binding }) => binding === 'RAW_COLLECTION_QUEUE'),
+    true,
+  );
 });
 
-test('scheduled-only production surface registers the collection promise directly', async () => {
-  const waited = [];
-  const result = buddiesMonitor.scheduled(null, {}, {
-    waitUntil(promise) {
-      waited.push(promise);
-    },
-  });
+test('the consolidated schedule runs other monitoring every five minutes', () => {
+  assert.equal(otherMonitorDue(Date.UTC(2026, 0, 1, 0, 0)), true);
+  assert.equal(otherMonitorDue(Date.UTC(2026, 0, 1, 0, 1)), false);
+  assert.equal(otherMonitorDue(Date.UTC(2026, 0, 1, 0, 5)), true);
+});
 
-  assert.equal(result, undefined);
-  assert.deepEqual(Object.keys(buddiesMonitor), ['scheduled']);
-  assert.equal(waited.length, 1);
-  await assert.rejects(waited[0], /RAW_COLLECTION_QUEUE binding is missing/);
+test('the consolidated collector aliases BUDDIES_DB to the legacy DB binding', () => {
+  const BUDDIES_DB = {};
+  const active = rawCollectorEnv({ BUDDIES_DB });
+  assert.equal(active.DB, BUDDIES_DB);
 });
 
 test('production collection skips unrelated ingest configuration work', async () => {
