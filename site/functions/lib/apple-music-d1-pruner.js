@@ -1,4 +1,36 @@
 const wrappedDatabases = new WeakMap();
+const CURRENT_BITE_APPLE_BIND_INDEX = 10;
+
+function normalizedSql(value) {
+  return String(value || '').replace(/\s+/g, ' ').trim().toLowerCase();
+}
+
+function removeQuestionMarkAt(value, ordinal) {
+  let seen = 0;
+  const marker = '__DROP_APPLE_MUSIC_BIND__';
+  const marked = String(value).replace(/\?/g, (token) => {
+    seen += 1;
+    return seen === ordinal ? marker : token;
+  });
+  if (seen < ordinal) return String(value);
+  return marked
+    .replace(new RegExp(`,\\s*${marker}`), '')
+    .replace(new RegExp(`${marker}\\s*,`), '')
+    .replace(marker, 'NULL');
+}
+
+function currentBiteInsertPlan(value) {
+  const original = String(value || '');
+  const normalized = normalizedSql(original);
+  if (!normalized.startsWith('insert or ignore into sh_track_counter_changes(')
+      || !normalized.includes('queue_position,queue_track_id,stationhead_track_id,spotify_id,apple_music_id,isrc,')) {
+    return null;
+  }
+  const withoutColumn = original.replace(/,\s*apple_music_id(?=\s*,\s*isrc)/i, '');
+  const sql = removeQuestionMarkAt(withoutColumn, CURRENT_BITE_APPLE_BIND_INDEX + 1);
+  if (sql === original || /apple_music_id/i.test(sql)) return null;
+  return { sql, dropBindIndex: CURRENT_BITE_APPLE_BIND_INDEX };
+}
 
 export function withoutAppleMusicHotPathSql(value) {
   return String(value || '')
@@ -9,6 +41,25 @@ export function withoutAppleMusicHotPathSql(value) {
     .replace(/apple_music_id\s*=\s*excluded\.apple_music_id\s*,/gi, '');
 }
 
+export function appleMusicStatementPlan(value) {
+  const insertPlan = currentBiteInsertPlan(value);
+  if (insertPlan) return insertPlan;
+  return { sql: withoutAppleMusicHotPathSql(value), dropBindIndex: null };
+}
+
+function wrapStatement(statement, dropBindIndex) {
+  if (dropBindIndex == null) return statement;
+  return new Proxy(statement, {
+    get(target, property) {
+      if (property === 'bind') {
+        return (...values) => target.bind(...values.filter((_value, index) => index !== dropBindIndex));
+      }
+      const result = Reflect.get(target, property, target);
+      return typeof result === 'function' ? result.bind(target) : result;
+    },
+  });
+}
+
 export function appleMusicFreeD1(db) {
   if (!db?.prepare) return db;
   const cached = wrappedDatabases.get(db);
@@ -16,7 +67,10 @@ export function appleMusicFreeD1(db) {
   const wrapped = new Proxy(db, {
     get(target, property) {
       if (property === 'prepare') {
-        return (sql) => target.prepare(withoutAppleMusicHotPathSql(sql));
+        return (sql) => {
+          const plan = appleMusicStatementPlan(sql);
+          return wrapStatement(target.prepare(plan.sql), plan.dropBindIndex);
+        };
       }
       const result = Reflect.get(target, property, target);
       return typeof result === 'function' ? result.bind(target) : result;
