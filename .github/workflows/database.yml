@@ -8,6 +8,8 @@ on:
       - '.github/workflows/database.yml'
       - 'database/facts-migrations/**'
       - 'worker/scripts/provision-facts-db.mjs'
+      - 'worker/scripts/provision-current-facts-db.mjs'
+      - 'worker/scripts/apply-facts-pr-schema.mjs'
       - 'worker/scripts/verify-facts-live.mjs'
       - 'worker/scripts/repair-july-stream-facts.mjs'
       - 'database/other-migrations/**'
@@ -66,7 +68,7 @@ jobs:
           cache-dependency-path: worker/package-lock.json
       - run: npm ci --no-audit --no-fund
       - name: Create or update database
-        run: node scripts/provision-facts-db.mjs
+        run: node scripts/provision-current-facts-db.mjs
       - name: Repair contaminated July stream facts
         run: node scripts/repair-july-stream-facts.mjs
       - name: Verify live data
