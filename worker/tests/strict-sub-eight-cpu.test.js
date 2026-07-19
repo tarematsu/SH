@@ -6,6 +6,7 @@ import {
   resetAppleMusicRuntimeCachesForTests,
   withAppleMusicFreeRuntime,
 } from '../../site/functions/lib/apple-music-d1-pruner.js';
+import { materializeDependencies } from '../src/ingest-channel-optimized-entry.js';
 import { officialNewsProbeDue } from '../src/other-monitor-support.js';
 
 function config(name) {
@@ -21,9 +22,11 @@ test('CPU budget treats 8 ms itself as a violation', () => {
   assert.match(source, /"comparison": "strictly_less_than"/);
 });
 
-test('production configs bound comment work and metadata refresh frequency', () => {
+test('production configs bound comment work and defer duplicate metadata persistence', async () => {
   assert.equal(config('wrangler.comments.jsonc').vars.CHAT_LIMIT, 25);
   assert.equal(config('wrangler.ingest.jsonc').vars.METADATA_REFRESH_INTERVAL_MS, 1_800_000);
+  assert.equal(config('wrangler.ingest.jsonc').vars.COLLECTED_METADATA_PERSIST_ENABLED, false);
+  assert.equal(await materializeDependencies({}).collectedMetadataDue(), false);
 });
 
 test('Apple-free runtime wrapper is reused for the same warm environment', () => {
