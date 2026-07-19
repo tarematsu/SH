@@ -169,6 +169,7 @@ jobs:
         run: python3 .github/scripts/analyze-worker-observability.py
 
       - name: Enforce stable 8 ms Worker CPU budget
+        if: always()
         shell: bash
         run: python3 .github/scripts/enforce-worker-cpu-budget.py
 
