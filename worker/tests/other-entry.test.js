@@ -74,7 +74,7 @@ function healthyOtherDb(now = Date.now()) {
 
 test('legacy scheduled runner still drives the injected monitor task set', async () => {
   const calls = [];
-  const controller = { scheduledTime: 300_000, cron: OTHER_WORKER_CRON };
+  const controller = { scheduledTime: 300_000, cron: '* * * * *' };
   const env = { marker: true };
   const ctx = { waitUntil() {} };
 
@@ -109,7 +109,7 @@ test('legacy scheduled runner reports failures after allowing sibling tasks to f
   const failure = new Error('prediction failed');
   const calls = [];
   await assert.rejects(
-    runOtherScheduled({ scheduledTime: 0, cron: OTHER_WORKER_CRON }, {}, { waitUntil() {} }, {
+    runOtherScheduled({ scheduledTime: 0, cron: '* * * * *' }, {}, { waitUntil() {} }, {
       buddy: () => calls.push('buddy'),
       host: () => calls.push('host'),
       prediction: async () => { throw failure; },
