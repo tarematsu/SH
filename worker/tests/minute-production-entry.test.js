@@ -40,7 +40,7 @@ function splitMessage(options = {}) {
   return body;
 }
 
-test('minute ingest writes one inbox row and durably hands off one derive trigger', async () => {
+test('minute ingest writes one inbox row and durably hands off one live derive trigger', async () => {
   const messageCalls = [];
   const sqlCalls = [];
   const triggers = [];
@@ -68,6 +68,7 @@ test('minute ingest writes one inbox row and durably hands off one derive trigge
     job_id: 'minute-fact:10:120000',
     channel_id: 10,
     minute_at: 120_000,
+    job_kind: 'live',
   }]);
 });
 
@@ -96,6 +97,7 @@ test('duplicate inbox delivery resends the derive trigger without extra work', a
   });
   assert.deepEqual(messageCalls, ['ack', 'ack']);
   assert.equal(triggers.length, 2);
+  assert.ok(triggers.every((trigger) => trigger.job_kind === 'live'));
 });
 
 test('legacy read-model failure happens after inbox and derive handoff', async () => {
