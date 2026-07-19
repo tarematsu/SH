@@ -76,16 +76,16 @@ function likeStatement(db, row) {
   const sourceRecordId = `buddies-like:${integer(row.id) || 0}`;
   return db.prepare(`INSERT INTO sh_track_counter_changes(
       observed_at,occurrence_key,station_id,queue_id,queue_start_time,queue_position,
-      queue_track_id,stationhead_track_id,spotify_id,apple_music_id,isrc,
+      queue_track_id,stationhead_track_id,spotify_id,isrc,
       track_key,count_value,source,source_record_id
-    ) SELECT ?,?,?,?,?,?,?,?,?,?,?,?,?,?,?
+    ) SELECT ?,?,?,?,?,?,?,?,?,?,?,?,?,?
     WHERE ? IS NOT NULL AND NOT EXISTS(
       SELECT 1 FROM sh_track_counter_changes
       WHERE occurrence_key=? AND count_value=?
     )`).bind(
     integer(row.observed_at), occurrenceKey, stationId, queueId, startTime, position,
     integer(row.queue_track_id), integer(row.stationhead_track_id), text(row.spotify_id),
-    text(row.apple_music_id), text(row.isrc), trackKey, count,
+    text(row.isrc), trackKey, count,
     text(row.source) || 'buddies-buffer', sourceRecordId,
     count, occurrenceKey, count,
   );

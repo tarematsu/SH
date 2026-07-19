@@ -43,7 +43,6 @@ function compactPlaybackQueue(queue) {
       queue_track_id: track?.queue_track_id ?? null,
       stationhead_track_id: track?.stationhead_track_id ?? null,
       spotify_id: track?.spotify_id ?? null,
-      apple_music_id: track?.apple_music_id ?? null,
       isrc: track?.isrc ?? null,
       bite_count: track?.bite_count ?? null,
     })),
