@@ -61,7 +61,7 @@ Invoke-Step "Worker install and checks" {
 
 Invoke-Step "Provision current D1 databases" {
   Invoke-External -FilePath "node" -Arguments @("scripts/provision-buddies-db.mjs") -WorkingDirectory $workerRoot
-  Invoke-External -FilePath "node" -Arguments @("scripts/provision-facts-db.mjs") -WorkingDirectory $workerRoot
+  Invoke-External -FilePath "node" -Arguments @("scripts/provision-current-facts-db.mjs") -WorkingDirectory $workerRoot
   Invoke-External -FilePath "node" -Arguments @("scripts/provision-other-db.mjs") -WorkingDirectory $workerRoot
 }
 
