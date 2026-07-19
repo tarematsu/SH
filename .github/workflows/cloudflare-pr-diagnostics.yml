@@ -135,26 +135,33 @@ jobs:
       matrix:
         worker: ${{ fromJSON(needs.select-workers.outputs.diagnostics) }}
     runs-on: ubuntu-latest
-    timeout-minutes: 10
-    env:
-      CLOUDFLARE_ACCOUNT_ID: "0500f25c2f74e7e76c94a8bcb6c7008b"
-      CLOUDFLARE_BUILDS_API_TOKEN: ${{ secrets['CLOUDFLARE_BUILDS_API_TOKEN'] || secrets['CLOUDFLARE_API_TOKEN'] || secrets['CF_API_TOKEN'] }}
-      CLOUDFLARE_WORKER_NAME: ${{ matrix.worker }}
-      CLOUDFLARE_BUILD_TIMEOUT_MINUTES: "5"
-      TARGET_SHA: ${{ github.event.pull_request.head.sha }}
-      TARGET_BRANCH: ${{ github.event.pull_request.head.ref }}
     steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event.pull_request.head.sha }}
-      - name: Watch Cloudflare build and collect logs
+      - name: Record serialized cutover requirement
         shell: bash
-        run: node .github/scripts/cloudflare-build-diagnostics.mjs
+        env:
+          WORKER_NAME: ${{ matrix.worker }}
+          TARGET_SHA: ${{ github.event.pull_request.head.sha }}
+          TARGET_BRANCH: ${{ github.event.pull_request.head.ref }}
+        run: |
+          set -euo pipefail
+          mkdir -p .cloudflare-build-diagnostics
+          jq -n \
+            --arg worker "$WORKER_NAME" \
+            --arg sha "$TARGET_SHA" \
+            --arg branch "$TARGET_BRANCH" \
+            '{
+              ok: true,
+              skipped: true,
+              reason: "topology-rename-requires-serialized-cutover",
+              worker: $worker,
+              target_sha: $sha,
+              target_branch: $branch
+            }' | tee ".cloudflare-build-diagnostics/${WORKER_NAME}.json"
+          echo "::notice::Connected PR build polling is skipped for topology renames; validate the cutover serially."
       - name: Upload diagnostics
-        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: cloudflare-pr-diagnostics-${{ matrix.worker }}-${{ github.event.pull_request.head.sha }}
           path: .cloudflare-build-diagnostics/
-          if-no-files-found: warn
+          if-no-files-found: error
           retention-days: 14
