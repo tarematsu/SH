@@ -116,7 +116,7 @@ test('all deployment paths provision the split Queue boundaries', () => {
 test('Worker package scripts contain only current deployment operations', () => {
   assert.equal(
     workerPackage.scripts['deploy:minute'],
-    'npm run deploy:minute-derive && npm run deploy:minute-enrichment && npm run deploy:minute-rebuild && npm run deploy:minute-maintenance && npm run deploy:minute-ingest && npm run deploy:track-metadata',
+    'npm run deploy:minute-derive && npm run deploy:minute-enrichment && npm run deploy:minute-rebuild && npm run deploy:minute-maintenance && npm run deploy:minute-ingest',
   );
   assert.equal(
     workerPackage.scripts['deploy:split-other'],
@@ -125,6 +125,9 @@ test('Worker package scripts contain only current deployment operations', () => 
   assert.equal(workerPackage.scripts['deploy:monitor-maintenance'], undefined);
   assert.equal(workerPackage.scripts['deploy:persist'], 'wrangler deploy --config wrangler.persist.jsonc');
   assert.equal(workerPackage.scripts['deploy:pages-read-model'], 'node scripts/deploy-pages-read-model.mjs');
+  assert.equal(workerPackage.scripts['deploy:minute-enrichment'], 'node scripts/deploy-minute-enrichment.mjs');
+  assert.equal(workerPackage.scripts['deploy:track-metadata'], undefined);
+  assert.equal(workerPackage.scripts['check:track-metadata-bundle'], undefined);
   assert.equal(workerPackage.scripts['deploy:other'], 'node scripts/deploy-other-monitor.mjs');
   assert.equal(workerPackage.scripts['deploy:minute-read-model'], undefined);
   assert.equal(workerPackage.scripts['deploy:host-monitor'], undefined);
@@ -133,6 +136,7 @@ test('Worker package scripts contain only current deployment operations', () => 
   assert.equal(workerPackage.scripts['check:host-monitor-bundle'], undefined);
   assert.equal(workerPackage.scripts['check:buddy-playback-bundle'], undefined);
   assert.equal(workerPackage.scripts['check:monitor-maintenance-bundle'], undefined);
+  assert.equal(existsSync(new URL('../worker/wrangler.track-metadata.jsonc', import.meta.url)), false);
   assert.equal(existsSync(new URL('../worker/wrangler.read-model.jsonc', import.meta.url)), false);
   assert.equal(existsSync(new URL('../worker/wrangler.host-monitor.jsonc', import.meta.url)), false);
   assert.equal(existsSync(new URL('../worker/wrangler.buddy-playback.jsonc', import.meta.url)), false);
@@ -173,7 +177,6 @@ test('R2 observability audits every current script and fails on real faults', ()
 
   for (const worker of [
     'sh-buddies-persist',
-    'sh-track-metadata',
     'sh-minute-enrichment',
     'sh-minute-rebuild',
     'sh-pages-read-model',
@@ -181,6 +184,7 @@ test('R2 observability audits every current script and fails on real faults', ()
   ]) {
     assert.match(observabilityAnalyzer, new RegExp(worker));
   }
+  assert.doesNotMatch(observabilityAnalyzer, /sh-track-metadata/);
   assert.doesNotMatch(observabilityAnalyzer, /sh-minute-read-model/);
   assert.doesNotMatch(observabilityAnalyzer, /sh-host-monitor/);
   assert.doesNotMatch(observabilityAnalyzer, /sh-buddy-playback/);

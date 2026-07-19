@@ -6,15 +6,19 @@ function source(path) {
   return readFileSync(new URL(path, import.meta.url), 'utf8');
 }
 
-test('track metadata caches lazy stage modules and dispatches one message', () => {
-  const config = source('../wrangler.track-metadata.jsonc');
-  const entry = source('../src/track-metadata-entry.js');
-  assert.match(config, /"max_batch_size"\s*:\s*1\b/);
-  assert.match(entry, /committedEnrichmentModulePromise \|\|=/);
-  assert.match(entry, /readModelStagesModulePromise \|\|=/);
-  assert.match(entry, /const JSON_QUEUE_SEND_OPTIONS = Object\.freeze/);
-  assert.match(entry, /const message = messages\[0\]/);
-  assert.doesNotMatch(entry, /for\s*\(const message of|fetch\s*\(/);
+test('minute enrichment owns the one-message metadata Queue boundary', () => {
+  const config = source('../wrangler.minute-enrichment.jsonc');
+  const enrichment = source('../src/minute-enrichment-optimized-entry.js');
+  const metadata = source('../src/track-metadata-entry.js');
+  assert.equal((config.match(/"max_batch_size"\s*:\s*1\b/g) || []).length, 2);
+  assert.match(config, /stationhead-track-metadata/);
+  assert.match(enrichment, /TRACK_METADATA_MESSAGE_TYPE/);
+  assert.match(enrichment, /processTrackMetadataTask/);
+  assert.match(enrichment, /const message = messages\[0\]/);
+  assert.match(metadata, /committedEnrichmentModulePromise \|\|=/);
+  assert.match(metadata, /readModelStagesModulePromise \|\|=/);
+  assert.match(metadata, /const JSON_QUEUE_SEND_OPTIONS = Object\.freeze/);
+  assert.doesNotMatch(enrichment, /for\s*\(const message of/);
 });
 
 test('Pages read model fast-paths successful Cron and one-message Queue invocations', () => {
