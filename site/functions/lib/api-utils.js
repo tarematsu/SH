@@ -112,15 +112,54 @@ export function shouldStripPublicPlaybackKey(key) {
   return shouldStripPlaybackKey(key) || isUnusedPublicPlaybackKey(key);
 }
 
-function stripFields(value, shouldStripKey) {
-  if (Array.isArray(value)) return value.map((item) => stripFields(item, shouldStripKey));
-  if (!value || typeof value !== 'object') return value;
+function copyPriorObjectEntries(entries, stop) {
   const output = {};
-  for (const [key, child] of Object.entries(value)) {
-    if (shouldStripKey(key)) continue;
-    output[key] = stripFields(child, shouldStripKey);
+  for (let index = 0; index < stop; index += 1) {
+    const [key, child] = entries[index];
+    output[key] = child;
   }
   return output;
+}
+
+function stripArrayFields(value, shouldStripKey) {
+  let output = null;
+  for (let index = 0; index < value.length; index += 1) {
+    const child = value[index];
+    const stripped = stripFields(child, shouldStripKey);
+    if (output) {
+      output.push(stripped);
+    } else if (stripped !== child) {
+      output = value.slice(0, index);
+      output.push(stripped);
+    }
+  }
+  return output || value;
+}
+
+function stripObjectFields(value, shouldStripKey) {
+  const entries = Object.entries(value);
+  let output = null;
+  for (let index = 0; index < entries.length; index += 1) {
+    const [key, child] = entries[index];
+    if (shouldStripKey(key)) {
+      output ||= copyPriorObjectEntries(entries, index);
+      continue;
+    }
+    const stripped = stripFields(child, shouldStripKey);
+    if (output) {
+      output[key] = stripped;
+    } else if (stripped !== child) {
+      output = copyPriorObjectEntries(entries, index);
+      output[key] = stripped;
+    }
+  }
+  return output || value;
+}
+
+function stripFields(value, shouldStripKey) {
+  if (Array.isArray(value)) return stripArrayFields(value, shouldStripKey);
+  if (!value || typeof value !== 'object') return value;
+  return stripObjectFields(value, shouldStripKey);
 }
 
 export function stripPlaybackFields(value) {
