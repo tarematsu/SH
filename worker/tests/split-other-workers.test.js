@@ -17,6 +17,7 @@ import {
   runOtherMonitorCron,
   runOtherMonitorScheduled,
 } from '../src/other-monitor-entry.js';
+import { runConsolidatedMonitorScheduled } from '../src/consolidated-monitor-entry.js';
 
 function config(name) {
   return JSON.parse(readFileSync(new URL(`../${name}`, import.meta.url), 'utf8'));
@@ -73,22 +74,24 @@ test('Pages read-model Worker surfaces single-task materialization failures', as
   );
 });
 
-test('maintenance Worker preserves stagger and collector-priority ordering', async () => {
+test('maintenance path preserves stagger and collector-priority ordering', async () => {
   const calls = [];
   const buddies = { prepare() {} };
   const other = {};
   const env = { BUDDIES_DB: buddies, OTHER_DB: other };
-  const result = await runMonitorMaintenanceCron(
+  const dependencies = {
+    applyStagger: async (_env, worker) => calls.push(`stagger:${worker}`),
+    waitForCollector: async () => { calls.push('collector'); return { ready: true }; },
+    runRollup: async (sourceDb, targetDb, now) => {
+      calls.push(['rollup', sourceDb, targetDb, now]);
+      return 'rollup';
+    },
+  };
+  const result = await runConsolidatedMonitorScheduled(
     { cron: ROLLUP_MAINTENANCE_CRON, scheduledTime: BASE + 30 * 60_000 },
     env,
-    {
-      applyStagger: async (_env, worker) => calls.push(`stagger:${worker}`),
-      waitForCollector: async () => { calls.push('collector'); return { ready: true }; },
-      runRollup: async (sourceDb, targetDb, now) => {
-        calls.push(['rollup', sourceDb, targetDb, now]);
-        return 'rollup';
-      },
-    },
+    {},
+    { maintenanceDependencies: dependencies },
   );
   assert.equal(result, 'rollup');
   assert.equal(calls[0], 'stagger:other');
@@ -106,14 +109,20 @@ test('maintenance Worker preserves stagger and collector-priority ordering', asy
   );
   assert.deepEqual(skipped, { skipped: true, reason: 'collector-not-ready', targetMinute: BASE });
 
-  const worker = config('wrangler.monitor-maintenance.jsonc');
-  assert.equal(worker.name, 'sh-monitor-maintenance');
-  assert.deepEqual(worker.triggers.crons, [ROLLUP_MAINTENANCE_CRON, SNAPSHOT_RETENTION_CRON]);
+  const worker = config('wrangler.other.jsonc');
+  assert.equal(worker.name, 'sh-monitor-other');
+  assert.equal(worker.main, 'src/consolidated-monitor-entry.js');
+  assert.deepEqual(worker.triggers.crons, [
+    OTHER_MONITOR_CRON,
+    ROLLUP_MAINTENANCE_CRON,
+    SNAPSHOT_RETENTION_CRON,
+  ]);
   assert.equal(worker.vars.CRON_STAGGER_OTHER_MS, 25_000);
   assert.equal(worker.vars.COLLECTOR_PRIORITY_WAIT_MS, 15_000);
+  assert.equal(worker.vars.SNAPSHOT_RETENTION_ENABLED, true);
 });
 
-test('maintenance Worker reports swallowed D1 failures as failed Cron invocations', async () => {
+test('maintenance path reports swallowed D1 failures as failed Cron invocations', async () => {
   const env = { BUDDIES_DB: { prepare() {} }, OTHER_DB: {} };
   const common = {
     applyStagger: async () => {},
@@ -209,12 +218,17 @@ test('other monitor reserves buddy46 stages and runs only one workload per tick'
 
   const worker = config('wrangler.other.jsonc');
   assert.equal(worker.name, 'sh-monitor-other');
-  assert.equal(worker.main, 'src/other-entry.js');
-  assert.deepEqual(worker.triggers.crons, [OTHER_MONITOR_CRON]);
+  assert.equal(worker.main, 'src/consolidated-monitor-entry.js');
+  assert.deepEqual(worker.triggers.crons, [OTHER_MONITOR_CRON, ROLLUP_MAINTENANCE_CRON, SNAPSHOT_RETENTION_CRON]);
   assert.equal(worker.vars.BUDDY_PLAYBACK_INTERVAL_MS, 1_800_000);
   assert.equal(worker.vars.BUDDY_PLAYBACK_METADATA_LIMIT, 1);
-  assert.equal(worker.vars.DATA_MAINTENANCE_ENABLED, undefined);
-  assert.equal(worker.vars.SNAPSHOT_RETENTION_ENABLED, undefined);
+});
+
+test('consolidated monitor rejects unknown schedules', async () => {
+  assert.deepEqual(
+    await runConsolidatedMonitorScheduled({ cron: '1 2 3 4 5' }, {}, {}),
+    { skipped: true, reason: 'unsupported-consolidated-monitor-cron', cron: '1 2 3 4 5' },
+  );
 });
 
 test('minute read-model Worker has the renamed single Queue owner', () => {
