@@ -61,7 +61,9 @@ jobs:
     timeout-minutes: 30
     env:
       CLOUDFLARE_API_TOKEN: ${{ secrets['CLOUDFLARE_BUILDS_API_TOKEN'] || secrets['CLOUDFLARE_API_TOKEN'] || secrets['CF_API_TOKEN'] }}
-      CLOUDFLARE_ACCOUNT_ID: ${{ secrets['CLOUDFLARE_ACCOUNT_ID'] || secrets['CF_ACCOUNT_ID'] }}
+      # Account IDs are public identifiers. Keep the deployment usable when the
+      # optional account-id secrets have not been configured.
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets['CLOUDFLARE_ACCOUNT_ID'] || secrets['CF_ACCOUNT_ID'] || '0500f25c2f74e7e76c94a8bcb6c7008b' }}
       DEPLOY_COMMANDS: ${{ needs.select-workers.outputs.commands }}
     steps:
       - uses: actions/checkout@v4

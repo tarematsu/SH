@@ -80,6 +80,10 @@ test('automatic deploys select only affected current Workers and isolate script 
 
   assert.match(splitDeployWorkflow, /workflow_dispatch/);
   assert.match(splitDeployWorkflow, /select-worker-deploys\.mjs --all/);
+  assert.match(
+    splitDeployWorkflow,
+    /CLOUDFLARE_ACCOUNT_ID:.*0500f25c2f74e7e76c94a8bcb6c7008b/,
+  );
   assert.doesNotMatch(splitDeployWorkflow, /legacy/i);
   assert.doesNotMatch(splitDeployWorkflow, /retire:/);
 
