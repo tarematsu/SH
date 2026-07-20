@@ -7,7 +7,7 @@ import productionApp, {
   runProductionScheduled,
 } from '../src/production-entry.js';
 
- test('production cron delegates only to the primary collection app', async () => {
+test('production cron delegates only to the primary collection app', async () => {
   const calls = [];
   const controller = { scheduledTime: 300_000, cron: '* * * * *' };
   const env = { marker: true };
@@ -45,10 +45,10 @@ test('legacy production entry exposes no HTTP control or health endpoints', asyn
   assert.equal((await productionApp.fetch(new Request('https://buddies.test/favicon.ico'), {}, {})).status, 204);
 });
 
-test('buddies Wrangler configuration owns collection and compact queue preparation only', () => {
-  const config = JSON.parse(readFileSync(new URL('../wrangler.jsonc', import.meta.url), 'utf8'));
+test('runtime Wrangler configuration owns collection and orchestration only', () => {
+  const config = JSON.parse(readFileSync(new URL('../wrangler.runtime.jsonc', import.meta.url), 'utf8'));
   const source = readFileSync(new URL('../src/raw-collector-entry.js', import.meta.url), 'utf8');
-  assert.equal(config.main, 'src/consolidated-monitor-entry.js');
+  assert.equal(config.main, 'src/runtime-orchestrator-entry.js');
   assert.deepEqual(config.triggers?.crons, ['* * * * *']);
   assert.deepEqual(config.d1_databases.map(({ binding }) => binding), ['BUDDIES_DB', 'MINUTE_DB', 'OTHER_DB']);
   assert.equal(config.d1_databases[0].database_name, 'stationhead-buddies');
@@ -58,6 +58,7 @@ test('buddies Wrangler configuration owns collection and compact queue preparati
     'HOST_MONITOR_QUEUE',
     'MINUTE_DERIVE_QUEUE',
     'MINUTE_LIVE_DERIVE_QUEUE',
+    'MINUTE_ENRICHMENT_QUEUE',
     'MINUTE_REBUILD_QUEUE',
   ]);
   assert.match(source, /JSON\.parse/);

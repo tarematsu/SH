@@ -6,6 +6,10 @@ const source = readFileSync(
   new URL('../scripts/deploy-minute-enrichment.mjs', import.meta.url),
   'utf8',
 );
+const workerApi = readFileSync(
+  new URL('../scripts/cloudflare-workers.mjs', import.meta.url),
+  'utf8',
+);
 
 test('metadata redeploy rollback preserves a pre-existing consolidated consumer', () => {
   assert.match(source, /consolidatedBefore: hasConsumer\(spec\.queue, consolidatedScript\)/);
@@ -14,7 +18,7 @@ test('metadata redeploy rollback preserves a pre-existing consolidated consumer'
 });
 
 test('metadata retirement API calls have a bounded timeout', () => {
-  assert.match(source, /AbortSignal\.timeout\(20_000\)/);
+  assert.match(workerApi, /AbortSignal\.timeout\(20_000\)/);
 });
 
 test('metadata consolidation is validated against the strict 10 ms CPU contract', () => {

@@ -23,10 +23,14 @@ test('CPU budget requires a p95 strictly below 10 ms', () => {
   assert.match(source, /"comparison": "less_than"/);
 });
 
-test('production configs bound comment work and defer duplicate metadata persistence', async () => {
-  assert.equal(config('wrangler.comments.jsonc').vars.CHAT_LIMIT, 25);
-  assert.equal(config('wrangler.ingest.jsonc').vars.METADATA_REFRESH_INTERVAL_MS, 1_800_000);
-  assert.equal(config('wrangler.ingest.jsonc').vars.COLLECTED_METADATA_PERSIST_ENABLED, false);
+test('production config bounds comment work and defers duplicate metadata persistence', async () => {
+  const ingest = config('wrangler.ingest.jsonc');
+  const entry = readFileSync(new URL('../src/ingest-channel-optimized-entry.js', import.meta.url), 'utf8');
+  assert.equal(ingest.vars.CHAT_LIMIT, 0);
+  assert.equal(ingest.vars.COMMENT_CHAIN_MAX_ATTEMPTS, 1);
+  assert.match(entry, /CHAT_LIMIT: \{ value: 25/);
+  assert.equal(ingest.vars.METADATA_REFRESH_INTERVAL_MS, 1_800_000);
+  assert.equal(ingest.vars.COLLECTED_METADATA_PERSIST_ENABLED, false);
   assert.equal(await materializeDependencies({}).collectedMetadataDue(), false);
 });
 

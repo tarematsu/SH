@@ -189,18 +189,18 @@ test('gap commit dispatches at most the first prepared candidate per invocation'
   assert.deepEqual(sent.map((body) => body.minute_at), [60_000]);
 });
 
-test('recovery throughput uses direct dispatch while bounding work per message and delivery', () => {
-  const maintenance = JSON.parse(readFileSync(new URL('../wrangler.minute.jsonc', import.meta.url), 'utf8'));
-  const rebuild = JSON.parse(readFileSync(new URL('../wrangler.minute-rebuild.jsonc', import.meta.url), 'utf8'));
+test('recovery throughput uses direct dispatch while bounding work per runtime delivery', () => {
+  const runtime = JSON.parse(readFileSync(new URL('../wrangler.runtime.jsonc', import.meta.url), 'utf8'));
+  const rebuild = runtime.queues.consumers.find(({ queue }) => queue === 'stationhead-minute-rebuild');
 
-  assert.equal(maintenance.vars.DERIVE_DISPATCH_LIMIT, 10);
-  assert.equal(rebuild.vars.REBUILD_SOURCE_ROWS, 1);
-  assert.equal(rebuild.vars.REBUILD_MAX_JOBS, 1);
-  assert.equal(rebuild.vars.GAP_SCAN_MAX_JOBS, 1);
-  assert.equal(rebuild.queues.consumers[0].max_batch_size, 2);
-  assert.equal(rebuild.queues.consumers[0].max_concurrency, 1);
+  assert.equal(runtime.vars.DERIVE_DISPATCH_LIMIT, 10);
+  assert.equal(runtime.vars.REBUILD_SOURCE_ROWS, 1);
+  assert.equal(runtime.vars.REBUILD_MAX_JOBS, 1);
+  assert.equal(runtime.vars.GAP_SCAN_MAX_JOBS, 1);
+  assert.equal(rebuild.max_batch_size, 2);
+  assert.equal(rebuild.max_concurrency, 1);
   assert.equal(
-    rebuild.queues.producers.some(({ binding }) => binding === 'MINUTE_DERIVE_QUEUE'),
+    runtime.queues.producers.some(({ binding }) => binding === 'MINUTE_DERIVE_QUEUE'),
     true,
   );
 });

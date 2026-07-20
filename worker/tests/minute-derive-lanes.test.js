@@ -11,17 +11,23 @@ function config(name) {
   return JSON.parse(readFileSync(new URL(`../${name}`, import.meta.url), 'utf8'));
 }
 
-test('minute derive Worker consumes isolated live and rebuild queues', () => {
-  const derive = config('wrangler.minute-derive.jsonc');
-  assert.deepEqual(derive.queues.consumers.map(({ queue }) => queue), [
+test('runtime Worker consumes isolated live and rebuild queues', () => {
+  const runtime = config('wrangler.runtime.jsonc');
+  const queues = runtime.queues.consumers.filter(({ queue }) => [
+    'stationhead-minute-derive',
+    'stationhead-minute-live-derive',
+    'stationhead-buddies-facts',
+    'stationhead-minute-rebuild',
+  ].includes(queue));
+  assert.deepEqual(queues.map(({ queue }) => queue), [
     'stationhead-minute-derive',
     'stationhead-minute-live-derive',
     'stationhead-buddies-facts',
     'stationhead-minute-rebuild',
   ]);
-  assert.deepEqual(derive.queues.consumers.map(({ max_concurrency }) => max_concurrency), [1, 2, 1, 1]);
+  assert.deepEqual(queues.map(({ max_concurrency }) => max_concurrency), [1, 2, 1, 1]);
   assert.equal(
-    derive.queues.producers.find(({ binding }) => binding === 'MINUTE_LIVE_DERIVE_QUEUE').queue,
+    runtime.queues.producers.find(({ binding }) => binding === 'MINUTE_LIVE_DERIVE_QUEUE').queue,
     'stationhead-minute-live-derive',
   );
 

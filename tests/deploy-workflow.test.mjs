@@ -53,7 +53,7 @@ test('manual deploy exposes Pages and the three active Workers only', () => {
   ]) {
     assert.match(deployWorkflow, new RegExp(command));
   }
-  assert.doesNotMatch(deployWorkflow, /deploy:split-other|deploy:minute\b|deploy:other/);
+  assert.doesNotMatch(deployWorkflow, /deploy:split-other|deploy:minute(?!-enrichment)|deploy:other/);
   assert.equal((deployWorkflow.match(/^  [a-z][a-z-]*:\n    name:/gm) || []).length, 2);
 });
 

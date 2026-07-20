@@ -51,10 +51,13 @@ test('consolidated Pages Worker routes minute read-model messages even when batc
   assert.deepEqual(events, ['metadata', 'ack']);
 });
 
-test('optional comments degrade after one failed collection attempt', () => {
-  const comments = config('wrangler.comments.jsonc');
-  assert.equal(comments.vars.COMMENT_CHAIN_MAX_ATTEMPTS, 1);
-  assert.equal(comments.vars.CHAT_LIMIT > 0, true);
+test('optional comments are bounded inside the consolidated ingest Worker', () => {
+  const ingest = config('wrangler.ingest.jsonc');
+  const entry = readFileSync(new URL('../src/ingest-channel-optimized-entry.js', import.meta.url), 'utf8');
+  const comments = ingest.queues.consumers.find(({ queue }) => queue === 'stationhead-comments');
+  assert.equal(ingest.vars.COMMENT_CHAIN_MAX_ATTEMPTS, 1);
+  assert.equal(comments.max_batch_size, 1);
+  assert.match(entry, /CHAT_LIMIT: \{ value: 25/);
 });
 
 test('ingest persists operational snapshots once per five-minute slot', () => {

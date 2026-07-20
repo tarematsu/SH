@@ -4,9 +4,11 @@ import test from 'node:test';
 
 import minuteDeriveWorker, { processMinuteDeriveBatch } from '../src/minute-derive-entry.js';
 
-test('minute derive deployment bounds deliveries to two messages', async () => {
-  const config = await readFile(new URL('../wrangler.minute-derive.jsonc', import.meta.url), 'utf8');
-  assert.match(config, /"max_batch_size"\s*:\s*2\b/);
+test('runtime deployment bounds recovery and live derive deliveries', async () => {
+  const config = JSON.parse(await readFile(new URL('../wrangler.runtime.jsonc', import.meta.url), 'utf8'));
+  const consumers = new Map(config.queues.consumers.map((consumer) => [consumer.queue, consumer]));
+  assert.equal(consumers.get('stationhead-minute-derive').max_batch_size, 1);
+  assert.equal(consumers.get('stationhead-minute-live-derive').max_batch_size, 2);
   assert.deepEqual(Object.keys(minuteDeriveWorker), ['queue']);
 });
 

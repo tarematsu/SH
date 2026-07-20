@@ -5,9 +5,13 @@ import test from 'node:test';
 import { writeSparseLiveRevisionChunk } from '../src/minute-revision-materializer.js';
 
 test('production keeps live revision chunks at one track after isolated rebuild claims', () => {
-  const config = JSON.parse(readFileSync(new URL('../wrangler.minute-derive.jsonc', import.meta.url), 'utf8'));
+  const config = JSON.parse(readFileSync(new URL('../wrangler.runtime.jsonc', import.meta.url), 'utf8'));
   assert.equal(config.vars.DERIVE_REVISION_CHUNK_TRACKS, 1);
-  assert.deepEqual(config.queues.consumers.map(({ max_batch_size }) => max_batch_size), [1, 2, 1, 2]);
+  const consumers = new Map(config.queues.consumers.map((consumer) => [consumer.queue, consumer]));
+  assert.equal(consumers.get('stationhead-minute-derive').max_batch_size, 1);
+  assert.equal(consumers.get('stationhead-minute-live-derive').max_batch_size, 2);
+  assert.equal(consumers.get('stationhead-buddies-facts').max_batch_size, 1);
+  assert.equal(consumers.get('stationhead-minute-rebuild').max_batch_size, 2);
 });
 
 test('sparse materializer respects the bounded two-track chunk', async () => {

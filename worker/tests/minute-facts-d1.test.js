@@ -19,7 +19,7 @@ const completionMigrationPath = path.resolve(repositoryRoot, 'database/facts-mig
 const storageRedesignMigrationPath = path.resolve(repositoryRoot, 'database/facts-migrations/010_sparse_context_and_counter_log.sql');
 const counterRepairMigrationPath = path.resolve(repositoryRoot, 'database/facts-migrations/011_repair_counter_current.sql');
 const factsBinding = 'MINUTE_DB';
-const minuteConfigPath = path.resolve(workerRoot, 'wrangler.minute.jsonc');
+const minuteConfigPath = path.resolve(workerRoot, 'wrangler.runtime.jsonc');
 
 function run(args) {
   const result = spawnSync(executable, [wranglerScript, ...args, '--config', minuteConfigPath], {

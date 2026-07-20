@@ -13,14 +13,15 @@ function session() {
   };
 }
 
-test('the consolidated monitor owns the former buddies deployment entry', () => {
+test('the runtime orchestrator owns scheduled raw collection', () => {
   const config = JSON.parse(readFileSync(
-    new URL('../wrangler.jsonc', import.meta.url),
+    new URL('../wrangler.runtime.jsonc', import.meta.url),
     'utf8',
   ));
 
-  assert.equal(config.name, 'sh-monitor-other');
-  assert.equal(config.main, 'src/consolidated-monitor-entry.js');
+  assert.equal(config.name, 'sh-runtime-orchestrator');
+  assert.equal(config.main, 'src/runtime-orchestrator-entry.js');
+  assert.equal(config.queues.producers.find(({ binding }) => binding === 'RAW_COLLECTION_QUEUE').queue, 'stationhead-raw-collection');
 });
 
 test('scheduled-only production surface registers the collection promise directly', async () => {
