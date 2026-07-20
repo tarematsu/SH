@@ -38,14 +38,17 @@ test('deployment support changes select the owning Worker', () => {
   assert.deepEqual(select(['worker/scripts/deploy-ingest.mjs']).workers, ['sh-buddies-ingest']);
 });
 
-test('shared build configuration changes conservatively select every Worker', () => {
+test('shared deployment infrastructure selects every Worker', () => {
   for (const path of [
     'worker/package.json',
     'worker/package-lock.json',
     'worker/scripts/cloudflare-build-config.mjs',
+    'worker/scripts/cloudflare-queues.mjs',
+    'worker/scripts/cloudflare-workers.mjs',
     'worker/scripts/deploy-connected-worker.mjs',
+    'worker/scripts/wrangler-command.mjs',
   ]) {
-    assert.equal(select([path]).workers.length, 3);
+    assert.equal(select([path]).workers.length, 3, path);
   }
 });
 
