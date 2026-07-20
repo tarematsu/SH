@@ -83,8 +83,6 @@ jobs:
           done
       - run: npm run deploy:minute
         working-directory: worker
-      - run: npm run deploy:persist
-        working-directory: worker
       - run: npm run deploy:ingest
         working-directory: worker
       - run: npm run deploy:split-other

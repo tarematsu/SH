@@ -7,70 +7,92 @@ import {
   runWrangler,
 } from './monitor-cutover-queues.mjs';
 
-const queue = 'stationhead-comments';
 const consolidatedScript = 'sh-buddies-ingest';
-const retiredScript = 'sh-buddies-comments';
-const deadLetterQueue = 'stationhead-comments-dlq';
+const MIGRATIONS = Object.freeze([
+  Object.freeze({
+    queue: 'stationhead-comments',
+    oldScript: 'sh-buddies-comments',
+    deadLetterQueue: 'stationhead-comments-dlq',
+  }),
+  Object.freeze({
+    queue: 'stationhead-buddies-persist',
+    oldScript: 'sh-buddies-persist',
+    deadLetterQueue: 'stationhead-buddies-persist-dlq',
+  }),
+]);
 
 function hasConsumer(output, scriptName) {
   return output.includes(scriptName);
 }
 
-function currentConsumers() {
-  return consumerList(queue);
-}
-
-function assertConsumer(output, scriptName, state) {
+function assertConsumer(output, queue, scriptName, state) {
   if (!hasConsumer(output, scriptName)) {
     throw new Error(`${state} consumer missing for ${queue}: ${scriptName}`);
   }
 }
 
-const before = currentConsumers();
-const retiredBefore = hasConsumer(before, retiredScript);
-const consolidatedBefore = hasConsumer(before, consolidatedScript);
-let paused = false;
-let retiredRemoved = false;
+const before = new Map(MIGRATIONS.map((migration) => [migration.queue, consumerList(migration.queue)]));
+const retiredBefore = new Set(MIGRATIONS
+  .filter((migration) => hasConsumer(before.get(migration.queue), migration.oldScript))
+  .map((migration) => migration.queue));
+const consolidatedBefore = new Set(MIGRATIONS
+  .filter((migration) => hasConsumer(before.get(migration.queue), consolidatedScript))
+  .map((migration) => migration.queue));
+const pausedQueues = new Set();
+const retiredRemoved = new Set();
 
 try {
   runWrangler(['deploy', '--config', 'wrangler.ingest.jsonc']);
-  assertConsumer(currentConsumers(), consolidatedScript, 'consolidated ingest');
+  for (const migration of MIGRATIONS) {
+    assertConsumer(
+      consumerList(migration.queue),
+      migration.queue,
+      consolidatedScript,
+      'consolidated ingest',
+    );
+  }
 
-  if (retiredBefore) {
-    pauseQueue(queue);
-    paused = true;
-    removeConsumer(queue, retiredScript);
-    retiredRemoved = true;
-    const after = currentConsumers();
-    assertConsumer(after, consolidatedScript, 'consolidated ingest');
-    if (hasConsumer(after, retiredScript)) {
-      throw new Error(`retired comments consumer still attached: ${retiredScript}`);
+  for (const migration of MIGRATIONS) {
+    if (!retiredBefore.has(migration.queue)) continue;
+    pauseQueue(migration.queue);
+    pausedQueues.add(migration.queue);
+    removeConsumer(migration.queue, migration.oldScript);
+    retiredRemoved.add(migration.queue);
+    const after = consumerList(migration.queue);
+    assertConsumer(after, migration.queue, consolidatedScript, 'consolidated ingest');
+    if (hasConsumer(after, migration.oldScript)) {
+      throw new Error(`retired consumer still attached: ${migration.oldScript}`);
     }
   }
 
-  if (paused) {
+  for (const queue of pausedQueues) {
     resumeQueue(queue);
-    paused = false;
   }
+  pausedQueues.clear();
   console.log(JSON.stringify({
-    event: 'comments_worker_consolidation_completed',
-    queue,
+    event: 'ingest_worker_consolidation_completed',
+    queues: MIGRATIONS.map(({ queue }) => queue),
     consolidated_script: consolidatedScript,
-    retired_script: retiredScript,
-    retired_consumer_removed: retiredRemoved,
+    retired_consumers_removed: [...retiredRemoved],
   }));
 } catch (error) {
-  if (retiredRemoved && !hasConsumer(currentConsumers(), retiredScript)) {
-    try {
-      restoreConsumer({ queue, oldScript: retiredScript, deadLetterQueue });
-    } catch (restoreError) {
-      console.error(`Failed to restore ${retiredScript}: ${restoreError.message}`);
+  for (const migration of MIGRATIONS) {
+    if (!retiredRemoved.has(migration.queue)) continue;
+    if (!hasConsumer(consumerList(migration.queue), migration.oldScript)) {
+      try {
+        restoreConsumer(migration);
+      } catch (restoreError) {
+        console.error(`Failed to restore ${migration.oldScript}: ${restoreError.message}`);
+      }
     }
   }
-  if (!consolidatedBefore && hasConsumer(currentConsumers(), consolidatedScript)) {
-    removeConsumer(queue, consolidatedScript, { allowFailure: true });
+  for (const migration of MIGRATIONS) {
+    if (!consolidatedBefore.has(migration.queue)
+        && hasConsumer(consumerList(migration.queue), consolidatedScript)) {
+      removeConsumer(migration.queue, consolidatedScript, { allowFailure: true });
+    }
   }
-  if (paused) {
+  for (const queue of pausedQueues) {
     try { resumeQueue(queue); } catch (resumeError) {
       console.error(`Failed to resume ${queue}: ${resumeError.message}`);
     }

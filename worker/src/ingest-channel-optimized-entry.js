@@ -1,5 +1,6 @@
 const EMPTY_DEPENDENCIES = Object.freeze({});
 export const COMMENTS_QUEUE_NAME = 'stationhead-comments';
+export const PERSIST_QUEUE_NAME = 'stationhead-buddies-persist';
 const DEFER_COLLECTED_METADATA = Object.freeze({
   collectedMetadataDue: async () => false,
 });
@@ -10,6 +11,7 @@ let legacyIngestPromise;
 let ingestFactStagesPromise;
 let ingestFinalizePromise;
 let commentsModulePromise;
+let persistModulePromise;
 
 function loadPreparedModules() {
   return preparedModulesPromise ??= Promise.all([
@@ -39,6 +41,10 @@ function loadCommentsModule() {
   return commentsModulePromise ??= import('./comments-cpu-entry.js');
 }
 
+function loadPersistModule() {
+  return persistModulePromise ??= import('./persist-channel-optimized-entry.js');
+}
+
 function commentsEnvironment(env) {
   const active = Object.create(env || null);
   Object.defineProperties(active, {
@@ -51,6 +57,11 @@ function commentsEnvironment(env) {
 function isCommentsBatch(batch) {
   if (String(batch?.queue || '') === COMMENTS_QUEUE_NAME) return true;
   return batch?.messages?.some((message) => String(message?.body?.message_type || '').startsWith('stationhead-comments-'));
+}
+
+function isPersistBatch(batch) {
+  if (String(batch?.queue || '') === PERSIST_QUEUE_NAME) return true;
+  return batch?.messages?.some((message) => message?.body?.message_type === 'stationhead-persistence-task');
 }
 
 function enabled(value) {
@@ -109,6 +120,10 @@ async function processIngestBatch(batch, env, ctx) {
   if (isCommentsBatch(batch)) {
     const comments = await loadCommentsModule();
     return comments.default.queue(batch, commentsEnvironment(env), ctx);
+  }
+  if (isPersistBatch(batch)) {
+    const persist = await loadPersistModule();
+    return persist.default.queue(batch, env, ctx);
   }
   const message = messages[0];
   const body = message.body;

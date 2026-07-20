@@ -55,6 +55,14 @@
         "max_retries": 8,
         "dead_letter_queue": "stationhead-comments-dlq",
         "max_concurrency": 1
+      },
+      {
+        "queue": "stationhead-buddies-persist",
+        "max_batch_size": 1,
+        "max_batch_timeout": 1,
+        "max_retries": 8,
+        "dead_letter_queue": "stationhead-buddies-persist-dlq",
+        "max_concurrency": 1
       }
     ],
     "producers": [

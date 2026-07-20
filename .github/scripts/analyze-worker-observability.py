@@ -18,7 +18,6 @@ from collections import Counter
 from typing import Any, Callable, Iterable
 
 EXPECTED_SCRIPTS = {
-    "sh-buddies-persist",
     "sh-buddies-ingest",
     "sh-pages-read-model",
     "sh-minute-derive",

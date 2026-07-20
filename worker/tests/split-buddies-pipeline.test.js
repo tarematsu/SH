@@ -52,6 +52,8 @@ test('ordered comments and consolidated minute Workers have one owner per queue 
   assert.equal(ingest.queues.consumers[0].queue, 'stationhead-raw-collection');
   assert.equal(ingest.queues.consumers.find(({ queue }) => queue === 'stationhead-comments').max_batch_size, 1);
   assert.equal(ingest.queues.consumers.find(({ queue }) => queue === 'stationhead-comments').dead_letter_queue, 'stationhead-comments-dlq');
+  assert.equal(ingest.queues.consumers.find(({ queue }) => queue === 'stationhead-buddies-persist').max_batch_size, 1);
+  assert.equal(ingest.queues.consumers.find(({ queue }) => queue === 'stationhead-buddies-persist').dead_letter_queue, 'stationhead-buddies-persist-dlq');
   assert.deepEqual(ingest.d1_databases.map(({ binding }) => binding), ['DB', 'MINUTE_DB']);
   assert.equal(ingest.queues.producers.some(({ binding }) => binding === 'MINUTE_FACT_QUEUE'), true);
   assert.equal(ingest.queues.producers.find(({ binding }) => binding === 'COMMENTS_QUEUE').queue, 'stationhead-comments');

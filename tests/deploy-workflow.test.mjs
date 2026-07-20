@@ -62,7 +62,6 @@ test('manual deploy keeps all Cloudflare targets available', () => {
   assert.doesNotMatch(deployWorkflow, /^\s{2}push:/m);
   assert.match(deployWorkflow, /wrangler pages deploy/);
   assert.doesNotMatch(deployWorkflow, /npm run deploy:buddies/);
-  assert.match(deployWorkflow, /npm run deploy:persist/);
   assert.match(deployWorkflow, /npm run deploy:ingest/);
   assert.match(deployWorkflow, /npm run deploy:minute/);
   assert.match(deployWorkflow, /npm run deploy:split-other/);
@@ -122,7 +121,6 @@ test('Worker package scripts contain only current deployment operations', () => 
     'npm run deploy:pages-read-model && npm run deploy:other',
   );
   assert.equal(workerPackage.scripts['deploy:monitor-maintenance'], undefined);
-  assert.equal(workerPackage.scripts['deploy:persist'], 'wrangler deploy --config wrangler.persist.jsonc');
   assert.equal(workerPackage.scripts['deploy:ingest'], 'node scripts/deploy-ingest.mjs');
   assert.equal(workerPackage.scripts['deploy:pages-read-model'], 'node scripts/deploy-pages-read-model.mjs');
   assert.equal(workerPackage.scripts['deploy:minute-enrichment'], 'node scripts/deploy-minute-enrichment.mjs');
@@ -176,7 +174,6 @@ test('R2 observability audits every current script and fails on real faults', ()
   assert.match(observabilityFetcher, /No post-deployment Worker events arrived/);
 
   for (const worker of [
-    'sh-buddies-persist',
     'sh-minute-enrichment',
     'sh-pages-read-model',
     'sh-monitor-other',

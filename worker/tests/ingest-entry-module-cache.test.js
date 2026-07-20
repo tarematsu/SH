@@ -23,6 +23,7 @@ test('ingest entry resolves each lazy stage module only once in an isolate', () 
     './ingest-fact-stage.js',
     './ingest-finalize-entry.js',
     './comments-cpu-entry.js',
+    './persist-channel-optimized-entry.js',
   ];
   for (const modulePath of modulePaths) {
     assert.equal(occurrences(`import('${modulePath}')`), 1, modulePath);
@@ -35,6 +36,7 @@ test('ingest entry resolves each lazy stage module only once in an isolate', () 
     'ingestFactStagesPromise',
     'ingestFinalizePromise',
     'commentsModulePromise',
+    'persistModulePromise',
   ]) {
     assert.match(source, new RegExp(`return ${cache} \\?\\?=`));
   }
@@ -48,6 +50,17 @@ test('comments Queue is delegated to the lazy comments wrapper with its own limi
     retry() { calls.push('retry'); },
   };
   await worker.queue({ queue: 'stationhead-comments', messages: [message] }, {});
+  assert.deepEqual(calls, ['retry']);
+});
+
+test('persist Queue is delegated to the lazy persistence wrapper', async () => {
+  const calls = [];
+  const message = {
+    body: { message_type: 'unsupported-persistence-task' },
+    ack() { calls.push('ack'); },
+    retry() { calls.push('retry'); },
+  };
+  await worker.queue({ queue: 'stationhead-buddies-persist', messages: [message] }, {});
   assert.deepEqual(calls, ['retry']);
 });
 

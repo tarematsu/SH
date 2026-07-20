@@ -28,7 +28,7 @@ test('the active topology is deduplicated and stays below the 50% request target
   });
   assert.equal(report.ok, true);
   assert.ok(report.estimated_daily_requests < TARGET_DAILY_REQUESTS);
-  assert.equal(report.workers.length, 6);
+  assert.equal(report.workers.length, 5);
   assert.equal(report.workers.filter(({ name }) => name === 'sh-monitor-other').length, 1);
   assert.ok(report.headroom > 0);
 });

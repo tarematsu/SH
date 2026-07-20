@@ -4,11 +4,14 @@ import test from 'node:test';
 
 const source = readFileSync(new URL('../scripts/deploy-ingest.mjs', import.meta.url), 'utf8');
 
-test('ingest deployment verifies the new comments consumer and rolls back safely', () => {
+test('ingest deployment verifies both consolidated consumers and rolls back safely', () => {
   assert.match(source, /runWrangler\(\['deploy', '--config', 'wrangler\.ingest\.jsonc'\]\)/);
-  assert.match(source, /pauseQueue\(queue\)/);
-  assert.match(source, /removeConsumer\(queue, retiredScript\)/);
-  assert.match(source, /restoreConsumer\(\{ queue, oldScript: retiredScript, deadLetterQueue \}\)/);
+  assert.match(source, /pauseQueue\(migration\.queue\)/);
+  assert.match(source, /removeConsumer\(migration\.queue, migration\.oldScript\)/);
+  assert.match(source, /restoreConsumer\(migration\)/);
   assert.match(source, /resumeQueue\(queue\)/);
-  assert.match(source, /retired comments consumer still attached/);
+  assert.match(source, /retired consumer still attached/);
+  assert.match(source, /stationhead-buddies-persist/);
+  assert.match(source, /sh-buddies-persist/);
+  assert.match(source, /ingest_worker_consolidation_completed/);
 });
