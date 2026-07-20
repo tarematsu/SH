@@ -4,6 +4,8 @@ import { jwtExpiryMs, normalizeBearer } from './shared.js';
 
 const STATE_ID = 'stationhead';
 const RAW_COLLECTION_QUEUE_OPTIONS = Object.freeze({ contentType: 'json' });
+const SESSION_CACHE_TTL_MS = 5 * 60_000;
+const sessionCache = new WeakMap();
 
 function positive(value, fallback) {
   const parsed = Number(value);
@@ -25,6 +27,43 @@ function collectorRequestConfig(env) {
     appVersion: env.STATIONHEAD_APP_VERSION || env.SH_APP_VERSION || '1.0.0',
     requestTimeoutMs: Math.min(positive(env.REQUEST_TIMEOUT_MS, 15_000), 30_000),
   };
+}
+
+function sessionCacheKey(env) {
+  const db = env?.DB;
+  return db && (typeof db === 'object' || typeof db === 'function') ? db : null;
+}
+
+function cachedSession(env, cfg, now = Date.now()) {
+  const key = sessionCacheKey(env);
+  if (!key) return null;
+  const entry = sessionCache.get(key);
+  if (!entry || entry.expiresAt <= now) {
+    if (entry) sessionCache.delete(key);
+    return null;
+  }
+  const state = entry.state;
+  if (state.tokenExpiresAt && state.tokenExpiresAt - now <= cfg.refreshBeforeMs) {
+    sessionCache.delete(key);
+    return null;
+  }
+  return { ...state };
+}
+
+function rememberSession(env, state, now = Date.now()) {
+  const key = sessionCacheKey(env);
+  if (key && state?.authToken && state?.deviceUid) {
+    sessionCache.set(key, {
+      expiresAt: now + SESSION_CACHE_TTL_MS,
+      state: { ...state },
+    });
+  }
+  return state;
+}
+
+function forgetSession(env) {
+  const key = sessionCacheKey(env);
+  if (key) sessionCache.delete(key);
 }
 
 async function claimAuthLock(env, cfg) {
@@ -83,21 +122,31 @@ async function acquireSession(env) {
 
 async function ensureSession(env) {
   const cfg = authConfig(env);
-  let state = await readAuthState(env, STATE_ID);
   const now = Date.now();
-  if (!state.controlExists) await ensureAuthControlRow(env, STATE_ID, now);
+  const cached = cachedSession(env, cfg, now);
+  if (cached) return cached;
+
+  let state = await readAuthState(env, STATE_ID);
+  if (!state.controlExists) {
+    await ensureAuthControlRow(env, STATE_ID, now);
+    state = { ...state, controlExists: true };
+  }
   const ready = Boolean(state.authToken && state.deviceUid);
   const expiresSoon = Boolean(state.tokenExpiresAt && state.tokenExpiresAt - now <= cfg.refreshBeforeMs);
-  if (ready && !expiresSoon) return state;
-  if (ready && state.lastSuccessAt && now - state.lastSuccessAt < cfg.cooldownMs) return state;
+  if (ready && !expiresSoon) return rememberSession(env, state, now);
+  if (ready && state.lastSuccessAt && now - state.lastSuccessAt < cfg.cooldownMs) {
+    return rememberSession(env, state, now);
+  }
   if (!await claimAuthLock(env, cfg)) {
     state = await readAuthState(env, STATE_ID);
-    if (state.authToken && state.deviceUid) return state;
+    if (state.authToken && state.deviceUid) return rememberSession(env, state, now);
     throw new Error('Stationhead auth refresh is locked');
   }
   try {
-    return await acquireSession(env);
+    state = await acquireSession(env);
+    return rememberSession(env, state, now);
   } catch (error) {
+    forgetSession(env);
     await finishAuthAttempt(env, String(error?.message || error).slice(0, 800)).catch(() => {});
     throw error;
   }
@@ -157,10 +206,6 @@ async function directPreparedMessage(base, body, config, env) {
   }
 }
 
-// The production cron Worker owns network collection only. JSON parsing,
-// normalization, hashing and queue-window materialization run behind durable
-// ingest Queue boundaries. The DB-less direct fallback retains the prior v1/v2/v3
-// behavior for tests and compatibility callers outside the deployed topology.
 export async function collectRawChannel(env, dependencies = {}) {
   const rawCollectionQueue = env?.RAW_COLLECTION_QUEUE;
   if (typeof rawCollectionQueue?.send !== 'function') {
@@ -178,21 +223,26 @@ export async function collectRawChannel(env, dependencies = {}) {
       signal: AbortSignal.timeout(config.requestTimeoutMs),
     },
   );
-  if (!response.ok) throw new Error(`Stationhead API ${response.status}: channel`);
+  if (!response.ok) {
+    if (response.status === 401 || response.status === 403) forgetSession(env);
+    throw new Error(`Stationhead API ${response.status}: channel`);
+  }
 
   const body = await response.text();
   const refreshed = normalizeBearer(response.headers.get('authorization'));
   const persistCredentials = !state.collectorUpdatedAt
     || Boolean(refreshed && refreshed !== state.authToken);
+  const activeToken = refreshed || state.authToken;
+  const activeExpiry = refreshed ? jwtExpiryMs(refreshed) : state.tokenExpiresAt;
   const base = {
     message_type: 'stationhead-raw-channel',
     observed_at: observedAt,
     channel_alias: config.channelAlias,
     persist_credentials: persistCredentials,
     auth: {
-      authToken: refreshed || state.authToken,
+      authToken: activeToken,
       deviceUid: state.deviceUid,
-      tokenExpiresAt: refreshed ? jwtExpiryMs(refreshed) : state.tokenExpiresAt,
+      tokenExpiresAt: activeExpiry,
       collectorLastRunAt: state.collectorLastRunAt,
       collectorLastSuccessAt: state.collectorLastSuccessAt,
       collectorLastError: state.collectorLastError,
@@ -204,6 +254,15 @@ export async function collectRawChannel(env, dependencies = {}) {
     ? await directPreparedMessage(base, body, config, env)
     : rawMessage(base, body);
   await rawCollectionQueue.send(message, RAW_COLLECTION_QUEUE_OPTIONS);
+  rememberSession(env, {
+    ...state,
+    authToken: activeToken,
+    tokenExpiresAt: activeExpiry,
+    collectorLastRunAt: observedAt,
+    collectorLastSuccessAt: observedAt,
+    collectorLastError: null,
+    collectorUpdatedAt: state.collectorUpdatedAt || observedAt,
+  }, observedAt);
 
   let queueTotalTracks = 0;
   let queueMaterializedTracks = 0;
@@ -220,6 +279,11 @@ export async function collectRawChannel(env, dependencies = {}) {
     queue_total_tracks: queueTotalTracks,
     queue_materialized_tracks: queueMaterializedTracks,
   }));
+}
+
+export function resetRawCollectorSessionCacheForTests() {
+  // WeakMap cannot be cleared; tests use fresh DB identities. This export gives
+  // callers a stable seam without exposing cached credentials.
 }
 
 export default {
