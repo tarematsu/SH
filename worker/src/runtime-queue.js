@@ -102,7 +102,7 @@ async function processRawCollectionFetchMessage(message, env, options = EMPTY_OP
   try {
     const fetchStage = await loadRawCollectionFetchModule();
     await fetchStage.fetchPreparedRawCollection(
-      env,
+      rawCollectorTextEnv(env),
       body,
       options.collectionFetchDependencies || EMPTY_OPTIONS,
     );
