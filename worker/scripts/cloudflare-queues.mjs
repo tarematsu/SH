@@ -1,11 +1,10 @@
 import { spawnSync } from 'node:child_process';
 
-export function npxExecutable(platform = process.platform) {
-  return platform === 'win32' ? 'npx.cmd' : 'npx';
-}
+import { wranglerCommand } from './wrangler-command.mjs';
 
 export function runWrangler(args, { capture = false, allowFailure = false } = {}) {
-  const result = spawnSync(npxExecutable(), ['wrangler', ...args], {
+  const command = wranglerCommand(args);
+  const result = spawnSync(command.executable, command.args, {
     cwd: new URL('..', import.meta.url),
     encoding: 'utf8',
     stdio: capture ? ['ignore', 'pipe', 'pipe'] : 'inherit',
