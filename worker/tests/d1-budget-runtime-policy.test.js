@@ -98,7 +98,7 @@ test('queued historical rebuild stages drain without D1 work', async () => {
   assert.equal(delegated, false);
 });
 
-test('recovery dispatch excludes durable rebuild jobs in budget mode', async () => {
+test('recovery dispatch excludes durable rebuild jobs with indexable predicates', async () => {
   const statements = [];
   const db = {
     prepare(sql) {
@@ -117,6 +117,7 @@ test('recovery dispatch excludes durable rebuild jobs in budget mode', async () 
   assert.equal(statements.length, 2);
   for (const statement of statements) {
     assert.match(statement.sql, /job_kind!='rebuild'/);
-    assert.equal(statement.args[1], 0);
+    assert.doesNotMatch(statement.sql, /\sOR\s/);
+    assert.deepEqual(statement.args, [123, 2]);
   }
 });
