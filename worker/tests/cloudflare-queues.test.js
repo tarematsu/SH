@@ -1,10 +1,17 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { npxExecutable } from '../scripts/cloudflare-queues.mjs';
+import { wranglerCommand } from '../scripts/wrangler-command.mjs';
 
-test('Cloudflare Queue deployment resolves the Windows command shim', () => {
-  assert.equal(npxExecutable('win32'), 'npx.cmd');
-  assert.equal(npxExecutable('linux'), 'npx');
-  assert.equal(npxExecutable('darwin'), 'npx');
+test('Cloudflare deployment invokes Wrangler through Node without command shims', () => {
+  assert.deepEqual(
+    wranglerCommand(['queues', 'list'], {
+      nodeExecutable: 'node-test',
+      scriptPath: 'wrangler-test.js',
+    }),
+    {
+      executable: 'node-test',
+      args: ['wrangler-test.js', 'queues', 'list'],
+    },
+  );
 });
