@@ -1,3 +1,4 @@
+import { historicalRebuildEnabled } from './historical-rebuild-policy.js';
 import { consumeMinuteQueue } from './minute-production-entry.js';
 
 export const LIVE_DERIVE_QUEUE_NAME = 'stationhead-minute-live-derive';
@@ -35,6 +36,15 @@ async function processRebuildBatch(batch, env, ctx, dependencies) {
   );
 }
 
+function acknowledgeDisabledHistoricalDerive(batch) {
+  for (const message of batch?.messages || []) message.ack();
+  console.log(JSON.stringify({
+    event: 'minute_historical_derive_skipped',
+    messages: batch?.messages?.length || 0,
+    reason: 'historical-rebuild-disabled-for-d1-budget',
+  }));
+}
+
 /**
  * Keep the minute Queue boundaries independent while sharing one deployment.
  * Each delegated handler remains the owner of ack/retry behavior for its queue.
@@ -45,6 +55,9 @@ export async function processMinutePipelineBatch(batch, env, ctx, dependencies =
     const consume = dependencies.consumeMinuteQueue || consumeMinuteQueue;
     return consume(batch, env, ctx);
   }
+  if (queueName === REBUILD_DERIVE_QUEUE_NAME && !historicalRebuildEnabled(env)) {
+    return acknowledgeDisabledHistoricalDerive(batch);
+  }
   if (queueName === REBUILD_DERIVE_QUEUE_NAME || queueName === LIVE_DERIVE_QUEUE_NAME) {
     return processDeriveBatch(batch, env, dependencies.derive);
   }
@@ -53,6 +66,10 @@ export async function processMinutePipelineBatch(batch, env, ctx, dependencies =
   }
   throw new Error(`Unsupported minute pipeline queue: ${queueName || 'missing'}`);
 }
+
+export {
+  acknowledgeDisabledHistoricalDerive,
+};
 
 export default {
   queue: processMinutePipelineBatch,
