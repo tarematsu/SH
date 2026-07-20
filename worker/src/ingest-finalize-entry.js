@@ -1,3 +1,5 @@
+const COLLECTOR_STATE_CHECKPOINT_MS = 5 * 60_000;
+
 function validateFinalizeTask(body) {
   if (body?.message_type !== 'stationhead-ingest-finalize'
       || Number(body?.message_version) !== 1
@@ -23,7 +25,13 @@ async function saveFinalizedCollectorState(env, state) {
       last_run_at=excluded.last_run_at,last_success_at=excluded.last_success_at,
       last_error=NULL,last_channel_id=excluded.last_channel_id,
       last_station_id=excluded.last_station_id,updated_at=excluded.updated_at
-    WHERE excluded.last_run_at>=COALESCE(sh_worker_collector_state.last_run_at,0)`)
+    WHERE excluded.last_run_at>=COALESCE(sh_worker_collector_state.last_run_at,0) AND (
+      ?=1
+      OR sh_worker_collector_state.last_error IS NOT NULL
+      OR excluded.last_channel_id IS NOT sh_worker_collector_state.last_channel_id
+      OR excluded.last_station_id IS NOT sh_worker_collector_state.last_station_id
+      OR excluded.last_run_at-COALESCE(sh_worker_collector_state.last_run_at,0)>=${COLLECTOR_STATE_CHECKPOINT_MS}
+    )`)
     .bind(
       state.authToken,
       state.deviceUid,
@@ -34,6 +42,7 @@ async function saveFinalizedCollectorState(env, state) {
       Number(state.channelId) || null,
       Number(state.stationId) || null,
       Date.now(),
+      persistCredentials,
       persistCredentials,
       persistCredentials,
       persistCredentials,
