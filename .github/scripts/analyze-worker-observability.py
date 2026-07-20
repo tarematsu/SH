@@ -8,14 +8,16 @@ import datetime as dt
 import gzip
 import json
 import math
+import os
 import pathlib
+import re
 import statistics
+import subprocess
 import sys
 from collections import Counter
 from typing import Any, Callable, Iterable
 
 EXPECTED_SCRIPTS = {
-    "sh-buddies-monitor",
     "sh-buddies-persist",
     "sh-buddies-ingest",
     "sh-buddies-comments",
@@ -29,15 +31,18 @@ EXPECTED_SCRIPTS = {
 }
 
 SCHEDULES: dict[str, Callable[[dt.datetime], bool]] = {
-    "sh-buddies-monitor": lambda minute: True,
     "sh-minute-maintenance": lambda minute: True,
-    "sh-monitor-other": lambda minute: minute.minute % 5 == 0,
+    "sh-monitor-other": lambda minute: True,
+}
+TRANSITION_SCHEDULES: dict[str, Callable[[dt.datetime], bool]] = {
+    "sh-buddies-monitor": lambda minute: True,
 }
 
 BAD_LOG_LEVELS = {"error", "fatal", "critical"}
 WARNING_LOG_LEVELS = {"warn", "warning"}
 CPU_REPORT_LIMIT_MS = 10.0
 LOG_INGESTION_GRACE_MS = 90_000
+WORKER_NAME_DIFF = re.compile(r'^[+-]\s*"name"\s*:\s*"(sh-[^"]+)"', re.MULTILINE)
 
 
 def finite_number(value: Any) -> float | None:
@@ -131,6 +136,45 @@ def schedule_due(start_ms: float, end_ms: float, predicate: Callable[[dt.datetim
     return False
 
 
+def transitional_scripts() -> set[str]:
+    """Return Worker names removed by a PR topology rename.
+
+    PR validation runs before the cutover, so the old script may still emit logs.
+    Main-branch and scheduled audits remain strict because this allowance is only
+    active for pull_request events with an actual Wrangler name diff.
+    """
+    if os.environ.get("GITHUB_EVENT_NAME") != "pull_request":
+        return set()
+    base_ref = os.environ.get("GITHUB_BASE_REF")
+    if not base_ref:
+        return set()
+    try:
+        result = subprocess.run(
+            [
+                "git", "diff", "--diff-filter=M", "-U0",
+                f"origin/{base_ref}..HEAD", "--", "worker/wrangler*.jsonc",
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return set()
+
+    removed: set[str] = set()
+    added: set[str] = set()
+    for line in result.stdout.splitlines():
+        match = WORKER_NAME_DIFF.match(line)
+        if not match:
+            continue
+        if line.startswith("-"):
+            removed.add(match.group(1))
+        elif line.startswith("+"):
+            added.add(match.group(1))
+    return removed - added
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--raw-dir", default="raw")
@@ -143,14 +187,21 @@ def main() -> int:
     output_dir.mkdir(parents=True, exist_ok=True)
     selection = json.loads(pathlib.Path(args.selection).read_text(encoding="utf-8"))
     cutoff_ms = iso_datetime(selection["cutoff"]).timestamp() * 1000
+    transition_scripts = transitional_scripts()
+    tracked_scripts = EXPECTED_SCRIPTS | transition_scripts
+    required_schedules = dict(SCHEDULES)
+    for script in transition_scripts:
+        predicate = TRANSITION_SCHEDULES.get(script)
+        if predicate is not None:
+            required_schedules[script] = predicate
 
-    counts = Counter({name: 0 for name in EXPECTED_SCRIPTS})
-    outcomes: dict[str, Counter[str]] = {name: Counter() for name in EXPECTED_SCRIPTS}
-    event_types: dict[str, Counter[str]] = {name: Counter() for name in EXPECTED_SCRIPTS}
-    cpu: dict[str, list[float]] = {name: [] for name in EXPECTED_SCRIPTS}
-    wall: dict[str, list[float]] = {name: [] for name in EXPECTED_SCRIPTS}
-    errors = Counter({name: 0 for name in EXPECTED_SCRIPTS})
-    warnings = Counter({name: 0 for name in EXPECTED_SCRIPTS})
+    counts = Counter({name: 0 for name in tracked_scripts})
+    outcomes: dict[str, Counter[str]] = {name: Counter() for name in tracked_scripts}
+    event_types: dict[str, Counter[str]] = {name: Counter() for name in tracked_scripts}
+    cpu: dict[str, list[float]] = {name: [] for name in tracked_scripts}
+    wall: dict[str, list[float]] = {name: [] for name in tracked_scripts}
+    errors = Counter({name: 0 for name in tracked_scripts})
+    warnings = Counter({name: 0 for name in tracked_scripts})
     observed_sh_scripts: set[str] = set()
     all_cpu: list[float] = []
     all_wall: list[float] = []
@@ -176,7 +227,7 @@ def main() -> int:
             full.write(compact + "\n")
             total += 1
 
-            if script not in EXPECTED_SCRIPTS:
+            if script not in tracked_scripts:
                 findings.write(json.dumps({"reason": ["unexpected_script"], "event": event}, ensure_ascii=False, separators=(",", ":")) + "\n")
                 continue
 
@@ -204,20 +255,20 @@ def main() -> int:
                 errors[script] += 1
                 findings.write(json.dumps({"reason": reasons, "event": event}, ensure_ascii=False, separators=(",", ":")) + "\n")
 
-    unexpected_scripts = sorted(observed_sh_scripts - EXPECTED_SCRIPTS)
+    unexpected_scripts = sorted(observed_sh_scripts - tracked_scripts)
     audit_end_ms = min(
         dt.datetime.now(dt.timezone.utc).timestamp() * 1000 - LOG_INGESTION_GRACE_MS,
         newest_event_ms if newest_event_ms is not None else cutoff_ms,
     )
     required_recent = {
-        name for name, predicate in SCHEDULES.items()
+        name for name, predicate in required_schedules.items()
         if schedule_due(cutoff_ms, audit_end_ms, predicate)
     }
     missing_required = sorted(name for name in required_recent if counts[name] == 0)
     error_events = sum(errors.values())
 
     scripts: dict[str, Any] = {}
-    for script in sorted(EXPECTED_SCRIPTS):
+    for script in sorted(tracked_scripts):
         cpu_summary = metric_summary(cpu[script])
         cpu_summary["over_10ms"] = sum(value > CPU_REPORT_LIMIT_MS for value in cpu[script])
         scripts[script] = {
@@ -228,6 +279,7 @@ def main() -> int:
             "event_types": dict(sorted(event_types[script].items())),
             "cpu_ms": cpu_summary,
             "wall_ms": metric_summary(wall[script]),
+            "transitional": script in transition_scripts,
         }
 
     ok = total > 0 and not unexpected_scripts and not missing_required and error_events == 0
@@ -245,6 +297,7 @@ def main() -> int:
         "newest_object_modified": selection["newest_object_modified"],
         "events": total,
         "error_events": error_events,
+        "transitional_scripts": sorted(transition_scripts),
         "unexpected_scripts": unexpected_scripts,
         "required_scheduled_scripts": sorted(required_recent),
         "missing_required_scripts": missing_required,
@@ -261,6 +314,8 @@ def main() -> int:
 
     if total == 0:
         print("No sh-* Worker events found after the audit cutoff", file=sys.stderr)
+    if transition_scripts:
+        print(f"Allowed PR transition Workers: {', '.join(sorted(transition_scripts))}", file=sys.stderr)
     if unexpected_scripts:
         print(f"Unexpected active Workers: {', '.join(unexpected_scripts)}", file=sys.stderr)
     if missing_required:
