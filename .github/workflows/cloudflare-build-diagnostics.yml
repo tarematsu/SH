@@ -10,6 +10,7 @@ on:
       - 'worker/package-lock.json'
       - 'worker/wrangler.other.jsonc'
       - 'packages/sh-shared/**'
+      - '.github/workflows/cloudflare-build-diagnostics.yml'
   workflow_dispatch:
 
 permissions:
