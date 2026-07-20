@@ -1,4 +1,4 @@
-name: Check Cloudflare D1 daily and hourly budget
+name: Check Cloudflare D1 daily and rolling budget
 
 on:
   pull_request:
@@ -17,6 +17,7 @@ on:
   workflow_dispatch:
 
 permissions:
+  actions: read
   contents: read
 
 concurrency:
@@ -26,19 +27,67 @@ concurrency:
 jobs:
   audit:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 30
     env:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_BUILDS_API_TOKEN }}
       D1_USAGE_OUTPUT_DIR: d1-usage
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
           cache-dependency-path: worker/package-lock.json
+
+      - name: Wait for the current PR deployment and observation window
+        if: github.event_name == 'pull_request'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEAD_BRANCH: ${{ github.event.pull_request.head.ref }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          BASE_BRANCH: ${{ github.event.pull_request.base.ref }}
+        run: |
+          set -euo pipefail
+          runtime_changed_at="$(git log --no-merges -1 --format=%cI "origin/${BASE_BRANCH}..HEAD" -- \
+            worker/src worker/scripts 'worker/wrangler*.jsonc' \
+            site/functions packages/sh-shared database/facts-migrations database/facts-db.json)"
+          test -n "$runtime_changed_at" || { echo 'No runtime changes to measure' >&2; exit 1; }
+          runtime_changed_at="$(date -u -d "$runtime_changed_at" +%Y-%m-%dT%H:%M:%SZ)"
+          deployed_at=""
+          for attempt in $(seq 1 40); do
+            runs="$(curl --fail-with-body --silent --show-error --get \
+              -H "Authorization: Bearer $GH_TOKEN" \
+              -H 'Accept: application/vnd.github+json' \
+              "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/workflows/cloudflare-pr-diagnostics.yml/runs" \
+              --data-urlencode "branch=$HEAD_BRANCH" \
+              --data-urlencode 'event=pull_request' \
+              --data-urlencode 'status=completed' \
+              --data-urlencode 'per_page=100')"
+            deployed_at="$(jq -r --arg changed "$runtime_changed_at" --arg head "$HEAD_SHA" \
+              '[.workflow_runs[] | select(.conclusion == "success" and .head_sha == $head and .created_at >= $changed)] | max_by(.updated_at) | .updated_at // empty' \
+              <<<"$runs")"
+            if [[ -n "$deployed_at" ]]; then break; fi
+            echo "Waiting for PR deployment attempt $attempt/40"
+            sleep 15
+          done
+          test -n "$deployed_at" || { echo 'No successful PR deployment found for this head SHA' >&2; exit 1; }
+
+          audit_since="$(date -u -d "$deployed_at + 90 seconds" +%Y-%m-%dT%H:%M:%SZ)"
+          minimum_end_epoch="$(( $(date -u -d "$audit_since" +%s) + 300 ))"
+          now_epoch="$(date -u +%s)"
+          if (( now_epoch < minimum_end_epoch )); then
+            sleep_seconds="$(( minimum_end_epoch - now_epoch ))"
+            echo "Waiting ${sleep_seconds}s for a five-minute post-deploy D1 sample"
+            sleep "$sleep_seconds"
+          fi
+          echo "Runtime changed at $runtime_changed_at"
+          echo "Deployment completed at $deployed_at"
+          echo "D1_USAGE_START=$audit_since" >> "$GITHUB_ENV"
 
       - name: Query account-wide daily D1 row usage
         shell: bash
@@ -48,7 +97,7 @@ jobs:
           node scripts/cloudflare-d1-usage.mjs
           cat d1-usage/summary.md >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Query repository rolling-hour D1 row usage
+      - name: Query repository rolling-window D1 row usage
         shell: bash
         run: |
           set -euo pipefail
@@ -80,9 +129,10 @@ jobs:
           NODE
 
       - name: Enforce 50 percent daily planning budget
+        if: github.event_name == 'schedule'
         run: node scripts/enforce-d1-half-budget.mjs
 
-      - name: Enforce 50 percent rolling-hour budget
+      - name: Enforce 50 percent rolling-window budget
         run: node scripts/enforce-d1-hourly-half-budget.mjs
 
       - name: Install Wrangler for query insights
