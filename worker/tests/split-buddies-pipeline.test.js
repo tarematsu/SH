@@ -52,7 +52,7 @@ test('the three active Workers have one owner per Queue boundary', () => {
   assert.equal(runtimeConsumers.get('stationhead-buddies-facts').max_concurrency, 1);
   assert.equal(runtimeConsumers.get('stationhead-minute-live-derive').max_batch_size, 1);
   assert.equal(runtimeConsumers.get('stationhead-minute-live-derive').max_concurrency, 2);
-  assert.equal(runtimeConsumers.get('stationhead-minute-rebuild').max_batch_size, 2);
+  assert.equal(runtimeConsumers.get('stationhead-minute-rebuild').max_batch_size, 1);
   assert.equal(runtimeConsumers.get('stationhead-minute-rebuild').max_concurrency, 1);
 });
 
