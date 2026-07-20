@@ -65,6 +65,8 @@ test('ordered comments and three minute Workers have one owner per queue boundar
   assert.equal(minuteDerive.queues.consumers[0].max_batch_size, 1);
   assert.equal(minuteDerive.queues.consumers.find(({ queue }) => queue === 'stationhead-buddies-facts').max_concurrency, 1);
   assert.equal(minuteDerive.queues.consumers.find(({ queue }) => queue === 'stationhead-buddies-facts').dead_letter_queue, 'stationhead-buddies-facts-dlq');
+  assert.equal(minuteDerive.queues.consumers.find(({ queue }) => queue === 'stationhead-minute-rebuild').max_batch_size, 2);
+  assert.equal(minuteDerive.queues.consumers.find(({ queue }) => queue === 'stationhead-minute-rebuild').dead_letter_queue, 'stationhead-minute-rebuild-dlq');
   assert.deepEqual(minuteDerive.d1_databases.map(({ binding }) => binding), ['DB', 'MINUTE_DB']);
   assert.equal(minuteMaintenance.queues.consumers, undefined);
   assert.equal(minuteMaintenance.queues.producers[0].queue, 'stationhead-minute-derive');

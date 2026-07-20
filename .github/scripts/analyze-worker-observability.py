@@ -24,7 +24,6 @@ EXPECTED_SCRIPTS = {
     "sh-pages-read-model",
     "sh-minute-derive",
     "sh-minute-enrichment",
-    "sh-minute-rebuild",
     "sh-monitor-other",
 }
 

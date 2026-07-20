@@ -31,10 +31,16 @@ test('minute production changes redeploy the consolidated derive Worker', () => 
   assert.deepEqual(result.commands, ['deploy:minute-derive']);
 });
 
+test('minute rebuild changes redeploy the consolidated derive Worker', () => {
+  const result = select(['worker/src/minute-rebuild-batched-entry.js']);
+  assert.deepEqual(result.workers, ['sh-minute-derive']);
+  assert.deepEqual(result.commands, ['deploy:minute-derive']);
+});
+
 test('metadata and minute enrichment modules map to the consolidated Worker', () => {
   assert.deepEqual(select(['worker/src/minute-enrichment-entry.js']).workers, ['sh-minute-enrichment']);
   assert.deepEqual(select(['worker/src/track-metadata-entry.js']).workers, ['sh-minute-enrichment']);
-  assert.deepEqual(select(['worker/src/minute-rebuild-entry.js']).workers, ['sh-minute-rebuild']);
+  assert.deepEqual(select(['worker/src/minute-rebuild-entry.js']).workers, ['sh-minute-derive']);
   assert.deepEqual(select(['worker/src/persist-channel-entry.js']).workers, ['sh-buddies-persist']);
 });
 
@@ -97,7 +103,7 @@ test('deploy script-only package changes do not redeploy runtime Workers', () =>
 
 test('lockfile changes conservatively redeploy every Worker', () => {
   const result = select(['worker/package-lock.json']);
-  assert.equal(result.workers.length, 8);
+  assert.equal(result.workers.length, 7);
 });
 
 test('tests and verification scripts do not redeploy runtime Workers', () => {
@@ -119,21 +125,20 @@ test('shared package changes select every Worker that imports sh-shared', () => 
 
 test('unresolved runtime source changes fall back to all Workers', () => {
   const result = select(['worker/src/deleted-runtime-module.js']);
-  assert.equal(result.workers.length, 8);
+  assert.equal(result.workers.length, 7);
 });
 
 test('manual selection deploys all Workers in durable order', () => {
   const result = select([], ['--all']);
-  assert.deepEqual(result.workers.slice(0, 8), [
+  assert.deepEqual(result.workers.slice(0, 7), [
     'sh-minute-derive',
     'sh-minute-enrichment',
-    'sh-minute-rebuild',
     'sh-buddies-comments',
     'sh-buddies-persist',
     'sh-buddies-ingest',
     'sh-pages-read-model',
     'sh-monitor-other',
   ]);
-  assert.equal(result.workers.length, 8);
+  assert.equal(result.workers.length, 7);
   assert.equal(result.workers.at(-1), 'sh-monitor-other');
 });

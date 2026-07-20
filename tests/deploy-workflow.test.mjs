@@ -116,7 +116,7 @@ test('all deployment paths provision the split Queue boundaries', () => {
 test('Worker package scripts contain only current deployment operations', () => {
   assert.equal(
     workerPackage.scripts['deploy:minute'],
-    'npm run deploy:minute-derive && npm run deploy:minute-enrichment && npm run deploy:minute-rebuild',
+    'npm run deploy:minute-derive && npm run deploy:minute-enrichment',
   );
   assert.equal(
     workerPackage.scripts['deploy:split-other'],
@@ -178,7 +178,6 @@ test('R2 observability audits every current script and fails on real faults', ()
   for (const worker of [
     'sh-buddies-persist',
     'sh-minute-enrichment',
-    'sh-minute-rebuild',
     'sh-pages-read-model',
     'sh-monitor-other',
   ]) {
