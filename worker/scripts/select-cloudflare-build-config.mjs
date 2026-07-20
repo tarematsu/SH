@@ -3,7 +3,6 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const CONFIG_BY_WORKER = Object.freeze({
-  'sh-buddies-monitor': 'wrangler.jsonc',
   'sh-buddies-persist': 'wrangler.persist.jsonc',
   'sh-buddies-ingest': 'wrangler.ingest.jsonc',
   'sh-buddies-comments': 'wrangler.comments.jsonc',
