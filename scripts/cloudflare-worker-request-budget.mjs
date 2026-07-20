@@ -6,13 +6,12 @@ export const FREE_DAILY_REQUESTS = 100_000;
 export const TARGET_RATIO = 0.5;
 export const TARGET_DAILY_REQUESTS = FREE_DAILY_REQUESTS * TARGET_RATIO;
 
-// These are the production configs selected by worker/scripts/select-worker-deploys.mjs.
-// wrangler.jsonc is a generated compatibility copy of wrangler.other.jsonc and must
-// never be counted as a second deployed Worker.
+// These are the only production Worker configs selected by
+// worker/scripts/select-worker-deploys.mjs.
 export const ACTIVE_CONFIGS = Object.freeze([
   'worker/wrangler.minute-enrichment.jsonc',
   'worker/wrangler.ingest.jsonc',
-  'worker/wrangler.other.jsonc',
+  'worker/wrangler.runtime.jsonc',
 ]);
 
 // A queue message normally becomes one consumer invocation with the current
