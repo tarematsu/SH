@@ -184,25 +184,33 @@ export async function runCommittedIsrcMetadataEnrichment(env, jobs, dependencies
   return savedTotal;
 }
 
+export async function repairCommittedPlaybackReadModels(env, saved, dependencies = {}) {
+  if (!(Number(saved) > 0)) {
+    return { repaired: 0, skipped: true, reason: 'no-metadata-change' };
+  }
+  const repair = dependencies.repairPlaybackReadModels
+    || (await import('./buddies-facts-sync.js')).repairPlaybackReadModels;
+  try {
+    return await repair(env);
+  } catch (error) {
+    console.warn(JSON.stringify({
+      event: 'minute_playback_read_model_repair_failed',
+      error: failureDetail(error),
+    }));
+    return { repaired: 0, skipped: true, reason: 'repair-error' };
+  }
+}
+
 export async function runCommittedMetadataEnrichment(env, jobs, dependencies = {}) {
   // Resolve recording identity first. Spotify is now only the artwork/provider
   // fallback after the ISRC dictionary has had a chance to satisfy the request.
   const isrcSaved = await runCommittedIsrcMetadataEnrichment(env, jobs, dependencies);
   const spotifySaved = await runCommittedSpotifyMetadataEnrichment(env, jobs, dependencies);
-  let playbackRepair = { repaired: 0, skipped: true, reason: 'no-metadata-change' };
-  if (isrcSaved > 0 || spotifySaved > 0) {
-    const repair = dependencies.repairPlaybackReadModels
-      || (await import('./buddies-facts-sync.js')).repairPlaybackReadModels;
-    try {
-      playbackRepair = await repair(env);
-    } catch (error) {
-      playbackRepair = { repaired: 0, skipped: true, reason: 'repair-error' };
-      console.warn(JSON.stringify({
-        event: 'minute_playback_read_model_repair_failed',
-        error: failureDetail(error),
-      }));
-    }
-  }
+  const playbackRepair = await repairCommittedPlaybackReadModels(
+    env,
+    isrcSaved + spotifySaved,
+    dependencies,
+  );
   return { isrcSaved, spotifySaved, playbackRepair };
 }
 

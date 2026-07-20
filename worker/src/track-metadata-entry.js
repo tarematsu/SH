@@ -75,7 +75,10 @@ export async function processTrackMetadataTask(env, body, dependencies = EMPTY_D
     }
     const runner = dependencies.runCommittedSpotifyMetadataEnrichment
       || module.runCommittedSpotifyMetadataEnrichment;
-    await runner(env, [job], dependencies.enrichment || EMPTY_DEPENDENCIES);
+    const saved = await runner(env, [job], dependencies.enrichment || EMPTY_DEPENDENCIES);
+    const repair = dependencies.repairCommittedPlaybackReadModels
+      || module.repairCommittedPlaybackReadModels;
+    await repair(env, saved, dependencies.enrichment || EMPTY_DEPENDENCIES);
     await enqueueCommittedIsrcStage(env, body, job, dependencies);
     return {
       task: kind,
@@ -90,7 +93,11 @@ export async function processTrackMetadataTask(env, body, dependencies = EMPTY_D
     if (!job?.jobId || !job?.payload) throw new Error('committed ISRC metadata job is invalid');
     const runner = dependencies.runCommittedIsrcMetadataEnrichment
       || (await loadCommittedEnrichmentModule()).runCommittedIsrcMetadataEnrichment;
-    await runner(env, [job], dependencies.enrichment || EMPTY_DEPENDENCIES);
+    const saved = await runner(env, [job], dependencies.enrichment || EMPTY_DEPENDENCIES);
+    const module = await loadCommittedEnrichmentModule();
+    const repair = dependencies.repairCommittedPlaybackReadModels
+      || module.repairCommittedPlaybackReadModels;
+    await repair(env, saved, dependencies.enrichment || EMPTY_DEPENDENCIES);
     return { task: kind, job_id: job.jobId, pending: false };
   }
 
