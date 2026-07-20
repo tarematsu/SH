@@ -31,14 +31,14 @@ test('committed metadata separates Spotify and ISRC work into Queue Invocations'
   }, body, {
     async runCommittedSpotifyMetadataEnrichment(_env, jobs) {
       calls.push(['spotify', jobs[0].jobId]);
-      return 1;
+      return 0;
     },
-    async repairCommittedPlaybackReadModels(_env, saved) {
-      calls.push(['repair', saved]);
+    async repairCommittedPlaybackReadModels(_env, saved, _dependencies, force) {
+      calls.push(['repair', saved, force]);
     },
   });
 
-  assert.deepEqual(calls, [['spotify', body.job.jobId], ['repair', 1]]);
+  assert.deepEqual(calls, [['spotify', body.job.jobId], ['repair', 0, true]]);
   assert.equal(first.pending, true);
   assert.equal(first.next_task, 'committed-enrichment-isrc');
   assert.equal(sent.length, 1);
@@ -51,15 +51,15 @@ test('committed metadata separates Spotify and ISRC work into Queue Invocations'
       calls.push(['isrc', jobs[0].jobId]);
       return 1;
     },
-    async repairCommittedPlaybackReadModels(_env, saved) {
-      calls.push(['repair', saved]);
+    async repairCommittedPlaybackReadModels(_env, saved, _dependencies, force) {
+      calls.push(['repair', saved, force]);
     },
   });
   assert.deepEqual(calls, [
     ['spotify', body.job.jobId],
-    ['repair', 1],
+    ['repair', 0, true],
     ['isrc', body.job.jobId],
-    ['repair', 1],
+    ['repair', 1, true],
   ]);
   assert.equal(second.pending, false);
 });

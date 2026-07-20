@@ -78,7 +78,7 @@ export async function processTrackMetadataTask(env, body, dependencies = EMPTY_D
     const saved = await runner(env, [job], dependencies.enrichment || EMPTY_DEPENDENCIES);
     const repair = dependencies.repairCommittedPlaybackReadModels
       || module.repairCommittedPlaybackReadModels;
-    await repair(env, saved, dependencies.enrichment || EMPTY_DEPENDENCIES);
+    await repair(env, saved, dependencies.enrichment || EMPTY_DEPENDENCIES, true);
     await enqueueCommittedIsrcStage(env, body, job, dependencies);
     return {
       task: kind,
@@ -97,7 +97,7 @@ export async function processTrackMetadataTask(env, body, dependencies = EMPTY_D
     const module = await loadCommittedEnrichmentModule();
     const repair = dependencies.repairCommittedPlaybackReadModels
       || module.repairCommittedPlaybackReadModels;
-    await repair(env, saved, dependencies.enrichment || EMPTY_DEPENDENCIES);
+    await repair(env, saved, dependencies.enrichment || EMPTY_DEPENDENCIES, true);
     return { task: kind, job_id: job.jobId, pending: false };
   }
 

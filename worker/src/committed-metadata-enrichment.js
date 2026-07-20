@@ -184,8 +184,8 @@ export async function runCommittedIsrcMetadataEnrichment(env, jobs, dependencies
   return savedTotal;
 }
 
-export async function repairCommittedPlaybackReadModels(env, saved, dependencies = {}) {
-  if (!(Number(saved) > 0)) {
+export async function repairCommittedPlaybackReadModels(env, saved, dependencies = {}, force = false) {
+  if (!force && !(Number(saved) > 0)) {
     return { repaired: 0, skipped: true, reason: 'no-metadata-change' };
   }
   const repair = dependencies.repairPlaybackReadModels
