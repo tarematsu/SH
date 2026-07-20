@@ -120,7 +120,7 @@ async function acquireSession(env) {
   return readAuthState(env, STATE_ID);
 }
 
-async function ensureSession(env) {
+export async function ensureSession(env) {
   const cfg = authConfig(env);
   const now = Date.now();
   const cached = cachedSession(env, cfg, now);
