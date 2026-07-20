@@ -9,6 +9,7 @@ import {
   gitHubRepositorySlug,
   githubCommitChangedPaths,
 } from '../scripts/deploy-connected-worker.mjs';
+import { WRANGLER_SCRIPT } from '../scripts/wrangler-command.mjs';
 
 const RUNTIME = 'sh-runtime-orchestrator';
 
@@ -50,7 +51,9 @@ test('local deploy defaults to the runtime static config', async () => {
     reason: 'local-runtime-default',
     workerName: RUNTIME,
   });
+  assert.equal(calls[0].command, process.execPath);
   assert.deepEqual(calls[0].args, [
+    WRANGLER_SCRIPT,
     'deploy', '--config', 'wrangler.runtime.jsonc', '--dry-run',
   ]);
 });
@@ -157,7 +160,9 @@ test('affected connected build invokes Wrangler with the static config', async (
     },
   });
   assert.equal(result.deploy, true);
+  assert.equal(calls[0].command, process.execPath);
   assert.deepEqual(calls[0].args, [
+    WRANGLER_SCRIPT,
     'deploy', '--config', 'wrangler.runtime.jsonc', '--dry-run',
   ]);
 });
