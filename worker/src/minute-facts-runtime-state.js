@@ -21,7 +21,10 @@ export const MINUTE_FACT_RUNTIME_STATE_SCHEMA_SQL = `CREATE TABLE IF NOT EXISTS 
   updated_at INTEGER NOT NULL
 )`;
 
-const REBUILD_RUNTIME_CHECKPOINT_MS = 5 * 60_000;
+// Derive and rebuild execute frequently enough that a successful heartbeat
+// does not need a D1 write for every invocation. Failures and backlog changes
+// still write immediately; unchanged success is checkpointed every five minutes.
+const RUNTIME_SUCCESS_CHECKPOINT_MS = 5 * 60_000;
 
 function finiteInteger(value, fallback = null) {
   const parsed = Number(value);
@@ -89,14 +92,14 @@ export async function recordMinuteFactRuntimeState(env, task, outcome = {}, opti
       pending_count=excluded.pending_count,processing_count=excluded.processing_count,
       dead_count=excluded.dead_count,oldest_pending_minute=excluded.oldest_pending_minute,
       updated_at=excluded.updated_at
-    WHERE excluded.task_name<>'rebuild'
+    WHERE excluded.task_name NOT IN ('rebuild','derive')
       OR excluded.failed_total>0
       OR sh_minute_fact_runtime_state.last_error IS NOT excluded.last_error
       OR sh_minute_fact_runtime_state.pending_count IS NOT excluded.pending_count
       OR sh_minute_fact_runtime_state.processing_count IS NOT excluded.processing_count
       OR sh_minute_fact_runtime_state.dead_count IS NOT excluded.dead_count
       OR sh_minute_fact_runtime_state.oldest_pending_minute IS NOT excluded.oldest_pending_minute
-      OR excluded.updated_at-COALESCE(sh_minute_fact_runtime_state.updated_at,0)>=${REBUILD_RUNTIME_CHECKPOINT_MS}`)
+      OR excluded.updated_at-COALESCE(sh_minute_fact_runtime_state.updated_at,0)>=${RUNTIME_SUCCESS_CHECKPOINT_MS}`)
     .bind(
       name, startedAt, success ? now : null, success ? null : now,
       Math.max(0, now - startedAt), error,

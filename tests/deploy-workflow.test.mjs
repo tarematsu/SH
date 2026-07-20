@@ -112,10 +112,7 @@ test('all deployment paths provision the split Queue boundaries', () => {
 });
 
 test('Worker package scripts contain only current deployment operations', () => {
-  assert.equal(
-    workerPackage.scripts['deploy:minute'],
-    'npm run deploy:minute-derive && npm run deploy:minute-enrichment',
-  );
+  assert.equal(workerPackage.scripts['deploy:minute'], 'npm run deploy:minute-enrichment');
   assert.equal(
     workerPackage.scripts['deploy:split-other'],
     'npm run deploy:pages-read-model && npm run deploy:other',

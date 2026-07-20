@@ -13,6 +13,34 @@ export const MIGRATIONS = Object.freeze([
     oldScript: 'sh-host-monitor',
     deadLetterQueue: 'stationhead-host-monitor-dlq',
   }),
+  Object.freeze({
+    queue: 'stationhead-minute-derive',
+    oldScript: 'sh-minute-derive',
+    deadLetterQueue: 'stationhead-minute-derive-dlq',
+    batchSize: 1,
+    maxConcurrency: 1,
+  }),
+  Object.freeze({
+    queue: 'stationhead-minute-live-derive',
+    oldScript: 'sh-minute-derive',
+    deadLetterQueue: 'stationhead-minute-live-derive-dlq',
+    batchSize: 2,
+    maxConcurrency: 2,
+  }),
+  Object.freeze({
+    queue: 'stationhead-buddies-facts',
+    oldScript: 'sh-minute-derive',
+    deadLetterQueue: 'stationhead-buddies-facts-dlq',
+    batchSize: 1,
+    maxConcurrency: 1,
+  }),
+  Object.freeze({
+    queue: 'stationhead-minute-rebuild',
+    oldScript: 'sh-minute-derive',
+    deadLetterQueue: 'stationhead-minute-rebuild-dlq',
+    batchSize: 2,
+    maxConcurrency: 1,
+  }),
 ]);
 
 export function runWrangler(args, { capture = false, allowFailure = false } = {}) {
@@ -82,12 +110,14 @@ export function removeConsumer(queue, scriptName, { allowFailure = false } = {})
 }
 
 export function restoreConsumer(item) {
+  const batchSize = item.batchSize || 1;
+  const maxConcurrency = item.maxConcurrency || 1;
   runWrangler([
     'queues', 'consumer', 'worker', 'add', item.queue, item.oldScript,
-    '--batch-size', '1',
+    '--batch-size', String(batchSize),
     '--batch-timeout', '1',
     '--message-retries', '8',
     '--dead-letter-queue', item.deadLetterQueue,
-    '--max-concurrency', '1',
+    '--max-concurrency', String(maxConcurrency),
   ]);
 }

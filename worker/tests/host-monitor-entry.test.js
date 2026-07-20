@@ -51,11 +51,20 @@ test('one monitor Worker consumes host and buddy queues with independent limits'
   assert.deepEqual(other.queues.consumers.map(({ queue }) => queue), [
     'stationhead-buddy-playback',
     'stationhead-host-monitor',
+    'stationhead-minute-derive',
+    'stationhead-minute-live-derive',
+    'stationhead-buddies-facts',
+    'stationhead-minute-rebuild',
   ]);
-  for (const consumer of other.queues.consumers) {
-    assert.equal(consumer.max_batch_size, 1);
-    assert.equal(consumer.max_concurrency, 1);
+  const limits = new Map(other.queues.consumers.map((consumer) => [consumer.queue, consumer]));
+  for (const queue of ['stationhead-buddy-playback', 'stationhead-host-monitor', 'stationhead-minute-derive', 'stationhead-buddies-facts']) {
+    assert.equal(limits.get(queue).max_batch_size, 1);
+    assert.equal(limits.get(queue).max_concurrency, 1);
   }
+  assert.equal(limits.get('stationhead-minute-live-derive').max_batch_size, 2);
+  assert.equal(limits.get('stationhead-minute-live-derive').max_concurrency, 2);
+  assert.equal(limits.get('stationhead-minute-rebuild').max_batch_size, 2);
+  assert.equal(limits.get('stationhead-minute-rebuild').max_concurrency, 1);
 });
 
 test('consolidated Queue router rejects unknown task types without acknowledging them', async () => {

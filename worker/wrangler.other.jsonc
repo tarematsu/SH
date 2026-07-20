@@ -17,17 +17,25 @@
     "QUEUE_INITIAL_TRACKS": 22,
     "QUEUE_LOW_WATER_TRACKS": 5,
     "QUEUE_EXPAND_TRACKS": 10,
+    "DERIVE_JOB_TIMEOUT_MS": 18000,
+    "DERIVE_LEASE_MS": 60000,
+    "DERIVE_MAX_ATTEMPTS": 8,
+    "DERIVE_REVISION_STAGE_TRACKS": 1,
+    "DERIVE_REVISION_CHUNK_TRACKS": 2,
+    "DERIVE_REVISION_INTERVAL_SECONDS": 20,
     "DERIVE_DISPATCH_LIMIT": 10,
     "DERIVE_REVISION_RECOVERY_LIMIT": 1,
     "DERIVE_REVISION_RECOVERY_STALE_MS": 120000,
-    "REBUILD_SOURCE_ROWS": 20,
-    "REBUILD_MAX_JOBS": 4,
+    "REBUILD_SOURCE_ROWS": 1,
+    "REBUILD_MAX_JOBS": 1,
     "REBUILD_RECENT_GUARD_MS": 300000,
     "REBUILD_MAX_CARRY_MINUTES": 5,
-    "GAP_SCAN_WINDOW_MINUTES": 360,
-    "GAP_SCAN_MAX_JOBS": 4,
+    "REBUILD_HISTORICAL_BACKFILL_ENABLED": true,
+    "REBUILD_HISTORICAL_BACKFILL_INTERVAL_MS": 86400000,
+    "GAP_SCAN_WINDOW_MINUTES": 10,
+    "GAP_SCAN_MAX_JOBS": 1,
     "GAP_SCAN_RECENT_GUARD_MS": 300000,
-    "GAP_SCAN_MAX_CARRY_MINUTES": 360,
+    "GAP_SCAN_MAX_CARRY_MINUTES": 60,
     "BUDDIES_SYNC_BATCH_SIZE": 100,
     "BUDDIES_SYNC_SOURCE_LAG_MS": 300000,
     "CRON_STAGGER_MINUTE_MS": 12000,
@@ -90,6 +98,38 @@
         "max_retries": 8,
         "dead_letter_queue": "stationhead-host-monitor-dlq",
         "max_concurrency": 1
+      },
+      {
+        "queue": "stationhead-minute-derive",
+        "max_batch_size": 1,
+        "max_batch_timeout": 1,
+        "max_retries": 8,
+        "dead_letter_queue": "stationhead-minute-derive-dlq",
+        "max_concurrency": 1
+      },
+      {
+        "queue": "stationhead-minute-live-derive",
+        "max_batch_size": 2,
+        "max_batch_timeout": 1,
+        "max_retries": 8,
+        "dead_letter_queue": "stationhead-minute-live-derive-dlq",
+        "max_concurrency": 2
+      },
+      {
+        "queue": "stationhead-buddies-facts",
+        "max_batch_size": 1,
+        "max_batch_timeout": 1,
+        "max_retries": 8,
+        "dead_letter_queue": "stationhead-buddies-facts-dlq",
+        "max_concurrency": 1
+      },
+      {
+        "queue": "stationhead-minute-rebuild",
+        "max_batch_size": 2,
+        "max_batch_timeout": 1,
+        "max_retries": 8,
+        "dead_letter_queue": "stationhead-minute-rebuild-dlq",
+        "max_concurrency": 1
       }
     ],
     "producers": [
@@ -98,6 +138,7 @@
       { "binding": "HOST_MONITOR_QUEUE", "queue": "stationhead-host-monitor" },
       { "binding": "MINUTE_DERIVE_QUEUE", "queue": "stationhead-minute-derive" },
       { "binding": "MINUTE_LIVE_DERIVE_QUEUE", "queue": "stationhead-minute-live-derive" },
+      { "binding": "MINUTE_ENRICHMENT_QUEUE", "queue": "stationhead-minute-enrichment" },
       { "binding": "MINUTE_REBUILD_QUEUE", "queue": "stationhead-minute-rebuild" }
     ]
   }

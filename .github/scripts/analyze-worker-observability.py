@@ -20,7 +20,6 @@ from typing import Any, Callable, Iterable
 EXPECTED_SCRIPTS = {
     "sh-buddies-ingest",
     "sh-pages-read-model",
-    "sh-minute-derive",
     "sh-minute-enrichment",
     "sh-monitor-other",
 }

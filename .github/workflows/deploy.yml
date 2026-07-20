@@ -81,7 +81,7 @@ jobs:
           do
             npx wrangler queues create "$queue" >/dev/null 2>&1 || true
           done
-      - run: npm run deploy:minute
+      - run: npm run deploy:minute-enrichment
         working-directory: worker
       - run: npm run deploy:ingest
         working-directory: worker
@@ -120,5 +120,5 @@ jobs:
           do
             npx wrangler queues create "$queue" >/dev/null 2>&1 || true
           done
-      - run: npm run deploy:minute
+      - run: npm run deploy:minute-enrichment
         working-directory: worker

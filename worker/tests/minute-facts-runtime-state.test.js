@@ -49,6 +49,7 @@ test('runtime state records success counters and inbox health', async () => {
   assert.equal(values[9], 3);
   assert.equal(values[10], 1);
   assert.match(db.calls.at(-1).sql, /runs_total=sh_minute_fact_runtime_state.runs_total\+1/);
+  assert.match(db.calls.at(-1).sql, /excluded\.task_name NOT IN \('rebuild','derive'\)/);
 });
 
 test('runtime state records sanitized task failures and exposes backlog signals', async () => {

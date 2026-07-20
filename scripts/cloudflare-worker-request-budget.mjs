@@ -10,7 +10,6 @@ export const TARGET_DAILY_REQUESTS = FREE_DAILY_REQUESTS * TARGET_RATIO;
 // wrangler.jsonc is a generated compatibility copy of wrangler.other.jsonc and must
 // never be counted as a second deployed Worker.
 export const ACTIVE_CONFIGS = Object.freeze([
-  'worker/wrangler.minute-derive.jsonc',
   'worker/wrangler.minute-enrichment.jsonc',
   'worker/wrangler.ingest.jsonc',
   'worker/wrangler.pages-read-model.jsonc',

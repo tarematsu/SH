@@ -5,7 +5,6 @@ const repositoryRoot = resolve(import.meta.dirname, '..', '..');
 const workerRoot = resolve(repositoryRoot, 'worker');
 
 const workerDefinitions = [
-  { name: 'sh-minute-derive', config: 'worker/wrangler.minute-derive.jsonc', command: 'deploy:minute-derive' },
   { name: 'sh-minute-enrichment', config: 'worker/wrangler.minute-enrichment.jsonc', command: 'deploy:minute-enrichment' },
   { name: 'sh-buddies-ingest', config: 'worker/wrangler.ingest.jsonc', command: 'deploy:ingest' },
   { name: 'sh-pages-read-model', config: 'worker/wrangler.pages-read-model.jsonc', command: 'deploy:pages-read-model' },

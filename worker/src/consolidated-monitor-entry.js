@@ -11,12 +11,21 @@ export const ROLLUP_MAINTENANCE_CRON = '30 * * * *';
 export const SNAPSHOT_RETENTION_CRON = '50 * * * *';
 const MINUTE_FACT_MAINTENANCE_CRON = '5,7,9,15,17,19,25,27,29,35,37,39,45,47,49,55,57,59 * * * *';
 export const MONITOR_MAINTENANCE_MESSAGE = 'monitor-maintenance-task';
+export const MINUTE_PIPELINE_QUEUE_NAMES = Object.freeze([
+  'stationhead-minute-derive',
+  'stationhead-minute-live-derive',
+  'stationhead-buddies-facts',
+  'stationhead-minute-rebuild',
+]);
+
+const MINUTE_PIPELINE_QUEUE_SET = new Set(MINUTE_PIPELINE_QUEUE_NAMES);
 
 let rawCollectorModulePromise;
 let minuteMaintenanceModulePromise;
 let minuteGateModulePromise;
 let otherMonitorModulePromise;
 let monitorMaintenanceModulePromise;
+let minutePipelineModulePromise;
 
 function loadRawCollectorModule() {
   rawCollectorModulePromise ||= import('./raw-collector-entry.js');
@@ -43,6 +52,11 @@ function loadMonitorMaintenanceModule() {
   return monitorMaintenanceModulePromise;
 }
 
+function loadMinutePipelineModule() {
+  minutePipelineModulePromise ||= import('./minute-pipeline-entry.js');
+  return minutePipelineModulePromise;
+}
+
 function rawCollectorEnv(env) {
   const active = Object.create(env || null);
   Object.defineProperty(active, 'DB', {
@@ -51,6 +65,23 @@ function rawCollectorEnv(env) {
     configurable: true,
   });
   return active;
+}
+
+function minutePipelineEnv(env) {
+  if (env?.DB || !env?.BUDDIES_DB) return env;
+  const active = Object.create(env || null);
+  Object.defineProperty(active, 'DB', {
+    value: env.BUDDIES_DB,
+    enumerable: false,
+    configurable: true,
+  });
+  return active;
+}
+
+export function isMinutePipelineBatch(batch) {
+  const queue = String(batch?.queue || '');
+  if (MINUTE_PIPELINE_QUEUE_SET.has(queue)) return true;
+  return false;
 }
 
 export function maintenanceCronFor(timestamp) {
@@ -185,6 +216,16 @@ export async function runConsolidatedMonitorQueue(batch, env, ctx, options = EMP
   const messages = batch?.messages;
   if (!messages?.length) return;
 
+  if (isMinutePipelineBatch(batch)) {
+    const minutePipeline = await loadMinutePipelineModule();
+    return minutePipeline.processMinutePipelineBatch(
+      batch,
+      minutePipelineEnv(env),
+      ctx,
+      options.minutePipelineDependencies || EMPTY_OPTIONS,
+    );
+  }
+
   // Keep the consumer correct if batching is enabled later. The previous
   // first-message router could leave all remaining messages unacked or send a
   // mixed batch to the wrong handler.
@@ -201,6 +242,7 @@ export async function runConsolidatedMonitorQueue(batch, env, ctx, options = EMP
 
 export {
   dispatchMinuteMaintenance,
+  minutePipelineEnv,
   rawCollectorEnv,
 };
 

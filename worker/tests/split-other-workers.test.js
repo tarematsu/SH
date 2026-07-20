@@ -139,6 +139,17 @@ test('consolidated monitor dispatches maintenance to Queue and preserves the Cro
   assert.equal(worker.vars.CRON_STAGGER_OTHER_MS, 25_000);
   assert.equal(worker.vars.COLLECTOR_PRIORITY_WAIT_MS, 15_000);
   assert.equal(worker.vars.SNAPSHOT_RETENTION_ENABLED, true);
+  assert.deepEqual(worker.queues.consumers.map(({ queue }) => queue), [
+    'stationhead-buddy-playback',
+    'stationhead-host-monitor',
+    'stationhead-minute-derive',
+    'stationhead-minute-live-derive',
+    'stationhead-buddies-facts',
+    'stationhead-minute-rebuild',
+  ]);
+  assert.equal(worker.queues.producers.some(({ binding }) => binding === 'MINUTE_ENRICHMENT_QUEUE'), true);
+  assert.equal(worker.vars.REBUILD_SOURCE_ROWS, 1);
+  assert.equal(worker.vars.GAP_SCAN_WINDOW_MINUTES, 10);
 });
 
 test('consolidated Queue router processes every message in a mixed batch', async () => {
@@ -170,6 +181,28 @@ test('consolidated Queue router processes every message in a mixed batch', async
     },
   );
   assert.deepEqual(events, ['maintenance-ack', 'other-retry']);
+});
+
+test('consolidated monitor delegates minute derive Queue batches without changing ack ownership', async () => {
+  const events = [];
+  await runConsolidatedMonitorQueue(
+    {
+      queue: 'stationhead-minute-live-derive',
+      messages: [{
+        body: { message_type: 'minute-fact-derive' },
+        ack() { events.push('ack'); },
+        retry() { events.push('retry'); },
+      }],
+    },
+    { BUDDIES_DB: {}, MINUTE_DB: {} },
+    {},
+    {
+      minutePipelineDependencies: {
+        derive: { processMessage: async () => ({ processed: 0 }) },
+      },
+    },
+  );
+  assert.deepEqual(events, ['ack']);
 });
 
 test('maintenance path reports swallowed D1 failures as failed Queue retries', async () => {

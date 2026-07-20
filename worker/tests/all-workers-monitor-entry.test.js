@@ -42,4 +42,6 @@ test('the consolidated monitor config deploys the consolidated entrypoint', () =
   assert.match(entry, /minuteMaintenanceModulePromise \|\|=/);
   assert.match(entry, /monitorMaintenanceModulePromise \|\|=/);
   assert.match(entry, /otherMonitorModulePromise \|\|=/);
+  assert.match(entry, /minutePipelineModulePromise \|\|=/);
+  assert.match(entry, /minutePipelineEnv/);
 });

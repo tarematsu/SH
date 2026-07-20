@@ -19,28 +19,28 @@ test('comments-only changes redeploy the consolidated ingest Worker', () => {
   assert.deepEqual(result.diagnostics, []);
 });
 
-test('minute derive changes redeploy only the derive consumer', () => {
+test('minute derive changes redeploy the consolidated monitor consumer', () => {
   const result = select(['worker/src/minute-derive-entry.js']);
-  assert.deepEqual(result.workers, ['sh-minute-derive']);
-  assert.deepEqual(result.commands, ['deploy:minute-derive']);
+  assert.deepEqual(result.workers, ['sh-monitor-other']);
+  assert.deepEqual(result.commands, ['deploy:other']);
 });
 
-test('minute production changes redeploy the consolidated derive Worker', () => {
+test('minute production changes redeploy the consolidated monitor Worker', () => {
   const result = select(['worker/src/minute-production-entry.js']);
-  assert.deepEqual(result.workers, ['sh-minute-derive']);
-  assert.deepEqual(result.commands, ['deploy:minute-derive']);
+  assert.deepEqual(result.workers, ['sh-monitor-other']);
+  assert.deepEqual(result.commands, ['deploy:other']);
 });
 
-test('minute rebuild changes redeploy the consolidated derive Worker', () => {
+test('minute rebuild changes redeploy the consolidated monitor Worker', () => {
   const result = select(['worker/src/minute-rebuild-batched-entry.js']);
-  assert.deepEqual(result.workers, ['sh-minute-derive']);
-  assert.deepEqual(result.commands, ['deploy:minute-derive']);
+  assert.deepEqual(result.workers, ['sh-monitor-other']);
+  assert.deepEqual(result.commands, ['deploy:other']);
 });
 
 test('metadata and minute enrichment modules map to the consolidated Worker', () => {
   assert.deepEqual(select(['worker/src/minute-enrichment-entry.js']).workers, ['sh-minute-enrichment']);
   assert.deepEqual(select(['worker/src/track-metadata-entry.js']).workers, ['sh-minute-enrichment']);
-  assert.deepEqual(select(['worker/src/minute-rebuild-entry.js']).workers, ['sh-minute-derive']);
+  assert.deepEqual(select(['worker/src/minute-rebuild-entry.js']).workers, ['sh-monitor-other']);
   assert.deepEqual(select(['worker/src/persist-channel-entry.js']).workers, ['sh-buddies-ingest']);
 });
 
@@ -103,7 +103,7 @@ test('deploy script-only package changes do not redeploy runtime Workers', () =>
 
 test('lockfile changes conservatively redeploy every Worker', () => {
   const result = select(['worker/package-lock.json']);
-  assert.equal(result.workers.length, 5);
+  assert.equal(result.workers.length, 4);
 });
 
 test('tests and verification scripts do not redeploy runtime Workers', () => {
@@ -124,7 +124,7 @@ test('shared package changes select every Worker that imports sh-shared', () => 
 
 test('unresolved runtime source changes fall back to all Workers', () => {
   const result = select(['worker/src/deleted-runtime-module.js']);
-  assert.equal(result.workers.length, 5);
+  assert.equal(result.workers.length, 4);
 });
 
 test('ingest cutover script redeploys only the consolidated ingest Worker', () => {
@@ -135,13 +135,12 @@ test('ingest cutover script redeploys only the consolidated ingest Worker', () =
 
 test('manual selection deploys all Workers in durable order', () => {
   const result = select([], ['--all']);
-  assert.deepEqual(result.workers.slice(0, 5), [
-    'sh-minute-derive',
+  assert.deepEqual(result.workers.slice(0, 4), [
     'sh-minute-enrichment',
     'sh-buddies-ingest',
     'sh-pages-read-model',
     'sh-monitor-other',
   ]);
-  assert.equal(result.workers.length, 5);
+  assert.equal(result.workers.length, 4);
   assert.equal(result.workers.at(-1), 'sh-monitor-other');
 });
