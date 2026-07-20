@@ -42,18 +42,23 @@ test('runtime orchestration is split by scheduled, Queue, and env responsibiliti
   assert.doesNotMatch(entry, /for \(const message of messages\)/);
 
   const scheduled = source('../src/runtime-scheduled.js');
-  assert.match(scheduled, /RAW_COLLECTION_TASK_MESSAGE/);
-  assert.match(scheduled, /dispatchRawCollection/);
+  assert.match(scheduled, /runtimeScheduledMessagesFor/);
+  assert.match(scheduled, /HOST_MONITOR_QUEUE/);
+  assert.match(scheduled, /sendBatch/);
+  assert.match(scheduled, /RUNTIME_MINUTE_RECOVERY_MESSAGE/);
+  assert.match(scheduled, /RUNTIME_MINUTE_GATE_MESSAGE/);
+  assert.match(scheduled, /RUNTIME_OTHER_MONITOR_MESSAGE/);
   assert.doesNotMatch(scheduled, /rawCollectorModulePromise/);
-  assert.match(scheduled, /minuteMaintenanceModulePromise \|\|=/);
-  assert.match(scheduled, /otherMonitorModulePromise \|\|=/);
+  assert.doesNotMatch(scheduled, /otherMonitorModulePromise/);
 
   const queue = source('../src/runtime-queue.js');
   assert.match(queue, /for \(const message of messages\)/);
   assert.match(queue, /rawCollectorModulePromise \|\|=/);
   assert.match(queue, /processRawCollectionMessage/);
+  assert.match(queue, /processRuntimeDispatchMessage/);
   assert.match(queue, /monitorMaintenanceModulePromise \|\|=/);
   assert.match(queue, /minutePipelineModulePromise \|\|=/);
+  assert.match(queue, /otherMonitorModulePromise \|\|=/);
 
   const env = source('../src/runtime-env.js');
   assert.match(env, /function withDatabaseAlias/);
