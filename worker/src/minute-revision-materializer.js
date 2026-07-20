@@ -153,7 +153,13 @@ export async function prepareSparseLiveRevision(env, payload, options = {}, depe
       source_visible_count=MAX(COALESCE(source_visible_count,0),?),
       materialized_item_count=?,coverage_complete=?,
       status=CASE WHEN ?>=? THEN 'complete' ELSE 'pending' END
-    WHERE id=?`)
+    WHERE id=?
+      AND (item_count IS NOT MAX(item_count,?)
+        OR source_job_id IS NOT ?
+        OR source_visible_count IS NOT MAX(COALESCE(source_visible_count,0),?)
+        OR materialized_item_count IS NOT ?
+        OR coverage_complete IS NOT ?
+        OR status IS NOT CASE WHEN ?>=? THEN 'complete' ELSE 'pending' END)`)
     .bind(
       totalCount,
       sourceJobId,
@@ -163,6 +169,13 @@ export async function prepareSparseLiveRevision(env, payload, options = {}, depe
       materializedCount,
       visibleCount,
       revisionId,
+      totalCount,
+      sourceJobId,
+      visibleCount,
+      materializedCount,
+      materializedCount >= totalCount ? 1 : 0,
+      materializedCount,
+      visibleCount,
     )
     .run());
   await updateSource();
@@ -287,7 +300,17 @@ export async function writeSparseLiveRevisionChunk(env, revisionState, dependenc
         stationhead_track_id=excluded.stationhead_track_id,isrc=excluded.isrc,
         spotify_id=excluded.spotify_id,deezer_id=excluded.deezer_id,
         duration_ms=excluded.duration_ms,playback_offset_ms=excluded.playback_offset_ms,
-        schedule_valid=excluded.schedule_valid,bite_count=excluded.bite_count`)
+        schedule_valid=excluded.schedule_valid,bite_count=excluded.bite_count
+      WHERE track_id IS NOT excluded.track_id
+        OR queue_track_id IS NOT excluded.queue_track_id
+        OR stationhead_track_id IS NOT excluded.stationhead_track_id
+        OR isrc IS NOT excluded.isrc
+        OR spotify_id IS NOT excluded.spotify_id
+        OR deezer_id IS NOT excluded.deezer_id
+        OR duration_ms IS NOT excluded.duration_ms
+        OR playback_offset_ms IS NOT excluded.playback_offset_ms
+        OR schedule_valid IS NOT excluded.schedule_valid
+        OR bite_count IS NOT excluded.bite_count`)
       .bind(
         state.revision_id,
         track.position,
@@ -320,7 +343,10 @@ export async function writeSparseLiveRevisionChunk(env, revisionState, dependenc
   const updateCoverage = dependencies.updateCoverage || (async () => db.prepare(`UPDATE sh_queue_revisions SET
       materialized_item_count=?,coverage_complete=?,last_materialized_at=?,
       status=CASE WHEN ?>=COALESCE(source_visible_count,?) THEN 'complete' ELSE 'pending' END
-    WHERE id=?`)
+    WHERE id=?
+      AND (materialized_item_count IS NOT ?
+        OR coverage_complete IS NOT ?
+        OR status IS NOT CASE WHEN ?>=COALESCE(source_visible_count,?) THEN 'complete' ELSE 'pending' END)`)
     .bind(
       materializedCount,
       coverageComplete ? 1 : 0,
@@ -328,6 +354,10 @@ export async function writeSparseLiveRevisionChunk(env, revisionState, dependenc
       materializedCount,
       state.visible_item_count,
       state.revision_id,
+      materializedCount,
+      coverageComplete ? 1 : 0,
+      materializedCount,
+      state.visible_item_count,
     )
     .run());
   await updateCoverage();

@@ -166,7 +166,14 @@ export async function prepareSparseRebuildRevision(env, payload, options = {}, d
       source_visible_count=MAX(COALESCE(source_visible_count,0),?),
       source_priority=MAX(source_priority,?),materialized_item_count=?,coverage_complete=?,
       status=CASE WHEN ?>=? THEN 'complete' ELSE 'pending' END
-    WHERE id=?`)
+    WHERE id=?
+      AND (item_count IS NOT MAX(item_count,?)
+        OR source_job_id IS NOT ?
+        OR source_visible_count IS NOT MAX(COALESCE(source_visible_count,0),?)
+        OR source_priority IS NOT MAX(source_priority,?)
+        OR materialized_item_count IS NOT ?
+        OR coverage_complete IS NOT ?
+        OR status IS NOT CASE WHEN ?>=? THEN 'complete' ELSE 'pending' END)`)
     .bind(
       visibleCount,
       sourceJobId,
@@ -177,6 +184,14 @@ export async function prepareSparseRebuildRevision(env, payload, options = {}, d
       materializedCount,
       visibleCount,
       revisionId,
+      visibleCount,
+      sourceJobId,
+      visibleCount,
+      sourcePriority,
+      materializedCount,
+      materializedCount >= visibleCount ? 1 : 0,
+      materializedCount,
+      visibleCount,
     )
     .run());
   await updateSource();

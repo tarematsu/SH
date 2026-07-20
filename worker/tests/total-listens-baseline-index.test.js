@@ -40,7 +40,7 @@ function recordingDb() {
 test('facts descriptor advances to the total-listens baseline index', () => {
   assert.equal(
     descriptor.schema,
-    'database/facts-migrations/022_total_listens_baseline_index.sql',
+    'database/facts-migrations/023_minute_facts_observed_index.sql',
   );
 });
 

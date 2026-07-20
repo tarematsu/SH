@@ -173,5 +173,5 @@ test('track metadata migration creates Spotify, ISRC and dictionary repair paths
   assert.match(provision, /coverage_complete/);
   assert.match(provision, /source_job_id/);
   assert.match(provision, /source_visible_count/);
-  assert.equal(metadata.schema, 'database/facts-migrations/022_total_listens_baseline_index.sql');
+  assert.equal(metadata.schema, 'database/facts-migrations/023_minute_facts_observed_index.sql');
 });

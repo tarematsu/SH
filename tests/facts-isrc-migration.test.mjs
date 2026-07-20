@@ -25,7 +25,7 @@ test('facts provisioner installs ISRC identity, dictionary and stats in order', 
   const revisionColumnCheck = "tableColumnNames(databaseName, 'sh_queue_revisions')";
   const dictionaryColumnCheck = "tableColumnNames(databaseName, 'sh_track_dictionary')";
   const dictionaryMigration = "'--file', isrcTrackDictionaryMigrationPath";
-  const schemaMarker = "schema: 'database/facts-migrations/020_isrc_track_dictionary.sql'";
+  const schemaMarker = "schema: 'database/facts-migrations/023_minute_facts_observed_index.sql'";
 
   assert.match(provisioner, /!trackColumns\.has\('isrc'\)/);
   assert.match(provisioner, /sh_tracks\.isrc migration did not complete/);

@@ -74,6 +74,10 @@ const isrcTrackDictionaryMigrationPath = resolve(
   repositoryRoot,
   'database/facts-migrations/020_isrc_track_dictionary.sql',
 );
+const observedFactsIndexMigrationPath = resolve(
+  repositoryRoot,
+  'database/facts-migrations/023_minute_facts_observed_index.sql',
+);
 const metadataPath = resolve(repositoryRoot, 'database/facts-db.json');
 const databaseName = process.env.FACTS_DATABASE_NAME || 'stationhead-minute';
 
@@ -337,6 +341,11 @@ wrangler([
   '--remote', '--yes',
   '--file', d1BudgetIndexesMigrationPath,
 ]);
+wrangler([
+  'd1', 'execute', databaseName,
+  '--remote', '--yes',
+  '--file', observedFactsIndexMigrationPath,
+]);
 
 let dictionaryColumns = tableColumnNames(databaseName, 'sh_track_dictionary');
 if (dictionaryColumns.size === 0) {
@@ -372,6 +381,6 @@ writeFileSync(metadataPath, `${JSON.stringify({
   binding: 'MINUTE_DB',
   database_name: databaseName,
   database_id: databaseId,
-  schema: 'database/facts-migrations/020_isrc_track_dictionary.sql',
+  schema: 'database/facts-migrations/023_minute_facts_observed_index.sql',
 }, null, 2)}\n`);
 console.log(JSON.stringify({ ok: true, database_name: databaseName, database_id: databaseId }));
