@@ -20,12 +20,12 @@ test('minute enrichment deploys the queue-only one-message wrapper', () => {
   assert.doesNotMatch(entry, /for\s*\(|Symbol\.iterator|fetch\s*\(/);
 });
 
-test('runtime Worker owns bounded rebuild delivery while preserving cached core stages', () => {
+test('runtime Worker owns single-message rebuild delivery while preserving cached core stages', () => {
   const runtime = config('../wrangler.runtime.jsonc');
   const wrapper = source('../src/minute-rebuild-batched-entry.js');
   const core = source('../src/minute-rebuild-entry.js');
   const rebuild = runtime.queues.consumers.find(({ queue }) => queue === 'stationhead-minute-rebuild');
-  assert.equal(rebuild.max_batch_size, 2);
+  assert.equal(rebuild.max_batch_size, 1);
   assert.equal(rebuild.max_concurrency, 1);
   assert.match(core, /runtimeStateModulePromise \|\|=/);
   assert.match(core, /gapScanModulePromise \|\|=/);
