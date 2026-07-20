@@ -99,7 +99,10 @@ async function processRuntimeDispatchMessage(message, env, ctx, options = EMPTY_
     } else if (messageType === RUNTIME_OTHER_MONITOR_MESSAGE) {
       const run = options.runOtherMonitorCron
         || (await loadOtherMonitorDispatchModule()).dispatchOtherMonitorStage;
-      await run(controller, env, ctx, options.otherOptions || EMPTY_OPTIONS);
+      await run(controller, env, ctx, {
+        ...(options.otherOptions || EMPTY_OPTIONS),
+        deferSuccess: true,
+      });
     } else {
       throw new Error(`unsupported runtime dispatch type: ${String(messageType || 'unknown')}`);
     }
