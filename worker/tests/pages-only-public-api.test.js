@@ -3,12 +3,12 @@ import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
 const CONFIG_PATHS = [
-  '../wrangler.jsonc',
-  '../wrangler.minute.jsonc',
-  '../wrangler.other.jsonc',
+  '../wrangler.ingest.jsonc',
+  '../wrangler.minute-enrichment.jsonc',
+  '../wrangler.runtime.jsonc',
 ];
 
-test('scheduled Workers cannot publish workers.dev or preview URLs', () => {
+test('Workers cannot publish workers.dev, preview URLs, or public routes', () => {
   for (const path of CONFIG_PATHS) {
     const config = JSON.parse(readFileSync(new URL(path, import.meta.url), 'utf8'));
     assert.equal(config.workers_dev, false, `${config.name} workers.dev must remain disabled`);
