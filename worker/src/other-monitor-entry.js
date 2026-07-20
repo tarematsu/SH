@@ -1,6 +1,4 @@
 import './fetch-guard.js';
-import { runBuddyPlaybackQueue } from './buddy-playback-entry.js';
-import { runHostMonitorQueue } from './host-monitor-entry.js';
 import {
   OFFICIAL_NEWS_STAGE_MESSAGE,
   officialNewsStageTask,
@@ -31,6 +29,8 @@ const OTHER_CRON_SUCCESS_SQL = `INSERT INTO sh_collector_status (
 let loadedHealthApp = null;
 let buddyPipelineModulePromise;
 let hostMonitorModulePromise;
+let buddyQueueModulePromise;
+let hostQueueModulePromise;
 let predictionModulePromise;
 let buddyHealthModulePromise;
 
@@ -42,6 +42,16 @@ function loadBuddyPipelineModule() {
 function loadHostMonitorModule() {
   hostMonitorModulePromise ||= import('./cloud-host-monitor.js');
   return hostMonitorModulePromise;
+}
+
+function loadBuddyQueueModule() {
+  buddyQueueModulePromise ||= import('./buddy-playback-entry.js');
+  return buddyQueueModulePromise;
+}
+
+function loadHostQueueModule() {
+  hostQueueModulePromise ||= import('./host-monitor-entry.js');
+  return hostQueueModulePromise;
 }
 
 function loadPredictionModule() {
@@ -302,8 +312,12 @@ export async function runOtherMonitorQueue(batch, env, ctx) {
   if (!messages?.length) return;
   const message = messages[0];
   const messageType = message?.body?.message_type;
-  if (messageType === 'buddy-playback-stage') return runBuddyPlaybackQueue(batch, env);
-  if (messageType === 'host-monitor-task') return runHostMonitorQueue(batch, env);
+  if (messageType === 'buddy-playback-stage') {
+    return (await loadBuddyQueueModule()).runBuddyPlaybackQueue(batch, env);
+  }
+  if (messageType === 'host-monitor-task') {
+    return (await loadHostQueueModule()).runHostMonitorQueue(batch, env);
+  }
   if (messageType === OTHER_SELECT_MESSAGE) return processHostSelection(message, env);
   if (messageType === OTHER_TASK_MESSAGE) return processDeferredTask(message, env, ctx);
   if (messageType === OFFICIAL_NEWS_STAGE_MESSAGE) return processOfficialNewsStageMessage(message, env);

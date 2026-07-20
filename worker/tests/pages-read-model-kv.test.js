@@ -39,6 +39,15 @@ class NoD1Db {
   prepare() { throw new Error('D1 response storage must not run on a KV hit'); }
 }
 
+class FakeEdgeCache {
+  constructor() { this.response = null; this.puts = 0; }
+  async match() { return this.response?.clone() || undefined; }
+  async put(_key, response) {
+    this.response = response;
+    this.puts += 1;
+  }
+}
+
 test('materialized responses publish once to KV and are served as streams', async () => {
   const kv = new FakeKv();
   const now = Date.UTC(2026, 6, 20, 0, 35);
@@ -77,6 +86,59 @@ test('the internal Worker endpoint returns a KV response or a closed fallback si
     { loadResponse: async () => null },
   );
   assert.equal(miss.status, 404);
+});
+
+test('the internal Worker endpoint uses Cache API as a same-colo L1 before KV', async () => {
+  const cache = new FakeEdgeCache();
+  const now = Date.UTC(2026, 6, 20, 0, 35);
+  const request = new Request('https://internal.test/_internal/pages-response?key=history%3Adaily');
+  const first = await runPagesReadModelFetch(request, {}, {
+    cache,
+    now: () => now,
+    loadResponse: async () => {
+      const response = Response.json({ source: 'kv' });
+      response.headers.set('x-materialized-at', String(now));
+      return response;
+    },
+  });
+  assert.equal(first.headers.get('x-api-source'), null);
+  assert.equal(cache.puts, 1);
+
+  let kvReads = 0;
+  const second = await runPagesReadModelFetch(request, {}, {
+    cache,
+    now: () => now + 1_000,
+    loadResponse: async () => {
+      kvReads += 1;
+      return null;
+    },
+  });
+  assert.equal(second.headers.get('x-api-source'), 'edge-cache');
+  assert.equal(kvReads, 0);
+  assert.deepEqual(await second.json(), { source: 'kv' });
+});
+
+test('the internal Worker endpoint schedules Cache API writes on the real execution context', async () => {
+  const cache = new FakeEdgeCache();
+  const waits = [];
+  const now = Date.UTC(2026, 6, 20, 0, 35);
+  const response = await runPagesReadModelFetch(
+    new Request('https://internal.test/_internal/pages-response?key=history%3Adaily'),
+    {},
+    { waitUntil(promise) { waits.push(promise); } },
+    {
+      cache,
+      now: () => now,
+      loadResponse: async () => {
+        const result = Response.json({ source: 'kv' });
+        result.headers.set('x-materialized-at', String(now));
+        return result;
+      },
+    },
+  );
+  assert.equal(response.status, 200);
+  await Promise.all(waits);
+  assert.equal(cache.puts, 1);
 });
 
 test('six-hour variants use KV without provisioning D1 response tables', async () => {

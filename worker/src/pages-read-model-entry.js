@@ -1,9 +1,5 @@
 import './fetch-guard.js';
 import { materializedResponseMaximumAge } from '../../site/functions/lib/api-contract.js';
-import { runDispatchedPagesReadModelTask } from './pages-read-model-dispatch.js';
-import { processReadModelBatch } from './read-model-entry.js';
-import { loadMaterializedR2Response } from './pages-response-r2.js';
-import { loadMaterializedResponse } from './pages-response-store.js';
 
 export const PAGES_READ_MODEL_CRON = '* * * * *';
 export const MINUTE_READ_MODEL_QUEUE = 'stationhead-read-model';
@@ -13,6 +9,30 @@ const EMPTY_DEPENDENCIES = Object.freeze({});
 const INTERNAL_RESPONSE_PATH = '/_internal/pages-response';
 
 let publicationModulePromise;
+let cronModulePromise;
+let readModelQueueModulePromise;
+let responseR2ModulePromise;
+let responseStoreModulePromise;
+
+function loadCronModule() {
+  cronModulePromise ||= import('./pages-read-model-dispatch.js');
+  return cronModulePromise;
+}
+
+function loadReadModelQueueModule() {
+  readModelQueueModulePromise ||= import('./read-model-entry.js');
+  return readModelQueueModulePromise;
+}
+
+function loadResponseR2Module() {
+  responseR2ModulePromise ||= import('./pages-response-r2.js');
+  return responseR2ModulePromise;
+}
+
+function loadResponseStoreModule() {
+  responseStoreModulePromise ||= import('./pages-response-store.js');
+  return responseStoreModulePromise;
+}
 
 function loadPublicationModule() {
   publicationModulePromise ||= import('./pages-track-history-publication-queue.js');
@@ -66,7 +86,61 @@ function minuteReadModelBatch(batch) {
   return body?.message_type === MINUTE_READ_MODEL_MESSAGE;
 }
 
-export async function runPagesReadModelFetch(request, env, dependencies = EMPTY_DEPENDENCIES) {
+function edgeCache(dependencies) {
+  return dependencies.cache || globalThis.caches?.default || null;
+}
+
+function edgeCacheKey(request, dependencies) {
+  if (dependencies.cacheKey) return dependencies.cacheKey(request);
+  return new Request(request.url, { method: 'GET' });
+}
+
+function freshMaterializedResponse(response, now, maximumAge) {
+  const updatedAt = Number(response?.headers?.get('x-materialized-at'));
+  const age = Number(maximumAge);
+  if (!Number.isFinite(updatedAt) || updatedAt < 0) return null;
+  if (Number.isFinite(age) && age >= 0 && now - updatedAt > age) return null;
+  const clone = response.clone();
+  const headers = new Headers(clone.headers);
+  headers.set('x-api-source', 'edge-cache');
+  return new Response(clone.body, { status: clone.status, headers });
+}
+
+async function loadEdgeCachedResponse(cache, key, now, maximumAge) {
+  if (!cache?.match) return null;
+  try {
+    return freshMaterializedResponse(await cache.match(key), now, maximumAge);
+  } catch (error) {
+    console.warn(JSON.stringify({
+      event: 'pages_response_edge_cache_read_failed',
+      error: String(error?.message || error).slice(0, 300),
+    }));
+    return null;
+  }
+}
+
+function cacheResponse(cache, key, response, context) {
+  if (!cache?.put || !response?.headers?.get('x-materialized-at')) return null;
+  const write = cache.put(key, response.clone()).catch((error) => {
+    console.warn(JSON.stringify({
+      event: 'pages_response_edge_cache_write_failed',
+      error: String(error?.message || error).slice(0, 300),
+    }));
+  });
+  if (context?.waitUntil) context.waitUntil(write);
+  return context?.waitUntil ? null : write;
+}
+
+export async function runPagesReadModelFetch(
+  request,
+  env,
+  contextOrDependencies = EMPTY_DEPENDENCIES,
+  injectedDependencies = EMPTY_DEPENDENCIES,
+) {
+  const context = typeof contextOrDependencies?.waitUntil === 'function'
+    ? contextOrDependencies
+    : null;
+  const dependencies = context ? injectedDependencies : contextOrDependencies;
   const url = new URL(request.url);
   if (request.method !== 'GET' || url.pathname !== INTERNAL_RESPONSE_PATH) {
     return new Response(null, { status: 404 });
@@ -75,9 +149,16 @@ export async function runPagesReadModelFetch(request, env, dependencies = EMPTY_
   if (!modelKey) return new Response(null, { status: 400 });
   const now = dependencies.now?.() ?? Date.now();
   const maximumAge = materializedResponseMaximumAge(modelKey, env);
-  const loadR2 = dependencies.loadR2Response || loadMaterializedR2Response;
-  const loadKv = dependencies.loadResponse || loadMaterializedResponse;
+  const cache = edgeCache(dependencies);
+  const cacheKey = edgeCacheKey(request, dependencies);
   try {
+    const edgeResponse = await loadEdgeCachedResponse(cache, cacheKey, now, maximumAge);
+    if (edgeResponse) return edgeResponse;
+
+    const loadR2 = dependencies.loadR2Response
+      || (await loadResponseR2Module()).loadMaterializedR2Response;
+    const loadKv = dependencies.loadResponse
+      || (await loadResponseStoreModule()).loadMaterializedResponse;
     const r2Response = modelKey === TRACK_HISTORY_MODEL_KEY
       ? await loadR2(env?.PAGES_RESPONSE_R2, modelKey, now, maximumAge)
       : null;
@@ -87,6 +168,7 @@ export async function runPagesReadModelFetch(request, env, dependencies = EMPTY_
       now,
       maximumAge,
     );
+    if (response) await cacheResponse(cache, cacheKey, response, context);
     return response || new Response(null, {
       status: 404,
       headers: { 'cache-control': 'no-store' },
@@ -114,13 +196,15 @@ export async function runPagesReadModelCron(controller, env, dependencies = EMPT
     }
   }
   const now = scheduledTimestamp(controller);
-  const runTask = dependencies.runTask || runDispatchedPagesReadModelTask;
+  const runTask = dependencies.runTask
+    || (await loadCronModule()).runDispatchedPagesReadModelTask;
   return assertRefreshSucceeded(await runTask(env, now, dependencies));
 }
 
 export async function runPagesReadModelQueue(batch, env, dependencies = EMPTY_DEPENDENCIES) {
   if (minuteReadModelBatch(batch)) {
-    const runMinuteReadModel = dependencies.processReadModelBatch || processReadModelBatch;
+    const runMinuteReadModel = dependencies.processReadModelBatch
+      || (await loadReadModelQueueModule()).processReadModelBatch;
     return runMinuteReadModel(batch, env);
   }
   const messages = batch.messages;

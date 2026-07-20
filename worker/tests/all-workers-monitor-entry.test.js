@@ -24,6 +24,8 @@ test('other monitor avoids Date allocation and caches task modules', () => {
   assert.doesNotMatch(entry, /new Date\(now\)/);
   assert.match(entry, /buddyPipelineModulePromise \|\|=/);
   assert.match(entry, /hostMonitorModulePromise \|\|=/);
+  assert.match(entry, /buddyQueueModulePromise \|\|=/);
+  assert.match(entry, /hostQueueModulePromise \|\|=/);
   assert.match(entry, /predictionModulePromise \|\|=/);
   assert.match(entry, /const JSON_QUEUE_SEND_OPTIONS = Object\.freeze/);
   assert.match(entry, /const message = messages\[0\]/);
