@@ -11,8 +11,10 @@ on:
         options:
           - all
           - pages
-          - monitor-workers
-          - minute-worker
+          - workers
+          - ingest
+          - minute-enrichment
+          - runtime
 
 permissions:
   contents: read
@@ -40,16 +42,17 @@ jobs:
         working-directory: site
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_BUILDS_API_TOKEN || secrets.CLOUDFLARE_API_TOKEN || secrets.CF_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID || secrets.CF_ACCOUNT_ID }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID || secrets.CF_ACCOUNT_ID || '0500f25c2f74e7e76c94a8bcb6c7008b' }}
 
-  monitor:
-    name: Monitor workers
-    if: ${{ inputs.target == 'all' || inputs.target == 'monitor-workers' }}
+  workers:
+    name: Workers
+    if: ${{ inputs.target != 'pages' }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_BUILDS_API_TOKEN || secrets.CLOUDFLARE_API_TOKEN || secrets.CF_API_TOKEN }}
-      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID || secrets.CF_ACCOUNT_ID }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID || secrets.CF_ACCOUNT_ID || '0500f25c2f74e7e76c94a8bcb6c7008b' }}
+      DEPLOY_TARGET: ${{ inputs.target }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -59,7 +62,7 @@ jobs:
           cache-dependency-path: worker/package-lock.json
       - run: npm ci --no-audit --no-fund
         working-directory: worker
-      - name: Ensure pipeline queues
+      - name: Ensure queues
         working-directory: worker
         shell: bash
         run: |
@@ -81,44 +84,29 @@ jobs:
           do
             npx wrangler queues create "$queue" >/dev/null 2>&1 || true
           done
-      - run: npm run deploy:minute-enrichment
-        working-directory: worker
-      - run: npm run deploy:ingest
-        working-directory: worker
-      - run: npm run deploy:split-other
-        working-directory: worker
-
-  minute:
-    name: Minute facts workers
-    if: ${{ inputs.target == 'minute-worker' }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    env:
-      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_BUILDS_API_TOKEN || secrets.CLOUDFLARE_API_TOKEN || secrets.CF_API_TOKEN }}
-      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID || secrets.CF_ACCOUNT_ID }}
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-          cache: npm
-          cache-dependency-path: worker/package-lock.json
-      - run: npm ci --no-audit --no-fund
-        working-directory: worker
-      - name: Ensure minute queues
-        working-directory: worker
+      - name: Deploy selected Workers
         shell: bash
-        run: |
-          for queue in \
-            stationhead-buddies-facts stationhead-buddies-facts-dlq \
-            stationhead-minute-derive stationhead-minute-derive-dlq \
-            stationhead-minute-live-derive stationhead-minute-live-derive-dlq \
-            stationhead-minute-enrichment stationhead-minute-enrichment-dlq \
-            stationhead-minute-rebuild stationhead-minute-rebuild-dlq \
-            stationhead-read-model stationhead-read-model-dlq \
-            stationhead-track-metadata stationhead-track-metadata-dlq
-          do
-            npx wrangler queues create "$queue" >/dev/null 2>&1 || true
-          done
-      - run: npm run deploy:minute-enrichment
         working-directory: worker
+        run: |
+          set -euo pipefail
+          case "$DEPLOY_TARGET" in
+            all|workers)
+              commands=(deploy:minute-enrichment deploy:ingest deploy:runtime)
+              ;;
+            ingest)
+              commands=(deploy:ingest)
+              ;;
+            minute-enrichment)
+              commands=(deploy:minute-enrichment)
+              ;;
+            runtime)
+              commands=(deploy:runtime)
+              ;;
+            *)
+              echo "Unsupported Worker target: $DEPLOY_TARGET" >&2
+              exit 1
+              ;;
+          esac
+          for command in "${commands[@]}"; do
+            npm run "$command"
+          done
