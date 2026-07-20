@@ -1,4 +1,5 @@
 import { withBackfillCursorSeek } from './backfill-cursor-seek.js';
+import { historicalRebuildEnabled } from './historical-rebuild-policy.js';
 import rebuildWorker from './minute-rebuild-entry.js';
 import { runMinuteScheduled } from './minute-entry.js';
 
@@ -31,6 +32,7 @@ function historicalBackfillIntervalMs(env = {}) {
 }
 
 export function historicalBackfillDue(env, scheduledAt) {
+  if (!historicalRebuildEnabled(env)) return false;
   if (!enabled(env?.REBUILD_HISTORICAL_BACKFILL_ENABLED, true)) return false;
   const timestamp = finiteTimestamp(scheduledAt);
   const interval = historicalBackfillIntervalMs(env);
@@ -91,6 +93,15 @@ async function sendStage(env, body, delaySeconds = 0, dependencies = EMPTY_DEPEN
 
 export async function processMinuteMaintenanceGate(env, body, dependencies = EMPTY_DEPENDENCIES) {
   const task = validateMaintenanceTask(body);
+  if (task.task === 'rebuild' && !historicalRebuildEnabled(env)) {
+    return {
+      stage: 'maintenance-gate',
+      task: task.task,
+      run_id: task.runId,
+      skipped: true,
+      reason: 'historical-rebuild-disabled-for-d1-budget',
+    };
+  }
   const check = dependencies.checkCollector || collectorReady;
   const collector = await check(env, task.scheduledAt);
   if (!collector?.ready) {
