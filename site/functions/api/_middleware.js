@@ -21,70 +21,8 @@ function notFoundResponse() {
   });
 }
 
-function cachePolicy(url) {
-  if (url.pathname === '/api/dashboard-history') return { ttl: 300, browser: 60 };
-  if (url.pathname === '/api/minute-facts/current') return { ttl: 60, browser: 30 };
-  if (url.pathname === '/api/track-history') return { ttl: 900, browser: 300 };
-  if (url.pathname === '/api/like-ranking') return { ttl: 900, browser: 300 };
-  if (url.pathname === '/api/broadcast-series') return { ttl: 3600, browser: 300 };
-  if (url.pathname === '/api/history') {
-    const mode = url.searchParams.get('mode') || 'weekly';
-    if (mode === 'raw' || url.searchParams.has('cursor')) return null;
-    if (mode === 'broadcasts') return { ttl: 900, browser: 120 };
-    return { ttl: 300, browser: 60 };
-  }
-  return null;
-}
-
-function canonicalRequest(request) {
-  const url = new URL(request.url);
-  url.searchParams.delete('v');
-  const sorted = [...url.searchParams.entries()].sort(([aKey, aValue], [bKey, bValue]) =>
-    aKey.localeCompare(bKey) || aValue.localeCompare(bValue));
-  url.search = '';
-  for (const [key, value] of sorted) url.searchParams.append(key, value);
-  return new Request(url.toString(), {
-    method: 'GET',
-    headers: { accept: 'application/json' },
-  });
-}
-
-function tagged(response, state) {
-  const clone = response.clone();
-  const headers = new Headers(clone.headers);
-  headers.set('x-edge-cache', state);
-  return new Response(clone.body, {
-    status: clone.status,
-    statusText: clone.statusText,
-    headers,
-  });
-}
-
 export async function onRequest(context) {
-  const { request } = context;
-  const url = new URL(request.url);
-  if (isBlockedApiPath(url.pathname)) return notFoundResponse();
-  if (request.method !== 'GET' || request.headers.has('authorization')) return context.next();
-
-  const policy = cachePolicy(url);
-  if (!policy) return context.next();
-
-  const cache = caches.default;
-  const cacheKey = canonicalRequest(request);
-  const hit = await cache.match(cacheKey);
-  if (hit) return tagged(hit, 'HIT');
-
-  const origin = await context.next();
-  const headers = new Headers(origin.headers);
-  if (origin.ok) {
-    headers.set('cache-control', `public, max-age=${policy.browser}, s-maxage=${policy.ttl}, stale-while-revalidate=${policy.ttl * 2}`);
-  }
-  headers.set('vary', 'accept-encoding');
-  const shared = new Response(origin.body, {
-    status: origin.status,
-    statusText: origin.statusText,
-    headers,
-  });
-  if (shared.ok) context.waitUntil(cache.put(cacheKey, shared.clone()));
-  return tagged(shared, 'MISS');
+  const pathname = new URL(context.request.url).pathname;
+  if (isBlockedApiPath(pathname)) return notFoundResponse();
+  return context.next();
 }
