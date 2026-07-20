@@ -1,3 +1,5 @@
+import { environmentView } from '../../packages/sh-shared/environment-view.mjs';
+
 const ORIGINAL_D1_STATEMENT = Symbol('minute-original-d1-statement');
 const STATEMENT_META = Symbol('minute-d1-statement-meta');
 const REWRITE_CACHE_LIMIT = 24;
@@ -219,13 +221,7 @@ function wrapDatabase(db) {
 
 export function withMinuteD1WriteThrottling(env) {
   if (!env?.MINUTE_DB) return env;
-  const db = wrapDatabase(env.MINUTE_DB);
-  return new Proxy(env, {
-    get(target, property, receiver) {
-      if (property === 'MINUTE_DB') return db;
-      return Reflect.get(target, property, receiver);
-    },
-  });
+  return environmentView(env, { MINUTE_DB: wrapDatabase(env.MINUTE_DB) });
 }
 
 export function resetMinuteD1WriteRewriteCacheForTests(db) {

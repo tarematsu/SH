@@ -1,3 +1,4 @@
+import { environmentView } from '../../../packages/sh-shared/environment-view.mjs';
 import { stripAppleMusicFields } from './api-utils.js';
 
 const wrappedDatabases = new WeakMap();
@@ -5,11 +6,16 @@ const wrappedQueues = new WeakMap();
 let wrappedD1Environments = new WeakMap();
 let wrappedRuntimeEnvironments = new WeakMap();
 const CURRENT_BITE_APPLE_BIND_INDEX = 10;
-const APPLE_FREE_QUEUE_BINDINGS = new Set([
+const APPLE_FREE_QUEUE_BINDINGS = Object.freeze([
   'MINUTE_DERIVE_QUEUE',
   'MINUTE_ENRICHMENT_QUEUE',
   'PERSIST_QUEUE',
   'TRACK_METADATA_QUEUE',
+]);
+const APPLE_FREE_DATABASE_BINDINGS = Object.freeze([
+  'DB',
+  'MINUTE_DB',
+  'BUDDIES_DB',
 ]);
 
 function normalizedSql(value) {
@@ -112,21 +118,29 @@ function cacheableEnvironment(env) {
   return env && (typeof env === 'object' || typeof env === 'function');
 }
 
+function appleMusicD1Overrides(env) {
+  const overrides = {};
+  for (const binding of APPLE_FREE_DATABASE_BINDINGS) {
+    const database = env?.[binding];
+    if (database?.prepare) overrides[binding] = appleMusicFreeD1(database);
+  }
+  return overrides;
+}
+
+function appleMusicRuntimeOverrides(env) {
+  const overrides = appleMusicD1Overrides(env);
+  for (const binding of APPLE_FREE_QUEUE_BINDINGS) {
+    const queue = env?.[binding];
+    if (queue?.send) overrides[binding] = appleMusicFreeQueue(queue);
+  }
+  return overrides;
+}
+
 export function withAppleMusicFreeD1(env) {
   if (!cacheableEnvironment(env)) return env;
   const cached = wrappedD1Environments.get(env);
   if (cached) return cached;
-  const db = appleMusicFreeD1(env.DB);
-  const minuteDb = appleMusicFreeD1(env.MINUTE_DB);
-  const buddiesDb = appleMusicFreeD1(env.BUDDIES_DB);
-  const wrapped = new Proxy(env, {
-    get(target, property, receiver) {
-      if (property === 'DB') return db;
-      if (property === 'MINUTE_DB') return minuteDb;
-      if (property === 'BUDDIES_DB') return buddiesDb;
-      return Reflect.get(target, property, receiver);
-    },
-  });
+  const wrapped = environmentView(env, appleMusicD1Overrides(env));
   wrappedD1Environments.set(env, wrapped);
   return wrapped;
 }
@@ -135,15 +149,7 @@ export function withAppleMusicFreeRuntime(env) {
   if (!cacheableEnvironment(env)) return env;
   const cached = wrappedRuntimeEnvironments.get(env);
   if (cached) return cached;
-  const d1Env = withAppleMusicFreeD1(env);
-  const wrapped = new Proxy(d1Env, {
-    get(target, property, receiver) {
-      if (APPLE_FREE_QUEUE_BINDINGS.has(property)) {
-        return appleMusicFreeQueue(Reflect.get(target, property, receiver));
-      }
-      return Reflect.get(target, property, receiver);
-    },
-  });
+  const wrapped = environmentView(env, appleMusicRuntimeOverrides(env));
   wrappedRuntimeEnvironments.set(env, wrapped);
   return wrapped;
 }
