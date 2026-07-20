@@ -5,7 +5,13 @@ import {
 } from './runtime-env.js';
 import {
   MONITOR_MAINTENANCE_MESSAGE,
+  OTHER_MONITOR_CRON,
   RAW_COLLECTION_TASK_MESSAGE,
+  RUNTIME_MINUTE_GATE_MESSAGE,
+  RUNTIME_MINUTE_RECOVERY_MESSAGE,
+  RUNTIME_OTHER_MONITOR_MESSAGE,
+  dispatchMinuteMaintenanceGate,
+  dispatchMinuteRecovery,
 } from './runtime-scheduled.js';
 
 const EMPTY_OPTIONS = Object.freeze({});
@@ -73,6 +79,40 @@ async function processMaintenanceMessage(message, env, options = EMPTY_OPTIONS) 
   }
 }
 
+async function processRuntimeDispatchMessage(message, env, ctx, options = EMPTY_OPTIONS) {
+  const body = message?.body || {};
+  const messageType = body.message_type;
+  const scheduledTime = Number(body.scheduled_at) || Date.now();
+  try {
+    if (Number(body.message_version) !== 1) throw new Error('unsupported runtime dispatch version');
+    const controller = { cron: OTHER_MONITOR_CRON, scheduledTime };
+    if (messageType === RUNTIME_MINUTE_RECOVERY_MESSAGE) {
+      await dispatchMinuteRecovery(controller, env, ctx, options);
+    } else if (messageType === RUNTIME_MINUTE_GATE_MESSAGE) {
+      await dispatchMinuteMaintenanceGate(controller, env, String(body.task || ''), ctx, options);
+    } else if (messageType === RUNTIME_OTHER_MONITOR_MESSAGE) {
+      const run = options.runOtherMonitorCron
+        || (await loadOtherMonitorModule()).runOtherMonitorCron;
+      await run(controller, env, ctx, {
+        ...(options.otherOptions || EMPTY_OPTIONS),
+        deferSuccess: true,
+      });
+    } else {
+      throw new Error(`unsupported runtime dispatch type: ${String(messageType || 'unknown')}`);
+    }
+    message.ack();
+  } catch (error) {
+    console.error(JSON.stringify({
+      event: 'runtime_dispatch_queue_failed',
+      message_type: String(messageType || 'unknown'),
+      task: body.task ?? null,
+      scheduled_at: scheduledTime,
+      error: String(error?.message || error).slice(0, 800),
+    }));
+    message.retry(RETRY_30_SECONDS);
+  }
+}
+
 export async function runRuntimeQueue(batch, env, ctx, options = EMPTY_OPTIONS) {
   const messages = batch?.messages;
   if (!messages?.length) return;
@@ -89,12 +129,19 @@ export async function runRuntimeQueue(batch, env, ctx, options = EMPTY_OPTIONS) 
 
   let otherMonitor = null;
   for (const message of messages) {
-    if (message?.body?.message_type === RAW_COLLECTION_TASK_MESSAGE) {
+    const messageType = message?.body?.message_type;
+    if (messageType === RAW_COLLECTION_TASK_MESSAGE) {
       await processRawCollectionMessage(message, env, options);
       continue;
     }
-    if (message?.body?.message_type === MONITOR_MAINTENANCE_MESSAGE) {
+    if (messageType === MONITOR_MAINTENANCE_MESSAGE) {
       await processMaintenanceMessage(message, env, options);
+      continue;
+    }
+    if (messageType === RUNTIME_MINUTE_RECOVERY_MESSAGE
+        || messageType === RUNTIME_MINUTE_GATE_MESSAGE
+        || messageType === RUNTIME_OTHER_MONITOR_MESSAGE) {
+      await processRuntimeDispatchMessage(message, env, ctx, options);
       continue;
     }
     otherMonitor ||= await loadOtherMonitorModule();
@@ -104,6 +151,7 @@ export async function runRuntimeQueue(batch, env, ctx, options = EMPTY_OPTIONS) 
 
 export {
   processRawCollectionMessage,
+  processRuntimeDispatchMessage,
 };
 
 export const runConsolidatedMonitorQueue = runRuntimeQueue;
