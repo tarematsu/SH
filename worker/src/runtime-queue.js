@@ -3,6 +3,7 @@ import {
   minutePipelineEnv,
   rawCollectorEnv,
 } from './runtime-env.js';
+import { textTransportQueue } from './raw-collection-text-transport.js';
 import {
   MONITOR_MAINTENANCE_MESSAGE,
   OTHER_MONITOR_CRON,
@@ -48,13 +49,26 @@ function loadRawCollectorModule() {
   return rawCollectorModulePromise;
 }
 
+function rawCollectorTextEnv(env) {
+  const active = rawCollectorEnv(env);
+  const queue = active?.RAW_COLLECTION_QUEUE;
+  if (!queue?.send) return active;
+  const scoped = Object.create(active);
+  Object.defineProperty(scoped, 'RAW_COLLECTION_QUEUE', {
+    value: textTransportQueue(queue),
+    enumerable: false,
+    configurable: true,
+  });
+  return scoped;
+}
+
 async function processRawCollectionMessage(message, env, options = EMPTY_OPTIONS) {
   const body = message?.body || {};
   try {
     if (Number(body.message_version) !== 1) throw new Error('unsupported raw collection task version');
     const collect = options.collectRawChannel
       || (await loadRawCollectorModule()).collectRawChannel;
-    await collect(rawCollectorEnv(env), options.collectionDependencies || EMPTY_OPTIONS);
+    await collect(rawCollectorTextEnv(env), options.collectionDependencies || EMPTY_OPTIONS);
     message.ack();
   } catch (error) {
     console.error(JSON.stringify({
@@ -158,6 +172,7 @@ export async function runRuntimeQueue(batch, env, ctx, options = EMPTY_OPTIONS) 
 export {
   processRawCollectionMessage,
   processRuntimeDispatchMessage,
+  rawCollectorTextEnv,
 };
 
 export const runConsolidatedMonitorQueue = runRuntimeQueue;
