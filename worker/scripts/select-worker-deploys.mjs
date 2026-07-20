@@ -14,8 +14,6 @@ const gitConnectedWorkers = new Set(['sh-runtime-orchestrator']);
 
 const deployScriptWorkers = new Map([
   ['worker/scripts/deploy-runtime.mjs', 'sh-runtime-orchestrator'],
-  ['worker/scripts/monitor-cutover-queues.mjs', 'sh-runtime-orchestrator'],
-  ['worker/scripts/cloudflare-workers.mjs', 'sh-runtime-orchestrator'],
   ['worker/scripts/deploy-minute-enrichment.mjs', 'sh-minute-enrichment'],
   ['worker/scripts/pages-response-kv-namespace.mjs', 'sh-minute-enrichment'],
   ['worker/scripts/deploy-ingest.mjs', 'sh-buddies-ingest'],
@@ -23,7 +21,10 @@ const deployScriptWorkers = new Map([
 
 const allWorkerDeployScripts = new Set([
   'worker/scripts/cloudflare-build-config.mjs',
+  'worker/scripts/cloudflare-queues.mjs',
+  'worker/scripts/cloudflare-workers.mjs',
   'worker/scripts/deploy-connected-worker.mjs',
+  'worker/scripts/wrangler-command.mjs',
   'worker/package.json',
 ]);
 
