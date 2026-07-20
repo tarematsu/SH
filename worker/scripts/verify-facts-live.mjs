@@ -156,9 +156,9 @@ for (let attempt = 1; attempt <= attempts; attempt += 1) {
         LIMIT 1
       ), live AS (
         SELECT 1 AS present
-        FROM sh_minute_facts
+        FROM sh_minute_facts INDEXED BY idx_sh_minute_facts_live_minute
         WHERE source_code=1
-        ORDER BY id DESC
+        ORDER BY minute_at DESC,id DESC
         LIMIT 1
       )
       SELECT
