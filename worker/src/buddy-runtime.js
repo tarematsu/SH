@@ -249,7 +249,9 @@ function otherDbEnv(env) {
 export async function collectBuddyPlaybackReady(env, observedAt = Date.now(), dependencies = {}) {
   const otherEnv = otherDbEnv(env);
   await ensureBuddyPlaybackSchema(otherEnv);
-  let state = await refreshSession(otherEnv, dependencies);
+  let state = await refreshSession(otherEnv, dependencies, {
+    force: dependencies.forceRefresh === true,
+  });
 
   const collect = dependencies.collect || collectBuddyPlayback;
   try {

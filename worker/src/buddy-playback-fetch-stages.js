@@ -203,6 +203,7 @@ export async function processBuddyFetchAuth(env, task, dependencies = {}) {
       || (await import('./buddy-runtime.js')).collectBuddyPlaybackReady;
     return await ready(env, task.observedAt, {
       ...dependencies,
+      forceRefresh: task.forceAuthRefresh === true,
       collect: async () => ({
         skipped: false,
         pending: true,
@@ -211,6 +212,7 @@ export async function processBuddyFetchAuth(env, task, dependencies = {}) {
         cycle_at: task.cycleAt,
         channel_alias: task.channelAlias,
         auth_prepared: true,
+        auth_refreshed: task.forceAuthRefresh === true,
       }),
     });
   } catch (error) {
@@ -287,6 +289,17 @@ export async function processBuddyFetchCompute(env, task, dependencies = {}) {
       checked_at: task.observedAt,
     };
   } catch (error) {
+    if (stationNotFound(error) && !task.authRefreshed) {
+      return {
+        skipped: false,
+        pending: true,
+        stage: 'fetch',
+        direct_stage: BUDDY_FETCH_AUTH_STAGE,
+        cycle_at: task.cycleAt,
+        channel_alias: task.channelAlias,
+        force_auth_refresh: true,
+      };
+    }
     if (stationNotFound(error)) return abortMissingStation(env, task);
     await recordFetchFailure(env, task, error).catch(() => {});
     throw error;

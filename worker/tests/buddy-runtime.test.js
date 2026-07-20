@@ -151,6 +151,24 @@ test('buddy runtime reuses a usable buddy46 session without refreshing', async (
   assert.equal(collectedAuth.deviceUid, 'stored-device-value');
 });
 
+test('buddy runtime can force-refresh an otherwise usable buddy46 session', async () => {
+  resetBuddyRuntimeForTests();
+  const db = new FakeDb();
+  let acquireCalls = 0;
+  await collectBuddyPlaybackReady({ DB: db, OTHER_DB: db }, 3000, {
+    now: () => 3000,
+    forceRefresh: true,
+    acquireSession: async () => {
+      acquireCalls += 1;
+      return { authToken: 'forced-auth-value', deviceUid: 'forced-device-value', tokenExpiresAt: 600000 };
+    },
+    collect: async () => ({ skipped: false, tracks: 1 }),
+  });
+
+  assert.equal(acquireCalls, 1);
+  assert.deepEqual(db.savedStateIds, ['buddy46']);
+});
+
 test('buddy runtime refreshes stale auth and saves it under the buddy46 state id', async () => {
   resetBuddyRuntimeForTests();
   const db = new FakeDb();

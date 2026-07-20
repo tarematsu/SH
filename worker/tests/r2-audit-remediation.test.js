@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
 import { runBuddyPlaybackQueue } from '../src/buddy-playback-entry.js';
+import { resetBuddyHealthForTests } from '../src/buddy-health.js';
 import {
   BUDDY_FETCH_COMPUTE_STAGE,
   processBuddyFetchCompute,
@@ -37,7 +38,7 @@ function statement(sql, state) {
   };
 }
 
-test('Stationhead not-in-database response aborts the durable cycle without retry backoff', async () => {
+test('Stationhead not-in-database response first forces a fresh buddy46 session', async () => {
   const state = { runs: [] };
   const result = await processBuddyFetchCompute({
     BUDDY_PLAYBACK_AUTH_STATE_ID: 'buddy46',
@@ -53,19 +54,43 @@ test('Stationhead not-in-database response aborts the durable cycle without retr
   });
 
   assert.deepEqual(result, {
-    skipped: true,
-    reason: 'station-not-found',
-    pending: false,
+    skipped: false,
+    pending: true,
+    stage: 'fetch',
+    direct_stage: 'fetch-auth',
     cycle_at: 1_800_000,
     channel_alias: 'buddy46',
+    force_auth_refresh: true,
   });
-  assert.equal(state.runs.some(({ sql }) => sql.startsWith('DELETE FROM sh_buddy_playback_pipeline')), true);
+  assert.equal(state.runs.some(({ sql }) => sql.startsWith('DELETE FROM sh_buddy_playback_pipeline')), false);
   assert.equal(state.runs.some(({ sql }) => sql.includes('next_attempt_at=?,lease_until=0')), false);
 });
 
-test('absent buddy station is acknowledged as a benign Queue result', async () => {
+test('Stationhead not-in-database response after auth refresh aborts the durable cycle', async () => {
+  const state = { runs: [] };
+  const result = await processBuddyFetchCompute({
+    BUDDY_PLAYBACK_AUTH_STATE_ID: 'buddy46',
+    OTHER_DB: { prepare(sql) { return statement(sql, state); } },
+  }, {
+    channelAlias: 'buddy46',
+    cycleAt: 1_800_000,
+    observedAt: 1_800_456,
+    authRefreshed: true,
+  }, {
+    fetchText: async () => {
+      throw new Error('Stationhead buddy staged playback API 404: {"error":{"detail":"Not in database"}}');
+    },
+  });
+
+  assert.equal(result.reason, 'station-not-found');
+  assert.equal(state.runs.some(({ sql }) => sql.startsWith('DELETE FROM sh_buddy_playback_pipeline')), true);
+});
+
+test('absent buddy station is acknowledged after recording collector failure', async () => {
+  resetBuddyHealthForTests();
   const calls = [];
   const logs = [];
+  const healthWrites = [];
   const originalLog = console.log;
   console.log = (value) => logs.push(String(value));
   try {
@@ -83,7 +108,18 @@ test('absent buddy station is acknowledged as a benign Queue result', async () =
         ack() { calls.push('ack'); },
         retry() { calls.push('retry'); },
       }],
-    }, {}, {
+    }, {
+      OTHER_DB: {
+        prepare(sql) {
+          return {
+            params: [],
+            bind(...params) { this.params = params; return this; },
+            async first() { return null; },
+            async run() { healthWrites.push({ sql, params: this.params }); return { meta: { changes: 1 } }; },
+          };
+        },
+      },
+    }, {
       fetchCompute: async () => ({
         skipped: true,
         reason: 'station-not-found',
@@ -99,6 +135,10 @@ test('absent buddy station is acknowledged as a benign Queue result', async () =
   assert.equal(logs.length, 1);
   assert.match(logs[0], /"event":"buddy_playback_stage_completed"/);
   assert.match(logs[0], /"reason":"station-not-found"/);
+  const statusWrite = healthWrites.find(({ sql }) => sql.includes('INSERT INTO sh_collector_status'));
+  assert.ok(statusWrite);
+  assert.equal(statusWrite.params[1], 'error');
+  assert.match(statusWrite.params[4], /station-not-found/);
 });
 
 test('monitor deployment retires the orphaned buddies read-model Worker', () => {

@@ -144,12 +144,20 @@ test('dashboard shell reuses the existing requests and fixes broken-image states
   assert.match(source, /const tickCount = width < 480 \? 4 : 6/);
 });
 
-test('dashboard client preserves playback, queue expansion and goals', async () => {
+test('dashboard client renders the complete fetched queue without incremental expansion', async () => {
   const source = await text('public/app-lite.js');
   assert.match(source, /function playbackView/);
-  assert.match(source, /\/api\/dashboard-queue\?offset=/);
+  assert.doesNotMatch(source, /\/api\/dashboard-queue\?offset=/);
+  assert.match(source, /取得\$\{formatNumber\(fetched\)\}曲\/キュー登録/);
   assert.match(source, /goal_predictions/);
   assert.match(source, /function spotifyUrl/);
+
+  const html = await text('public/index.html');
+  assert.doesNotMatch(html, /queueMore|続きを読み込む/);
+
+  const endpoint = await text('functions/api/dashboard.js');
+  assert.match(endpoint, /const enrichedQueue = queue\.map/);
+  assert.doesNotMatch(endpoint, /queue\.slice\(startIndex/);
 });
 
 test('edge middleware shares dashboard history through Cache API without request promises', async () => {

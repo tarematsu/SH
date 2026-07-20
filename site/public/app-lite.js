@@ -16,10 +16,10 @@
     payload: null,
     history: [],
     queue: [],
+    queueFetched: 0,
     queueTotal: 0,
     queueRevision: '',
     refreshing: false,
-    loadingMore: false,
     abortController: null,
     playbackIndex: -1,
     selectedChartIndex: -1,
@@ -272,42 +272,18 @@
 
   function renderQueue() {
     const box = byId('queue');
-    const more = byId('queueMore');
-    if (!box || !more) return;
+    if (!box) return;
     const current = playbackView().index;
     const upcoming = state.queue.slice(Math.max(0, current + 1));
-    const loaded = state.queue.length;
-    const remaining = Math.max(0, state.queueTotal - loaded);
-    setText('queueCount', remaining > 0 ? `${formatNumber(state.queueTotal)}曲 / ${formatNumber(loaded)}曲読込` : `${formatNumber(state.queueTotal || loaded)}曲`);
+    const fetched = Math.max(state.queue.length, state.queueFetched);
+    const registered = Math.max(fetched, state.queueTotal);
+    setText('queueCount', `取得${formatNumber(fetched)}曲/キュー登録${formatNumber(registered)}曲`);
     box.replaceChildren(...upcoming.map((track, index) => queueItem(track, index)));
     if (!upcoming.length) {
       const empty = document.createElement('p');
       empty.className = 'subtle';
-      empty.textContent = remaining > 0 ? '続きを読み込めます。' : '次の曲はありません。';
+      empty.textContent = '次の曲はありません。';
       box.append(empty);
-    }
-    more.hidden = remaining <= 0;
-    more.disabled = state.loadingMore;
-    more.textContent = state.loadingMore ? '読み込み中...' : `続きを読み込む（残り${formatNumber(remaining)}曲）`;
-  }
-
-  async function loadMoreQueue() {
-    if (state.loadingMore || state.queue.length >= state.queueTotal) return;
-    state.loadingMore = true;
-    renderQueue();
-    try {
-      const response = await fetch(`/api/dashboard-queue?offset=${state.queue.length}&limit=20`, { headers: { accept: 'application/json' } });
-      if (!response.ok) throw new Error(`queue API ${response.status}`);
-      const payload = await response.json();
-      if (!payload.ok) throw new Error(payload.error || 'queue API error');
-      state.queue.push(...(Array.isArray(payload.queue) ? payload.queue : []));
-      state.queueTotal = finite(payload.total_items) || state.queueTotal;
-    } catch (error) {
-      showStatus('キューの続きを取得できませんでした。');
-      console.error(error);
-    } finally {
-      state.loadingMore = false;
-      renderQueue();
     }
   }
 
@@ -556,7 +532,10 @@
     state.payload = payload;
     const incomingQueue = Array.isArray(payload.queue) ? payload.queue : [];
     state.queue = incomingQueue;
-    state.queueTotal = finite(payload.queue_status?.total_items) || incomingQueue.length;
+    state.queueFetched = finite(payload.queue_status?.returned_items)
+      ?? finite(payload.queue_status?.loaded_items)
+      ?? incomingQueue.length;
+    state.queueTotal = finite(payload.queue_status?.total_items) ?? incomingQueue.length;
     state.queueRevision = String(payload.queue_revision || '');
     state.playbackIndex = -1;
     renderHeader(payload);
@@ -619,7 +598,6 @@
 
   function start() {
     restoreCache();
-    byId('queueMore')?.addEventListener('click', loadMoreQueue);
     byId('chart')?.addEventListener('pointerup', selectChartPoint);
     refreshDashboard();
     fetchHistory().catch((error) => {

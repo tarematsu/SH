@@ -12,7 +12,6 @@ import {
   mergeFactsLatest,
 } from '../lib/dashboard-facts.js';
 
-const INITIAL_QUEUE_ITEMS = 11;
 export const ROUND_GOAL_STEP = 5_000_000;
 export const ROUND_GOAL_COUNT = 3;
 const COMMENT_VELOCITY_WINDOW_MS = 2 * 60_000;
@@ -335,6 +334,7 @@ export function compactQueueStatus(latestQueue, latest, playback, totalItems, lo
     anchor_at: playback.anchorAt,
     queue_end_at: playback.queueEndAt,
     total_items: totalItems,
+    returned_items: loadedItems,
     loaded_items: loadedItems,
     has_more: loadedItems < totalItems,
   };
@@ -406,14 +406,17 @@ export async function onRequestGet({ request, env }) {
 
     const generatedAt = Date.now();
     const playback = computePlaybackWithAnchors(queue, generatedAt);
-    const startIndex = Math.max(0, playback.currentIndex);
-    const queueWindow = queue.slice(startIndex, startIndex + INITIAL_QUEUE_ITEMS);
-    const enrichedQueue = queueWindow.map((track, index) => (
-      normalizePlaybackTrack(track, startIndex + index, playback)
+    const enrichedQueue = queue.map((track, index) => (
+      normalizePlaybackTrack(track, index, playback)
     ));
 
     const channel = safeJson(latest?.raw_json, {}) || {};
     const station = channel.current_station || {};
+    const sourceQueue = station.queue || channel.queue || {};
+    const registeredItems = Math.max(
+      queue.length,
+      num(sourceQueue.total_track_count ?? sourceQueue.total_items) ?? queue.length,
+    );
     const owner = station.owner || {};
     const streaming = station.streaming_party || {};
     const goal = latest?.stream_goal ?? streaming.stream_goal ?? null;
@@ -455,7 +458,7 @@ export async function onRequestGet({ request, env }) {
       goal_prediction: goalPrediction,
       goal_predictions: goalPredictions,
       queue: enrichedQueue,
-      queue_status: compactQueueStatus(latestQueue, latest, playback, queue.length, queueWindow.length),
+      queue_status: compactQueueStatus(latestQueue, latest, playback, registeredItems, queue.length),
     });
   } catch (error) {
     console.error(error);

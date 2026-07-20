@@ -34,6 +34,13 @@ test('queue read model accepts both an array and an object envelope', () => {
   assert.equal(enveloped.queue[0].title, 'B');
   assert.equal(direct.queue[0].station_id, 3);
   assert.equal(direct.latestQueue.start_time, 5);
+  assert.equal(direct.registeredItems, 1);
+  const partiallyMaterialized = queueFromReadModel({
+    ...base,
+    queue_json: '{"total_track_count":22,"materialized_track_count":2,"tracks":[{"title":"A"},{"title":"B"}]}',
+  });
+  assert.equal(partiallyMaterialized.queue.length, 2);
+  assert.equal(partiallyMaterialized.registeredItems, 22);
 });
 
 test('queue read-model presentation fields survive playback normalization', () => {

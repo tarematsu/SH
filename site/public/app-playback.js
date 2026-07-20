@@ -204,55 +204,18 @@ function queueItemNode(track, index) {
   return row;
 }
 
-async function loadMoreQueue() {
-  if (playbackQueueLoadingMore) return;
-  const offset = Math.max(0, playbackQueue.length);
-  if (!playbackQueueTotalItems || offset >= playbackQueueTotalItems) return;
-  playbackQueueLoadingMore = true;
-  renderSimulatedQueue();
-  try {
-    const response = await fetch(`/api/dashboard-queue?offset=${offset}&limit=20`, {
-      cache: 'no-store',
-      headers: { accept: 'application/json' },
-    });
-    if (!response.ok) throw new Error(`queue API error: ${response.status}`);
-    const data = await response.json();
-    if (!data.ok) throw new Error(data.error || 'queue API error');
-    const extra = Array.isArray(data.queue) ? data.queue : [];
-    playbackQueue.push(...extra);
-    playbackQueueTotalItems = Number(data.total_items) || playbackQueueTotalItems;
-  } catch (error) {
-    console.error(error);
-  } finally {
-    playbackQueueLoadingMore = false;
-    renderSimulatedQueue();
-  }
-}
-
 function renderQueue(queue, totalItems) {
-  const upcoming = queue.filter(t => !t.is_current);
-  const loadedItems = queue.length;
-  const remaining = Math.max(0, (totalItems ?? loadedItems) - loadedItems);
+  const currentIndex = queue.findIndex((track) => track.is_current);
+  const upcoming = queue.slice(Math.max(0, currentIndex + 1));
+  const fetchedItems = queue.length;
+  const registeredItems = Math.max(fetchedItems, totalItems ?? fetchedItems);
   const box = el('queue');
-  el('queueCount').textContent = remaining > 0
-    ? `${number(totalItems ?? loadedItems)}曲 / 読込 ${loadedItems}曲`
-    : `${number(totalItems ?? loadedItems)}曲`;
-  if (!upcoming.length && remaining <= 0) {
+  el('queueCount').textContent = `取得${number(fetchedItems)}曲/キュー登録${number(registeredItems)}曲`;
+  if (!upcoming.length) {
     box.innerHTML = '<p class="muted">次の曲はありません。</p>';
     return;
   }
   const nodes = upcoming.map((track, index) => queueItemNode(track, index));
-  if (remaining > 0) {
-    const button = document.createElement('button');
-    button.type = 'button';
-    button.className = 'queue-load-more';
-    button.disabled = playbackQueueLoadingMore;
-    button.textContent = playbackQueueLoadingMore
-      ? '読み込み中...'
-      : `続きを読み込む（残り${number(remaining)}曲）`;
-    button.addEventListener('click', loadMoreQueue);
-    nodes.push(button);
-  }
   box.replaceChildren(...nodes);
 }
 

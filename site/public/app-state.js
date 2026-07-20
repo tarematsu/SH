@@ -7,7 +7,6 @@ let nowPlayingTimer = null;
 let nowPlayingState = null;
 let playbackQueue = [];
 let playbackQueueTotalItems = 0;
-let playbackQueueLoadingMore = false;
 let simulatedCurrentIndex = -1;
 let currentNowPlayingHost = {};
 let mainChartState = null;

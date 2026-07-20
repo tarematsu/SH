@@ -110,7 +110,7 @@ test('playback endpoint maps the Pages read model into current-track state and c
   assert.match(body.queue_revision, /^[a-z0-9_-]+/i);
 });
 
-test('buddies and buddy46 aliases use the same Pages read model', async () => {
+test('buddies and buddy46 use isolated primary and secondary read models', async () => {
   const now = Date.now();
   const queue = [{
     position: 0,
@@ -123,12 +123,45 @@ test('buddies and buddy46 aliases use the same Pages read model', async () => {
     request: new Request('https://skrzk.test/api/playback?channel=buddies'),
     env: { MINUTE_DB: primaryPlaybackDb(queue, now) },
   });
+  const secondaryRow = {
+    channel_alias: 'buddy46',
+    station_id: 46,
+    queue_id: 460,
+    start_time: now - 30_000,
+    is_paused: 0,
+    is_broadcasting: 1,
+    host_account_id: 4600,
+    host_handle: 'buddy46-host',
+    state_hash: 'buddy46-hash',
+    checked_at: now - 500,
+    changed_at: now - 500,
+    paused_total_ms: 0,
+    pause_started_at: null,
+    queue_json: JSON.stringify([{
+      position: 0,
+      duration_ms: 180_000,
+      title: 'Dedicated Song',
+      artist: 'Dedicated Artist',
+      thumbnail_url: 'https://example.invalid/dedicated.jpg',
+    }]),
+  };
+  const otherDb = {
+    prepare(sql) {
+      return {
+        bind() { return this; },
+        async first() {
+          if (sql.includes('sh_collector_status')) {
+            return { status: 'ok', last_attempt_at: now - 500, last_success_at: now - 500, tracks: 1 };
+          }
+          if (sql.includes('sh_playback_channel_current')) return secondaryRow;
+          throw new Error(`unexpected secondary SQL: ${sql}`);
+        },
+      };
+    },
+  };
   const buddy46Response = await playbackGet({
     request: new Request('https://skrzk.test/api/playback?channel=buddy46'),
-    env: {
-      MINUTE_DB: primaryPlaybackDb(queue, now),
-      OTHER_DB: { prepare() { throw new Error('OTHER_DB must not be read'); } },
-    },
+    env: { MINUTE_DB: primaryPlaybackDb(queue, now), OTHER_DB: otherDb },
   });
   const buddies = await responseJson(buddiesResponse);
   const buddy46 = await responseJson(buddy46Response);
@@ -137,13 +170,25 @@ test('buddies and buddy46 aliases use the same Pages read model', async () => {
   assert.equal(buddy46Response.status, 200);
   assertPlaybackCoreEnvelope(buddies);
   assertPlaybackCoreEnvelope(buddy46);
-  assert.equal(buddy46.queue.length, buddies.queue.length);
-  assert.equal(buddy46.queue[0].title, buddies.queue[0].title);
-  assert.equal(buddy46.queue[0].artist, buddies.queue[0].artist);
-  assert.equal(buddy46.queue[0].thumbnail_url, buddies.queue[0].thumbnail_url);
+  assert.equal(buddies.queue[0].title, 'Shared Song');
+  assert.equal(buddy46.queue[0].title, 'Dedicated Song');
+  assert.equal(buddy46.queue[0].artist, 'Dedicated Artist');
+  assert.equal(buddy46.queue[0].thumbnail_url, 'https://example.invalid/dedicated.jpg');
+  assert.equal(buddy46.station_id, 46);
   assert.equal(buddies.channel_alias, 'buddies');
   assert.equal(buddy46.channel_alias, 'buddy46');
-  assert.equal(buddy46.canonical_channel_alias, 'buddies');
+  assert.equal('canonical_channel_alias' in buddy46, false);
+  assert.equal(buddy46Response.headers.get('cache-control'), 'public, max-age=5, s-maxage=10, stale-while-revalidate=30');
+});
+
+test('buddy46 playback requires its dedicated OTHER_DB binding', async () => {
+  const response = await playbackGet({
+    request: new Request('https://skrzk.test/api/playback?channel=buddy46'),
+    env: { MINUTE_DB: primaryPlaybackDb() },
+  });
+  assert.equal(response.status, 500);
+  assert.equal(response.headers.get('cache-control'), 'no-store');
+  assert.deepEqual(await responseJson(response), { ok: false, error: 'OTHER_DB binding missing' });
 });
 
 test('playback endpoint rejects unsupported channels and raw payload access', async () => {

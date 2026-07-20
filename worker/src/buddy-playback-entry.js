@@ -21,7 +21,6 @@ const BENIGN_SKIP_REASONS = new Set([
   'retry-not-due',
   'stage-advanced',
   'stale-cycle',
-  'station-not-found',
 ]);
 const PIPELINE_STAGES = new Set(['fetch', 'parse', 'parse-store', 'metadata', 'commit']);
 const DIRECT_STAGES = new Set([
@@ -62,6 +61,8 @@ function validateTask(body) {
     preparedParse: body.prepared_parse && typeof body.prepared_parse === 'object'
       ? body.prepared_parse
       : null,
+    forceAuthRefresh: body.force_auth_refresh === true,
+    authRefreshed: body.auth_refreshed === true,
   };
 }
 
@@ -83,6 +84,8 @@ async function enqueueNextStage(env, task, result = null) {
   else if (PIPELINE_STAGES.has(stage)) message.expected_stage = stage;
   if (Number.isFinite(cycleAt)) message.cycle_at = cycleAt;
   if (result?.prepared_parse) message.prepared_parse = result.prepared_parse;
+  if (result?.force_auth_refresh === true) message.force_auth_refresh = true;
+  if (result?.auth_refreshed === true || task.authRefreshed) message.auth_refreshed = true;
   await env.BUDDY_PLAYBACK_QUEUE.send(message, NEXT_STAGE_OPTIONS);
 }
 

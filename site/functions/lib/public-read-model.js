@@ -17,8 +17,11 @@ FROM sh_collector_read_model
 WHERE collector_id=?
 LIMIT 1`;
 
-function arrayFromQueueJson(value) {
-  const parsed = safeJson(value, null);
+function parsedQueueJson(value) {
+  return safeJson(value, null);
+}
+
+function arrayFromParsedQueue(parsed) {
   if (Array.isArray(parsed)) return parsed;
   if (Array.isArray(parsed?.queue)) return parsed.queue;
   if (Array.isArray(parsed?.tracks)) return parsed.tracks;
@@ -26,12 +29,25 @@ function arrayFromQueueJson(value) {
   return [];
 }
 
+function registeredQueueItems(parsed, returnedItems) {
+  if (!parsed || Array.isArray(parsed)) return returnedItems;
+  for (const value of [
+    parsed.total_track_count,
+    parsed.total_items,
+    parsed.queue_total_tracks,
+  ]) {
+    const total = Number(value);
+    if (Number.isFinite(total) && total >= 0) return Math.max(returnedItems, Math.trunc(total));
+  }
+  return returnedItems;
+}
+
 export function presentationFromRow(row) {
   return safeJson(row?.presentation_json, {}) || {};
 }
 
 export function queueFromReadModel(row) {
-  if (!row) return { latestQueue: null, queue: [] };
+  if (!row) return { latestQueue: null, queue: [], registeredItems: 0 };
   const latestQueue = {
     station_id: row.station_id,
     queue_id: row.queue_id,
@@ -39,7 +55,8 @@ export function queueFromReadModel(row) {
     is_paused: row.is_paused,
     observed_at: row.observed_at,
   };
-  const queue = arrayFromQueueJson(row.queue_json).map((track, index) => ({
+  const parsed = parsedQueueJson(row.queue_json);
+  const queue = arrayFromParsedQueue(parsed).map((track, index) => ({
     ...track,
     position: track?.position ?? index,
     station_id: track?.station_id ?? row.station_id,
@@ -47,7 +64,11 @@ export function queueFromReadModel(row) {
     start_time: track?.start_time ?? row.start_time,
     observed_at: track?.observed_at ?? row.observed_at,
   }));
-  return { latestQueue, queue };
+  return {
+    latestQueue,
+    queue,
+    registeredItems: registeredQueueItems(parsed, queue.length),
+  };
 }
 
 export async function loadPublicReadModels(db, channelId) {

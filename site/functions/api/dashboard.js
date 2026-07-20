@@ -360,13 +360,12 @@ export async function onRequestGet(context) {
     const streaming = station.streaming_party || presentation.streaming_party || {};
     const latest = { ...presentation, ...presentation.latest, ...facts.latest };
     const goal = latest.stream_goal ?? streaming.stream_goal ?? null;
-    const { latestQueue, queue } = queueFromReadModel(models.queue);
+    const { latestQueue, queue, registeredItems } = queueFromReadModel(models.queue);
     const generatedAt = Date.now();
     const playback = computePlayback(queue, generatedAt);
-    const startIndex = Math.max(0, playback.currentIndex);
-    const queueWindow = queue.slice(startIndex, startIndex + 11);
-    const enrichedQueue = queueWindow.map((track, index) => normalizePlaybackTrack(track, startIndex + index, playback));
+    const enrichedQueue = queue.map((track, index) => normalizePlaybackTrack(track, index, playback));
     queueContext.state = stateFromQueue(latestQueue, queue);
+    if (queueContext.state) queueContext.state.total_items = registeredItems;
     queueContext.hostIdentity = hostIdentity(latest);
     queueContext.revision = queueRevision(queueContext.state, queueContext.hostIdentity);
     queueContext.unchanged = Boolean(queueContext.requestedRevision && queueContext.requestedRevision === queueContext.revision);
@@ -418,7 +417,7 @@ export async function onRequestGet(context) {
       goal_prediction: goalPrediction,
       goal_predictions: goalPredictions,
       queue: queueContext.unchanged ? [] : enrichedQueue,
-      queue_status: compactQueueStatus(latestQueue, latest, playback, queue.length, queueWindow.length),
+      queue_status: compactQueueStatus(latestQueue, latest, playback, registeredItems, queue.length),
       ...queueResponseFields(queueContext),
     };
     const currentGoal = finite(payload.latest?.stream_goal);

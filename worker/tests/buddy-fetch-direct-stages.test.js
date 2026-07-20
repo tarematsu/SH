@@ -167,6 +167,35 @@ test('fetch auth prepares the session without issuing the Stationhead request', 
   assert.equal(result.auth_prepared, true);
 });
 
+test('fetch auth forwards a forced refresh and marks the next compute stage', async () => {
+  const state = {
+    runs: [],
+    firsts: [],
+    first(sql) {
+      if (sql.includes('SELECT channel_alias,cycle_at')) return fetchRow();
+      throw new Error(`unexpected first SQL: ${sql}`);
+    },
+  };
+  let forceRefresh = false;
+  const result = await processBuddyFetchAuth({
+    OTHER_DB: { prepare(sql) { return statement(sql, state); } },
+  }, {
+    channelAlias: 'buddy46',
+    cycleAt: 1_800_000,
+    observedAt: 1_800_456,
+    forceAuthRefresh: true,
+  }, {
+    collectReady: async (env, observedAt, dependencies) => {
+      forceRefresh = dependencies.forceRefresh;
+      return dependencies.collect(env, observedAt, {});
+    },
+  });
+
+  assert.equal(forceRefresh, true);
+  assert.equal(result.auth_refreshed, true);
+  assert.equal(result.direct_stage, BUDDY_FETCH_COMPUTE_STAGE);
+});
+
 test('fetch compute loads pipeline and credentials together, stores raw text, and queues parse', async () => {
   const state = {
     runs: [],

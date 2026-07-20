@@ -96,7 +96,6 @@ h2 { margin-bottom: 0; font-size: 1.12rem; letter-spacing: -.015em; }
 .queue-copy strong { font-size: .84rem; }
 .queue-copy small { margin-top: 2px; color: var(--muted); font-size: .69rem; }
 .pill { padding: 6px 10px; border: 1px solid var(--line); border-radius: 99px; background: var(--panel-2); color: var(--muted); font-size: .7rem; font-weight: 800; white-space: nowrap; }
-.queue-more { width: 100%; margin-top: 10px; }
 
 .goal-card, .chart-card { margin-top: 10px; content-visibility: auto; contain-intrinsic-size: auto 340px; }
 .goal-layout { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(250px, .6fr); gap: 16px; align-items: stretch; }
