@@ -7,6 +7,7 @@ import { cloudflareBuildConfig } from './cloudflare-build-config.mjs';
 const workerRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const repositoryRoot = resolve(workerRoot, '..');
 const selectorPath = resolve(workerRoot, 'scripts', 'select-worker-deploys.mjs');
+const DEFAULT_WORKER_NAME = 'sh-runtime-orchestrator';
 
 function normalizedLines(value) {
   return [...new Set(String(value || '')
@@ -183,17 +184,35 @@ function runWrangler(args = [], options = {}) {
 }
 
 export async function deployConnectedWorker(options = {}) {
-  const workerName = String(options.workerName ?? process.env.WRANGLER_CI_OVERRIDE_NAME ?? '').trim();
+  const requestedWorkerName = String(
+    options.workerName ?? process.env.WRANGLER_CI_OVERRIDE_NAME ?? '',
+  ).trim();
+  const workerName = requestedWorkerName || DEFAULT_WORKER_NAME;
   const workerConfig = cloudflareBuildConfig(workerName);
-  if (workerName && !workerConfig) {
+  if (!workerConfig) {
     const decision = { deploy: false, reason: 'unknown-worker-build', workerName };
     console.log(JSON.stringify({ event: 'connected_worker_deploy_decision', ...decision }));
     return decision;
   }
 
+  if (!requestedWorkerName) {
+    const decision = { deploy: true, reason: 'local-runtime-default', workerName };
+    console.log(JSON.stringify({
+      event: 'connected_worker_deploy_decision',
+      ...decision,
+      branch: null,
+      production_branch: null,
+      changed_paths: null,
+      affected_workers: null,
+      config: workerConfig,
+    }));
+    runWrangler(options.wranglerArgs || process.argv.slice(2), { ...options, workerConfig });
+    return decision;
+  }
+
   const branch = String(options.branch ?? process.env.WORKERS_CI_BRANCH ?? '').trim();
   const productionBranch = String(options.productionBranch ?? 'main').trim() || 'main';
-  if (workerConfig && branch && branch !== productionBranch) {
+  if (branch && branch !== productionBranch) {
     const decision = {
       deploy: false,
       reason: 'non-production-branch',
