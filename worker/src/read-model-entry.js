@@ -16,6 +16,12 @@ export {
   readModelNeedsPreservation,
 };
 
+function deferredEvent(task) {
+  if (task === 'read-model-hydration') return 'read_model_hydration_deferred';
+  if (task === 'read-model-preserve') return 'read_model_preservation_deferred';
+  return 'read_model_write_deferred';
+}
+
 export async function processReadModelMessage(env, body, dependencies = EMPTY_DEPENDENCIES) {
   if (body?.message_type !== 'stationhead-read-model' || Number(body?.message_version) !== 1) {
     throw new Error('unsupported read model message');
@@ -23,26 +29,26 @@ export async function processReadModelMessage(env, body, dependencies = EMPTY_DE
   const observedAt = Number(body.observed_at) || null;
   const readModel = body.read_model;
   const metadataQueue = env?.TRACK_METADATA_QUEUE;
-  const deferredTask = readModelMetadataTask(readModel);
-  if (metadataQueue?.send && deferredTask) {
+  const metadataTask = readModelMetadataTask(readModel);
+  const delegatedTask = metadataTask
+    || (!env?.MINUTE_DB && !dependencies.writePreparedReadModel ? 'read-model-write' : null);
+  if (metadataQueue?.send && delegatedTask) {
     await metadataQueue.send({
       message_type: 'stationhead-track-metadata',
       message_version: 1,
-      task: deferredTask,
+      task: delegatedTask,
       job_id: body.job_id,
       observed_at: observedAt,
       read_model: readModel,
     }, JSON_QUEUE_SEND_OPTIONS);
     console.log(JSON.stringify({
-      event: deferredTask === 'read-model-hydration'
-        ? 'read_model_hydration_deferred'
-        : 'read_model_preservation_deferred',
+      event: deferredEvent(delegatedTask),
       observed_at: observedAt,
     }));
     return { deferred: true };
   }
   let prepared = readModel;
-  if (!metadataQueue?.send && deferredTask) {
+  if (!metadataQueue?.send && metadataTask) {
     const prepare = dependencies.prepareReadModelForWrite || prepareReadModelForWrite;
     prepared = await prepare(env, readModel);
   }
