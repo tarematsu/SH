@@ -128,9 +128,11 @@ async function processIngestBatch(batch, env, ctx) {
     return persist.default.queue(batch, env, ctx);
   }
   const message = messages[0];
-  const body = decodeRawCollectionTextMessage(message.body);
-  const type = body?.message_type;
+  let body;
+  let type;
   try {
+    body = decodeRawCollectionTextMessage(message.body);
+    type = body?.message_type;
     switch (type) {
       case 'stationhead-ingest-fact': {
         const stages = await loadIngestFactStages();
