@@ -1,4 +1,5 @@
 import { withBackfillCursorSeek } from './backfill-cursor-seek.js';
+import { historicalRebuildEnabled } from './historical-rebuild-policy.js';
 import { processMinuteRebuildStage } from './minute-rebuild-entry.js';
 import {
   processMinuteMaintenanceGate,
@@ -17,10 +18,22 @@ function maintenanceStage(body) {
   return null;
 }
 
+function historicalStage(body) {
+  return body?.message_type === 'minute-rebuild-stage'
+    && ['gap-scan', 'gap-commit', 'backfill', 'backfill-prepare', 'backfill-commit']
+      .includes(String(body?.stage || ''));
+}
+
 async function processOneMinuteRebuildMessage(message, env, dependencies = EMPTY_DEPENDENCIES) {
   const stage = maintenanceStage(message?.body);
   try {
-    if (stage) {
+    if (!historicalRebuildEnabled(env) && historicalStage(message?.body)) {
+      console.log(JSON.stringify({
+        event: 'minute_rebuild_stage_skipped',
+        stage: message.body.stage,
+        reason: 'historical-rebuild-disabled-for-d1-budget',
+      }));
+    } else if (stage) {
       const run = stage === 'maintenance-gate'
         ? dependencies.processMinuteMaintenanceGate || processMinuteMaintenanceGate
         : stage === 'maintenance-sync'
@@ -68,6 +81,7 @@ export async function processMinuteRebuildBatch(batch, env, _ctx, dependencies =
 }
 
 export {
+  historicalStage,
   maintenanceStage,
   processOneMinuteRebuildMessage,
 };
