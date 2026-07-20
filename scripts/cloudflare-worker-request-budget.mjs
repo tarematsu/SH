@@ -12,7 +12,6 @@ export const TARGET_DAILY_REQUESTS = FREE_DAILY_REQUESTS * TARGET_RATIO;
 export const ACTIVE_CONFIGS = Object.freeze([
   'worker/wrangler.minute-derive.jsonc',
   'worker/wrangler.minute-enrichment.jsonc',
-  'worker/wrangler.comments.jsonc',
   'worker/wrangler.persist.jsonc',
   'worker/wrangler.ingest.jsonc',
   'worker/wrangler.pages-read-model.jsonc',

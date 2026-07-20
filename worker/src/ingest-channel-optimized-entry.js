@@ -1,4 +1,5 @@
 const EMPTY_DEPENDENCIES = Object.freeze({});
+export const COMMENTS_QUEUE_NAME = 'stationhead-comments';
 const DEFER_COLLECTED_METADATA = Object.freeze({
   collectedMetadataDue: async () => false,
 });
@@ -8,6 +9,7 @@ let rawStagesPromise;
 let legacyIngestPromise;
 let ingestFactStagesPromise;
 let ingestFinalizePromise;
+let commentsModulePromise;
 
 function loadPreparedModules() {
   return preparedModulesPromise ??= Promise.all([
@@ -31,6 +33,24 @@ function loadIngestFactStages() {
 
 function loadIngestFinalize() {
   return ingestFinalizePromise ??= import('./ingest-finalize-entry.js');
+}
+
+function loadCommentsModule() {
+  return commentsModulePromise ??= import('./comments-cpu-entry.js');
+}
+
+function commentsEnvironment(env) {
+  const active = Object.create(env || null);
+  Object.defineProperties(active, {
+    CHAT_LIMIT: { value: 25, enumerable: false, configurable: true },
+    COMMENT_CHAIN_MAX_ATTEMPTS: { value: 1, enumerable: false, configurable: true },
+  });
+  return active;
+}
+
+function isCommentsBatch(batch) {
+  if (String(batch?.queue || '') === COMMENTS_QUEUE_NAME) return true;
+  return batch?.messages?.some((message) => String(message?.body?.message_type || '').startsWith('stationhead-comments-'));
 }
 
 function enabled(value) {
@@ -83,9 +103,13 @@ export async function ingestRawCollection(env, message, dependencies = EMPTY_DEP
   return legacy.ingestRawCollection(env, message);
 }
 
-async function processIngestBatch(batch, env) {
+async function processIngestBatch(batch, env, ctx) {
   const messages = batch.messages;
   if (!messages?.length) return;
+  if (isCommentsBatch(batch)) {
+    const comments = await loadCommentsModule();
+    return comments.default.queue(batch, commentsEnvironment(env), ctx);
+  }
   const message = messages[0];
   const body = message.body;
   const type = body?.message_type;

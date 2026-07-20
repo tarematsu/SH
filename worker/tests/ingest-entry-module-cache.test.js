@@ -22,6 +22,7 @@ test('ingest entry resolves each lazy stage module only once in an isolate', () 
     './ingest-channel-entry.js',
     './ingest-fact-stage.js',
     './ingest-finalize-entry.js',
+    './comments-cpu-entry.js',
   ];
   for (const modulePath of modulePaths) {
     assert.equal(occurrences(`import('${modulePath}')`), 1, modulePath);
@@ -33,9 +34,21 @@ test('ingest entry resolves each lazy stage module only once in an isolate', () 
     'legacyIngestPromise',
     'ingestFactStagesPromise',
     'ingestFinalizePromise',
+    'commentsModulePromise',
   ]) {
     assert.match(source, new RegExp(`return ${cache} \\?\\?=`));
   }
+});
+
+test('comments Queue is delegated to the lazy comments wrapper with its own limits', async () => {
+  const calls = [];
+  const message = {
+    body: { message_type: 'stationhead-comments-forward', message_version: 1 },
+    ack() { calls.push('ack'); },
+    retry() { calls.push('retry'); },
+  };
+  await worker.queue({ queue: 'stationhead-comments', messages: [message] }, {});
+  assert.deepEqual(calls, ['retry']);
 });
 
 test('ingest queue keeps empty batches allocation-light and harmless', async () => {

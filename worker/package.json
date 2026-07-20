@@ -8,7 +8,7 @@
     "dev": "wrangler dev --config wrangler.other.jsonc --test-scheduled",
     "deploy": "node scripts/deploy-connected-worker.mjs",
     "deploy:persist": "wrangler deploy --config wrangler.persist.jsonc",
-    "deploy:ingest": "wrangler deploy --config wrangler.ingest.jsonc",
+    "deploy:ingest": "node scripts/deploy-ingest.mjs",
     "deploy:comments": "wrangler deploy --config wrangler.comments.jsonc",
     "deploy:pages-read-model": "node scripts/deploy-pages-read-model.mjs",
     "deploy:other": "node scripts/deploy-consolidated-monitor.mjs",

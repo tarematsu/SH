@@ -64,7 +64,6 @@ test('manual deploy keeps all Cloudflare targets available', () => {
   assert.doesNotMatch(deployWorkflow, /npm run deploy:buddies/);
   assert.match(deployWorkflow, /npm run deploy:persist/);
   assert.match(deployWorkflow, /npm run deploy:ingest/);
-  assert.match(deployWorkflow, /npm run deploy:comments/);
   assert.match(deployWorkflow, /npm run deploy:minute/);
   assert.match(deployWorkflow, /npm run deploy:split-other/);
   assert.equal(occurrences, 3);
@@ -124,6 +123,7 @@ test('Worker package scripts contain only current deployment operations', () => 
   );
   assert.equal(workerPackage.scripts['deploy:monitor-maintenance'], undefined);
   assert.equal(workerPackage.scripts['deploy:persist'], 'wrangler deploy --config wrangler.persist.jsonc');
+  assert.equal(workerPackage.scripts['deploy:ingest'], 'node scripts/deploy-ingest.mjs');
   assert.equal(workerPackage.scripts['deploy:pages-read-model'], 'node scripts/deploy-pages-read-model.mjs');
   assert.equal(workerPackage.scripts['deploy:minute-enrichment'], 'node scripts/deploy-minute-enrichment.mjs');
   assert.equal(workerPackage.scripts['deploy:track-metadata'], undefined);

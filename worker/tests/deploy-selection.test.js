@@ -12,10 +12,10 @@ function select(paths = [], args = []) {
   }));
 }
 
-test('comments-only changes do not redeploy the minute pipeline', () => {
+test('comments-only changes redeploy the consolidated ingest Worker', () => {
   const result = select(['worker/src/comments-entry.js']);
-  assert.deepEqual(result.workers, ['sh-buddies-comments']);
-  assert.deepEqual(result.commands, ['deploy:comments']);
+  assert.deepEqual(result.workers, ['sh-buddies-ingest']);
+  assert.deepEqual(result.commands, ['deploy:ingest']);
   assert.deepEqual(result.diagnostics, []);
 });
 
@@ -103,7 +103,7 @@ test('deploy script-only package changes do not redeploy runtime Workers', () =>
 
 test('lockfile changes conservatively redeploy every Worker', () => {
   const result = select(['worker/package-lock.json']);
-  assert.equal(result.workers.length, 7);
+  assert.equal(result.workers.length, 6);
 });
 
 test('tests and verification scripts do not redeploy runtime Workers', () => {
@@ -119,26 +119,30 @@ test('shared package changes select every Worker that imports sh-shared', () => 
   const result = select(['packages/sh-shared/index.mjs']);
   assert.ok(result.workers.includes('sh-monitor-other'));
   assert.ok(result.workers.includes('sh-buddies-ingest'));
-  assert.ok(result.workers.includes('sh-buddies-comments'));
   assert.ok(result.workers.length >= 3);
 });
 
 test('unresolved runtime source changes fall back to all Workers', () => {
   const result = select(['worker/src/deleted-runtime-module.js']);
-  assert.equal(result.workers.length, 7);
+  assert.equal(result.workers.length, 6);
+});
+
+test('ingest cutover script redeploys only the consolidated ingest Worker', () => {
+  const result = select(['worker/scripts/deploy-ingest.mjs']);
+  assert.deepEqual(result.workers, ['sh-buddies-ingest']);
+  assert.deepEqual(result.commands, ['deploy:ingest']);
 });
 
 test('manual selection deploys all Workers in durable order', () => {
   const result = select([], ['--all']);
-  assert.deepEqual(result.workers.slice(0, 7), [
+  assert.deepEqual(result.workers.slice(0, 6), [
     'sh-minute-derive',
     'sh-minute-enrichment',
-    'sh-buddies-comments',
     'sh-buddies-persist',
     'sh-buddies-ingest',
     'sh-pages-read-model',
     'sh-monitor-other',
   ]);
-  assert.equal(result.workers.length, 7);
+  assert.equal(result.workers.length, 6);
   assert.equal(result.workers.at(-1), 'sh-monitor-other');
 });

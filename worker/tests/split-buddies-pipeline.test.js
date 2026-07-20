@@ -31,7 +31,7 @@ function commentsTask() {
   };
 }
 
-test('ordered comments and three minute Workers have one owner per queue boundary', () => {
+test('ordered comments and consolidated minute Workers have one owner per queue boundary', () => {
   const buddies = config('wrangler.jsonc');
   const ingest = config('wrangler.ingest.jsonc');
   const comments = config('wrangler.comments.jsonc');
@@ -50,7 +50,10 @@ test('ordered comments and three minute Workers have one owner per queue boundar
 
   assert.equal(buddies.queues.producers[0].queue, 'stationhead-raw-collection');
   assert.equal(ingest.queues.consumers[0].queue, 'stationhead-raw-collection');
-  assert.equal(ingest.queues.producers.some(({ binding }) => binding === 'MINUTE_FACT_QUEUE'), false);
+  assert.equal(ingest.queues.consumers.find(({ queue }) => queue === 'stationhead-comments').max_batch_size, 1);
+  assert.equal(ingest.queues.consumers.find(({ queue }) => queue === 'stationhead-comments').dead_letter_queue, 'stationhead-comments-dlq');
+  assert.deepEqual(ingest.d1_databases.map(({ binding }) => binding), ['DB', 'MINUTE_DB']);
+  assert.equal(ingest.queues.producers.some(({ binding }) => binding === 'MINUTE_FACT_QUEUE'), true);
   assert.equal(ingest.queues.producers.find(({ binding }) => binding === 'COMMENTS_QUEUE').queue, 'stationhead-comments');
   assert.equal(comments.queues.consumers[0].queue, 'stationhead-comments');
   assert.equal(comments.queues.producers.find(({ binding }) => binding === 'MINUTE_FACT_QUEUE').queue, 'stationhead-buddies-facts');
