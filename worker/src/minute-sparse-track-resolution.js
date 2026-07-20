@@ -100,11 +100,13 @@ export async function resolveSparseTracks(db, oldDb, tracks, observedAt, context
   }
   const descriptor = buildTrackDescriptor(tracks[0], {}, integer(tracks[0]?.position) ?? 0);
   descriptor.trackId = await lookupTrackId(db, descriptor);
+  let created = false;
   if (descriptor.trackId == null) {
     await insertMissingTrack(db, descriptor, observedAt);
     descriptor.trackId = await lookupTrackId(db, descriptor);
+    created = descriptor.trackId != null;
   }
-  await updateTrackAndAliases(db, descriptor, observedAt);
+  if (created) await updateTrackAndAliases(db, descriptor, observedAt);
   return [descriptor];
 }
 

@@ -69,10 +69,10 @@ test('production batches live derive and rebuild while recovery derive stays iso
   const rebuild = config('wrangler.minute-rebuild.jsonc');
   const entry = readFileSync(new URL('../src/minute-derive-entry.js', import.meta.url), 'utf8');
   assert.deepEqual(derive.queues.consumers.map(({ max_batch_size }) => max_batch_size), [1, 2, 1, 2]);
-  assert.equal(derive.vars.DERIVE_REVISION_CHUNK_TRACKS, 2);
+  assert.equal(derive.vars.DERIVE_REVISION_CHUNK_TRACKS, 1);
   assert.equal(rebuild.queues.consumers[0].max_batch_size, 2);
   assert.equal(rebuild.queues.consumers[0].max_concurrency, 1);
-  assert.match(entry, /const MAX_LIVE_REVISION_CHUNK_TRACKS = 2/);
+  assert.match(entry, /const MAX_LIVE_REVISION_CHUNK_TRACKS = 1/);
   assert.match(entry, /env\?\.DERIVE_REVISION_CHUNK_TRACKS/);
   assert.match(entry, /minute_derive_queue_overloaded/);
 });

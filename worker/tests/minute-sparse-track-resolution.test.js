@@ -19,7 +19,7 @@ class Statement {
 
   async first() {
     this.db.lookups.push({ sql: this.sql, args: this.args });
-    return { id: 42 };
+    return this.db.lookupResults.shift() ?? null;
   }
 
   async run() {
@@ -29,10 +29,11 @@ class Statement {
 }
 
 class FakeDb {
-  constructor() {
+  constructor(lookupResults = [{ id: 42 }]) {
     this.lookups = [];
     this.runs = [];
     this.batches = [];
+    this.lookupResults = lookupResults;
   }
 
   prepare(sql) {
@@ -69,7 +70,7 @@ test('sparse lookup keeps alias precedence in one D1 query', () => {
   assert.equal(shape.direct.stationhead_track_id, 700);
 });
 
-test('one sparse track performs indexed union probes and one update batch', async () => {
+test('one known sparse track performs indexed union probes without rewrite churn', async () => {
   const db = new FakeDb();
   const [resolved] = await resolveSparseTracks(db, null, [track], 1_000);
 
@@ -90,6 +91,18 @@ test('one sparse track performs indexed union probes and one update batch', asyn
     700,
     resolved.canonicalKey,
   ]);
+  assert.equal(db.runs.length, 0);
+  assert.equal(db.batches.length, 0);
+});
+
+test('one new sparse track persists the track and aliases once', async () => {
+  const db = new FakeDb([null, { id: 42 }]);
+  const [resolved] = await resolveSparseTracks(db, null, [track], 1_000);
+
+  assert.equal(resolved.trackId, 42);
+  assert.equal(db.lookups.length, 2);
+  assert.equal(db.runs.length, 1);
+  assert.match(db.runs[0].sql, /INSERT OR IGNORE INTO sh_tracks/);
   assert.equal(db.batches.length, 1);
   assert.equal(db.batches[0][0].args.at(-1), 42);
   assert.equal(db.batches[0].length, 1 + resolved.aliases.length);

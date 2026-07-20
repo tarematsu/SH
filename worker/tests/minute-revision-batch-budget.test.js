@@ -4,9 +4,9 @@ import test from 'node:test';
 
 import { writeSparseLiveRevisionChunk } from '../src/minute-revision-materializer.js';
 
-test('production batches the live derive lane after isolated rebuild claims', () => {
+test('production keeps live revision chunks at one track after isolated rebuild claims', () => {
   const config = JSON.parse(readFileSync(new URL('../wrangler.minute-derive.jsonc', import.meta.url), 'utf8'));
-  assert.equal(config.vars.DERIVE_REVISION_CHUNK_TRACKS, 2);
+  assert.equal(config.vars.DERIVE_REVISION_CHUNK_TRACKS, 1);
   assert.deepEqual(config.queues.consumers.map(({ max_batch_size }) => max_batch_size), [1, 2, 1, 2]);
 });
 
