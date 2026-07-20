@@ -5,12 +5,9 @@ const JSON_QUEUE_SEND_OPTIONS = Object.freeze({ contentType: 'json' });
 export const OTHER_MONITOR_SUCCESS_MESSAGE = 'other-monitor-success';
 
 export async function dispatchOtherMonitorStage(controller, env, ctx, options = EMPTY_OPTIONS) {
-  const result = await runOtherMonitorScheduled(
-    controller,
-    env,
-    ctx,
-    options.dependencies || EMPTY_OPTIONS,
-  );
+  const result = options.dependencies
+    ? await runOtherMonitorScheduled(controller, env, ctx, options.dependencies)
+    : await runOtherMonitorScheduled(controller, env, ctx);
   if (!env?.HOST_MONITOR_QUEUE?.send) {
     throw new Error('HOST_MONITOR_QUEUE binding is missing for monitor success dispatch');
   }
