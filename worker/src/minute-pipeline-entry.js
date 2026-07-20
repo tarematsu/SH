@@ -23,7 +23,7 @@ async function processBudgetedLiveRevisionBatch(batch, env) {
 
 function liveRevisionMaterializationEnabled(env = {}) {
   const value = env?.LIVE_REVISION_MATERIALIZATION_ENABLED;
-  if (value == null || value === '') return true;
+  if (value == null || value === '') return historicalRebuildEnabled(env);
   return !['0', 'false', 'no', 'off'].includes(String(value).trim().toLowerCase());
 }
 
