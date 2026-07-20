@@ -73,3 +73,47 @@ test('playback read-model hydration falls back for identifiers missing in MINUTE
   assert.deepEqual(calls.map((call) => call.name), ['minute', 'buddies']);
   assert.deepEqual(calls[1].bindings, ['JPX2', 'sp2']);
 });
+
+test('playback hydration bridges an incomplete ISRC dictionary row to legacy Spotify metadata', async () => {
+  const calls = [];
+  const MINUTE_DB = metadataDb([{
+    spotify_id: 'sp-bridge',
+    isrc: 'JPBRIDGE1',
+    title: 'Dictionary title',
+    artist: 'Dictionary artist',
+    thumbnail_url: null,
+    fetched_at: 20,
+  }], calls, 'minute');
+  const BUDDIES_DB = {
+    prepare(sql) {
+      calls.push({ name: 'buddies', sql, bindings: [] });
+      const call = calls.at(-1);
+      return {
+        bind(...bindings) { call.bindings = bindings; return this; },
+        async all() {
+          if (!/NULL AS isrc/i.test(sql)) throw new Error('no such column: isrc');
+          return { results: [{
+            spotify_id: 'sp-bridge',
+            title: 'Legacy title',
+            artist: 'Legacy artist',
+            thumbnail_url: 'https://img.example/bridged.jpg',
+            fetched_at: 10,
+          }] };
+        },
+      };
+    },
+  };
+
+  const rows = await loadReadModelTrackMetadata(
+    { MINUTE_DB, BUDDIES_DB },
+    [],
+    ['JPBRIDGE1'],
+  );
+
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].isrc, 'JPBRIDGE1');
+  assert.equal(rows[0].spotify_id, 'sp-bridge');
+  assert.equal(rows[0].thumbnail_url, 'https://img.example/bridged.jpg');
+  assert.deepEqual(calls.map(({ name }) => name), ['minute', 'buddies', 'buddies']);
+  assert.deepEqual(calls[2].bindings, ['sp-bridge']);
+});

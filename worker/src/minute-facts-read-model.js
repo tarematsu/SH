@@ -221,6 +221,46 @@ async function queryTrackMetadata(db, spotifyIds, isrcs, includeDictionary = fal
   }
 }
 
+async function queryLegacySpotifyMetadata(db, spotifyIds) {
+  if (!db || typeof db.prepare !== 'function' || !spotifyIds.length) return [];
+  const placeholders = spotifyIds.map((_, index) => `?${index + 1}`).join(',');
+  return runMetadataQuery(db, `SELECT spotify_id,NULL AS isrc,title,artist,thumbnail_url,fetched_at
+    FROM sh_track_metadata
+    WHERE spotify_id IN (${placeholders})
+    ORDER BY fetched_at DESC`, spotifyIds);
+}
+
+function completeMetadataRow(row) {
+  return Boolean(row?.title && row?.artist && row?.thumbnail_url);
+}
+
+function mergeMetadataSources(primaryRows, fallbackRows) {
+  const fallbackBySpotifyId = new Map();
+  for (const row of fallbackRows) {
+    const spotifyId = String(row?.spotify_id || '').trim();
+    if (spotifyId && !fallbackBySpotifyId.has(spotifyId)) fallbackBySpotifyId.set(spotifyId, row);
+  }
+  const primarySpotifyIds = new Set();
+  const mergedPrimary = primaryRows.map((row) => {
+    const spotifyId = String(row?.spotify_id || '').trim();
+    if (spotifyId) primarySpotifyIds.add(spotifyId);
+    const fallback = spotifyId ? fallbackBySpotifyId.get(spotifyId) : null;
+    if (!fallback) return row;
+    return {
+      ...fallback,
+      ...row,
+      title: row.title || fallback.title || null,
+      artist: row.artist || fallback.artist || null,
+      thumbnail_url: row.thumbnail_url || fallback.thumbnail_url || null,
+      fetched_at: Math.max(Number(row.fetched_at || 0), Number(fallback.fetched_at || 0)) || null,
+    };
+  });
+  return [
+    ...mergedPrimary,
+    ...fallbackRows.filter((row) => !primarySpotifyIds.has(String(row?.spotify_id || '').trim())),
+  ];
+}
+
 export async function loadReadModelTrackMetadata(env, spotifyIds, isrcs) {
   const requestedSpotifyIds = [...new Set(
     (spotifyIds || []).map((value) => String(value || '').trim()).filter(Boolean),
@@ -236,17 +276,31 @@ export async function loadReadModelTrackMetadata(env, spotifyIds, isrcs) {
   } catch (error) {
     if (!/no such table|no such column/i.test(String(error?.message || ''))) throw error;
   }
-  const completeSpotifyIds = new Set(rows.map((row) => String(row?.spotify_id || '').trim()).filter(Boolean));
-  const completeIsrcs = new Set(rows.map((row) => normalizedIsrc(row?.isrc)).filter(Boolean));
+  const completeRows = rows.filter(completeMetadataRow);
+  const completeSpotifyIds = new Set(completeRows.map((row) => String(row?.spotify_id || '').trim()).filter(Boolean));
+  const completeIsrcs = new Set(completeRows.map((row) => normalizedIsrc(row?.isrc)).filter(Boolean));
   const missingSpotifyIds = requestedSpotifyIds.filter((value) => !completeSpotifyIds.has(value));
   const missingIsrcs = requestedIsrcs.filter((value) => !completeIsrcs.has(value));
   if ((!missingSpotifyIds.length && !missingIsrcs.length) || !fallback || fallback === primary) return rows;
+  const missingIsrcSet = new Set(missingIsrcs);
+  const bridgedSpotifyIds = rows
+    .filter((row) => missingIsrcSet.has(normalizedIsrc(row?.isrc)))
+    .map((row) => String(row?.spotify_id || '').trim())
+    .filter(Boolean);
+  const fallbackSpotifyIds = [...new Set([...missingSpotifyIds, ...bridgedSpotifyIds])];
   try {
-    const fallbackRows = await queryTrackMetadata(fallback, missingSpotifyIds, missingIsrcs);
-    return [...rows, ...fallbackRows];
+    const fallbackRows = await queryTrackMetadata(fallback, fallbackSpotifyIds, missingIsrcs);
+    return mergeMetadataSources(rows, fallbackRows);
   } catch (error) {
     if (!/no such table|no such column/i.test(String(error?.message || ''))) throw error;
-    return rows;
+    if (!fallbackSpotifyIds.length) return rows;
+    try {
+      const fallbackRows = await queryLegacySpotifyMetadata(fallback, fallbackSpotifyIds);
+      return mergeMetadataSources(rows, fallbackRows);
+    } catch (fallbackError) {
+      if (!/no such table|no such column/i.test(String(fallbackError?.message || ''))) throw fallbackError;
+      return rows;
+    }
   }
 }
 
