@@ -56,6 +56,36 @@ test('production wrapper changes only the matching BUDDIES_DB statement', async 
   assert.equal(env.marker, 1);
 });
 
+test('backfill wrapper safely shadows a non-configurable Cloudflare binding', async () => {
+  const prepared = [];
+  const db = {
+    prepare(sql) {
+      prepared.push(sql);
+      return {
+        bind() {
+          return { all: async () => ({ results: [] }) };
+        },
+      };
+    },
+  };
+  const cloudflareEnv = { marker: 1 };
+  Object.defineProperty(cloudflareEnv, 'BUDDIES_DB', {
+    value: db,
+    enumerable: true,
+    configurable: false,
+    writable: false,
+  });
+
+  const active = withBackfillCursorSeek(cloudflareEnv);
+  await assert.doesNotReject(
+    active.BUDDIES_DB.prepare(SOURCE_SQL).bind(100, 10, 10, 1, 20).all(),
+  );
+  assert.notEqual(active.BUDDIES_DB, db);
+  assert.equal(Object.getPrototypeOf(active), cloudflareEnv);
+  assert.equal(active.marker, 1);
+  assert.match(prepared[0], /\(observed_at,id\)>\(\?,\?\)/);
+});
+
 test('inconsistent legacy cursor binds fail closed', () => {
   assert.throws(
     () => rewriteBackfillCursorBinds([100, 10, 11, 1, 20]),
