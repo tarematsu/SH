@@ -64,7 +64,7 @@ test('defensive paired revision handling caps each message at one track', async 
   assert.deepEqual(events, ['ack:1', 'ack:2']);
 });
 
-test('runtime isolates live derive while retaining rebuild batching', () => {
+test('runtime isolates all CPU-sensitive derive and rebuild deliveries', () => {
   const runtime = config('wrangler.runtime.jsonc');
   const entry = readFileSync(new URL('../src/minute-derive-entry.js', import.meta.url), 'utf8');
   const consumers = new Map(runtime.queues.consumers.map((consumer) => [consumer.queue, consumer]));
@@ -73,7 +73,7 @@ test('runtime isolates live derive while retaining rebuild batching', () => {
     consumers.get('stationhead-minute-live-derive').max_batch_size,
     consumers.get('stationhead-buddies-facts').max_batch_size,
     consumers.get('stationhead-minute-rebuild').max_batch_size,
-  ], [1, 1, 1, 2]);
+  ], [1, 1, 1, 1]);
   assert.equal(runtime.vars.DERIVE_REVISION_CHUNK_TRACKS, 1);
   assert.equal(consumers.get('stationhead-minute-live-derive').max_concurrency, 2);
   assert.equal(consumers.get('stationhead-minute-rebuild').max_concurrency, 1);
@@ -93,7 +93,7 @@ test('derive isolation composes with the merged CPU, KV, and Worker topology con
   );
   const enrichment = config('wrangler.minute-enrichment.jsonc');
   assert.match(budget, /BUDGET_MS = 10\.0/);
-  assert.match(budget, /"comparison": "less_than"/);
+  assert.match(budget, /"comparison": "less_than_or_equal"/);
   assert.match(pagesKv, /NAMESPACE_PAGE_SIZE = 1000/);
   assert.deepEqual(
     enrichment.queues.consumers.map(({ queue }) => queue).sort(),
