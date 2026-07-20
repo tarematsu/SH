@@ -9,6 +9,7 @@ export const MINUTE_REBUILD_QUEUE_NAME = 'stationhead-minute-rebuild';
 const EMPTY_DEPENDENCIES = Object.freeze({});
 let deriveModulePromise = null;
 let liveRevisionBudgetModulePromise = null;
+let liveWriteBudgetModulePromise = null;
 let rebuildModulePromise = null;
 
 async function processDeriveBatch(batch, env, dependencies) {
@@ -19,6 +20,11 @@ async function processDeriveBatch(batch, env, dependencies) {
 async function processBudgetedLiveRevisionBatch(batch, env) {
   const budget = await (liveRevisionBudgetModulePromise ||= import('./minute-live-revision-budget-entry.js'));
   return budget.processBudgetedLiveRevisionBatch(batch, env);
+}
+
+async function processBudgetedLiveWriteBatch(batch, env, dependencies) {
+  const budget = await (liveWriteBudgetModulePromise ||= import('./minute-live-write-budget-entry.js'));
+  return budget.processBudgetedLiveWriteBatch(batch, env, dependencies);
 }
 
 function liveRevisionMaterializationEnabled(env = {}) {
@@ -37,6 +43,18 @@ function budgetedLiveRevisionBatch(batch, env) {
       && body?.stage === 'revision-materialize'
       && body?.revision?.sparse === true
       && body?.revision?.rebuild !== true;
+  });
+}
+
+function budgetedLiveWriteBatch(batch, env) {
+  if (liveRevisionMaterializationEnabled(env)) return false;
+  const messages = batch?.messages || [];
+  return messages.length > 0 && messages.every((message) => {
+    const body = message?.body;
+    return body?.message_type === 'minute-fact-derive-stage'
+      && Number(body?.message_version) === 1
+      && (body?.stage === 'write' || body?.stage === 'budget-live-write')
+      && body?.payload?.rebuild !== true;
   });
 }
 
@@ -86,6 +104,9 @@ export async function processMinutePipelineBatch(batch, env, ctx, dependencies =
   if (queueName === LIVE_DERIVE_QUEUE_NAME && budgetedLiveRevisionBatch(batch, env)) {
     return processBudgetedLiveRevisionBatch(batch, env);
   }
+  if (queueName === LIVE_DERIVE_QUEUE_NAME && budgetedLiveWriteBatch(batch, env)) {
+    return processBudgetedLiveWriteBatch(batch, env, dependencies.liveWrite);
+  }
   if (queueName === REBUILD_DERIVE_QUEUE_NAME || queueName === LIVE_DERIVE_QUEUE_NAME) {
     return processDeriveBatch(batch, env, dependencies.derive);
   }
@@ -98,6 +119,7 @@ export async function processMinutePipelineBatch(batch, env, ctx, dependencies =
 export {
   acknowledgeDisabledHistoricalDerive,
   budgetedLiveRevisionBatch,
+  budgetedLiveWriteBatch,
 };
 
 export default {
