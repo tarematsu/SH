@@ -174,7 +174,7 @@ test('budget live write commit persists the fact and forwards full revision stat
   };
   await processBudgetedLiveWriteMessage({ MINUTE_LIVE_DERIVE_QUEUE: {} }, body, {
     appleRuntime: { withAppleMusicFreeRuntime: (env) => env },
-    writeThrottle: { withMinuteD1WriteThrottle: (env) => env },
+    writeThrottle: { withMinuteD1WriteThrottling: (env) => env },
     deriveQueue: {
       async processMinuteDeriveWriteStage(env, activeBody, dependencies) {
         await dependencies.write(env, activeBody.payload);
