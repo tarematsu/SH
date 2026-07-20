@@ -19,7 +19,7 @@ export function queueNeedsHydration(queue) {
   const trackCount = tracks.length;
   for (let index = 0; index < trackCount; index += 1) {
     const track = tracks[index];
-    if (!track || typeof track !== 'object') continue;
+    if (!track || typeof track !== 'object' || !hasTrackIdentity(track)) continue;
     if (!track.title || !track.artist || !track.thumbnail_url) return true;
   }
   return false;
@@ -44,9 +44,9 @@ export function readModelMetadataTask(readModel) {
   const trackCount = tracks.length;
   for (let index = 0; index < trackCount; index += 1) {
     const track = tracks[index];
-    if (!track || typeof track !== 'object') continue;
+    if (!track || typeof track !== 'object' || !hasTrackIdentity(track)) continue;
     if (!track.title || !track.artist || !track.thumbnail_url) return 'read-model-hydration';
-    if (!track.album_name && hasTrackIdentity(track)) preserve = true;
+    if (!track.album_name) preserve = true;
   }
   return preserve ? 'read-model-preserve' : null;
 }
