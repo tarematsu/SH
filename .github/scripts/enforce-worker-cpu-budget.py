@@ -10,6 +10,11 @@ import sys
 BUDGET_MS = 10.0
 SUMMARY_PATH = pathlib.Path("observability-logs/summary.json")
 OUTPUT_PATH = pathlib.Path("observability-logs/cpu-budget.json")
+ACTIVE_WORKERS = frozenset({
+    "sh-buddies-ingest",
+    "sh-minute-enrichment",
+    "sh-runtime-orchestrator",
+})
 
 summary = json.loads(SUMMARY_PATH.read_text(encoding="utf-8"))
 violations: list[dict[str, object]] = []
@@ -17,8 +22,18 @@ workers: dict[str, dict[str, object]] = {}
 total_events = int(summary.get("events") or 0)
 total_samples = int((summary.get("cpu_ms") or {}).get("samples") or 0)
 missing_observability = total_events <= 0 or total_samples <= 0
+scripts = summary.get("scripts") or {}
 
-for name, item in sorted((summary.get("scripts") or {}).items()):
+for required_worker in sorted(ACTIVE_WORKERS):
+    if required_worker not in scripts:
+        violations.append({
+            "worker": required_worker,
+            "events": 0,
+            "samples": 0,
+            "reason": "active_worker_missing_from_summary",
+        })
+
+for name, item in sorted(scripts.items()):
     events = int(item.get("events") or 0)
     retired = item.get("retired") is True
     cpu = item.get("cpu_ms") or {}
@@ -28,6 +43,13 @@ for name, item in sorted((summary.get("scripts") or {}).items()):
     over_budget = None
     all_events_sampled = None if events <= 0 else samples == events
 
+    if name in ACTIVE_WORKERS and (events <= 0 or samples <= 0):
+        violations.append({
+            "worker": name,
+            "events": events,
+            "samples": samples,
+            "reason": "active_worker_unobserved",
+        })
     if retired and events > 0:
         violations.append({
             "worker": name,
@@ -62,6 +84,7 @@ for name, item in sorted((summary.get("scripts") or {}).items()):
             })
     workers[name] = {
         "events": events,
+        "active": name in ACTIVE_WORKERS,
         "retired": retired,
         "samples": samples,
         "all_events_sampled": all_events_sampled,
@@ -75,7 +98,8 @@ result = {
     "budget_ms": BUDGET_MS,
     "comparison": "less_than_or_equal",
     "statistic": "max",
-    "scope": "observed_invocations",
+    "scope": "all_active_workers_and_observed_invocations",
+    "required_active_workers": sorted(ACTIVE_WORKERS),
     "total_events": total_events,
     "total_samples": total_samples,
     "missing_observability": missing_observability,
@@ -91,7 +115,7 @@ if missing_observability:
 if violations:
     detail = ", ".join(
         f"{item['worker']} {item.get('reason')}"
-        + (f" max={item['max_ms']}ms" if 'max_ms' in item else "")
+        + (f" max={item['max_ms']}ms" if "max_ms" in item else "")
         for item in violations
     )
     print(f"Worker observability policy failed: {detail}", file=sys.stderr)
