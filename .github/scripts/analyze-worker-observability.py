@@ -27,9 +27,6 @@ EXPECTED_SCRIPTS = {
 SCHEDULES: dict[str, Callable[[dt.datetime], bool]] = {
     "sh-monitor-other": lambda minute: True,
 }
-TRANSITION_SCHEDULES: dict[str, Callable[[dt.datetime], bool]] = {
-    "sh-buddies-monitor": lambda minute: True,
-}
 
 BAD_LOG_LEVELS = {"error", "fatal", "critical"}
 WARNING_LOG_LEVELS = {"warn", "warning"}
@@ -132,9 +129,9 @@ def schedule_due(start_ms: float, end_ms: float, predicate: Callable[[dt.datetim
 def transitional_scripts() -> set[str]:
     """Return Worker names removed by a PR topology rename.
 
-    PR validation runs before the cutover, so the old script may still emit logs.
-    Main-branch and scheduled audits remain strict because this allowance is only
-    active for pull_request events with an actual Wrangler name diff.
+    PR validation runs before or during the cutover, so the old script may still
+    emit logs. Its absence is also expected after the cutover; the allowance
+    tracks those events without making the retired Worker a required schedule.
     """
     if os.environ.get("GITHUB_EVENT_NAME") != "pull_request":
         return set()
@@ -183,10 +180,6 @@ def main() -> int:
     transition_scripts = transitional_scripts()
     tracked_scripts = EXPECTED_SCRIPTS | transition_scripts
     required_schedules = dict(SCHEDULES)
-    for script in transition_scripts:
-        predicate = TRANSITION_SCHEDULES.get(script)
-        if predicate is not None:
-            required_schedules[script] = predicate
 
     counts = Counter({name: 0 for name in tracked_scripts})
     outcomes: dict[str, Counter[str]] = {name: Counter() for name in tracked_scripts}
