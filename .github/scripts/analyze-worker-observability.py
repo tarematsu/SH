@@ -30,6 +30,7 @@ SCHEDULES: dict[str, Callable[[dt.datetime], bool]] = {
 
 BAD_LOG_LEVELS = {"error", "fatal", "critical"}
 WARNING_LOG_LEVELS = {"warn", "warning"}
+NON_FAILURE_OUTCOMES = {"ok", "canceled"}
 CPU_REPORT_LIMIT_MS = 10.0
 LOG_INGESTION_GRACE_MS = 90_000
 WORKER_NAME_DIFF = re.compile(r'^[+-]\s*"name"\s*:\s*"(sh-[^"]+)"', re.MULTILINE)
@@ -88,7 +89,9 @@ def log_levels(event: dict[str, Any]) -> list[str]:
 def event_failure(event: dict[str, Any]) -> tuple[bool, list[str]]:
     reasons: list[str] = []
     outcome = str(event.get("Outcome", "unknown")).strip().lower()
-    if outcome != "ok":
+    # Cloudflare reports client disconnects and deployment cutovers as
+    # `canceled`; they are not Worker exceptions and should not fail the audit.
+    if outcome not in NON_FAILURE_OUTCOMES:
         reasons.append(f"outcome:{outcome or 'missing'}")
 
     exceptions = event.get("Exceptions")

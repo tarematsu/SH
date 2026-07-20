@@ -34,6 +34,7 @@ test('observability extraction uses the dedicated strict analyzer', () => {
   assert.match(observability, /python3 \.github\/scripts\/analyze-worker-observability\.py/);
   assert.match(observabilityAnalyzer, /for event in iter_events\(raw_dir\):/);
   assert.match(observabilityAnalyzer, /event_failure\(event\)/);
+  assert.match(observabilityAnalyzer, /NON_FAILURE_OUTCOMES = \{"ok", "canceled"\}/);
   assert.match(observabilityAnalyzer, /event\.get\("CPUTimeMs"\)/);
   assert.match(observabilityAnalyzer, /return 0 if ok else 1/);
   assert.doesNotMatch(observability, /def event_metrics\(event\):/);
