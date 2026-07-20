@@ -1,14 +1,14 @@
 import { readFileSync } from 'node:fs';
 
-import { pruneRetiredWorkers } from './cloudflare-workers.mjs';
 import {
-  consumerList,
+  hasConsumer,
   pauseQueue,
   removeConsumer,
   restoreConsumer,
   resumeQueue,
   runWrangler,
-} from './monitor-cutover-queues.mjs';
+} from './cloudflare-queues.mjs';
+import { pruneRetiredWorkers } from './cloudflare-workers.mjs';
 
 const configName = 'wrangler.runtime.jsonc';
 const config = JSON.parse(readFileSync(new URL(`../${configName}`, import.meta.url), 'utf8'));
@@ -21,10 +21,6 @@ const migrations = Object.freeze(config.queues.consumers.map((consumer) => Objec
   batchSize: consumer.max_batch_size,
   maxConcurrency: consumer.max_concurrency,
 })));
-
-function hasConsumer(queue, scriptName) {
-  return consumerList(queue).includes(scriptName);
-}
 
 const previousConsumers = new Set(
   migrations.filter(({ queue }) => hasConsumer(queue, previousScript)).map(({ queue }) => queue),
