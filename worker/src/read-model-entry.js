@@ -1,4 +1,5 @@
 import {
+  readModelMetadataTask,
   readModelNeedsHydration,
   readModelNeedsPreservation,
 } from './read-model-metadata-plan.js';
@@ -12,12 +13,6 @@ export {
   readModelNeedsPreservation,
 };
 
-function deferredReadModelTask(readModel) {
-  if (readModelNeedsHydration(readModel)) return 'read-model-hydration';
-  if (readModelNeedsPreservation(readModel)) return 'read-model-preserve';
-  return null;
-}
-
 export async function processReadModelMessage(env, body, dependencies = EMPTY_DEPENDENCIES) {
   if (body?.message_type !== 'stationhead-read-model' || Number(body?.message_version) !== 1) {
     throw new Error('unsupported read model message');
@@ -25,7 +20,7 @@ export async function processReadModelMessage(env, body, dependencies = EMPTY_DE
   const observedAt = Number(body.observed_at) || null;
   const readModel = body.read_model;
   const metadataQueue = env?.TRACK_METADATA_QUEUE;
-  const deferredTask = metadataQueue?.send ? deferredReadModelTask(readModel) : null;
+  const deferredTask = metadataQueue?.send ? readModelMetadataTask(readModel) : null;
   if (deferredTask) {
     await metadataQueue.send({
       message_type: 'stationhead-track-metadata',
