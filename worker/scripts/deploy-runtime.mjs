@@ -51,8 +51,6 @@ try {
     }
   }
 
-  await pruneRetiredWorkers();
-
   for (const queue of paused) resumeQueue(queue);
   paused.clear();
 } catch (error) {
@@ -76,6 +74,10 @@ try {
   }
   throw error;
 }
+
+// Worker retirement is intentionally after the reversible Queue cutover. A
+// deletion failure leaves the new runtime active and is safe to retry.
+await pruneRetiredWorkers();
 
 console.log(JSON.stringify({
   event: 'runtime_orchestrator_deployed',
