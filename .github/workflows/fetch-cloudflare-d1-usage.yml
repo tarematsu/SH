@@ -21,7 +21,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: cloudflare-d1-budget-${{ github.event.pull_request.number || github.ref }}
+  group: cloudflare-d1-budget-${{ github.event.pull_request.number || github.ref }}-${{ github.event.pull_request.head.sha || github.sha }}
   cancel-in-progress: true
 
 jobs:
