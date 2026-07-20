@@ -71,5 +71,6 @@ test('ingest queue keeps empty batches allocation-light and harmless', async () 
 test('ingest failure routing avoids a transient membership array and repeated delay coercion', () => {
   assert.doesNotMatch(source, /\[.*stationhead-ingest-fact.*\]\.includes\(type\)/s);
   assert.equal(occurrences('Number(error?.retryDelaySeconds)'), 1);
-  assert.equal(occurrences('const body = message.body;'), 1);
+  assert.equal(occurrences('decodeRawCollectionTextMessage(message.body)'), 1);
+  assert.equal(occurrences('let body;'), 1);
 });
