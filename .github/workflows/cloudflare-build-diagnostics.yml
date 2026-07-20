@@ -30,19 +30,19 @@ jobs:
         run: |
           workers='[]'
           add_worker() {
-            workers="$(jq -c --arg worker "$1" '. + [$worker]' <<<"$workers")"
+            workers="$(jq -c --arg worker "$1" '. + [$worker] | unique' <<<"$workers")"
           }
 
           if [[ '${{ github.event_name }}' == 'workflow_dispatch' ]]; then
-            add_worker 'sh-monitor-other'
+            add_worker 'sh-runtime-orchestrator'
           else
             files="$(git diff --name-only '${{ github.event.before }}' '${{ github.sha }}')"
             printf '%s\n' "$files"
 
             if grep -Eq '^worker/src/|^worker/scripts/|^worker/(package\.json|package-lock\.json)$|^packages/sh-shared/' <<<"$files"; then
-              add_worker 'sh-monitor-other'
+              add_worker 'sh-runtime-orchestrator'
             else
-              grep -Eq '^worker/wrangler\.other\.jsonc$' <<<"$files" && add_worker 'sh-monitor-other' || true
+              grep -Eq '^worker/wrangler\.runtime\.jsonc$' <<<"$files" && add_worker 'sh-runtime-orchestrator' || true
             fi
           fi
 

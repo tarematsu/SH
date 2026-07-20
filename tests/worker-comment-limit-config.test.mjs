@@ -2,10 +2,16 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 
-const commentsConfig = JSON.parse(await readFile(new URL('../worker/wrangler.comments.jsonc', import.meta.url), 'utf8'));
-const otherConfig = JSON.parse(await readFile(new URL('../worker/wrangler.other.jsonc', import.meta.url), 'utf8'));
+const ingestConfig = JSON.parse(await readFile(
+  new URL('../worker/wrangler.ingest.jsonc', import.meta.url),
+  'utf8',
+));
+const runtimeConfig = JSON.parse(await readFile(
+  new URL('../worker/wrangler.runtime.jsonc', import.meta.url),
+  'utf8',
+));
 
-test('normal comment collection is bounded below solo collection', () => {
-  assert.equal(commentsConfig.vars.CHAT_LIMIT, 25);
-  assert.equal(otherConfig.vars.SOLO_CHAT_LIMIT, 50);
+test('normal comment collection remains disabled below solo collection', () => {
+  assert.equal(ingestConfig.vars.CHAT_LIMIT, 0);
+  assert.equal(runtimeConfig.vars.SOLO_CHAT_LIMIT, 50);
 });

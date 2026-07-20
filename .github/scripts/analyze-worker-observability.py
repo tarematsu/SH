@@ -8,11 +8,8 @@ import datetime as dt
 import gzip
 import json
 import math
-import os
 import pathlib
-import re
 import statistics
-import subprocess
 import sys
 from collections import Counter
 from typing import Any, Callable, Iterable
@@ -20,12 +17,27 @@ from typing import Any, Callable, Iterable
 EXPECTED_SCRIPTS = {
     "sh-buddies-ingest",
     "sh-minute-enrichment",
-    "sh-monitor-other",
+    "sh-runtime-orchestrator",
 }
-RETIRED_SCRIPTS = {"sh-pages-read-model"}
-
+RETIRED_SCRIPTS = {
+    "sh-monitor-other",
+    "sh-buddies-monitor",
+    "sh-buddies-persist",
+    "sh-buddies-comments",
+    "sh-buddy-playback",
+    "sh-host-monitor",
+    "sh-buddies-read-model",
+    "sh-minute-maintenance",
+    "sh-monitor-maintenance",
+    "sh-minute-derive",
+    "sh-minute-ingest",
+    "sh-minute-rebuild",
+    "sh-track-metadata",
+    "sh-pages-read-model",
+    "sh-minute-read-model",
+}
 SCHEDULES: dict[str, Callable[[dt.datetime], bool]] = {
-    "sh-monitor-other": lambda minute: True,
+    "sh-runtime-orchestrator": lambda minute: True,
 }
 
 BAD_LOG_LEVELS = {"error", "fatal", "critical"}
@@ -33,7 +45,6 @@ WARNING_LOG_LEVELS = {"warn", "warning"}
 NON_FAILURE_OUTCOMES = {"ok", "canceled"}
 CPU_REPORT_LIMIT_MS = 10.0
 LOG_INGESTION_GRACE_MS = 90_000
-WORKER_NAME_DIFF = re.compile(r'^[+-]\s*"name"\s*:\s*"(sh-[^"]+)"', re.MULTILINE)
 
 
 def finite_number(value: Any) -> float | None:
@@ -89,8 +100,6 @@ def log_levels(event: dict[str, Any]) -> list[str]:
 def event_failure(event: dict[str, Any]) -> tuple[bool, list[str]]:
     reasons: list[str] = []
     outcome = str(event.get("Outcome", "unknown")).strip().lower()
-    # Cloudflare reports client disconnects and deployment cutovers as
-    # `canceled`; they are not Worker exceptions and should not fail the audit.
     if outcome not in NON_FAILURE_OUTCOMES:
         reasons.append(f"outcome:{outcome or 'missing'}")
 
@@ -98,8 +107,7 @@ def event_failure(event: dict[str, Any]) -> tuple[bool, list[str]]:
     if isinstance(exceptions, list) and exceptions:
         reasons.append(f"exceptions:{len(exceptions)}")
 
-    levels = log_levels(event)
-    bad_levels = sorted(set(levels) & BAD_LOG_LEVELS)
+    bad_levels = sorted(set(log_levels(event)) & BAD_LOG_LEVELS)
     if bad_levels:
         reasons.append(f"log_levels:{','.join(bad_levels)}")
     return bool(reasons), reasons
@@ -129,45 +137,6 @@ def schedule_due(start_ms: float, end_ms: float, predicate: Callable[[dt.datetim
     return False
 
 
-def transitional_scripts() -> set[str]:
-    """Return Worker names removed by a PR topology rename.
-
-    PR validation runs before or during the cutover, so the old script may still
-    emit logs. Its absence is also expected after the cutover; the allowance
-    tracks those events without making the retired Worker a required schedule.
-    """
-    if os.environ.get("GITHUB_EVENT_NAME") != "pull_request":
-        return set()
-    base_ref = os.environ.get("GITHUB_BASE_REF")
-    if not base_ref:
-        return set()
-    try:
-        result = subprocess.run(
-            [
-                "git", "diff", "--diff-filter=M", "-U0",
-                f"origin/{base_ref}..HEAD", "--", "worker/wrangler*.jsonc",
-            ],
-            check=True,
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
-    except (OSError, subprocess.SubprocessError):
-        return set()
-
-    removed: set[str] = set()
-    added: set[str] = set()
-    for line in result.stdout.splitlines():
-        match = WORKER_NAME_DIFF.match(line)
-        if not match:
-            continue
-        if line.startswith("-"):
-            removed.add(match.group(1))
-        elif line.startswith("+"):
-            added.add(match.group(1))
-    return removed - added
-
-
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--raw-dir", default="raw")
@@ -180,9 +149,7 @@ def main() -> int:
     output_dir.mkdir(parents=True, exist_ok=True)
     selection = json.loads(pathlib.Path(args.selection).read_text(encoding="utf-8"))
     cutoff_ms = iso_datetime(selection["cutoff"]).timestamp() * 1000
-    transition_scripts = transitional_scripts()
-    tracked_scripts = EXPECTED_SCRIPTS | RETIRED_SCRIPTS | transition_scripts
-    required_schedules = dict(SCHEDULES)
+    tracked_scripts = EXPECTED_SCRIPTS | RETIRED_SCRIPTS
 
     counts = Counter({name: 0 for name in tracked_scripts})
     outcomes: dict[str, Counter[str]] = {name: Counter() for name in tracked_scripts}
@@ -217,7 +184,11 @@ def main() -> int:
             total += 1
 
             if script not in tracked_scripts:
-                findings.write(json.dumps({"reason": ["unexpected_script"], "event": event}, ensure_ascii=False, separators=(",", ":")) + "\n")
+                findings.write(json.dumps(
+                    {"reason": ["unexpected_script"], "event": event},
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                ) + "\n")
                 continue
 
             counts[script] += 1
@@ -235,14 +206,17 @@ def main() -> int:
                 wall[script].append(wall_ms)
                 all_wall.append(wall_ms)
 
-            levels = log_levels(event)
-            if set(levels) & WARNING_LOG_LEVELS:
+            if set(log_levels(event)) & WARNING_LOG_LEVELS:
                 warnings[script] += 1
 
             failed, reasons = event_failure(event)
             if failed:
                 errors[script] += 1
-                findings.write(json.dumps({"reason": reasons, "event": event}, ensure_ascii=False, separators=(",", ":")) + "\n")
+                findings.write(json.dumps(
+                    {"reason": reasons, "event": event},
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                ) + "\n")
 
     unexpected_scripts = sorted(observed_sh_scripts - tracked_scripts)
     audit_end_ms = min(
@@ -250,7 +224,7 @@ def main() -> int:
         newest_event_ms if newest_event_ms is not None else cutoff_ms,
     )
     required_recent = {
-        name for name, predicate in required_schedules.items()
+        name for name, predicate in SCHEDULES.items()
         if schedule_due(cutoff_ms, audit_end_ms, predicate)
     }
     missing_required = sorted(name for name in required_recent if counts[name] == 0)
@@ -268,7 +242,7 @@ def main() -> int:
             "event_types": dict(sorted(event_types[script].items())),
             "cpu_ms": cpu_summary,
             "wall_ms": metric_summary(wall[script]),
-            "transitional": script in transition_scripts or script in RETIRED_SCRIPTS,
+            "retired": script in RETIRED_SCRIPTS,
         }
 
     ok = total > 0 and not unexpected_scripts and not missing_required and error_events == 0
@@ -286,7 +260,6 @@ def main() -> int:
         "newest_object_modified": selection["newest_object_modified"],
         "events": total,
         "error_events": error_events,
-        "transitional_scripts": sorted(transition_scripts),
         "unexpected_scripts": unexpected_scripts,
         "required_scheduled_scripts": sorted(required_recent),
         "missing_required_scripts": missing_required,
@@ -303,8 +276,6 @@ def main() -> int:
 
     if total == 0:
         print("No sh-* Worker events found after the audit cutoff", file=sys.stderr)
-    if transition_scripts:
-        print(f"Allowed PR transition Workers: {', '.join(sorted(transition_scripts))}", file=sys.stderr)
     if unexpected_scripts:
         print(f"Unexpected active Workers: {', '.join(unexpected_scripts)}", file=sys.stderr)
     if missing_required:

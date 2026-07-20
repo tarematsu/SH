@@ -1,5 +1,6 @@
 const OTHER_CRON_ID = 'other-cron';
 const OFFICIAL_NEWS_ID = 'official-news';
+const RUNTIME_SERVICE = 'sh-runtime-orchestrator';
 
 function integer(value, fallback = null) {
   const parsed = Number(value);
@@ -130,7 +131,7 @@ export async function readOtherHealth(env, now = Date.now()) {
   const components = { cron, buddy, official_news: officialNews, cloud_host: cloudHost };
   return {
     ok: Object.values(components).every((component) => component.ok),
-    service: 'sh-monitor-other',
+    service: RUNTIME_SERVICE,
     gateway: 'cloudflare-pages',
     checked_at: now,
     components,
@@ -158,7 +159,7 @@ export async function onRequest(context) {
     }));
     return Response.json({
       ok: false,
-      service: 'sh-monitor-other',
+      service: RUNTIME_SERVICE,
       gateway: 'cloudflare-pages',
       error: 'other-health-query-failed',
       checked_at: now,

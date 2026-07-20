@@ -18,6 +18,7 @@ import {
 } from './queue-analysis-transfer.js';
 import { prepareMaterializedQueue } from './queue-materialization.js';
 import { prepareSnapshotAnalysis } from './snapshot-analysis-transfer.js';
+import { logSampledSuccess } from './sampled-success-log.js';
 
 export const RAW_ANALYSIS_MESSAGE = 'stationhead-raw-analysis';
 export const RAW_STRUCTURAL_MESSAGE = 'stationhead-raw-structural-analysis';
@@ -180,9 +181,6 @@ export async function processRawNormalizeStage(env, body, dependencies = {}) {
   }
   const extractedQueue = extractQueue(channel, state.stationId);
   const compacted = compactCollectedQueue(extractedQueue);
-  // The structural and like seed is serialized after compaction. Provider IDs,
-  // preview URLs and repeated presentation fields therefore never cross the
-  // raw-analysis Queue boundary unless they are required as a fallback.
   const queueAnalysisSeed = serializedQueueAnalysis(compacted.queue);
   await sendNext(env, preparedMessage(
     RAW_ANALYSIS_MESSAGE,
@@ -202,7 +200,7 @@ export async function processRawNormalizeStage(env, body, dependencies = {}) {
     queue_tracks: Array.isArray(compacted.queue?.tracks) ? compacted.queue.tracks.length : 0,
     track_metadata_rows: compacted.metadata.length,
   };
-  console.log(JSON.stringify(result));
+  logSampledSuccess(result, common.observed_at, 60, 0);
   return result;
 }
 
@@ -232,7 +230,7 @@ export async function processRawAnalysisStage(env, body, dependencies = {}) {
     channel_id: integer(snapshot.channel_id),
     queue_tracks: Array.isArray(queue?.tracks) ? queue.tracks.length : 0,
   };
-  console.log(JSON.stringify(result));
+  logSampledSuccess(result, common.observed_at, 60, 15);
   return result;
 }
 
@@ -262,7 +260,7 @@ export async function processRawStructuralStage(env, body, dependencies = {}) {
     channel_id: integer(snapshot.channel_id),
     queue_tracks: Array.isArray(queue?.tracks) ? queue.tracks.length : 0,
   };
-  console.log(JSON.stringify(result));
+  logSampledSuccess(result, common.observed_at, 60, 30);
   return result;
 }
 
@@ -292,7 +290,7 @@ export async function processRawLikesStage(env, body, dependencies = {}) {
     channel_id: integer(snapshot.channel_id),
     queue_tracks: Array.isArray(queue?.tracks) ? queue.tracks.length : 0,
   };
-  console.log(JSON.stringify(result));
+  logSampledSuccess(result, common.observed_at, 60, 45);
   return result;
 }
 
@@ -344,6 +342,6 @@ export async function processRawMaterializeStage(env, body, dependencies = {}) {
     track_dictionary_changed: Number(metadataResult?.changed || 0),
     track_dictionary_skipped: metadataResult?.skipped || null,
   };
-  console.log(JSON.stringify(result));
+  logSampledSuccess(result, common.observed_at, 60, 50);
   return result;
 }

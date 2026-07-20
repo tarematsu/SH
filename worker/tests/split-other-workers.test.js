@@ -3,94 +3,56 @@ import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
 import {
-  MINUTE_READ_MODEL_QUEUE,
-  PAGES_READ_MODEL_CRON,
-  runPagesReadModelCron,
-  runPagesReadModelQueue,
-} from '../src/pages-read-model-entry.js';
-import {
   ROLLUP_MAINTENANCE_CRON,
   SNAPSHOT_RETENTION_CRON,
-  runMonitorMaintenanceCron,
 } from '../src/monitor-maintenance-entry.js';
 import {
-  OTHER_MONITOR_CRON,
-  otherMonitorTask,
-  runOtherMonitorCron,
-  runOtherMonitorScheduled,
-} from '../src/other-monitor-entry.js';
-import {
   MONITOR_MAINTENANCE_MESSAGE,
-  runConsolidatedMonitorQueue,
-  runConsolidatedMonitorScheduled,
-} from '../src/consolidated-monitor-entry.js';
+  OTHER_MONITOR_CRON,
+  runRuntimeScheduled,
+} from '../src/runtime-scheduled.js';
+import { runRuntimeQueue } from '../src/runtime-queue.js';
+
+const BASE = Date.UTC(2026, 0, 1, 0, 0, 0);
 
 function config(name) {
   return JSON.parse(readFileSync(new URL(`../${name}`, import.meta.url), 'utf8'));
 }
 
-const BASE = Date.UTC(2026, 0, 1, 0, 0, 0);
-
-test('Pages read-model Worker runs one six-hour task slot from a one-minute Cron', async () => {
-  const calls = [];
-  const dependencies = {
-    runTask: async (_env, now) => {
-      calls.push(now);
-      return { skipped: false, task: { key: 'dashboard-history' }, responses: [], failed: 0 };
-    },
-  };
-
-  assert.equal(PAGES_READ_MODEL_CRON, '* * * * *');
-  const result = await runPagesReadModelCron(
-    { cron: PAGES_READ_MODEL_CRON, scheduledTime: BASE },
-    {},
-    dependencies,
-  );
-  assert.equal(result.task.key, 'dashboard-history');
-  assert.deepEqual(calls, [BASE]);
-  assert.deepEqual(
-    await runPagesReadModelCron({ cron: '*/5 * * * *', scheduledTime: BASE }, {}, dependencies),
-    { skipped: true, reason: 'unsupported-pages-read-model-cron', cron: '*/5 * * * *' },
-  );
-
-  const worker = config('wrangler.minute-enrichment.jsonc');
-  assert.equal(worker.name, 'sh-minute-enrichment');
-  assert.equal(worker.main, 'src/minute-enrichment-optimized-entry.js');
-  assert.deepEqual(worker.triggers.crons, [PAGES_READ_MODEL_CRON]);
-  assert.deepEqual(worker.d1_databases.map(({ binding }) => binding), ['MINUTE_DB', 'BUDDIES_DB', 'OTHER_DB']);
+test('runtime Worker config owns orchestration boundaries', () => {
+  const worker = config('wrangler.runtime.jsonc');
+  assert.equal(worker.name, 'sh-runtime-orchestrator');
+  assert.equal(worker.main, 'src/runtime-orchestrator-entry.js');
+  assert.deepEqual(worker.triggers.crons, ['* * * * *']);
+  assert.deepEqual(worker.d1_databases.map(({ binding }) => binding), [
+    'BUDDIES_DB',
+    'MINUTE_DB',
+    'OTHER_DB',
+  ]);
+  assert.deepEqual(worker.queues.consumers.map(({ queue }) => queue), [
+    'stationhead-buddy-playback',
+    'stationhead-host-monitor',
+    'stationhead-minute-derive',
+    'stationhead-minute-live-derive',
+    'stationhead-buddies-facts',
+    'stationhead-minute-rebuild',
+  ]);
+  assert.equal(worker.queues.producers.some(({ binding }) => binding === 'MINUTE_ENRICHMENT_QUEUE'), true);
+  assert.equal(worker.vars.CRON_STAGGER_OTHER_MS, 25_000);
+  assert.equal(worker.vars.COLLECTOR_PRIORITY_WAIT_MS, 15_000);
+  assert.equal(worker.vars.SNAPSHOT_RETENTION_ENABLED, true);
 });
 
-test('Pages read-model Worker surfaces single-task materialization failures', async () => {
-  await assert.rejects(
-    runPagesReadModelCron(
-      { cron: PAGES_READ_MODEL_CRON, scheduledTime: BASE },
-      {},
-      {
-        runTask: async () => ({
-          skipped: false,
-          task: { key: 'minute-facts-current' },
-          failed: 1,
-          responses: [{ key: 'minute-facts-current', ok: false, error: 'render failed' }],
-        }),
-      },
-    ),
-    (error) => error instanceof AggregateError
-      && /Pages read-model task minute-facts-current failed/.test(error.message)
-      && error.errors.some((item) => /minute-facts-current: render failed/.test(item.message)),
-  );
-});
-
-test('consolidated monitor dispatches maintenance to Queue and preserves the Cron budget', async () => {
+test('runtime scheduled handler dispatches maintenance without adding a Cron', async () => {
   const sent = [];
   const scheduledTime = BASE + 30 * 60_000;
-  const env = {
-    HOST_MONITOR_QUEUE: {
-      async send(body, options) { sent.push({ body, options }); },
-    },
-  };
-  const result = await runConsolidatedMonitorScheduled(
+  const result = await runRuntimeScheduled(
     { cron: OTHER_MONITOR_CRON, scheduledTime },
-    env,
+    {
+      HOST_MONITOR_QUEUE: {
+        async send(body, options) { sent.push({ body, options }); },
+      },
+    },
     {},
     {
       collectRawChannel: async () => ({ collected: true }),
@@ -102,74 +64,66 @@ test('consolidated monitor dispatches maintenance to Queue and preserves the Cro
     },
   );
 
-  assert.equal(sent.length, 1);
-  assert.deepEqual(sent[0].body, {
-    message_type: MONITOR_MAINTENANCE_MESSAGE,
-    message_version: 1,
-    cron: ROLLUP_MAINTENANCE_CRON,
-    scheduled_at: scheduledTime,
-  });
-  assert.deepEqual(sent[0].options, { contentType: 'json' });
-  assert.equal(result.at(-1).task, 'maintenance');
-
-  const calls = [];
-  const message = {
-    body: sent[0].body,
-    ack() { calls.push('ack'); },
-    retry() { calls.push('retry'); },
-  };
-  await runConsolidatedMonitorQueue(
-    { messages: [message] },
-    { BUDDIES_DB: {}, OTHER_DB: {} },
-    {},
-    {
-      maintenanceDependencies: {
-        applyStagger: async () => calls.push('stagger'),
-        waitForCollector: async () => ({ ready: true }),
-        runRollup: async () => { calls.push('rollup'); return 'rollup'; },
-      },
+  assert.deepEqual(sent, [{
+    body: {
+      message_type: MONITOR_MAINTENANCE_MESSAGE,
+      message_version: 1,
+      cron: ROLLUP_MAINTENANCE_CRON,
+      scheduled_at: scheduledTime,
     },
-  );
-  assert.deepEqual(calls, ['stagger', 'rollup', 'ack']);
-
-  const worker = config('wrangler.other.jsonc');
-  assert.equal(worker.name, 'sh-monitor-other');
-  assert.equal(worker.main, 'src/consolidated-monitor-entry.js');
-  assert.deepEqual(worker.triggers.crons, ['* * * * *']);
-  assert.equal(worker.vars.CRON_STAGGER_OTHER_MS, 25_000);
-  assert.equal(worker.vars.COLLECTOR_PRIORITY_WAIT_MS, 15_000);
-  assert.equal(worker.vars.SNAPSHOT_RETENTION_ENABLED, true);
-  assert.deepEqual(worker.queues.consumers.map(({ queue }) => queue), [
-    'stationhead-buddy-playback',
-    'stationhead-host-monitor',
-    'stationhead-minute-derive',
-    'stationhead-minute-live-derive',
-    'stationhead-buddies-facts',
-    'stationhead-minute-rebuild',
-  ]);
-  assert.equal(worker.queues.producers.some(({ binding }) => binding === 'MINUTE_ENRICHMENT_QUEUE'), true);
-  assert.equal(worker.vars.REBUILD_SOURCE_ROWS, 1);
-  assert.equal(worker.vars.GAP_SCAN_WINDOW_MINUTES, 10);
+    options: { contentType: 'json' },
+  }]);
+  assert.equal(result.at(-1).task, 'maintenance');
 });
 
-test('consolidated Queue router processes every message in a mixed batch', async () => {
+test('runtime Queue handler executes maintenance and preserves ack ownership', async () => {
   const events = [];
-  const maintenance = {
+  const message = {
     body: {
       message_type: MONITOR_MAINTENANCE_MESSAGE,
       cron: ROLLUP_MAINTENANCE_CRON,
       scheduled_at: BASE + 30 * 60_000,
     },
-    ack() { events.push('maintenance-ack'); },
-    retry() { events.push('maintenance-retry'); },
+    ack() { events.push('ack'); },
+    retry() { events.push('retry'); },
   };
-  const unsupported = {
-    body: { message_type: 'unsupported-monitor-message' },
-    ack() { events.push('other-ack'); },
-    retry() { events.push('other-retry'); },
-  };
-  await runConsolidatedMonitorQueue(
-    { messages: [maintenance, unsupported] },
+
+  await runRuntimeQueue(
+    { messages: [message] },
+    { BUDDIES_DB: {}, OTHER_DB: {} },
+    {},
+    {
+      maintenanceDependencies: {
+        applyStagger: async () => events.push('stagger'),
+        waitForCollector: async () => ({ ready: true }),
+        runRollup: async () => { events.push('rollup'); return 'rollup'; },
+      },
+    },
+  );
+  assert.deepEqual(events, ['stagger', 'rollup', 'ack']);
+});
+
+test('runtime Queue router processes every message in a mixed batch', async () => {
+  const events = [];
+  await runRuntimeQueue(
+    {
+      messages: [
+        {
+          body: {
+            message_type: MONITOR_MAINTENANCE_MESSAGE,
+            cron: ROLLUP_MAINTENANCE_CRON,
+            scheduled_at: BASE + 30 * 60_000,
+          },
+          ack() { events.push('maintenance-ack'); },
+          retry() { events.push('maintenance-retry'); },
+        },
+        {
+          body: { message_type: 'unsupported-monitor-message' },
+          ack() { events.push('other-ack'); },
+          retry() { events.push('other-retry'); },
+        },
+      ],
+    },
     { BUDDIES_DB: {}, OTHER_DB: {} },
     {},
     {
@@ -183,9 +137,9 @@ test('consolidated Queue router processes every message in a mixed batch', async
   assert.deepEqual(events, ['maintenance-ack', 'other-retry']);
 });
 
-test('consolidated monitor delegates minute derive Queue batches without changing ack ownership', async () => {
+test('runtime Queue router delegates minute pipeline batches unchanged', async () => {
   const events = [];
-  await runConsolidatedMonitorQueue(
+  await runRuntimeQueue(
     {
       queue: 'stationhead-minute-live-derive',
       messages: [{
@@ -205,29 +159,34 @@ test('consolidated monitor delegates minute derive Queue batches without changin
   assert.deepEqual(events, ['ack']);
 });
 
-test('maintenance path reports swallowed D1 failures as failed Queue retries', async () => {
+test('maintenance failures remain Queue retries', async () => {
   const events = [];
-  const message = {
-    body: {
-      message_type: MONITOR_MAINTENANCE_MESSAGE,
-      cron: SNAPSHOT_RETENTION_CRON,
-      scheduled_at: BASE + 50 * 60_000,
-    },
-    ack() { events.push('ack'); },
-    retry() { events.push('retry'); },
-  };
   const originalError = console.error;
   console.error = () => {};
   try {
-    await runConsolidatedMonitorQueue(
-      { messages: [message] },
+    await runRuntimeQueue(
+      {
+        messages: [{
+          body: {
+            message_type: MONITOR_MAINTENANCE_MESSAGE,
+            cron: SNAPSHOT_RETENTION_CRON,
+            scheduled_at: BASE + 50 * 60_000,
+          },
+          ack() { events.push('ack'); },
+          retry() { events.push('retry'); },
+        }],
+      },
       { BUDDIES_DB: {}, OTHER_DB: {} },
       {},
       {
         maintenanceDependencies: {
           applyStagger: async () => {},
           waitForCollector: async () => ({ ready: true }),
-          pruneSnapshots: async () => ({ skipped: true, reason: 'retention-error', error: 'delete failed' }),
+          pruneSnapshots: async () => ({
+            skipped: true,
+            reason: 'retention-error',
+            error: 'delete failed',
+          }),
         },
       },
     );
@@ -237,110 +196,9 @@ test('maintenance path reports swallowed D1 failures as failed Queue retries', a
   assert.deepEqual(events, ['retry']);
 });
 
-test('direct maintenance runner preserves collector gating', async () => {
-  const skipped = await runMonitorMaintenanceCron(
-    { cron: SNAPSHOT_RETENTION_CRON, scheduledTime: BASE + 50 * 60_000 },
-    { BUDDIES_DB: {}, OTHER_DB: {} },
-    {
-      applyStagger: async () => {},
-      waitForCollector: async () => ({ ready: false, reason: 'collector-not-ready', targetMinute: BASE }),
-      pruneSnapshots: async () => assert.fail('retention must be gated'),
-    },
-  );
-  assert.deepEqual(skipped, { skipped: true, reason: 'collector-not-ready', targetMinute: BASE });
-});
-
-test('other monitor reserves buddy46 stages and runs only one workload per tick', async () => {
-  assert.equal(otherMonitorTask(BASE), 'buddy');
-  assert.equal(otherMonitorTask(BASE + 5 * 60_000), 'buddy');
-  assert.equal(otherMonitorTask(BASE + 10 * 60_000), 'prediction');
-  assert.equal(otherMonitorTask(BASE + 15 * 60_000), 'buddy');
-  assert.equal(otherMonitorTask(BASE + 20 * 60_000), 'officialNews');
-  assert.equal(otherMonitorTask(BASE + 25 * 60_000), 'host');
-  assert.equal(otherMonitorTask(BASE + 30 * 60_000), 'buddy');
-  assert.equal(otherMonitorTask(BASE + 40 * 60_000), 'prediction');
-  assert.equal(otherMonitorTask(BASE + 50 * 60_000), 'host');
-
-  const calls = [];
-  const dependencies = {
-    buddy: async () => { calls.push('buddy'); return 'buddy'; },
-    host: async () => { calls.push('host'); return 'host'; },
-    officialNews: async () => { calls.push('officialNews'); return 'news'; },
-    officialNewsDue: async () => true,
-  };
-  const buddyResult = await runOtherMonitorScheduled(
-    { cron: OTHER_MONITOR_CRON, scheduledTime: BASE + 5 * 60_000 },
-    {},
-    {},
-    dependencies,
-  );
-  assert.deepEqual(buddyResult, ['buddy']);
-  assert.deepEqual(calls, ['buddy']);
-
-  calls.length = 0;
-  const dueNewsResult = await runOtherMonitorScheduled(
-    { cron: OTHER_MONITOR_CRON, scheduledTime: BASE + 25 * 60_000 },
-    {},
-    {},
-    dependencies,
-  );
-  assert.deepEqual(dueNewsResult, ['news']);
-  assert.deepEqual(calls, ['officialNews']);
-
-  const events = [];
-  await runOtherMonitorCron(
-    { cron: OTHER_MONITOR_CRON, scheduledTime: BASE + 10 * 60_000 },
-    {},
-    {},
-    {
-      dependencies: {
-        prediction: async () => events.push('prediction'),
-        officialNewsDue: async () => false,
-      },
-      recordSuccess: async () => events.push('heartbeat'),
-      healthApp: { invalidateHealthCache: () => events.push('invalidate') },
-    },
-  );
-  assert.deepEqual(events, ['prediction', 'heartbeat', 'invalidate']);
-});
-
-test('consolidated monitor rejects unknown schedules', async () => {
+test('runtime scheduled handler rejects unknown schedules', async () => {
   assert.deepEqual(
-    await runConsolidatedMonitorScheduled({ cron: '1 2 3 4 5' }, {}, {}),
-    { skipped: true, reason: 'unsupported-consolidated-monitor-cron', cron: '1 2 3 4 5' },
+    await runRuntimeScheduled({ cron: '1 2 3 4 5' }, {}, {}),
+    { skipped: true, reason: 'unsupported-runtime-cron', cron: '1 2 3 4 5' },
   );
-});
-
-test('Pages read-model Worker owns both Queue boundaries', async () => {
-  const worker = config('wrangler.minute-enrichment.jsonc');
-  assert.deepEqual(
-    worker.queues.consumers.map(({ queue }) => queue).slice(-2),
-    ['stationhead-pages-read-model-publication', MINUTE_READ_MODEL_QUEUE],
-  );
-  assert.equal(worker.queues.producers.some(({ binding }) => binding === 'TRACK_METADATA_QUEUE'), true);
-
-  const events = [];
-  await runPagesReadModelQueue({
-    queue: MINUTE_READ_MODEL_QUEUE,
-    messages: [{
-      body: {
-        message_type: 'stationhead-read-model',
-        message_version: 1,
-        read_model: {
-          queue: {
-            value: {
-              tracks: [{ title: null, artist: null, album_name: null, thumbnail_url: null }],
-            },
-          },
-        },
-      },
-      ack() { events.push('ack'); },
-      retry() { events.push('retry'); },
-    }],
-  }, {
-    TRACK_METADATA_QUEUE: {
-      async send() { events.push('metadata'); },
-    },
-  }, {});
-  assert.deepEqual(events, ['metadata', 'ack']);
 });

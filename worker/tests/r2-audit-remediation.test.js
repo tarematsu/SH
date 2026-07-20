@@ -141,8 +141,9 @@ test('absent buddy station is acknowledged after recording collector failure', a
   assert.match(statusWrite.params[4], /station-not-found/);
 });
 
-test('monitor deployment retires the orphaned buddies read-model Worker', () => {
-  const source = readFileSync(new URL('../scripts/deploy-other-monitor.mjs', import.meta.url), 'utf8');
+test('runtime deployment retires orphaned Worker scripts centrally', () => {
+  const source = readFileSync(new URL('../scripts/cloudflare-workers.mjs', import.meta.url), 'utf8');
   assert.match(source, /'sh-buddies-read-model'/);
-  assert.match(source, /for \(const scriptName of retiredScripts\) await deleteOldWorker\(scriptName\)/);
+  assert.match(source, /export async function pruneRetiredWorkers/);
+  assert.match(source, /for \(const name of names\) await deleteWorker\(name\)/);
 });

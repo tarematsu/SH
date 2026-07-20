@@ -12,12 +12,28 @@ test('read-model hydration is deferred only for incomplete track presentation', 
   assert.equal(readModelNeedsHydration({
     queue: {
       value: {
-        tracks: [{ title: 'Song', artist: 'Artist', album_name: 'Album', thumbnail_url: 'image' }],
+        tracks: [{
+          spotify_id: 'spotify-complete',
+          title: 'Song',
+          artist: 'Artist',
+          album_name: 'Album',
+          thumbnail_url: 'image',
+        }],
       },
     },
   }), false);
   assert.equal(readModelNeedsHydration({
-    queue: { value: { tracks: [{ title: 'Song', artist: null, album_name: 'Album', thumbnail_url: 'image' }] } },
+    queue: {
+      value: {
+        tracks: [{
+          spotify_id: 'spotify-incomplete',
+          title: 'Song',
+          artist: null,
+          album_name: 'Album',
+          thumbnail_url: 'image',
+        }],
+      },
+    },
   }), true);
 });
 

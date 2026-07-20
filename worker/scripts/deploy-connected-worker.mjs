@@ -2,11 +2,13 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
-import { cloudflareBuildConfig } from './select-cloudflare-build-config.mjs';
+import { cloudflareBuildConfig } from './cloudflare-build-config.mjs';
+import { wranglerCommand } from './wrangler-command.mjs';
 
 const workerRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const repositoryRoot = resolve(workerRoot, '..');
 const selectorPath = resolve(workerRoot, 'scripts', 'select-worker-deploys.mjs');
+const DEFAULT_WORKER_NAME = 'sh-runtime-orchestrator';
 
 function normalizedLines(value) {
   return [...new Set(String(value || '')
@@ -29,9 +31,7 @@ export function connectedDeployDecision(workerName, changedPaths, selectedWorker
   if (name && !cloudflareBuildConfig(name)) {
     return { deploy: false, reason: 'unknown-worker-build', workerName: name };
   }
-  if (!name) {
-    return { deploy: true, reason: 'not-a-connected-worker-build', workerName: null };
-  }
+  if (!name) return { deploy: true, reason: 'not-a-connected-worker-build', workerName: null };
   if (!Array.isArray(changedPaths)) {
     return { deploy: true, reason: 'changed-files-unavailable', workerName: name };
   }
@@ -70,18 +70,15 @@ export function currentCommitChangedPaths(options = {}) {
 }
 
 export function gitHubRepositorySlug(remoteUrl) {
-  const value = String(remoteUrl || '').trim();
-  const match = value.match(/github\.com[/:]([^/\s]+)\/([^/\s]+?)(?:\.git)?$/i);
+  const match = String(remoteUrl || '').trim()
+    .match(/github\.com[/:]([^/\s]+)\/([^/\s]+?)(?:\.git)?$/i);
   return match ? `${match[1]}/${match[2]}` : null;
 }
 
 function connectedRepositorySlug(options = {}) {
   if (options.repositorySlug) return String(options.repositorySlug).trim() || null;
-  try {
-    return gitHubRepositorySlug(gitOutput(['remote', 'get-url', 'origin'], options));
-  } catch {
-    return null;
-  }
+  try { return gitHubRepositorySlug(gitOutput(['remote', 'get-url', 'origin'], options)); }
+  catch { return null; }
 }
 
 function connectedCommitSha(options = {}) {
@@ -91,20 +88,14 @@ function connectedCommitSha(options = {}) {
     ?? '',
   ).trim();
   if (configured) return configured;
-  try {
-    return gitOutput(['rev-parse', 'HEAD'], options);
-  } catch {
-    return null;
-  }
+  try { return gitOutput(['rev-parse', 'HEAD'], options); }
+  catch { return null; }
 }
 
 export function connectedRepositoryIsShallow(options = {}) {
   if (typeof options.shallow === 'boolean') return options.shallow;
-  try {
-    return gitOutput(['rev-parse', '--is-shallow-repository'], options) === 'true';
-  } catch {
-    return false;
-  }
+  try { return gitOutput(['rev-parse', '--is-shallow-repository'], options) === 'true'; }
+  catch { return false; }
 }
 
 export async function githubCommitChangedPaths(options = {}) {
@@ -146,8 +137,9 @@ export async function connectedCommitChangedPaths(options = {}) {
   const localPaths = options.localPaths === undefined
     ? currentCommitChangedPaths(options)
     : options.localPaths;
-  const shallow = connectedRepositoryIsShallow(options);
-  if (!shallow && Array.isArray(localPaths) && localPaths.length > 0) return localPaths;
+  if (!connectedRepositoryIsShallow(options)
+      && Array.isArray(localPaths)
+      && localPaths.length > 0) return localPaths;
   const remotePaths = await githubCommitChangedPaths(options);
   return Array.isArray(remotePaths) && remotePaths.length > 0 ? remotePaths : localPaths;
 }
@@ -173,9 +165,16 @@ export function affectedWorkersForPaths(changedPaths, options = {}) {
   }
 }
 
+function hasConfigArgument(args) {
+  return args.some((arg) => arg === '--config' || arg === '-c' || String(arg).startsWith('--config='));
+}
+
 function runWrangler(args = [], options = {}) {
-  const executable = process.platform === 'win32' ? 'wrangler.cmd' : 'wrangler';
-  const result = (options.spawnSync || spawnSync)(executable, ['deploy', ...args], {
+  const configArgs = options.workerConfig && !hasConfigArgument(args)
+    ? ['--config', options.workerConfig]
+    : [];
+  const command = wranglerCommand(['deploy', ...configArgs, ...args]);
+  const result = (options.spawnSync || spawnSync)(command.executable, command.args, {
     cwd: options.workerRoot || workerRoot,
     stdio: 'inherit',
     env: process.env,
@@ -186,17 +185,35 @@ function runWrangler(args = [], options = {}) {
 }
 
 export async function deployConnectedWorker(options = {}) {
-  const workerName = String(options.workerName ?? process.env.WRANGLER_CI_OVERRIDE_NAME ?? '').trim();
+  const requestedWorkerName = String(
+    options.workerName ?? process.env.WRANGLER_CI_OVERRIDE_NAME ?? '',
+  ).trim();
+  const workerName = requestedWorkerName || DEFAULT_WORKER_NAME;
   const workerConfig = cloudflareBuildConfig(workerName);
-  if (workerName && !workerConfig) {
+  if (!workerConfig) {
     const decision = { deploy: false, reason: 'unknown-worker-build', workerName };
     console.log(JSON.stringify({ event: 'connected_worker_deploy_decision', ...decision }));
     return decision;
   }
 
+  if (!requestedWorkerName) {
+    const decision = { deploy: true, reason: 'local-runtime-default', workerName };
+    console.log(JSON.stringify({
+      event: 'connected_worker_deploy_decision',
+      ...decision,
+      branch: null,
+      production_branch: null,
+      changed_paths: null,
+      affected_workers: null,
+      config: workerConfig,
+    }));
+    runWrangler(options.wranglerArgs || process.argv.slice(2), { ...options, workerConfig });
+    return decision;
+  }
+
   const branch = String(options.branch ?? process.env.WORKERS_CI_BRANCH ?? '').trim();
   const productionBranch = String(options.productionBranch ?? 'main').trim() || 'main';
-  if (workerConfig && branch && branch !== productionBranch) {
+  if (branch && branch !== productionBranch) {
     const decision = {
       deploy: false,
       reason: 'non-production-branch',
@@ -223,10 +240,11 @@ export async function deployConnectedWorker(options = {}) {
     production_branch: productionBranch,
     changed_paths: Array.isArray(changedPaths) ? changedPaths : null,
     affected_workers: Array.isArray(selectedWorkers) ? selectedWorkers : null,
+    config: workerConfig,
   }));
 
   if (!decision.deploy) return decision;
-  runWrangler(options.wranglerArgs || process.argv.slice(2), options);
+  runWrangler(options.wranglerArgs || process.argv.slice(2), { ...options, workerConfig });
   return decision;
 }
 

@@ -7,20 +7,25 @@ const workerRoot = resolve(repositoryRoot, 'worker');
 const workerDefinitions = [
   { name: 'sh-minute-enrichment', config: 'worker/wrangler.minute-enrichment.jsonc', command: 'deploy:minute-enrichment' },
   { name: 'sh-buddies-ingest', config: 'worker/wrangler.ingest.jsonc', command: 'deploy:ingest' },
-  { name: 'sh-monitor-other', config: 'worker/wrangler.other.jsonc', command: 'deploy:other' },
+  { name: 'sh-runtime-orchestrator', config: 'worker/wrangler.runtime.jsonc', command: 'deploy:runtime' },
 ];
 
-const gitConnectedWorkers = new Set([
-  'sh-monitor-other',
-]);
+const gitConnectedWorkers = new Set(['sh-runtime-orchestrator']);
 
 const deployScriptWorkers = new Map([
-  ['worker/scripts/deploy-consolidated-monitor.mjs', 'sh-monitor-other'],
-  ['worker/scripts/monitor-cutover-queues.mjs', 'sh-monitor-other'],
-  ['worker/scripts/monitor-cutover-cloudflare.mjs', 'sh-monitor-other'],
-  ['worker/scripts/deploy-pages-read-model.mjs', 'sh-minute-enrichment'],
+  ['worker/scripts/deploy-runtime.mjs', 'sh-runtime-orchestrator'],
   ['worker/scripts/deploy-minute-enrichment.mjs', 'sh-minute-enrichment'],
+  ['worker/scripts/pages-response-kv-namespace.mjs', 'sh-minute-enrichment'],
   ['worker/scripts/deploy-ingest.mjs', 'sh-buddies-ingest'],
+]);
+
+const allWorkerDeployScripts = new Set([
+  'worker/scripts/cloudflare-build-config.mjs',
+  'worker/scripts/cloudflare-queues.mjs',
+  'worker/scripts/cloudflare-workers.mjs',
+  'worker/scripts/deploy-connected-worker.mjs',
+  'worker/scripts/wrangler-command.mjs',
+  'worker/package.json',
 ]);
 
 function repositoryPath(path) {
@@ -54,9 +59,7 @@ function importedSpecifiers(source) {
 }
 
 function resolveImport(importer, specifier) {
-  if (specifier === 'sh-shared') {
-    return resolve(repositoryRoot, 'packages/sh-shared/index.mjs');
-  }
+  if (specifier === 'sh-shared') return resolve(repositoryRoot, 'packages/sh-shared/index.mjs');
   if (!specifier.startsWith('.')) return null;
   return existingModule(resolve(dirname(importer), specifier));
 }
@@ -89,8 +92,10 @@ function normalizeChangedPath(value) {
 function readChangedPaths() {
   if (process.argv.includes('--all')) return { all: true, paths: [] };
   const input = readFileSync(0, 'utf8');
-  const paths = [...new Set(input.split(/\r?\n/).map(normalizeChangedPath).filter(Boolean))];
-  return { all: false, paths };
+  return {
+    all: false,
+    paths: [...new Set(input.split(/\r?\n/).map(normalizeChangedPath).filter(Boolean))],
+  };
 }
 
 function affectedByPath(definition, changedPath) {
@@ -108,7 +113,7 @@ if (changed.all) {
   for (const definition of definitions) selected.add(definition.name);
 } else {
   for (const changedPath of changed.paths) {
-    if (changedPath === 'worker/package-lock.json') {
+    if (changedPath === 'worker/package-lock.json' || allWorkerDeployScripts.has(changedPath)) {
       for (const definition of definitions) selected.add(definition.name);
       continue;
     }
@@ -140,13 +145,11 @@ if (changed.all) {
 }
 
 const workers = definitions.filter((definition) => selected.has(definition.name));
-const output = {
+process.stdout.write(`${JSON.stringify({
   changed_paths: changed.paths,
   workers: workers.map((definition) => definition.name),
   commands: workers.map((definition) => definition.command),
   diagnostics: workers
     .map((definition) => definition.name)
     .filter((name) => gitConnectedWorkers.has(name)),
-};
-
-process.stdout.write(`${JSON.stringify(output)}\n`);
+})}\n`);

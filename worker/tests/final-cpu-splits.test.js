@@ -127,9 +127,22 @@ test('comment forwarding fully validates legacy or mismatched continuation messa
   assert.equal(forwarded.payload.comments.commentTotal, 9);
 });
 
-test('read-model hydration, preservation and writes run as separate metadata stages', async () => {
+test('read-model hydration, remaining preservation and writes run as separate metadata stages', async () => {
   const enqueued = [];
-  const readModel = { channel: { channel_id: 10, observed_at: 20 } };
+  const readModel = {
+    channel: { channel_id: 10, observed_at: 20 },
+    queue: {
+      value: {
+        tracks: [{
+          spotify_id: 'spotify-album-gap',
+          title: 'Song',
+          artist: 'Artist',
+          album_name: null,
+          thumbnail_url: 'cover',
+        }],
+      },
+    },
+  };
   const dependencies = {
     hydrateReadModelMetadata: async (_env, value) => ({ ...value, hydrated: true }),
     preserveReadModelForWrite: async (_env, value) => ({ ...value, preserved: true }),

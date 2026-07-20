@@ -17,7 +17,7 @@ test('monitor maintenance caches lazy modules and exposes scheduled work only', 
 });
 
 test('other monitor avoids Date allocation and caches task modules', () => {
-  const config = source('../wrangler.other.jsonc');
+  const config = source('../wrangler.runtime.jsonc');
   const entry = source('../src/other-monitor-entry.js');
   assert.match(config, /"max_batch_size"\s*:\s*1\b/g);
   assert.match(entry, /Math\.floor\(now \/ MINUTE_MS\) % 60/);
@@ -32,16 +32,26 @@ test('other monitor avoids Date allocation and caches task modules', () => {
   assert.doesNotMatch(entry, /for \(const message of batch/);
 });
 
-test('the consolidated monitor config deploys the consolidated entrypoint', () => {
-  const config = source('../wrangler.other.jsonc');
-  assert.match(config, /"main"\s*:\s*"src\/consolidated-monitor-entry\.js"/);
-  assert.doesNotMatch(config, /"main"\s*:\s*"src\/other-entry\.js"/);
-  const entry = source('../src/consolidated-monitor-entry.js');
-  assert.match(entry, /for \(const message of messages\)/);
-  assert.match(entry, /rawCollectorModulePromise \|\|=/);
-  assert.match(entry, /minuteMaintenanceModulePromise \|\|=/);
-  assert.match(entry, /monitorMaintenanceModulePromise \|\|=/);
-  assert.match(entry, /otherMonitorModulePromise \|\|=/);
-  assert.match(entry, /minutePipelineModulePromise \|\|=/);
-  assert.match(entry, /minutePipelineEnv/);
+test('runtime orchestration is split by scheduled, Queue, and env responsibilities', () => {
+  const config = source('../wrangler.runtime.jsonc');
+  assert.match(config, /"main"\s*:\s*"src\/runtime-orchestrator-entry\.js"/);
+
+  const entry = source('../src/runtime-orchestrator-entry.js');
+  assert.match(entry, /runRuntimeScheduled/);
+  assert.match(entry, /runRuntimeQueue/);
+  assert.doesNotMatch(entry, /for \(const message of messages\)/);
+
+  const scheduled = source('../src/runtime-scheduled.js');
+  assert.match(scheduled, /rawCollectorModulePromise \|\|=/);
+  assert.match(scheduled, /minuteMaintenanceModulePromise \|\|=/);
+  assert.match(scheduled, /otherMonitorModulePromise \|\|=/);
+
+  const queue = source('../src/runtime-queue.js');
+  assert.match(queue, /for \(const message of messages\)/);
+  assert.match(queue, /monitorMaintenanceModulePromise \|\|=/);
+  assert.match(queue, /minutePipelineModulePromise \|\|=/);
+
+  const env = source('../src/runtime-env.js');
+  assert.match(env, /function withDatabaseAlias/);
+  assert.match(env, /export function minutePipelineEnv/);
 });

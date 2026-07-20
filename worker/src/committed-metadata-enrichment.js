@@ -1,3 +1,6 @@
+import { environmentView } from '../../packages/sh-shared/environment-view.mjs';
+import { logSampledSuccess } from './sampled-success-log.js';
+
 let configModulePromise;
 let ingestModulePromise;
 let spotifyModulePromise;
@@ -5,10 +8,7 @@ let isrcModulePromise;
 
 function sourceDatabaseEnv(env) {
   const source = env?.MINUTE_DB;
-  if (!source) return env;
-  const active = Object.create(env || null);
-  Object.defineProperty(active, 'DB', { value: source, enumerable: false });
-  return active;
+  return source ? environmentView(env, { DB: source }) : env;
 }
 
 function failureDetail(error) {
@@ -129,13 +129,13 @@ export async function runCommittedSpotifyMetadataEnrichment(env, jobs, dependenc
         : 0;
       const saved = Number(savedResult?.saved ?? savedResult ?? 0);
       savedTotal += Number.isFinite(saved) ? saved : 0;
-      console.log(JSON.stringify({
+      logSampledSuccess({
         event: 'minute_track_metadata_enriched',
         stage: 'spotify',
         job_id: job.jobId,
         candidates,
         saved: Number(saved || 0),
-      }));
+      }, job.payload.observedAt, 60, 10);
     } catch (error) {
       console.warn(JSON.stringify({
         event: 'minute_track_metadata_enrichment_failed',
@@ -164,14 +164,14 @@ export async function runCommittedIsrcMetadataEnrichment(env, jobs, dependencies
         ? await enrichIsrcTracks(sourceEnv, queue, config)
         : { attempted: 0, saved: 0 };
       savedTotal += Number(result?.saved || 0);
-      console.log(JSON.stringify({
+      logSampledSuccess({
         event: 'isrc_track_metadata_enriched',
         stage: 'isrc',
         job_id: job.jobId,
         candidates,
         attempted: Number(result?.attempted || 0),
         saved: Number(result?.saved || 0),
-      }));
+      }, job.payload.observedAt, 60, 20);
     } catch (error) {
       console.warn(JSON.stringify({
         event: 'minute_track_metadata_enrichment_failed',
@@ -202,8 +202,6 @@ export async function repairCommittedPlaybackReadModels(env, saved, dependencies
 }
 
 export async function runCommittedMetadataEnrichment(env, jobs, dependencies = {}) {
-  // Resolve recording identity first. Spotify is now only the artwork/provider
-  // fallback after the ISRC dictionary has had a chance to satisfy the request.
   const isrcSaved = await runCommittedIsrcMetadataEnrichment(env, jobs, dependencies);
   const spotifySaved = await runCommittedSpotifyMetadataEnrichment(env, jobs, dependencies);
   const playbackRepair = await repairCommittedPlaybackReadModels(

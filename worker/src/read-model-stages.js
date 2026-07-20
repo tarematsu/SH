@@ -2,8 +2,8 @@ import {
   attachReadModelTrackMetadata,
   loadReadModelTrackMetadata,
   preserveReadModelTrackMetadata,
-  queueNeedsPreviousTrackMetadata,
 } from './minute-facts-read-model.js';
+import { queueNeedsPreservation } from './read-model-metadata-plan.js';
 
 const READ_MODEL_CHECKPOINT_MS = 5 * 60_000;
 
@@ -89,7 +89,7 @@ export async function preserveReadModelForWrite(env, readModel) {
   const queue = readModel?.queue?.value;
   const channelId = integer(readModel?.channel?.channel_id);
   if (!env?.MINUTE_DB || channelId == null || !queue?.tracks?.length
-      || !queueNeedsPreviousTrackMetadata(queue)) return readModel;
+      || !queueNeedsPreservation(queue)) return readModel;
 
   const previous = await env.MINUTE_DB.prepare(`SELECT queue_id,start_time,queue_json
     FROM sh_queue_read_model_current WHERE channel_id=? LIMIT 1`).bind(channelId).first();

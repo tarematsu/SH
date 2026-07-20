@@ -10,13 +10,10 @@ const metadataPath = resolve(repositoryRoot, 'database/other-db.json');
 const databaseName = process.env.OTHER_DATABASE_NAME || 'stationhead-other';
 const BINDING = 'OTHER_DB';
 
-// Both configs need this binding: sh-monitor-other writes the tables in
-// database/other-migrations, and site reads/writes several of the same
-// tables (host-ingest, dashboard, history summaries) directly.
-// Shared track metadata is consolidated by the explicit metadata-consolidation
-// workflow after the target database has been verified.
+// Runtime writes the operational tables and Pages reads the public projections.
+// Provisioning updates only those two explicit owners.
 const configPaths = [
-  resolve(workerRoot, 'wrangler.other.jsonc'),
+  resolve(workerRoot, 'wrangler.runtime.jsonc'),
   resolve(repositoryRoot, 'site/wrangler.jsonc'),
 ];
 
@@ -78,22 +75,16 @@ const migrationFiles = readdirSync(migrationsDir)
   .filter((name) => name.endsWith('.sql'))
   .sort();
 const retiredMigrationFiles = new Set([
-  // Historical creation migrations must not recreate the archive after the
-  // final retirement migration has removed it.
   '005_legacy_history_tables.sql',
   '006_legacy_snapshot_stream_count.sql',
 ]);
 for (const migrationFile of migrationFiles) {
   if (retiredMigrationFiles.has(migrationFile)) continue;
-  try {
-    wrangler([
-      'd1', 'execute', databaseName,
-      '--remote', '--yes',
-      '--file', resolve(migrationsDir, migrationFile),
-    ]);
-  } catch (error) {
-    throw error;
-  }
+  wrangler([
+    'd1', 'execute', databaseName,
+    '--remote', '--yes',
+    '--file', resolve(migrationsDir, migrationFile),
+  ]);
 }
 
 writeFileSync(metadataPath, `${JSON.stringify({

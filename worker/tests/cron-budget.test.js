@@ -6,20 +6,20 @@ function config(name) {
   return JSON.parse(readFileSync(new URL(`../${name}`, import.meta.url), 'utf8'));
 }
 
-test('three production Workers stay within the account-wide Free cron limit', () => {
+test('active production Workers stay within the account-wide Free cron limit', () => {
   const configs = [
-    config('wrangler.jsonc'),
-    config('wrangler.minute.jsonc'),
-    config('wrangler.other.jsonc'),
+    config('wrangler.ingest.jsonc'),
+    config('wrangler.minute-enrichment.jsonc'),
+    config('wrangler.runtime.jsonc'),
   ];
   const counts = configs.map((value) => value.triggers?.crons?.length || 0);
 
-  assert.deepEqual(counts, [1, 2, 1]);
-  assert.equal(counts.reduce((sum, count) => sum + count, 0), 4);
+  assert.deepEqual(counts, [0, 1, 1]);
+  assert.equal(counts.reduce((sum, count) => sum + count, 0), 2);
 });
 
-test('other cron health threshold tolerates a delayed five-minute tick', () => {
-  const other = config('wrangler.other.jsonc');
-  assert.deepEqual(other.triggers.crons, ['* * * * *']);
-  assert.ok(Number(other.vars.OTHER_CRON_STALE_MS) >= 12 * 60_000);
+test('runtime health threshold tolerates a delayed five-minute task slot', () => {
+  const runtime = config('wrangler.runtime.jsonc');
+  assert.deepEqual(runtime.triggers.crons, ['* * * * *']);
+  assert.ok(Number(runtime.vars.OTHER_CRON_STALE_MS) >= 12 * 60_000);
 });

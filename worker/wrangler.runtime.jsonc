@@ -1,7 +1,7 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "sh-monitor-other",
-  "main": "src/consolidated-monitor-entry.js",
+  "name": "sh-runtime-orchestrator",
+  "main": "src/runtime-orchestrator-entry.js",
   "compatibility_date": "2026-06-24",
   "workers_dev": false,
   "preview_urls": false,
@@ -109,7 +109,7 @@
       },
       {
         "queue": "stationhead-minute-live-derive",
-        "max_batch_size": 2,
+        "max_batch_size": 1,
         "max_batch_timeout": 1,
         "max_retries": 8,
         "dead_letter_queue": "stationhead-minute-live-derive-dlq",

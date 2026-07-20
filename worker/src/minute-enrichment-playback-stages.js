@@ -24,10 +24,43 @@ function identityFrom(body) {
   return { channelId, minuteAt, observedAt };
 }
 
+async function loadPlaybackContext(db, identity) {
+  return db.prepare(`SELECT f.observed_at,
+      p.channel_id AS playback_channel_id,
+      p.session_id AS playback_session_id,
+      p.revision_id AS playback_revision_id,
+      p.queue_start_time AS playback_queue_start_time,
+      p.is_paused AS playback_is_paused,
+      p.paused_total_ms AS playback_paused_total_ms,
+      p.pause_started_at AS playback_pause_started_at,
+      p.last_observed_at AS playback_last_observed_at,
+      p.current_position AS playback_current_position
+    FROM sh_minute_facts f
+    LEFT JOIN sh_playback_current p ON p.channel_id=f.channel_id
+    WHERE f.channel_id=? AND f.minute_at=? LIMIT 1`)
+    .bind(identity.channelId, identity.minuteAt).first();
+}
+
 async function loadCurrentMinute(db, identity) {
   return db.prepare(`SELECT id,observed_at,quality_flags FROM sh_minute_facts
     WHERE channel_id=? AND minute_at=? LIMIT 1`)
     .bind(identity.channelId, identity.minuteAt).first();
+}
+
+function preloadedPlaybackState(current) {
+  if (!current || !Object.hasOwn(current, 'playback_channel_id')) return undefined;
+  if (current.playback_channel_id == null) return null;
+  return {
+    channel_id: current.playback_channel_id,
+    session_id: current.playback_session_id,
+    revision_id: current.playback_revision_id,
+    queue_start_time: current.playback_queue_start_time,
+    is_paused: current.playback_is_paused,
+    paused_total_ms: current.playback_paused_total_ms,
+    pause_started_at: current.playback_pause_started_at,
+    last_observed_at: current.playback_last_observed_at,
+    current_position: current.playback_current_position,
+  };
 }
 
 function staleWinner(current, identity) {
@@ -107,13 +140,14 @@ export async function processMinutePlaybackResolve(
   if (!db?.prepare && !dependencies.loadCurrentMinute) {
     throw new Error('MINUTE_DB binding is missing');
   }
-  const loadCurrent = dependencies.loadCurrentMinute || loadCurrentMinute;
+  const loadCurrent = dependencies.loadCurrentMinute || loadPlaybackContext;
   const current = await loadCurrent(db, identity);
   if (staleWinner(current, identity)) {
     return { skipped: true, reason: 'stale-minute-winner', stage: 'playback', ...identity };
   }
   const revisionId = integer(body.revision_id);
   if (revisionId == null) throw new Error('minute playback revision id is missing');
+  const previous = preloadedPlaybackState(current);
   const updatePlayback = dependencies.updatePlaybackState || updatePlaybackState;
   const playback = await updatePlayback(db, {
     channelId: identity.channelId,
@@ -122,6 +156,7 @@ export async function processMinutePlaybackResolve(
     queueStartTime: body.queue_start_time,
     observedAt: identity.observedAt,
     isPaused: body.is_paused,
+    ...(previous !== undefined ? { previous } : {}),
   });
   const position = integer(playback?.current_position);
   const trackId = integer(playback?.current_track_id);

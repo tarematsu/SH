@@ -18,14 +18,6 @@ const splitDeployWorkflow = readFileSync(
   new URL('../.github/workflows/deploy-split-pipeline.yml', import.meta.url),
   'utf8',
 );
-const observabilityWorkflow = readFileSync(
-  new URL('../.github/workflows/fetch-cloudflare-observability.yml', import.meta.url),
-  'utf8',
-);
-const observabilityFetcher = readFileSync(
-  new URL('../.github/scripts/fetch-r2-worker-logs.py', import.meta.url),
-  'utf8',
-);
 const observabilityAnalyzer = readFileSync(
   new URL('../.github/scripts/analyze-worker-observability.py', import.meta.url),
   'utf8',
@@ -35,7 +27,6 @@ const workerPackage = JSON.parse(readFileSync(
   'utf8',
 ));
 
-const selectorName = 'select-worker-deploys.mjs';
 const splitQueues = [
   'stationhead-buddies-persist',
   'stationhead-ingest-finalize',
@@ -48,29 +39,27 @@ const splitQueues = [
   'stationhead-read-model',
 ];
 
-function position(source, value) {
-  const index = source.indexOf(value);
-  assert.notEqual(index, -1, `missing expected workflow fragment: ${value}`);
-  return index;
-}
-
-test('manual deploy keeps all Cloudflare targets available', () => {
-  const fallback = 'secrets.CLOUDFLARE_BUILDS_API_TOKEN || secrets.CLOUDFLARE_API_TOKEN || secrets.CF_API_TOKEN';
-  const occurrences = deployWorkflow.split(fallback).length - 1;
-
+test('manual deploy exposes Pages and the three active Workers only', () => {
   assert.match(deployWorkflow, /^\s{2}workflow_dispatch:/m);
   assert.doesNotMatch(deployWorkflow, /^\s{2}push:/m);
   assert.match(deployWorkflow, /wrangler pages deploy/);
-  assert.doesNotMatch(deployWorkflow, /npm run deploy:buddies/);
-  assert.match(deployWorkflow, /npm run deploy:ingest/);
-  assert.match(deployWorkflow, /npm run deploy:minute/);
-  assert.match(deployWorkflow, /npm run deploy:split-other/);
-  assert.equal(occurrences, 3);
+  for (const target of ['ingest', 'minute-enrichment', 'runtime']) {
+    assert.match(deployWorkflow, new RegExp(`- ${target}`));
+  }
+  for (const command of [
+    'deploy:ingest',
+    'deploy:minute-enrichment',
+    'deploy:runtime',
+  ]) {
+    assert.match(deployWorkflow, new RegExp(command));
+  }
+  assert.doesNotMatch(deployWorkflow, /deploy:split-other|deploy:minute(?!-enrichment)|deploy:other/);
+  assert.equal((deployWorkflow.match(/^  [a-z][a-z-]*:\n    name:/gm) || []).length, 2);
 });
 
-test('automatic deploys select only affected current Workers and isolate script renames', () => {
+test('automatic deploys select affected Workers from one import graph', () => {
   for (const workflow of [splitDeployWorkflow, prDiagnosticsWorkflow]) {
-    assert.match(workflow, new RegExp(selectorName.replace('.', '\\.')));
+    assert.match(workflow, /select-worker-deploys\.mjs/);
     assert.match(workflow, /site\/functions\/\*\*/);
     assert.match(workflow, /packages\/sh-shared\/\*\*/);
     assert.match(workflow, /DEPLOY_COMMANDS/);
@@ -80,34 +69,12 @@ test('automatic deploys select only affected current Workers and isolate script 
 
   assert.match(splitDeployWorkflow, /workflow_dispatch/);
   assert.match(splitDeployWorkflow, /select-worker-deploys\.mjs --all/);
-  assert.match(
-    splitDeployWorkflow,
-    /CLOUDFLARE_ACCOUNT_ID:.*0500f25c2f74e7e76c94a8bcb6c7008b/,
-  );
-  assert.doesNotMatch(splitDeployWorkflow, /legacy/i);
-  assert.doesNotMatch(splitDeployWorkflow, /retire:/);
-
   assert.match(prDiagnosticsWorkflow, /github\.event\.pull_request\.base\.sha/);
-  assert.match(prDiagnosticsWorkflow, /topology_rename/);
-  assert.match(prDiagnosticsWorkflow, /git diff --diff-filter=M -U0/);
-  assert.match(prDiagnosticsWorkflow, /Skipping direct PR deploy because a Worker script name changed/);
-  assert.match(prDiagnosticsWorkflow, /needs\.select-workers\.outputs\.topology_rename != 'true'/);
-  assert.match(prDiagnosticsWorkflow, /fromJSON\(needs\.select-workers\.outputs\.diagnostics\)/);
-  assert.doesNotMatch(prDiagnosticsWorkflow, /Reinitialize track-history publication/);
-  assert.doesNotMatch(prDiagnosticsWorkflow, /Probe Pages Queue consumer/);
+  assert.match(prDiagnosticsWorkflow, /runtime_changes/);
+  assert.doesNotMatch(prDiagnosticsWorkflow, /Reinitialize track-history publication|Probe Pages Queue consumer/);
 });
 
-test('PR deploys apply only the current facts schema before dependent Workers', () => {
-  assert.match(prDiagnosticsWorkflow, /database\/facts-migrations\/\*\*/);
-  assert.match(prDiagnosticsWorkflow, /database\/facts-db\.json/);
-  assert.match(prDiagnosticsWorkflow, /facts_schema/);
-  const provision = 'node scripts/apply-facts-pr-schema.mjs';
-  const deploy = 'Deploy selected Workers in dependency order';
-  assert.ok(position(prDiagnosticsWorkflow, provision) < position(prDiagnosticsWorkflow, deploy));
-  assert.doesNotMatch(prDiagnosticsWorkflow, /node scripts\/provision-facts-db\.mjs/);
-});
-
-test('all deployment paths provision the split Queue boundaries', () => {
+test('all deployment paths provision current Queue boundaries', () => {
   for (const queue of splitQueues) {
     for (const workflow of [deployWorkflow, splitDeployWorkflow, prDiagnosticsWorkflow]) {
       assert.match(workflow, new RegExp(`${queue} ${queue}-dlq`));
@@ -115,81 +82,61 @@ test('all deployment paths provision the split Queue boundaries', () => {
   }
 });
 
-test('Worker package scripts contain only current deployment operations', () => {
-  assert.equal(workerPackage.scripts['deploy:minute'], 'npm run deploy:minute-enrichment');
-  assert.equal(
-    workerPackage.scripts['deploy:split-other'],
-    'npm run deploy:minute-enrichment && npm run deploy:other',
+test('Worker package scripts contain only active deployment and bundle operations', () => {
+  assert.deepEqual(
+    Object.fromEntries(Object.entries(workerPackage.scripts).filter(([name]) => name.startsWith('deploy'))),
+    {
+      deploy: 'node scripts/deploy-connected-worker.mjs',
+      'deploy:ingest': 'node scripts/deploy-ingest.mjs',
+      'deploy:minute-enrichment': 'node scripts/deploy-minute-enrichment.mjs',
+      'deploy:runtime': 'node scripts/deploy-runtime.mjs',
+    },
   );
-  assert.equal(workerPackage.scripts['deploy:monitor-maintenance'], undefined);
-  assert.equal(workerPackage.scripts['deploy:ingest'], 'node scripts/deploy-ingest.mjs');
-  assert.equal(workerPackage.scripts['deploy:pages-read-model'], 'npm run deploy:minute-enrichment');
-  assert.equal(workerPackage.scripts['deploy:minute-enrichment'], 'node scripts/deploy-minute-enrichment.mjs');
-  assert.equal(workerPackage.scripts['deploy:track-metadata'], undefined);
-  assert.equal(workerPackage.scripts['check:track-metadata-bundle'], undefined);
-  assert.equal(workerPackage.scripts['deploy:other'], 'node scripts/deploy-consolidated-monitor.mjs');
-  assert.equal(workerPackage.scripts['deploy:minute-read-model'], undefined);
-  assert.equal(workerPackage.scripts['deploy:host-monitor'], undefined);
-  assert.equal(workerPackage.scripts['deploy:buddy-playback'], undefined);
-  assert.equal(workerPackage.scripts['check:minute-read-model-bundle'], undefined);
-  assert.equal(workerPackage.scripts['check:host-monitor-bundle'], undefined);
-  assert.equal(workerPackage.scripts['check:buddy-playback-bundle'], undefined);
-  assert.equal(workerPackage.scripts['check:monitor-maintenance-bundle'], undefined);
-  assert.equal(existsSync(new URL('../worker/wrangler.track-metadata.jsonc', import.meta.url)), false);
-  assert.equal(existsSync(new URL('../worker/wrangler.read-model.jsonc', import.meta.url)), false);
-  assert.equal(existsSync(new URL('../worker/wrangler.host-monitor.jsonc', import.meta.url)), false);
-  assert.equal(existsSync(new URL('../worker/wrangler.buddy-playback.jsonc', import.meta.url)), false);
-  assert.equal(existsSync(new URL('../worker/wrangler.monitor-maintenance.jsonc', import.meta.url)), false);
+  assert.equal(workerPackage.scripts.postinstall, undefined);
+  assert.equal(workerPackage.scripts['check:ingest-bundle'] !== undefined, true);
+  assert.equal(workerPackage.scripts['check:minute-enrichment-bundle'] !== undefined, true);
+  assert.equal(workerPackage.scripts['check:runtime-bundle'] !== undefined, true);
 
-  for (const key of Object.keys(workerPackage.scripts)) {
-    assert.doesNotMatch(key, /detach|retire|cutover|mintue/);
+  for (const path of [
+    '../worker/wrangler.jsonc',
+    '../worker/wrangler.other.jsonc',
+    '../worker/wrangler.minute.jsonc',
+    '../worker/wrangler.persist.jsonc',
+    '../worker/wrangler.comments.jsonc',
+    '../worker/wrangler.minute-derive.jsonc',
+    '../worker/wrangler.minute-rebuild.jsonc',
+    '../worker/wrangler.minute-ingest.jsonc',
+  ]) {
+    assert.equal(existsSync(new URL(path, import.meta.url)), false, `${path} must remain deleted`);
   }
-  assert.equal(workerPackage.scripts['deploy:read-model'], undefined);
-  assert.equal(workerPackage.scripts['check:read-model-bundle'], undefined);
 });
 
-test('Cloudflare Git diagnostics include only remaining connected Worker dependencies', () => {
+test('Cloudflare Git diagnostics target the runtime Worker', () => {
   assert.match(diagnosticsWorkflow, /^\s{2}push:/m);
   assert.match(diagnosticsWorkflow, /branches: \[main\]/);
-  assert.match(diagnosticsWorkflow, /packages\/sh-shared/);
-  assert.match(diagnosticsWorkflow, /\.github\/workflows\/cloudflare-build-diagnostics\.yml/);
-  assert.doesNotMatch(diagnosticsWorkflow, /sh-buddies-monitor/);
-  assert.match(diagnosticsWorkflow, /sh-monitor-other/);
-  assert.doesNotMatch(diagnosticsWorkflow, /sh-minute-maintenance/);
+  assert.match(diagnosticsWorkflow, /sh-runtime-orchestrator/);
+  assert.match(diagnosticsWorkflow, /wrangler\\\.runtime\\\.jsonc|wrangler\.runtime\.jsonc/);
+  assert.doesNotMatch(diagnosticsWorkflow, /sh-monitor-other/);
   assert.match(diagnosticsWorkflow, /cloudflare-build-diagnostics\.mjs/);
 });
 
-test('R2 observability audits every current script and fails on real faults', () => {
-  assert.match(observabilityWorkflow, /fetch-r2-worker-logs\.py/);
-  assert.match(observabilityWorkflow, /analyze-worker-observability\.py/);
-  assert.match(observabilityWorkflow, /default: "90"/);
-  assert.match(observabilityWorkflow, /if: always\(\)/);
-
-  assert.doesNotMatch(observabilityFetcher, /selected\s*=\s*selected\[:100\]/);
-  assert.match(observabilityFetcher, /objects_selected/);
-  assert.match(observabilityFetcher, /oldest_object_modified/);
-  assert.match(observabilityFetcher, /newest_object_modified/);
-  assert.match(observabilityFetcher, /NextContinuationToken/);
-  assert.match(observabilityFetcher, /SUMMARY_PATH\.unlink\(\)/);
-  assert.match(observabilityFetcher, /Downloaded \{downloaded\} of \{len\(selected\)\} selected R2 objects/);
-  assert.match(observabilityFetcher, /events > 0/);
-  assert.match(observabilityFetcher, /No post-deployment Worker events arrived/);
-
+test('observability requires active Workers and tolerates retired names during cleanup', () => {
   for (const worker of [
+    'sh-buddies-ingest',
     'sh-minute-enrichment',
-    'sh-monitor-other',
+    'sh-runtime-orchestrator',
   ]) {
     assert.match(observabilityAnalyzer, new RegExp(worker));
   }
-  assert.doesNotMatch(observabilityAnalyzer, /sh-track-metadata/);
-  assert.match(observabilityAnalyzer, /RETIRED_SCRIPTS = \{"sh-pages-read-model"\}/);
-  assert.doesNotMatch(observabilityAnalyzer, /sh-minute-read-model/);
-  assert.doesNotMatch(observabilityAnalyzer, /sh-host-monitor/);
-  assert.doesNotMatch(observabilityAnalyzer, /sh-buddy-playback/);
-  assert.doesNotMatch(observabilityAnalyzer, /sh-monitor-maintenance/);
+  for (const retired of [
+    'sh-monitor-other',
+    'sh-pages-read-model',
+    'sh-minute-derive',
+    'sh-host-monitor',
+  ]) {
+    assert.match(observabilityAnalyzer, new RegExp(retired));
+  }
   assert.match(observabilityAnalyzer, /CPUTimeMs/);
-  assert.match(observabilityAnalyzer, /Outcome/);
-  assert.match(observabilityAnalyzer, /Exceptions/);
   assert.match(observabilityAnalyzer, /unexpected_scripts/);
   assert.match(observabilityAnalyzer, /missing_required_scripts/);
   assert.match(observabilityAnalyzer, /return 0 if ok else 1/);

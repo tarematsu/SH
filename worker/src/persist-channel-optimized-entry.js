@@ -4,12 +4,13 @@ import {
   processOptimizedQueueLikesTask,
   QUEUE_STAGE_LIKES_WRITE,
 } from './persist-likes-stages.js';
+import { logSampledSuccess } from './sampled-success-log.js';
 
 const RETRY_30_SECONDS = Object.freeze({ delaySeconds: 30 });
 const EMPTY_DEPENDENCIES = Object.freeze({});
 
 function logPersistenceResult(result) {
-  console.log(JSON.stringify({
+  logSampledSuccess({
     event: 'persistence_task_completed',
     task: result?.task ?? null,
     stage: result?.stage ?? null,
@@ -25,7 +26,7 @@ function logPersistenceResult(result) {
     materialization_recorded: result?.materialization_recorded === true,
     metadata_deferred: result?.metadata_deferred === true,
     finalization_deferred: result?.finalization_deferred === true,
-  }));
+  }, result?.observed_at, 60, 30);
 }
 
 function isOptimizedLikesTask(body) {

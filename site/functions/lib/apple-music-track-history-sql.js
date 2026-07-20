@@ -1,3 +1,5 @@
+import { environmentView } from '../../../packages/sh-shared/environment-view.mjs';
+
 const wrappedDatabases = new WeakMap();
 
 export function withoutAppleMusicTrackHistorySql(value) {
@@ -28,15 +30,10 @@ export function appleMusicFreeTrackHistoryDatabase(db) {
 
 export function withAppleMusicFreeTrackHistoryEnv(env) {
   if (!env) return env;
-  const buddiesDb = appleMusicFreeTrackHistoryDatabase(env.BUDDIES_DB);
-  const minuteDb = appleMusicFreeTrackHistoryDatabase(env.MINUTE_DB);
-  const fallbackDb = appleMusicFreeTrackHistoryDatabase(env.DB);
-  return new Proxy(env, {
-    get(target, property, receiver) {
-      if (property === 'BUDDIES_DB') return buddiesDb;
-      if (property === 'MINUTE_DB') return minuteDb;
-      if (property === 'DB') return fallbackDb;
-      return Reflect.get(target, property, receiver);
-    },
-  });
+  const overrides = {};
+  for (const binding of ['BUDDIES_DB', 'MINUTE_DB', 'DB']) {
+    const database = env[binding];
+    if (database?.prepare) overrides[binding] = appleMusicFreeTrackHistoryDatabase(database);
+  }
+  return environmentView(env, overrides);
 }

@@ -24,7 +24,7 @@ test('stream-goal prediction defaults to a six-hour budget', () => {
   assert.equal(streamGoalPredictionIntervalMs({}), 6 * 60 * 60_000);
   assert.equal(streamGoalPredictionIntervalMs({ STREAM_GOAL_PREDICTION_INTERVAL_MS: 1_800_000 }), 1_800_000);
   const entry = source('../worker/src/stream-goal-prediction.js');
-  const config = source('../worker/wrangler.other.jsonc');
+  const config = source('../worker/wrangler.runtime.jsonc');
   assert.match(entry, /PREDICTION_WINDOW_MS = 6 \* 60 \* 60_000/);
   assert.match(config, /"STREAM_GOAL_PREDICTION_INTERVAL_MS"\s*:\s*21600000/);
 });
@@ -72,7 +72,7 @@ test('facts provisioning updates only unrepaired revision rows', () => {
   assert.match(text, /WHERE coverage_complete IS NOT CASE/);
   assert.match(text, /WHERE source_visible_count IS NULL/);
   assert.match(text, /019_d1_budget_indexes\.sql/);
-  assert.doesNotMatch(text, /SET source_visible_count=COALESCE\(source_visible_count,materialized_item_count,item_count\)`/);
+  assert.doesNotMatch(text, /SET source_visible_count=COALESCE\(source_visible_count,materialized_item_count,item_count\)/);
 });
 
 test('live verification uses primary-key probes and keeps revision analytics opt-in', () => {

@@ -65,12 +65,13 @@ test('one failed message retries without discarding a successful sibling', async
   assert.deepEqual(events, ['retry:1:60', 'ack:2']);
 });
 
-test('production rebuild delivery is capped at two messages', () => {
+test('runtime rebuild delivery is capped at two messages', () => {
   const config = JSON.parse(readFileSync(
-    new URL('../wrangler.minute-rebuild.jsonc', import.meta.url),
+    new URL('../wrangler.runtime.jsonc', import.meta.url),
     'utf8',
   ));
-  assert.equal(config.main, 'src/minute-rebuild-batched-entry.js');
-  assert.equal(config.queues.consumers[0].max_batch_size, 2);
-  assert.equal(config.queues.consumers[0].max_concurrency, 1);
+  const rebuild = config.queues.consumers.find(({ queue }) => queue === 'stationhead-minute-rebuild');
+  assert.equal(config.main, 'src/runtime-orchestrator-entry.js');
+  assert.equal(rebuild.max_batch_size, 2);
+  assert.equal(rebuild.max_concurrency, 1);
 });

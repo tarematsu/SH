@@ -176,11 +176,11 @@ test('Pages other health reads scheduler, buddy, official news and cloud host st
   assert.equal((await response.json()).gateway, 'cloudflare-pages');
 });
 
-test('all scheduled Workers disable workers.dev and preview URLs', () => {
+test('all active Workers disable workers.dev and preview URLs', () => {
   const configs = [
-    '../../worker/wrangler.jsonc',
-    '../../worker/wrangler.minute.jsonc',
-    '../../worker/wrangler.other.jsonc',
+    '../../worker/wrangler.ingest.jsonc',
+    '../../worker/wrangler.minute-enrichment.jsonc',
+    '../../worker/wrangler.runtime.jsonc',
   ].map((path) => JSON.parse(readFileSync(new URL(path, import.meta.url), 'utf8')));
 
   for (const config of configs) {

@@ -36,14 +36,17 @@ test('zero CHAT_LIMIT disables optional comment collection', async () => {
   assert.equal(requests, 0);
 });
 
-test('deployed split configs disable ingest comments and bound comments Worker collection', () => {
+test('consolidated ingest disables inline comments and bounds the comments Queue lane', () => {
   const ingest = workerConfig('wrangler.ingest.jsonc');
-  const comments = workerConfig('wrangler.comments.jsonc');
+  const entry = readFileSync(new URL('../src/ingest-channel-optimized-entry.js', import.meta.url), 'utf8');
+  const comments = ingest.queues.consumers.find(({ queue }) => queue === 'stationhead-comments');
 
   assert.equal(ingest.name, 'sh-buddies-ingest');
   assert.equal(configFromEnv(ingest.vars).chatLimit, 0);
-  assert.equal(comments.name, 'sh-buddies-comments');
-  assert.equal(configFromEnv(comments.vars).chatLimit, 25);
+  assert.equal(comments.max_batch_size, 1);
+  assert.equal(comments.max_concurrency, 1);
+  assert.equal(ingest.vars.COMMENT_CHAIN_MAX_ATTEMPTS, 1);
+  assert.match(entry, /CHAT_LIMIT: \{ value: 25/);
 });
 
 test('comment count inputs retain only identity and timestamp fields', () => {
