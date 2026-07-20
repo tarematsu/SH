@@ -9,27 +9,36 @@ function hasTrackIdentity(track) {
   );
 }
 
-function hasMetadataGap(queue, includeAlbum) {
+function hydrationGap(queue) {
+  const tracks = queue?.tracks;
+  if (!Array.isArray(tracks)) return false;
+  const trackCount = tracks.length;
+  for (let index = 0; index < trackCount; index += 1) {
+    const track = tracks[index];
+    if (!track || typeof track !== 'object') continue;
+    if (!track.title || !track.artist || !track.thumbnail_url) return true;
+  }
+  return false;
+}
+
+function preservationGap(queue) {
   const tracks = queue?.tracks;
   if (!Array.isArray(tracks)) return false;
   const trackCount = tracks.length;
   for (let index = 0; index < trackCount; index += 1) {
     const track = tracks[index];
     if (!track || typeof track !== 'object' || !hasTrackIdentity(track)) continue;
-    if (!track.title
-        || !track.artist
-        || !track.thumbnail_url
-        || (includeAlbum && !track.album_name)) return true;
+    if (!track.title || !track.artist || !track.album_name || !track.thumbnail_url) return true;
   }
   return false;
 }
 
 export function queueNeedsHydration(queue) {
-  return hasMetadataGap(queue, false);
+  return hydrationGap(queue);
 }
 
 export function queueNeedsPreservation(queue) {
-  return hasMetadataGap(queue, true);
+  return preservationGap(queue);
 }
 
 export function readModelNeedsHydration(readModel) {
