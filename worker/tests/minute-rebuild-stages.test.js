@@ -197,7 +197,7 @@ test('recovery throughput uses direct dispatch while bounding work per runtime d
   assert.equal(runtime.vars.REBUILD_SOURCE_ROWS, 1);
   assert.equal(runtime.vars.REBUILD_MAX_JOBS, 1);
   assert.equal(runtime.vars.GAP_SCAN_MAX_JOBS, 1);
-  assert.equal(rebuild.max_batch_size, 2);
+  assert.equal(rebuild.max_batch_size, 1);
   assert.equal(rebuild.max_concurrency, 1);
   assert.equal(
     runtime.queues.producers.some(({ binding }) => binding === 'MINUTE_DERIVE_QUEUE'),
