@@ -8,11 +8,36 @@ export const MINUTE_REBUILD_QUEUE_NAME = 'stationhead-minute-rebuild';
 
 const EMPTY_DEPENDENCIES = Object.freeze({});
 let deriveModulePromise = null;
+let liveRevisionBudgetModulePromise = null;
 let rebuildModulePromise = null;
 
 async function processDeriveBatch(batch, env, dependencies) {
   const derive = await (deriveModulePromise ||= import('./minute-derive-entry.js'));
   return derive.processMinuteDeriveBatch(batch, env, dependencies);
+}
+
+async function processBudgetedLiveRevisionBatch(batch, env) {
+  const budget = await (liveRevisionBudgetModulePromise ||= import('./minute-live-revision-budget-entry.js'));
+  return budget.processBudgetedLiveRevisionBatch(batch, env);
+}
+
+function liveRevisionMaterializationEnabled(env = {}) {
+  const value = env?.LIVE_REVISION_MATERIALIZATION_ENABLED;
+  if (value == null || value === '') return true;
+  return !['0', 'false', 'no', 'off'].includes(String(value).trim().toLowerCase());
+}
+
+function budgetedLiveRevisionBatch(batch, env) {
+  if (liveRevisionMaterializationEnabled(env)) return false;
+  const messages = batch?.messages || [];
+  return messages.length > 0 && messages.every((message) => {
+    const body = message?.body;
+    return body?.message_type === 'minute-fact-derive-stage'
+      && Number(body?.message_version) === 1
+      && body?.stage === 'revision-materialize'
+      && body?.revision?.sparse === true
+      && body?.revision?.rebuild !== true;
+  });
 }
 
 function rebuildEnvironment(env) {
@@ -58,6 +83,9 @@ export async function processMinutePipelineBatch(batch, env, ctx, dependencies =
   if (queueName === REBUILD_DERIVE_QUEUE_NAME && !historicalRebuildEnabled(env)) {
     return acknowledgeDisabledHistoricalDerive(batch);
   }
+  if (queueName === LIVE_DERIVE_QUEUE_NAME && budgetedLiveRevisionBatch(batch, env)) {
+    return processBudgetedLiveRevisionBatch(batch, env);
+  }
   if (queueName === REBUILD_DERIVE_QUEUE_NAME || queueName === LIVE_DERIVE_QUEUE_NAME) {
     return processDeriveBatch(batch, env, dependencies.derive);
   }
@@ -69,6 +97,7 @@ export async function processMinutePipelineBatch(batch, env, ctx, dependencies =
 
 export {
   acknowledgeDisabledHistoricalDerive,
+  budgetedLiveRevisionBatch,
 };
 
 export default {
