@@ -1,5 +1,6 @@
 const EMPTY_OPTIONS = Object.freeze({});
 const JSON_QUEUE_SEND_OPTIONS = Object.freeze({ contentType: 'json' });
+const MINUTE_MS = 60_000;
 const OTHER_MONITOR_INTERVAL_MINUTES = 5;
 const MINUTE_RECOVERY_POLL_INTERVAL_MINUTES = 5;
 const MINUTE_RECOVERY_POLL_OFFSET_MINUTE = 1;
@@ -11,12 +12,14 @@ export const ROLLUP_MAINTENANCE_CRON = '30 * * * *';
 export const SNAPSHOT_RETENTION_CRON = '50 * * * *';
 export const MONITOR_MAINTENANCE_MESSAGE = 'monitor-maintenance-task';
 export const RAW_COLLECTION_TASK_MESSAGE = 'raw-collection-task';
+export const RUNTIME_MINUTE_RECOVERY_MESSAGE = 'runtime-minute-recovery-dispatch';
+export const RUNTIME_MINUTE_GATE_MESSAGE = 'runtime-minute-maintenance-gate-dispatch';
+export const RUNTIME_OTHER_MONITOR_MESSAGE = 'runtime-other-monitor-dispatch';
 
 const MINUTE_FACT_MAINTENANCE_CRON = '5,7,9,15,17,19,25,27,29,35,37,39,45,47,49,55,57,59 * * * *';
 
 let minuteMaintenanceModulePromise;
 let minuteGateModulePromise;
-let otherMonitorModulePromise;
 
 function loadMinuteMaintenanceModule() {
   minuteMaintenanceModulePromise ||= import('./minute-maintenance-entry.js');
@@ -28,21 +31,20 @@ function loadMinuteGateModule() {
   return minuteGateModulePromise;
 }
 
-function loadOtherMonitorModule() {
-  otherMonitorModulePromise ||= import('./other-monitor-entry.js');
-  return otherMonitorModulePromise;
+function utcMinute(timestamp) {
+  const value = Number(timestamp) || 0;
+  return ((Math.floor(value / MINUTE_MS) % 60) + 60) % 60;
 }
 
 export function maintenanceCronFor(timestamp) {
-  const minute = new Date(Number(timestamp) || 0).getUTCMinutes();
+  const minute = utcMinute(timestamp);
   if (minute === 30) return ROLLUP_MAINTENANCE_CRON;
   if (minute === 50) return SNAPSHOT_RETENTION_CRON;
   return null;
 }
 
 export function minuteMaintenanceTaskFor(timestamp) {
-  const minute = new Date(Number(timestamp) || 0).getUTCMinutes();
-  const slot = ((minute % 10) + 10) % 10;
+  const slot = utcMinute(timestamp) % 10;
   if (slot === 5) return 'recovery';
   if (slot === 7) return 'rebuild';
   if (slot === 9) return 'sync';
@@ -50,100 +52,130 @@ export function minuteMaintenanceTaskFor(timestamp) {
 }
 
 export function minuteRecoveryPollDue(timestamp) {
-  const minute = new Date(Number(timestamp) || 0).getUTCMinutes();
-  return minute % MINUTE_RECOVERY_POLL_INTERVAL_MINUTES === MINUTE_RECOVERY_POLL_OFFSET_MINUTE;
+  return utcMinute(timestamp) % MINUTE_RECOVERY_POLL_INTERVAL_MINUTES
+    === MINUTE_RECOVERY_POLL_OFFSET_MINUTE;
 }
 
 export function otherMonitorDue(timestamp) {
-  const minute = new Date(Number(timestamp) || 0).getUTCMinutes();
-  return minute % OTHER_MONITOR_INTERVAL_MINUTES === 0;
+  return utcMinute(timestamp) % OTHER_MONITOR_INTERVAL_MINUTES === 0;
 }
 
-async function dispatchRuntimeMessage(env, body, missingMessage) {
-  if (!env?.HOST_MONITOR_QUEUE?.send) throw new Error(missingMessage);
-  await env.HOST_MONITOR_QUEUE.send(body, JSON_QUEUE_SEND_OPTIONS);
-}
-
-export async function dispatchRawCollection(env, scheduledAt) {
-  await dispatchRuntimeMessage(env, {
+export function runtimeScheduledMessagesFor(scheduledAt) {
+  const messages = [{
     message_type: RAW_COLLECTION_TASK_MESSAGE,
     message_version: 1,
     scheduled_at: scheduledAt,
-  }, 'HOST_MONITOR_QUEUE binding is missing for raw collection dispatch');
-  return { dispatched: true, task: 'raw-collection', scheduled_at: scheduledAt };
+  }];
+  if (minuteRecoveryPollDue(scheduledAt)) {
+    messages.push({
+      message_type: RUNTIME_MINUTE_RECOVERY_MESSAGE,
+      message_version: 1,
+      scheduled_at: scheduledAt,
+    });
+  }
+  const minuteTask = minuteMaintenanceTaskFor(scheduledAt);
+  if (minuteTask) {
+    messages.push({
+      message_type: RUNTIME_MINUTE_GATE_MESSAGE,
+      message_version: 1,
+      task: minuteTask,
+      scheduled_at: scheduledAt,
+    });
+  }
+  if (otherMonitorDue(scheduledAt)) {
+    messages.push({
+      message_type: RUNTIME_OTHER_MONITOR_MESSAGE,
+      message_version: 1,
+      scheduled_at: scheduledAt,
+    });
+  }
+  const maintenanceCron = maintenanceCronFor(scheduledAt);
+  if (maintenanceCron) {
+    messages.push({
+      message_type: MONITOR_MAINTENANCE_MESSAGE,
+      message_version: 1,
+      cron: maintenanceCron,
+      scheduled_at: scheduledAt,
+    });
+  }
+  return messages;
 }
 
-async function dispatchMonitorMaintenance(env, scheduledAt) {
-  const cron = maintenanceCronFor(scheduledAt);
-  if (!cron) return null;
-  await dispatchRuntimeMessage(env, {
-    message_type: MONITOR_MAINTENANCE_MESSAGE,
-    message_version: 1,
-    cron,
-    scheduled_at: scheduledAt,
-  }, 'HOST_MONITOR_QUEUE binding is missing for maintenance dispatch');
-  return { dispatched: true, task: 'maintenance', cron, scheduled_at: scheduledAt };
+async function sendRuntimeMessages(queue, messages) {
+  if (queue?.sendBatch) {
+    await queue.sendBatch(messages.map((body) => ({ body, contentType: 'json' })));
+    return;
+  }
+  if (!queue?.send) throw new Error('HOST_MONITOR_QUEUE binding is missing for runtime dispatch');
+  await Promise.all(messages.map((body) => queue.send(body, JSON_QUEUE_SEND_OPTIONS)));
+}
+
+export async function dispatchMinuteRecovery(controller, env, ctx, options = EMPTY_OPTIONS) {
+  const scheduledAt = Number(controller?.scheduledTime) || Date.now();
+  if (!minuteRecoveryPollDue(scheduledAt)) return null;
+  const dispatch = options.dispatchPendingMinuteFacts
+    || (await loadMinuteMaintenanceModule()).dispatchPendingMinuteFacts;
+  return dispatch(env, options.minuteDispatchDependencies || EMPTY_OPTIONS, ctx);
+}
+
+export async function dispatchMinuteMaintenanceGate(
+  controller,
+  env,
+  task,
+  ctx,
+  options = EMPTY_OPTIONS,
+) {
+  const scheduledAt = Number(controller?.scheduledTime) || Date.now();
+  const activeTask = task || minuteMaintenanceTaskFor(scheduledAt);
+  if (!activeTask) return null;
+  const dispatch = options.dispatchMinuteMaintenanceGate
+    || (await loadMinuteGateModule()).dispatchMinuteMaintenanceGate;
+  return dispatch({
+    ...controller,
+    cron: MINUTE_FACT_MAINTENANCE_CRON,
+    scheduledTime: scheduledAt,
+  }, env, activeTask, ctx);
 }
 
 export async function dispatchMinuteMaintenance(controller, env, ctx, options = EMPTY_OPTIONS) {
   const scheduledAt = Number(controller?.scheduledTime) || Date.now();
-  const derive = minuteRecoveryPollDue(scheduledAt)
-    ? (options.dispatchPendingMinuteFacts
-      || (await loadMinuteMaintenanceModule()).dispatchPendingMinuteFacts)(
-        env,
-        options.minuteDispatchDependencies || EMPTY_OPTIONS,
-        ctx,
-      )
-    : Promise.resolve(null);
-  const task = minuteMaintenanceTaskFor(scheduledAt);
-  const gate = task
-    ? (options.dispatchMinuteMaintenanceGate
-      || (await loadMinuteGateModule()).dispatchMinuteMaintenanceGate)({
-        ...controller,
-        cron: MINUTE_FACT_MAINTENANCE_CRON,
-        scheduledTime: scheduledAt,
-      }, env, task, ctx)
-    : Promise.resolve(null);
-  const [deriveResult, gateResult] = await Promise.all([derive, gate]);
+  const [deriveResult, gateResult] = await Promise.all([
+    dispatchMinuteRecovery({ ...controller, scheduledTime: scheduledAt }, env, ctx, options),
+    dispatchMinuteMaintenanceGate(
+      { ...controller, scheduledTime: scheduledAt },
+      env,
+      minuteMaintenanceTaskFor(scheduledAt),
+      ctx,
+      options,
+    ),
+  ]);
   return [
     ...(deriveResult ? [deriveResult] : []),
     ...(gateResult ? [gateResult] : []),
   ];
 }
 
-export async function runRuntimeScheduled(controller, env, ctx, options = EMPTY_OPTIONS) {
+function runtimeDispatchResult(body) {
+  const type = body.message_type;
+  if (type === RAW_COLLECTION_TASK_MESSAGE) return { dispatched: true, task: 'raw-collection' };
+  if (type === RUNTIME_MINUTE_RECOVERY_MESSAGE) return { dispatched: true, task: 'minute-recovery' };
+  if (type === RUNTIME_MINUTE_GATE_MESSAGE) return { dispatched: true, task: `minute-${body.task}` };
+  if (type === RUNTIME_OTHER_MONITOR_MESSAGE) return { dispatched: true, task: 'other-monitor' };
+  return { dispatched: true, task: 'maintenance', cron: body.cron };
+}
+
+export async function runRuntimeScheduled(controller, env) {
   const cron = String(controller?.cron || '');
   if (cron !== RUNTIME_CRON && cron !== OTHER_MONITOR_CRON) {
     return { skipped: true, reason: 'unsupported-runtime-cron', cron };
   }
   const scheduledAt = Number(controller?.scheduledTime) || Date.now();
-  const collection = dispatchRawCollection(env, scheduledAt);
-  const minuteTasks = dispatchMinuteMaintenance(controller, env, ctx, options);
-  const monitorController = {
-    ...controller,
-    cron: OTHER_MONITOR_CRON,
-    scheduledTime: scheduledAt,
-  };
-  const otherTasks = otherMonitorDue(scheduledAt)
-    ? (await loadOtherMonitorModule()).runOtherMonitorCron(
-        monitorController,
-        env,
-        ctx,
-        options.otherOptions || EMPTY_OPTIONS,
-      )
-    : Promise.resolve([]);
-  const [collectionResult, minuteResults, otherResults] = await Promise.all([
-    collection,
-    minuteTasks,
-    otherTasks,
-  ]);
-  const maintenance = await dispatchMonitorMaintenance(env, scheduledAt);
-  return [
-    collectionResult,
-    ...minuteResults,
-    ...otherResults,
-    ...(maintenance ? [maintenance] : []),
-  ];
+  const messages = runtimeScheduledMessagesFor(scheduledAt);
+  await sendRuntimeMessages(env?.HOST_MONITOR_QUEUE, messages);
+  return messages.map((body) => ({
+    ...runtimeDispatchResult(body),
+    scheduled_at: scheduledAt,
+  }));
 }
 
 export const runConsolidatedMonitorScheduled = runRuntimeScheduled;
