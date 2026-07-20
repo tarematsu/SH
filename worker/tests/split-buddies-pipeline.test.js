@@ -45,7 +45,7 @@ test('ordered comments and three minute Workers have one owner per queue boundar
   assert.equal(comments.main, 'src/comments-cpu-entry.js');
   assert.equal(readModel.main, 'src/pages-read-model-entry.js');
   assert.equal(minuteIngest.main, 'src/minute-production-entry.js');
-  assert.equal(minuteDerive.main, 'src/minute-derive-entry.js');
+  assert.equal(minuteDerive.main, 'src/minute-pipeline-entry.js');
   assert.equal(minuteMaintenance.main, 'src/minute-maintenance-entry.js');
 
   assert.equal(buddies.queues.producers[0].queue, 'stationhead-raw-collection');
@@ -63,6 +63,8 @@ test('ordered comments and three minute Workers have one owner per queue boundar
   assert.equal(minuteIngest.queues.producers[0].queue, 'stationhead-minute-derive');
   assert.equal(minuteDerive.queues.consumers[0].queue, 'stationhead-minute-derive');
   assert.equal(minuteDerive.queues.consumers[0].max_batch_size, 1);
+  assert.equal(minuteDerive.queues.consumers.find(({ queue }) => queue === 'stationhead-buddies-facts').max_concurrency, 1);
+  assert.equal(minuteDerive.queues.consumers.find(({ queue }) => queue === 'stationhead-buddies-facts').dead_letter_queue, 'stationhead-buddies-facts-dlq');
   assert.deepEqual(minuteDerive.d1_databases.map(({ binding }) => binding), ['DB', 'MINUTE_DB']);
   assert.equal(minuteMaintenance.queues.consumers, undefined);
   assert.equal(minuteMaintenance.queues.producers[0].queue, 'stationhead-minute-derive');

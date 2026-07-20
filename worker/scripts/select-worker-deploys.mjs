@@ -8,7 +8,6 @@ const workerDefinitions = [
   { name: 'sh-minute-derive', config: 'worker/wrangler.minute-derive.jsonc', command: 'deploy:minute-derive' },
   { name: 'sh-minute-enrichment', config: 'worker/wrangler.minute-enrichment.jsonc', command: 'deploy:minute-enrichment' },
   { name: 'sh-minute-rebuild', config: 'worker/wrangler.minute-rebuild.jsonc', command: 'deploy:minute-rebuild' },
-  { name: 'sh-minute-ingest', config: 'worker/wrangler.minute-ingest.jsonc', command: 'deploy:minute-ingest' },
   { name: 'sh-buddies-comments', config: 'worker/wrangler.comments.jsonc', command: 'deploy:comments' },
   { name: 'sh-buddies-persist', config: 'worker/wrangler.persist.jsonc', command: 'deploy:persist' },
   { name: 'sh-buddies-ingest', config: 'worker/wrangler.ingest.jsonc', command: 'deploy:ingest' },

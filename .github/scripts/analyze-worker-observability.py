@@ -22,7 +22,6 @@ EXPECTED_SCRIPTS = {
     "sh-buddies-ingest",
     "sh-buddies-comments",
     "sh-pages-read-model",
-    "sh-minute-ingest",
     "sh-minute-derive",
     "sh-minute-enrichment",
     "sh-minute-rebuild",

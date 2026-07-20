@@ -13,7 +13,6 @@ export const ACTIVE_CONFIGS = Object.freeze([
   'worker/wrangler.minute-derive.jsonc',
   'worker/wrangler.minute-enrichment.jsonc',
   'worker/wrangler.minute-rebuild.jsonc',
-  'worker/wrangler.minute-ingest.jsonc',
   'worker/wrangler.comments.jsonc',
   'worker/wrangler.persist.jsonc',
   'worker/wrangler.ingest.jsonc',

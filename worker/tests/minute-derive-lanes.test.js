@@ -16,8 +16,9 @@ test('minute derive Worker consumes isolated live and rebuild queues', () => {
   assert.deepEqual(derive.queues.consumers.map(({ queue }) => queue), [
     'stationhead-minute-derive',
     'stationhead-minute-live-derive',
+    'stationhead-buddies-facts',
   ]);
-  assert.deepEqual(derive.queues.consumers.map(({ max_concurrency }) => max_concurrency), [1, 2]);
+  assert.deepEqual(derive.queues.consumers.map(({ max_concurrency }) => max_concurrency), [1, 2, 1]);
   assert.equal(
     derive.queues.producers.find(({ binding }) => binding === 'MINUTE_LIVE_DERIVE_QUEUE').queue,
     'stationhead-minute-live-derive',

@@ -25,6 +25,12 @@ test('minute derive changes redeploy only the derive consumer', () => {
   assert.deepEqual(result.commands, ['deploy:minute-derive']);
 });
 
+test('minute production changes redeploy the consolidated derive Worker', () => {
+  const result = select(['worker/src/minute-production-entry.js']);
+  assert.deepEqual(result.workers, ['sh-minute-derive']);
+  assert.deepEqual(result.commands, ['deploy:minute-derive']);
+});
+
 test('metadata and minute enrichment modules map to the consolidated Worker', () => {
   assert.deepEqual(select(['worker/src/minute-enrichment-entry.js']).workers, ['sh-minute-enrichment']);
   assert.deepEqual(select(['worker/src/track-metadata-entry.js']).workers, ['sh-minute-enrichment']);
@@ -91,7 +97,7 @@ test('deploy script-only package changes do not redeploy runtime Workers', () =>
 
 test('lockfile changes conservatively redeploy every Worker', () => {
   const result = select(['worker/package-lock.json']);
-  assert.equal(result.workers.length, 9);
+  assert.equal(result.workers.length, 8);
 });
 
 test('tests and verification scripts do not redeploy runtime Workers', () => {
@@ -113,22 +119,21 @@ test('shared package changes select every Worker that imports sh-shared', () => 
 
 test('unresolved runtime source changes fall back to all Workers', () => {
   const result = select(['worker/src/deleted-runtime-module.js']);
-  assert.equal(result.workers.length, 9);
+  assert.equal(result.workers.length, 8);
 });
 
 test('manual selection deploys all Workers in durable order', () => {
   const result = select([], ['--all']);
-  assert.deepEqual(result.workers.slice(0, 9), [
+  assert.deepEqual(result.workers.slice(0, 8), [
     'sh-minute-derive',
     'sh-minute-enrichment',
     'sh-minute-rebuild',
-    'sh-minute-ingest',
     'sh-buddies-comments',
     'sh-buddies-persist',
     'sh-buddies-ingest',
     'sh-pages-read-model',
     'sh-monitor-other',
   ]);
-  assert.equal(result.workers.length, 9);
+  assert.equal(result.workers.length, 8);
   assert.equal(result.workers.at(-1), 'sh-monitor-other');
 });
