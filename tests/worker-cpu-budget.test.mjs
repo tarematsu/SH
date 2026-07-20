@@ -38,11 +38,21 @@ function runBudget(summary) {
   }
 }
 
+function sampledWorker(maximum = 1) {
+  return {
+    events: 1,
+    retired: false,
+    cpu_ms: { samples: 1, p95: maximum, max: maximum },
+  };
+}
+
 function summaryFor(maximum, { events = 1, samples = events } = {}) {
   return {
-    events,
-    cpu_ms: { samples },
+    events: events + 2,
+    cpu_ms: { samples: samples + 2 },
     scripts: {
+      'sh-buddies-ingest': sampledWorker(),
+      'sh-minute-enrichment': sampledWorker(),
       'sh-runtime-orchestrator': {
         events,
         retired: false,
