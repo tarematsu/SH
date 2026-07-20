@@ -1,8 +1,13 @@
+import { materializedResponseCadenceSeconds } from '../../site/functions/lib/api-contract.js';
 import {
   advanceTrackHistoryPublication,
   initializeTrackHistoryPublication,
 } from './pages-track-history-publication.js';
-import { createTrackHistoryPublication } from './pages-track-history-response.js';
+import {
+  createTrackHistoryPublication,
+  TRACK_HISTORY_MODEL_KEY,
+} from './pages-track-history-response.js';
+import { promoteMaterializedD1ResponseToR2 } from './pages-response-r2.js';
 import {
   finalizeTrackHistoryStatus,
   loadTrackHistoryStage,
@@ -190,6 +195,17 @@ async function processPageStage(env, stage, generation, timestamp, dependencies)
   const result = await advance(env.MINUTE_DB, stage.publication, timestamp, dependencies);
   stage.publication = result.publication;
   stage.updated_at = timestamp;
+  let promoted = null;
+  if (result.published && env?.PAGES_RESPONSE_R2) {
+    const promote = dependencies.promoteResponse || promoteMaterializedD1ResponseToR2;
+    promoted = await promote(
+      env.MINUTE_DB,
+      env.PAGES_RESPONSE_R2,
+      TRACK_HISTORY_MODEL_KEY,
+      timestamp,
+      materializedResponseCadenceSeconds(TRACK_HISTORY_MODEL_KEY),
+    );
+  }
   if (result.published) {
     stage.published = true;
     stage.published_at = timestamp;
@@ -214,6 +230,7 @@ async function processPageStage(env, stage, generation, timestamp, dependencies)
     rows_written: Number(stage.publication.rows_written || 0),
     chunks: Number(result.chunks || 0),
     published: result.published === true,
+    storage: promoted?.storage || (result.published ? 'd1' : null),
   };
 }
 
