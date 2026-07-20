@@ -20,6 +20,7 @@ const RETRY_30_SECONDS = Object.freeze({ delaySeconds: 30 });
 let monitorMaintenanceModulePromise;
 let minutePipelineModulePromise;
 let otherMonitorModulePromise;
+let otherMonitorDispatchModulePromise;
 let rawCollectorModulePromise;
 
 function loadMonitorMaintenanceModule() {
@@ -35,6 +36,11 @@ function loadMinutePipelineModule() {
 function loadOtherMonitorModule() {
   otherMonitorModulePromise ||= import('./other-monitor-entry.js');
   return otherMonitorModulePromise;
+}
+
+function loadOtherMonitorDispatchModule() {
+  otherMonitorDispatchModulePromise ||= import('./runtime-other-monitor-dispatch.js');
+  return otherMonitorDispatchModulePromise;
 }
 
 function loadRawCollectorModule() {
@@ -92,11 +98,8 @@ async function processRuntimeDispatchMessage(message, env, ctx, options = EMPTY_
       await dispatchMinuteMaintenanceGate(controller, env, String(body.task || ''), ctx, options);
     } else if (messageType === RUNTIME_OTHER_MONITOR_MESSAGE) {
       const run = options.runOtherMonitorCron
-        || (await loadOtherMonitorModule()).runOtherMonitorCron;
-      await run(controller, env, ctx, {
-        ...(options.otherOptions || EMPTY_OPTIONS),
-        deferSuccess: true,
-      });
+        || (await loadOtherMonitorDispatchModule()).dispatchOtherMonitorStage;
+      await run(controller, env, ctx, options.otherOptions || EMPTY_OPTIONS);
     } else {
       throw new Error(`unsupported runtime dispatch type: ${String(messageType || 'unknown')}`);
     }
