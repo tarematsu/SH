@@ -32,7 +32,12 @@ async function prepareLiveWrite(env, body, dependencies = {}) {
   if (!materializer.shouldMaterializeLiveRevision(env, body.payload)) {
     return commitLiveWrite(env, { ...body, stage: BUDGET_LIVE_WRITE_STAGE }, dependencies);
   }
-  const revision = await materializer.prepareSparseLiveRevision(env, body.payload);
+  const revision = await materializer.prepareSparseLiveRevision(
+    env,
+    body.payload,
+    { sourceJobId: body?.job?.id },
+    dependencies.materializerDependencies || {},
+  );
   await sendStage(env, {
     ...body,
     stage: BUDGET_LIVE_WRITE_STAGE,
@@ -70,14 +75,7 @@ async function commitLiveWrite(env, body, dependencies = {}) {
       message_version: 1,
       stage: 'revision-materialize',
       job: body.job,
-      revision: {
-        revision_id: Number(preparedRevision.revision_id),
-        cursor: 0,
-        item_count: Number(preparedRevision.item_count || 0),
-        preferred_position: preparedRevision.preferred_position,
-        sparse: true,
-        rebuild: false,
-      },
+      revision: preparedRevision,
       started_at: body.started_at,
     }, dependencies);
   }
