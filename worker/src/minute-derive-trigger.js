@@ -76,20 +76,18 @@ export async function pendingMinuteDeriveTriggers(env, options = {}) {
   if (!env?.MINUTE_DB) throw new Error('minute derive MINUTE_DB binding is missing');
   const now = integer(options.now) ?? Date.now();
   const limit = positiveInteger(options.limit, 5, 20);
-  const allowRebuild = historicalRebuildEnabled(env) ? 1 : 0;
+  const kindFilter = historicalRebuildEnabled(env) ? '' : " AND job_kind!='rebuild'";
   const [pending, expired] = await Promise.all([
     env.MINUTE_DB.prepare(`SELECT id,channel_id,minute_at,job_kind,job_priority
       FROM sh_minute_fact_jobs
-      WHERE status='pending' AND next_attempt_at<=?
-        AND (?=1 OR job_kind!='rebuild')
+      WHERE status='pending' AND next_attempt_at<=?${kindFilter}
       ORDER BY job_priority DESC,minute_at ASC,id ASC
-      LIMIT ?`).bind(now, allowRebuild, limit).all(),
+      LIMIT ?`).bind(now, limit).all(),
     env.MINUTE_DB.prepare(`SELECT id,channel_id,minute_at,job_kind,job_priority
       FROM sh_minute_fact_jobs
-      WHERE status='processing' AND lease_until<?
-        AND (?=1 OR job_kind!='rebuild')
+      WHERE status='processing' AND lease_until<?${kindFilter}
       ORDER BY lease_until ASC,id ASC
-      LIMIT ?`).bind(now, allowRebuild, limit).all(),
+      LIMIT ?`).bind(now, limit).all(),
   ]);
   return [...(pending.results || []), ...(expired.results || [])]
     .sort(dispatchOrder)
