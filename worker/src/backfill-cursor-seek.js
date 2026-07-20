@@ -1,3 +1,5 @@
+import { environmentView } from '../../packages/sh-shared/environment-view.mjs';
+
 const ORIGINAL_D1_STATEMENT = Symbol('backfill-original-d1-statement');
 const wrappedDatabases = new WeakMap();
 
@@ -68,13 +70,7 @@ function wrapDatabase(db) {
 
 export function withBackfillCursorSeek(env) {
   if (!env?.BUDDIES_DB) return env;
-  const db = wrapDatabase(env.BUDDIES_DB);
-  return new Proxy(env, {
-    get(target, property, receiver) {
-      if (property === 'BUDDIES_DB') return db;
-      return Reflect.get(target, property, receiver);
-    },
-  });
+  return environmentView(env, { BUDDIES_DB: wrapDatabase(env.BUDDIES_DB) });
 }
 
 export function resetBackfillCursorSeekForTests(db) {
