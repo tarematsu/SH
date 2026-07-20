@@ -42,6 +42,17 @@ const pausedQueues = new Set();
 const retiredRemoved = new Set();
 
 try {
+  // A Queue accepts only one consumer for this cutover path. Remove the
+  // retired consumer while delivery is paused before Wrangler registers the
+  // consolidated consumer, then restore it if deployment fails.
+  for (const migration of MIGRATIONS) {
+    if (!retiredBefore.has(migration.queue)) continue;
+    pauseQueue(migration.queue);
+    pausedQueues.add(migration.queue);
+    removeConsumer(migration.queue, migration.oldScript);
+    retiredRemoved.add(migration.queue);
+  }
+
   runWrangler(['deploy', '--config', 'wrangler.ingest.jsonc']);
   for (const migration of MIGRATIONS) {
     assertConsumer(
@@ -53,11 +64,6 @@ try {
   }
 
   for (const migration of MIGRATIONS) {
-    if (!retiredBefore.has(migration.queue)) continue;
-    pauseQueue(migration.queue);
-    pausedQueues.add(migration.queue);
-    removeConsumer(migration.queue, migration.oldScript);
-    retiredRemoved.add(migration.queue);
     const after = consumerList(migration.queue);
     assertConsumer(after, migration.queue, consolidatedScript, 'consolidated ingest');
     if (hasConsumer(after, migration.oldScript)) {

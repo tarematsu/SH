@@ -16,11 +16,11 @@ import {
   rollbackConsolidatedWorker,
 } from './monitor-cutover-cloudflare.mjs';
 
-const retiredQueueWorkers = [
+const retiredQueueWorkers = [...new Set([
   ...MIGRATIONS.map(({ oldScript }) => oldScript),
   'sh-buddies-read-model',
   'sh-monitor-maintenance',
-];
+])];
 const retiredScheduledWorkers = [
   COLLECTOR_SCRIPT,
   'sh-minute-maintenance',
@@ -40,16 +40,16 @@ try {
     paused.push(item);
   }
 
-  // Deploy first while the old consumers remain attached. This makes the
-  // cutover reversible without creating a window in which collection or
-  // maintenance has no consumer.
-  deployConsolidatedWorker();
-  deployed = true;
-  assertConsolidatedConsumersPresent();
+  // Remove the old consumer while delivery is paused before Wrangler
+  // registers the consolidated consumer. The catch block restores it if
+  // deployment fails, so no queue is left without a rollback path.
   for (const item of active) {
     removeConsumer(item.queue, item.oldScript);
     removed.push(item);
   }
+  deployConsolidatedWorker();
+  deployed = true;
+  assertConsolidatedConsumersPresent();
   assertConsolidatedConsumers();
   for (const script of retiredQueueWorkers) await deleteWorker(script);
   assertConsolidatedConsumers();
