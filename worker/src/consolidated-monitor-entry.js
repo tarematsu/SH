@@ -16,6 +16,8 @@ import { collectRawChannel } from './raw-collector-entry.js';
 const EMPTY_OPTIONS = Object.freeze({});
 const JSON_QUEUE_SEND_OPTIONS = Object.freeze({ contentType: 'json' });
 const OTHER_MONITOR_INTERVAL_MINUTES = 5;
+const MINUTE_RECOVERY_POLL_INTERVAL_MINUTES = 5;
+const MINUTE_RECOVERY_POLL_OFFSET_MINUTE = 1;
 export const CONSOLIDATED_MONITOR_CRON = '* * * * *';
 export const MONITOR_MAINTENANCE_MESSAGE = 'monitor-maintenance-task';
 
@@ -51,6 +53,11 @@ export function minuteMaintenanceTaskFor(timestamp) {
   return null;
 }
 
+export function minuteRecoveryPollDue(timestamp) {
+  const minute = new Date(Number(timestamp) || 0).getUTCMinutes();
+  return minute % MINUTE_RECOVERY_POLL_INTERVAL_MINUTES === MINUTE_RECOVERY_POLL_OFFSET_MINUTE;
+}
+
 export function otherMonitorDue(timestamp) {
   const minute = new Date(Number(timestamp) || 0).getUTCMinutes();
   return minute % OTHER_MONITOR_INTERVAL_MINUTES === 0;
@@ -75,7 +82,9 @@ async function dispatchMinuteMaintenance(controller, env, ctx, options = EMPTY_O
   const scheduledAt = Number(controller?.scheduledTime) || Date.now();
   const dispatchFacts = options.dispatchPendingMinuteFacts || dispatchPendingMinuteFacts;
   const dispatchGate = options.dispatchMinuteMaintenanceGate || dispatchMinuteMaintenanceGate;
-  const derive = dispatchFacts(env, options.minuteDispatchDependencies || EMPTY_OPTIONS, ctx);
+  const derive = minuteRecoveryPollDue(scheduledAt)
+    ? dispatchFacts(env, options.minuteDispatchDependencies || EMPTY_OPTIONS, ctx)
+    : Promise.resolve(null);
   const task = minuteMaintenanceTaskFor(scheduledAt);
   const gate = task
     ? dispatchGate({
@@ -85,7 +94,10 @@ async function dispatchMinuteMaintenance(controller, env, ctx, options = EMPTY_O
       }, env, task, ctx)
     : Promise.resolve(null);
   const [deriveResult, gateResult] = await Promise.all([derive, gate]);
-  return [deriveResult, ...(gateResult ? [gateResult] : [])];
+  return [
+    ...(deriveResult ? [deriveResult] : []),
+    ...(gateResult ? [gateResult] : []),
+  ];
 }
 
 export async function runConsolidatedMonitorScheduled(
