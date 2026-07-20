@@ -34,3 +34,22 @@ test('runtime monitor stage defers its D1 checkpoint to a separate Queue invocat
   }]);
   assert.equal(invalidations, 1);
 });
+
+test('production host selection stays queue-only and avoids a D1 due probe', async () => {
+  const sent = [];
+  const scheduledAt = SCHEDULED_AT + 25 * 60_000;
+  await dispatchOtherMonitorStage({
+    cron: '*/5 * * * *',
+    scheduledTime: scheduledAt,
+  }, {
+    OTHER_DB: { prepare() { assert.fail('host selection must not query D1'); } },
+    HOST_MONITOR_QUEUE: {
+      async send(body) { sent.push(body); },
+    },
+  }, {});
+
+  assert.deepEqual(sent.map(({ message_type }) => message_type), [
+    'other-monitor-select',
+    OTHER_MONITOR_SUCCESS_MESSAGE,
+  ]);
+});
