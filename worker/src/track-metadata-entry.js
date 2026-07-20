@@ -1,3 +1,5 @@
+import { queueNeedsPreservation } from './read-model-metadata-plan.js';
+
 const EMPTY_DEPENDENCIES = Object.freeze({});
 const JSON_QUEUE_SEND_OPTIONS = Object.freeze({ contentType: 'json' });
 let committedEnrichmentModulePromise;
@@ -115,8 +117,11 @@ export async function processTrackMetadataTask(env, body, dependencies = EMPTY_D
     const hydrate = dependencies.hydrateReadModelMetadata
       || (await loadReadModelStagesModule()).hydrateReadModelMetadata;
     const readModel = await hydrate(env, body.read_model);
-    await enqueueReadModelStage(env, body, readModel, 'read-model-preserve', dependencies);
-    return { task: kind, job_id: body.job_id, pending: true, next_task: 'read-model-preserve' };
+    const nextTask = queueNeedsPreservation(readModel?.queue?.value)
+      ? 'read-model-preserve'
+      : 'read-model-write';
+    await enqueueReadModelStage(env, body, readModel, nextTask, dependencies);
+    return { task: kind, job_id: body.job_id, pending: true, next_task: nextTask };
   }
 
   if (kind === 'read-model-preserve') {
