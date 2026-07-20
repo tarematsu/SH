@@ -36,8 +36,9 @@ let cutoverCommitted = false;
 
 try {
   for (const item of active) {
+    if (paused.some((queue) => queue === item.queue)) continue;
     pauseQueue(item.queue);
-    paused.push(item);
+    paused.push(item.queue);
   }
 
   // Remove the old consumer while delivery is paused before Wrangler
@@ -53,7 +54,7 @@ try {
   assertConsolidatedConsumers();
   for (const script of retiredQueueWorkers) await deleteWorker(script);
   assertConsolidatedConsumers();
-  for (const item of paused) resumeQueue(item.queue);
+  for (const queue of paused) resumeQueue(queue);
   paused.length = 0;
   cutoverCommitted = true;
 
@@ -78,8 +79,8 @@ try {
     try { if (!hasConsumer(item.queue, item.oldScript)) restoreConsumer(item); }
     catch (cause) { failures.push(`Consumer restore failed: ${cause.message}`); }
   }
-  for (const item of paused.toReversed()) {
-    try { resumeQueue(item.queue); }
+  for (const queue of paused.toReversed()) {
+    try { resumeQueue(queue); }
     catch (cause) { failures.push(`Queue resume failed: ${cause.message}`); }
   }
   if (failures.length) {

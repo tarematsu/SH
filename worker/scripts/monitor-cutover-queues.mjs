@@ -35,8 +35,22 @@ export const MIGRATIONS = Object.freeze([
     maxConcurrency: 1,
   }),
   Object.freeze({
+    queue: 'stationhead-buddies-facts',
+    oldScript: 'sh-minute-ingest',
+    deadLetterQueue: 'stationhead-buddies-facts-dlq',
+    batchSize: 1,
+    maxConcurrency: 1,
+  }),
+  Object.freeze({
     queue: 'stationhead-minute-rebuild',
     oldScript: 'sh-minute-derive',
+    deadLetterQueue: 'stationhead-minute-rebuild-dlq',
+    batchSize: 2,
+    maxConcurrency: 1,
+  }),
+  Object.freeze({
+    queue: 'stationhead-minute-rebuild',
+    oldScript: 'sh-minute-rebuild',
     deadLetterQueue: 'stationhead-minute-rebuild-dlq',
     batchSize: 2,
     maxConcurrency: 1,
