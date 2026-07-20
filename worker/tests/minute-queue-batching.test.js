@@ -19,7 +19,7 @@ function queueMessage(id, events, body = { id }) {
   };
 }
 
-test('derive processes and acknowledges every message in a two-message delivery', async () => {
+test('derive helper preserves acknowledgement for a defensive multi-message delivery', async () => {
   const events = [];
   const processed = [];
   const messages = [queueMessage(1, events), queueMessage(2, events)];
@@ -36,7 +36,7 @@ test('derive processes and acknowledges every message in a two-message delivery'
   assert.deepEqual(events, ['ack:1', 'ack:2']);
 });
 
-test('paired revision materialization caps each message at one track', async () => {
+test('defensive paired revision handling caps each message at one track', async () => {
   const events = [];
   const chunkTracks = [];
   const revisionBody = (id) => ({
@@ -64,7 +64,7 @@ test('paired revision materialization caps each message at one track', async () 
   assert.deepEqual(events, ['ack:1', 'ack:2']);
 });
 
-test('runtime batches live derive and rebuild while recovery derive stays isolated', () => {
+test('runtime isolates live derive while retaining rebuild batching', () => {
   const runtime = config('wrangler.runtime.jsonc');
   const entry = readFileSync(new URL('../src/minute-derive-entry.js', import.meta.url), 'utf8');
   const consumers = new Map(runtime.queues.consumers.map((consumer) => [consumer.queue, consumer]));
@@ -73,15 +73,16 @@ test('runtime batches live derive and rebuild while recovery derive stays isolat
     consumers.get('stationhead-minute-live-derive').max_batch_size,
     consumers.get('stationhead-buddies-facts').max_batch_size,
     consumers.get('stationhead-minute-rebuild').max_batch_size,
-  ], [1, 2, 1, 2]);
+  ], [1, 1, 1, 2]);
   assert.equal(runtime.vars.DERIVE_REVISION_CHUNK_TRACKS, 1);
+  assert.equal(consumers.get('stationhead-minute-live-derive').max_concurrency, 2);
   assert.equal(consumers.get('stationhead-minute-rebuild').max_concurrency, 1);
   assert.match(entry, /const MAX_LIVE_REVISION_CHUNK_TRACKS = 1/);
   assert.match(entry, /env\?\.DERIVE_REVISION_CHUNK_TRACKS/);
   assert.match(entry, /minute_derive_queue_overloaded/);
 });
 
-test('batched derive composes with the merged CPU, KV, and Worker topology contracts', () => {
+test('derive isolation composes with the merged CPU, KV, and Worker topology contracts', () => {
   const budget = readFileSync(
     new URL('../../.github/scripts/enforce-worker-cpu-budget.py', import.meta.url),
     'utf8',

@@ -62,11 +62,18 @@ test('runtime Worker consumes host, buddy, and minute queues with independent li
     'stationhead-host-monitor',
     'stationhead-minute-derive',
     'stationhead-buddies-facts',
+    'stationhead-minute-live-derive',
   ]) {
     assert.equal(limits.get(queue).max_batch_size, 1);
+  }
+  for (const queue of [
+    'stationhead-buddy-playback',
+    'stationhead-host-monitor',
+    'stationhead-minute-derive',
+    'stationhead-buddies-facts',
+  ]) {
     assert.equal(limits.get(queue).max_concurrency, 1);
   }
-  assert.equal(limits.get('stationhead-minute-live-derive').max_batch_size, 2);
   assert.equal(limits.get('stationhead-minute-live-derive').max_concurrency, 2);
   assert.equal(limits.get('stationhead-minute-rebuild').max_batch_size, 2);
   assert.equal(limits.get('stationhead-minute-rebuild').max_concurrency, 1);

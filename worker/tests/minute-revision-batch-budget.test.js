@@ -4,12 +4,13 @@ import test from 'node:test';
 
 import { writeSparseLiveRevisionChunk } from '../src/minute-revision-materializer.js';
 
-test('production keeps live revision chunks at one track after isolated rebuild claims', () => {
+test('production keeps live revisions at one message and one track per invocation', () => {
   const config = JSON.parse(readFileSync(new URL('../wrangler.runtime.jsonc', import.meta.url), 'utf8'));
   assert.equal(config.vars.DERIVE_REVISION_CHUNK_TRACKS, 1);
   const consumers = new Map(config.queues.consumers.map((consumer) => [consumer.queue, consumer]));
   assert.equal(consumers.get('stationhead-minute-derive').max_batch_size, 1);
-  assert.equal(consumers.get('stationhead-minute-live-derive').max_batch_size, 2);
+  assert.equal(consumers.get('stationhead-minute-live-derive').max_batch_size, 1);
+  assert.equal(consumers.get('stationhead-minute-live-derive').max_concurrency, 2);
   assert.equal(consumers.get('stationhead-buddies-facts').max_batch_size, 1);
   assert.equal(consumers.get('stationhead-minute-rebuild').max_batch_size, 2);
 });
