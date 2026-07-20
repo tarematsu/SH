@@ -9,9 +9,13 @@ function hasTrackIdentity(track) {
   );
 }
 
-function hydrationGap(queue) {
-  const tracks = queue?.tracks;
-  if (!Array.isArray(tracks)) return false;
+function tracksFromQueue(queue) {
+  return Array.isArray(queue?.tracks) ? queue.tracks : null;
+}
+
+export function queueNeedsHydration(queue) {
+  const tracks = tracksFromQueue(queue);
+  if (!tracks) return false;
   const trackCount = tracks.length;
   for (let index = 0; index < trackCount; index += 1) {
     const track = tracks[index];
@@ -21,9 +25,9 @@ function hydrationGap(queue) {
   return false;
 }
 
-function preservationGap(queue) {
-  const tracks = queue?.tracks;
-  if (!Array.isArray(tracks)) return false;
+export function queueNeedsPreservation(queue) {
+  const tracks = tracksFromQueue(queue);
+  if (!tracks) return false;
   const trackCount = tracks.length;
   for (let index = 0; index < trackCount; index += 1) {
     const track = tracks[index];
@@ -33,12 +37,18 @@ function preservationGap(queue) {
   return false;
 }
 
-export function queueNeedsHydration(queue) {
-  return hydrationGap(queue);
-}
-
-export function queueNeedsPreservation(queue) {
-  return preservationGap(queue);
+export function readModelMetadataTask(readModel) {
+  const tracks = tracksFromQueue(readModel?.queue?.value);
+  if (!tracks) return null;
+  let preserve = false;
+  const trackCount = tracks.length;
+  for (let index = 0; index < trackCount; index += 1) {
+    const track = tracks[index];
+    if (!track || typeof track !== 'object') continue;
+    if (!track.title || !track.artist || !track.thumbnail_url) return 'read-model-hydration';
+    if (!track.album_name && hasTrackIdentity(track)) preserve = true;
+  }
+  return preserve ? 'read-model-preserve' : null;
 }
 
 export function readModelNeedsHydration(readModel) {
