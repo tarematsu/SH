@@ -80,11 +80,9 @@ jobs:
           NODE
 
       - name: Enforce 50 percent daily planning budget
-        if: github.event_name != 'pull_request'
         run: node scripts/enforce-d1-half-budget.mjs
 
       - name: Enforce 50 percent rolling-hour budget
-        if: github.event_name != 'pull_request'
         run: node scripts/enforce-d1-hourly-half-budget.mjs
 
       - name: Install Wrangler for query insights
