@@ -55,7 +55,7 @@ test('read-model metadata scans distinguish hydration from preservation', () => 
   assert.equal(readModelNeedsPreservation(readModelWithTracks(albumOnly)), true);
 
   const unidentified = [{ title: null, artist: null, album_name: null, thumbnail_url: null }, null];
-  assert.equal(readModelNeedsHydration(readModelWithTracks(unidentified)), false);
+  assert.equal(readModelNeedsHydration(readModelWithTracks(unidentified)), true);
   assert.equal(readModelNeedsPreservation(readModelWithTracks(unidentified)), false);
   assert.equal(readModelNeedsHydration({ queue: { value: { tracks: [] } } }), false);
   assert.equal(readModelNeedsPreservation({ queue: { value: { tracks: [] } } }), false);
@@ -130,34 +130,29 @@ test('album-only gaps skip hydration and start at preservation', async () => {
   assert.deepEqual(sends[0].options, { contentType: 'json' });
 });
 
-test('complete or unresolvable read models use the checkpointed writer directly', async () => {
-  for (const tracks of [
-    [completeTrack(0)],
-    [{ title: null, artist: null, album_name: null, thumbnail_url: null }],
-  ]) {
-    const readModel = readModelWithTracks(tracks);
-    let written = null;
-    const originalLog = console.log;
-    console.log = () => {};
-    try {
-      assert.deepEqual(await processReadModelMessage({
-        TRACK_METADATA_QUEUE: {
-          async send() { assert.fail('direct read-model writes must not enqueue metadata work'); },
-        },
-      }, {
-        message_type: 'stationhead-read-model',
-        message_version: 1,
-        job_id: 'read-model-job',
-        observed_at: 123,
-        read_model: readModel,
-      }, {
-        async writePreparedReadModel(_env, value) { written = value; },
-      }), { deferred: false });
-    } finally {
-      console.log = originalLog;
-    }
-    assert.strictEqual(written, readModel);
+test('complete read models use the checkpointed writer directly', async () => {
+  const readModel = readModelWithTracks([completeTrack(0)]);
+  let written = null;
+  const originalLog = console.log;
+  console.log = () => {};
+  try {
+    assert.deepEqual(await processReadModelMessage({
+      TRACK_METADATA_QUEUE: {
+        async send() { assert.fail('complete read-model writes must not enqueue metadata work'); },
+      },
+    }, {
+      message_type: 'stationhead-read-model',
+      message_version: 1,
+      job_id: 'read-model-job',
+      observed_at: 123,
+      read_model: readModel,
+    }, {
+      async writePreparedReadModel(_env, value) { written = value; },
+    }), { deferred: false });
+  } finally {
+    console.log = originalLog;
   }
+  assert.strictEqual(written, readModel);
 });
 
 test('consolidated read-model deployment keeps single-message Queue boundaries', async () => {
