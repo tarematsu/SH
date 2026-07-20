@@ -1,3 +1,5 @@
+import { historicalRebuildEnabled } from './historical-rebuild-policy.js';
+
 export const MINUTE_DERIVE_MESSAGE_TYPE = 'minute-fact-derive';
 export const MINUTE_DERIVE_MESSAGE_VERSION = 1;
 
@@ -74,17 +76,20 @@ export async function pendingMinuteDeriveTriggers(env, options = {}) {
   if (!env?.MINUTE_DB) throw new Error('minute derive MINUTE_DB binding is missing');
   const now = integer(options.now) ?? Date.now();
   const limit = positiveInteger(options.limit, 5, 20);
+  const allowRebuild = historicalRebuildEnabled(env) ? 1 : 0;
   const [pending, expired] = await Promise.all([
     env.MINUTE_DB.prepare(`SELECT id,channel_id,minute_at,job_kind,job_priority
       FROM sh_minute_fact_jobs
       WHERE status='pending' AND next_attempt_at<=?
+        AND (?=1 OR job_kind!='rebuild')
       ORDER BY job_priority DESC,minute_at ASC,id ASC
-      LIMIT ?`).bind(now, limit).all(),
+      LIMIT ?`).bind(now, allowRebuild, limit).all(),
     env.MINUTE_DB.prepare(`SELECT id,channel_id,minute_at,job_kind,job_priority
       FROM sh_minute_fact_jobs
       WHERE status='processing' AND lease_until<?
+        AND (?=1 OR job_kind!='rebuild')
       ORDER BY lease_until ASC,id ASC
-      LIMIT ?`).bind(now, limit).all(),
+      LIMIT ?`).bind(now, allowRebuild, limit).all(),
   ]);
   return [...(pending.results || []), ...(expired.results || [])]
     .sort(dispatchOrder)
