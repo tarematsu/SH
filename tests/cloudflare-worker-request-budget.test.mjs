@@ -16,7 +16,7 @@ test('cron request estimates cover wildcard, interval and hourly list schedules'
   assert.equal(cronInvocationsPerDay('5,7,9 * * * *'), 72);
 });
 
-test('the active topology is deduplicated and stays below the 50% request target', async () => {
+test('the active topology is deduplicated and stays below the request budgets', async () => {
   assert.deepEqual(ACTIVE_CONFIGS, [
     'worker/wrangler.minute-enrichment.jsonc',
     'worker/wrangler.ingest.jsonc',
@@ -33,6 +33,7 @@ test('the active topology is deduplicated and stays below the 50% request target
   });
   assert.equal(report.ok, true);
   assert.ok(report.estimated_daily_requests < TARGET_DAILY_REQUESTS);
+  assert.ok(report.estimated_daily_requests < 80_000);
   assert.deepEqual(report.workers.map(({ name }) => name), [
     'sh-minute-enrichment',
     'sh-buddies-ingest',
