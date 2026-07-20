@@ -6,6 +6,12 @@ CREATE INDEX IF NOT EXISTS idx_sh_minute_facts_live_minute
 ON sh_minute_facts(minute_at DESC, id DESC)
 WHERE source_code=1;
 
+-- D1 did not consistently choose the partial live index for the public
+-- playback CTE. Keep source_code in the key so INDEXED BY can guarantee a
+-- bounded seek instead of a multi-million-row fact scan.
+CREATE INDEX IF NOT EXISTS idx_sh_minute_facts_source_minute_desc
+ON sh_minute_facts(source_code, minute_at DESC, id DESC);
+
 CREATE INDEX IF NOT EXISTS idx_sh_broadcast_sessions_channel_start
 ON sh_broadcast_sessions(channel_id, broadcast_start_time, first_observed_at, id);
 
