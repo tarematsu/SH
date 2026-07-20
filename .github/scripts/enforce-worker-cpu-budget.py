@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Enforce the active Worker topology and stable per-Worker CPU budget."""
+"""Enforce the active Worker topology and per-invocation CPU ceiling."""
 
 from __future__ import annotations
 
@@ -26,6 +26,8 @@ for name, item in sorted((summary.get("scripts") or {}).items()):
     p95 = cpu.get("p95")
     maximum = cpu.get("max")
     over_budget = None
+    all_events_sampled = None if events <= 0 else samples == events
+
     if retired and events > 0:
         violations.append({
             "worker": name,
@@ -33,15 +35,22 @@ for name, item in sorted((summary.get("scripts") or {}).items()):
             "samples": samples,
             "reason": "retired_worker_active",
         })
-    if events > 0 and samples <= 0:
+    if events > 0 and samples != events:
         violations.append({
             "worker": name,
             "events": events,
             "samples": samples,
-            "reason": "missing_cpu_samples",
+            "reason": "incomplete_cpu_samples",
         })
-    if samples and p95 is not None:
-        over_budget = float(p95) >= BUDGET_MS
+    if samples > 0 and maximum is None:
+        violations.append({
+            "worker": name,
+            "events": events,
+            "samples": samples,
+            "reason": "missing_cpu_max",
+        })
+    if samples and maximum is not None:
+        over_budget = float(maximum) > BUDGET_MS
         if over_budget:
             violations.append({
                 "worker": name,
@@ -49,23 +58,24 @@ for name, item in sorted((summary.get("scripts") or {}).items()):
                 "samples": samples,
                 "p95_ms": p95,
                 "max_ms": maximum,
-                "reason": "p95_above_budget",
+                "reason": "invocation_above_budget",
             })
     workers[name] = {
         "events": events,
         "retired": retired,
         "samples": samples,
+        "all_events_sampled": all_events_sampled,
         "p95_ms": p95,
         "max_ms": maximum,
-        "p95_within_budget": None if over_budget is None else not over_budget,
-        "max_at_or_above_budget": maximum is not None and float(maximum) >= BUDGET_MS,
+        "max_within_budget": None if over_budget is None else not over_budget,
     }
 
 result = {
     "ok": not missing_observability and not violations,
     "budget_ms": BUDGET_MS,
-    "comparison": "less_than",
-    "statistic": "p95",
+    "comparison": "less_than_or_equal",
+    "statistic": "max",
+    "scope": "observed_invocations",
     "total_events": total_events,
     "total_samples": total_samples,
     "missing_observability": missing_observability,
@@ -81,7 +91,7 @@ if missing_observability:
 if violations:
     detail = ", ".join(
         f"{item['worker']} {item.get('reason')}"
-        + (f" p95={item['p95_ms']}ms" if 'p95_ms' in item else "")
+        + (f" max={item['max_ms']}ms" if 'max_ms' in item else "")
         for item in violations
     )
     print(f"Worker observability policy failed: {detail}", file=sys.stderr)
