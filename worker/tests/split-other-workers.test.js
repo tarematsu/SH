@@ -10,7 +10,11 @@ import {
   MONITOR_MAINTENANCE_MESSAGE,
   OTHER_MONITOR_CRON,
   RAW_COLLECTION_TASK_MESSAGE,
+  RUNTIME_MINUTE_GATE_MESSAGE,
+  RUNTIME_MINUTE_RECOVERY_MESSAGE,
+  RUNTIME_OTHER_MONITOR_MESSAGE,
   runRuntimeScheduled,
+  runtimeScheduledMessagesFor,
 } from '../src/runtime-scheduled.js';
 import { runRuntimeQueue } from '../src/runtime-queue.js';
 
@@ -18,6 +22,14 @@ const BASE = Date.UTC(2026, 0, 1, 0, 0, 0);
 
 function config(name) {
   return JSON.parse(readFileSync(new URL(`../${name}`, import.meta.url), 'utf8'));
+}
+
+function queueMessage(body, events, prefix = '') {
+  return {
+    body,
+    ack() { events.push(`${prefix}ack`); },
+    retry() { events.push(`${prefix}retry`); },
+  };
 }
 
 test('runtime Worker config owns orchestration boundaries', () => {
@@ -44,60 +56,55 @@ test('runtime Worker config owns orchestration boundaries', () => {
   assert.equal(worker.vars.SNAPSHOT_RETENTION_ENABLED, true);
 });
 
-test('runtime scheduled handler dispatches collection and maintenance without adding a Cron', async () => {
-  const sent = [];
+test('runtime Cron uses one Queue batch instead of executing work inline', async () => {
+  const batches = [];
   const scheduledTime = BASE + 30 * 60_000;
   const result = await runRuntimeScheduled(
     { cron: OTHER_MONITOR_CRON, scheduledTime },
-    {
-      HOST_MONITOR_QUEUE: {
-        async send(body, options) { sent.push({ body, options }); },
-      },
-    },
-    {},
-    {
-      otherOptions: {
-        dependencies: { buddy: async () => 'buddy' },
-        recordSuccess: async () => {},
-        healthApp: { invalidateHealthCache() {} },
-      },
-    },
+    { HOST_MONITOR_QUEUE: { async sendBatch(messages) { batches.push(messages); } } },
   );
 
-  assert.deepEqual(sent, [
+  assert.equal(batches.length, 1);
+  assert.deepEqual(batches[0].map(({ body }) => body), [
     {
-      body: {
-        message_type: RAW_COLLECTION_TASK_MESSAGE,
-        message_version: 1,
-        scheduled_at: scheduledTime,
-      },
-      options: { contentType: 'json' },
+      message_type: RAW_COLLECTION_TASK_MESSAGE,
+      message_version: 1,
+      scheduled_at: scheduledTime,
     },
     {
-      body: {
-        message_type: MONITOR_MAINTENANCE_MESSAGE,
-        message_version: 1,
-        cron: ROLLUP_MAINTENANCE_CRON,
-        scheduled_at: scheduledTime,
-      },
-      options: { contentType: 'json' },
+      message_type: RUNTIME_OTHER_MONITOR_MESSAGE,
+      message_version: 1,
+      scheduled_at: scheduledTime,
+    },
+    {
+      message_type: MONITOR_MAINTENANCE_MESSAGE,
+      message_version: 1,
+      cron: ROLLUP_MAINTENANCE_CRON,
+      scheduled_at: scheduledTime,
     },
   ]);
-  assert.equal(result[0].task, 'raw-collection');
-  assert.equal(result.at(-1).task, 'maintenance');
+  assert.deepEqual(batches[0].map(({ contentType }) => contentType), ['json', 'json', 'json']);
+  assert.deepEqual(result.map(({ task }) => task), ['raw-collection', 'other-monitor', 'maintenance']);
+});
+
+test('runtime Cron creates bounded messages for recovery and maintenance gates', () => {
+  assert.deepEqual(runtimeScheduledMessagesFor(BASE + 36 * 60_000).map(({ message_type }) => message_type), [
+    RAW_COLLECTION_TASK_MESSAGE,
+    RUNTIME_MINUTE_RECOVERY_MESSAGE,
+  ]);
+  assert.deepEqual(runtimeScheduledMessagesFor(BASE + 37 * 60_000).map(({ message_type, task }) => [message_type, task]), [
+    [RAW_COLLECTION_TASK_MESSAGE, undefined],
+    [RUNTIME_MINUTE_GATE_MESSAGE, 'rebuild'],
+  ]);
 });
 
 test('runtime Queue handler executes raw collection in an isolated invocation', async () => {
   const events = [];
-  const message = {
-    body: {
-      message_type: RAW_COLLECTION_TASK_MESSAGE,
-      message_version: 1,
-      scheduled_at: BASE,
-    },
-    ack() { events.push('ack'); },
-    retry() { events.push('retry'); },
-  };
+  const message = queueMessage({
+    message_type: RAW_COLLECTION_TASK_MESSAGE,
+    message_version: 1,
+    scheduled_at: BASE,
+  }, events);
   await runRuntimeQueue({ messages: [message] }, {
     RAW_COLLECTION_QUEUE: { send() {} },
   }, {}, {
@@ -109,17 +116,52 @@ test('runtime Queue handler executes raw collection in an isolated invocation', 
   assert.deepEqual(events, ['collect', 'ack']);
 });
 
+test('runtime Queue handler isolates recovery, gate, and monitor dispatches', async () => {
+  const events = [];
+  const messages = [
+    queueMessage({
+      message_type: RUNTIME_MINUTE_RECOVERY_MESSAGE,
+      message_version: 1,
+      scheduled_at: BASE + 36 * 60_000,
+    }, events, 'recovery-'),
+    queueMessage({
+      message_type: RUNTIME_MINUTE_GATE_MESSAGE,
+      message_version: 1,
+      task: 'rebuild',
+      scheduled_at: BASE + 37 * 60_000,
+    }, events, 'gate-'),
+    queueMessage({
+      message_type: RUNTIME_OTHER_MONITOR_MESSAGE,
+      message_version: 1,
+      scheduled_at: BASE + 40 * 60_000,
+    }, events, 'monitor-'),
+  ];
+
+  await runRuntimeQueue({ messages }, {}, {}, {
+    async dispatchPendingMinuteFacts() { events.push('recovery-run'); },
+    async dispatchMinuteMaintenanceGate(_controller, _env, task) {
+      events.push(`gate-run-${task}`);
+    },
+    async runOtherMonitorCron(_controller, _env, _ctx, options) {
+      assert.equal(options.deferSuccess, true);
+      events.push('monitor-run');
+    },
+  });
+
+  assert.deepEqual(events, [
+    'recovery-run', 'recovery-ack',
+    'gate-run-rebuild', 'gate-ack',
+    'monitor-run', 'monitor-ack',
+  ]);
+});
+
 test('runtime Queue handler executes maintenance and preserves ack ownership', async () => {
   const events = [];
-  const message = {
-    body: {
-      message_type: MONITOR_MAINTENANCE_MESSAGE,
-      cron: ROLLUP_MAINTENANCE_CRON,
-      scheduled_at: BASE + 30 * 60_000,
-    },
-    ack() { events.push('ack'); },
-    retry() { events.push('retry'); },
-  };
+  const message = queueMessage({
+    message_type: MONITOR_MAINTENANCE_MESSAGE,
+    cron: ROLLUP_MAINTENANCE_CRON,
+    scheduled_at: BASE + 30 * 60_000,
+  }, events);
 
   await runRuntimeQueue(
     { messages: [message] },
@@ -141,20 +183,12 @@ test('runtime Queue router processes every message in a mixed batch', async () =
   await runRuntimeQueue(
     {
       messages: [
-        {
-          body: {
-            message_type: MONITOR_MAINTENANCE_MESSAGE,
-            cron: ROLLUP_MAINTENANCE_CRON,
-            scheduled_at: BASE + 30 * 60_000,
-          },
-          ack() { events.push('maintenance-ack'); },
-          retry() { events.push('maintenance-retry'); },
-        },
-        {
-          body: { message_type: 'unsupported-monitor-message' },
-          ack() { events.push('other-ack'); },
-          retry() { events.push('other-retry'); },
-        },
+        queueMessage({
+          message_type: MONITOR_MAINTENANCE_MESSAGE,
+          cron: ROLLUP_MAINTENANCE_CRON,
+          scheduled_at: BASE + 30 * 60_000,
+        }, events, 'maintenance-'),
+        queueMessage({ message_type: 'unsupported-monitor-message' }, events, 'other-'),
       ],
     },
     { BUDDIES_DB: {}, OTHER_DB: {} },
@@ -175,11 +209,7 @@ test('runtime Queue router delegates minute pipeline batches unchanged', async (
   await runRuntimeQueue(
     {
       queue: 'stationhead-minute-live-derive',
-      messages: [{
-        body: { message_type: 'minute-fact-derive' },
-        ack() { events.push('ack'); },
-        retry() { events.push('retry'); },
-      }],
+      messages: [queueMessage({ message_type: 'minute-fact-derive' }, events)],
     },
     { BUDDIES_DB: {}, MINUTE_DB: {} },
     {},
@@ -199,15 +229,11 @@ test('maintenance failures remain Queue retries', async () => {
   try {
     await runRuntimeQueue(
       {
-        messages: [{
-          body: {
-            message_type: MONITOR_MAINTENANCE_MESSAGE,
-            cron: SNAPSHOT_RETENTION_CRON,
-            scheduled_at: BASE + 50 * 60_000,
-          },
-          ack() { events.push('ack'); },
-          retry() { events.push('retry'); },
-        }],
+        messages: [queueMessage({
+          message_type: MONITOR_MAINTENANCE_MESSAGE,
+          cron: SNAPSHOT_RETENTION_CRON,
+          scheduled_at: BASE + 50 * 60_000,
+        }, events)],
       },
       { BUDDIES_DB: {}, OTHER_DB: {} },
       {},
