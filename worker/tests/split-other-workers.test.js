@@ -53,11 +53,11 @@ test('Pages read-model Worker runs one six-hour task slot from a one-minute Cron
     { skipped: true, reason: 'unsupported-pages-read-model-cron', cron: '*/5 * * * *' },
   );
 
-  const worker = config('wrangler.pages-read-model.jsonc');
-  assert.equal(worker.name, 'sh-pages-read-model');
-  assert.equal(worker.main, 'src/pages-read-model-entry.js');
+  const worker = config('wrangler.minute-enrichment.jsonc');
+  assert.equal(worker.name, 'sh-minute-enrichment');
+  assert.equal(worker.main, 'src/minute-enrichment-optimized-entry.js');
   assert.deepEqual(worker.triggers.crons, [PAGES_READ_MODEL_CRON]);
-  assert.deepEqual(worker.d1_databases.map(({ binding }) => binding), ['BUDDIES_DB', 'MINUTE_DB', 'OTHER_DB']);
+  assert.deepEqual(worker.d1_databases.map(({ binding }) => binding), ['MINUTE_DB', 'BUDDIES_DB', 'OTHER_DB']);
 });
 
 test('Pages read-model Worker surfaces single-task materialization failures', async () => {
@@ -312,11 +312,11 @@ test('consolidated monitor rejects unknown schedules', async () => {
 });
 
 test('Pages read-model Worker owns both Queue boundaries', async () => {
-  const worker = config('wrangler.pages-read-model.jsonc');
-  assert.deepEqual(worker.queues.consumers.map(({ queue }) => queue), [
-    'stationhead-pages-read-model-publication',
-    MINUTE_READ_MODEL_QUEUE,
-  ]);
+  const worker = config('wrangler.minute-enrichment.jsonc');
+  assert.deepEqual(
+    worker.queues.consumers.map(({ queue }) => queue).slice(-2),
+    ['stationhead-pages-read-model-publication', MINUTE_READ_MODEL_QUEUE],
+  );
   assert.equal(worker.queues.producers.some(({ binding }) => binding === 'TRACK_METADATA_QUEUE'), true);
 
   const events = [];

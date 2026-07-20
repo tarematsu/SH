@@ -6,8 +6,6 @@ const CONFIG_BY_WORKER = Object.freeze({
   'sh-buddies-persist': 'wrangler.persist.jsonc',
   'sh-buddies-ingest': 'wrangler.ingest.jsonc',
   'sh-buddies-comments': 'wrangler.comments.jsonc',
-  'sh-track-metadata': 'wrangler.track-metadata.jsonc',
-  'sh-pages-read-model': 'wrangler.pages-read-model.jsonc',
   'sh-monitor-other': 'wrangler.other.jsonc',
   'sh-minute-derive': 'wrangler.minute-derive.jsonc',
   'sh-minute-enrichment': 'wrangler.minute-enrichment.jsonc',

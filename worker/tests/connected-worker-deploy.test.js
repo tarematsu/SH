@@ -15,7 +15,7 @@ test('connected deploy decision skips an unaffected consolidated Worker', () => 
     connectedDeployDecision(
       'sh-monitor-other',
       ['worker/src/other-monitor-entry.js'],
-      ['sh-pages-read-model'],
+      ['sh-minute-enrichment'],
     ),
     {
       deploy: false,
@@ -168,7 +168,7 @@ test('unaffected connected build exits without invoking Wrangler', async () => {
   const result = await deployConnectedWorker({
     workerName: 'sh-monitor-other',
     changedPaths: ['worker/src/other-monitor-entry.js'],
-    selectedWorkers: ['sh-pages-read-model'],
+    selectedWorkers: ['sh-minute-enrichment'],
     spawnSync() {
       spawned = true;
       return { status: 0 };

@@ -295,6 +295,34 @@ export async function processPersistenceTask(env, body, dependencies = EMPTY_DEP
 
   const prepare = dependencies.prepareQueueStructurePersistence || prepareQueueStructurePersistence;
   const plan = await prepare(env.DB, body, observedAt);
+  if (plan?.structure_changed !== true) {
+    const likesDeferred = await enqueueQueueLikes(env, body, observedAt, plan, dependencies);
+    if (likesDeferred) {
+      return {
+        task,
+        stage,
+        observed_at: observedAt,
+        ...queueCounts(body.data),
+        structure_changed: false,
+        structure_write_deferred: false,
+        likes_deferred: true,
+        finalization_deferred: true,
+      };
+    }
+    const finished = await finishLikesStage(env, body, observedAt, dependencies);
+    return {
+      task,
+      stage,
+      observed_at: observedAt,
+      structure_changed: false,
+      ...queueCounts(body.data),
+      ...finished.result,
+      ...finished.finalized,
+      structure_write_deferred: false,
+      likes_deferred: false,
+      finalization_deferred: finished.finalizationDeferred,
+    };
+  }
   const writeDeferred = await enqueueStructureWrite(env, body, observedAt, plan, dependencies);
   if (writeDeferred) {
     return {

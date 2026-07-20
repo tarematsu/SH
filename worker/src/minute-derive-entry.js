@@ -9,7 +9,7 @@ export const REBUILD_DERIVE_QUEUE_NAME = 'stationhead-minute-derive';
 
 const RETRY_60_SECONDS = Object.freeze({ delaySeconds: 60 });
 const SUCCESS_LOG_SAMPLE_MODULUS = 16;
-const LIVE_REVISION_CHUNK_TRACKS = 1;
+const MAX_LIVE_REVISION_CHUNK_TRACKS = 2;
 const SOURCE_PAYLOAD_GRACE_MS = 5 * 60_000;
 const JSON_QUEUE_SEND_OPTIONS = Object.freeze({ contentType: 'json', delaySeconds: 1 });
 const SOURCE_PAYLOAD_ERROR = /queue revision \d+ source payload is unavailable or incomplete/i;
@@ -67,8 +67,12 @@ function deriveEnvironmentSet(env) {
   const base = withMinuteD1WriteThrottling(withAppleMusicFreeRuntime(env));
   const rebuildQueue = env?.MINUTE_DERIVE_QUEUE;
   const liveQueue = env?.MINUTE_LIVE_DERIVE_QUEUE || rebuildQueue;
+  const configuredChunkTracks = Math.max(
+    1,
+    Math.min(MAX_LIVE_REVISION_CHUNK_TRACKS, integer(env?.DERIVE_REVISION_CHUNK_TRACKS) ?? 1),
+  );
   const environments = {
-    live: scopedDeriveEnv(base, liveQueue, LIVE_REVISION_CHUNK_TRACKS),
+    live: scopedDeriveEnv(base, liveQueue, configuredChunkTracks),
     rebuild: scopedDeriveEnv(base, rebuildQueue),
     fallback: scopedDeriveEnv(base, liveQueue),
   };

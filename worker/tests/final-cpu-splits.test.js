@@ -255,3 +255,26 @@ test('ingest finalization preserves collector state before read-model handoff', 
   assert.deepEqual(calls, ['state', 'read-model']);
   assert.equal(result.state_accepted, true);
 });
+
+test('ingest finalization skips D1 between five-minute collector checkpoints', async () => {
+  let readModels = 0;
+  const result = await processIngestFinalizeTask({
+    DB: new Proxy({}, { get() { assert.fail('checkpoint skip must not access D1'); } }),
+  }, {
+    message_type: 'stationhead-ingest-finalize',
+    message_version: 1,
+    observed_at: 20,
+    channel_id: 10,
+    collector_state: {
+      authToken: 'token',
+      deviceUid: 'device',
+      checkpointDue: false,
+    },
+    read_model: { message_type: 'stationhead-read-model', job_id: 'read-model:10:20' },
+  }, {
+    sendReadModel: async () => { readModels += 1; },
+  });
+  assert.equal(readModels, 1);
+  assert.equal(result.state_accepted, true);
+  assert.equal(result.state_persisted, false);
+});

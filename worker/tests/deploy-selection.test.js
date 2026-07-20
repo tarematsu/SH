@@ -44,9 +44,9 @@ test('metadata and minute enrichment modules map to the consolidated Worker', ()
   assert.deepEqual(select(['worker/src/persist-channel-entry.js']).workers, ['sh-buddies-ingest']);
 });
 
-test('minute and Pages read-model modules redeploy the consolidated Pages Worker', () => {
-  assert.deepEqual(select(['worker/src/read-model-entry.js']).workers, ['sh-pages-read-model']);
-  assert.deepEqual(select(['worker/src/pages-read-model-entry.js']).workers, ['sh-pages-read-model']);
+test('minute and Pages read-model modules redeploy minute enrichment', () => {
+  assert.deepEqual(select(['worker/src/read-model-entry.js']).workers, ['sh-minute-enrichment']);
+  assert.deepEqual(select(['worker/src/pages-read-model-entry.js']).workers, ['sh-minute-enrichment']);
 });
 
 test('monitor Queue modules redeploy the consolidated monitor Worker', () => {
@@ -63,10 +63,10 @@ test('monitor cutover script redeploys only the consolidated monitor Worker', ()
   assert.deepEqual(result.diagnostics, ['sh-monitor-other']);
 });
 
-test('read-model cutover script redeploys only the consolidated Pages Worker', () => {
+test('read-model compatibility deploy redeploys only minute enrichment', () => {
   const result = select(['worker/scripts/deploy-pages-read-model.mjs']);
-  assert.deepEqual(result.workers, ['sh-pages-read-model']);
-  assert.deepEqual(result.commands, ['deploy:pages-read-model']);
+  assert.deepEqual(result.workers, ['sh-minute-enrichment']);
+  assert.deepEqual(result.commands, ['deploy:minute-enrichment']);
 });
 
 test('metadata cutover script redeploys only minute enrichment', () => {
@@ -75,10 +75,10 @@ test('metadata cutover script redeploys only minute enrichment', () => {
   assert.deepEqual(result.commands, ['deploy:minute-enrichment']);
 });
 
-test('bundled site function changes redeploy only the Pages materializer', () => {
+test('bundled site function changes redeploy the consolidated materializer', () => {
   const result = select(['site/functions/api/minute-facts/current.js']);
-  assert.deepEqual(result.workers, ['sh-pages-read-model']);
-  assert.deepEqual(result.commands, ['deploy:pages-read-model']);
+  assert.deepEqual(result.workers, ['sh-minute-enrichment']);
+  assert.deepEqual(result.commands, ['deploy:minute-enrichment']);
   assert.deepEqual(result.diagnostics, []);
 });
 
@@ -90,9 +90,9 @@ test('other monitor changes do not pull Pages or retired maintenance Workers in'
 });
 
 test('Wrangler config changes map directly to their Worker', () => {
-  const result = select(['worker/wrangler.pages-read-model.jsonc']);
-  assert.deepEqual(result.workers, ['sh-pages-read-model']);
-  assert.deepEqual(result.commands, ['deploy:pages-read-model']);
+  const result = select(['worker/wrangler.minute-enrichment.jsonc']);
+  assert.deepEqual(result.workers, ['sh-minute-enrichment']);
+  assert.deepEqual(result.commands, ['deploy:minute-enrichment']);
 });
 
 test('deploy script-only package changes do not redeploy runtime Workers', () => {
@@ -103,7 +103,7 @@ test('deploy script-only package changes do not redeploy runtime Workers', () =>
 
 test('lockfile changes conservatively redeploy every Worker', () => {
   const result = select(['worker/package-lock.json']);
-  assert.equal(result.workers.length, 4);
+  assert.equal(result.workers.length, 3);
 });
 
 test('tests and verification scripts do not redeploy runtime Workers', () => {
@@ -124,7 +124,7 @@ test('shared package changes select every Worker that imports sh-shared', () => 
 
 test('unresolved runtime source changes fall back to all Workers', () => {
   const result = select(['worker/src/deleted-runtime-module.js']);
-  assert.equal(result.workers.length, 4);
+  assert.equal(result.workers.length, 3);
 });
 
 test('ingest cutover script redeploys only the consolidated ingest Worker', () => {
@@ -135,12 +135,11 @@ test('ingest cutover script redeploys only the consolidated ingest Worker', () =
 
 test('manual selection deploys all Workers in durable order', () => {
   const result = select([], ['--all']);
-  assert.deepEqual(result.workers.slice(0, 4), [
+  assert.deepEqual(result.workers, [
     'sh-minute-enrichment',
     'sh-buddies-ingest',
-    'sh-pages-read-model',
     'sh-monitor-other',
   ]);
-  assert.equal(result.workers.length, 4);
+  assert.equal(result.workers.length, 3);
   assert.equal(result.workers.at(-1), 'sh-monitor-other');
 });

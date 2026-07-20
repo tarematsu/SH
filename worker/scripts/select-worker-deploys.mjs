@@ -7,7 +7,6 @@ const workerRoot = resolve(repositoryRoot, 'worker');
 const workerDefinitions = [
   { name: 'sh-minute-enrichment', config: 'worker/wrangler.minute-enrichment.jsonc', command: 'deploy:minute-enrichment' },
   { name: 'sh-buddies-ingest', config: 'worker/wrangler.ingest.jsonc', command: 'deploy:ingest' },
-  { name: 'sh-pages-read-model', config: 'worker/wrangler.pages-read-model.jsonc', command: 'deploy:pages-read-model' },
   { name: 'sh-monitor-other', config: 'worker/wrangler.other.jsonc', command: 'deploy:other' },
 ];
 
@@ -19,7 +18,7 @@ const deployScriptWorkers = new Map([
   ['worker/scripts/deploy-consolidated-monitor.mjs', 'sh-monitor-other'],
   ['worker/scripts/monitor-cutover-queues.mjs', 'sh-monitor-other'],
   ['worker/scripts/monitor-cutover-cloudflare.mjs', 'sh-monitor-other'],
-  ['worker/scripts/deploy-pages-read-model.mjs', 'sh-pages-read-model'],
+  ['worker/scripts/deploy-pages-read-model.mjs', 'sh-minute-enrichment'],
   ['worker/scripts/deploy-minute-enrichment.mjs', 'sh-minute-enrichment'],
   ['worker/scripts/deploy-ingest.mjs', 'sh-buddies-ingest'],
 ]);

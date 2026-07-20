@@ -1,12 +1,29 @@
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { preparePagesReadModelDeployConfig } from './pages-response-kv-namespace.mjs';
 
 const workerRoot = fileURLToPath(new URL('..', import.meta.url));
 const metadataQueue = 'stationhead-track-metadata';
 const metadataDlq = 'stationhead-track-metadata-dlq';
 const minuteQueue = 'stationhead-minute-enrichment';
 const consolidatedScript = 'sh-minute-enrichment';
-const retiredScript = 'sh-track-metadata';
+const migrationSpecs = Object.freeze([
+  {
+    queue: metadataQueue,
+    deadLetterQueue: metadataDlq,
+    retiredScript: 'sh-track-metadata',
+  },
+  {
+    queue: 'stationhead-read-model',
+    deadLetterQueue: 'stationhead-read-model-dlq',
+    retiredScript: 'sh-pages-read-model',
+  },
+  {
+    queue: 'stationhead-pages-read-model-publication',
+    deadLetterQueue: 'stationhead-pages-read-model-publication-dlq',
+    retiredScript: 'sh-pages-read-model',
+  },
+]);
 
 function runWrangler(args, { capture = false, allowFailure = false } = {}) {
   const result = spawnSync('npx', ['wrangler', ...args], {
@@ -39,13 +56,13 @@ function removeConsumer(queue, scriptName, allowFailure = false) {
   runWrangler(['queues', 'consumer', 'worker', 'remove', queue, scriptName], { allowFailure });
 }
 
-function restoreRetiredConsumer() {
+function restoreRetiredConsumer(spec) {
   runWrangler([
-    'queues', 'consumer', 'worker', 'add', metadataQueue, retiredScript,
+    'queues', 'consumer', 'worker', 'add', spec.queue, spec.retiredScript,
     '--batch-size', '1',
     '--batch-timeout', '1',
     '--message-retries', '8',
-    '--dead-letter-queue', metadataDlq,
+    '--dead-letter-queue', spec.deadLetterQueue,
     '--max-concurrency', '1',
   ]);
 }
@@ -71,7 +88,7 @@ async function workerRequest(scriptName, method = 'GET') {
   );
 }
 
-async function deleteRetiredWorker() {
+async function deleteRetiredWorker(retiredScript) {
   const response = await workerRequest(retiredScript, 'DELETE');
   const body = await response.json().catch(() => null);
   const notFound = response.status === 404
@@ -87,53 +104,69 @@ async function deleteRetiredWorker() {
   }
 }
 
-const migrating = hasConsumer(metadataQueue, retiredScript);
-const consolidatedBefore = hasConsumer(metadataQueue, consolidatedScript);
-let paused = false;
-let removed = false;
+const deploy = await preparePagesReadModelDeployConfig(workerRoot, {
+  sourcePath: `${workerRoot}/wrangler.minute-enrichment.jsonc`,
+  temporaryPath: `${workerRoot}/.wrangler.minute-enrichment.deploy-${process.pid}.jsonc`,
+});
+const migrations = migrationSpecs.map((spec) => ({
+  ...spec,
+  migrating: hasConsumer(spec.queue, spec.retiredScript),
+  consolidatedBefore: hasConsumer(spec.queue, consolidatedScript),
+  paused: false,
+  removed: false,
+}));
 try {
-  if (migrating) {
-    runWrangler(['queues', 'pause-delivery', metadataQueue]);
-    paused = true;
-    removeConsumer(metadataQueue, retiredScript);
-    removed = true;
+  for (const migration of migrations) {
+    if (!migration.migrating) continue;
+    runWrangler(['queues', 'pause-delivery', migration.queue]);
+    migration.paused = true;
+    removeConsumer(migration.queue, migration.retiredScript);
+    migration.removed = true;
   }
 
-  runWrangler(['deploy', '--config', 'wrangler.minute-enrichment.jsonc']);
-  if (!hasConsumer(minuteQueue, consolidatedScript)) {
-    throw new Error(`minute enrichment consumer missing for ${minuteQueue}`);
-  }
-  if (!hasConsumer(metadataQueue, consolidatedScript)) {
-    throw new Error(`consolidated metadata consumer missing for ${metadataQueue}`);
-  }
-  if (hasConsumer(metadataQueue, retiredScript)) {
-    throw new Error(`retired metadata consumer still attached: ${retiredScript}`);
-  }
-  if (paused) {
-    runWrangler(['queues', 'resume-delivery', metadataQueue]);
-    paused = false;
-  }
-} catch (error) {
-  if (!consolidatedBefore && hasConsumer(metadataQueue, consolidatedScript)) {
-    removeConsumer(metadataQueue, consolidatedScript, true);
-  }
-  if (removed && !hasConsumer(metadataQueue, retiredScript)) {
-    try { restoreRetiredConsumer(); } catch (rollbackError) {
-      console.error(`Failed to restore ${retiredScript}: ${rollbackError.message}`);
+  runWrangler(['deploy', '--config', deploy.configPath]);
+  for (const queue of [minuteQueue, ...migrationSpecs.map(({ queue }) => queue)]) {
+    if (!hasConsumer(queue, consolidatedScript)) {
+      throw new Error(`consolidated consumer missing for ${queue}`);
     }
   }
-  if (paused) {
-    try { runWrangler(['queues', 'resume-delivery', metadataQueue]); } catch (resumeError) {
-      console.error(`Failed to resume ${metadataQueue}: ${resumeError.message}`);
+  for (const migration of migrations) {
+    if (hasConsumer(migration.queue, migration.retiredScript)) {
+      throw new Error(`retired consumer still attached: ${migration.retiredScript} on ${migration.queue}`);
+    }
+    if (migration.paused) {
+      runWrangler(['queues', 'resume-delivery', migration.queue]);
+      migration.paused = false;
+    }
+  }
+} catch (error) {
+  for (const migration of migrations) {
+    if (!migration.consolidatedBefore && hasConsumer(migration.queue, consolidatedScript)) {
+      removeConsumer(migration.queue, consolidatedScript, true);
+    }
+    if (migration.removed && !hasConsumer(migration.queue, migration.retiredScript)) {
+      try { restoreRetiredConsumer(migration); } catch (rollbackError) {
+        console.error(`Failed to restore ${migration.retiredScript}: ${rollbackError.message}`);
+      }
+    }
+    if (migration.paused) {
+      try { runWrangler(['queues', 'resume-delivery', migration.queue]); } catch (resumeError) {
+        console.error(`Failed to resume ${migration.queue}: ${resumeError.message}`);
+      }
     }
   }
   throw error;
+} finally {
+  deploy.cleanup();
 }
 
-await deleteRetiredWorker();
+for (const retiredScript of [...new Set(migrationSpecs.map(({ retiredScript }) => retiredScript))]) {
+  await deleteRetiredWorker(retiredScript);
+}
 console.log(JSON.stringify({
-  event: 'track_metadata_worker_consolidation_completed',
+  event: 'minute_enrichment_worker_consolidation_completed',
   script: consolidatedScript,
-  queue: metadataQueue,
-  retired_script: retiredScript,
+  queues: [minuteQueue, ...migrationSpecs.map(({ queue }) => queue)],
+  retired_scripts: [...new Set(migrationSpecs.map(({ retiredScript }) => retiredScript))],
+  pages_response_kv_namespace: deploy.namespace.id,
 }));

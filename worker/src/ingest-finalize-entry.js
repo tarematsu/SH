@@ -13,6 +13,9 @@ function validateFinalizeTask(body) {
 }
 
 async function saveFinalizedCollectorState(env, state) {
+  if (state.checkpointDue === false) {
+    return { accepted: true, persisted: false, skipped: true };
+  }
   const persistCredentials = state.persistCredentials !== false ? 1 : 0;
   const result = await env.DB.prepare(`INSERT INTO sh_worker_collector_state(
       id,auth_token,device_uid,token_expires_at,last_run_at,last_success_at,
@@ -53,7 +56,7 @@ async function saveFinalizedCollectorState(env, state) {
     await env.DB.prepare('DELETE FROM sh_collector_failure_state WHERE id=?')
       .bind('stationhead').run();
   }
-  return { accepted };
+  return { accepted, persisted: accepted, skipped: false };
 }
 
 export async function processIngestFinalizeTask(env, body, dependencies = {}) {
@@ -72,5 +75,6 @@ export async function processIngestFinalizeTask(env, body, dependencies = {}) {
     observed_at: Number(body.observed_at) || null,
     channel_id: Number(body.channel_id) || null,
     state_accepted: saved?.accepted !== false,
+    state_persisted: saved?.persisted !== false,
   };
 }

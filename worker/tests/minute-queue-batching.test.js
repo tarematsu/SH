@@ -72,7 +72,8 @@ test('production batches live derive and rebuild while recovery derive stays iso
   assert.equal(derive.vars.DERIVE_REVISION_CHUNK_TRACKS, 2);
   assert.equal(rebuild.queues.consumers[0].max_batch_size, 2);
   assert.equal(rebuild.queues.consumers[0].max_concurrency, 1);
-  assert.match(entry, /const LIVE_REVISION_CHUNK_TRACKS = 1/);
+  assert.match(entry, /const MAX_LIVE_REVISION_CHUNK_TRACKS = 2/);
+  assert.match(entry, /env\?\.DERIVE_REVISION_CHUNK_TRACKS/);
   assert.match(entry, /minute_derive_queue_overloaded/);
 });
 
@@ -91,7 +92,12 @@ test('batched derive composes with the merged CPU, KV, and Worker topology contr
   assert.match(pagesKv, /NAMESPACE_PAGE_SIZE = 1000/);
   assert.deepEqual(
     enrichment.queues.consumers.map(({ queue }) => queue).sort(),
-    ['stationhead-minute-enrichment', 'stationhead-track-metadata'],
+    [
+      'stationhead-minute-enrichment',
+      'stationhead-pages-read-model-publication',
+      'stationhead-read-model',
+      'stationhead-track-metadata',
+    ],
   );
   assert.equal(existsSync(new URL('../wrangler.track-metadata.jsonc', import.meta.url)), false);
 });

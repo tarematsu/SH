@@ -19,10 +19,10 @@ from typing import Any, Callable, Iterable
 
 EXPECTED_SCRIPTS = {
     "sh-buddies-ingest",
-    "sh-pages-read-model",
     "sh-minute-enrichment",
     "sh-monitor-other",
 }
+RETIRED_SCRIPTS = {"sh-pages-read-model"}
 
 SCHEDULES: dict[str, Callable[[dt.datetime], bool]] = {
     "sh-monitor-other": lambda minute: True,
@@ -181,7 +181,7 @@ def main() -> int:
     selection = json.loads(pathlib.Path(args.selection).read_text(encoding="utf-8"))
     cutoff_ms = iso_datetime(selection["cutoff"]).timestamp() * 1000
     transition_scripts = transitional_scripts()
-    tracked_scripts = EXPECTED_SCRIPTS | transition_scripts
+    tracked_scripts = EXPECTED_SCRIPTS | RETIRED_SCRIPTS | transition_scripts
     required_schedules = dict(SCHEDULES)
 
     counts = Counter({name: 0 for name in tracked_scripts})
@@ -268,7 +268,7 @@ def main() -> int:
             "event_types": dict(sorted(event_types[script].items())),
             "cpu_ms": cpu_summary,
             "wall_ms": metric_summary(wall[script]),
-            "transitional": script in transition_scripts,
+            "transitional": script in transition_scripts or script in RETIRED_SCRIPTS,
         }
 
     ok = total > 0 and not unexpected_scripts and not missing_required and error_events == 0

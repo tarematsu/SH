@@ -119,11 +119,11 @@ test('Worker package scripts contain only current deployment operations', () => 
   assert.equal(workerPackage.scripts['deploy:minute'], 'npm run deploy:minute-enrichment');
   assert.equal(
     workerPackage.scripts['deploy:split-other'],
-    'npm run deploy:pages-read-model && npm run deploy:other',
+    'npm run deploy:minute-enrichment && npm run deploy:other',
   );
   assert.equal(workerPackage.scripts['deploy:monitor-maintenance'], undefined);
   assert.equal(workerPackage.scripts['deploy:ingest'], 'node scripts/deploy-ingest.mjs');
-  assert.equal(workerPackage.scripts['deploy:pages-read-model'], 'node scripts/deploy-pages-read-model.mjs');
+  assert.equal(workerPackage.scripts['deploy:pages-read-model'], 'npm run deploy:minute-enrichment');
   assert.equal(workerPackage.scripts['deploy:minute-enrichment'], 'node scripts/deploy-minute-enrichment.mjs');
   assert.equal(workerPackage.scripts['deploy:track-metadata'], undefined);
   assert.equal(workerPackage.scripts['check:track-metadata-bundle'], undefined);
@@ -177,12 +177,12 @@ test('R2 observability audits every current script and fails on real faults', ()
 
   for (const worker of [
     'sh-minute-enrichment',
-    'sh-pages-read-model',
     'sh-monitor-other',
   ]) {
     assert.match(observabilityAnalyzer, new RegExp(worker));
   }
   assert.doesNotMatch(observabilityAnalyzer, /sh-track-metadata/);
+  assert.match(observabilityAnalyzer, /RETIRED_SCRIPTS = \{"sh-pages-read-model"\}/);
   assert.doesNotMatch(observabilityAnalyzer, /sh-minute-read-model/);
   assert.doesNotMatch(observabilityAnalyzer, /sh-host-monitor/);
   assert.doesNotMatch(observabilityAnalyzer, /sh-buddy-playback/);

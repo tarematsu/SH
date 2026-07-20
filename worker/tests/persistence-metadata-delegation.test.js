@@ -240,22 +240,18 @@ test('persistence continuation records materialization before metadata delegatio
   assert.equal(result.finalization_deferred, false);
 });
 
-test('unchanged queues still pass through structure write and likes without metadata', async () => {
+test('unchanged queues skip structure write and continue directly to likes', async () => {
   const initial = queueBody();
   initial.metadata_requested = false;
   const plan = structurePlan({ structure_changed: false, write_positions: [] });
-  let structureWrite = null;
-  await processPersistenceTask({ DB: { prepare() {} } }, initial, {
-    prepareQueueStructurePersistence: async () => plan,
-    sendPersistenceContinuation: async (message) => { structureWrite = message; },
-  });
-  assert.equal(structureWrite.metadata_requested, false);
-
   let likes = null;
-  await processPersistenceTask({ DB: { prepare() {} } }, structureWrite, {
-    commitQueueStructurePersistence: async () => ({ structureChanged: false, itemsWritten: 0 }),
+  const planned = await processPersistenceTask({ DB: { prepare() {} } }, initial, {
+    prepareQueueStructurePersistence: async () => plan,
     sendPersistenceContinuation: async (message) => { likes = message; },
   });
+  assert.equal(planned.structure_write_deferred, false);
+  assert.equal(planned.likes_deferred, true);
+  assert.equal(likes.stage, 'likes');
   assert.equal(likes.metadata_requested, false);
 
   let finalize = null;

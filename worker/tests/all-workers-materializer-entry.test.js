@@ -6,11 +6,11 @@ function source(path) {
   return readFileSync(new URL(path, import.meta.url), 'utf8');
 }
 
-test('minute enrichment owns the one-message metadata Queue boundary', () => {
+test('minute enrichment owns four isolated one-message Queue boundaries', () => {
   const config = source('../wrangler.minute-enrichment.jsonc');
   const enrichment = source('../src/minute-enrichment-optimized-entry.js');
   const metadata = source('../src/track-metadata-entry.js');
-  assert.equal((config.match(/"max_batch_size"\s*:\s*1\b/g) || []).length, 2);
+  assert.equal((config.match(/"max_batch_size"\s*:\s*1\b/g) || []).length, 4);
   assert.match(config, /stationhead-track-metadata/);
   assert.match(enrichment, /TRACK_METADATA_MESSAGE_TYPE/);
   assert.match(enrichment, /processTrackMetadataTask/);
@@ -22,7 +22,7 @@ test('minute enrichment owns the one-message metadata Queue boundary', () => {
 });
 
 test('Pages read model fast-paths successful Cron and one-message Queue invocations', () => {
-  const config = source('../wrangler.pages-read-model.jsonc');
+  const config = source('../wrangler.minute-enrichment.jsonc');
   const entry = source('../src/pages-read-model-entry.js');
   assert.match(config, /"max_batch_size"\s*:\s*1\b/);
   assert.match(entry, /if \(declaredFailed === 0\) return result/);

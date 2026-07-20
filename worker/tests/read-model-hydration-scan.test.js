@@ -71,8 +71,8 @@ test('read-model hydration handoff reuses Queue options and preserves its payloa
 });
 
 test('consolidated read-model deployment keeps single-message Queue boundaries', async () => {
-  const config = JSON.parse(readFileSync(new URL('../wrangler.pages-read-model.jsonc', import.meta.url), 'utf8'));
-  assert.deepEqual(config.queues.consumers.map(({ max_batch_size }) => max_batch_size), [1, 1]);
+  const config = JSON.parse(readFileSync(new URL('../wrangler.minute-enrichment.jsonc', import.meta.url), 'utf8'));
+  assert.deepEqual(config.queues.consumers.map(({ max_batch_size }) => max_batch_size), [1, 1, 1, 1]);
   assert.equal(config.queues.consumers.some(({ queue }) => queue === 'stationhead-read-model'), true);
   assert.deepEqual(Object.keys(readModelWorker), ['queue']);
 

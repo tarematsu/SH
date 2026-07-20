@@ -13,8 +13,15 @@ import {
   processMinutePlaybackResolve,
 } from './minute-enrichment-playback-stages.js';
 import { processTrackMetadataTask } from './track-metadata-entry.js';
+import {
+  MINUTE_READ_MODEL_QUEUE,
+  runPagesReadModelCron,
+  runPagesReadModelFetch,
+  runPagesReadModelQueue,
+} from './pages-read-model-entry.js';
 
 export const TRACK_METADATA_QUEUE_NAME = 'stationhead-track-metadata';
+export const PAGES_PUBLICATION_QUEUE_NAME = 'stationhead-pages-read-model-publication';
 const TRACK_METADATA_MESSAGE_TYPE = 'stationhead-track-metadata';
 const RETRY_30_SECONDS = Object.freeze({ delaySeconds: 30 });
 const EMPTY_DEPENDENCIES = Object.freeze({});
@@ -152,9 +159,27 @@ async function processMinuteEnrichmentBatch(batch, env, dependencies = EMPTY_DEP
   }
 }
 
+function isPagesReadModelDelivery(batch, body) {
+  const queue = String(batch?.queue || '');
+  return queue === MINUTE_READ_MODEL_QUEUE
+    || queue === PAGES_PUBLICATION_QUEUE_NAME
+    || body?.message_type === 'stationhead-read-model'
+    || body?.message_type === 'stationhead-pages-read-model-publication';
+}
+
+async function processConsolidatedEnrichmentBatch(batch, env, dependencies = EMPTY_DEPENDENCIES) {
+  const body = batch?.messages?.[0]?.body;
+  if (isPagesReadModelDelivery(batch, body)) {
+    return runPagesReadModelQueue(batch, env, dependencies.pages || EMPTY_DEPENDENCIES);
+  }
+  return processMinuteEnrichmentBatch(batch, env, dependencies);
+}
+
 export {
   activeEnrichmentBody,
   isTrackMetadataDelivery,
+  isPagesReadModelDelivery,
+  processConsolidatedEnrichmentBatch,
   processMinuteEnrichmentBatch,
   processOptimizedMinuteEnrichment,
   productionEnrichmentEnv,
@@ -163,5 +188,7 @@ export {
 };
 
 export default {
-  queue: processMinuteEnrichmentBatch,
+  fetch: runPagesReadModelFetch,
+  scheduled: runPagesReadModelCron,
+  queue: processConsolidatedEnrichmentBatch,
 };

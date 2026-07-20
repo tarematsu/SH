@@ -8,8 +8,8 @@ const source = readFileSync(
 );
 
 test('metadata redeploy rollback preserves a pre-existing consolidated consumer', () => {
-  assert.match(source, /const consolidatedBefore = hasConsumer\(metadataQueue, consolidatedScript\)/);
-  assert.match(source, /if \(!consolidatedBefore && hasConsumer\(metadataQueue, consolidatedScript\)\)/);
+  assert.match(source, /consolidatedBefore: hasConsumer\(spec\.queue, consolidatedScript\)/);
+  assert.match(source, /if \(!migration\.consolidatedBefore && hasConsumer\(migration\.queue, consolidatedScript\)\)/);
   assert.doesNotMatch(source, /capture: true, allowFailure: true/);
 });
 

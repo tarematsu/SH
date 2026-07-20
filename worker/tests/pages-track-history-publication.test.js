@@ -222,9 +222,12 @@ test('cron keeps lightweight stalled-publication recovery active through minute 
   assert.equal(pagesReadModelTask(CYCLE_START + 174 * 60_000).kind, 'track-history-step');
   assert.equal(pagesReadModelTask(CYCLE_START + 175 * 60_000).key, 'minute-facts-current');
 
-  const config = JSON.parse(readFileSync(new URL('../wrangler.pages-read-model.jsonc', import.meta.url), 'utf8'));
+  const config = JSON.parse(readFileSync(new URL('../wrangler.minute-enrichment.jsonc', import.meta.url), 'utf8'));
   assert.equal(config.vars.PAGES_TRACK_HISTORY_ROWS_PER_STEP, 40);
-  assert.equal(config.queues.consumers[0].queue, 'stationhead-pages-read-model-publication');
+  assert.equal(
+    config.queues.consumers.some(({ queue }) => queue === 'stationhead-pages-read-model-publication'),
+    true,
+  );
   assert.equal(config.queues.consumers[0].max_batch_size, 1);
-  assert.equal(config.queues.producers[0].binding, 'PAGES_READ_MODEL_QUEUE');
+  assert.equal(config.queues.producers.some(({ binding }) => binding === 'PAGES_READ_MODEL_QUEUE'), true);
 });

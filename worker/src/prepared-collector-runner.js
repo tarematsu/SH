@@ -18,6 +18,7 @@ import { jwtExpiryMs } from './shared.js';
 const RAW_D1_STATEMENT = Symbol('prepared-collector-raw-d1-statement');
 const PREPARED_COLLECTOR_FINALIZE = Symbol('prepared-collector-finalize');
 const PREPARED_COLLECTOR_FACT = Symbol('prepared-collector-fact');
+const COLLECTOR_STATE_CHECKPOINT_MS = 5 * 60_000;
 const NO_COMMENTS_RESULT = Object.freeze({
   commentsSaved: 0,
   degraded: false,
@@ -140,7 +141,7 @@ function preparedPayload(env, state, config, previousRunAt, observedAt, metadata
   };
 }
 
-function finalizeState(state, observedAt, lastSuccessAt) {
+function finalizeState(state, observedAt, lastSuccessAt, checkpointDue = true) {
   return {
     authToken: state.authToken,
     deviceUid: state.deviceUid,
@@ -152,6 +153,7 @@ function finalizeState(state, observedAt, lastSuccessAt) {
     stationId: state.stationId,
     persistCredentials: state.persistCredentials !== false,
     clearFailureOnSuccess: state.clearFailureOnSuccess === true,
+    checkpointDue,
   };
 }
 
@@ -176,6 +178,8 @@ export async function collectPreparedOnce(env, source = 'raw-collection-queue') 
     stage = 'sh_auth';
     state = collectorStateFromAuthState(activeEnv.__shAuthState, activeEnv);
     const previousRunAt = Number(state.lastRunAt || 0);
+    const previousChannelId = Number(state.channelId || 0) || null;
+    const previousStationId = Number(state.stationId || 0) || null;
     const metadataRetry = Boolean(state.lastError);
     state.lastRunAt = observedAt;
     state.lastError = null;
@@ -239,7 +243,12 @@ export async function collectPreparedOnce(env, source = 'raw-collection-queue') 
       },
     };
     const lastSuccessAt = Date.now();
-    const deferredState = finalizeState(state, observedAt, lastSuccessAt);
+    const checkpointDue = state.persistCredentials !== false
+      || state.clearFailureOnSuccess === true
+      || previousChannelId !== (Number(state.channelId || 0) || null)
+      || previousStationId !== (Number(state.stationId || 0) || null)
+      || observedAt - previousRunAt >= COLLECTOR_STATE_CHECKPOINT_MS;
+    const deferredState = finalizeState(state, observedAt, lastSuccessAt, checkpointDue);
     let minuteFactJob = null;
     let factStage = null;
 

@@ -2,7 +2,7 @@
 
 All public HTTP APIs are owned by Cloudflare Pages under `/api`.
 
-The scheduled Workers (`sh-buddies-monitor`, `sh-pages-read-model`, `sh-minute-maintenance`, `sh-monitor-other`, and `sh-monitor-maintenance`) have public Worker URLs disabled. They remain responsible for cron and Queue execution only. `sh-pages-read-model` runs a one-minute Cron that spreads six-hour materialization cycles across bounded minute slots.
+The scheduled Workers have public Worker URLs disabled. `sh-minute-enrichment` owns metadata, minute enrichment, and the isolated Pages read-model Queue/Cron handlers; `sh-monitor-other` owns the remaining monitor lanes. The Pages one-minute Cron spreads six-hour materialization cycles across bounded minute slots.
 
 Use `GET /api` for the machine-readable endpoint catalog. Canonical monitoring and minute-facts routes include:
 

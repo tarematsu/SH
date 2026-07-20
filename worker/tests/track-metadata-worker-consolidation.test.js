@@ -54,14 +54,19 @@ test('successful metadata logs are deterministically sampled instead of emitted 
   assert.equal(shouldLogTrackMetadataResult({ job_id: 'job-error', reason: 'degraded' }), true);
 });
 
-test('production config has two consumers and the retired Worker config is absent', () => {
+test('production config owns metadata and Pages queues while retired configs stay inactive', () => {
   const config = JSON.parse(readFileSync(
     new URL('../wrangler.minute-enrichment.jsonc', import.meta.url),
     'utf8',
   ));
   assert.deepEqual(
     config.queues.consumers.map(({ queue }) => queue),
-    ['stationhead-minute-enrichment', 'stationhead-track-metadata'],
+    [
+      'stationhead-minute-enrichment',
+      'stationhead-track-metadata',
+      'stationhead-pages-read-model-publication',
+      'stationhead-read-model',
+    ],
   );
   assert.equal(config.queues.producers.some(({ binding }) => binding === 'TRACK_METADATA_QUEUE'), true);
   assert.equal(existsSync(new URL('../wrangler.track-metadata.jsonc', import.meta.url)), false);
