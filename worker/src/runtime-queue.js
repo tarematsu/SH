@@ -3,6 +3,7 @@ import {
   minutePipelineEnv,
   rawCollectorEnv,
 } from './runtime-env.js';
+import { RAW_COLLECTION_FETCH_MESSAGE } from './raw-collection-messages.js';
 import { textTransportQueue } from './raw-collection-text-transport.js';
 import {
   MONITOR_MAINTENANCE_MESSAGE,
@@ -22,7 +23,8 @@ let monitorMaintenanceModulePromise;
 let minutePipelineModulePromise;
 let otherMonitorModulePromise;
 let otherMonitorDispatchModulePromise;
-let rawCollectorModulePromise;
+let rawCollectionFetchModulePromise;
+let rawCollectionSessionModulePromise;
 
 function loadMonitorMaintenanceModule() {
   monitorMaintenanceModulePromise ||= import('./monitor-maintenance-entry.js');
@@ -44,9 +46,14 @@ function loadOtherMonitorDispatchModule() {
   return otherMonitorDispatchModulePromise;
 }
 
-function loadRawCollectorModule() {
-  rawCollectorModulePromise ||= import('./raw-collector-entry.js');
-  return rawCollectorModulePromise;
+function loadRawCollectionSessionModule() {
+  rawCollectionSessionModulePromise ||= import('./raw-collection-session-entry.js');
+  return rawCollectionSessionModulePromise;
+}
+
+function loadRawCollectionFetchModule() {
+  rawCollectionFetchModulePromise ||= import('./raw-collection-fetch-entry.js');
+  return rawCollectionFetchModulePromise;
 }
 
 function rawCollectorTextEnv(env) {
@@ -66,13 +73,43 @@ async function processRawCollectionMessage(message, env, options = EMPTY_OPTIONS
   const body = message?.body || {};
   try {
     if (Number(body.message_version) !== 1) throw new Error('unsupported raw collection task version');
-    const collect = options.collectRawChannel
-      || (await loadRawCollectorModule()).collectRawChannel;
-    await collect(rawCollectorTextEnv(env), options.collectionDependencies || EMPTY_OPTIONS);
+    if (options.collectRawChannel) {
+      await options.collectRawChannel(
+        rawCollectorTextEnv(env),
+        options.collectionDependencies || EMPTY_OPTIONS,
+      );
+    } else {
+      const session = await loadRawCollectionSessionModule();
+      await session.prepareRawCollectionFetch(
+        rawCollectorEnv(env),
+        body,
+        options.collectionDependencies || EMPTY_OPTIONS,
+      );
+    }
     message.ack();
   } catch (error) {
     console.error(JSON.stringify({
       event: 'raw_collection_queue_failed',
+      scheduled_at: Number(body.scheduled_at) || null,
+      error: String(error?.message || error).slice(0, 800),
+    }));
+    message.retry(RETRY_30_SECONDS);
+  }
+}
+
+async function processRawCollectionFetchMessage(message, env, options = EMPTY_OPTIONS) {
+  const body = message?.body || {};
+  try {
+    const fetchStage = await loadRawCollectionFetchModule();
+    await fetchStage.fetchPreparedRawCollection(
+      env,
+      body,
+      options.collectionFetchDependencies || EMPTY_OPTIONS,
+    );
+    message.ack();
+  } catch (error) {
+    console.error(JSON.stringify({
+      event: 'raw_collection_fetch_queue_failed',
       scheduled_at: Number(body.scheduled_at) || null,
       error: String(error?.message || error).slice(0, 800),
     }));
@@ -154,6 +191,10 @@ export async function runRuntimeQueue(batch, env, ctx, options = EMPTY_OPTIONS) 
       await processRawCollectionMessage(message, env, options);
       continue;
     }
+    if (messageType === RAW_COLLECTION_FETCH_MESSAGE) {
+      await processRawCollectionFetchMessage(message, env, options);
+      continue;
+    }
     if (messageType === MONITOR_MAINTENANCE_MESSAGE) {
       await processMaintenanceMessage(message, env, options);
       continue;
@@ -170,6 +211,7 @@ export async function runRuntimeQueue(batch, env, ctx, options = EMPTY_OPTIONS) 
 }
 
 export {
+  processRawCollectionFetchMessage,
   processRawCollectionMessage,
   processRuntimeDispatchMessage,
   rawCollectorTextEnv,
