@@ -88,10 +88,12 @@ jobs:
         run: node scripts/enforce-d1-hourly-half-budget.mjs
 
       - name: Install Wrangler for query insights
+        if: ${{ !cancelled() }}
         working-directory: worker
         run: npm ci --no-audit --no-fund
 
       - name: Fetch top D1 queries for one-hour and one-day windows
+        if: ${{ !cancelled() }}
         shell: bash
         run: |
           set -euo pipefail
