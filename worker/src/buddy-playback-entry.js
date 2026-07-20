@@ -117,11 +117,23 @@ async function runTask(env, task, dependencies) {
   }
   const productionPlan = !task.expectedStage
     && task.cycleAt === null
+    && !dependencies.fetchPlan
     && !dependencies.advance
     && !dependencies.pipeline;
   if (dependencies.fetchPlan || productionPlan) {
     const run = dependencies.fetchPlan || processBuddyFetchPlan;
-    return run(env, { ...task, channelAlias });
+    const result = await run(env, { ...task, channelAlias });
+    // The compute stage already reads the persisted auth state and falls back
+    // to fetch-auth when it is absent or near expiry. Bypass the unconditional
+    // auth invocation on the normal production path.
+    if (productionPlan
+        && result?.pending === true
+        && result?.stage === 'fetch'
+        && result?.direct_stage === BUDDY_FETCH_AUTH_STAGE
+        && result?.force_auth_refresh !== true) {
+      result.direct_stage = BUDDY_FETCH_COMPUTE_STAGE;
+    }
+    return result;
   }
   const run = dependencies.advance || advanceBuddyPlaybackPipeline;
   return run(
