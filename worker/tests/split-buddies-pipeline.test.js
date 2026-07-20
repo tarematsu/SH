@@ -50,7 +50,8 @@ test('the three active Workers have one owner per Queue boundary', () => {
   const runtimeConsumers = new Map(runtime.queues.consumers.map((consumer) => [consumer.queue, consumer]));
   assert.equal(runtimeConsumers.get('stationhead-buddies-facts').max_batch_size, 1);
   assert.equal(runtimeConsumers.get('stationhead-buddies-facts').max_concurrency, 1);
-  assert.equal(runtimeConsumers.get('stationhead-minute-live-derive').max_batch_size, 2);
+  assert.equal(runtimeConsumers.get('stationhead-minute-live-derive').max_batch_size, 1);
+  assert.equal(runtimeConsumers.get('stationhead-minute-live-derive').max_concurrency, 2);
   assert.equal(runtimeConsumers.get('stationhead-minute-rebuild').max_batch_size, 2);
   assert.equal(runtimeConsumers.get('stationhead-minute-rebuild').max_concurrency, 1);
 });
