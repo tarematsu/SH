@@ -15,12 +15,13 @@ for (const [key, label] of [['rowsRead', 'rows read'], ['rowsWritten', 'rows wri
   const value = Number(actual[key] || 0);
   const limit = Number(target[key] || 0);
   if (!limit) violations.push(`${label} free-tier limit is missing`);
-  else if (value > limit) violations.push(`${label} ${value} > ${limit}`);
+  else if (value >= limit) violations.push(`${label} ${value} >= ${limit}`);
 }
 
 const result = {
   ok: violations.length === 0,
   ratio,
+  comparison: 'less_than',
   source: report?.planningEstimate ? 'planningEstimate' : 'latestComplete',
   actual: {
     rowsRead: Number(actual.rowsRead || 0),
