@@ -90,8 +90,10 @@ export async function createRevision(db, oldDb, input) {
 
 export async function updatePlaybackState(db, input) {
   const { channelId, sessionId, revisionId, queueStartTime, observedAt, isPaused } = input;
-  const previous = await db.prepare('SELECT * FROM sh_playback_current WHERE channel_id=?')
-    .bind(channelId).first();
+  const previous = Object.hasOwn(input, 'previous')
+    ? input.previous
+    : await db.prepare('SELECT * FROM sh_playback_current WHERE channel_id=?')
+      .bind(channelId).first();
   const paused = bool(isPaused) === 1;
   const delayed = previous && observedAt < Number(previous.last_observed_at || 0);
   // A delayed payload cannot safely reuse a position calculated for a later
