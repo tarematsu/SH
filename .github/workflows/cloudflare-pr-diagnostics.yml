@@ -11,6 +11,9 @@ on:
       - "database/facts-db.json"
       - ".github/workflows/cloudflare-pr-diagnostics.yml"
       - ".github/scripts/cloudflare-build-diagnostics.mjs"
+      - ".github/scripts/analyze-worker-observability.py"
+      - ".github/scripts/enforce-worker-cpu-budget.py"
+      - ".github/scripts/fetch-r2-worker-logs.py"
 
 permissions:
   contents: read
@@ -38,52 +41,22 @@ jobs:
           fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
-          node-version: '22'
+          node-version: 22
       - name: Select deploy targets from the import graph
         id: targets
-        shell: bash
         env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-        run: |
-          set -euo pipefail
-          git diff --name-only "$BASE_SHA" "$HEAD_SHA" | tee changed-files.txt
-          selection="$(node worker/scripts/select-worker-deploys.mjs < changed-files.txt)"
-          echo "$selection" | jq .
-          echo "workers=$(jq -c '.workers' <<<"$selection")" >> "$GITHUB_OUTPUT"
-          echo "commands=$(jq -c '.commands' <<<"$selection")" >> "$GITHUB_OUTPUT"
-          echo "diagnostics=$(jq -c '.diagnostics' <<<"$selection")" >> "$GITHUB_OUTPUT"
-          topology_rename=false
-          if git diff --diff-filter=M -U0 "$BASE_SHA" "$HEAD_SHA" -- 'worker/wrangler*.jsonc' \
-              | grep -Eq '^[+-][[:space:]]*"name"[[:space:]]*:'; then
-            topology_rename=true
-            echo "::notice::Skipping direct PR deploy because a Worker script name changed."
-          fi
-          echo "topology_rename=$topology_rename" >> "$GITHUB_OUTPUT"
-          facts_schema=false
-          if grep -Eq '^(database/facts-migrations/|database/facts-db\.json$|worker/scripts/provision-facts-db\.mjs$)' changed-files.txt; then
-            facts_schema=true
-          fi
-          echo "facts_schema=$facts_schema" >> "$GITHUB_OUTPUT"
-          runtime_changes=false
-          if git diff --name-only "$BASE_SHA" "$HEAD_SHA" \
-              | grep -Eq '^(worker/src/|worker/wrangler[^/]*\.jsonc$|worker/package(-lock)?\.json$|site/functions/|packages/sh-shared/|database/facts-migrations/|database/facts-db\.json$)'; then
-            runtime_changes=true
-          fi
-          echo "runtime_changes=$runtime_changes" >> "$GITHUB_OUTPUT"
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+        run: node worker/scripts/select-worker-deploys.mjs --base-ref "origin/${BASE_REF}"
 
-  prepare-workers:
+  deploy:
     name: Deploy affected Workers
     needs: select-workers
-    if: >-
-      needs.select-workers.outputs.workers != '[]'
-      && needs.select-workers.outputs.topology_rename != 'true'
-      && needs.select-workers.outputs.runtime_changes == 'true'
+    if: needs.select-workers.outputs.commands != '[]' || needs.select-workers.outputs.facts_schema == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 15
     env:
-      CLOUDFLARE_ACCOUNT_ID: "0500f25c2f74e7e76c94a8bcb6c7008b"
-      CLOUDFLARE_API_TOKEN: ${{ secrets['CLOUDFLARE_BUILDS_API_TOKEN'] || secrets['CLOUDFLARE_API_TOKEN'] || secrets['CF_API_TOKEN'] }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_BUILDS_API_TOKEN }}
       DEPLOY_COMMANDS: ${{ needs.select-workers.outputs.commands }}
     steps:
       - uses: actions/checkout@v4
@@ -91,81 +64,45 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha }}
       - uses: actions/setup-node@v4
         with:
-          node-version: '22'
+          node-version: 22
           cache: npm
           cache-dependency-path: worker/package-lock.json
       - run: npm ci --no-audit --no-fund
         working-directory: worker
       - name: Apply current facts schema before dependent Workers
         if: needs.select-workers.outputs.facts_schema == 'true'
+        run: npm run facts:migrate:remote
         working-directory: worker
-        run: node scripts/apply-facts-pr-schema.mjs
       - name: Ensure split pipeline queues exist
-        shell: bash
+        if: needs.select-workers.outputs.runtime_changes == 'true'
+        run: npm run queues:ensure
         working-directory: worker
-        run: |
-          for queue in \
-            stationhead-raw-collection stationhead-raw-collection-dlq \
-            stationhead-buddies-persist stationhead-buddies-persist-dlq \
-            stationhead-ingest-finalize stationhead-ingest-finalize-dlq \
-            stationhead-comments stationhead-comments-dlq \
-            stationhead-read-model stationhead-read-model-dlq \
-            stationhead-track-metadata stationhead-track-metadata-dlq \
-            stationhead-buddies-facts stationhead-buddies-facts-dlq \
-            stationhead-minute-derive stationhead-minute-derive-dlq \
-            stationhead-minute-live-derive stationhead-minute-live-derive-dlq \
-            stationhead-minute-enrichment stationhead-minute-enrichment-dlq \
-            stationhead-minute-rebuild stationhead-minute-rebuild-dlq \
-            stationhead-buddy-playback stationhead-buddy-playback-dlq \
-            stationhead-host-monitor stationhead-host-monitor-dlq \
-            stationhead-pages-read-model-publication stationhead-pages-read-model-publication-dlq
-          do
-            npx wrangler queues create "$queue" >/dev/null 2>&1 || true
-          done
       - name: Deploy selected Workers in dependency order
         shell: bash
-        working-directory: worker
         run: |
           set -euo pipefail
-          while IFS= read -r command; do
-            echo "Deploying $command"
-            npm run "$command"
-          done < <(jq -r '.[]' <<<"$DEPLOY_COMMANDS")
+          node - <<'NODE'
+          const { spawnSync } = require('node:child_process');
+          const commands = JSON.parse(process.env.DEPLOY_COMMANDS || '[]');
+          for (const script of commands) {
+            const result = spawnSync('npm', ['run', script], {
+              cwd: 'worker',
+              stdio: 'inherit',
+              shell: process.platform === 'win32',
+            });
+            if (result.status !== 0) process.exit(result.status || 1);
+          }
+          NODE
 
   diagnose:
     name: Diagnose ${{ matrix.worker }}
-    needs: [select-workers, prepare-workers]
-    if: >-
-      always()
-      && needs.select-workers.result == 'success'
-      && needs.select-workers.outputs.runtime_changes == 'true'
-      && needs.select-workers.outputs.topology_rename == 'true'
-      && needs.select-workers.outputs.diagnostics != '[]'
+    needs: [select-workers, deploy]
+    if: always() && needs.select-workers.outputs.diagnostics != '[]' && (needs.deploy.result == 'success' || needs.deploy.result == 'skipped')
     strategy:
       fail-fast: false
       matrix:
         worker: ${{ fromJSON(needs.select-workers.outputs.diagnostics) }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    env:
-      CLOUDFLARE_ACCOUNT_ID: "0500f25c2f74e7e76c94a8bcb6c7008b"
-      CLOUDFLARE_BUILDS_API_TOKEN: ${{ secrets['CLOUDFLARE_BUILDS_API_TOKEN'] || secrets['CLOUDFLARE_API_TOKEN'] || secrets['CF_API_TOKEN'] }}
-      CLOUDFLARE_WORKER_NAME: ${{ matrix.worker }}
-      CLOUDFLARE_BUILD_TIMEOUT_MINUTES: "5"
-      TARGET_SHA: ${{ github.event.pull_request.head.sha }}
-      TARGET_BRANCH: ${{ github.event.pull_request.head.ref }}
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event.pull_request.head.sha }}
-      - name: Watch Cloudflare build and collect logs
-        shell: bash
-        run: node .github/scripts/cloudflare-build-diagnostics.mjs
-      - name: Upload diagnostics
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: cloudflare-pr-diagnostics-${{ matrix.worker }}-${{ github.event.pull_request.head.sha }}
-          path: .cloudflare-build-diagnostics/
-          if-no-files-found: warn
-          retention-days: 14
+    uses: ./.github/workflows/cloudflare-build-diagnostics-reusable.yml
+    with:
+      worker_name: ${{ matrix.worker }}
+    secrets: inherit
