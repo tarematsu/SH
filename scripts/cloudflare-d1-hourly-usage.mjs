@@ -6,7 +6,7 @@ const GRAPHQL_URL = `${API_ROOT}/graphql`;
 const FREE_READ_ROWS_PER_DAY = 5_000_000;
 const FREE_WRITE_ROWS_PER_DAY = 100_000;
 const TARGET_RATIO = 0.5;
-const WINDOW_MINUTES = 60;
+const DEFAULT_WINDOW_MINUTES = 60;
 const token = String(process.env.CLOUDFLARE_API_TOKEN || '').trim();
 if (!token) throw new Error('CLOUDFLARE_API_TOKEN is required');
 
@@ -20,6 +20,23 @@ function numeric(value) {
 
 function percentage(value, limit) {
   return limit > 0 ? (value / limit) * 100 : 0;
+}
+
+function configuredWindowMinutes() {
+  const parsed = Number(process.env.D1_USAGE_WINDOW_MINUTES || DEFAULT_WINDOW_MINUTES);
+  if (!Number.isFinite(parsed) || parsed <= 0) return DEFAULT_WINDOW_MINUTES;
+  return Math.max(1, Math.min(DEFAULT_WINDOW_MINUTES, parsed));
+}
+
+function configuredStart(end) {
+  const raw = String(process.env.D1_USAGE_START || '').trim();
+  if (!raw) return new Date(end.getTime() - configuredWindowMinutes() * 60_000);
+  const parsed = new Date(raw);
+  if (!Number.isFinite(parsed.getTime()) || parsed >= end) {
+    throw new Error(`D1_USAGE_START is invalid: ${raw}`);
+  }
+  const earliest = new Date(end.getTime() - DEFAULT_WINDOW_MINUTES * 60_000);
+  return parsed < earliest ? earliest : parsed;
 }
 
 async function api(url, options = {}) {
@@ -70,7 +87,7 @@ async function discoverAccounts(referenced) {
     try {
       listed = await api(`${API_ROOT}/accounts/${account.id}/d1/database?per_page=100`);
     } catch (error) {
-      console.warn(`Skipping account ${account.id}: ${error.message}`);
+      console.warn(`Skipping inaccessible account: ${error.message}`);
       continue;
     }
     const matches = (listed.result || []).filter((database) => referenced.has(database.uuid || database.id));
@@ -115,8 +132,10 @@ function addUsage(target, source) {
 }
 
 const generatedAt = new Date();
+const startDate = configuredStart(generatedAt);
 const end = generatedAt.toISOString();
-const start = new Date(generatedAt.getTime() - WINDOW_MINUTES * 60_000).toISOString();
+const start = startDate.toISOString();
+const windowMinutes = Math.max(1, (generatedAt.getTime() - startDate.getTime()) / 60_000);
 const referenced = await referencedDatabases();
 const accounts = await discoverAccounts(referenced);
 const databaseNames = new Map([...referenced.values()].map(({ id, name }) => [id, name]));
@@ -146,22 +165,24 @@ for (const account of accounts) {
   }
 }
 
-const hourlyTarget = {
-  rowsRead: (FREE_READ_ROWS_PER_DAY * TARGET_RATIO) / 24,
-  rowsWritten: (FREE_WRITE_ROWS_PER_DAY * TARGET_RATIO) / 24,
+const windowRatio = windowMinutes / (24 * 60);
+const windowTarget = {
+  rowsRead: FREE_READ_ROWS_PER_DAY * TARGET_RATIO * windowRatio,
+  rowsWritten: FREE_WRITE_ROWS_PER_DAY * TARGET_RATIO * windowRatio,
 };
+const dailyProjectionFactor = (24 * 60) / windowMinutes;
 const projectedDaily = {
-  rowsRead: Math.round(total.rowsRead * 24),
-  rowsWritten: Math.round(total.rowsWritten * 24),
-  readQueries: Math.round(total.readQueries * 24),
-  writeQueries: Math.round(total.writeQueries * 24),
+  rowsRead: Math.round(total.rowsRead * dailyProjectionFactor),
+  rowsWritten: Math.round(total.rowsWritten * dailyProjectionFactor),
+  readQueries: Math.round(total.readQueries * dailyProjectionFactor),
+  writeQueries: Math.round(total.writeQueries * dailyProjectionFactor),
 };
 const violations = [];
-if (total.rowsRead >= hourlyTarget.rowsRead) {
-  violations.push(`rows read ${total.rowsRead} >= ${Math.floor(hourlyTarget.rowsRead)}`);
+if (total.rowsRead >= windowTarget.rowsRead) {
+  violations.push(`rows read ${total.rowsRead} >= ${Math.floor(windowTarget.rowsRead)}`);
 }
-if (total.rowsWritten >= hourlyTarget.rowsWritten) {
-  violations.push(`rows written ${total.rowsWritten} >= ${Math.floor(hourlyTarget.rowsWritten)}`);
+if (total.rowsWritten >= windowTarget.rowsWritten) {
+  violations.push(`rows written ${total.rowsWritten} >= ${Math.floor(windowTarget.rowsWritten)}`);
 }
 
 const databases = [...byDatabase.values()]
@@ -170,7 +191,7 @@ const buckets = [...byBucket.values()].sort((left, right) => left.bucket.localeC
 const report = {
   generatedAt: generatedAt.toISOString(),
   scope: 'repository-referenced-databases',
-  window: { start, end, minutes: WINDOW_MINUTES },
+  window: { start, end, minutes: windowMinutes },
   limits: {
     freePerDay: { rowsRead: FREE_READ_ROWS_PER_DAY, rowsWritten: FREE_WRITE_ROWS_PER_DAY },
     targetRatio: TARGET_RATIO,
@@ -178,17 +199,21 @@ const report = {
       rowsRead: FREE_READ_ROWS_PER_DAY * TARGET_RATIO,
       rowsWritten: FREE_WRITE_ROWS_PER_DAY * TARGET_RATIO,
     },
-    targetPerHour: hourlyTarget,
+    targetPerWindow: windowTarget,
+    targetPerHour: {
+      rowsRead: (FREE_READ_ROWS_PER_DAY * TARGET_RATIO) / 24,
+      rowsWritten: (FREE_WRITE_ROWS_PER_DAY * TARGET_RATIO) / 24,
+    },
   },
   observed: total,
   projectedDaily,
   utilization: {
-    rowsReadPercent: percentage(total.rowsRead, hourlyTarget.rowsRead),
-    rowsWrittenPercent: percentage(total.rowsWritten, hourlyTarget.rowsWritten),
+    rowsReadPercent: percentage(total.rowsRead, windowTarget.rowsRead),
+    rowsWrittenPercent: percentage(total.rowsWritten, windowTarget.rowsWritten),
   },
   headroom: {
-    rowsRead: Math.floor(hourlyTarget.rowsRead - total.rowsRead),
-    rowsWritten: Math.floor(hourlyTarget.rowsWritten - total.rowsWritten),
+    rowsRead: Math.floor(windowTarget.rowsRead - total.rowsRead),
+    rowsWritten: Math.floor(windowTarget.rowsWritten - total.rowsWritten),
   },
   ok: violations.length === 0,
   violations,
@@ -200,16 +225,16 @@ const report = {
 await writeFile(path.join(outputDir, 'hourly-summary.json'), `${JSON.stringify(report, null, 2)}\n`);
 const fmt = new Intl.NumberFormat('en-US', { maximumFractionDigits: 1 });
 const lines = [
-  '# D1 rolling one-hour usage',
+  '# D1 rolling usage',
   '',
   `Generated: ${report.generatedAt}`,
-  `Window: ${start} to ${end}`,
+  `Window: ${start} to ${end} (${windowMinutes.toFixed(1)} minutes)`,
   'Scope: D1 databases referenced by this repository',
   '',
-  '| Metric | Observed hour | 50% free-tier hourly target | Utilization | 24h projection | Headroom |',
+  '| Metric | Observed window | 50% free-tier window target | Utilization | 24h projection | Headroom |',
   '|---|---:|---:|---:|---:|---:|',
-  `| Rows read | ${fmt.format(total.rowsRead)} | ${fmt.format(hourlyTarget.rowsRead)} | ${report.utilization.rowsReadPercent.toFixed(1)}% | ${fmt.format(projectedDaily.rowsRead)} | ${fmt.format(report.headroom.rowsRead)} |`,
-  `| Rows written | ${fmt.format(total.rowsWritten)} | ${fmt.format(hourlyTarget.rowsWritten)} | ${report.utilization.rowsWrittenPercent.toFixed(1)}% | ${fmt.format(projectedDaily.rowsWritten)} | ${fmt.format(report.headroom.rowsWritten)} |`,
+  `| Rows read | ${fmt.format(total.rowsRead)} | ${fmt.format(windowTarget.rowsRead)} | ${report.utilization.rowsReadPercent.toFixed(1)}% | ${fmt.format(projectedDaily.rowsRead)} | ${fmt.format(report.headroom.rowsRead)} |`,
+  `| Rows written | ${fmt.format(total.rowsWritten)} | ${fmt.format(windowTarget.rowsWritten)} | ${report.utilization.rowsWrittenPercent.toFixed(1)}% | ${fmt.format(projectedDaily.rowsWritten)} | ${fmt.format(report.headroom.rowsWritten)} |`,
   '',
   `Budget result: ${report.ok ? 'PASS' : `FAIL (${violations.join(', ')})`}`,
   '',
