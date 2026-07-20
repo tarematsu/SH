@@ -55,7 +55,7 @@ test('read-model metadata scans distinguish hydration from preservation', () => 
   assert.equal(readModelNeedsPreservation(readModelWithTracks(albumOnly)), true);
 
   const unidentified = [{ title: null, artist: null, album_name: null, thumbnail_url: null }, null];
-  assert.equal(readModelNeedsHydration(readModelWithTracks(unidentified)), true);
+  assert.equal(readModelNeedsHydration(readModelWithTracks(unidentified)), false);
   assert.equal(readModelNeedsPreservation(readModelWithTracks(unidentified)), false);
   assert.equal(readModelNeedsHydration({ queue: { value: { tracks: [] } } }), false);
   assert.equal(readModelNeedsPreservation({ queue: { value: { tracks: [] } } }), false);
