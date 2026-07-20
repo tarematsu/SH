@@ -12,6 +12,10 @@ import {
 import { fetchPreparedRawCollection } from '../src/raw-collection-fetch-entry.js';
 import { RAW_COLLECTION_FETCH_MESSAGE } from '../src/raw-collection-messages.js';
 import { prepareRawCollectionFetch } from '../src/raw-collection-session-entry.js';
+import {
+  decodeRawCollectionTextMessage,
+  textTransportQueue,
+} from '../src/raw-collection-text-transport.js';
 import { runRuntimeQueue } from '../src/runtime-queue.js';
 import { RAW_COLLECTION_TASK_MESSAGE } from '../src/runtime-scheduled.js';
 
@@ -54,9 +58,12 @@ test('raw collection session resolution dispatches a separate fetch task', async
   assert.equal(sent[0].auth.authToken, 'token');
 });
 
-test('raw collection fetch stage transports text without D1 session work', async () => {
+test('raw collection fetch stage uses text transport for the large response body', async () => {
   const sent = [];
-  const result = await fetchPreparedRawCollection({ RAW_COLLECTION_QUEUE: {} }, {
+  const queue = textTransportQueue({
+    async send(body, options) { sent.push({ body, options }); },
+  });
+  const result = await fetchPreparedRawCollection({ RAW_COLLECTION_QUEUE: queue }, {
     message_type: RAW_COLLECTION_FETCH_MESSAGE,
     message_version: 1,
     channel_alias: 'buddies',
@@ -64,13 +71,16 @@ test('raw collection fetch stage transports text without D1 session work', async
     auth: { authToken: 'token', deviceUid: 'device', tokenExpiresAt: 999 },
   }, {
     async fetch() {
-      return new Response('{"id":10}', { status: 200 });
+      return new Response('{"id":10}\n{"queue":[]}', { status: 200 });
     },
-    async send(body) { sent.push(body); },
   });
-  assert.equal(result.payload_chars, 9);
-  assert.equal(sent[0].message_version, 1);
-  assert.equal(sent[0].body, '{"id":10}');
+  assert.equal(result.payload_chars, 22);
+  assert.equal(sent.length, 1);
+  assert.equal(typeof sent[0].body, 'string');
+  assert.deepEqual(sent[0].options, { contentType: 'text' });
+  const decoded = decodeRawCollectionTextMessage(sent[0].body);
+  assert.equal(decoded.message_version, 1);
+  assert.equal(decoded.body, '{"id":10}\n{"queue":[]}');
 });
 
 test('runtime routes raw session and fetch stages as independent acknowledgements', async () => {
@@ -104,8 +114,9 @@ test('runtime routes raw session and fetch stages as independent acknowledgement
   assert.equal(dispatched[1].message_type, 'stationhead-raw-channel');
 });
 
-test('live write preparation is deferred before fact persistence', async () => {
+test('live write preparation preserves source job and complete revision state', async () => {
   const sent = [];
+  let sourceOptions = null;
   const queued = message(liveWriteBody());
   await processMinutePipelineBatch({
     queue: LIVE_DERIVE_QUEUE_NAME,
@@ -117,25 +128,49 @@ test('live write preparation is deferred before fact persistence', async () => {
     liveWrite: {
       materializer: {
         shouldMaterializeLiveRevision() { return true; },
-        async prepareSparseLiveRevision() {
-          return { revision_id: 77, staged: true, item_count: 1 };
+        async prepareSparseLiveRevision(_env, _payload, options) {
+          sourceOptions = options;
+          return {
+            revision_id: 77,
+            staged: true,
+            sparse: true,
+            source_job_id: 1,
+            visible_item_count: 1,
+            total_item_count: 1,
+            materialized_item_count: 0,
+            enrichment: { channel_id: 10 },
+            queue_identity: { station_id: 20 },
+          };
         },
       },
       async sendStage(body) { sent.push(body); },
     },
   });
   assert.deepEqual(queued.events, ['ack']);
+  assert.deepEqual(sourceOptions, { sourceJobId: 1 });
   assert.equal(sent.length, 1);
   assert.equal(sent[0].stage, BUDGET_LIVE_WRITE_STAGE);
-  assert.equal(sent[0].prepared_revision.revision_id, 77);
+  assert.equal(sent[0].prepared_revision.source_job_id, 1);
+  assert.deepEqual(sent[0].prepared_revision.queue_identity, { station_id: 20 });
 });
 
-test('budget live write commit persists the fact and dispatches revision close separately', async () => {
+test('budget live write commit persists the fact and forwards full revision state', async () => {
   const sent = [];
   const writes = [];
+  const revision = {
+    revision_id: 77,
+    staged: true,
+    sparse: true,
+    source_job_id: 1,
+    visible_item_count: 1,
+    total_item_count: 1,
+    materialized_item_count: 0,
+    enrichment: { channel_id: 10 },
+    queue_identity: { station_id: 20 },
+  };
   const body = {
     ...liveWriteBody(BUDGET_LIVE_WRITE_STAGE),
-    prepared_revision: { revision_id: 77, staged: true, item_count: 1 },
+    prepared_revision: revision,
   };
   await processBudgetedLiveWriteMessage({ MINUTE_LIVE_DERIVE_QUEUE: {} }, body, {
     appleRuntime: { withAppleMusicFreeRuntime: (env) => env },
@@ -155,7 +190,8 @@ test('budget live write commit persists the fact and dispatches revision close s
     async sendStage(activeBody) { sent.push(activeBody); },
   });
   assert.equal(writes.length, 1);
-  assert.equal(writes[0].prepared_revision.revision_id, 77);
+  assert.deepEqual(writes[0].prepared_revision, revision);
   assert.equal(sent.length, 1);
   assert.equal(sent[0].stage, 'revision-materialize');
+  assert.deepEqual(sent[0].revision, revision);
 });
