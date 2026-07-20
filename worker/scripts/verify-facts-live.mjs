@@ -152,7 +152,7 @@ for (let attempt = 1; attempt <= attempts; attempt += 1) {
     const payload = runQuery(`WITH latest AS (
         SELECT observed_at,minute_at,source_code
         FROM sh_minute_facts
-        ORDER BY observed_at DESC,id DESC
+        ORDER BY id DESC
         LIMIT 1
       ), live AS (
         SELECT 1 AS present
