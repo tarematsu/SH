@@ -12,7 +12,7 @@ test('production keeps live revisions at one message and one track per invocatio
   assert.equal(consumers.get('stationhead-minute-live-derive').max_batch_size, 1);
   assert.equal(consumers.get('stationhead-minute-live-derive').max_concurrency, 2);
   assert.equal(consumers.get('stationhead-buddies-facts').max_batch_size, 1);
-  assert.equal(consumers.get('stationhead-minute-rebuild').max_batch_size, 2);
+  assert.equal(consumers.get('stationhead-minute-rebuild').max_batch_size, 1);
 });
 
 test('sparse materializer respects the bounded two-track chunk', async () => {
