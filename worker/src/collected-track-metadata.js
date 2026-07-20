@@ -16,17 +16,16 @@ export function normalizeCollectedIsrc(value) {
   return /^[A-Z]{2}[A-Z0-9]{3}\d{7}$/.test(normalized) ? normalized : null;
 }
 
-function metadataKey(value) {
-  const isrc = normalizeCollectedIsrc(value?.isrc);
+function identityKey(isrc, spotifyId) {
   if (isrc) return `isrc:${isrc}`;
-  const spotifyId = text(value?.spotify_id, 200);
   return spotifyId ? `spotify:${spotifyId}` : null;
 }
 
-function completeMetadata(value) {
-  return Boolean(text(value?.title, 500)
-    && text(value?.artist, 500)
-    && text(value?.thumbnail_url));
+function metadataKey(value) {
+  return identityKey(
+    normalizeCollectedIsrc(value?.isrc),
+    text(value?.spotify_id, 200),
+  );
 }
 
 function mergeMetadata(current, next) {
@@ -40,23 +39,21 @@ function mergeMetadata(current, next) {
   };
 }
 
-function collectedMetadata(track) {
-  const isrc = normalizeCollectedIsrc(track?.isrc);
-  const spotifyId = text(track?.spotify_id, 200);
-  const row = {
+function collectedMetadata(track, isrc, spotifyId) {
+  const title = text(track?.title, 500);
+  const artist = text(track?.artist, 500);
+  const thumbnailUrl = text(track?.thumbnail_url);
+  if (!isrc && !spotifyId) return null;
+  return {
     isrc,
-    spotify_id: spotifyId,
-    title: text(track?.title, 500),
-    artist: text(track?.artist, 500),
-    thumbnail_url: text(track?.thumbnail_url),
+    spotify_id: isrc && title && artist && thumbnailUrl ? null : spotifyId,
+    title,
+    artist,
+    thumbnail_url: thumbnailUrl,
   };
-  if (isrc && completeMetadata(row)) row.spotify_id = null;
-  return metadataKey(row) ? row : null;
 }
 
-function compactTrack(track) {
-  const isrc = normalizeCollectedIsrc(track?.isrc);
-  const spotifyId = text(track?.spotify_id, 200);
+function compactTrack(track, isrc, spotifyId) {
   return {
     position: integer(track?.position),
     queue_track_id: integer(track?.queue_track_id),
@@ -69,41 +66,52 @@ function compactTrack(track) {
 }
 
 function structuralTrack(track) {
-  const { bite_count: _biteCount, ...structural } = compactTrack(track);
-  return structural;
-}
-
-function likeAnalysisForTracks(tracks) {
-  const values = new Map();
-  let identifiable = 0;
-  let complete = true;
-  for (const track of tracks) {
-    const key = metadataKey(track);
-    if (!key) continue;
-    identifiable += 1;
-    const likeCount = integer(track?.bite_count);
-    if (likeCount == null) complete = false;
-    else values.set(key, likeCount);
-  }
   return {
-    complete: identifiable === 0 || complete,
-    payload: [...values.entries()]
-      .map(([track_key, like_count]) => ({ track_key, like_count }))
-      .sort((left, right) => left.track_key.localeCompare(right.track_key)),
+    position: track.position,
+    queue_track_id: track.queue_track_id,
+    stationhead_track_id: track.stationhead_track_id,
+    spotify_id: track.spotify_id,
+    isrc: track.isrc,
+    duration_ms: track.duration_ms,
   };
 }
 
 export function compactCollectedQueue(queue) {
   if (!queue || !Array.isArray(queue.tracks)) return { queue, metadata: [] };
+  const trackCount = queue.tracks.length;
   const metadataByKey = new Map();
-  const tracks = new Array(queue.tracks.length);
-  for (let index = 0; index < queue.tracks.length; index += 1) {
+  const tracks = new Array(trackCount);
+  const structuralTracks = new Array(trackCount);
+  const likeValues = new Map();
+  let identifiableLikes = 0;
+  let completeLikes = true;
+
+  for (let index = 0; index < trackCount; index += 1) {
     const source = queue.tracks[index];
-    tracks[index] = compactTrack(source);
-    const row = collectedMetadata(source);
-    const key = metadataKey(row);
-    if (key) metadataByKey.set(key, mergeMetadata(metadataByKey.get(key), row));
+    const isrc = normalizeCollectedIsrc(source?.isrc);
+    const spotifyId = text(source?.spotify_id, 200);
+    const key = identityKey(isrc, spotifyId);
+    const compact = compactTrack(source, isrc, spotifyId);
+    tracks[index] = compact;
+    structuralTracks[index] = structuralTrack(compact);
+
+    if (key) {
+      identifiableLikes += 1;
+      if (compact.bite_count == null) completeLikes = false;
+      else likeValues.set(key, compact.bite_count);
+
+      const row = collectedMetadata(source, isrc, spotifyId);
+      if (row) metadataByKey.set(key, mergeMetadata(metadataByKey.get(key), row));
+    }
   }
+
+  const likePayload = new Array(likeValues.size);
+  let likeIndex = 0;
+  for (const [trackKey, likeCount] of likeValues) {
+    likePayload[likeIndex] = { track_key: trackKey, like_count: likeCount };
+    likeIndex += 1;
+  }
+  likePayload.sort((left, right) => left.track_key.localeCompare(right.track_key));
 
   const { tracks: _tracks, ...rest } = queue;
   const compact = { ...rest, tracks };
@@ -114,11 +122,14 @@ export function compactCollectedQueue(queue) {
       queue_id: integer(sourceStructural.queue_id ?? compact.queue_id),
       start_time: integer(sourceStructural.start_time ?? compact.start_time),
       is_paused: sourceStructural.is_paused ?? compact.is_paused ?? null,
-      tracks: tracks.map(structuralTrack),
+      tracks: structuralTracks,
     },
   });
   Object.defineProperty(compact.tracks, QUEUE_LIKE_ANALYSIS, {
-    value: likeAnalysisForTracks(tracks),
+    value: {
+      complete: identifiableLikes === 0 || completeLikes,
+      payload: likePayload,
+    },
   });
   return { queue: compact, metadata: [...metadataByKey.values()] };
 }
