@@ -3,10 +3,11 @@ const JSON_QUEUE_SEND_OPTIONS = Object.freeze({ contentType: 'json' });
 export const BUDGET_LIVE_WRITE_STAGE = 'budget-live-write';
 
 function activeQueueEnvironment(env) {
-  if (env?.MINUTE_DERIVE_QUEUE || !env?.MINUTE_LIVE_DERIVE_QUEUE) return env;
-  const active = Object.create(env);
+  const liveQueue = env?.MINUTE_LIVE_DERIVE_QUEUE;
+  if (!liveQueue || env?.MINUTE_DERIVE_QUEUE === liveQueue) return env;
+  const active = Object.create(env || null);
   Object.defineProperty(active, 'MINUTE_DERIVE_QUEUE', {
-    value: env.MINUTE_LIVE_DERIVE_QUEUE,
+    value: liveQueue,
     enumerable: false,
     configurable: true,
   });
@@ -22,7 +23,7 @@ function validStageBody(body, stage) {
 
 async function sendStage(env, body, dependencies = {}) {
   if (dependencies.sendStage) return dependencies.sendStage(body);
-  const queue = env?.MINUTE_DERIVE_QUEUE || env?.MINUTE_LIVE_DERIVE_QUEUE;
+  const queue = env?.MINUTE_LIVE_DERIVE_QUEUE || env?.MINUTE_DERIVE_QUEUE;
   if (!queue?.send) throw new Error('minute live derive Queue binding is missing');
   return queue.send(body, JSON_QUEUE_SEND_OPTIONS);
 }
@@ -88,9 +89,10 @@ async function commitLiveWrite(env, body, dependencies = {}) {
 }
 
 export async function processBudgetedLiveWriteMessage(env, body, dependencies = {}) {
-  if (validStageBody(body, 'write')) return prepareLiveWrite(activeQueueEnvironment(env), body, dependencies);
+  const activeEnv = activeQueueEnvironment(env);
+  if (validStageBody(body, 'write')) return prepareLiveWrite(activeEnv, body, dependencies);
   if (validStageBody(body, BUDGET_LIVE_WRITE_STAGE)) {
-    return commitLiveWrite(activeQueueEnvironment(env), body, dependencies);
+    return commitLiveWrite(activeEnv, body, dependencies);
   }
   throw new Error('unsupported budgeted live write message');
 }
