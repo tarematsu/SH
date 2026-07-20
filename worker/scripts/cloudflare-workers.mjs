@@ -1,3 +1,9 @@
+export const ACTIVE_WORKER_NAMES = Object.freeze([
+  'sh-buddies-ingest',
+  'sh-minute-enrichment',
+  'sh-runtime-orchestrator',
+]);
+
 export const RETIRED_WORKER_NAMES = Object.freeze([
   'sh-monitor-other',
   'sh-buddies-monitor',
@@ -42,6 +48,24 @@ function isNotFound(response, body) {
     || body?.errors?.some((error) => /not found/i.test(String(error?.message || '')));
 }
 
+export async function assertActiveWorkers(names = ACTIVE_WORKER_NAMES) {
+  const missing = [];
+  for (const name of names) {
+    const response = await workerRequest(name);
+    if (response.ok) continue;
+    if (response.status === 404) {
+      missing.push(name);
+      continue;
+    }
+    throw new Error(`active Worker ${name} verification failed: HTTP ${response.status}`);
+  }
+  if (missing.length) {
+    throw new Error(
+      `refusing retired Worker deletion; active Workers are missing: ${missing.join(', ')}`,
+    );
+  }
+}
+
 export async function deleteWorker(scriptName) {
   const response = await workerRequest(scriptName, 'DELETE');
   const body = await response.json().catch(() => null);
@@ -60,6 +84,10 @@ export async function deleteWorker(scriptName) {
   }
 }
 
-export async function pruneRetiredWorkers(names = RETIRED_WORKER_NAMES) {
+export async function pruneRetiredWorkers(
+  names = RETIRED_WORKER_NAMES,
+  { requiredActiveWorkers = ACTIVE_WORKER_NAMES } = {},
+) {
+  await assertActiveWorkers(requiredActiveWorkers);
   for (const name of names) await deleteWorker(name);
 }
