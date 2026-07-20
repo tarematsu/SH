@@ -2,6 +2,7 @@ import { withBackfillCursorSeek } from './backfill-cursor-seek.js';
 import { processMinuteRebuildStage } from './minute-rebuild-entry.js';
 import {
   processMinuteMaintenanceGate,
+  processMinuteMaintenanceRun,
   processMinuteMaintenanceSync,
 } from './minute-rebuild-maintenance-entry.js';
 
@@ -10,7 +11,9 @@ const EMPTY_DEPENDENCIES = Object.freeze({});
 
 function maintenanceStage(body) {
   if (body?.message_type !== 'minute-rebuild-stage' || Number(body?.message_version) !== 1) return null;
-  if (body.stage === 'maintenance-gate' || body.stage === 'maintenance-sync') return body.stage;
+  if (['maintenance-gate', 'maintenance-run', 'maintenance-sync'].includes(body.stage)) {
+    return body.stage;
+  }
   return null;
 }
 
@@ -18,9 +21,11 @@ async function processOneMinuteRebuildMessage(message, env, dependencies = EMPTY
   const stage = maintenanceStage(message?.body);
   try {
     if (stage) {
-      const run = stage === 'maintenance-sync'
-        ? dependencies.processMinuteMaintenanceSync || processMinuteMaintenanceSync
-        : dependencies.processMinuteMaintenanceGate || processMinuteMaintenanceGate;
+      const run = stage === 'maintenance-gate'
+        ? dependencies.processMinuteMaintenanceGate || processMinuteMaintenanceGate
+        : stage === 'maintenance-sync'
+          ? dependencies.processMinuteMaintenanceSync || processMinuteMaintenanceSync
+          : dependencies.processMinuteMaintenanceRun || processMinuteMaintenanceRun;
       const result = await run(env, message.body, dependencies.maintenance || EMPTY_DEPENDENCIES);
       console.log(JSON.stringify({
         event: 'minute_maintenance_gate_completed',

@@ -39,13 +39,15 @@ export function historicalBackfillDue(env, scheduledAt) {
 
 function maintenanceStage(body) {
   if (body?.message_type !== 'minute-rebuild-stage' || Number(body?.message_version) !== 1) return null;
-  if (body.stage === 'maintenance-gate' || body.stage === 'maintenance-sync') return body.stage;
+  if (['maintenance-gate', 'maintenance-run', 'maintenance-sync'].includes(body.stage)) {
+    return body.stage;
+  }
   return null;
 }
 
 function validateMaintenanceTask(body) {
   const task = body?.maintenance_task;
-  if (task !== 'rebuild' && task !== 'sync') {
+  if (!['recovery', 'rebuild', 'sync'].includes(task)) {
     throw new Error(`unsupported minute maintenance task: ${String(task || '')}`);
   }
   return {
@@ -93,10 +95,7 @@ export async function processMinuteMaintenanceGate(env, body, dependencies = EMP
   const collector = await check(env, task.scheduledAt);
   if (!collector?.ready) {
     if (task.attempt < GATE_MAX_ATTEMPTS) {
-      await sendStage(env, {
-        ...body,
-        attempt: task.attempt + 1,
-      }, GATE_RETRY_SECONDS, dependencies);
+      await sendStage(env, { ...body, attempt: task.attempt + 1 }, GATE_RETRY_SECONDS, dependencies);
       return {
         stage: 'maintenance-gate',
         task: task.task,
@@ -135,33 +134,36 @@ export async function processMinuteMaintenanceGate(env, body, dependencies = EMP
     };
   }
 
-  await sendStage(env, {
-    ...body,
-    stage: 'maintenance-sync',
-  }, 0, dependencies);
+  await sendStage(env, { ...body, stage: 'maintenance-run' }, 0, dependencies);
   return {
     stage: 'maintenance-gate',
     task: task.task,
     run_id: task.runId,
     pending: true,
-    dispatched_stage: 'maintenance-sync',
+    dispatched_stage: 'maintenance-run',
+  };
+}
+
+export async function processMinuteMaintenanceRun(env, body, dependencies = EMPTY_DEPENDENCIES) {
+  const task = validateMaintenanceTask(body);
+  if (task.task === 'rebuild') throw new Error('rebuild maintenance must dispatch gap-scan');
+  const run = dependencies.runScheduled || runMinuteScheduled;
+  const result = await run({ cron: task.cron, scheduledTime: task.scheduledAt }, env, {
+    collectorReady: true,
+  });
+  return {
+    stage: 'maintenance-run',
+    task: task.task,
+    run_id: task.runId,
+    pending: false,
+    result,
   };
 }
 
 export async function processMinuteMaintenanceSync(env, body, dependencies = EMPTY_DEPENDENCIES) {
   const task = validateMaintenanceTask(body);
   if (task.task !== 'sync') throw new Error('maintenance sync stage requires a sync task');
-  const run = dependencies.runScheduled || runMinuteScheduled;
-  const result = await run({ cron: task.cron, scheduledTime: task.scheduledAt }, env, {
-    collectorReady: true,
-  });
-  return {
-    stage: 'maintenance-sync',
-    task: task.task,
-    run_id: task.runId,
-    pending: false,
-    result,
-  };
+  return processMinuteMaintenanceRun(env, { ...body, stage: 'maintenance-run' }, dependencies);
 }
 
 function logMaintenanceGateResult(result) {
@@ -187,9 +189,11 @@ async function processMinuteRebuildBatch(batch, env, ctx) {
   const stage = maintenanceStage(message.body);
   if (!stage) return rebuildWorker.queue(batch, withBackfillCursorSeek(env), ctx);
   try {
-    const result = stage === 'maintenance-sync'
-      ? await processMinuteMaintenanceSync(env, message.body)
-      : await processMinuteMaintenanceGate(env, message.body);
+    const result = stage === 'maintenance-gate'
+      ? await processMinuteMaintenanceGate(env, message.body)
+      : stage === 'maintenance-sync'
+        ? await processMinuteMaintenanceSync(env, message.body)
+        : await processMinuteMaintenanceRun(env, message.body);
     logMaintenanceGateResult(result);
     message.ack();
   } catch (error) {

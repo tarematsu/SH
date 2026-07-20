@@ -8,6 +8,9 @@ import {
   SNAPSHOT_RETENTION_CRON,
   runMonitorMaintenanceCron,
 } from './monitor-maintenance-entry.js';
+import { MINUTE_FACT_MAINTENANCE_CRON } from './minute-entry.js';
+import { dispatchPendingMinuteFacts } from './minute-maintenance-entry.js';
+import { dispatchMinuteMaintenanceGate } from './minute-maintenance-optimized-entry.js';
 import { collectRawChannel } from './raw-collector-entry.js';
 
 const EMPTY_OPTIONS = Object.freeze({});
@@ -39,12 +42,21 @@ export function maintenanceCronFor(timestamp) {
   return null;
 }
 
+export function minuteMaintenanceTaskFor(timestamp) {
+  const minute = new Date(Number(timestamp) || 0).getUTCMinutes();
+  const slot = ((minute % 10) + 10) % 10;
+  if (slot === 5) return 'recovery';
+  if (slot === 7) return 'rebuild';
+  if (slot === 9) return 'sync';
+  return null;
+}
+
 export function otherMonitorDue(timestamp) {
   const minute = new Date(Number(timestamp) || 0).getUTCMinutes();
   return minute % OTHER_MONITOR_INTERVAL_MINUTES === 0;
 }
 
-async function dispatchMaintenance(env, scheduledAt) {
+async function dispatchMonitorMaintenance(env, scheduledAt) {
   const cron = maintenanceCronFor(scheduledAt);
   if (!cron) return null;
   if (!env?.HOST_MONITOR_QUEUE?.send) {
@@ -57,6 +69,23 @@ async function dispatchMaintenance(env, scheduledAt) {
     scheduled_at: scheduledAt,
   }, JSON_QUEUE_SEND_OPTIONS);
   return { dispatched: true, task: 'maintenance', cron, scheduled_at: scheduledAt };
+}
+
+async function dispatchMinuteMaintenance(controller, env, ctx, options = EMPTY_OPTIONS) {
+  const scheduledAt = Number(controller?.scheduledTime) || Date.now();
+  const dispatchFacts = options.dispatchPendingMinuteFacts || dispatchPendingMinuteFacts;
+  const dispatchGate = options.dispatchMinuteMaintenanceGate || dispatchMinuteMaintenanceGate;
+  const derive = dispatchFacts(env, options.minuteDispatchDependencies || EMPTY_OPTIONS, ctx);
+  const task = minuteMaintenanceTaskFor(scheduledAt);
+  const gate = task
+    ? dispatchGate({
+        ...controller,
+        cron: MINUTE_FACT_MAINTENANCE_CRON,
+        scheduledTime: scheduledAt,
+      }, env, task, ctx)
+    : Promise.resolve(null);
+  const [deriveResult, gateResult] = await Promise.all([derive, gate]);
+  return [deriveResult, ...(gateResult ? [gateResult] : [])];
 }
 
 export async function runConsolidatedMonitorScheduled(
@@ -72,29 +101,25 @@ export async function runConsolidatedMonitorScheduled(
   const scheduledAt = Number(controller?.scheduledTime) || Date.now();
   const collect = options.collectRawChannel || collectRawChannel;
   const collection = collect(rawCollectorEnv(env), options.collectionDependencies || EMPTY_OPTIONS);
-  if (!otherMonitorDue(scheduledAt)) {
-    await collection;
-    return [{ collected: true, scheduled_at: scheduledAt }];
-  }
-
+  const minuteTasks = dispatchMinuteMaintenance(controller, env, ctx, options);
   const monitorController = {
     ...controller,
     cron: OTHER_MONITOR_CRON,
     scheduledTime: scheduledAt,
   };
-  const [, result] = await Promise.all([
+  const otherTasks = otherMonitorDue(scheduledAt)
+    ? runOtherMonitorCron(monitorController, env, ctx, options.otherOptions || EMPTY_OPTIONS)
+    : Promise.resolve([]);
+  const [, minuteResults, otherResults] = await Promise.all([
     collection,
-    runOtherMonitorCron(
-      monitorController,
-      env,
-      ctx,
-      options.otherOptions || EMPTY_OPTIONS,
-    ),
+    minuteTasks,
+    otherTasks,
   ]);
-  const maintenance = await dispatchMaintenance(env, scheduledAt);
+  const maintenance = await dispatchMonitorMaintenance(env, scheduledAt);
   return [
     { collected: true, scheduled_at: scheduledAt },
-    ...result,
+    ...minuteResults,
+    ...otherResults,
     ...(maintenance ? [maintenance] : []),
   ];
 }
@@ -126,6 +151,7 @@ export async function runConsolidatedMonitorQueue(batch, env, ctx, options = EMP
 }
 
 export {
+  dispatchMinuteMaintenance,
   rawCollectorEnv,
 };
 

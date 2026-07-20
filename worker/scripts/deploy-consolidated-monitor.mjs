@@ -15,10 +15,14 @@ import {
   rollbackConsolidatedWorker,
 } from './monitor-cutover-cloudflare.mjs';
 
-const retiredFirst = [
+const retiredQueueWorkers = [
   ...MIGRATIONS.map(({ oldScript }) => oldScript),
   'sh-buddies-read-model',
   'sh-monitor-maintenance',
+];
+const retiredScheduledWorkers = [
+  COLLECTOR_SCRIPT,
+  'sh-minute-maintenance',
 ];
 const existed = new Map(
   MIGRATIONS.map((item) => [item.queue, hasConsumer(item.queue, CONSOLIDATED_SCRIPT)]),
@@ -27,7 +31,7 @@ const active = MIGRATIONS.filter((item) => hasConsumer(item.queue, item.oldScrip
 const paused = [];
 const removed = [];
 let deployed = false;
-let collectorRetired = false;
+let cutoverCommitted = false;
 
 try {
   for (const item of active) {
@@ -39,15 +43,19 @@ try {
   deployConsolidatedWorker();
   deployed = true;
   assertConsolidatedConsumers();
-  for (const script of retiredFirst) await deleteWorker(script);
+  for (const script of retiredQueueWorkers) await deleteWorker(script);
   assertConsolidatedConsumers();
   for (const item of paused) resumeQueue(item.queue);
   paused.length = 0;
-  await deleteWorker(COLLECTOR_SCRIPT);
-  collectorRetired = true;
+  cutoverCommitted = true;
+
+  // Scheduled Worker retirement is intentionally after the reversible cutover.
+  // A deletion failure leaves the consolidated Worker active and is safe to retry.
+  for (const script of retiredScheduledWorkers) await deleteWorker(script);
 } catch (error) {
+  if (cutoverCommitted) throw error;
   const failures = [];
-  if (deployed && !collectorRetired) {
+  if (deployed) {
     try { rollbackConsolidatedWorker(); }
     catch (cause) { failures.push(`Worker rollback failed: ${cause.message}`); }
   }
@@ -79,5 +87,5 @@ console.log(JSON.stringify({
   event: 'monitor_worker_consolidation_completed',
   script: CONSOLIDATED_SCRIPT,
   queues: MIGRATIONS.map((item) => item.queue),
-  retired_scripts: [...retiredFirst, COLLECTOR_SCRIPT],
+  retired_scripts: [...retiredQueueWorkers, ...retiredScheduledWorkers],
 }));

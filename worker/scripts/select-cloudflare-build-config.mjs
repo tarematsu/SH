@@ -9,7 +9,6 @@ const CONFIG_BY_WORKER = Object.freeze({
   'sh-track-metadata': 'wrangler.track-metadata.jsonc',
   'sh-pages-read-model': 'wrangler.pages-read-model.jsonc',
   'sh-monitor-other': 'wrangler.other.jsonc',
-  'sh-minute-maintenance': 'wrangler.minute.jsonc',
   'sh-minute-derive': 'wrangler.minute-derive.jsonc',
   'sh-minute-enrichment': 'wrangler.minute-enrichment.jsonc',
   'sh-minute-rebuild': 'wrangler.minute-rebuild.jsonc',
