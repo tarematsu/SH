@@ -115,17 +115,8 @@ jobs:
           cache: npm
           cache-dependency-path: worker/package-lock.json
       - run: npm ci --no-audit --no-fund
-      - run: npm run check
-      - name: Check persistence Worker bundle
-        run: npm run check:persist-bundle
-      - name: Check ingest Worker bundle
-        run: npm run check:ingest-bundle
-      - name: Check comments Worker bundle
-        run: npm run check:comments-bundle
-      - name: Check minute Worker bundles
-        run: npm run check:minute-bundle
-      - name: Check split other Worker bundles
-        run: npm run check:split-other-bundle
+      - name: Check active Worker bundles
+        run: npm run check
       - name: Run Worker tests
         shell: bash
         run: |
