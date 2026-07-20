@@ -32,10 +32,18 @@ async function processStructureTask(env, body, dependencies) {
 
 async function processLikesPlanTask(env, body, dependencies) {
   const module = await (likesPlanModulePromise ||= import('./persist-likes-plan-entry.js'));
+  const activeDependencies = dependencies?.prepareQueueLikesPersistence
+    ? {
+        ...dependencies,
+        prepareQueueLikesPersistence: (_activeEnv, value, observedAt) => (
+          dependencies.prepareQueueLikesPersistence(env.DB, value, observedAt)
+        ),
+      }
+    : dependencies;
   return module.processOptimizedQueueLikesPlanTask(
     likesBudgetEnvironment(env),
     body,
-    dependencies,
+    activeDependencies,
   );
 }
 
