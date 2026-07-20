@@ -55,7 +55,7 @@ Invoke-Step "Repository checks" {
 }
 
 Invoke-Step "Worker install and checks" {
-  Invoke-External -FilePath "npm" -Arguments @("install", "--no-audit", "--no-fund") -WorkingDirectory $workerRoot
+  Invoke-External -FilePath "npm" -Arguments @("ci", "--no-audit", "--no-fund") -WorkingDirectory $workerRoot
   Invoke-External -FilePath "npm" -Arguments @("run", "check") -WorkingDirectory $workerRoot
 }
 
@@ -65,13 +65,14 @@ Invoke-Step "Provision current D1 databases" {
   Invoke-External -FilePath "node" -Arguments @("scripts/provision-other-db.mjs") -WorkingDirectory $workerRoot
 }
 
-Invoke-Step "Deploy monitor Workers" {
-  Invoke-External -FilePath "npx" -Arguments @("wrangler", "deploy", "--config", ".\wrangler.jsonc") -WorkingDirectory $workerRoot
-  Invoke-External -FilePath "npx" -Arguments @("wrangler", "deploy", "--config", ".\wrangler.other.jsonc") -WorkingDirectory $workerRoot
+Invoke-Step "Deploy active Workers" {
+  Invoke-External -FilePath "npm" -Arguments @("run", "deploy:minute-enrichment") -WorkingDirectory $workerRoot
+  Invoke-External -FilePath "npm" -Arguments @("run", "deploy:ingest") -WorkingDirectory $workerRoot
+  Invoke-External -FilePath "npm" -Arguments @("run", "deploy:runtime") -WorkingDirectory $workerRoot
 }
 
 Invoke-Step "Site install and checks" {
-  Invoke-External -FilePath "npm" -Arguments @("install", "--no-audit", "--no-fund") -WorkingDirectory $siteRoot
+  Invoke-External -FilePath "npm" -Arguments @("ci", "--no-audit", "--no-fund") -WorkingDirectory $siteRoot
   Invoke-External -FilePath "npm" -Arguments @("run", "check") -WorkingDirectory $siteRoot
 }
 
@@ -83,19 +84,11 @@ Invoke-Step "Deploy Pages site" {
   ) -WorkingDirectory $siteRoot
 }
 
-Invoke-Step "Verify Worker health" {
-  $response = Invoke-RestMethod "https://sh-monitor-other.tarematsu.workers.dev/health"
-  $isHealthy = $false
-  if ($response.PSObject.Properties.Name -contains "healthy") {
-    $isHealthy = [bool]$response.healthy
-  }
-  elseif ($response.PSObject.Properties.Name -contains "ok") {
-    $isHealthy = [bool]$response.ok
-  }
-
-  if (-not $isHealthy) {
-    throw "Worker health verification failed."
+Invoke-Step "Verify public health" {
+  $response = Invoke-RestMethod "https://skrzk.pages.dev/api/health"
+  if (-not [bool]$response.ok) {
+    throw "Pages health verification failed."
   }
 }
 
-Write-Host "Local deploy complete for sh-monitor"
+Write-Host "Local deploy complete for active Workers and Pages"
