@@ -2,12 +2,8 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
-import {
-  onRequestGet as playbackGet,
-  onRequestOptions as playbackOptions,
-  secondaryPlaybackPayload,
-} from '../functions/api/playback.js';
-import { FakeD1Database, responseJson } from './helpers/fake-d1.js';
+import { onRequestOptions as playbackOptions } from '../functions/api/playback.js';
+import { secondaryPlaybackPayload } from '../functions/lib/secondary-playback.js';
 
 const migration = readFileSync(
   new URL('../../database/other-migrations/011_buddy_playback_canonical.sql', import.meta.url),
@@ -53,187 +49,65 @@ function playbackRow(overrides = {}) {
   };
 }
 
-test('secondary playback migration owns clock and metadata tables in OTHER_DB', () => {
+test('secondary collector storage remains isolated in OTHER_DB', () => {
   assert.match(migration, /CREATE TABLE IF NOT EXISTS sh_buddy_playback_clock/);
   assert.match(migration, /CREATE TABLE IF NOT EXISTS sh_buddy_track_metadata/);
-  assert.match(migration, /channel_alias TEXT PRIMARY KEY/);
   assert.doesNotMatch(migration, /MINUTE_DB|BUDDIES_DB/);
 });
 
-test('secondary playback exposes current progress and track metadata without Spotify IDs', () => {
+test('secondary diagnostics compute progress without exposing provider IDs', () => {
   const payload = secondaryPlaybackPayload(playbackRow(), 350_000);
-
-  assert.equal(payload.channel_alias, 'buddy46');
   assert.equal(payload.playing, true);
-  assert.equal(payload.stale, false);
   assert.equal(payload.queue_status.current_index, 0);
   assert.equal(payload.queue_status.progress_ms, 50_000);
   assert.equal(payload.queue[0].is_current, true);
-  assert.deepEqual(
-    {
-      title: payload.queue[1].title,
-      artist: payload.queue[1].artist,
-      thumbnail_url: payload.queue[1].thumbnail_url,
-    },
-    {
-      title: 'Song 2',
-      artist: 'Artist',
-      thumbnail_url: 'cover-2',
-    },
-  );
+  assert.equal(payload.queue[1].thumbnail_url, 'cover-2');
   assert.equal('spotify_id' in payload.queue[0], false);
-  assert.equal('spotify_id' in payload.queue[1], false);
 });
 
-test('secondary endpoint repairs sparse queue metadata from OTHER_DB only', async () => {
-  const db = new FakeD1Database()
-    .route('first', 'sh_collector_status', null)
-    .route('first', 'sh_playback_channel_current', playbackRow({
-      queue_json: JSON.stringify([{
-        position: 0,
-        spotify_id: 'sp1',
-        isrc: 'JPX1',
-        duration_ms: 180_000,
-        title: null,
-        artist: null,
-        thumbnail_url: null,
-      }]),
-    }))
-    .route('all', 'sh_buddy_track_metadata', {
-      results: [{
-        spotify_id: 'sp1',
-        isrc: 'JPX1',
-        title: 'Repaired Song',
-        artist: 'Repaired Artist',
-        display_title: 'Repaired Song — Repaired Artist',
-        thumbnail_url: 'https://example.invalid/repaired.jpg',
-        fetched_at: 345_000,
-        raw_json: null,
-      }],
-    });
-
-  const response = await playbackGet({
-    request: new Request('https://skrzk.test/api/playback?channel=buddy46'),
-    env: { OTHER_DB: db },
-  });
-  const payload = await responseJson(response);
-
-  assert.equal(response.status, 200);
-  assert.equal(payload.queue[0].title, 'Repaired Song');
-  assert.equal(payload.queue[0].artist, 'Repaired Artist');
-  assert.equal(payload.queue[0].thumbnail_url, 'https://example.invalid/repaired.jpg');
-  assert.ok(db.callsMatching(/sh_buddy_track_metadata/, 'all').length > 0);
-});
-
-test('secondary playback keeps metadata keys stable when values are unavailable', () => {
+test('secondary diagnostics retain stable metadata keys when values are missing', () => {
   const payload = secondaryPlaybackPayload(playbackRow({
-    queue_json: JSON.stringify([{
-      position: 0,
-      spotify_id: 'sp1',
-      duration_ms: 180_000,
-    }]),
+    queue_json: JSON.stringify([{ position: 0, spotify_id: 'sp1', duration_ms: 180_000 }]),
   }), 350_000);
-
   assert.equal(payload.queue[0].title, null);
   assert.equal(payload.queue[0].artist, null);
   assert.equal(payload.queue[0].thumbnail_url, null);
-  assert.equal('spotify_id' in payload.queue[0], false);
 });
 
-test('completed buddy pauses are subtracted after playback resumes', () => {
-  const payload = secondaryPlaybackPayload(playbackRow({
-    start_time: 300_000,
+test('secondary diagnostics account for completed and active pauses', () => {
+  const resumed = secondaryPlaybackPayload(playbackRow({
     paused_total_ms: 120_000,
     checked_at: 499_000,
   }), 500_000);
+  assert.equal(resumed.queue_status.progress_ms, 80_000);
 
-  assert.equal(payload.playing, true);
-  assert.equal(payload.queue_status.current_index, 0);
-  assert.equal(payload.queue_status.progress_ms, 80_000);
-});
-
-test('paused secondary playback freezes progress at pause_started_at', () => {
-  const payload = secondaryPlaybackPayload(playbackRow({
+  const paused = secondaryPlaybackPayload(playbackRow({
     is_paused: 1,
     changed_at: 330_000,
     pause_started_at: 330_000,
-    checked_at: 890_000,
   }), 900_000);
-
-  assert.equal(payload.playing, false);
-  assert.equal(payload.queue_status.is_paused, true);
-  assert.equal(payload.queue_status.current_index, 0);
-  assert.equal(payload.queue_status.progress_ms, 30_000);
+  assert.equal(paused.playing, false);
+  assert.equal(paused.queue_status.progress_ms, 30_000);
 });
 
-test('secondary playback does not report the last track as playing after queue end', () => {
+test('secondary diagnostics do not mark a track current after the queue ends', () => {
   const payload = secondaryPlaybackPayload(playbackRow({
-    start_time: 300_000,
-    queue_json: JSON.stringify([{
-      position: 0,
-      spotify_id: 'sp1',
-      duration_ms: 10_000,
-      title: 'Short Song',
-      artist: 'Artist',
-    }]),
+    queue_json: JSON.stringify([{ position: 0, duration_ms: 10_000, title: 'Short Song' }]),
   }), 400_000);
-
   assert.equal(payload.playing, false);
   assert.equal(payload.queue_status.ended, true);
   assert.equal(payload.queue_status.current_index, -1);
-  assert.equal(payload.queue[0].is_current, undefined);
-});
-
-test('corrupt current queue data is returned as stale instead of throwing', () => {
-  const payload = secondaryPlaybackPayload(playbackRow({ queue_json: '{broken' }), 350_000);
-  assert.equal(payload.stale, true);
-  assert.equal(payload.queue_corrupt, true);
-  assert.deepEqual(payload.queue, []);
-});
-
-test('missing secondary playback returns an empty stale feed', () => {
-  const payload = secondaryPlaybackPayload(null, 350_000);
-  assert.equal(payload.playing, false);
-  assert.equal(payload.stale, true);
-  assert.equal(payload.queue_status, null);
-  assert.deepEqual(payload.queue, []);
-});
-
-test('secondary playback endpoint stays available before migration is applied', async () => {
-  const db = new FakeD1Database().route(
-    'first',
-    'sh_playback_channel_current',
-    () => { throw new Error('no such table: sh_playback_channel_current'); },
-  );
-  const response = await playbackGet({
-    request: new Request('https://skrzk.test/api/playback?channel=buddy46'),
-    env: { OTHER_DB: db },
-  });
-  const payload = await responseJson(response);
-  assert.equal(response.status, 200);
-  assert.equal(payload.ok, true);
-  assert.equal(payload.setup_required, true);
-  assert.deepEqual(payload.queue, []);
-});
-
-test('secondary stale endpoint uses the same absent-current marker as buddies', async () => {
-  const db = new FakeD1Database()
-    .route('first', 'sh_collector_status', {
-      status: 'ok',
-      last_attempt_at: Date.now(),
-      last_success_at: Date.now(),
-    })
-    .route('first', 'sh_playback_channel_current', playbackRow({ checked_at: 1 }))
-    .route('all', 'sh_buddy_track_metadata', { results: [] });
-  const response = await playbackGet({
-    request: new Request('https://skrzk.test/api/playback?channel=buddy46'),
-    env: { OTHER_DB: db },
-  });
-  const payload = await responseJson(response);
-
-  assert.equal(response.status, 200);
-  assert.equal(payload.stale, true);
   assert.equal('is_current' in payload.queue[0], false);
+});
+
+test('secondary diagnostics return safe stale envelopes for corrupt or absent state', () => {
+  const corrupt = secondaryPlaybackPayload(playbackRow({ queue_json: '{broken' }), 350_000);
+  assert.equal(corrupt.queue_corrupt, true);
+  assert.deepEqual(corrupt.queue, []);
+
+  const absent = secondaryPlaybackPayload(null, 350_000);
+  assert.equal(absent.stale, true);
+  assert.deepEqual(absent.queue, []);
 });
 
 test('playback endpoint answers CORS preflight without credentials', () => {

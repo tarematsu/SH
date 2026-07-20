@@ -4,7 +4,7 @@ import {
   loadBuddyCollectorStatus,
 } from '../lib/buddy-collector-status.js';
 import { computePlayback } from '../lib/playback.js';
-import { loadCanonicalPlaybackPayload } from '../lib/primary-playback-fallback.js';
+import { loadPrimaryPlaybackPayload } from '../lib/primary-playback.js';
 import {
   emptySecondaryPayload,
   loadSecondaryPlaybackMetadata,
@@ -14,6 +14,10 @@ import {
 
 const CACHE_CONTROL = 'public, max-age=5, s-maxage=10, stale-while-revalidate=30';
 const DEFAULT_CHANNEL_ALIAS = 'buddies';
+const PUBLIC_CHANNELS = Object.freeze({
+  buddies: { canonicalAlias: 'buddies' },
+  buddy46: { canonicalAlias: 'buddies', compatibilityAlias: true },
+});
 const SECONDARY_PLAYBACK_LEGACY_SQL = `SELECT channel_alias,station_id,queue_id,start_time,
   is_paused,is_broadcasting,host_account_id,host_handle,state_hash,queue_json,
   checked_at,changed_at
@@ -206,26 +210,30 @@ export async function onRequestGet({ request, env }) {
   try {
     const generatedAt = Date.now();
     const channelAlias = requestedChannel(request);
-    if (channelAlias !== DEFAULT_CHANNEL_ALIAS) {
-      if (!env.OTHER_DB) {
-        return playbackJson({ ok: false, error: 'OTHER_DB binding missing' }, 500, 'no-store');
-      }
-      return secondaryPlaybackResponse(
-        env.OTHER_DB,
-        channelAlias,
-        generatedAt,
-        requestedRawPayload(request),
+    const channel = PUBLIC_CHANNELS[channelAlias];
+    if (!channel) {
+      return playbackJson(
+        { ok: false, error: `unsupported playback channel: ${channelAlias}` },
+        400,
+        'no-store',
       );
     }
-
-    if (!env.DB) {
-      return playbackJson({ ok: false, error: 'DB binding missing' }, 500, 'no-store');
+    if (requestedRawPayload(request)) {
+      return playbackJson(
+        { ok: false, error: 'raw playback payloads are not available on the public endpoint' },
+        400,
+        'no-store',
+      );
     }
-    const canonical = await loadCanonicalPlaybackPayload(env.DB, generatedAt);
-    if (!canonical) {
-      return playbackJson({ ok: false, error: 'canonical playback state unavailable' }, 503, 'no-store');
+    if (!env.MINUTE_DB) {
+      return playbackJson({ ok: false, error: 'MINUTE_DB binding missing' }, 500, 'no-store');
     }
-    return playbackJson(canonical, 200, CACHE_CONTROL);
+    const canonical = await loadPrimaryPlaybackPayload(env.MINUTE_DB, generatedAt);
+    return playbackJson({
+      ...canonical,
+      channel_alias: channelAlias,
+      ...(channel.compatibilityAlias ? { canonical_channel_alias: channel.canonicalAlias } : {}),
+    }, 200, CACHE_CONTROL);
   } catch (error) {
     console.error(error);
     return playbackJson({ ok: false, error: error?.message || 'playback feed error' }, 500, 'no-store');

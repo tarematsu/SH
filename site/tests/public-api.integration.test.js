@@ -19,6 +19,34 @@ import { onRequestGet as officialHistoryGet } from '../functions/api/official-hi
 import { onRequestGet as trackLikesGet } from '../functions/api/track-likes.js';
 import { FakeD1Database, responseJson } from './helpers/fake-d1.js';
 
+function primaryPlaybackDb(queue = [], now = Date.now()) {
+  return new FakeD1Database().route('first', 'WITH latest_fact AS', {
+    channel_id: 318,
+    latest_observed_at: now - 1_000,
+    is_broadcasting: 1,
+    fact_station_id: 3328626,
+    host_account_id: 46,
+    host_handle: 'sakurazaka46jp',
+    revision_id: 7,
+    queue_start_time: now - 30_000,
+    is_paused: 0,
+    paused_total_ms: 0,
+    pause_started_at: null,
+    last_observed_at: now - 500,
+    current_position: 0,
+    queue_station_id: 3328626,
+    queue_id: 99,
+    structural_hash: 'structural-hash',
+    read_model_channel_id: 318,
+    read_model_observed_at: now - 500,
+    read_model_station_id: 3328626,
+    read_model_queue_id: 99,
+    read_model_start_time: now - 30_000,
+    read_model_is_paused: 0,
+    read_model_queue_json: JSON.stringify(queue),
+  });
+}
+
 const PLAYBACK_CORE_FIELDS = [
   'ok',
   'channel_alias',
@@ -42,22 +70,16 @@ function assertPlaybackCoreEnvelope(payload) {
   for (const field of PLAYBACK_CORE_FIELDS) assert.ok(field in payload, `missing playback field: ${field}`);
 }
 
-test('playback endpoint rejects a missing canonical DB binding without cacheable output', async () => {
+test('playback endpoint rejects a missing primary read-model binding without cacheable output', async () => {
   const response = await playbackGet({ env: {} });
   assert.equal(response.status, 500);
   assert.equal(response.headers.get('cache-control'), 'no-store');
-  assert.deepEqual(await responseJson(response), { ok: false, error: 'DB binding missing' });
+  assert.deepEqual(await responseJson(response), { ok: false, error: 'MINUTE_DB binding missing' });
 });
 
-test('playback endpoint maps the canonical Pages queue into current-track state and cache headers', async () => {
+test('playback endpoint maps the Pages read model into current-track state and cache headers', async () => {
   const now = Date.now();
-  const rows = [{
-    queue_station_id: 3328626,
-    queue_id: 91,
-    queue_start_time: now - 30_000,
-    queue_is_paused: 0,
-    queue_observed_at: now - 500,
-    item_observed_at: now - 500,
+  const queue = [{
     position: 0,
     queue_track_id: 1001,
     stationhead_track_id: 2001,
@@ -69,23 +91,9 @@ test('playback endpoint maps the canonical Pages queue into current-track state 
     bite_count: 12,
     title: 'Integration Song',
     artist: 'Integration Artist',
-    display_title: 'Integration Song - Integration Artist',
     thumbnail_url: 'https://example.invalid/cover.jpg',
-    spotify_url: null,
-    metadata_fetched_at: now - 2_000,
-    metadata_raw_json: null,
   }];
-  const db = new FakeD1Database()
-    .route('first', 'FROM sh_channel_snapshots', {
-      observed_at: now - 1_000,
-      channel_id: 318,
-      station_id: 3328626,
-      is_broadcasting: 1,
-      host_account_id: 46,
-      host_handle: 'sakurazaka46jp',
-    })
-    .route('all', 'WITH latest_station AS', { results: rows });
-  const response = await playbackGet({ env: { DB: db } });
+  const response = await playbackGet({ env: { MINUTE_DB: primaryPlaybackDb(queue, now) } });
   const body = await responseJson(response);
 
   assert.equal(response.status, 200);
@@ -102,32 +110,53 @@ test('playback endpoint maps the canonical Pages queue into current-track state 
   assert.match(body.queue_revision, /^[a-z0-9_-]+/i);
 });
 
-test('buddies reports unavailable canonical state while buddy46 keeps its empty envelope', async () => {
-  const primaryDb = new FakeD1Database()
-    .route('first', 'FROM sh_channel_snapshots', null)
-    .route('all', 'WITH latest_station AS', { results: [] });
-  const primaryResponse = await playbackGet({
+test('buddies and buddy46 aliases use the same Pages read model', async () => {
+  const now = Date.now();
+  const queue = [{
+    position: 0,
+    duration_ms: 180_000,
+    title: 'Shared Song',
+    artist: 'Shared Artist',
+    thumbnail_url: 'https://example.invalid/shared.jpg',
+  }];
+  const buddiesResponse = await playbackGet({
     request: new Request('https://skrzk.test/api/playback?channel=buddies'),
-    env: { DB: primaryDb },
+    env: { MINUTE_DB: primaryPlaybackDb(queue, now) },
   });
-  const secondaryDb = new FakeD1Database()
-    .route('first', 'sh_collector_status', null)
-    .route('first', 'sh_playback_channel_current', null);
-  const secondaryResponse = await playbackGet({
+  const buddy46Response = await playbackGet({
     request: new Request('https://skrzk.test/api/playback?channel=buddy46'),
-    env: { OTHER_DB: secondaryDb },
+    env: {
+      MINUTE_DB: primaryPlaybackDb(queue, now),
+      OTHER_DB: { prepare() { throw new Error('OTHER_DB must not be read'); } },
+    },
   });
-  const primary = await responseJson(primaryResponse);
-  const secondary = await responseJson(secondaryResponse);
+  const buddies = await responseJson(buddiesResponse);
+  const buddy46 = await responseJson(buddy46Response);
 
-  assert.equal(primaryResponse.status, 503);
-  assert.deepEqual(primary, { ok: false, error: 'canonical playback state unavailable' });
-  assert.equal(secondaryResponse.status, 200);
-  assertPlaybackCoreEnvelope(secondary);
-  assert.equal(secondary.host_account_id, null);
-  assert.equal(secondary.host_handle, null);
-  assert.deepEqual(secondary.queue, []);
-  assert.equal(secondary.collector.status, 'never');
+  assert.equal(buddiesResponse.status, 200);
+  assert.equal(buddy46Response.status, 200);
+  assertPlaybackCoreEnvelope(buddies);
+  assertPlaybackCoreEnvelope(buddy46);
+  assert.equal(buddy46.queue.length, buddies.queue.length);
+  assert.equal(buddy46.queue[0].title, buddies.queue[0].title);
+  assert.equal(buddy46.queue[0].artist, buddies.queue[0].artist);
+  assert.equal(buddy46.queue[0].thumbnail_url, buddies.queue[0].thumbnail_url);
+  assert.equal(buddies.channel_alias, 'buddies');
+  assert.equal(buddy46.channel_alias, 'buddy46');
+  assert.equal(buddy46.canonical_channel_alias, 'buddies');
+});
+
+test('playback endpoint rejects unsupported channels and raw payload access', async () => {
+  const db = { prepare() { throw new Error('D1 must not be queried'); } };
+  for (const url of [
+    'https://skrzk.test/api/playback?channel=unknown',
+    'https://skrzk.test/api/playback?channel=buddies&raw=1',
+  ]) {
+    const response = await playbackGet({ request: new Request(url), env: { MINUTE_DB: db } });
+    assert.equal(response.status, 400);
+    assert.equal(response.headers.get('cache-control'), 'no-store');
+    assert.equal((await responseJson(response)).ok, false);
+  }
 });
 
 test('history endpoint rejects unknown modes and never caches errors', async () => {

@@ -65,7 +65,7 @@ async function dictionaryRows(db, queue) {
   if (!db?.prepare || !isrcs.length) return new Map();
   const placeholders = isrcs.map(() => '?').join(',');
   try {
-    const result = await db.prepare(`SELECT isrc,title,artist,thumbnail_url
+    const result = await db.prepare(`SELECT isrc,spotify_id,title,artist,thumbnail_url
       FROM sh_track_dictionary WHERE isrc IN (${placeholders})`).bind(...isrcs).all();
     return new Map((result.results || []).map((row) => [normalizeIsrc(row?.isrc), row]));
   } catch (error) {
@@ -76,17 +76,28 @@ async function dictionaryRows(db, queue) {
 
 function filteredQueue(queue, rows, stage) {
   if (!queue?.tracks?.length || rows == null) return queue;
-  const tracks = queue.tracks.filter((track) => {
+  let changed = false;
+  const tracks = queue.tracks.flatMap((track) => {
     const isrc = normalizeIsrc(track?.isrc);
-    const spotifyId = text(track?.spotify_id);
     const row = isrc ? rows.get(isrc) : null;
     const hasTitleArtist = Boolean(text(row?.title) && text(row?.artist));
-    if (stage === 'isrc') return Boolean(isrc && !hasTitleArtist);
-    if (!spotifyId) return false;
-    if (!isrc) return true;
-    return !hasTitleArtist || !text(row?.thumbnail_url);
+    if (stage === 'isrc') {
+      if (isrc && !hasTitleArtist) return [track];
+      changed = true;
+      return [];
+    }
+
+    const originalSpotifyId = text(track?.spotify_id);
+    const spotifyId = originalSpotifyId || text(row?.spotify_id);
+    if (!spotifyId || (isrc && hasTitleArtist && text(row?.thumbnail_url))) {
+      changed = true;
+      return [];
+    }
+    if (originalSpotifyId) return [track];
+    changed = true;
+    return [{ ...track, spotify_id: spotifyId }];
   });
-  return tracks.length === queue.tracks.length ? queue : { ...queue, tracks };
+  return changed ? { ...queue, tracks } : queue;
 }
 
 async function enrichmentQueue(sourceEnv, queue, stage) {
@@ -108,13 +119,16 @@ export async function runCommittedSpotifyMetadataEnrichment(env, jobs, dependenc
     || dependencies.enrichTracks
     || (await loadSpotifyModule()).enrichTracks;
 
+  let savedTotal = 0;
   for (const job of jobs) {
     try {
       const queue = await enrichmentQueue(sourceEnv, job.payload.queue, 'spotify');
       const candidates = Number(queue?.tracks?.length || 0);
-      const saved = candidates > 0
+      const savedResult = candidates > 0
         ? await enrichTracks(sourceEnv, ingest, queue, job.payload.observedAt, config)
         : 0;
+      const saved = Number(savedResult?.saved ?? savedResult ?? 0);
+      savedTotal += Number.isFinite(saved) ? saved : 0;
       console.log(JSON.stringify({
         event: 'minute_track_metadata_enriched',
         stage: 'spotify',
@@ -131,6 +145,7 @@ export async function runCommittedSpotifyMetadataEnrichment(env, jobs, dependenc
       }));
     }
   }
+  return savedTotal;
 }
 
 export async function runCommittedIsrcMetadataEnrichment(env, jobs, dependencies = {}) {
@@ -140,6 +155,7 @@ export async function runCommittedIsrcMetadataEnrichment(env, jobs, dependencies
   const enrichIsrcTracks = dependencies.enrichIsrcTracks
     || (await loadIsrcModule()).enrichIsrcTracks;
 
+  let savedTotal = 0;
   for (const job of jobs) {
     try {
       const queue = await enrichmentQueue(sourceEnv, job.payload.queue, 'isrc');
@@ -147,6 +163,7 @@ export async function runCommittedIsrcMetadataEnrichment(env, jobs, dependencies
       const result = candidates > 0
         ? await enrichIsrcTracks(sourceEnv, queue, config)
         : { attempted: 0, saved: 0 };
+      savedTotal += Number(result?.saved || 0);
       console.log(JSON.stringify({
         event: 'isrc_track_metadata_enriched',
         stage: 'isrc',
@@ -164,13 +181,29 @@ export async function runCommittedIsrcMetadataEnrichment(env, jobs, dependencies
       }));
     }
   }
+  return savedTotal;
 }
 
 export async function runCommittedMetadataEnrichment(env, jobs, dependencies = {}) {
   // Resolve recording identity first. Spotify is now only the artwork/provider
   // fallback after the ISRC dictionary has had a chance to satisfy the request.
-  await runCommittedIsrcMetadataEnrichment(env, jobs, dependencies);
-  await runCommittedSpotifyMetadataEnrichment(env, jobs, dependencies);
+  const isrcSaved = await runCommittedIsrcMetadataEnrichment(env, jobs, dependencies);
+  const spotifySaved = await runCommittedSpotifyMetadataEnrichment(env, jobs, dependencies);
+  let playbackRepair = { repaired: 0, skipped: true, reason: 'no-metadata-change' };
+  if (isrcSaved > 0 || spotifySaved > 0) {
+    const repair = dependencies.repairPlaybackReadModels
+      || (await import('./buddies-facts-sync.js')).repairPlaybackReadModels;
+    try {
+      playbackRepair = await repair(env);
+    } catch (error) {
+      playbackRepair = { repaired: 0, skipped: true, reason: 'repair-error' };
+      console.warn(JSON.stringify({
+        event: 'minute_playback_read_model_repair_failed',
+        error: failureDetail(error),
+      }));
+    }
+  }
+  return { isrcSaved, spotifySaved, playbackRepair };
 }
 
 export { spotifyEnrichmentConfig };

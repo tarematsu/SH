@@ -1,12 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { onRequestGet } from '../functions/api/playback.js';
 import {
   attachBuddyCollectorStatus,
   buddyCollectorStatus,
 } from '../functions/lib/buddy-collector-status.js';
-import { FakeD1Database, responseJson } from './helpers/fake-d1.js';
 
 test('missing buddy collector heartbeat is reported as never collected', () => {
   const status = buddyCollectorStatus(null);
@@ -63,48 +61,4 @@ test('an older collector error does not invalidate newer playback data', () => {
   assert.equal(payload.stale, false);
   assert.equal(payload.playing, true);
   assert.equal(payload.queue_status.current_index, 0);
-});
-
-test('secondary playback endpoint exposes collector failure when no queue row exists', async () => {
-  const db = new FakeD1Database()
-    .route('first', 'sh_collector_status', {
-      status: 'error',
-      last_attempt_at: 2000,
-      last_success_at: null,
-      last_error: 'authentication failed',
-      failure_code: 'STATIONHEAD_AUTH_ERROR',
-      failure_stage: 'sh_auth',
-    })
-    .route('first', 'sh_playback_channel_current', null);
-
-  const response = await onRequestGet({
-    request: new Request('https://skrzk.test/api/playback?channel=buddy46'),
-    env: { DB: db, OTHER_DB: db },
-  });
-  const body = await responseJson(response);
-
-  assert.equal(response.status, 200);
-  assert.equal(body.stale, true);
-  assert.equal(body.collector.status, 'error');
-  assert.equal(body.collector.failure_code, 'STATIONHEAD_AUTH_ERROR');
-  assert.equal(body.collector.last_error, 'authentication failed');
-  assert.deepEqual(body.queue, []);
-});
-
-test('collector health read failure does not take down the playback endpoint', async () => {
-  const db = new FakeD1Database()
-    .route('first', 'sh_collector_status', () => {
-      throw new Error('D1 temporary read failure');
-    })
-    .route('first', 'sh_playback_channel_current', null);
-
-  const response = await onRequestGet({
-    request: new Request('https://skrzk.test/api/playback?channel=buddy46'),
-    env: { DB: db, OTHER_DB: db },
-  });
-  const body = await responseJson(response);
-
-  assert.equal(response.status, 200);
-  assert.equal(body.collector.status, 'unknown');
-  assert.equal(body.collector.failure_code, 'D1_READ_ERROR');
 });
