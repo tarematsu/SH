@@ -39,6 +39,17 @@ test('read-model metadata routing gives hydration precedence over preservation',
   }])), null);
 });
 
+test('unidentified metadata gaps bypass impossible hydration and preservation', () => {
+  assert.equal(readModelMetadataTask(model([{
+    spotify_id: null,
+    isrc: null,
+    title: null,
+    artist: null,
+    album_name: null,
+    thumbnail_url: null,
+  }])), null);
+});
+
 test('production routing scans complete tracks once', () => {
   let titleReads = 0;
   const tracks = Array.from({ length: 40 }, (_, index) => ({
