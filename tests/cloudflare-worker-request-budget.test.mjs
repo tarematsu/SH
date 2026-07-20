@@ -17,6 +17,11 @@ test('cron request estimates cover wildcard, interval and hourly list schedules'
 });
 
 test('the active topology is deduplicated and stays below the 50% request target', async () => {
+  assert.deepEqual(ACTIVE_CONFIGS, [
+    'worker/wrangler.minute-enrichment.jsonc',
+    'worker/wrangler.ingest.jsonc',
+    'worker/wrangler.runtime.jsonc',
+  ]);
   const configs = await Promise.all(ACTIVE_CONFIGS.map(async (path) => ({
     path,
     source: await readFile(new URL(`../${path}`, import.meta.url), 'utf8'),
@@ -28,8 +33,10 @@ test('the active topology is deduplicated and stays below the 50% request target
   });
   assert.equal(report.ok, true);
   assert.ok(report.estimated_daily_requests < TARGET_DAILY_REQUESTS);
-  assert.equal(report.workers.length, 3);
-  assert.equal(report.workers.some(({ name }) => name === 'sh-pages-read-model'), false);
-  assert.equal(report.workers.filter(({ name }) => name === 'sh-monitor-other').length, 1);
+  assert.deepEqual(report.workers.map(({ name }) => name), [
+    'sh-minute-enrichment',
+    'sh-buddies-ingest',
+    'sh-runtime-orchestrator',
+  ]);
   assert.ok(report.headroom > 0);
 });
