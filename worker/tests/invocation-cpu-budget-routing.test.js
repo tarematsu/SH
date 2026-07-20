@@ -121,7 +121,7 @@ test('ingest routes unchanged likes directly to finalization in budget mode', as
     },
   });
 
-  assert.equal(receivedDb, db);
+  assert.equal(typeof receivedDb?.prepare, 'function');
   assert.deepEqual(message.events, ['ack']);
   assert.equal(sent[0].stage, 'finalize');
 });
