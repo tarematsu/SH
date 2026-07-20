@@ -14,6 +14,17 @@ async function activeEnvironment(env) {
   return module.withAppleMusicFreeRuntime(env);
 }
 
+function likesBudgetEnvironment(env) {
+  if (env?.QUEUE_LIKES_REPAIR_ENABLED != null) return env;
+  const active = Object.create(env);
+  Object.defineProperty(active, 'QUEUE_LIKES_REPAIR_ENABLED', {
+    value: false,
+    enumerable: false,
+    configurable: true,
+  });
+  return active;
+}
+
 async function processStructureTask(env, body, dependencies) {
   const module = await (structureModulePromise ||= import('./persist-structure-budget-entry.js'));
   return module.processBudgetedQueueStructureTask(env, body, dependencies);
@@ -21,7 +32,11 @@ async function processStructureTask(env, body, dependencies) {
 
 async function processLikesPlanTask(env, body, dependencies) {
   const module = await (likesPlanModulePromise ||= import('./persist-likes-plan-entry.js'));
-  return module.processOptimizedQueueLikesPlanTask(env, body, dependencies);
+  return module.processOptimizedQueueLikesPlanTask(
+    likesBudgetEnvironment(env),
+    body,
+    dependencies,
+  );
 }
 
 async function processLikesWriteTask(env, body, dependencies) {
