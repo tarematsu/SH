@@ -4,6 +4,7 @@ import test from 'node:test';
 
 import {
   ACTIVE_CONFIGS,
+  CONTINUATION_RESERVE_PER_DAY,
   QUEUE_MESSAGES_PER_DAY,
   TARGET_DAILY_REQUESTS,
   calculateDailyRequestBudget,
@@ -16,7 +17,15 @@ test('cron request estimates cover wildcard, interval and hourly list schedules'
   assert.equal(cronInvocationsPerDay('5,7,9 * * * *'), 72);
 });
 
-test('the active topology is deduplicated and stays below the request budgets', async () => {
+test('continuation-heavy queues are counted rather than collapsed into source polls', () => {
+  assert.equal(QUEUE_MESSAGES_PER_DAY['stationhead-buddies-persist'], 10_080);
+  assert.equal(QUEUE_MESSAGES_PER_DAY['stationhead-minute-live-derive'], 4_320);
+  assert.equal(QUEUE_MESSAGES_PER_DAY['stationhead-minute-enrichment'], 4_320);
+  assert.equal(CONTINUATION_RESERVE_PER_DAY, 5_000);
+  assert.equal(TARGET_DAILY_REQUESTS, 80_000);
+});
+
+test('the active topology is deduplicated and stays below 80000 requests per day', async () => {
   assert.deepEqual(ACTIVE_CONFIGS, [
     'worker/wrangler.minute-enrichment.jsonc',
     'worker/wrangler.ingest.jsonc',
@@ -32,12 +41,15 @@ test('the active topology is deduplicated and stays below the request budgets', 
     pagesRequests: 25_000,
   });
   assert.equal(report.ok, true);
+  assert.equal(report.queue_consumer_requests, 30_000);
+  assert.equal(report.scheduled_requests, 2_880);
+  assert.equal(report.continuation_and_burst_reserve, 5_000);
+  assert.equal(report.estimated_daily_requests, 62_880);
+  assert.equal(report.headroom, 17_120);
   assert.ok(report.estimated_daily_requests < TARGET_DAILY_REQUESTS);
-  assert.ok(report.estimated_daily_requests < 80_000);
   assert.deepEqual(report.workers.map(({ name }) => name), [
     'sh-minute-enrichment',
     'sh-buddies-ingest',
     'sh-runtime-orchestrator',
   ]);
-  assert.ok(report.headroom > 0);
 });
