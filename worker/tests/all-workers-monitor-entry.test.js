@@ -42,12 +42,16 @@ test('runtime orchestration is split by scheduled, Queue, and env responsibiliti
   assert.doesNotMatch(entry, /for \(const message of messages\)/);
 
   const scheduled = source('../src/runtime-scheduled.js');
-  assert.match(scheduled, /rawCollectorModulePromise \|\|=/);
+  assert.match(scheduled, /RAW_COLLECTION_TASK_MESSAGE/);
+  assert.match(scheduled, /dispatchRawCollection/);
+  assert.doesNotMatch(scheduled, /rawCollectorModulePromise/);
   assert.match(scheduled, /minuteMaintenanceModulePromise \|\|=/);
   assert.match(scheduled, /otherMonitorModulePromise \|\|=/);
 
   const queue = source('../src/runtime-queue.js');
   assert.match(queue, /for \(const message of messages\)/);
+  assert.match(queue, /rawCollectorModulePromise \|\|=/);
+  assert.match(queue, /processRawCollectionMessage/);
   assert.match(queue, /monitorMaintenanceModulePromise \|\|=/);
   assert.match(queue, /minutePipelineModulePromise \|\|=/);
 
