@@ -3,6 +3,7 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { cloudflareBuildConfig } from './cloudflare-build-config.mjs';
+import { wranglerCommand } from './wrangler-command.mjs';
 
 const workerRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const repositoryRoot = resolve(workerRoot, '..');
@@ -169,11 +170,11 @@ function hasConfigArgument(args) {
 }
 
 function runWrangler(args = [], options = {}) {
-  const executable = process.platform === 'win32' ? 'wrangler.cmd' : 'wrangler';
   const configArgs = options.workerConfig && !hasConfigArgument(args)
     ? ['--config', options.workerConfig]
     : [];
-  const result = (options.spawnSync || spawnSync)(executable, ['deploy', ...configArgs, ...args], {
+  const command = wranglerCommand(['deploy', ...configArgs, ...args]);
+  const result = (options.spawnSync || spawnSync)(command.executable, command.args, {
     cwd: options.workerRoot || workerRoot,
     stdio: 'inherit',
     env: process.env,
