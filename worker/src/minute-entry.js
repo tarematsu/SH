@@ -9,6 +9,25 @@ export const MINUTE_FACT_RECOVERY_MINUTE = 5;
 
 const ACTIVE_HEALTH_TASKS = new Set(['derive', 'recovery', 'rebuild', 'sync']);
 let healthCache = null;
+let minuteQueueDependenciesPromise;
+
+function loadMinuteQueueDependencies() {
+  if (!minuteQueueDependenciesPromise) {
+    minuteQueueDependenciesPromise = Promise.all([
+      import('./minute-facts-queue.js'),
+      import('./minute-facts-read-model.js'),
+      import('./minute-facts-inbox.js'),
+    ]).then(([queue, readModel, inbox]) => ({
+      consumeMinuteFactBatch: queue.consumeMinuteFactBatch,
+      saveMinuteFactReadModels: readModel.saveMinuteFactReadModels,
+      enqueueMinuteFactJob: inbox.enqueueMinuteFactJob,
+    })).catch((error) => {
+      minuteQueueDependenciesPromise = null;
+      throw error;
+    });
+  }
+  return minuteQueueDependenciesPromise;
+}
 
 function sanitizeFailureDetail(value) {
   return String(value?.message || value || '').replace(/\s+/g, ' ').trim().slice(0, 1000);
@@ -224,11 +243,11 @@ export async function runMinuteScheduledWithCollectorPriority(
 }
 
 async function consumeQueue(batch, env, ctx) {
-  const [{ consumeMinuteFactBatch }, { saveMinuteFactReadModels }, { enqueueMinuteFactJob }] = await Promise.all([
-    import('./minute-facts-queue.js'),
-    import('./minute-facts-read-model.js'),
-    import('./minute-facts-inbox.js'),
-  ]);
+  const {
+    consumeMinuteFactBatch,
+    saveMinuteFactReadModels,
+    enqueueMinuteFactJob,
+  } = await loadMinuteQueueDependencies();
   const metadataJobs = [];
   const newJobIds = new Set();
   const result = await consumeMinuteFactBatch(batch, env, {

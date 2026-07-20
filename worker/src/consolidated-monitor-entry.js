@@ -1,17 +1,4 @@
 import './fetch-guard.js';
-import otherMonitor, {
-  OTHER_MONITOR_CRON,
-  runOtherMonitorCron,
-} from './other-monitor-entry.js';
-import {
-  ROLLUP_MAINTENANCE_CRON,
-  SNAPSHOT_RETENTION_CRON,
-  runMonitorMaintenanceCron,
-} from './monitor-maintenance-entry.js';
-import { MINUTE_FACT_MAINTENANCE_CRON } from './minute-entry.js';
-import { dispatchPendingMinuteFacts } from './minute-maintenance-entry.js';
-import { dispatchMinuteMaintenanceGate } from './minute-maintenance-optimized-entry.js';
-import { collectRawChannel } from './raw-collector-entry.js';
 
 const EMPTY_OPTIONS = Object.freeze({});
 const JSON_QUEUE_SEND_OPTIONS = Object.freeze({ contentType: 'json' });
@@ -19,13 +6,42 @@ const OTHER_MONITOR_INTERVAL_MINUTES = 5;
 const MINUTE_RECOVERY_POLL_INTERVAL_MINUTES = 5;
 const MINUTE_RECOVERY_POLL_OFFSET_MINUTE = 1;
 export const CONSOLIDATED_MONITOR_CRON = '* * * * *';
+export const OTHER_MONITOR_CRON = '*/5 * * * *';
+export const ROLLUP_MAINTENANCE_CRON = '30 * * * *';
+export const SNAPSHOT_RETENTION_CRON = '50 * * * *';
+const MINUTE_FACT_MAINTENANCE_CRON = '5,7,9,15,17,19,25,27,29,35,37,39,45,47,49,55,57,59 * * * *';
 export const MONITOR_MAINTENANCE_MESSAGE = 'monitor-maintenance-task';
 
-export {
-  OTHER_MONITOR_CRON,
-  ROLLUP_MAINTENANCE_CRON,
-  SNAPSHOT_RETENTION_CRON,
-};
+let rawCollectorModulePromise;
+let minuteMaintenanceModulePromise;
+let minuteGateModulePromise;
+let otherMonitorModulePromise;
+let monitorMaintenanceModulePromise;
+
+function loadRawCollectorModule() {
+  rawCollectorModulePromise ||= import('./raw-collector-entry.js');
+  return rawCollectorModulePromise;
+}
+
+function loadMinuteMaintenanceModule() {
+  minuteMaintenanceModulePromise ||= import('./minute-maintenance-entry.js');
+  return minuteMaintenanceModulePromise;
+}
+
+function loadMinuteGateModule() {
+  minuteGateModulePromise ||= import('./minute-maintenance-optimized-entry.js');
+  return minuteGateModulePromise;
+}
+
+function loadOtherMonitorModule() {
+  otherMonitorModulePromise ||= import('./other-monitor-entry.js');
+  return otherMonitorModulePromise;
+}
+
+function loadMonitorMaintenanceModule() {
+  monitorMaintenanceModulePromise ||= import('./monitor-maintenance-entry.js');
+  return monitorMaintenanceModulePromise;
+}
 
 function rawCollectorEnv(env) {
   const active = Object.create(env || null);
@@ -80,14 +96,18 @@ async function dispatchMonitorMaintenance(env, scheduledAt) {
 
 async function dispatchMinuteMaintenance(controller, env, ctx, options = EMPTY_OPTIONS) {
   const scheduledAt = Number(controller?.scheduledTime) || Date.now();
-  const dispatchFacts = options.dispatchPendingMinuteFacts || dispatchPendingMinuteFacts;
-  const dispatchGate = options.dispatchMinuteMaintenanceGate || dispatchMinuteMaintenanceGate;
   const derive = minuteRecoveryPollDue(scheduledAt)
-    ? dispatchFacts(env, options.minuteDispatchDependencies || EMPTY_OPTIONS, ctx)
+    ? (options.dispatchPendingMinuteFacts
+      || (await loadMinuteMaintenanceModule()).dispatchPendingMinuteFacts)(
+        env,
+        options.minuteDispatchDependencies || EMPTY_OPTIONS,
+        ctx,
+      )
     : Promise.resolve(null);
   const task = minuteMaintenanceTaskFor(scheduledAt);
   const gate = task
-    ? dispatchGate({
+    ? (options.dispatchMinuteMaintenanceGate
+      || (await loadMinuteGateModule()).dispatchMinuteMaintenanceGate)({
         ...controller,
         cron: MINUTE_FACT_MAINTENANCE_CRON,
         scheduledTime: scheduledAt,
@@ -111,7 +131,8 @@ export async function runConsolidatedMonitorScheduled(
     return { skipped: true, reason: 'unsupported-consolidated-monitor-cron', cron };
   }
   const scheduledAt = Number(controller?.scheduledTime) || Date.now();
-  const collect = options.collectRawChannel || collectRawChannel;
+  const collect = options.collectRawChannel
+    || (await loadRawCollectorModule()).collectRawChannel;
   const collection = collect(rawCollectorEnv(env), options.collectionDependencies || EMPTY_OPTIONS);
   const minuteTasks = dispatchMinuteMaintenance(controller, env, ctx, options);
   const monitorController = {
@@ -120,7 +141,12 @@ export async function runConsolidatedMonitorScheduled(
     scheduledTime: scheduledAt,
   };
   const otherTasks = otherMonitorDue(scheduledAt)
-    ? runOtherMonitorCron(monitorController, env, ctx, options.otherOptions || EMPTY_OPTIONS)
+    ? (await loadOtherMonitorModule()).runOtherMonitorCron(
+        monitorController,
+        env,
+        ctx,
+        options.otherOptions || EMPTY_OPTIONS,
+      )
     : Promise.resolve([]);
   const [, minuteResults, otherResults] = await Promise.all([
     collection,
@@ -139,6 +165,7 @@ export async function runConsolidatedMonitorScheduled(
 async function processMaintenanceMessage(message, env, options = EMPTY_OPTIONS) {
   const body = message?.body || {};
   try {
+    const { runMonitorMaintenanceCron } = await loadMonitorMaintenanceModule();
     await runMonitorMaintenanceCron({
       cron: String(body.cron || ''),
       scheduledTime: Number(body.scheduled_at) || Date.now(),
@@ -161,12 +188,14 @@ export async function runConsolidatedMonitorQueue(batch, env, ctx, options = EMP
   // Keep the consumer correct if batching is enabled later. The previous
   // first-message router could leave all remaining messages unacked or send a
   // mixed batch to the wrong handler.
+  let otherMonitor = null;
   for (const message of messages) {
     if (message?.body?.message_type === MONITOR_MAINTENANCE_MESSAGE) {
       await processMaintenanceMessage(message, env, options);
       continue;
     }
-    await otherMonitor.queue({ ...batch, messages: [message] }, env, ctx);
+    otherMonitor ||= await loadOtherMonitorModule();
+    await otherMonitor.runOtherMonitorQueue({ ...batch, messages: [message] }, env, ctx);
   }
 }
 
@@ -176,7 +205,9 @@ export {
 };
 
 export default {
-  ...otherMonitor,
   scheduled: runConsolidatedMonitorScheduled,
   queue: runConsolidatedMonitorQueue,
+  async fetch(request, env, ctx) {
+    return (await loadOtherMonitorModule()).default.fetch(request, env, ctx);
+  },
 };

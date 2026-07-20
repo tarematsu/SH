@@ -15,6 +15,14 @@ import minuteApp, {
   runMinuteScheduledWithCollectorPriority,
 } from '../src/minute-entry.js';
 
+test('minute Queue dependencies are memoized as one lazy bundle', () => {
+  const source = readFileSync(new URL('../src/minute-entry.js', import.meta.url), 'utf8');
+  assert.match(source, /minuteQueueDependenciesPromise/);
+  assert.match(source, /consumeMinuteFactBatch: queue\.consumeMinuteFactBatch/);
+  assert.match(source, /saveMinuteFactReadModels: readModel\.saveMinuteFactReadModels/);
+  assert.match(source, /enqueueMinuteFactJob: inbox\.enqueueMinuteFactJob/);
+});
+
 test('minute worker routes derive and rebuild through the buddies source only', async () => {
   const buddiesDb = { name: 'buddies' };
   const env = { BUDDIES_DB: buddiesDb };

@@ -38,4 +38,8 @@ test('the consolidated monitor config deploys the consolidated entrypoint', () =
   assert.doesNotMatch(config, /"main"\s*:\s*"src\/other-entry\.js"/);
   const entry = source('../src/consolidated-monitor-entry.js');
   assert.match(entry, /for \(const message of messages\)/);
+  assert.match(entry, /rawCollectorModulePromise \|\|=/);
+  assert.match(entry, /minuteMaintenanceModulePromise \|\|=/);
+  assert.match(entry, /monitorMaintenanceModulePromise \|\|=/);
+  assert.match(entry, /otherMonitorModulePromise \|\|=/);
 });
