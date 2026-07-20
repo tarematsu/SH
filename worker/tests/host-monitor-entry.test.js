@@ -63,6 +63,7 @@ test('runtime Worker consumes host, buddy, and minute queues with independent li
     'stationhead-minute-derive',
     'stationhead-buddies-facts',
     'stationhead-minute-live-derive',
+    'stationhead-minute-rebuild',
   ]) {
     assert.equal(limits.get(queue).max_batch_size, 1);
   }
@@ -71,12 +72,11 @@ test('runtime Worker consumes host, buddy, and minute queues with independent li
     'stationhead-host-monitor',
     'stationhead-minute-derive',
     'stationhead-buddies-facts',
+    'stationhead-minute-rebuild',
   ]) {
     assert.equal(limits.get(queue).max_concurrency, 1);
   }
   assert.equal(limits.get('stationhead-minute-live-derive').max_concurrency, 2);
-  assert.equal(limits.get('stationhead-minute-rebuild').max_batch_size, 2);
-  assert.equal(limits.get('stationhead-minute-rebuild').max_concurrency, 1);
 });
 
 test('monitor Queue router rejects unknown task types without acknowledging them', async () => {
