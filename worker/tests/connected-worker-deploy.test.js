@@ -35,6 +35,26 @@ test('unknown connected Worker names never deploy', async () => {
   assert.equal(spawned, false);
 });
 
+test('local deploy defaults to the runtime static config', async () => {
+  const calls = [];
+  const result = await deployConnectedWorker({
+    workerName: '',
+    wranglerArgs: ['--dry-run'],
+    spawnSync(command, args, options) {
+      calls.push({ command, args, cwd: options.cwd });
+      return { status: 0 };
+    },
+  });
+  assert.deepEqual(result, {
+    deploy: true,
+    reason: 'local-runtime-default',
+    workerName: RUNTIME,
+  });
+  assert.deepEqual(calls[0].args, [
+    'deploy', '--config', 'wrangler.runtime.jsonc', '--dry-run',
+  ]);
+});
+
 test('connected deploy decision keeps conservative fallbacks', () => {
   assert.equal(connectedDeployDecision(RUNTIME, null, null).deploy, true);
   assert.deepEqual(
