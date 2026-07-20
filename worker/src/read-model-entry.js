@@ -3,7 +3,10 @@ import {
   readModelNeedsHydration,
   readModelNeedsPreservation,
 } from './read-model-metadata-plan.js';
-import { writePreparedReadModel } from './read-model-stages.js';
+import {
+  prepareReadModelForWrite,
+  writePreparedReadModel,
+} from './read-model-stages.js';
 
 const JSON_QUEUE_SEND_OPTIONS = Object.freeze({ contentType: 'json' });
 const EMPTY_DEPENDENCIES = Object.freeze({});
@@ -20,8 +23,8 @@ export async function processReadModelMessage(env, body, dependencies = EMPTY_DE
   const observedAt = Number(body.observed_at) || null;
   const readModel = body.read_model;
   const metadataQueue = env?.TRACK_METADATA_QUEUE;
-  const deferredTask = metadataQueue?.send ? readModelMetadataTask(readModel) : null;
-  if (deferredTask) {
+  const deferredTask = readModelMetadataTask(readModel);
+  if (metadataQueue?.send && deferredTask) {
     await metadataQueue.send({
       message_type: 'stationhead-track-metadata',
       message_version: 1,
@@ -38,8 +41,13 @@ export async function processReadModelMessage(env, body, dependencies = EMPTY_DE
     }));
     return { deferred: true };
   }
+  let prepared = readModel;
+  if (!metadataQueue?.send && deferredTask) {
+    const prepare = dependencies.prepareReadModelForWrite || prepareReadModelForWrite;
+    prepared = await prepare(env, readModel);
+  }
   const write = dependencies.writePreparedReadModel || writePreparedReadModel;
-  await write(env, readModel);
+  await write(env, prepared);
   console.log(JSON.stringify({
     event: 'read_model_updated',
     observed_at: observedAt,
