@@ -19,6 +19,7 @@ test('cron request estimates cover wildcard, interval and hourly list schedules'
 
 test('continuation-heavy queues are counted rather than collapsed into source polls', () => {
   assert.equal(QUEUE_MESSAGES_PER_DAY['stationhead-buddies-persist'], 10_080);
+  assert.equal(QUEUE_MESSAGES_PER_DAY['stationhead-host-monitor'], 2_136);
   assert.equal(QUEUE_MESSAGES_PER_DAY['stationhead-minute-live-derive'], 4_320);
   assert.equal(QUEUE_MESSAGES_PER_DAY['stationhead-minute-enrichment'], 4_320);
   assert.equal(CONTINUATION_RESERVE_PER_DAY, 5_000);
@@ -41,11 +42,11 @@ test('the active topology is deduplicated and stays below 80000 requests per day
     pagesRequests: 25_000,
   });
   assert.equal(report.ok, true);
-  assert.equal(report.queue_consumer_requests, 30_000);
+  assert.equal(report.queue_consumer_requests, 31_440);
   assert.equal(report.scheduled_requests, 2_880);
   assert.equal(report.continuation_and_burst_reserve, 5_000);
-  assert.equal(report.estimated_daily_requests, 62_880);
-  assert.equal(report.headroom, 17_120);
+  assert.equal(report.estimated_daily_requests, 64_320);
+  assert.equal(report.headroom, 15_680);
   assert.ok(report.estimated_daily_requests < TARGET_DAILY_REQUESTS);
   assert.deepEqual(report.workers.map(({ name }) => name), [
     'sh-minute-enrichment',
