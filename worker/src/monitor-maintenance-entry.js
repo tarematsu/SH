@@ -75,7 +75,10 @@ export async function runMonitorMaintenanceCron(controller, env, dependencies = 
     }
     const runRollup = dependencies.runRollup
       || (await loadRollupModule()).runRollupMaintenanceSafely;
-    return assertMaintenanceSucceeded('rollup maintenance', await runRollup(env.BUDDIES_DB, env.OTHER_DB, now));
+    return assertMaintenanceSucceeded(
+      'rollup maintenance',
+      await runRollup(env.BUDDIES_DB, env.OTHER_DB, env.MINUTE_DB, now),
+    );
   }
 
   const pruneSnapshots = dependencies.pruneSnapshots

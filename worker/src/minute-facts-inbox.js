@@ -83,6 +83,7 @@ export async function enqueueMinuteFactJob(env, input = {}, options = {}) {
   const jobKind = text(options.jobKind, payload.rebuild ? 'rebuild' : 'live');
   const jobPriority = positiveInteger(options.jobPriority, payload.rebuild ? 20 : 100, 1000);
   const requeueCompleted = options.requeueCompleted === true ? 1 : 0;
+  const forceRepair = options.forceRepair === true ? 1 : 0;
   const result = await env.MINUTE_DB.prepare(`INSERT INTO sh_minute_fact_jobs(
       channel_id,minute_at,observed_at,payload_version,payload_json,job_kind,job_priority,
       status,attempts,next_attempt_at,lease_until,processed_at,last_error,created_at,updated_at
@@ -92,7 +93,10 @@ export async function enqueueMinuteFactJob(env, input = {}, options = {}) {
       payload_json=excluded.payload_json,job_kind=excluded.job_kind,
       job_priority=excluded.job_priority,status='pending',attempts=0,next_attempt_at=0,
       lease_until=NULL,processed_at=NULL,last_error=NULL,updated_at=excluded.updated_at
-    WHERE ?=1 AND sh_minute_fact_jobs.status IN ('done','dead')`)
+    WHERE ?=1 AND (
+      sh_minute_fact_jobs.status IN ('done','dead')
+      OR (?=1 AND sh_minute_fact_jobs.status='pending')
+    )`)
     .bind(
       channelId,
       minuteAt,
@@ -104,6 +108,7 @@ export async function enqueueMinuteFactJob(env, input = {}, options = {}) {
       now,
       now,
       requeueCompleted,
+      forceRepair,
     )
     .run();
   return {

@@ -53,7 +53,7 @@ export async function runScheduledMaintenance(env, now = Date.now()) {
     import('./pages-read-model-refresh.js'),
   ]);
   const [rollup, pagesReadModels] = await Promise.all([
-    runRollupMaintenanceSafely(sourceDb, env.OTHER_DB, now),
+    runRollupMaintenanceSafely(sourceDb, env.OTHER_DB, env.MINUTE_DB, now),
     refreshPagesReadModels(env, now),
   ]);
   return {

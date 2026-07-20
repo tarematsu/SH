@@ -13,18 +13,20 @@ test('rollups reject total-listener values masquerading as total streams', () =>
 
 test('July contaminated summaries are retried from corrected daily source data', () => {
   assert.match(source, /'2026-07-10', '2026-07-11', '2026-07-12', '2026-07-13'/);
-  assert.match(source, /rollup-stream-repair-2026-07-v3/);
+  assert.match(source, /rollup-stream-repair-2026-07-v4/);
+  assert.match(source, /runMinuteFactsRepair/);
+  assert.match(source, /minute-facts-repair-pending/);
   assert.match(source, /rollupDaily\(db, otherDb, jstPeriod\(key\), now\)/);
   assert.match(source, /rollupFromDaily\(otherDb, 'sh_weekly_summary'/);
   assert.match(source, /rollupFromDaily\(otherDb, 'sh_monthly_summary'/);
 });
 
-test('minute fact repair clears only matching total-listener contamination in the JST range', () => {
-  assert.match(repair, /BETWEEN '2026-07-10' AND '2026-07-13'/);
-  assert.match(repair, /reported_current_stream_count = reported_total_listens/);
-  assert.match(repair, /SET reported_current_stream_count=NULL/);
-  assert.match(repair, /quality_flags=quality_flags \| 64/);
-  assert.match(repair, /contaminated_count/);
+test('minute fact repair uses a remote preflight and never destructively nulls facts', () => {
+  assert.match(repair, /--apply/);
+  assert.match(repair, /024_minute_fact_repairs\.sql/);
+  assert.match(repair, /source-verified Queue repairs/);
+  assert.doesNotMatch(repair, /SET reported_current_stream_count=NULL/);
+  assert.doesNotMatch(repair, /UPDATE sh_minute_facts/);
 });
 
 test('repair is marked complete only after every weekly and monthly write succeeds', () => {

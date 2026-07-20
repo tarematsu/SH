@@ -160,7 +160,13 @@ export async function saveReconstructedMinuteFact(env, input) {
   const queue = input.queue || null;
   const rebuild = input.rebuild || {};
   const mode = rebuild.mode === 'carry_forward' ? 'carry_forward' : 'exact';
-  const sourcePriority = mode === 'exact' ? 90 : 85;
+  const requestedRepairPriority = rebuild.repair === true ? integer(rebuild.source_priority) : null;
+  const sourcePriority = rebuild.repair === true
+    ? Math.max(101, Math.min(110, requestedRepairPriority ?? 110))
+    : (mode === 'exact' ? 90 : 85);
+  const sourceRecordId = rebuild.repair === true && text(rebuild.source_record_id)
+    ? text(rebuild.source_record_id)
+    : `snapshot:${rebuild.source_snapshot_id ?? 0}:minute:${minuteBucket(integer(input.observedAt) ?? Date.now())}:${mode}`;
   const observedAt = integer(input.observedAt) ?? Date.now();
   const receivedAt = Date.now();
   const channelId = integer(snapshot.channel_id);
@@ -222,7 +228,7 @@ export async function saveReconstructedMinuteFact(env, input) {
     received_at: receivedAt,
     source_code: MINUTE_FACT_SOURCE_CODES.live_reconstructed,
     source_priority: sourcePriority,
-    source_record_id: `snapshot:${rebuild.source_snapshot_id ?? 0}:minute:${minuteAt}:${mode}`,
+    source_record_id: sourceRecordId,
     collector_id: `${text(env.COLLECTOR_ID) || 'cloudflare-worker'}:rebuild`,
     broadcast_session_id: sessionId,
     host_id: hostId,

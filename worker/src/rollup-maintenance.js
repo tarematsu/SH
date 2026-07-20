@@ -5,9 +5,10 @@ import {
   utcMonthlyRange,
   utcWeeklyRange,
 } from '../../site/functions/lib/time-buckets.js';
+import { runMinuteFactsRepair } from './minute-facts-repair.js';
 
 const STATE_ID = 'rollup-retention-v1';
-const STREAM_REPAIR_STATE_ID = 'rollup-stream-repair-2026-07-v3';
+const STREAM_REPAIR_STATE_ID = 'rollup-stream-repair-2026-07-v4';
 const STREAM_REPAIR_KEYS = Object.freeze(['2026-07-10', '2026-07-11', '2026-07-12', '2026-07-13']);
 const STREAM_VALUE_SQL = `COALESCE(
   CASE WHEN validated_stream_count IS NOT NULL AND validated_stream_count>=0
@@ -179,17 +180,44 @@ async function repairContaminatedSummaries(db, otherDb, now) {
 // sh_channel_snapshots/sh_data_maintenance_state stay on `db` (buddies'
 // database); the daily/weekly/monthly summary tables this produces live on
 // `otherDb` since they're read exclusively by sh-monitor-other/site.
-export async function runRollupMaintenance(db, otherDb, now = Date.now()) {
+export async function runRollupMaintenance(db, otherDb, minuteDb, now = Date.now()) {
+  // Preserve the old injected/test call shape while production passes MINUTE_DB.
+  if (typeof minuteDb === 'number') {
+    now = minuteDb;
+    minuteDb = null;
+  }
   if (!db || !otherDb) return { skipped: true, reason: 'db-binding-missing' };
+  const minuteFactsRepair = await runMinuteFactsRepair({ DB: db, MINUTE_DB: minuteDb }, now);
+  if (minuteFactsRepair.pending > 0) {
+    return {
+      skipped: true,
+      reason: 'minute-facts-repair-pending',
+      minuteFactsRepair,
+    };
+  }
   const summaryRepair = await repairContaminatedSummaries(db, otherDb, now);
   const period = previousJstDay(now);
   const state = await db.prepare(`SELECT last_rollup_key FROM sh_data_maintenance_state WHERE id=?`)
     .bind(STATE_ID).first();
   if (state?.last_rollup_key === period.key) {
-    return { skipped: true, reason: 'already-rolled-up', periodKey: period.key, summaryRepair };
+    return {
+      skipped: true,
+      reason: 'already-rolled-up',
+      periodKey: period.key,
+      minuteFactsRepair,
+      summaryRepair,
+    };
   }
   const dailyWritten = await rollupDaily(db, otherDb, period, now);
-  if (!dailyWritten) return { skipped: true, reason: 'no-source-data', periodKey: period.key, summaryRepair };
+  if (!dailyWritten) {
+    return {
+      skipped: true,
+      reason: 'no-source-data',
+      periodKey: period.key,
+      minuteFactsRepair,
+      summaryRepair,
+    };
+  }
   await rollupFromDaily(otherDb, 'sh_weekly_summary', utcWeeklyRange(period.key), now);
   await rollupFromDaily(otherDb, 'sh_monthly_summary', utcMonthlyRange(period.key), now);
   await db.prepare(`INSERT INTO sh_data_maintenance_state(
@@ -201,14 +229,15 @@ export async function runRollupMaintenance(db, otherDb, now = Date.now()) {
     skipped: false,
     rolledUp: true,
     periodKey: period.key,
+    minuteFactsRepair,
     summaryRepair,
     legacyBackfill: { skipped: true, reason: 'legacy-migration-disabled' },
   };
 }
 
-export async function runRollupMaintenanceSafely(db, otherDb, now = Date.now()) {
+export async function runRollupMaintenanceSafely(db, otherDb, minuteDb, now = Date.now()) {
   try {
-    return await runRollupMaintenance(db, otherDb, now);
+    return await runRollupMaintenance(db, otherDb, minuteDb, now);
   } catch (error) {
     console.error('D1 rollup maintenance failed', error);
     return { skipped: true, reason: 'maintenance-error', error: error?.message || String(error) };
