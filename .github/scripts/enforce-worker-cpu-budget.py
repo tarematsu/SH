@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Enforce a stable per-Worker CPU budget from the R2 observability summary."""
+"""Enforce the active Worker topology and stable per-Worker CPU budget."""
 
 from __future__ import annotations
 
@@ -20,11 +20,19 @@ missing_observability = total_events <= 0 or total_samples <= 0
 
 for name, item in sorted((summary.get("scripts") or {}).items()):
     events = int(item.get("events") or 0)
+    retired = item.get("retired") is True
     cpu = item.get("cpu_ms") or {}
     samples = int(cpu.get("samples") or 0)
     p95 = cpu.get("p95")
     maximum = cpu.get("max")
     over_budget = None
+    if retired and events > 0:
+        violations.append({
+            "worker": name,
+            "events": events,
+            "samples": samples,
+            "reason": "retired_worker_active",
+        })
     if events > 0 and samples <= 0:
         violations.append({
             "worker": name,
@@ -45,6 +53,7 @@ for name, item in sorted((summary.get("scripts") or {}).items()):
             })
     workers[name] = {
         "events": events,
+        "retired": retired,
         "samples": samples,
         "p95_ms": p95,
         "max_ms": maximum,
@@ -67,7 +76,7 @@ OUTPUT_PATH.write_text(json.dumps(result, ensure_ascii=False, indent=2) + "\n", 
 print(json.dumps(result, ensure_ascii=False, separators=(",", ":")))
 
 if missing_observability:
-    print("Worker CPU budget cannot pass without observability samples", file=sys.stderr)
+    print("Worker observability cannot pass without CPU samples", file=sys.stderr)
     raise SystemExit(1)
 if violations:
     detail = ", ".join(
@@ -75,5 +84,5 @@ if violations:
         + (f" p95={item['p95_ms']}ms" if 'p95_ms' in item else "")
         for item in violations
     )
-    print(f"Worker CPU p95 must stay below {BUDGET_MS:g} ms: {detail}", file=sys.stderr)
+    print(f"Worker observability policy failed: {detail}", file=sys.stderr)
     raise SystemExit(1)
