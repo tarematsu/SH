@@ -167,7 +167,7 @@ test('unrecoverable sparse revision sources become terminal partial revisions af
   assert.equal(retired, true);
   assert.match(calls[0][1], /source_visible_count=COALESCE\(materialized_item_count,0\)/);
   assert.match(calls[0][1], /coverage_complete=CASE/);
-  assert.deepEqual(calls[1], ['bind', [now, 559, 99]]);
+  assert.deepEqual(calls[1], ['bind', [now, 559, 99, 8]]);
 });
 
 test('stale unavailable revision messages are acknowledged after terminalization', async () => {
