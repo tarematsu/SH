@@ -19,7 +19,8 @@ export const ACTIVE_CONFIGS = Object.freeze([
 // one-message CPU boundaries. Continuation-heavy queues include every normal
 // stage rather than pretending one source poll equals one request:
 // - persistence: persist + likes + up to four likes-write chunks + finalize
-// - host monitor: regular monitor work plus one raw-collection task per minute
+// - runtime host queue: raw collection, recovery/gate/monitor dispatch stages,
+//   maintenance, downstream monitor work, and a success-checkpoint allowance
 // - live derive: trigger/write + compact revision close
 // - enrichment: identity/playback continuation allowance
 export const QUEUE_MESSAGES_PER_DAY = Object.freeze({
@@ -27,8 +28,8 @@ export const QUEUE_MESSAGES_PER_DAY = Object.freeze({
   'stationhead-raw-collection': 1_440,
   'stationhead-ingest-finalize': 1_440,
   'stationhead-buddies-persist': 10_080,
-  'stationhead-buddy-playback': 72,
-  'stationhead-host-monitor': 2_136,
+  'stationhead-buddy-playback': 144,
+  'stationhead-host-monitor': 3_492,
   'stationhead-minute-derive': 1_440,
   'stationhead-minute-live-derive': 4_320,
   'stationhead-minute-enrichment': 4_320,
