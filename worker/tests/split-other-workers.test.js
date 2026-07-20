@@ -9,6 +9,7 @@ import {
 import {
   MONITOR_MAINTENANCE_MESSAGE,
   OTHER_MONITOR_CRON,
+  RAW_COLLECTION_TASK_MESSAGE,
   runRuntimeScheduled,
 } from '../src/runtime-scheduled.js';
 import { runRuntimeQueue } from '../src/runtime-queue.js';
@@ -43,7 +44,7 @@ test('runtime Worker config owns orchestration boundaries', () => {
   assert.equal(worker.vars.SNAPSHOT_RETENTION_ENABLED, true);
 });
 
-test('runtime scheduled handler dispatches maintenance without adding a Cron', async () => {
+test('runtime scheduled handler dispatches collection and maintenance without adding a Cron', async () => {
   const sent = [];
   const scheduledTime = BASE + 30 * 60_000;
   const result = await runRuntimeScheduled(
@@ -55,7 +56,6 @@ test('runtime scheduled handler dispatches maintenance without adding a Cron', a
     },
     {},
     {
-      collectRawChannel: async () => ({ collected: true }),
       otherOptions: {
         dependencies: { buddy: async () => 'buddy' },
         recordSuccess: async () => {},
@@ -64,16 +64,49 @@ test('runtime scheduled handler dispatches maintenance without adding a Cron', a
     },
   );
 
-  assert.deepEqual(sent, [{
-    body: {
-      message_type: MONITOR_MAINTENANCE_MESSAGE,
-      message_version: 1,
-      cron: ROLLUP_MAINTENANCE_CRON,
-      scheduled_at: scheduledTime,
+  assert.deepEqual(sent, [
+    {
+      body: {
+        message_type: RAW_COLLECTION_TASK_MESSAGE,
+        message_version: 1,
+        scheduled_at: scheduledTime,
+      },
+      options: { contentType: 'json' },
     },
-    options: { contentType: 'json' },
-  }]);
+    {
+      body: {
+        message_type: MONITOR_MAINTENANCE_MESSAGE,
+        message_version: 1,
+        cron: ROLLUP_MAINTENANCE_CRON,
+        scheduled_at: scheduledTime,
+      },
+      options: { contentType: 'json' },
+    },
+  ]);
+  assert.equal(result[0].task, 'raw-collection');
   assert.equal(result.at(-1).task, 'maintenance');
+});
+
+test('runtime Queue handler executes raw collection in an isolated invocation', async () => {
+  const events = [];
+  const message = {
+    body: {
+      message_type: RAW_COLLECTION_TASK_MESSAGE,
+      message_version: 1,
+      scheduled_at: BASE,
+    },
+    ack() { events.push('ack'); },
+    retry() { events.push('retry'); },
+  };
+  await runRuntimeQueue({ messages: [message] }, {
+    RAW_COLLECTION_QUEUE: { send() {} },
+  }, {}, {
+    async collectRawChannel(activeEnv) {
+      assert.equal(typeof activeEnv.RAW_COLLECTION_QUEUE?.send, 'function');
+      events.push('collect');
+    },
+  });
+  assert.deepEqual(events, ['collect', 'ack']);
 });
 
 test('runtime Queue handler executes maintenance and preserves ack ownership', async () => {
