@@ -12,6 +12,7 @@ import {
 
 export const OTHER_MONITOR_CRON = '*/5 * * * *';
 const MINUTE_MS = 60_000;
+const OTHER_CRON_SUCCESS_CHECKPOINT_MS = 10 * MINUTE_MS;
 const EMPTY_DEPENDENCIES = Object.freeze({});
 const EMPTY_OPTIONS = Object.freeze({});
 const JSON_QUEUE_SEND_OPTIONS = Object.freeze({ contentType: 'json' });
@@ -25,7 +26,9 @@ const OTHER_CRON_SUCCESS_SQL = `INSERT INTO sh_collector_status (
   ON CONFLICT(collector_id) DO UPDATE SET
     status='ok',last_attempt_at=excluded.last_attempt_at,last_success_at=excluded.last_success_at,
     last_error=NULL,failure_code=NULL,failure_stage=NULL,failure_summary=NULL,failure_hint=NULL,
-    updated_at=excluded.updated_at`;
+    updated_at=excluded.updated_at
+  WHERE sh_collector_status.last_success_at IS NULL
+    OR excluded.last_success_at >= sh_collector_status.last_success_at + ${OTHER_CRON_SUCCESS_CHECKPOINT_MS}`;
 let loadedHealthApp = null;
 let buddyPipelineModulePromise;
 let hostMonitorModulePromise;
@@ -178,14 +181,6 @@ async function recordOtherCronFailureLazy(env, error) {
   return (await loadBuddyHealthModule()).recordOtherCronFailure(env, error);
 }
 
-async function dispatchSuccessRecord(env, at) {
-  return dispatchQueue(env?.HOST_MONITOR_QUEUE, {
-    message_type: OTHER_SUCCESS_MESSAGE,
-    message_version: 1,
-    at,
-  });
-}
-
 export async function runOtherMonitorCron(controller, env, ctx, options = EMPTY_OPTIONS) {
   const health = options.healthApp || loadedHealthApp;
   const recordSuccess = options.recordSuccess || recordOtherCronSuccessFast;
@@ -197,12 +192,12 @@ export async function runOtherMonitorCron(controller, env, ctx, options = EMPTY_
       ctx,
       options.dependencies || EMPTY_DEPENDENCIES,
     );
-    const first = result?.[0];
     const scheduledAt = scheduledTimestamp(controller);
-    const deferredHeartbeat = options === EMPTY_OPTIONS
-      && first?.dispatched === true
-      && await dispatchSuccessRecord(env, scheduledAt);
-    if (!deferredHeartbeat) await recordSuccess(env, scheduledAt);
+    // Keep the success checkpoint in the existing Cron invocation. Sending a
+    // second Queue message only to write this status added one request and one
+    // Worker invocation without changing the health result. The queue handler
+    // below remains for already-delivered legacy heartbeat messages.
+    await recordSuccess(env, scheduledAt);
     return result;
   } catch (error) {
     await recordFailure(env, error).catch(() => {});

@@ -42,18 +42,31 @@ test('production prediction and host selection are deferred to the host queue', 
   assert.equal(sent[0].body.message_type, 'other-monitor-select');
 });
 
-test('production Cron defers its heartbeat after dispatch', async () => {
+test('production Cron records its heartbeat without a second Queue request', async () => {
   const sent = [];
-  const env = { HOST_MONITOR_QUEUE: queueSink(sent) };
+  const writes = [];
+  const env = {
+    HOST_MONITOR_QUEUE: queueSink(sent),
+    OTHER_DB: {
+      prepare(sql) {
+        return {
+          bind(...values) {
+            writes.push({ sql, values });
+            return this;
+          },
+          async run() {},
+        };
+      },
+    },
+  };
   await runOtherMonitorCron(
     { cron: OTHER_MONITOR_CRON, scheduledTime: BASE + 10 * 60_000 },
     env,
     {},
   );
-  assert.deepEqual(sent.map(({ body }) => body.message_type), [
-    'other-monitor-task',
-    'other-monitor-success',
-  ]);
+  assert.deepEqual(sent.map(({ body }) => body.message_type), ['other-monitor-task']);
+  assert.equal(writes.length, 1);
+  assert.match(writes[0].sql, /last_success_at >= sh_collector_status\.last_success_at \+ 600000/);
 });
 
 test('host selection runs the due probe in its own invocation', async () => {
