@@ -50,8 +50,8 @@ test('legacy compatibility runner retains injected five-minute buddy cadence', a
   ]);
 });
 
-test('consolidated worker production config uses the one-minute collection cadence', () => {
-  const config = JSON.parse(readFileSync(new URL('../wrangler.other.jsonc', import.meta.url), 'utf8'));
+test('runtime production config uses the one-minute collection cadence', () => {
+  const config = JSON.parse(readFileSync(new URL('../wrangler.runtime.jsonc', import.meta.url), 'utf8'));
   assert.equal(config.vars.BUDDY_PLAYBACK_INTERVAL_MS, 1_800_000);
   assert.deepEqual(config.triggers.crons, ['* * * * *']);
 });
