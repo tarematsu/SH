@@ -9,6 +9,12 @@ export const DATA_ONLY_MIGRATIONS = new Set([
   '129_add_queue_reachability_index.sql',
   '131_drop_local_collector_backup.sql',
 ]);
+// These schema changes are applied by the D1 migration workflow and do not
+// require a tokenless Worker bootstrap path. Keep them separate from data-only
+// migrations because 037 also adds indexes and triggers.
+export const D1_APPLY_ONLY_MIGRATIONS = new Set([
+  '037_isrc_track_metadata.sql',
+]);
 export const RUNTIME_MIGRATION_COVERAGE = {
   '008_buddy_auth_control.sql': {
     runtime_file: 'worker/src/auth-state.js',
@@ -77,7 +83,11 @@ export function changedMigrationNames(repositoryRoot) {
 }
 
 export function uncoveredRuntimeMigrations(names, coverage = RUNTIME_MIGRATION_COVERAGE) {
-  return [...new Set(names)].filter((name) => !coverage[name] && !DATA_ONLY_MIGRATIONS.has(name));
+  return [...new Set(names)].filter((name) => (
+    !coverage[name]
+    && !DATA_ONLY_MIGRATIONS.has(name)
+    && !D1_APPLY_ONLY_MIGRATIONS.has(name)
+  ));
 }
 
 function migrationStatements(sql) {
@@ -102,7 +112,7 @@ export function assertRuntimeMigrationCoverage(repositoryRoot, names = null) {
   }
 
   for (const migrationName of changed) {
-    if (DATA_ONLY_MIGRATIONS.has(migrationName)) continue;
+    if (DATA_ONLY_MIGRATIONS.has(migrationName) || D1_APPLY_ONLY_MIGRATIONS.has(migrationName)) continue;
     const definition = RUNTIME_MIGRATION_COVERAGE[migrationName];
     if (!definition) continue;
     const migrationPath = path.join(repositoryRoot, 'database', 'migrations', migrationName);

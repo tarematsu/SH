@@ -26,12 +26,10 @@ EXPECTED_SCRIPTS = {
     "sh-minute-derive",
     "sh-minute-enrichment",
     "sh-minute-rebuild",
-    "sh-minute-maintenance",
     "sh-monitor-other",
 }
 
 SCHEDULES: dict[str, Callable[[dt.datetime], bool]] = {
-    "sh-minute-maintenance": lambda minute: True,
     "sh-monitor-other": lambda minute: True,
 }
 TRANSITION_SCHEDULES: dict[str, Callable[[dt.datetime], bool]] = {
@@ -270,7 +268,7 @@ def main() -> int:
     scripts: dict[str, Any] = {}
     for script in sorted(tracked_scripts):
         cpu_summary = metric_summary(cpu[script])
-        cpu_summary["over_10ms"] = sum(value > CPU_REPORT_LIMIT_MS for value in cpu[script])
+        cpu_summary["at_or_over_10ms"] = sum(value >= CPU_REPORT_LIMIT_MS for value in cpu[script])
         scripts[script] = {
             "events": counts[script],
             "error_events": errors[script],

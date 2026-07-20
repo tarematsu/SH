@@ -10,17 +10,17 @@ import {
   githubCommitChangedPaths,
 } from '../scripts/deploy-connected-worker.mjs';
 
-test('connected deploy decision skips an unaffected current Worker', () => {
+test('connected deploy decision skips an unaffected consolidated Worker', () => {
   assert.deepEqual(
     connectedDeployDecision(
-      'sh-buddies-monitor',
+      'sh-monitor-other',
       ['worker/src/other-monitor-entry.js'],
-      ['sh-monitor-other'],
+      ['sh-pages-read-model'],
     ),
     {
       deploy: false,
       reason: 'worker-unaffected',
-      workerName: 'sh-buddies-monitor',
+      workerName: 'sh-monitor-other',
     },
   );
 });
@@ -51,21 +51,21 @@ test('unknown connected Worker names never deploy', async () => {
   assert.equal(spawned, false);
 });
 
-test('connected deploy decision keeps conservative fallbacks for current names', () => {
+test('connected deploy decision keeps conservative fallbacks for the current name', () => {
   assert.equal(
-    connectedDeployDecision('sh-buddies-monitor', null, null).deploy,
+    connectedDeployDecision('sh-monitor-other', null, null).deploy,
     true,
   );
   assert.deepEqual(
     connectedDeployDecision(
-      'sh-buddies-monitor',
+      'sh-monitor-other',
       ['worker/src/other-monitor-entry.js'],
       null,
     ),
     {
       deploy: true,
       reason: 'worker-selection-unavailable',
-      workerName: 'sh-buddies-monitor',
+      workerName: 'sh-monitor-other',
     },
   );
   assert.deepEqual(
@@ -166,9 +166,9 @@ test('non-production connected build exits before diff resolution or Wrangler', 
 test('unaffected connected build exits without invoking Wrangler', async () => {
   let spawned = false;
   const result = await deployConnectedWorker({
-    workerName: 'sh-buddies-monitor',
+    workerName: 'sh-monitor-other',
     changedPaths: ['worker/src/other-monitor-entry.js'],
-    selectedWorkers: ['sh-monitor-other'],
+    selectedWorkers: ['sh-pages-read-model'],
     spawnSync() {
       spawned = true;
       return { status: 0 };

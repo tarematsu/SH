@@ -1,11 +1,12 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 
-const selector = new URL('../scripts/select-worker-deploys.mjs', import.meta.url);
+const selector = fileURLToPath(new URL('../scripts/select-worker-deploys.mjs', import.meta.url));
 
 function select(paths = [], args = []) {
-  return JSON.parse(execFileSync(process.execPath, [selector.pathname, ...args], {
+  return JSON.parse(execFileSync(process.execPath, [selector, ...args], {
     encoding: 'utf8',
     input: `${paths.join('\n')}\n`,
   }));
@@ -44,7 +45,7 @@ test('monitor Queue modules redeploy the consolidated monitor Worker', () => {
 });
 
 test('monitor cutover script redeploys only the consolidated monitor Worker', () => {
-  const result = select(['worker/scripts/deploy-other-monitor.mjs']);
+  const result = select(['worker/scripts/deploy-consolidated-monitor.mjs']);
   assert.deepEqual(result.workers, ['sh-monitor-other']);
   assert.deepEqual(result.commands, ['deploy:other']);
   assert.deepEqual(result.diagnostics, ['sh-monitor-other']);
@@ -90,7 +91,7 @@ test('deploy script-only package changes do not redeploy runtime Workers', () =>
 
 test('lockfile changes conservatively redeploy every Worker', () => {
   const result = select(['worker/package-lock.json']);
-  assert.equal(result.workers.length, 11);
+  assert.equal(result.workers.length, 9);
 });
 
 test('tests and verification scripts do not redeploy runtime Workers', () => {
@@ -104,7 +105,7 @@ test('tests and verification scripts do not redeploy runtime Workers', () => {
 
 test('shared package changes select every Worker that imports sh-shared', () => {
   const result = select(['packages/sh-shared/index.mjs']);
-  assert.ok(result.workers.includes('sh-buddies-monitor'));
+  assert.ok(result.workers.includes('sh-monitor-other'));
   assert.ok(result.workers.includes('sh-buddies-ingest'));
   assert.ok(result.workers.includes('sh-buddies-comments'));
   assert.ok(result.workers.length >= 3);
@@ -112,7 +113,7 @@ test('shared package changes select every Worker that imports sh-shared', () => 
 
 test('unresolved runtime source changes fall back to all Workers', () => {
   const result = select(['worker/src/deleted-runtime-module.js']);
-  assert.equal(result.workers.length, 11);
+  assert.equal(result.workers.length, 9);
 });
 
 test('manual selection deploys all Workers in durable order', () => {
@@ -121,13 +122,13 @@ test('manual selection deploys all Workers in durable order', () => {
     'sh-minute-derive',
     'sh-minute-enrichment',
     'sh-minute-rebuild',
-    'sh-minute-maintenance',
     'sh-minute-ingest',
     'sh-buddies-comments',
     'sh-buddies-persist',
     'sh-buddies-ingest',
-    'sh-buddies-monitor',
+    'sh-pages-read-model',
+    'sh-monitor-other',
   ]);
-  assert.equal(result.workers.length, 11);
+  assert.equal(result.workers.length, 9);
   assert.equal(result.workers.at(-1), 'sh-monitor-other');
 });

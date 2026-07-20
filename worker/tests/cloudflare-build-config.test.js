@@ -10,7 +10,7 @@ import {
 } from '../scripts/select-cloudflare-build-config.mjs';
 
 test('current Worker names map to their Wrangler configs', () => {
-  assert.equal(cloudflareBuildConfig('sh-buddies-monitor'), 'wrangler.jsonc');
+  assert.equal(cloudflareBuildConfig('sh-buddies-monitor'), null);
   assert.equal(cloudflareBuildConfig('sh-buddies-persist'), 'wrangler.persist.jsonc');
   assert.equal(cloudflareBuildConfig('sh-buddies-ingest'), 'wrangler.ingest.jsonc');
   assert.equal(cloudflareBuildConfig('sh-buddies-comments'), 'wrangler.comments.jsonc');
@@ -20,7 +20,7 @@ test('current Worker names map to their Wrangler configs', () => {
   assert.equal(cloudflareBuildConfig('sh-monitor-maintenance'), null);
   assert.equal(cloudflareBuildConfig('sh-monitor-other'), 'wrangler.other.jsonc');
   assert.equal(cloudflareBuildConfig('sh-buddy-playback'), null);
-  assert.equal(cloudflareBuildConfig('sh-minute-maintenance'), 'wrangler.minute.jsonc');
+  assert.equal(cloudflareBuildConfig('sh-minute-maintenance'), null);
   assert.equal(cloudflareBuildConfig('sh-minute-derive'), 'wrangler.minute-derive.jsonc');
   assert.equal(cloudflareBuildConfig('sh-minute-enrichment'), 'wrangler.minute-enrichment.jsonc');
   assert.equal(cloudflareBuildConfig('sh-minute-rebuild'), 'wrangler.minute-rebuild.jsonc');
@@ -29,25 +29,25 @@ test('current Worker names map to their Wrangler configs', () => {
   assert.equal(cloudflareBuildConfig(''), null);
 });
 
-test('minute connected build replaces only the ephemeral default config', async () => {
+test('connected build replaces only the ephemeral default config', async () => {
   const workerRoot = await mkdtemp(join(tmpdir(), 'sh-worker-config-'));
   try {
     await writeFile(join(workerRoot, 'wrangler.jsonc'), '{"name":"sh-buddies-monitor"}\n');
-    await writeFile(join(workerRoot, 'wrangler.minute.jsonc'), '{"name":"sh-minute-maintenance"}\n');
+    await writeFile(join(workerRoot, 'wrangler.other.jsonc'), '{"name":"sh-monitor-other"}\n');
 
     const result = await selectCloudflareBuildConfig({
-      workerName: 'sh-minute-maintenance',
+      workerName: 'sh-monitor-other',
       workerRoot,
     });
 
     assert.deepEqual(result, {
       selected: true,
-      workerName: 'sh-minute-maintenance',
-      sourceName: 'wrangler.minute.jsonc',
+      workerName: 'sh-monitor-other',
+      sourceName: 'wrangler.other.jsonc',
     });
     assert.equal(
       await readFile(join(workerRoot, 'wrangler.jsonc'), 'utf8'),
-      '{"name":"sh-minute-maintenance"}\n',
+      '{"name":"sh-monitor-other"}\n',
     );
   } finally {
     await rm(workerRoot, { recursive: true, force: true });

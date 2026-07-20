@@ -29,3 +29,11 @@ test('other monitor avoids Date allocation and caches task modules', () => {
   assert.match(entry, /const message = messages\[0\]/);
   assert.doesNotMatch(entry, /for \(const message of batch/);
 });
+
+test('the consolidated monitor config deploys the consolidated entrypoint', () => {
+  const config = source('../wrangler.other.jsonc');
+  assert.match(config, /"main"\s*:\s*"src\/consolidated-monitor-entry\.js"/);
+  assert.doesNotMatch(config, /"main"\s*:\s*"src\/other-entry\.js"/);
+  const entry = source('../src/consolidated-monitor-entry.js');
+  assert.match(entry, /for \(const message of messages\)/);
+});

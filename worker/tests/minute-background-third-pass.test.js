@@ -111,23 +111,23 @@ test('non-daily gap repair completes without entering historical backfill', asyn
   assert.deepEqual(enqueued, []);
 });
 
-test('ready maintenance gate dispatches a separate sync Invocation', async () => {
+test('ready maintenance gate dispatches the consolidated run invocation', async () => {
   const sent = [];
   const sync = await processMinuteMaintenanceGate({}, gateBody('sync'), {
     checkCollector: async () => ({ ready: true }),
     send: async (body, delaySeconds) => sent.push({ body, delaySeconds }),
   });
   assert.equal(sync.pending, true);
-  assert.equal(sync.dispatched_stage, 'maintenance-sync');
-  assert.equal(sent[0].body.stage, 'maintenance-sync');
+  assert.equal(sync.dispatched_stage, 'maintenance-run');
+  assert.equal(sent[0].body.stage, 'maintenance-run');
   assert.equal(sent[0].delaySeconds, 0);
 });
 
-test('maintenance sync executes only after the collector gate Invocation', async () => {
+test('maintenance run executes only after the collector gate invocation', async () => {
   let scheduled = null;
   const result = await processMinuteMaintenanceSync({}, {
     ...gateBody('sync'),
-    stage: 'maintenance-sync',
+    stage: 'maintenance-run',
   }, {
     runScheduled: async (controller, _env, dependencies) => {
       scheduled = { controller, dependencies };
@@ -135,7 +135,7 @@ test('maintenance sync executes only after the collector gate Invocation', async
     },
   });
   assert.equal(result.pending, false);
-  assert.equal(result.stage, 'maintenance-sync');
+  assert.equal(result.stage, 'maintenance-run');
   assert.equal(scheduled.controller.scheduledTime, BASE);
   assert.equal(scheduled.dependencies.collectorReady, true);
 });

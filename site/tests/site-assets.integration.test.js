@@ -153,9 +153,9 @@ test('dashboard client preserves playback, queue expansion and goals', async () 
 });
 
 test('edge middleware shares dashboard history through Cache API without request promises', async () => {
-  const source = await text('functions/api/_middleware.js');
-  assert.match(source, /url\.pathname === '\/api\/dashboard-history'/);
-  assert.match(source, /ttl: 300, browser: 60/);
+  const source = await text('functions/_middleware.js');
+  assert.match(source, /MATERIALIZED_API_VARIANTS/);
+  assert.match(source, /materializedApiKey/);
   assert.match(source, /cache\.match/);
   assert.match(source, /cache\.put/);
   assert.doesNotMatch(source, /inFlight/);
@@ -172,10 +172,12 @@ test('Pages configuration binds the expected D1 database and output directory', 
 
 test('Pages homepage is never stored by browsers or shared caches', async () => {
   const headers = await text('public/_headers');
-  assert.match(headers, /^\/\n\s+Cache-Control: no-store, max-age=0, must-revalidate/m);
-  assert.match(headers, /^\/index\.html\n\s+Cache-Control: no-store, max-age=0, must-revalidate/m);
+  assert.match(headers, /\/\r?\n\s+Cache-Control: no-store, max-age=0, must-revalidate/m);
+  assert.match(headers, /\/index\.html\r?\n\s+Cache-Control: no-store, max-age=0, must-revalidate/m);
+  const wildcard = headers.search(/\/\r?\n/);
+  const homepage = headers.search(/\/index\.html\r?\n/);
   assert.ok(
-    headers.indexOf('\n/\n') > headers.indexOf('\n/*\n'),
+    homepage > wildcard,
     'homepage override should follow the wildcard rule',
   );
 });

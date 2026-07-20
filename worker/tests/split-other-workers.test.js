@@ -93,6 +93,7 @@ test('consolidated monitor dispatches maintenance to Queue and preserves the Cro
     env,
     {},
     {
+      collectRawChannel: async () => ({ collected: true }),
       otherOptions: {
         dependencies: { buddy: async () => 'buddy' },
         recordSuccess: async () => {},
@@ -133,11 +134,42 @@ test('consolidated monitor dispatches maintenance to Queue and preserves the Cro
 
   const worker = config('wrangler.other.jsonc');
   assert.equal(worker.name, 'sh-monitor-other');
-  assert.equal(worker.main, 'src/other-entry.js');
-  assert.deepEqual(worker.triggers.crons, [OTHER_MONITOR_CRON]);
+  assert.equal(worker.main, 'src/consolidated-monitor-entry.js');
+  assert.deepEqual(worker.triggers.crons, ['* * * * *']);
   assert.equal(worker.vars.CRON_STAGGER_OTHER_MS, 25_000);
   assert.equal(worker.vars.COLLECTOR_PRIORITY_WAIT_MS, 15_000);
   assert.equal(worker.vars.SNAPSHOT_RETENTION_ENABLED, true);
+});
+
+test('consolidated Queue router processes every message in a mixed batch', async () => {
+  const events = [];
+  const maintenance = {
+    body: {
+      message_type: MONITOR_MAINTENANCE_MESSAGE,
+      cron: ROLLUP_MAINTENANCE_CRON,
+      scheduled_at: BASE + 30 * 60_000,
+    },
+    ack() { events.push('maintenance-ack'); },
+    retry() { events.push('maintenance-retry'); },
+  };
+  const unsupported = {
+    body: { message_type: 'unsupported-monitor-message' },
+    ack() { events.push('other-ack'); },
+    retry() { events.push('other-retry'); },
+  };
+  await runConsolidatedMonitorQueue(
+    { messages: [maintenance, unsupported] },
+    { BUDDIES_DB: {}, OTHER_DB: {} },
+    {},
+    {
+      maintenanceDependencies: {
+        applyStagger: async () => {},
+        waitForCollector: async () => ({ ready: true }),
+        runRollup: async () => 'rollup',
+      },
+    },
+  );
+  assert.deepEqual(events, ['maintenance-ack', 'other-retry']);
 });
 
 test('maintenance path reports swallowed D1 failures as failed Queue retries', async () => {

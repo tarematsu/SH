@@ -149,13 +149,13 @@ jobs:
           if budget_path.exists():
               budget = json.loads(budget_path.read_text(encoding='utf-8'))
               violations = ', '.join(item['worker'] for item in budget['violations']) or 'none'
-              print(f"- CPU p95 budget: `<= {budget['budget_ms']} ms`; violations: `{violations}`")
+              print(f"- CPU p95 budget: `< {budget['budget_ms']} ms`; violations: `{violations}`")
           print()
-          print('| Worker | events | errors | CPU avg ms | CPU p95 ms | CPU max ms | >10 ms |')
+          print('| Worker | events | errors | CPU avg ms | CPU p95 ms | CPU max ms | >=10 ms |')
           print('|---|---:|---:|---:|---:|---:|---:|')
           for name, item in summary['scripts'].items():
               metric = item['cpu_ms']
-              print(f"| {name} | {item['events']} | {item['error_events']} | {metric['avg']} | {metric['p95']} | {metric['max']} | {metric['over_10ms']} |")
+              print(f"| {name} | {item['events']} | {item['error_events']} | {metric['avg']} | {metric['p95']} | {metric['max']} | {metric['at_or_over_10ms']} |")
           PY
 
       - name: Upload filtered logs and compact analysis

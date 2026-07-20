@@ -40,7 +40,7 @@ test('ordered comments and three minute Workers have one owner per queue boundar
   const minuteDerive = config('wrangler.minute-derive.jsonc');
   const minuteMaintenance = config('wrangler.minute.jsonc');
 
-  assert.equal(buddies.main, 'src/raw-collector-entry.js');
+  assert.equal(buddies.main, 'src/consolidated-monitor-entry.js');
   assert.equal(ingest.main, 'src/ingest-channel-optimized-entry.js');
   assert.equal(comments.main, 'src/comments-cpu-entry.js');
   assert.equal(readModel.main, 'src/pages-read-model-entry.js');

@@ -17,13 +17,13 @@ test('metadata retirement API calls have a bounded timeout', () => {
   assert.match(source, /AbortSignal\.timeout\(20_000\)/);
 });
 
-test('metadata consolidation is validated against the merged 9 ms CPU contract', () => {
+test('metadata consolidation is validated against the strict 10 ms CPU contract', () => {
   const budget = readFileSync(
     new URL('../../.github/scripts/enforce-worker-cpu-budget.py', import.meta.url),
     'utf8',
   );
-  assert.match(budget, /BUDGET_MS = 9\.0/);
-  assert.match(budget, /"comparison": "less_than_or_equal"/);
+  assert.match(budget, /BUDGET_MS = 10\.0/);
+  assert.match(budget, /"comparison": "less_than"/);
 });
 
 test('metadata consolidation composes with the merged paginated Pages KV deploy', () => {

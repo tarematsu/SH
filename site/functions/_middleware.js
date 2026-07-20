@@ -11,10 +11,11 @@ import {
 
 const MATERIALIZED_RETRY_TTL_SECONDS = 30;
 const MATERIALIZED_EDGE_TTL_MAX_SECONDS = 30 * 60;
-const KV_MATERIALIZED_MODEL_KEYS = new Set(
-  MATERIALIZED_API_VARIANTS
-    .filter(({ key }) => key !== 'track-history')
-    .map(({ key }) => key),
+// The Pages service owns the storage choice. Compact payloads are read from
+// KV and large payloads such as track-history are read from R2 there, so the
+// gateway must not make a storage-specific decision before invoking it.
+const SERVICE_MATERIALIZED_MODEL_KEYS = new Set(
+  MATERIALIZED_API_VARIANTS.map(({ key }) => key),
 );
 
 function tagged(response, cacheState) {
@@ -41,7 +42,7 @@ function safeHeaders(value) {
 
 async function serviceMaterializedResponse(context, modelKey) {
   const service = context.env?.PAGES_READ_MODEL_SERVICE;
-  if (!KV_MATERIALIZED_MODEL_KEYS.has(modelKey) || typeof service?.fetch !== 'function') return null;
+  if (!SERVICE_MATERIALIZED_MODEL_KEYS.has(modelKey) || typeof service?.fetch !== 'function') return null;
   try {
     const url = new URL('https://pages-read-model.internal/_internal/pages-response');
     url.searchParams.set('key', modelKey);
@@ -106,21 +107,33 @@ function responseCacheTtl(origin, requestedTtl, modelKey, usedMaterialized, now)
   return Math.max(1, Math.min(Math.max(requestedTtl, materializedTtl), remainingSeconds));
 }
 
+function cacheableOrigin(origin) {
+  if (!origin?.ok) return false;
+  if (origin.headers.has('set-cookie')) return false;
+  const cacheControl = origin.headers.get('cache-control') || '';
+  if (/\b(private|no-store)\b/i.test(cacheControl)) return false;
+  const contentType = origin.headers.get('content-type') || '';
+  return !contentType || /^application\/json(?:\s*;|$)/i.test(contentType);
+}
+
 function sharedResponse(origin, ttlSeconds) {
   const headers = new Headers(origin.headers);
-  if (origin.ok) {
+  const cacheable = cacheableOrigin(origin);
+  if (cacheable) {
     const browserTtl = Math.min(API_BROWSER_TTL_SECONDS, ttlSeconds);
     headers.set(
       'cache-control',
       `public, max-age=${browserTtl}, s-maxage=${ttlSeconds}, stale-while-revalidate=${ttlSeconds * 2}`,
     );
   }
-  headers.set('vary', 'accept-encoding');
-  return new Response(origin.body, {
+  const vary = new Set((headers.get('vary') || '').split(',').map((value) => value.trim().toLowerCase()).filter(Boolean));
+  vary.add('accept-encoding');
+  headers.set('vary', [...vary].join(', '));
+  return { response: new Response(origin.body, {
     status: origin.status,
     statusText: origin.statusText,
     headers,
-  });
+  }), cacheable };
 }
 
 export async function onRequest(context) {
@@ -148,6 +161,6 @@ export async function onRequest(context) {
     now,
   );
   const shared = sharedResponse(origin, ttlSeconds);
-  if (shared.ok) context.waitUntil(cache.put(cacheKey, shared.clone()));
-  return tagged(shared, 'MISS');
+  if (shared.cacheable) context.waitUntil(cache.put(cacheKey, shared.response.clone()));
+  return tagged(shared.response, shared.cacheable ? 'MISS' : 'BYPASS');
 }

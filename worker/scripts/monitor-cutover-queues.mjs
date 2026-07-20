@@ -58,6 +58,14 @@ export function assertConsolidatedConsumers() {
   }
 }
 
+export function assertConsolidatedConsumersPresent() {
+  for (const item of MIGRATIONS) {
+    if (!consumerList(item.queue).includes(CONSOLIDATED_SCRIPT)) {
+      throw new Error(`consolidated monitor consumer missing for ${item.queue}`);
+    }
+  }
+}
+
 export function pauseQueue(queue) {
   runWrangler(['queues', 'pause-delivery', queue]);
 }

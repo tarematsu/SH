@@ -61,7 +61,7 @@ test('a cache miss serves compact materializations through the KV service before
   }
 });
 
-test('track-history remains on D1 and does not spend a KV read', async () => {
+test('track-history reaches the read-model service so it can use R2 before D1', async () => {
   const originalCaches = globalThis.caches;
   globalThis.caches = { default: memoryCache() };
   let serviceCalls = 0;
@@ -69,13 +69,52 @@ test('track-history remains on D1 and does not spend a KV read', async () => {
     const response = await onRequest({
       request: new Request('https://skrzk.test/api/track-history'),
       env: {
-        PAGES_READ_MODEL_SERVICE: { fetch: async () => { serviceCalls += 1; } },
+        PAGES_READ_MODEL_SERVICE: {
+          fetch: async () => {
+            serviceCalls += 1;
+            return Response.json({ source: 'r2' }, {
+              headers: {
+                'x-api-source': 'worker-r2',
+                'x-materialized-at': String(Date.now()),
+                'x-materialized-cadence-seconds': '21600',
+              },
+            });
+          },
+        },
       },
-      next: async () => Response.json({ source: 'live' }),
+      next: async () => { throw new Error('track-history must not reach the live D1 handler'); },
       waitUntil() {},
     });
     assert.equal(response.status, 200);
-    assert.equal(serviceCalls, 0);
+    assert.equal(response.headers.get('x-api-source'), 'worker-r2');
+    assert.deepEqual(await response.json(), { source: 'r2' });
+    assert.equal(serviceCalls, 1);
+  } finally {
+    globalThis.caches = originalCaches;
+  }
+});
+
+test('private materialized responses bypass the shared Cache API', async () => {
+  const originalCaches = globalThis.caches;
+  let writes = 0;
+  globalThis.caches = {
+    default: {
+      async match() { return undefined; },
+      async put() { writes += 1; },
+    },
+  };
+  try {
+    const response = await onRequest({
+      request: new Request('https://skrzk.test/api/history?mode=daily'),
+      env: {},
+      next: async () => Response.json({ source: 'private' }, {
+        headers: { 'cache-control': 'private, no-store', vary: 'origin' },
+      }),
+      waitUntil() {},
+    });
+    assert.equal(response.headers.get('x-edge-cache'), 'BYPASS');
+    assert.equal(response.headers.get('vary'), 'origin, accept-encoding');
+    assert.equal(writes, 0);
   } finally {
     globalThis.caches = originalCaches;
   }

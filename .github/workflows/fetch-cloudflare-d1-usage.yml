@@ -55,7 +55,7 @@ jobs:
           node scripts/cloudflare-d1-hourly-usage.mjs
           cat d1-usage/hourly-summary.md >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Enforce 80 percent free-tier daily budget
+      - name: Enforce 50 percent free-tier daily budget
         if: github.event_name == 'schedule'
         shell: bash
         run: |
@@ -66,11 +66,11 @@ jobs:
           const actual = report.latestComplete;
           const target = report.limits.target;
           const violations = [];
-          if (actual.rowsRead > target.rowsRead) {
-            violations.push(`rows read ${actual.rowsRead} > ${target.rowsRead}`);
+          if (actual.rowsRead >= target.rowsRead) {
+            violations.push(`rows read ${actual.rowsRead} >= ${target.rowsRead}`);
           }
-          if (actual.rowsWritten > target.rowsWritten) {
-            violations.push(`rows written ${actual.rowsWritten} > ${target.rowsWritten}`);
+          if (actual.rowsWritten >= target.rowsWritten) {
+            violations.push(`rows written ${actual.rowsWritten} >= ${target.rowsWritten}`);
           }
           if (violations.length) {
             console.error(`D1 daily budget exceeded for ${actual.date}: ${violations.join(', ')}`);

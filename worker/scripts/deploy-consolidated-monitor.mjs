@@ -1,5 +1,6 @@
 import {
   assertConsolidatedConsumers,
+  assertConsolidatedConsumersPresent,
   COLLECTOR_SCRIPT,
   CONSOLIDATED_SCRIPT,
   hasConsumer,
@@ -37,11 +38,18 @@ try {
   for (const item of active) {
     pauseQueue(item.queue);
     paused.push(item);
+  }
+
+  // Deploy first while the old consumers remain attached. This makes the
+  // cutover reversible without creating a window in which collection or
+  // maintenance has no consumer.
+  deployConsolidatedWorker();
+  deployed = true;
+  assertConsolidatedConsumersPresent();
+  for (const item of active) {
     removeConsumer(item.queue, item.oldScript);
     removed.push(item);
   }
-  deployConsolidatedWorker();
-  deployed = true;
   assertConsolidatedConsumers();
   for (const script of retiredQueueWorkers) await deleteWorker(script);
   assertConsolidatedConsumers();

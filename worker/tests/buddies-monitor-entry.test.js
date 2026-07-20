@@ -13,14 +13,14 @@ function session() {
   };
 }
 
-test('buddies monitor keeps its existing deployment entry', () => {
+test('the consolidated monitor owns the former buddies deployment entry', () => {
   const config = JSON.parse(readFileSync(
     new URL('../wrangler.jsonc', import.meta.url),
     'utf8',
   ));
 
-  assert.equal(config.name, 'sh-buddies-monitor');
-  assert.equal(config.main, 'src/raw-collector-entry.js');
+  assert.equal(config.name, 'sh-monitor-other');
+  assert.equal(config.main, 'src/consolidated-monitor-entry.js');
 });
 
 test('scheduled-only production surface registers the collection promise directly', async () => {

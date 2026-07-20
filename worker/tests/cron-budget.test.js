@@ -20,6 +20,6 @@ test('three production Workers stay within the account-wide Free cron limit', ()
 
 test('other cron health threshold tolerates a delayed five-minute tick', () => {
   const other = config('wrangler.other.jsonc');
-  assert.deepEqual(other.triggers.crons, ['*/5 * * * *']);
-  assert.ok(Number(other.vars.OTHER_CRON_STALE_MS) >= 10 * 60_000);
+  assert.deepEqual(other.triggers.crons, ['* * * * *']);
+  assert.ok(Number(other.vars.OTHER_CRON_STALE_MS) >= 12 * 60_000);
 });

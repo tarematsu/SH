@@ -6,10 +6,10 @@ function source(path) {
   return readFileSync(new URL(path, import.meta.url), 'utf8');
 }
 
-test('buddies monitor retains its narrow scheduled production entry', () => {
+test('the consolidated monitor retains the narrow collection production surface', () => {
   const config = source('../wrangler.jsonc');
   const entry = source('../src/raw-collector-entry.js');
-  assert.match(config, /"main"\s*:\s*"src\/raw-collector-entry\.js"/);
+  assert.match(config, /"main"\s*:\s*"src\/consolidated-monitor-entry\.js"/);
   assert.match(entry, /const RAW_COLLECTION_QUEUE_OPTIONS = Object\.freeze/);
   assert.match(entry, /export default \{\s*scheduled\(_controller, env, ctx\)/s);
   assert.doesNotMatch(entry, /export default \{[^}]*\bfetch\s*:/s);

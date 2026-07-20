@@ -5,7 +5,7 @@ const API_ROOT = 'https://api.cloudflare.com/client/v4';
 const GRAPHQL_URL = `${API_ROOT}/graphql`;
 const FREE_READ_ROWS = 5_000_000;
 const FREE_WRITE_ROWS = 100_000;
-const TARGET_RATIO = 0.8;
+const TARGET_RATIO = 0.5;
 const TARGET_READ_ROWS = FREE_READ_ROWS * TARGET_RATIO;
 const TARGET_WRITE_ROWS = FREE_WRITE_ROWS * TARGET_RATIO;
 const token = String(process.env.CLOUDFLARE_API_TOKEN || '').trim();
@@ -261,7 +261,7 @@ const lines = [
   '',
   `Generated: ${report.generatedAt}`,
   '',
-  '| Metric | Free limit | 80% target | Latest complete day | 7-day average | 7-day maximum | Projected today | Planning estimate | Target utilization |',
+  '| Metric | Free limit | 50% target | Latest complete day | 7-day average | 7-day maximum | Projected today | Planning estimate | Target utilization |',
   '|---|---:|---:|---:|---:|---:|---:|---:|---:|',
   `| Rows read | ${fmt.format(FREE_READ_ROWS)} | ${fmt.format(TARGET_READ_ROWS)} | ${fmt.format(latestComplete.rowsRead)} | ${fmt.format(sevenDayAverage.rowsRead)} | ${fmt.format(sevenDayMaximum.rowsRead)} | ${fmt.format(projectedToday.rowsRead)} | ${fmt.format(planningEstimate.rowsRead)} | ${percentage(planningEstimate.rowsRead, TARGET_READ_ROWS).toFixed(1)}% |`,
   `| Rows written | ${fmt.format(FREE_WRITE_ROWS)} | ${fmt.format(TARGET_WRITE_ROWS)} | ${fmt.format(latestComplete.rowsWritten)} | ${fmt.format(sevenDayAverage.rowsWritten)} | ${fmt.format(sevenDayMaximum.rowsWritten)} | ${fmt.format(projectedToday.rowsWritten)} | ${fmt.format(planningEstimate.rowsWritten)} | ${percentage(planningEstimate.rowsWritten, TARGET_WRITE_ROWS).toFixed(1)}% |`,

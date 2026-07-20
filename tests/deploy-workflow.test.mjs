@@ -61,7 +61,7 @@ test('manual deploy keeps all Cloudflare targets available', () => {
   assert.match(deployWorkflow, /^\s{2}workflow_dispatch:/m);
   assert.doesNotMatch(deployWorkflow, /^\s{2}push:/m);
   assert.match(deployWorkflow, /wrangler pages deploy/);
-  assert.match(deployWorkflow, /npm run deploy:buddies/);
+  assert.doesNotMatch(deployWorkflow, /npm run deploy:buddies/);
   assert.match(deployWorkflow, /npm run deploy:persist/);
   assert.match(deployWorkflow, /npm run deploy:ingest/);
   assert.match(deployWorkflow, /npm run deploy:comments/);
@@ -116,7 +116,7 @@ test('all deployment paths provision the split Queue boundaries', () => {
 test('Worker package scripts contain only current deployment operations', () => {
   assert.equal(
     workerPackage.scripts['deploy:minute'],
-    'npm run deploy:minute-derive && npm run deploy:minute-enrichment && npm run deploy:minute-rebuild && npm run deploy:minute-maintenance && npm run deploy:minute-ingest',
+    'npm run deploy:minute-derive && npm run deploy:minute-enrichment && npm run deploy:minute-rebuild && npm run deploy:minute-ingest',
   );
   assert.equal(
     workerPackage.scripts['deploy:split-other'],
@@ -128,7 +128,7 @@ test('Worker package scripts contain only current deployment operations', () => 
   assert.equal(workerPackage.scripts['deploy:minute-enrichment'], 'node scripts/deploy-minute-enrichment.mjs');
   assert.equal(workerPackage.scripts['deploy:track-metadata'], undefined);
   assert.equal(workerPackage.scripts['check:track-metadata-bundle'], undefined);
-  assert.equal(workerPackage.scripts['deploy:other'], 'node scripts/deploy-other-monitor.mjs');
+  assert.equal(workerPackage.scripts['deploy:other'], 'node scripts/deploy-consolidated-monitor.mjs');
   assert.equal(workerPackage.scripts['deploy:minute-read-model'], undefined);
   assert.equal(workerPackage.scripts['deploy:host-monitor'], undefined);
   assert.equal(workerPackage.scripts['deploy:buddy-playback'], undefined);

@@ -48,14 +48,18 @@ test('legacy production entry exposes no HTTP control or health endpoints', asyn
 test('buddies Wrangler configuration owns collection and compact queue preparation only', () => {
   const config = JSON.parse(readFileSync(new URL('../wrangler.jsonc', import.meta.url), 'utf8'));
   const source = readFileSync(new URL('../src/raw-collector-entry.js', import.meta.url), 'utf8');
-  assert.equal(config.main, 'src/raw-collector-entry.js');
+  assert.equal(config.main, 'src/consolidated-monitor-entry.js');
   assert.deepEqual(config.triggers?.crons, ['* * * * *']);
-  assert.deepEqual(config.d1_databases.map(({ binding }) => binding), ['DB']);
+  assert.deepEqual(config.d1_databases.map(({ binding }) => binding), ['BUDDIES_DB', 'MINUTE_DB', 'OTHER_DB']);
   assert.equal(config.d1_databases[0].database_name, 'stationhead-buddies');
-  assert.deepEqual(config.queues?.producers, [{
-    binding: 'RAW_COLLECTION_QUEUE',
-    queue: 'stationhead-raw-collection',
-  }]);
+  assert.deepEqual(config.queues?.producers.map(({ binding }) => binding), [
+    'RAW_COLLECTION_QUEUE',
+    'BUDDY_PLAYBACK_QUEUE',
+    'HOST_MONITOR_QUEUE',
+    'MINUTE_DERIVE_QUEUE',
+    'MINUTE_LIVE_DERIVE_QUEUE',
+    'MINUTE_REBUILD_QUEUE',
+  ]);
   assert.match(source, /JSON\.parse/);
   assert.match(source, /normalizeSnapshot/);
   assert.match(source, /extractQueue/);
@@ -63,7 +67,6 @@ test('buddies Wrangler configuration owns collection and compact queue preparati
 
   const names = Object.keys(config.vars || {});
   for (const prefix of ['BUDDY_PLAYBACK_', 'HOST_', 'SOLO_', 'OFFICIAL_NEWS_', 'DERIVE_', 'HEALTH_ALERT_']) {
-    assert.equal(names.some((name) => name.startsWith(prefix)), false, prefix);
+    assert.equal(names.some((name) => name.startsWith(prefix)), true, prefix);
   }
-  assert.equal('DATA_MAINTENANCE_ENABLED' in config.vars, false);
 });

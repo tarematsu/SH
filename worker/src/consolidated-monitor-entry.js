@@ -155,11 +155,19 @@ async function processMaintenanceMessage(message, env, options = EMPTY_OPTIONS) 
 }
 
 export async function runConsolidatedMonitorQueue(batch, env, ctx, options = EMPTY_OPTIONS) {
-  const message = batch?.messages?.[0];
-  if (message?.body?.message_type === MONITOR_MAINTENANCE_MESSAGE) {
-    return processMaintenanceMessage(message, env, options);
+  const messages = batch?.messages;
+  if (!messages?.length) return;
+
+  // Keep the consumer correct if batching is enabled later. The previous
+  // first-message router could leave all remaining messages unacked or send a
+  // mixed batch to the wrong handler.
+  for (const message of messages) {
+    if (message?.body?.message_type === MONITOR_MAINTENANCE_MESSAGE) {
+      await processMaintenanceMessage(message, env, options);
+      continue;
+    }
+    await otherMonitor.queue({ ...batch, messages: [message] }, env, ctx);
   }
-  return otherMonitor.queue(batch, env, ctx);
 }
 
 export {

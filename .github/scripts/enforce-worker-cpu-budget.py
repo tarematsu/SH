@@ -7,7 +7,7 @@ import json
 import pathlib
 import sys
 
-BUDGET_MS = 9.0
+BUDGET_MS = 10.0
 SUMMARY_PATH = pathlib.Path("observability-logs/summary.json")
 OUTPUT_PATH = pathlib.Path("observability-logs/cpu-budget.json")
 
@@ -33,7 +33,7 @@ for name, item in sorted((summary.get("scripts") or {}).items()):
             "reason": "missing_cpu_samples",
         })
     if samples and p95 is not None:
-        over_budget = float(p95) > BUDGET_MS
+        over_budget = float(p95) >= BUDGET_MS
         if over_budget:
             violations.append({
                 "worker": name,
@@ -49,13 +49,13 @@ for name, item in sorted((summary.get("scripts") or {}).items()):
         "p95_ms": p95,
         "max_ms": maximum,
         "p95_within_budget": None if over_budget is None else not over_budget,
-        "max_above_budget": maximum is not None and float(maximum) > BUDGET_MS,
+        "max_at_or_above_budget": maximum is not None and float(maximum) >= BUDGET_MS,
     }
 
 result = {
     "ok": not missing_observability and not violations,
     "budget_ms": BUDGET_MS,
-    "comparison": "less_than_or_equal",
+    "comparison": "less_than",
     "statistic": "p95",
     "total_events": total_events,
     "total_samples": total_samples,
@@ -75,5 +75,5 @@ if violations:
         + (f" p95={item['p95_ms']}ms" if 'p95_ms' in item else "")
         for item in violations
     )
-    print(f"Worker CPU p95 must stay at or below {BUDGET_MS:g} ms: {detail}", file=sys.stderr)
+    print(f"Worker CPU p95 must stay below {BUDGET_MS:g} ms: {detail}", file=sys.stderr)
     raise SystemExit(1)

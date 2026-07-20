@@ -11,7 +11,7 @@ const mainStyles = readFileSync(new URL('../public/app-lite.css', import.meta.ur
 const likesPage = readFileSync(new URL('../public/history/likes/index.html', import.meta.url), 'utf8');
 const likesClient = readFileSync(new URL('../public/history/history-likes.js', import.meta.url), 'utf8');
 const likeApi = readFileSync(new URL('../functions/api/like-ranking.js', import.meta.url), 'utf8');
-const middleware = readFileSync(new URL('../functions/api/_middleware.js', import.meta.url), 'utf8');
+const middleware = readFileSync(new URL('../functions/_middleware.js', import.meta.url), 'utf8');
 
 test('history removes the current tab and keeps every archive mode', () => {
   for (const mode of ['daily', 'weekly', 'monthly', 'ranking', 'tracks', 'broadcasts']) {
@@ -146,7 +146,7 @@ test('likes tab reads the Worker-materialized Sakurazaka and JP ranking', () => 
 });
 
 test('edge middleware shares track-history and like-ranking D1 reads', () => {
-  assert.match(middleware, /url\.pathname === '\/api\/track-history'/);
-  assert.match(middleware, /url\.pathname === '\/api\/like-ranking'/);
-  assert.match(middleware, /ttl: 900, browser: 300/);
+  assert.match(middleware, /MATERIALIZED_API_VARIANTS/);
+  assert.match(middleware, /SERVICE_MATERIALIZED_MODEL_KEYS/);
+  assert.match(middleware, /cache\.put/);
 });

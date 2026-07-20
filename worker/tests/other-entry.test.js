@@ -126,11 +126,11 @@ test('official news reconcile is skipped when the probe fails', async () => {
   assert.equal(reconciled, false);
 });
 
-test('other worker Wrangler configuration uses one five-minute cron', () => {
+test('consolidated worker Wrangler configuration uses one-minute scheduling', () => {
   const config = JSON.parse(readFileSync(new URL('../wrangler.other.jsonc', import.meta.url), 'utf8'));
   assert.equal(config.name, 'sh-monitor-other');
-  assert.equal(config.main, 'src/other-entry.js');
-  assert.deepEqual(config.triggers?.crons, [OTHER_WORKER_CRON]);
+  assert.equal(config.main, 'src/consolidated-monitor-entry.js');
+  assert.deepEqual(config.triggers?.crons, ['* * * * *']);
   assert.equal(config.vars?.PUBLIC_HEALTH_CACHE_MS, 60_000);
   assert.deepEqual(config.d1_databases.map(({ binding }) => binding), ['BUDDIES_DB', 'MINUTE_DB', 'OTHER_DB']);
   assert.equal(config.d1_databases.some(({ database_name }) => database_name === 'stationhead-buddies'), true);

@@ -54,11 +54,13 @@ test('root Pages cache does not share Response promises across requests', async 
   );
 });
 
-test('API cache does not share Response promises across requests', async () => {
-  await assertConcurrentMissesStayRequestLocal(
-    apiMiddleware,
-    'https://skrzk.test/api/broadcast-series?id=7',
-  );
+test('API middleware leaves cache ownership to the Pages root middleware', async () => {
+  const response = await apiMiddleware({
+    request: new Request('https://skrzk.test/api/broadcast-series?id=7'),
+    env: {},
+    next: async () => Response.json({ ok: true }),
+  });
+  assert.equal(response.headers.get('x-edge-cache'), null);
 });
 
 test('legacy cache helper does not share Response promises across requests', async () => {
