@@ -17,7 +17,10 @@ const runtime = JSON.parse(readFileSync(
 
 test('PR deployment applies the D1 budget hot-path indexes', () => {
   assert.equal(descriptor.schema, 'database/facts-migrations/025_d1_budget_hotpath_index.sql');
-  assert.match(migration, /ON sh_minute_facts\(source_code, minute_at DESC, id DESC\)/);
+  assert.match(
+    migration,
+    /ON sh_minute_facts\(\s*source_code,\s*minute_at DESC,\s*id DESC,\s*channel_id,\s*observed_at,\s*is_broadcasting\s*\)/s,
+  );
   assert.match(migration, /ON sh_minute_fact_jobs\(status, job_kind, minute_at, id\)/);
 });
 
