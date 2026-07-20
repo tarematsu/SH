@@ -9,7 +9,6 @@ on:
       - 'worker/package.json'
       - 'worker/package-lock.json'
       - 'worker/wrangler.other.jsonc'
-      - 'worker/wrangler.minute.jsonc'
       - 'packages/sh-shared/**'
   workflow_dispatch:
 
@@ -41,17 +40,14 @@ jobs:
 
           if [[ '${{ github.event_name }}' == 'workflow_dispatch' ]]; then
             add_worker 'sh-monitor-other'
-            add_worker 'sh-minute-maintenance'
           else
             files="$(git diff --name-only '${{ github.event.before }}' '${{ github.sha }}')"
             printf '%s\n' "$files"
 
             if grep -Eq '^worker/src/|^worker/scripts/|^worker/(package\.json|package-lock\.json)$|^packages/sh-shared/' <<<"$files"; then
               add_worker 'sh-monitor-other'
-              add_worker 'sh-minute-maintenance'
             else
               grep -Eq '^worker/wrangler\.other\.jsonc$' <<<"$files" && add_worker 'sh-monitor-other' || true
-              grep -Eq '^worker/wrangler\.minute\.jsonc$' <<<"$files" && add_worker 'sh-minute-maintenance' || true
             fi
           fi
 

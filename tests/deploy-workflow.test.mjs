@@ -154,7 +154,7 @@ test('Cloudflare Git diagnostics include only remaining connected Worker depende
   assert.match(diagnosticsWorkflow, /packages\/sh-shared/);
   assert.doesNotMatch(diagnosticsWorkflow, /sh-buddies-monitor/);
   assert.match(diagnosticsWorkflow, /sh-monitor-other/);
-  assert.match(diagnosticsWorkflow, /sh-minute-maintenance/);
+  assert.doesNotMatch(diagnosticsWorkflow, /sh-minute-maintenance/);
   assert.match(diagnosticsWorkflow, /cloudflare-build-diagnostics\.mjs/);
 });
 
