@@ -195,3 +195,63 @@ test('budget live write commit persists the fact and forwards full revision stat
   assert.equal(sent[0].stage, 'revision-materialize');
   assert.deepEqual(sent[0].revision, revision);
 });
+
+test('live write continuations never leak into the disabled rebuild queue', async () => {
+  const liveMessages = [];
+  const rebuildMessages = [];
+  const writes = [];
+  const liveQueue = {
+    async send(body, options) { liveMessages.push({ body, options }); },
+  };
+  const rebuildQueue = {
+    async send(body, options) { rebuildMessages.push({ body, options }); },
+  };
+  const env = {
+    MINUTE_DERIVE_QUEUE: rebuildQueue,
+    MINUTE_LIVE_DERIVE_QUEUE: liveQueue,
+  };
+  const revision = {
+    revision_id: 88,
+    staged: true,
+    sparse: true,
+    source_job_id: 1,
+    visible_item_count: 1,
+    total_item_count: 1,
+    materialized_item_count: 0,
+  };
+
+  await processBudgetedLiveWriteMessage(env, liveWriteBody(), {
+    materializer: {
+      shouldMaterializeLiveRevision() { return true; },
+      async prepareSparseLiveRevision() { return revision; },
+    },
+  });
+
+  assert.equal(rebuildMessages.length, 0);
+  assert.equal(liveMessages.length, 1);
+  assert.equal(liveMessages[0].body.stage, BUDGET_LIVE_WRITE_STAGE);
+
+  await processBudgetedLiveWriteMessage(env, liveMessages[0].body, {
+    appleRuntime: { withAppleMusicFreeRuntime: (active) => active },
+    writeThrottle: { withMinuteD1WriteThrottling: (active) => active },
+    deriveQueue: {
+      async processMinuteDeriveWriteStage(active, activeBody, dependencies) {
+        assert.equal(active.MINUTE_DERIVE_QUEUE, liveQueue);
+        await dependencies.write(active, activeBody.payload);
+        return { stage: 'write' };
+      },
+    },
+    fastStore: {
+      async saveOptimizedMinuteFactWithinBudget(_active, payload) {
+        writes.push(payload);
+        return { saved: true };
+      },
+    },
+  });
+
+  assert.equal(rebuildMessages.length, 0);
+  assert.equal(liveMessages.length, 2);
+  assert.equal(liveMessages[1].body.stage, 'revision-materialize');
+  assert.equal(writes.length, 1);
+  assert.deepEqual(writes[0].prepared_revision, revision);
+});
