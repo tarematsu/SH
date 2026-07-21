@@ -1,4 +1,3 @@
-import { onRequestPost as corePost } from './ingest-core.js';
 import {
   authorized,
   json,
@@ -10,36 +9,49 @@ import {
 } from './api-utils.js';
 import { saveCommentCounts } from './comment-counts.js';
 import { saveLeanHeartbeat, saveLeanQueue, saveLeanSnapshot } from './d1-optimized-ingest.js';
-import { requestWithParsedJson } from './parsed-request.js';
 import { saveQueueReachability } from './queue-reachability.js';
 
-export * from './ingest-core.js';
-
-export function isPendingStreamSchemaError(error) {
-  const message = String(error?.message || error || '');
-  return /no such column:\s*(?:last_stream_count|last_stream_at|validated_stream_count)\b/i.test(message)
-    || /table\s+sh_channel_snapshots\s+has no column named\s+validated_stream_count/i.test(message);
-}
+export * from './queue-ingest-state.js';
 
 const INGEST_HANDLERS = {
-  comments: async (env, body, observedAt, data) => ({ ok: true, type: body.type, ...await saveCommentCounts(env.DB, observedAt, data) }),
-  snapshot: async (env, body, observedAt, data) => ({ ok: true, type: body.type, accepted: true, ...await saveLeanSnapshot(env.DB, observedAt, data) }),
+  comments: async (env, body, observedAt, data) => ({
+    ok: true,
+    type: body.type,
+    ...await saveCommentCounts(env.DB, observedAt, data),
+  }),
+  snapshot: async (env, body, observedAt, data) => ({
+    ok: true,
+    type: body.type,
+    accepted: true,
+    ...await saveLeanSnapshot(env.DB, observedAt, data),
+  }),
   queue: async (env, body, observedAt, data) => {
     const result = await saveLeanQueue(env.DB, observedAt, body);
     const structuralSnapshotWritten = result.structureChanged === true && result.claim.accepted === true;
-    const reachability = structuralSnapshotWritten ? { inserted: false } : await saveQueueReachability(env.DB, observedAt, data);
+    const reachability = structuralSnapshotWritten
+      ? { inserted: false }
+      : await saveQueueReachability(env.DB, observedAt, data);
     return {
-      ok: true, type: body.type, accepted: result.claim.accepted, duplicate: result.claim.duplicate || false,
-      claim_reason: result.claim.reason || null, queue_inspected: result.inspected,
-      structure_changed: result.structureChanged === true, likes_changed: result.likesChanged === true,
-      complete_likes: result.completeLikes !== false, queue_items_written: result.itemsWritten,
+      ok: true,
+      type: body.type,
+      accepted: result.claim.accepted,
+      duplicate: result.claim.duplicate || false,
+      claim_reason: result.claim.reason || null,
+      queue_inspected: result.inspected,
+      structure_changed: result.structureChanged === true,
+      likes_changed: result.likesChanged === true,
+      complete_likes: result.completeLikes !== false,
+      queue_items_written: result.itemsWritten,
       like_observations_written: result.observationsWritten,
       reachability_checkpoint_written: reachability.inserted,
       reachability_recorded: structuralSnapshotWritten || reachability.inserted,
     };
   },
   collector_heartbeat: async (env, body, observedAt, data) => {
-    const result = await saveLeanHeartbeat(env.DB, observedAt, { ...data, collector_id: data?.collector_id || body?.collector_id });
+    const result = await saveLeanHeartbeat(env.DB, observedAt, {
+      ...data,
+      collector_id: data?.collector_id || body?.collector_id,
+    });
     return { ok: true, type: body.type, accepted: result.accepted };
   },
   track_metadata: async (env, body, observedAt, data) => {
@@ -59,15 +71,22 @@ const INGEST_HANDLERS = {
         fetched_at=MAX(excluded.fetched_at,sh_track_metadata.fetched_at),
         raw_json=COALESCE(excluded.raw_json,sh_track_metadata.raw_json)`)
       .bind(
-        text(track.spotify_id), text(track.isrc)?.trim().toUpperCase() || null,
-        text(track.title), text(track.artist), text(track.display_title), text(track.thumbnail_url),
-        text(track.spotify_url), text(track.source || 'spotify_oembed'), num(track.fetched_at) ?? observedAt,
+        text(track.spotify_id),
+        text(track.isrc)?.trim().toUpperCase() || null,
+        text(track.title),
+        text(track.artist),
+        text(track.display_title),
+        text(track.thumbnail_url),
+        text(track.spotify_url),
+        text(track.source || 'spotify_oembed'),
+        num(track.fetched_at) ?? observedAt,
         rawJson(track.raw),
       ));
     if (statements.length) await env.DB.batch(statements);
     return { ok: true, type: body.type, accepted: true, tracks_written: statements.length };
   },
 };
+
 const NO_OPTIMIZED_INGEST = Promise.resolve(null);
 
 export function supportsOptimizedIngestType(type) {
@@ -81,21 +100,20 @@ export function ingestOptimizedBody(env, body) {
   return handler(env, body, observedAtFrom(body), body?.data ?? {});
 }
 
-export async function ingestInternal(context) {
-  const { request, env } = context;
-  if (!authorized(request, env) || !env.DB) return corePost(context);
-  const parsed = await readJsonBody(request, { clone: true });
-  if (!parsed.ok) return corePost(context);
+export async function ingestInternal({ request, env }) {
+  if (!authorized(request, env)) return json({ ok: false, error: 'unauthorized' }, 401);
+  if (!env?.DB) return json({ ok: false, error: 'DB binding missing' }, 500);
+
+  const parsed = await readJsonBody(request);
+  if (!parsed.ok) return json({ ok: false, error: 'invalid JSON' }, 400);
   const body = parsed.body;
-  const fallbackContext = {
-    ...context,
-    request: requestWithParsedJson(request, body),
-  };
-  if (!supportsOptimizedIngestType(body?.type)) return corePost(fallbackContext);
+  if (!supportsOptimizedIngestType(body?.type)) {
+    return json({ ok: false, error: `unknown type: ${String(body?.type || '')}` }, 400);
+  }
+
   try {
     return json(await ingestOptimizedBody(env, body));
   } catch (error) {
-    if (body?.type === 'snapshot' && isPendingStreamSchemaError(error)) return corePost(fallbackContext);
     console.error(error);
     return json({ ok: false, error: error?.message || 'database error' }, 500);
   }
