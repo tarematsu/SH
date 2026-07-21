@@ -11,7 +11,6 @@ export const API_GROUPS = Object.freeze({
     { path: '/api/dashboard-history', methods: ['GET'], description: 'Recent dashboard history' },
     { path: '/api/dashboard-queue', methods: ['GET'], description: 'Current queue read model' },
     { path: '/api/dashboard-recovery', methods: ['GET'], description: 'Dashboard recovery payload' },
-    { path: '/api/playback', methods: ['GET'], description: 'Current playback state' },
     { path: '/api/comment-velocity', methods: ['GET'], description: 'Comment velocity series' },
     { path: '/api/track-likes', methods: ['GET'], description: 'Track like observations' },
     { path: '/api/like-ranking', methods: ['GET'], description: 'Track like ranking' },
@@ -25,7 +24,7 @@ export const API_GROUPS = Object.freeze({
     { path: '/api/history', methods: ['GET'], description: 'Daily, weekly, monthly, ranking, broadcast, and raw history modes' },
     { path: '/api/track-history', methods: ['GET'], description: 'Track play history' },
     { path: '/api/broadcast-series', methods: ['GET'], description: 'Broadcast listener time series' },
-    { path: '/api/host-history', methods: ['GET'], description: 'Host profiles, sessions, and session details' },
+    { path: '/api/host-history', methods: ['GET'], description: 'Sakurazaka broadcast sessions and session details' },
   ]),
 });
 
@@ -35,6 +34,7 @@ export const RETIRED_ENDPOINTS = Object.freeze([
   { path: '/api/history-migrated', status: 404, description: 'Use /api/minute-facts' },
   { path: '/api/history-raw', status: 404, description: 'Use /api/history?mode=raw' },
   { path: '/api/official-history', status: 404, description: 'Use /api/history?mode=broadcasts' },
+  { path: '/api/playback', status: 404, description: 'Use /api/dashboard' },
   { path: '/api/ingest', status: 404, description: 'Public Pages ingestion is disabled' },
   { path: '/api/host-ingest', status: 404, description: 'Public Pages host ingestion is disabled' },
 ]);
@@ -54,10 +54,8 @@ export const BLOCKED_API_PATHS = Object.freeze([
 ]);
 
 export const API_EDGE_TTL_SECONDS = 300;
-export const PLAYBACK_EDGE_TTL_SECONDS = 300;
 export const API_BROWSER_TTL_SECONDS = 30;
 export const MATERIALIZED_RESPONSE_MAX_AGE_MS = 15 * 60_000;
-export const PLAYBACK_RESPONSE_MAX_AGE_MS = 2 * 60 * 60_000;
 
 export const MATERIALIZED_API_VARIANTS = Object.freeze([
   Object.freeze({ key: 'dashboard-history', url: '/api/dashboard-history', cadence_minutes: 360 }),
@@ -88,15 +86,10 @@ function onlyParameters(url, allowed = []) {
   return true;
 }
 
-function normalizedChannel(url) {
-  return String(url.searchParams.get('channel') || 'buddies').trim().toLowerCase();
-}
-
 export function materializedApiKey(input) {
   const url = input instanceof URL ? input : new URL(input);
   const pathname = normalizedPathname(url.pathname);
 
-  if (pathname === '/api/playback') return null;
   if (pathname === '/api/dashboard' && onlyParameters(url)) return 'dashboard';
   if (pathname === '/api/dashboard-history' && onlyParameters(url)) return 'dashboard-history';
   if (pathname === '/api/dashboard-queue' && onlyParameters(url, ['offset', 'limit'])) {
@@ -136,30 +129,22 @@ export function edgeCacheableApiRequest(request) {
   return true;
 }
 
-export function apiCacheTtlSeconds(request) {
-  return normalizedPathname(new URL(request.url).pathname) === '/api/playback'
-    ? PLAYBACK_EDGE_TTL_SECONDS
-    : API_EDGE_TTL_SECONDS;
+export function apiCacheTtlSeconds() {
+  return API_EDGE_TTL_SECONDS;
 }
 
 export function materializedResponseCadenceSeconds(modelKey) {
-  if (String(modelKey || '').startsWith('playback:')) return PLAYBACK_EDGE_TTL_SECONDS;
   const cadenceMinutes = Number(materializedVariantsByKey.get(String(modelKey || ''))?.cadence_minutes);
   if (!Number.isFinite(cadenceMinutes) || cadenceMinutes <= 0) return API_EDGE_TTL_SECONDS;
   return Math.max(API_EDGE_TTL_SECONDS, Math.trunc(cadenceMinutes * 60));
 }
 
 export function materializedResponseMaximumAge(modelKey, env = {}) {
-  const playback = String(modelKey || '').startsWith('playback:');
-  const configured = Number(playback
-    ? env.PLAYBACK_RESPONSE_MAX_AGE_MS
-    : env.PAGES_RESPONSE_MAX_AGE_MS);
+  const configured = Number(env.PAGES_RESPONSE_MAX_AGE_MS);
   const cadenceMs = materializedResponseCadenceSeconds(modelKey) * 1000;
   const graceMs = API_EDGE_TTL_SECONDS * 1000;
   const minimum = cadenceMs + graceMs;
-  const fallback = playback
-    ? PLAYBACK_RESPONSE_MAX_AGE_MS
-    : Math.max(MATERIALIZED_RESPONSE_MAX_AGE_MS, minimum);
+  const fallback = Math.max(MATERIALIZED_RESPONSE_MAX_AGE_MS, minimum);
   return Number.isFinite(configured) && configured >= minimum ? configured : fallback;
 }
 
@@ -168,9 +153,6 @@ export function canonicalApiCacheRequest(request) {
   const pathname = normalizedPathname(url.pathname);
   url.searchParams.delete('v');
 
-  if (pathname === '/api/playback' && normalizedChannel(url) === 'buddies') {
-    url.searchParams.delete('channel');
-  }
   if (pathname === '/api/history'
       && String(url.searchParams.get('mode') || 'weekly').trim().toLowerCase() === 'weekly') {
     url.searchParams.delete('mode');
