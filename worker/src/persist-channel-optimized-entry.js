@@ -3,16 +3,10 @@ import { logSampledSuccess } from './sampled-success-log.js';
 const RETRY_30_SECONDS = Object.freeze({ delaySeconds: 30 });
 const EMPTY_DEPENDENCIES = Object.freeze({});
 
-let appleRuntimeModulePromise;
 let fallbackModulePromise;
 let likesPlanModulePromise;
 let likesWriteModulePromise;
 let structureModulePromise;
-
-async function activeEnvironment(env) {
-  const module = await (appleRuntimeModulePromise ||= import('../../site/functions/lib/apple-music-d1-pruner.js'));
-  return module.withAppleMusicFreeRuntime(env);
-}
 
 function likesBudgetEnvironment(env) {
   if (env?.QUEUE_LIKES_REPAIR_ENABLED != null) return env;
@@ -87,15 +81,14 @@ async function processPersistenceBatch(batch, env, dependencies = EMPTY_DEPENDEN
   if (!messages?.length) return;
   const message = messages[0];
   try {
-    const activeEnv = await activeEnvironment(env);
     const stage = optimizedQueueStage(message.body);
     const result = stage === 'persist' || stage === 'structure-write'
-      ? await processStructureTask(activeEnv, message.body, dependencies)
+      ? await processStructureTask(env, message.body, dependencies)
       : stage === 'likes'
-        ? await processLikesPlanTask(activeEnv, message.body, dependencies)
+        ? await processLikesPlanTask(env, message.body, dependencies)
         : stage === 'likes-write'
-          ? await processLikesWriteTask(activeEnv, message.body, dependencies)
-          : await processFallbackTask(activeEnv, message.body, dependencies);
+          ? await processLikesWriteTask(env, message.body, dependencies)
+          : await processFallbackTask(env, message.body, dependencies);
     logPersistenceResult(result);
     message.ack();
   } catch (error) {
