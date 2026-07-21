@@ -22,10 +22,13 @@ test('active history and like SQL use Spotify and ISRC without Apple Music colum
   assert.match(TRACK_HISTORY_SQL, /isrc/);
 });
 
-test('host history no longer exposes general profiles or raw comments and events', () => {
+test('host history contains only Sakurazaka session summary and detail modes', () => {
   const source = readFileSync(new URL('../functions/api/host-history.js', import.meta.url), 'utf8');
   assert.doesNotMatch(source, /sh_host_profile_snapshots/);
   assert.doesNotMatch(source, /sh_host_comments/);
   assert.doesNotMatch(source, /sh_host_raw_events/);
-  assert.match(source, /general profile history retired/);
+  assert.doesNotMatch(source, /mode === 'profile'|general profile history retired/);
+  assert.match(source, /mode === 'sessions'/);
+  assert.match(source, /mode === 'session'/);
+  assert.match(source, /handle='sakurazaka46jp'/);
 });
