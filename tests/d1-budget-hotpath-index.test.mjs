@@ -10,6 +10,10 @@ const migration = readFileSync(
   new URL('../database/facts-migrations/025_d1_budget_hotpath_index.sql', import.meta.url),
   'utf8',
 );
+const prSchema = readFileSync(
+  new URL('../worker/scripts/apply-facts-pr-schema.mjs', import.meta.url),
+  'utf8',
+);
 const runtime = JSON.parse(readFileSync(
   new URL('../worker/wrangler.runtime.jsonc', import.meta.url),
   'utf8',
@@ -19,8 +23,20 @@ const requestBudget = readFileSync(
   'utf8',
 );
 
-test('PR deployment applies the D1 budget hot-path indexes before the current schema tip', () => {
-  assert.equal(descriptor.schema, 'database/facts-migrations/028_purge_completed_minute_fact_payloads.sql');
+const expectedMigrations = [
+  'database/facts-migrations/025_d1_budget_hotpath_index.sql',
+  'database/facts-migrations/026_remove_apple_music_compatibility.sql',
+  'database/facts-migrations/027_purge_retired_api_read_models.sql',
+  'database/facts-migrations/028_purge_completed_minute_fact_payloads.sql',
+];
+
+test('PR deployment applies the ordered FACTS migration set through the current schema tip', () => {
+  assert.equal(descriptor.schema, expectedMigrations.at(-1));
+  assert.deepEqual(descriptor.migrations, expectedMigrations);
+  assert.match(prSchema, /descriptor\.migrations/);
+  assert.match(prSchema, /ordered-migration-set/);
+  assert.match(prSchema, /026_remove_apple_music_compatibility\.sql/);
+  assert.match(prSchema, /appleMusicCompatibilityPresent/);
   assert.match(
     migration,
     /ON sh_minute_facts\(\s*source_code,\s*minute_at DESC,\s*id DESC,\s*channel_id,\s*observed_at,\s*is_broadcasting\s*\)/s,
