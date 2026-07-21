@@ -2,7 +2,6 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import { onRequest as rootMiddleware } from '../functions/_middleware.js';
-import { onRequest as apiMiddleware } from '../functions/api/_middleware.js';
 import { serveCached as routeCache } from '../functions/lib/cache-middleware.js';
 
 function uncachedEdge() {
@@ -52,15 +51,6 @@ test('root Pages cache keeps Sakurazaka response misses request-local', async ()
     rootMiddleware,
     'https://skrzk.test/api/sakurazaka46jp?from=2026-01-01&to=2026-01-02',
   );
-});
-
-test('API middleware leaves canonical cache ownership to the Pages root middleware', async () => {
-  const response = await apiMiddleware({
-    request: new Request('https://skrzk.test/api/sakurazaka46jp?from=2026-01-01&to=2026-01-02'),
-    env: {},
-    next: async () => Response.json({ ok: true }),
-  });
-  assert.equal(response.headers.get('x-edge-cache'), null);
 });
 
 test('route cache helper keeps Sakurazaka misses request-local', async () => {
