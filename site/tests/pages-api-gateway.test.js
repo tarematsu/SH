@@ -12,6 +12,10 @@ import {
   onRequest as otherHealthRequest,
   readOtherHealth,
 } from '../functions/api/health/other.js';
+import {
+  onRequest as sakurazakaHealthRequest,
+  readSakurazakaHealth,
+} from '../functions/api/health/sakurazaka46jp.js';
 
 const NOW = 1_700_000_000_000;
 
@@ -108,18 +112,34 @@ async function withFixedNow(action) {
 test('Pages API catalog exposes only canonical routes without Worker URLs', async () => {
   const catalog = apiCatalog(NOW);
   assert.equal(catalog.gateway, 'cloudflare-pages');
-  assert.equal(catalog.contract_version, 2);
+  assert.equal(catalog.contract_version, 3);
   assert.equal(catalog.worker_urls_public, false);
   assert.equal('compatibility' in catalog, false);
+  assert.equal('retired' in catalog, false);
   const paths = Object.values(catalog.groups).flat().map(({ path }) => path);
-  assert.ok(paths.includes('/api/health'));
-  assert.ok(paths.includes('/api/health/minute'));
-  assert.ok(paths.includes('/api/health/other'));
-  assert.ok(paths.includes('/api/minute-facts'));
-  assert.ok(paths.includes('/api/minute-facts/current'));
-  assert.ok(paths.includes('/api/minute-facts/latest'));
-  assert.equal(paths.includes('/api/health/collector'), false);
-  assert.equal(paths.includes('/api/history-current'), false);
+  for (const path of [
+    '/api/health',
+    '/api/health/minute',
+    '/api/health/other',
+    '/api/health/sakurazaka46jp',
+    '/api/dashboard',
+    '/api/history',
+    '/api/track-history',
+    '/api/sakurazaka46jp',
+    '/api/host-history',
+  ]) assert.ok(paths.includes(path), path);
+  for (const retired of [
+    '/api/minute-facts',
+    '/api/minute-facts/current',
+    '/api/minute-facts/latest',
+    '/api/dashboard-history',
+    '/api/dashboard-queue',
+    '/api/dashboard-recovery',
+    '/api/comment-velocity',
+    '/api/track-likes',
+    '/api/like-ranking',
+    '/api/broadcast-series',
+  ]) assert.equal(paths.includes(retired), false, retired);
   assert.equal(new Set(paths).size, paths.length);
 
   const response = await catalogRequest({ request: new Request('https://example.com/api') });
@@ -150,20 +170,30 @@ test('Pages minute health reads all active tasks and rejects unhealthy task stat
   assert.equal(response.headers.get('cache-control'), 'no-store');
 });
 
-test('Pages other health reads prediction, official news and Sakurazaka state', async () => {
-  const env = {
-    OTHER_DB: otherDb(),
-    SOLO_BROADCAST_HANDLE: 'sakurazaka46jp',
-  };
+test('Pages other health is scoped to the runtime orchestrator', async () => {
+  const env = { OTHER_DB: otherDb() };
   const payload = await readOtherHealth(env, NOW);
   assert.equal(payload.ok, true);
-  assert.equal(payload.components.prediction.ok, true);
-  assert.equal(payload.components.official_news.upcoming_count, 2);
-  assert.equal(payload.components.sakurazaka.phase, 'idle');
-  assert.deepEqual(payload.services, ['sh-runtime-orchestrator', 'sh-sakurazaka46jp']);
+  assert.equal(payload.components.runtime.ok, true);
+  assert.deepEqual(payload.services, ['sh-runtime-orchestrator']);
 
   const response = await withFixedNow(() => otherHealthRequest({
     request: new Request('https://example.com/api/health/other'),
+    env,
+  }));
+  assert.equal(response.status, 200);
+});
+
+test('Pages Sakurazaka health combines official news and solo monitor state', async () => {
+  const env = { OTHER_DB: otherDb(), SOLO_BROADCAST_HANDLE: 'sakurazaka46jp' };
+  const payload = await readSakurazakaHealth(env, NOW);
+  assert.equal(payload.ok, true);
+  assert.equal(payload.components.official_news.upcoming_count, 2);
+  assert.equal(payload.components.solo_monitor.phase, 'idle');
+  assert.deepEqual(payload.services, ['sh-sakurazaka46jp']);
+
+  const response = await withFixedNow(() => sakurazakaHealthRequest({
+    request: new Request('https://example.com/api/health/sakurazaka46jp'),
     env,
   }));
   assert.equal(response.status, 200);
@@ -186,17 +216,16 @@ test('all active Workers disable workers.dev and preview URLs', () => {
 
   const pages = JSON.parse(readFileSync(new URL('../wrangler.jsonc', import.meta.url), 'utf8'));
   assert.deepEqual(pages.d1_databases.map(({ binding }) => binding), ['DB', 'MINUTE_DB', 'OTHER_DB']);
-  assert.equal(pages.vars.MINUTE_DERIVE_STALE_MS, 360_000);
-  assert.equal(pages.vars.OTHER_CRON_STALE_MS, 720_000);
 
   for (const path of [
     '../functions/api/index.js',
     '../functions/api/health.js',
     '../functions/api/health/minute.js',
     '../functions/api/health/other.js',
-    '../functions/api/minute-facts/index.js',
-    '../functions/api/minute-facts/current.js',
-    '../functions/api/minute-facts/latest.js',
+    '../functions/api/health/sakurazaka46jp.js',
+    '../functions/api/dashboard.js',
+    '../functions/api/track-history.js',
+    '../functions/api/sakurazaka46jp.js',
   ]) {
     assert.equal(existsSync(new URL(path, import.meta.url)), true, `${path} must exist`);
   }
