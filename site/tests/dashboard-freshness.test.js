@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
-import { onRequest } from '../functions/api/_middleware.js';
+import { onRequest } from '../functions/_middleware.js';
 
 test('live dashboard bypasses the Pages edge cache', async () => {
   let nextCalls = 0;
