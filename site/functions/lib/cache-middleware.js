@@ -3,7 +3,6 @@ function cachePolicy(url) {
   if (url.pathname === '/api/sakurazaka46jp') return { ttl: 3600, browser: 300 };
   if (url.pathname === '/api/history') {
     const mode = url.searchParams.get('mode') || 'weekly';
-    if (mode === 'raw' || url.searchParams.has('cursor')) return null;
     if (mode === 'broadcasts') return { ttl: 900, browser: 120 };
     return { ttl: 300, browser: 60 };
   }
