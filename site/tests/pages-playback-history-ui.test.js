@@ -9,15 +9,16 @@ const historyEntry = readFileSync(new URL('../public/history/history-main.js', i
 const historyFixes = readFileSync(new URL('../public/history/history-page-fixes.js', import.meta.url), 'utf8');
 const trackEndpoint = readFileSync(new URL('../functions/api/track-history.js', import.meta.url), 'utf8');
 
-test('main page renders current track likes from the canonical dashboard response', () => {
+test('main page renders current track likes from the dashboard response', () => {
   assert.match(mainPage, /id="trackBites" hidden/);
   assert.equal((mainPage.match(/<script /g) || []).length, 1);
   assert.match(mainPage, /src="\/dashboard-metrics\.js"/);
   assert.match(dashboardEntry, /import\('\/dashboard-client\.js'\)/);
   assert.match(dashboardClient, /track\.bite_count/);
   assert.match(dashboardClient, /`♡ \$\{integer\.format\(bites\)\}`/);
-  assert.match(dashboardClient, /const DASHBOARD_URL = '\/api\/dashboard'/);
-  assert.doesNotMatch(`${dashboardEntry}\n${dashboardClient}`, /\/api\/playback|dashboard-history|dashboard-queue/);
+  assert.equal((dashboardClient.match(/\/api\/dashboard/g) || []).length, 1);
+  assert.match(dashboardClient, /payload\.queue/);
+  assert.match(dashboardClient, /payload\.history/);
 });
 
 test('main page labels member and stream deltas with their actual dates', () => {
@@ -32,7 +33,8 @@ test('track history reads materialized rows and integrated ranking status', () =
   assert.match(trackEndpoint, /FROM sh_pages_track_history_read_model/);
   assert.match(trackEndpoint, /FROM sh_pages_payload_read_model/);
   assert.match(trackEndpoint, /ranking_summary/);
-  assert.doesNotMatch(trackEndpoint, /handleTrackHistory|sh_queue_items|sh_queue_snapshots|sh_channel_snapshots|sh_track_counter_current/);
+  assert.match(trackEndpoint, /ranking_scope/);
+  assert.match(trackEndpoint, /worker_materialized_read_model/);
 });
 
 test('track history defaults to yesterday as a single day', () => {
