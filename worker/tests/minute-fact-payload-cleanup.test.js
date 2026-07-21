@@ -48,7 +48,9 @@ test('database workflow purges every eligible existing payload in one job using 
   assert.match(purgeScript, /while \(batches < maxBatches\)/);
   assert.match(purgeScript, /LIMIT \$\{batchSize\}/);
   assert.match(purgeScript, /if \(cleared < batchSize\) break/);
-  assert.match(purgeScript, /after\.eligible_jobs !== 0/);
+  assert.match(purgeScript, /firstEligibleJobId/);
+  assert.match(purgeScript, /remainingEligibleJobId != null/);
+  assert.doesNotMatch(purgeScript, /SUM\(LENGTH\(payload_json\)\)/);
   assert.match(databaseWorkflow, /name: Purge completed minute fact payloads/);
   assert.match(databaseWorkflow, /node scripts\/purge-completed-minute-fact-payloads\.mjs/);
 });
