@@ -11,7 +11,7 @@ export const API_GROUPS = Object.freeze({
     { path: '/api/dashboard', methods: ['GET'], description: 'Current dashboard, queue, and recent history read model' },
   ]),
   history: Object.freeze([
-    { path: '/api/history', methods: ['GET'], description: 'Daily, weekly, monthly, ranking, broadcast, and raw history modes' },
+    { path: '/api/history', methods: ['GET'], description: 'Daily, weekly, monthly, ranking, and broadcast history modes' },
     { path: '/api/track-history', methods: ['GET'], description: 'Track play history with like ranking' },
     { path: '/api/sakurazaka46jp', methods: ['GET'], description: 'Sakurazaka official broadcast listener series' },
     { path: '/api/host-history', methods: ['GET'], description: 'Sakurazaka broadcast sessions and session details' },
@@ -21,8 +21,10 @@ export const API_GROUPS = Object.freeze({
 export const INTERNAL_API_PATHS = Object.freeze([
   '/api/dashboard-legacy',
   '/api/history-legacy',
+  '/api/ingest',
   '/api/ingest-core',
   '/api/ingest-legacy',
+  '/api/host-ingest',
   '/api/host-ingest-core',
   '/api/host-ingest-legacy',
 ]);
@@ -80,7 +82,6 @@ export function edgeCacheableApiRequest(request) {
   const pathname = normalizedPathname(url.pathname);
   if (!pathname.startsWith('/api/') || blockedApiPaths.has(pathname)) return false;
   if (pathname.startsWith('/api/health')) return false;
-  if (url.searchParams.has('raw') || url.searchParams.get('mode') === 'raw') return false;
   return true;
 }
 
