@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
 import test from 'node:test';
 
-import { TRACK_RANKING_SQL } from '../site/functions/lib/track-history-restored-handler.js';
+import { TRACK_RANKING_SQL } from '../site/functions/lib/track-ranking.js';
 
 function rankingDatabase() {
   const db = new DatabaseSync(':memory:');
@@ -21,30 +21,23 @@ function rankingDatabase() {
       updated_at INTEGER
     );
     CREATE TABLE sh_track_counter_current(
+      occurrence_key TEXT PRIMARY KEY,
+      track_key TEXT NOT NULL,
       track_id INTEGER,
-      counter_id INTEGER,
-      count_value INTEGER,
-      observed_at INTEGER
-    );
-    CREATE TABLE sh_track_counter_dictionary(
-      id INTEGER PRIMARY KEY,
-      counter_type TEXT,
-      counter_key TEXT
+      isrc TEXT,
+      spotify_id TEXT,
+      count_value INTEGER NOT NULL,
+      observed_at INTEGER NOT NULL
     );
     INSERT INTO sh_tracks VALUES
-      (1,10,'sp1','JPTEST1','A','Artist A','A — Artist A',NULL,NULL,100),
+      (1,10,'sp1','JPTEST1','A','櫻坂46','A — 櫻坂46',NULL,NULL,100),
       (2,20,'sp2','JPTEST2','B','Artist B','B — Artist B',NULL,NULL,100),
-      (3,30,NULL,NULL,'C','Artist C','C — Artist C',NULL,NULL,100);
-    INSERT INTO sh_track_counter_dictionary VALUES
-      (1,'like','isrc:JPTEST1'),
-      (2,'like','spotify:sp1'),
-      (3,'like','isrc:JPTEST2'),
-      (4,'like','stationhead:30');
+      (3,30,'sp3','USTEST3','C','Artist C','C — Artist C',NULL,NULL,100);
     INSERT INTO sh_track_counter_current VALUES
-      (1,1,20,2000),
-      (1,2,25,2500),
-      (2,3,5,2100),
-      (3,4,99,2600);
+      ('occ-1','isrc:JPTEST1',1,'JPTEST1','sp1',20,2000),
+      ('occ-2','isrc:JPTEST1',1,'JPTEST1','sp1',25,2500),
+      ('occ-3','isrc:JPTEST2',2,'JPTEST2','sp2',5,2100),
+      ('occ-4','isrc:USTEST3',3,'USTEST3','sp3',99,2600);
   `);
   return db;
 }
