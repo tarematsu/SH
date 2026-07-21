@@ -121,6 +121,38 @@ async function processSparseLiveStart(env, body, dependencies = EMPTY_DEPENDENCI
       : { ...dependencies, stageRevision: false, write };
     return processMinuteDeriveWriteStage(env, body, writeDependencies);
   }
+
+  if (dependencies.write) {
+    const result = await processMinuteDeriveWriteStage(env, body, {
+      ...dependencies,
+      stageRevision: false,
+      write: (activeEnv, value) => dependencies.write(activeEnv, {
+        ...value,
+        prepared_revision: revision,
+      }),
+    });
+    if (result?.failed || !revision.staged) {
+      return {
+        ...result,
+        revision_id: revision.revision_id,
+        revision_pending: false,
+        revision_complete: true,
+      };
+    }
+    await sendStage(env, {
+      stage: SPARSE_STAGE,
+      job: compactJob(body.job),
+      revision,
+      started_at: integer(body.started_at) ?? Date.now(),
+    }, dependencies);
+    return {
+      ...result,
+      revision_id: revision.revision_id,
+      revision_pending: true,
+      revision_complete: false,
+    };
+  }
+
   await sendStage(env, {
     stage: LIVE_WRITE_STAGE,
     job: compactJob(body.job),
