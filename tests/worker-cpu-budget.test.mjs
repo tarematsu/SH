@@ -48,11 +48,12 @@ function sampledWorker(maximum = 1) {
 
 function summaryFor(maximum, { events = 1, samples = events } = {}) {
   return {
-    events: events + 2,
-    cpu_ms: { samples: samples + 2 },
+    events: events + 3,
+    cpu_ms: { samples: samples + 3 },
     scripts: {
       'sh-buddies-ingest': sampledWorker(),
       'sh-minute-enrichment': sampledWorker(),
+      'sh-sakurazaka46jp': sampledWorker(),
       'sh-runtime-orchestrator': {
         events,
         retired: false,
