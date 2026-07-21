@@ -6,7 +6,7 @@ import { DatabaseSync } from 'node:sqlite';
 import {
   COMMENT_VELOCITY_UPDATE_SQL,
   loadQueueComparisonState,
-} from '../site/functions/api/ingest.js';
+} from '../site/functions/lib/ingest.js';
 import {
   BROADCAST_SUMMARY_SQL,
   parseBroadcastSummaryRows,
@@ -109,16 +109,12 @@ test('broadcast summary reports empty range and setup state in one query', () =>
   assert.equal(Object.hasOwn(inside.rows[0], 'has_data'), false);
 });
 
-test('history display layer avoids repeated canvas resets and temporary date arrays', () => {
+test('history display layer uses current canonical modules only', () => {
   const source = readFileSync(
-    new URL('../site/public/history/history-track-performance.js', import.meta.url),
+    new URL('../site/public/history/history-lite.js', import.meta.url),
     'utf8',
   );
-  assert.match(source, /prepareCanvasDifferential/);
-  assert.match(source, /if \(canvas\.width !== pixelWidth\)/);
-  assert.match(source, /setChartRangeSinglePass/);
-  assert.match(source, /makeXPositionsSinglePass/);
-  assert.match(source, /url\.searchParams\.set\('v', '14'\)/);
-  assert.doesNotMatch(source, /dates\.filter\(Boolean\)/);
-  assert.doesNotMatch(source, /dates\.map\(dateTimestamp\)/);
+  assert.match(source, /CACHE_PREFIX = 'sh\.history\.v3:'/);
+  assert.match(source, /tracks: \{ label: '楽曲'/);
+  assert.match(source, /broadcasts: \{ label: '公式配信比較'/);
 });
