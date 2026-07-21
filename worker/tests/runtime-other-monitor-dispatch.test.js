@@ -1,55 +1,65 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import {
-  OTHER_MONITOR_SUCCESS_MESSAGE,
-  dispatchOtherMonitorStage,
-} from '../src/runtime-other-monitor-dispatch.js';
+import { dispatchOtherMonitorStage } from '../src/runtime-other-monitor-dispatch.js';
+import { runRuntimeQueue } from '../src/runtime-queue.js';
 
-const SCHEDULED_AT = Date.UTC(2026, 0, 1, 0, 0, 0);
+const BASE = Date.UTC(2026, 0, 1, 0, 0, 0);
 
-test('runtime monitor stage defers its D1 checkpoint to a separate Queue invocation', async () => {
-  const sent = [];
+test('runtime prediction executes only at the two scheduled minute slots', async () => {
+  const calls = [];
+  const dependencies = {
+    prediction: async (_env, scheduledAt) => {
+      calls.push(scheduledAt);
+      return { ok: true, scheduled_at: scheduledAt };
+    },
+  };
+
+  const first = await dispatchOtherMonitorStage(
+    { scheduledTime: BASE + 10 * 60_000 },
+    {},
+    {},
+    { dependencies },
+  );
+  const second = await dispatchOtherMonitorStage(
+    { scheduledTime: BASE + 40 * 60_000 },
+    {},
+    {},
+    { dependencies },
+  );
+  const idle = await dispatchOtherMonitorStage(
+    { scheduledTime: BASE + 25 * 60_000 },
+    {},
+    {},
+    { dependencies },
+  );
+
+  assert.deepEqual(calls, [BASE + 10 * 60_000, BASE + 40 * 60_000]);
+  assert.equal(first[0].ok, true);
+  assert.equal(second[0].ok, true);
+  assert.deepEqual(idle, [{ skipped: true, reason: 'stream-prediction-not-due' }]);
+});
+
+test('successful prediction invalidates the runtime health cache once', async () => {
   let invalidations = 0;
-  const result = await dispatchOtherMonitorStage({
-    cron: '*/5 * * * *',
-    scheduledTime: SCHEDULED_AT,
-  }, {
-    HOST_MONITOR_QUEUE: {
-      async send(body, options) { sent.push({ body, options }); },
+  await dispatchOtherMonitorStage(
+    { scheduledTime: BASE + 10 * 60_000 },
+    {},
+    {},
+    {
+      dependencies: { prediction: async () => ({ ok: true }) },
+      healthApp: { invalidateHealthCache() { invalidations += 1; } },
     },
-  }, {}, {
-    dependencies: { buddy: async () => 'buddy-dispatched' },
-    healthApp: { invalidateHealthCache() { invalidations += 1; } },
-  });
-
-  assert.deepEqual(result, ['buddy-dispatched']);
-  assert.deepEqual(sent, [{
-    body: {
-      message_type: OTHER_MONITOR_SUCCESS_MESSAGE,
-      message_version: 1,
-      at: SCHEDULED_AT,
-    },
-    options: { contentType: 'json' },
-  }]);
+  );
   assert.equal(invalidations, 1);
 });
 
-test('production host selection stays queue-only and avoids a D1 due probe', async () => {
-  const sent = [];
-  const scheduledAt = SCHEDULED_AT + 25 * 60_000;
-  await dispatchOtherMonitorStage({
-    cron: '*/5 * * * *',
-    scheduledTime: scheduledAt,
-  }, {
-    OTHER_DB: { prepare() { assert.fail('host selection must not query D1'); } },
-    HOST_MONITOR_QUEUE: {
-      async send(body) { sent.push(body); },
-    },
-  }, {});
-
-  assert.deepEqual(sent.map(({ message_type }) => message_type), [
-    'other-monitor-select',
-    OTHER_MONITOR_SUCCESS_MESSAGE,
-  ]);
+test('unknown runtime queue messages are discarded without loading a legacy monitor', async () => {
+  const calls = [];
+  await runRuntimeQueue({ messages: [{
+    body: { message_type: 'retired-monitor-task' },
+    ack() { calls.push('ack'); },
+    retry() { calls.push('retry'); },
+  }] }, {}, {});
+  assert.deepEqual(calls, ['ack']);
 });
