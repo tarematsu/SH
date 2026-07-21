@@ -20,8 +20,8 @@ Use `GET /api` for the machine-readable endpoint catalog. The public API surface
 
 Removed endpoints do not have compatibility handlers or catalog entries. File absence is the public 404 boundary.
 
-The canonical groups and internal implementation paths are defined in `site/functions/lib/api-contract.js`. Both the API catalog and middleware consume that contract.
+The canonical groups are defined in `site/functions/lib/api-contract.js`. Both the API catalog and middleware consume that contract. Tests enforce that every JavaScript file under `site/functions/api` corresponds to one declared public route, apart from the API index and middleware.
 
-Public Pages ingestion is disabled. The internal ingest modules remain callable by Workers, while `/api/ingest` and `/api/host-ingest` are blocked by API middleware.
+Collection and solo-session persistence are private modules under `site/functions/lib`. Workers call those modules directly; there are no Pages ingestion routes.
 
 Do not add public HTTP routes to Worker entrypoints. Add new public read endpoints to `site/functions/api`, register them in the shared API contract, and bind their data sources in `site/wrangler.jsonc`.
