@@ -7,6 +7,7 @@ const workerRoot = resolve(repositoryRoot, 'worker');
 const workerDefinitions = [
   { name: 'sh-minute-enrichment', config: 'worker/wrangler.minute-enrichment.jsonc', command: 'deploy:minute-enrichment' },
   { name: 'sh-buddies-ingest', config: 'worker/wrangler.ingest.jsonc', command: 'deploy:ingest' },
+  { name: 'sh-sakurazaka46jp', config: 'worker/wrangler.sakurazaka46jp.jsonc', command: 'deploy:sakurazaka46jp' },
   { name: 'sh-runtime-orchestrator', config: 'worker/wrangler.runtime.jsonc', command: 'deploy:runtime' },
 ];
 
@@ -17,6 +18,7 @@ const deployScriptWorkers = new Map([
   ['worker/scripts/deploy-minute-enrichment.mjs', 'sh-minute-enrichment'],
   ['worker/scripts/pages-response-kv-namespace.mjs', 'sh-minute-enrichment'],
   ['worker/scripts/deploy-ingest.mjs', 'sh-buddies-ingest'],
+  ['worker/scripts/deploy-sakurazaka46jp.mjs', 'sh-sakurazaka46jp'],
 ]);
 
 const allWorkerDeployScripts = new Set([
