@@ -28,10 +28,14 @@ test('PR deployment applies the D1 budget hot-path indexes before the current sc
   assert.match(migration, /ON sh_minute_fact_jobs\(status, job_kind, minute_at, id\)/);
 });
 
-test('production resumes historical reconstruction outside the temporary request budget', () => {
+test('production keeps historical reconstruction enabled at D1-budgeted throughput', () => {
   assert.equal(runtime.vars.HISTORICAL_REBUILD_ENABLED, true);
   assert.equal(runtime.vars.REBUILD_HISTORICAL_BACKFILL_ENABLED, true);
-  assert.equal(runtime.vars.REBUILD_HISTORICAL_BACKFILL_INTERVAL_MS, 600_000);
+  assert.equal(runtime.vars.REBUILD_HISTORICAL_BACKFILL_INTERVAL_MS, 3_600_000);
+  assert.equal(runtime.vars.DERIVE_DISPATCH_LIMIT, 2);
+  assert.equal(runtime.vars.DERIVE_REVISION_RECOVERY_LIMIT, 1);
+  assert.equal(runtime.vars.REBUILD_SOURCE_ROWS, 20);
+  assert.equal(runtime.vars.REBUILD_MAX_JOBS, 4);
   const historical = runtime.queues.consumers.find(
     ({ queue }) => queue === 'stationhead-minute-derive',
   );
