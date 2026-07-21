@@ -1,36 +1,25 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import test from 'node:test';
 
 import {
   API_CONTRACT_VERSION,
   API_GROUPS,
-  INTERNAL_API_PATHS,
   canonicalApiPaths,
   materializedResponseCadenceSeconds,
   materializedResponseMaximumAge,
 } from '../functions/lib/api-contract.js';
 import { apiCatalog } from '../functions/api/index.js';
-import { isBlockedApiPath } from '../functions/api/_middleware.js';
 
 function unique(values, label) {
   assert.equal(new Set(values).size, values.length, `${label} must not contain duplicates`);
 }
 
-test('API contract contains unique canonical and internal paths', () => {
+test('API contract contains unique canonical paths only', () => {
   const canonical = canonicalApiPaths();
   unique(canonical, 'canonical API paths');
-  unique(INTERNAL_API_PATHS, 'internal API paths');
-  const canonicalSet = new Set(canonical);
-  for (const path of INTERNAL_API_PATHS) assert.equal(canonicalSet.has(path), false, `${path} cannot be canonical`);
-});
-
-test('middleware blocks internal routes but not canonical APIs', () => {
-  for (const path of INTERNAL_API_PATHS) {
-    assert.equal(isBlockedApiPath(path), true, path);
-    assert.equal(isBlockedApiPath(`${path}/`), true, `${path}/`);
-  }
-  for (const path of canonicalApiPaths()) assert.equal(isBlockedApiPath(path), false, path);
+  assert.equal(canonical.length, 9);
+  assert.equal(existsSync(new URL('../functions/api/_middleware.js', import.meta.url)), false);
 });
 
 test('GET /api catalog is generated from the canonical contract only', () => {
