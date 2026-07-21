@@ -1,5 +1,4 @@
 import { withMinuteD1WriteThrottling } from './minute-d1-write-throttle.js';
-import { processMinuteEnrichment } from './minute-enrichment-entry.js';
 import {
   IDENTITY_ATTACH_STAGE,
   IDENTITY_BITE_STAGE,
@@ -99,12 +98,14 @@ async function processOptimizedMinuteEnrichment(env, body, dependencies = EMPTY_
     const run = dependencies.processMinuteIdentityBite || processMinuteIdentityBite;
     return run(env, activeBody, dependencies.identity || EMPTY_DEPENDENCIES);
   }
-  if (activeBody?.stage === 'identity' && !dependencies.processMinuteEnrichment) {
+  if (activeBody?.stage === 'identity') {
     const run = dependencies.processMinuteIdentitySession || processMinuteIdentitySession;
     return run(env, activeBody, dependencies.identity || EMPTY_DEPENDENCIES);
   }
-  const run = dependencies.processMinuteEnrichment || processMinuteEnrichment;
-  return run(env, activeBody, dependencies.core || EMPTY_DEPENDENCIES);
+  if (dependencies.processMinuteEnrichment) {
+    return dependencies.processMinuteEnrichment(env, activeBody, dependencies.core || EMPTY_DEPENDENCIES);
+  }
+  throw new Error(`unsupported minute enrichment stage: ${String(activeBody?.stage || '')}`);
 }
 
 function isTrackMetadataDelivery(batch, body) {
