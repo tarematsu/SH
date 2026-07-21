@@ -28,7 +28,7 @@ ACTIVE_WORKERS = tuple(
     name.strip()
     for name in os.environ.get(
         "REQUIRED_ACTIVE_WORKERS",
-        "sh-buddies-ingest,sh-minute-enrichment,sh-runtime-orchestrator",
+        "sh-buddies-ingest,sh-minute-enrichment,sh-sakurazaka46jp,sh-runtime-orchestrator",
     ).split(",")
     if name.strip()
 )
