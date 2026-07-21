@@ -14,6 +14,7 @@ import {
 import { integer } from './minute-facts-track-descriptor.js';
 
 const SPARSE_STAGE = 'revision-materialize';
+const LIVE_WRITE_STAGE = 'live-write';
 const REBUILD_PREFERRED_STAGE = 'rebuild-preferred';
 const REBUILD_WRITE_STAGE = 'rebuild-write';
 const EMPTY_DEPENDENCIES = Object.freeze({});
@@ -108,53 +109,80 @@ async function preferredPositionExists(env, revision, dependencies = EMPTY_DEPEN
   return Boolean(row);
 }
 
+async function processSparseLiveStart(env, body, dependencies = EMPTY_DEPENDENCIES) {
+  const prepare = dependencies.prepareSparseLiveRevision || prepareSparseLiveRevision;
+  const revision = await prepare(env, body.payload, {
+    sourceJobId: body?.job?.id,
+  }, dependencies.materializer || EMPTY_DEPENDENCIES);
+  if (integer(revision?.revision_id) == null) {
+    const write = dependencies.write || defaultWrite;
+    const writeDependencies = dependencies === EMPTY_DEPENDENCIES
+      ? { stageRevision: false, write }
+      : { ...dependencies, stageRevision: false, write };
+    return processMinuteDeriveWriteStage(env, body, writeDependencies);
+  }
+  await sendStage(env, {
+    stage: LIVE_WRITE_STAGE,
+    job: compactJob(body.job),
+    revision,
+    started_at: integer(body.started_at) ?? Date.now(),
+  }, dependencies);
+  return {
+    event: 'minute_fact_live_revision_prepared',
+    processed: 0,
+    failed: 0,
+    pending: true,
+    job_id: integer(body?.job?.id),
+    revision_id: revision.revision_id,
+    revision_staged: revision.staged === true,
+    materialized_item_count: revision.materialized_item_count,
+    visible_item_count: revision.visible_item_count,
+  };
+}
+
 async function processSparseLiveWrite(env, body, dependencies = EMPTY_DEPENDENCIES) {
-  let preparedRevision = null;
+  const job = compactJob(body.job);
+  const payload = await loadDurablePayload(env, job, dependencies);
   const write = dependencies.write || defaultWrite;
   const writeStageDependencies = dependencies === EMPTY_DEPENDENCIES
     ? {
         stageRevision: false,
-        write: async (activeEnv, payload) => {
-          preparedRevision = await prepareSparseLiveRevision(activeEnv, payload, {
-            sourceJobId: body?.job?.id,
-          }, EMPTY_DEPENDENCIES);
-          return write(activeEnv, preparedRevision?.revision_id == null
-            ? payload
-            : { ...payload, prepared_revision: preparedRevision });
-        },
+        write: (activeEnv, value) => write(activeEnv, body.revision?.revision_id == null
+          ? value
+          : { ...value, prepared_revision: body.revision }),
       }
     : {
         ...dependencies,
         stageRevision: false,
-        write: async (activeEnv, payload) => {
-          preparedRevision = await prepareSparseLiveRevision(activeEnv, payload, {
-            sourceJobId: body?.job?.id,
-          }, dependencies.materializer || EMPTY_DEPENDENCIES);
-          return write(activeEnv, preparedRevision?.revision_id == null
-            ? payload
-            : { ...payload, prepared_revision: preparedRevision });
-        },
+        write: (activeEnv, value) => write(activeEnv, body.revision?.revision_id == null
+          ? value
+          : { ...value, prepared_revision: body.revision }),
       };
-  const result = await processMinuteDeriveWriteStage(env, body, writeStageDependencies);
-  if (result?.failed || !preparedRevision?.staged) {
-    return preparedRevision?.revision_id == null
+  const result = await processMinuteDeriveWriteStage(env, {
+    ...body,
+    stage: 'write',
+    job,
+    payload,
+  }, writeStageDependencies);
+  if (result?.failed || !body.revision?.staged) {
+    return body.revision?.revision_id == null
       ? result
       : {
           ...result,
-          revision_id: preparedRevision.revision_id,
+          revision_id: body.revision.revision_id,
           revision_pending: false,
           revision_complete: true,
         };
   }
   await sendStage(env, {
     stage: SPARSE_STAGE,
-    job: compactJob(body.job),
-    revision: preparedRevision,
+    job,
+    revision: body.revision,
     started_at: integer(body.started_at) ?? Date.now(),
   }, dependencies);
   return {
     ...result,
-    revision_id: preparedRevision.revision_id,
+    revision_id: body.revision.revision_id,
     revision_pending: true,
     revision_complete: false,
   };
@@ -366,11 +394,14 @@ export function processMinuteDeriveMessage(env, body, dependencies = EMPTY_DEPEN
       return processSparseRebuildStart(env, body, dependencies);
     }
     if (shouldMaterializeLiveRevision(env, body.payload)) {
-      return processSparseLiveWrite(env, body, dependencies);
+      return processSparseLiveStart(env, body, dependencies);
     }
     return processLegacyMinuteDeriveMessage(env, body, dependencies);
   }
   const revision = body.revision;
+  if (stage === LIVE_WRITE_STAGE && revision?.rebuild !== true) {
+    return processSparseLiveWrite(env, body, dependencies);
+  }
   if (revision?.sparse !== true) return processLegacyMinuteDeriveMessage(env, body, dependencies);
   if (stage === REBUILD_PREFERRED_STAGE && revision.rebuild === true) {
     return processSparseRebuildPreferred(env, body, dependencies);
