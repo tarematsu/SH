@@ -192,7 +192,7 @@ test('track rows retain details but incomplete dates are marked for total exclus
   assert.deepEqual(result.excludedDates, ['2026-07-02']);
 });
 
-test('history lite client trusts server completeness and excludes incomplete track totals in one pass', () => {
+test('history lite client consumes server completeness without legacy boundary modules', () => {
   const html = readFileSync(new URL('../site/public/history/index.html', import.meta.url), 'utf8');
   assert.match(html, /src="\/history\/history-lite\.js"/);
   assert.doesNotMatch(html, /history-period-completeness\.js|history-copy-fixes\.js|history-track-likes\.js/);
@@ -201,9 +201,9 @@ test('history lite client trusts server completeness and excludes incomplete tra
     new URL('../site/public/history/history-lite.js', import.meta.url),
     'utf8',
   );
-  assert.match(runtimeSource, /row\.period_complete !== false && row\.play_count_excluded !== true/);
-  assert.match(runtimeSource, /rowData\.period_complete === false \|\| rowData\.play_count_excluded === true/);
+  assert.match(runtimeSource, /state\.rows = Array\.isArray\(data\.rows\) \? data\.rows : \[\]/);
   assert.match(runtimeSource, /const TRACK_COLUMNS/);
   assert.match(runtimeSource, /\['like_count', 'いいね数'\]/);
   assert.doesNotMatch(runtimeSource, /mondayJstKey|expectedStart|expectedEnd/);
+  assert.doesNotMatch(runtimeSource, /history-period-completeness|history-track-likes/);
 });
