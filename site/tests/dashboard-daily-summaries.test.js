@@ -69,7 +69,7 @@ test('dashboard daily summary loader uses one cached OTHER_DB read', async () =>
 
 test('dashboard route composes daily summaries without owning their SQL', () => {
   const route = readFileSync(new URL('../functions/api/dashboard.js', import.meta.url), 'utf8');
-  const core = readFileSync(new URL('../functions/api/dashboard-core.js', import.meta.url), 'utf8');
+  const core = readFileSync(new URL('../functions/lib/dashboard-core.js', import.meta.url), 'utf8');
   assert.match(route, /loadDashboardDailySummaries/);
   assert.match(route, /daily_summaries/);
   assert.match(route, /dashboardCore/);
