@@ -35,7 +35,7 @@ function database() {
   return db;
 }
 
-test('bounded cleanup clears old completed payloads and waits for incomplete revisions', () => {
+test('migration purges the existing completed payload backlog in one statement', () => {
   const db = database();
   db.exec(`INSERT INTO sh_minute_fact_jobs VALUES
       (1,'done','old-complete',100,NULL,NULL,100),
@@ -43,14 +43,7 @@ test('bounded cleanup clears old completed payloads and waits for incomplete rev
     INSERT INTO sh_queue_revisions VALUES(20,2,'pending',0,3,3);`);
 
   db.exec(migration);
-  assert.equal(
-    db.prepare('SELECT payload_json FROM sh_minute_fact_jobs WHERE id=1').get().payload_json,
-    'old-complete',
-    'migration installation must not run one unbounded table-wide update',
-  );
-  const cleared = db.prepare(CLEAR_COMPLETED_MINUTE_FACT_PAYLOADS_SQL).all(200, 1000);
-  assert.deepEqual(cleared.map(({ id }) => id), [1]);
-  assert.equal(db.prepare('SELECT payload_json FROM sh_minute_fact_jobs WHERE id=1').get().payload_json, '');
+  assert.equal(db.prepare('SELECT payload_json FROM sh_minute_fact_jobs WHERE id=1').get().payload_json, '{}');
   assert.equal(
     db.prepare('SELECT payload_json FROM sh_minute_fact_jobs WHERE id=2').get().payload_json,
     'revision-pending',
@@ -58,7 +51,18 @@ test('bounded cleanup clears old completed payloads and waits for incomplete rev
 
   db.prepare(`UPDATE sh_queue_revisions SET
     status='complete',materialized_item_count=3 WHERE id=20`).run();
-  assert.equal(db.prepare('SELECT payload_json FROM sh_minute_fact_jobs WHERE id=2').get().payload_json, '');
+  assert.equal(db.prepare('SELECT payload_json FROM sh_minute_fact_jobs WHERE id=2').get().payload_json, '{}');
+});
+
+test('bounded maintenance cleanup remains an idempotent fallback', () => {
+  const db = database();
+  db.exec(migration);
+  db.exec(`INSERT INTO sh_minute_fact_jobs VALUES
+      (6,'done','late-backlog',100,NULL,NULL,100);`);
+  const cleared = db.prepare(CLEAR_COMPLETED_MINUTE_FACT_PAYLOADS_SQL).all(200, 1000);
+  assert.deepEqual(cleared.map(({ id }) => id), [6]);
+  assert.equal(db.prepare('SELECT payload_json FROM sh_minute_fact_jobs WHERE id=6').get().payload_json, '{}');
+  assert.deepEqual(db.prepare(CLEAR_COMPLETED_MINUTE_FACT_PAYLOADS_SQL).all(201, 1000), []);
 });
 
 test('job completion clears immediately when its revision already finished', () => {
@@ -73,7 +77,7 @@ test('job completion clears immediately when its revision already finished', () 
     FROM sh_minute_fact_jobs WHERE id=3`).get();
   assert.deepEqual(row, {
     status: 'done',
-    payload_json: '',
+    payload_json: '{}',
     processed_at: 200,
     lease_until: null,
   });
@@ -85,7 +89,7 @@ test('database trigger also clears jobs completed outside the normal helper', ()
   db.exec(`INSERT INTO sh_minute_fact_jobs VALUES
       (5,'processing','trigger-completion',NULL,999,NULL,100);`);
   db.exec(`UPDATE sh_minute_fact_jobs SET status='done',processed_at=200 WHERE id=5;`);
-  assert.equal(db.prepare('SELECT payload_json FROM sh_minute_fact_jobs WHERE id=5').get().payload_json, '');
+  assert.equal(db.prepare('SELECT payload_json FROM sh_minute_fact_jobs WHERE id=5').get().payload_json, '{}');
 });
 
 test('one completed revision cannot clear a payload while another revision is pending', () => {
@@ -100,5 +104,5 @@ test('one completed revision cannot clear a payload while another revision is pe
   db.exec(`UPDATE sh_queue_revisions SET status='complete',materialized_item_count=2 WHERE id=40;`);
   assert.equal(db.prepare('SELECT payload_json FROM sh_minute_fact_jobs WHERE id=4').get().payload_json, 'two-revisions');
   db.exec(`UPDATE sh_queue_revisions SET status='complete',materialized_item_count=1 WHERE id=41;`);
-  assert.equal(db.prepare('SELECT payload_json FROM sh_minute_fact_jobs WHERE id=4').get().payload_json, '');
+  assert.equal(db.prepare('SELECT payload_json FROM sh_minute_fact_jobs WHERE id=4').get().payload_json, '{}');
 });
