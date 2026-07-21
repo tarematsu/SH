@@ -1,4 +1,6 @@
 const DAY_MS = 86_400_000;
+const CACHE_MS = 5 * 60_000;
+const cache = { dayStart: null, value: null, expiresAt: 0, pending: null };
 
 export const DAILY_SUMMARY_SQL = `SELECT period_key,stream_growth,member_growth
   FROM sh_daily_summary
@@ -53,8 +55,14 @@ export function dashboardDailySummaries(rows, starts) {
   };
 }
 
-export async function loadDashboardDailySummaries(db, now = Date.now()) {
-  const starts = utcDayStarts(now);
+export function resetDashboardDailySummariesCache() {
+  cache.dayStart = null;
+  cache.value = null;
+  cache.expiresAt = 0;
+  cache.pending = null;
+}
+
+async function readDashboardDailySummaries(db, starts) {
   if (!db) return { ...dashboardDailySummaries([], starts), setup_required: true };
   try {
     const result = await db.prepare(DAILY_SUMMARY_SQL)
@@ -67,4 +75,20 @@ export async function loadDashboardDailySummaries(db, now = Date.now()) {
     }
     throw error;
   }
+}
+
+export async function loadDashboardDailySummaries(db, now = Date.now()) {
+  const starts = utcDayStarts(now);
+  if (cache.dayStart === starts.currentStart && cache.value && cache.expiresAt > now) return cache.value;
+  if (cache.dayStart === starts.currentStart && cache.pending) return cache.pending;
+
+  cache.dayStart = starts.currentStart;
+  cache.pending = readDashboardDailySummaries(db, starts).then((value) => {
+    cache.value = value;
+    cache.expiresAt = Date.now() + CACHE_MS;
+    return value;
+  }).finally(() => {
+    cache.pending = null;
+  });
+  return cache.pending;
 }
