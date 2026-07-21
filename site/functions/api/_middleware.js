@@ -1,6 +1,6 @@
-import { BLOCKED_API_PATHS } from '../lib/api-contract.js';
+import { INTERNAL_API_PATHS } from '../lib/api-contract.js';
 
-const blockedApiPaths = new Set(BLOCKED_API_PATHS);
+const blockedApiPaths = new Set(INTERNAL_API_PATHS);
 
 function normalizedPathname(value) {
   const pathname = String(value || '/');
