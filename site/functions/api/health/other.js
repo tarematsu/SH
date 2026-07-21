@@ -1,6 +1,5 @@
 const OTHER_CRON_ID = 'other-cron';
 const OFFICIAL_NEWS_ID = 'official-news';
-const RUNTIME_SERVICE = 'sh-runtime-orchestrator';
 
 function integer(value, fallback = null) {
   const parsed = Number(value);
@@ -10,11 +9,6 @@ function integer(value, fallback = null) {
 function positiveMs(value, fallback, minimum = 1_000) {
   const parsed = integer(value);
   return parsed != null && parsed > 0 ? Math.max(minimum, parsed) : fallback;
-}
-
-function enabled(value, fallback = true) {
-  if (value == null || value === '') return fallback;
-  return !['0', 'false', 'no', 'off'].includes(String(value).trim().toLowerCase());
 }
 
 function age(now, value) {
@@ -57,41 +51,29 @@ async function readOfficial(db, now) {
     .first();
 }
 
-async function readHost(db, id) {
+async function readSakurazaka(db, id) {
   return db.prepare(`SELECT phase,session_id,station_id,last_success_at,last_error,updated_at
     FROM sh_cloud_host_monitor_state WHERE id=? LIMIT 1`).bind(id).first();
 }
 
 export async function readOtherHealth(env, now = Date.now()) {
   if (!env?.OTHER_DB?.prepare) throw new Error('OTHER_DB binding missing');
-  const buddyEnabled = enabled(env.BUDDY_PLAYBACK_ENABLED, true);
-  const buddyAlias = String(env.BUDDY_PLAYBACK_ALIAS || 'buddy46').trim().toLowerCase();
-  const profileId = `profile:${String(env.HOST_PROFILE_HANDLE || 'sakuramankai').trim().toLowerCase()}`;
   const soloId = `solo:${String(env.SOLO_BROADCAST_HANDLE || 'sakurazaka46jp').trim().toLowerCase()}`;
   const results = await Promise.allSettled([
     readTask(env.OTHER_DB, OTHER_CRON_ID),
-    buddyEnabled ? readTask(env.OTHER_DB, `${buddyAlias}-playback`) : Promise.resolve(null),
     readOfficial(env.OTHER_DB, now),
-    readHost(env.OTHER_DB, profileId),
-    readHost(env.OTHER_DB, soloId),
+    readSakurazaka(env.OTHER_DB, soloId),
   ]);
-  const [cronResult, buddyResult, officialResult, profileResult, soloResult] = results;
+  const [cronResult, officialResult, sakurazakaResult] = results;
   const cronRow = cronResult.status === 'fulfilled' ? cronResult.value : null;
-  const buddyRow = buddyResult.status === 'fulfilled' ? buddyResult.value : null;
   const official = officialResult.status === 'fulfilled' ? officialResult.value : null;
-  const profile = profileResult.status === 'fulfilled' ? profileResult.value : null;
-  const solo = soloResult.status === 'fulfilled' ? soloResult.value : null;
+  const sakurazakaRow = sakurazakaResult.status === 'fulfilled' ? sakurazakaResult.value : null;
 
-  const cronStaleMs = positiveMs(env.OTHER_CRON_STALE_MS, 12 * 60_000, 5 * 60_000);
-  const buddyIntervalMs = positiveMs(env.BUDDY_PLAYBACK_INTERVAL_MS, 3 * 60 * 60_000, 5 * 60_000);
-  const buddyStaleMs = positiveMs(env.BUDDY_PLAYBACK_STALE_MS, buddyIntervalMs + 15 * 60_000, buddyIntervalMs);
+  const cronStaleMs = positiveMs(env.OTHER_CRON_STALE_MS, 45 * 60_000, 30 * 60_000);
   const officialStaleMs = positiveMs(env.OFFICIAL_NEWS_STALE_MS, 2 * 60 * 60_000, 30 * 60_000);
-  const hostStaleMs = positiveMs(env.CLOUD_HOST_STALE_MS, 2 * 60 * 60_000, 30 * 60_000);
+  const sakurazakaStaleMs = positiveMs(env.CLOUD_HOST_STALE_MS, 2 * 60 * 60_000, 30 * 60_000);
 
-  const cron = taskHealth(cronRow, now, cronStaleMs, cronResult.status === 'rejected');
-  const buddy = buddyEnabled
-    ? taskHealth(buddyRow, now, buddyStaleMs, buddyResult.status === 'rejected')
-    : { ok: true, enabled: false, setup_required: false, stale: false };
+  const prediction = taskHealth(cronRow, now, cronStaleMs, cronResult.status === 'rejected');
 
   const officialAgeMs = age(now, official?.last_check_at);
   const officialSetupRequired = officialResult.status === 'rejected' || integer(official?.last_check_at) == null;
@@ -109,29 +91,28 @@ export async function readOtherHealth(env, now = Date.now()) {
     active_count: Number(official?.active_count || 0),
   };
 
-  const profileReference = integer(profile?.updated_at) ?? integer(profile?.last_success_at);
-  const profileAgeMs = age(now, profileReference);
-  const hostSetupRequired = profileResult.status === 'rejected' || !profile;
-  const hostStale = profileAgeMs == null || profileAgeMs >= hostStaleMs;
-  const cloudHost = {
-    ok: !hostSetupRequired && !hostStale && !profile?.last_error && !solo?.last_error,
-    setup_required: hostSetupRequired,
-    stale: hostStale,
-    stale_after_ms: hostStaleMs,
-    age_ms: profileAgeMs,
-    profile_phase: profile?.phase || null,
-    profile_last_success_at: integer(profile?.last_success_at),
-    profile_last_error_present: Boolean(profile?.last_error),
-    solo_phase: solo?.phase || 'idle',
-    solo_session_id: integer(solo?.session_id),
-    solo_station_id: integer(solo?.station_id),
-    solo_last_error_present: Boolean(solo?.last_error),
+  const sakurazakaReference = integer(sakurazakaRow?.updated_at)
+    ?? integer(sakurazakaRow?.last_success_at);
+  const sakurazakaAgeMs = age(now, sakurazakaReference);
+  const sakurazakaSetupRequired = sakurazakaResult.status === 'rejected' || !sakurazakaRow;
+  const sakurazakaStale = sakurazakaAgeMs == null || sakurazakaAgeMs >= sakurazakaStaleMs;
+  const sakurazaka = {
+    ok: !sakurazakaSetupRequired && !sakurazakaStale && !sakurazakaRow?.last_error,
+    setup_required: sakurazakaSetupRequired,
+    stale: sakurazakaStale,
+    stale_after_ms: sakurazakaStaleMs,
+    age_ms: sakurazakaAgeMs,
+    phase: sakurazakaRow?.phase || 'idle',
+    session_id: integer(sakurazakaRow?.session_id),
+    station_id: integer(sakurazakaRow?.station_id),
+    last_success_at: integer(sakurazakaRow?.last_success_at),
+    last_error_present: Boolean(sakurazakaRow?.last_error),
   };
 
-  const components = { cron, buddy, official_news: officialNews, cloud_host: cloudHost };
+  const components = { prediction, official_news: officialNews, sakurazaka };
   return {
     ok: Object.values(components).every((component) => component.ok),
-    service: RUNTIME_SERVICE,
+    services: ['sh-runtime-orchestrator', 'sh-sakurazaka46jp'],
     gateway: 'cloudflare-pages',
     checked_at: now,
     components,
@@ -159,7 +140,7 @@ export async function onRequest(context) {
     }));
     return Response.json({
       ok: false,
-      service: RUNTIME_SERVICE,
+      services: ['sh-runtime-orchestrator', 'sh-sakurazaka46jp'],
       gateway: 'cloudflare-pages',
       error: 'other-health-query-failed',
       checked_at: now,
