@@ -2,15 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import { isBlockedApiPath, onRequest } from '../functions/api/_middleware.js';
-
-const INTERNAL = [
-  '/api/ingest',
-  '/api/ingest-core',
-  '/api/ingest-legacy',
-  '/api/host-ingest',
-  '/api/host-ingest-core',
-  '/api/host-ingest-legacy',
-];
+import { INTERNAL_API_PATHS } from '../functions/lib/api-contract.js';
 
 const CANONICAL = [
   '/api/health',
@@ -24,33 +16,9 @@ const CANONICAL = [
   '/api/host-history',
 ];
 
-test('internal Pages API implementation paths are blocked including trailing slashes', () => {
-  for (const path of INTERNAL) {
-    assert.equal(isBlockedApiPath(path), true, path);
-    assert.equal(isBlockedApiPath(`${path}/`), true, `${path}/`);
-  }
+test('Pages API has no internal HTTP implementation routes', () => {
+  assert.deepEqual(INTERNAL_API_PATHS, []);
   for (const path of CANONICAL) assert.equal(isBlockedApiPath(path), false, path);
-});
-
-test('internal API paths return a no-store 404 before route handlers', async () => {
-  for (const path of ['/api/ingest', '/api/ingest-core', '/api/host-ingest']) {
-    let nextCalls = 0;
-    const response = await onRequest({
-      request: new Request(`https://example.com${path}`, {
-        headers: { authorization: 'Bearer should-not-bypass-boundary' },
-      }),
-      next: async () => {
-        nextCalls += 1;
-        return Response.json({ ok: true });
-      },
-    });
-
-    assert.equal(response.status, 404, path);
-    assert.equal(response.headers.get('cache-control'), 'no-store');
-    assert.equal(response.headers.get('x-content-type-options'), 'nosniff');
-    assert.deepEqual(await response.json(), { ok: false, error: 'not found' });
-    assert.equal(nextCalls, 0);
-  }
 });
 
 test('canonical API routes continue to their Pages handlers unchanged', async () => {
