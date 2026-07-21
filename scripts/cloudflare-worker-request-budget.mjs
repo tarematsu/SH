@@ -55,8 +55,16 @@ export function cronInvocationsPerDay(expression) {
 }
 
 function configValue(source, key) {
-  const match = source.match(new RegExp(`"${key}"\s*:\s*"([^"]+)"`));
-  return match?.[1] || null;
+  const marker = `"${key}"`;
+  const keyOffset = source.indexOf(marker);
+  if (keyOffset < 0) return null;
+  const valueSource = source.slice(keyOffset + marker.length);
+  const colonOffset = valueSource.indexOf(':');
+  if (colonOffset < 0) return null;
+  const startQuote = valueSource.indexOf('"', colonOffset + 1);
+  if (startQuote < 0) return null;
+  const endQuote = valueSource.indexOf('"', startQuote + 1);
+  return endQuote < 0 ? null : valueSource.slice(startQuote + 1, endQuote);
 }
 
 export function cronExpressions(source) {
