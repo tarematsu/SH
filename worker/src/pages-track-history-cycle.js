@@ -1,12 +1,8 @@
-import {
-  loadTrackHistoryData,
-  TRACK_HISTORY_GRACE_MS,
-} from '../../site/functions/lib/track-history-restored-handler.js';
+import { loadTrackHistoryData } from '../../site/functions/lib/track-history-restored-handler.js';
 import { mergeTrackRows } from '../../site/functions/lib/track-history-merge.js';
 import { applyTrackPeriodCompleteness } from '../../site/functions/lib/period-completeness.js';
 import { attachCompactTrackLikes } from '../../site/functions/lib/track-likes.js';
 import {
-  mergeTrackHistoryExcludedDates,
   refreshTrackHistoryPagesReadModel,
   trackHistoryRefreshRanges,
 } from './pages-track-history-support.js';
@@ -15,7 +11,6 @@ const DAY_MS = 86_400_000;
 const MINUTE_MS = 60_000;
 export const TRACK_HISTORY_CYCLE_MS = 6 * 60 * MINUTE_MS;
 export const TRACK_HISTORY_ACTIVE_MINUTES = 60;
-const TRACK_HISTORY_EPOCH = Date.UTC(2024, 4, 1);
 const TRACK_HISTORY_LIMIT = 40_000;
 export const TRACK_HISTORY_STAGE_KEY = 'track-history-cycle-stage';
 const BACKFILL_KEY = 'track-history-backfill';
@@ -40,11 +35,6 @@ const SHARD_SCHEMA_SQL = [
 
 function dayText(timestamp) {
   return new Date(timestamp).toISOString().slice(0, 10);
-}
-
-function validTimestamp(value) {
-  const timestamp = Number(value);
-  return Number.isFinite(timestamp) && timestamp >= 0 ? timestamp : null;
 }
 
 function parsedPayload(row) {
@@ -187,104 +177,9 @@ async function materializeTrackHistoryDay(sourceDb, targetDb, range, now) {
   };
 }
 
-async function trackHistoryCoverage(db, range) {
-  const fromDay = dayText(range.fromTs);
-  const toDay = dayText(range.toTs - 1);
-  return db.prepare(`SELECT
-      MIN(play_date) AS earliest_date,
-      MAX(play_date) AS latest_date,
-      COALESCE(SUM(CASE WHEN play_date>=? AND play_date<=? THEN 1 ELSE 0 END),0) AS recent_row_count
-    FROM sh_pages_track_history_read_model`)
-    .bind(fromDay, toDay)
-    .first();
-}
-
-function completedResults(stage, kind) {
-  return stage.tasks
-    .filter((task) => task.kind === kind)
-    .map((task) => stage.completed[task.id])
-    .filter(Boolean);
-}
-
-function fullExcludedDates(results) {
-  return [...new Set(results.flatMap((result) => result.excludedDates || []).map(String).filter(Boolean))].sort();
-}
-
-function incrementalExcludedDates(stage) {
-  let dates = Array.isArray(stage.previous_status?.excluded_play_count_dates)
-    ? stage.previous_status.excluded_play_count_dates
-    : [];
-  for (const task of stage.tasks.filter((item) => item.kind === 'recent')) {
-    const result = stage.completed[task.id];
-    dates = mergeTrackHistoryExcludedDates(dates, result?.excludedDates, task.range);
-  }
-  return dates;
-}
-
-function backfillStatus(stage, now) {
-  const range = stage.ranges.backfill;
-  if (!range) {
-    return {
-      next_to: TRACK_HISTORY_EPOCH,
-      completed: true,
-      updated_at: now,
-    };
-  }
-  return {
-    next_to: range.fromTs,
-    completed: range.fromTs <= TRACK_HISTORY_EPOCH,
-    updated_at: now,
-  };
-}
-
 async function finalizeTrackHistoryStage(env, stage, now, dependencies = {}) {
-  const targetDb = env.MINUTE_DB;
-  const coverage = await (dependencies.coverage || trackHistoryCoverage)(
-    targetDb,
-    stage.ranges.full_recent,
-  );
-  const recentResults = completedResults(stage, 'recent');
-  const previousSourceRowCount = Number(stage.previous_status?.source_row_count);
-  const previousSourceRefreshedAt = validTimestamp(
-    stage.previous_status?.source_row_count_refreshed_at
-      ?? stage.previous_status?.full_reconciled_at
-      ?? stage.previous_status?.generated_at,
-  );
-  const full = stage.refresh_mode === 'full';
-  const sourceRowCount = full || !Number.isFinite(previousSourceRowCount)
-    ? recentResults.reduce((sum, result) => sum + (Number(result.sourceRowCount) || 0), 0)
-    : previousSourceRowCount;
-  const sourceRowCountRefreshedAt = full || previousSourceRefreshedAt == null
-    ? now
-    : previousSourceRefreshedAt;
-  const excludedDates = full
-    ? fullExcludedDates(recentResults)
-    : incrementalExcludedDates(stage);
-  const recentRange = stage.ranges.recent;
-  const backfillRange = stage.ranges.backfill;
-  const status = {
-    ok: true,
-    from: coverage?.earliest_date || dayText(recentRange.fromTs),
-    to: coverage?.latest_date || dayText(recentRange.toTs - 1),
-    row_count: Math.max(0, Number(coverage?.recent_row_count || 0)),
-    source_row_count: sourceRowCount,
-    source_row_count_refreshed_at: sourceRowCountRefreshedAt,
-    source_truncated: false,
-    excluded_play_count_dates: excludedDates,
-    grace_ms: TRACK_HISTORY_GRACE_MS,
-    backfill_completed: !backfillRange || backfillRange.fromTs <= TRACK_HISTORY_EPOCH,
-    backfill_from: backfillRange ? dayText(backfillRange.fromTs) : null,
-    backfill_to: backfillRange ? dayText(backfillRange.toTs - 1) : null,
-    refresh_mode: stage.refresh_mode,
-    refresh_from: dayText(recentRange.fromTs),
-    refresh_to: dayText(recentRange.toTs - 1),
-    full_reconciled_at: full ? now : stage.previous_full_at,
-    generated_at: now,
-  };
-  const save = dependencies.savePayload || savePayload;
-  await save(targetDb, BACKFILL_KEY, backfillStatus(stage, now), now);
-  await save(targetDb, STATUS_KEY, status, now);
-
+  const { finalizeTrackHistoryStatus } = await import('./pages-track-history-stage.js');
+  const status = await finalizeTrackHistoryStatus(env, stage, now, dependencies);
   const publish = dependencies.publish || refreshTrackHistoryPagesReadModel;
   const publication = await publish(env, now, {
     ...dependencies,
@@ -295,7 +190,8 @@ async function finalizeTrackHistoryStage(env, stage, now, dependencies = {}) {
   stage.published = true;
   stage.published_at = now;
   stage.updated_at = now;
-  await save(targetDb, TRACK_HISTORY_STAGE_KEY, stage, now);
+  const save = dependencies.savePayload || savePayload;
+  await save(env.MINUTE_DB, TRACK_HISTORY_STAGE_KEY, stage, now);
   return { publication, status, published: true };
 }
 
