@@ -6,7 +6,7 @@ import { fetchTrackMetadata } from '../worker/src/track-metadata.js';
 
 const migrationUrl = new URL('../database/migrations/037_isrc_track_metadata.sql', import.meta.url);
 const schemaUrl = new URL('../database/schema.sql', import.meta.url);
-const ingestUrl = new URL('../site/functions/api/ingest.js', import.meta.url);
+const ingestUrl = new URL('../site/functions/lib/ingest.js', import.meta.url);
 
 test('track metadata schema stores normalized ISRC values', async () => {
   const schema = await readFile(schemaUrl, 'utf8');
