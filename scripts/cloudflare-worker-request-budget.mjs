@@ -12,6 +12,7 @@ export const CONTINUATION_RESERVE_PER_DAY = 5_000;
 export const ACTIVE_CONFIGS = Object.freeze([
   'worker/wrangler.minute-enrichment.jsonc',
   'worker/wrangler.ingest.jsonc',
+  'worker/wrangler.sakurazaka46jp.jsonc',
   'worker/wrangler.runtime.jsonc',
 ]);
 
@@ -19,8 +20,8 @@ export const ACTIVE_CONFIGS = Object.freeze([
 // one-message CPU boundaries. Continuation-heavy queues include every normal
 // stage rather than pretending one source poll equals one request:
 // - persistence: persist + likes + up to four likes-write chunks + finalize
-// - runtime host queue: raw session + raw fetch, recovery/gate/monitor dispatch
-//   stages, maintenance, downstream monitor work, and a success checkpoint
+// - runtime dispatch: raw session, recovery/gate/prediction, and maintenance
+// - Sakurazaka: five-minute cycle plus official-news continuation stages
 // - live derive: trigger + revision prepare + fact write + compact revision close
 // - enrichment: playback + playback patch + identity resolve + identity attach + bite
 export const QUEUE_MESSAGES_PER_DAY = Object.freeze({
@@ -28,8 +29,8 @@ export const QUEUE_MESSAGES_PER_DAY = Object.freeze({
   'stationhead-raw-collection': 1_440,
   'stationhead-ingest-finalize': 1_440,
   'stationhead-buddies-persist': 10_080,
-  'stationhead-buddy-playback': 144,
-  'stationhead-host-monitor': 4_932,
+  'stationhead-host-monitor': 2_256,
+  'stationhead-sakurazaka46jp': 720,
   'stationhead-minute-derive': 1_440,
   'stationhead-minute-live-derive': 5_760,
   'stationhead-minute-enrichment': 7_200,
