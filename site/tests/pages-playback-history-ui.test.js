@@ -3,32 +3,36 @@ import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
 const mainPage = readFileSync(new URL('../public/index.html', import.meta.url), 'utf8');
-const dashboardClient = readFileSync(new URL('../public/dashboard-metrics.js', import.meta.url), 'utf8');
+const dashboardEntry = readFileSync(new URL('../public/dashboard-metrics.js', import.meta.url), 'utf8');
+const dashboardClient = readFileSync(new URL('../public/dashboard-client.js', import.meta.url), 'utf8');
 const historyEntry = readFileSync(new URL('../public/history/history-main.js', import.meta.url), 'utf8');
 const historyFixes = readFileSync(new URL('../public/history/history-page-fixes.js', import.meta.url), 'utf8');
 const trackEndpoint = readFileSync(new URL('../functions/api/track-history.js', import.meta.url), 'utf8');
 
-test('main page renders the current track bite count from the existing dashboard response', () => {
+test('main page renders current track likes from the canonical dashboard response', () => {
   assert.match(mainPage, /id="trackBites" hidden/);
   assert.equal((mainPage.match(/<script /g) || []).length, 1);
   assert.match(mainPage, /src="\/dashboard-metrics\.js"/);
-  assert.match(dashboardClient, /current\?\.bite_count/);
-  assert.match(dashboardClient, /`♡ \$\{integer\.format\(count\)\}`/);
-  assert.doesNotMatch(dashboardClient, /fetch\(['"]\/api\/playback/);
+  assert.match(dashboardEntry, /import\('\/dashboard-client\.js'\)/);
+  assert.match(dashboardClient, /track\.bite_count/);
+  assert.match(dashboardClient, /`♡ \$\{integer\.format\(bites\)\}`/);
+  assert.match(dashboardClient, /const DASHBOARD_URL = '\/api\/dashboard'/);
+  assert.doesNotMatch(`${dashboardEntry}\n${dashboardClient}`, /\/api\/playback|dashboard-history|dashboard-queue/);
 });
 
 test('main page labels member and stream deltas with their actual dates', () => {
-  assert.match(dashboardClient, /formatPeriodLabel\(data\?\.yesterday\?\.period_key, '昨日'\)/);
-  assert.match(dashboardClient, /formatPeriodLabel\(data\?\.day_before_yesterday\?\.period_key, '一昨日'\)/);
-  assert.match(dashboardClient, /`\$\{Number\(match\[2\]\)\}月\$\{Number\(match\[3\]\)\}日`/);
-  assert.match(dashboardClient, /streamsYesterdayDelta', yesterdayLabel/);
-  assert.match(dashboardClient, /streamsDayBeforeDelta', dayBeforeLabel/);
+  assert.match(dashboardEntry, /formatPeriodLabel\(data\?\.yesterday\?\.period_key, '昨日'\)/);
+  assert.match(dashboardEntry, /formatPeriodLabel\(data\?\.day_before_yesterday\?\.period_key, '一昨日'\)/);
+  assert.match(dashboardEntry, /`\$\{Number\(match\[2\]\)\}月\$\{Number\(match\[3\]\)\}日`/);
+  assert.match(dashboardEntry, /streamsYesterdayDelta', yesterdayLabel/);
+  assert.match(dashboardEntry, /streamsDayBeforeDelta', dayBeforeLabel/);
 });
 
-test('track history reads only the materialized MINUTE_DB read model', () => {
+test('track history reads materialized rows and integrated ranking status', () => {
   assert.match(trackEndpoint, /FROM sh_pages_track_history_read_model/);
   assert.match(trackEndpoint, /FROM sh_pages_payload_read_model/);
-  assert.doesNotMatch(trackEndpoint, /handleTrackHistory|sh_queue_items|sh_queue_snapshots|sh_channel_snapshots/);
+  assert.match(trackEndpoint, /ranking_summary/);
+  assert.doesNotMatch(trackEndpoint, /handleTrackHistory|sh_queue_items|sh_queue_snapshots|sh_channel_snapshots|sh_track_counter_current/);
 });
 
 test('track history defaults to yesterday as a single day', () => {
@@ -37,7 +41,7 @@ test('track history defaults to yesterday as a single day', () => {
   assert.match(historyEntry, /trackWeekMode\.checked = false/);
 });
 
-test('track history is presented as a daily play-count ranking using like-ranking cards', () => {
+test('track history is presented as a daily play-count ranking card view', () => {
   assert.match(historyEntry, /import\('\/history\/history-page-fixes\.js'\)/);
   assert.match(historyFixes, /labels\.indexOf\('再生回数'\)/);
   assert.match(historyFixes, /\.sort\(\(left, right\) =>/);
