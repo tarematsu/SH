@@ -87,17 +87,17 @@ test('canonical history variant renders and persists one response', async () => 
   assert.deepEqual(calls, ['history:daily', 'save:history:daily']);
 });
 
-test('retired API cycle minutes are reassigned to track-history or idle work', () => {
-  for (const minute of [0, 175, 210, 245, 246]) {
+test('unreserved cycle minutes become track-history or idle work', () => {
+  const expectedKinds = new Map([
+    [0, 'track-history-step'],
+    [175, 'idle'],
+    [210, 'idle'],
+    [245, 'idle'],
+    [246, 'idle'],
+  ]);
+  for (const [minute, expectedKind] of expectedKinds) {
     const task = pagesSixHourTask(BASE + minute * MINUTE_MS);
-    assert.equal(['track-history-step', 'idle'].includes(task.kind), true, `${minute}:${task.kind}`);
-    assert.equal([
-      'dashboard-history',
-      'minute-facts-current',
-      'track-likes',
-      'source:like-ranking',
-      'like-ranking',
-    ].includes(task.key), false);
+    assert.equal(task.kind, expectedKind, `${minute}:${task.kind}`);
   }
 });
 
