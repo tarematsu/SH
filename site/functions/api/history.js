@@ -1,4 +1,4 @@
-import { loadRanking } from './history-ranking.js';
+import { loadRanking } from '../lib/history-ranking.js';
 import {
   SUMMARY_TABLES,
   combineSummaryRows,
