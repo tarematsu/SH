@@ -12,23 +12,27 @@ test('live summary SQL aggregates rows inside D1', () => {
   assert.doesNotMatch(sql, /LIMIT 100000/);
 });
 
-test('active history endpoint has no retired raw archive path', () => {
+test('active history endpoint keeps ranking implementation outside public routes', () => {
   const history = readFileSync(new URL('../site/functions/api/history.js', import.meta.url), 'utf8');
-  const legacy = readFileSync(new URL('../site/functions/api/history-legacy.mjs', import.meta.url), 'utf8');
+  const ranking = readFileSync(new URL('../site/functions/lib/history-ranking.js', import.meta.url), 'utf8');
+  const implementation = readFileSync(new URL('../site/functions/lib/history-legacy.mjs', import.meta.url), 'utf8');
 
-  assert.doesNotMatch(history, /history-legacy\.mjs/);
-  assert.doesNotMatch(legacy, /sh_legacy_(?:history_rows|snapshots)/);
-  assert.match(legacy, /export async function loadRanking/);
+  assert.match(history, /\.\.\/lib\/history-ranking\.js/);
+  assert.match(ranking, /\.\/history-legacy\.mjs/);
+  assert.doesNotMatch(implementation, /sh_legacy_(?:history_rows|snapshots)/);
+  assert.match(implementation, /export async function loadRanking/);
 });
 
-test('history chart interactions reuse prepared models', () => {
-  const summary = readFileSync(
-    new URL('../site/public/history/history-multiseries.js', import.meta.url),
+test('history client exposes only current canonical modes', () => {
+  const source = readFileSync(
+    new URL('../site/public/history/history-lite.js', import.meta.url),
     'utf8',
   );
 
-  assert.match(summary, /summaryModelFor/);
-  assert.match(summary, /summaryModelSource === source/);
+  for (const mode of ['daily', 'weekly', 'monthly', 'ranking', 'tracks', 'broadcasts']) {
+    assert.match(source, new RegExp(`${mode}:`));
+  }
+  assert.match(source, /CACHE_PREFIX = 'sh\.history\.v3:'/);
 });
 
 test('goal prediction avoids rewriting unchanged DOM text', () => {
