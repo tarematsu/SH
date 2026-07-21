@@ -47,15 +47,15 @@ export const COMPLETE_MINUTE_FACT_JOB_SQL = `UPDATE sh_minute_fact_jobs SET
         AND (revisions.status<>'complete'
           OR COALESCE(revisions.materialized_item_count,0)
             <COALESCE(revisions.source_visible_count,revisions.item_count,0))
-    ) THEN payload_json ELSE '' END,
+    ) THEN payload_json ELSE '{}' END,
     updated_at=?
   WHERE id=? AND status='processing'`;
 
 export const CLEAR_COMPLETED_MINUTE_FACT_PAYLOADS_SQL = `UPDATE sh_minute_fact_jobs SET
-    payload_json='',updated_at=?
+    payload_json='{}',updated_at=?
   WHERE id IN (
     SELECT jobs.id FROM sh_minute_fact_jobs jobs
-    WHERE jobs.status='done' AND LENGTH(jobs.payload_json)>0
+    WHERE jobs.status='done' AND LENGTH(jobs.payload_json)>2
       AND NOT EXISTS (
         SELECT 1 FROM sh_queue_revisions revisions
         WHERE revisions.source_job_id=jobs.id
