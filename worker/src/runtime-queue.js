@@ -7,11 +7,11 @@ import { RAW_COLLECTION_FETCH_MESSAGE } from './raw-collection-messages.js';
 import { textTransportQueue } from './raw-collection-text-transport.js';
 import {
   MONITOR_MAINTENANCE_MESSAGE,
-  OTHER_MONITOR_CRON,
   RAW_COLLECTION_TASK_MESSAGE,
+  RUNTIME_CRON,
   RUNTIME_MINUTE_GATE_MESSAGE,
   RUNTIME_MINUTE_RECOVERY_MESSAGE,
-  RUNTIME_OTHER_MONITOR_MESSAGE,
+  RUNTIME_STREAM_PREDICTION_MESSAGE,
   dispatchMinuteMaintenanceGate,
   dispatchMinuteRecovery,
 } from './runtime-scheduled.js';
@@ -21,7 +21,7 @@ const RETRY_30_SECONDS = Object.freeze({ delaySeconds: 30 });
 
 let monitorMaintenanceModulePromise;
 let minutePipelineModulePromise;
-let otherMonitorDispatchModulePromise;
+let streamPredictionDispatchModulePromise;
 let rawCollectionFetchModulePromise;
 let rawCollectionSessionModulePromise;
 
@@ -35,9 +35,9 @@ function loadMinutePipelineModule() {
   return minutePipelineModulePromise;
 }
 
-function loadOtherMonitorDispatchModule() {
-  otherMonitorDispatchModulePromise ||= import('./runtime-other-monitor-dispatch.js');
-  return otherMonitorDispatchModulePromise;
+function loadStreamPredictionDispatchModule() {
+  streamPredictionDispatchModulePromise ||= import('./runtime-stream-prediction-dispatch.js');
+  return streamPredictionDispatchModulePromise;
 }
 
 function loadRawCollectionSessionModule() {
@@ -136,18 +136,15 @@ async function processRuntimeDispatchMessage(message, env, ctx, options = EMPTY_
   const scheduledTime = Number(body.scheduled_at) || Date.now();
   try {
     if (Number(body.message_version) !== 1) throw new Error('unsupported runtime dispatch version');
-    const controller = { cron: OTHER_MONITOR_CRON, scheduledTime };
+    const controller = { cron: RUNTIME_CRON, scheduledTime };
     if (messageType === RUNTIME_MINUTE_RECOVERY_MESSAGE) {
       await dispatchMinuteRecovery(controller, env, ctx, options);
     } else if (messageType === RUNTIME_MINUTE_GATE_MESSAGE) {
       await dispatchMinuteMaintenanceGate(controller, env, String(body.task || ''), ctx, options);
-    } else if (messageType === RUNTIME_OTHER_MONITOR_MESSAGE) {
-      const run = options.runOtherMonitorCron
-        || (await loadOtherMonitorDispatchModule()).dispatchOtherMonitorStage;
-      await run(controller, env, ctx, {
-        ...(options.otherOptions || EMPTY_OPTIONS),
-        deferSuccess: true,
-      });
+    } else if (messageType === RUNTIME_STREAM_PREDICTION_MESSAGE) {
+      const run = options.runStreamPrediction
+        || (await loadStreamPredictionDispatchModule()).dispatchStreamPrediction;
+      await run(controller, env, ctx, options.streamPredictionOptions || EMPTY_OPTIONS);
     } else {
       throw new Error(`unsupported runtime dispatch type: ${String(messageType || 'unknown')}`);
     }
@@ -194,7 +191,7 @@ export async function runRuntimeQueue(batch, env, ctx, options = EMPTY_OPTIONS) 
     }
     if (messageType === RUNTIME_MINUTE_RECOVERY_MESSAGE
         || messageType === RUNTIME_MINUTE_GATE_MESSAGE
-        || messageType === RUNTIME_OTHER_MONITOR_MESSAGE) {
+        || messageType === RUNTIME_STREAM_PREDICTION_MESSAGE) {
       await processRuntimeDispatchMessage(message, env, ctx, options);
       continue;
     }
