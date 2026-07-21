@@ -1,5 +1,3 @@
-import { withAppleMusicFreeRuntime } from '../../site/functions/lib/apple-music-d1-pruner.js';
-import { stripAppleMusicFields } from '../../site/functions/lib/api-utils.js';
 import { withMinuteD1WriteThrottling } from './minute-d1-write-throttle.js';
 import { processMinuteEnrichment } from './minute-enrichment-entry.js';
 import {
@@ -75,39 +73,16 @@ function shouldLogTrackMetadataResult(result) {
   return stableSampleIdentity(identity) % TRACK_METADATA_LOG_SAMPLE_MODULUS === 0;
 }
 
-function sanitizeIdentityBody(body) {
-  const tracks = body?.queue?.tracks;
-  if (!Array.isArray(tracks) || tracks.length !== 1) return body;
-  const track = tracks[0];
-  if (!track || typeof track !== 'object' || !Object.hasOwn(track, 'apple_music_id')) return body;
-  const { apple_music_id: _removedAppleMusicId, ...activeTrack } = track;
-  return {
-    ...body,
-    queue: {
-      ...body.queue,
-      tracks: [activeTrack],
-    },
-  };
-}
-
-function activeEnrichmentBody(body) {
-  return body?.stage === 'identity'
-      || body?.stage === IDENTITY_ATTACH_STAGE
-      || body?.stage === IDENTITY_BITE_STAGE
-    ? sanitizeIdentityBody(body)
-    : stripAppleMusicFields(body);
-}
-
 function productionEnrichmentEnv(env) {
   const cached = activeEnrichmentEnvs.get(env);
   if (cached) return cached;
-  const active = withMinuteD1WriteThrottling(withAppleMusicFreeRuntime(env));
+  const active = withMinuteD1WriteThrottling(env);
   activeEnrichmentEnvs.set(env, active);
   return active;
 }
 
 async function processOptimizedMinuteEnrichment(env, body, dependencies = EMPTY_DEPENDENCIES) {
-  const activeBody = activeEnrichmentBody(body);
+  const activeBody = body;
   if (activeBody?.stage === 'playback') {
     const run = dependencies.processMinutePlaybackResolve || processMinutePlaybackResolve;
     return run(env, activeBody, dependencies.playback || EMPTY_DEPENDENCIES);
@@ -185,7 +160,6 @@ async function processConsolidatedEnrichmentBatch(batch, env, dependencies = EMP
 }
 
 export {
-  activeEnrichmentBody,
   isTrackMetadataDelivery,
   isPagesReadModelDelivery,
   processConsolidatedEnrichmentBatch,
