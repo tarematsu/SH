@@ -59,13 +59,13 @@ function otherDb() {
         },
         async first() {
           if (sql.includes('FROM sh_collector_status')) {
-            const id = this.args[0];
-            if (id === 'other-cron') {
-              return { status: 'ok', last_attempt_at: NOW - 60_000, last_success_at: NOW - 60_000, last_error: null };
-            }
-            if (id === 'buddy46-playback') {
-              return { status: 'ok', last_attempt_at: NOW - 60_000, last_success_at: NOW - 60_000, last_error: null };
-            }
+            assert.equal(this.args[0], 'other-cron');
+            return {
+              status: 'ok',
+              last_attempt_at: NOW - 60_000,
+              last_success_at: NOW - 60_000,
+              last_error: null,
+            };
           }
           if (sql.includes('sh_official_news_monitor_state')) {
             return {
@@ -77,18 +77,15 @@ function otherDb() {
             };
           }
           if (sql.includes('sh_cloud_host_monitor_state')) {
-            const id = this.args[0];
-            if (id === 'profile:sakuramankai') {
-              return {
-                phase: 'idle',
-                session_id: null,
-                station_id: null,
-                last_success_at: NOW - 60_000,
-                last_error: null,
-                updated_at: NOW - 60_000,
-              };
-            }
-            if (id === 'solo:sakurazaka46jp') return null;
+            assert.equal(this.args[0], 'solo:sakurazaka46jp');
+            return {
+              phase: 'idle',
+              session_id: null,
+              station_id: null,
+              last_success_at: NOW - 60_000,
+              last_error: null,
+              updated_at: NOW - 60_000,
+            };
           }
           throw new Error(`unexpected health SQL: ${sql}`);
         },
@@ -153,20 +150,17 @@ test('Pages minute health reads all active tasks and rejects unhealthy task stat
   assert.equal(response.headers.get('cache-control'), 'no-store');
 });
 
-test('Pages other health reads scheduler, buddy, official news and cloud host state', async () => {
+test('Pages other health reads prediction, official news and Sakurazaka state', async () => {
   const env = {
     OTHER_DB: otherDb(),
-    BUDDY_PLAYBACK_ENABLED: true,
-    BUDDY_PLAYBACK_ALIAS: 'buddy46',
-    HOST_PROFILE_HANDLE: 'sakuramankai',
     SOLO_BROADCAST_HANDLE: 'sakurazaka46jp',
   };
   const payload = await readOtherHealth(env, NOW);
   assert.equal(payload.ok, true);
-  assert.equal(payload.components.cron.ok, true);
-  assert.equal(payload.components.buddy.ok, true);
+  assert.equal(payload.components.prediction.ok, true);
   assert.equal(payload.components.official_news.upcoming_count, 2);
-  assert.equal(payload.components.cloud_host.profile_phase, 'idle');
+  assert.equal(payload.components.sakurazaka.phase, 'idle');
+  assert.deepEqual(payload.services, ['sh-runtime-orchestrator', 'sh-sakurazaka46jp']);
 
   const response = await withFixedNow(() => otherHealthRequest({
     request: new Request('https://example.com/api/health/other'),
@@ -180,6 +174,7 @@ test('all active Workers disable workers.dev and preview URLs', () => {
   const configs = [
     '../../worker/wrangler.ingest.jsonc',
     '../../worker/wrangler.minute-enrichment.jsonc',
+    '../../worker/wrangler.sakurazaka46jp.jsonc',
     '../../worker/wrangler.runtime.jsonc',
   ].map((path) => JSON.parse(readFileSync(new URL(path, import.meta.url), 'utf8')));
 
