@@ -2,25 +2,14 @@
 -- the minute fact and every queue-revision item that depends on it are complete.
 -- The cleared value is the valid minimal JSON object `{}` because downstream
 -- duplicate deliveries may still evaluate payload_json with SQLite JSON functions.
+-- Existing payloads are purged to completion by
+-- worker/scripts/purge-completed-minute-fact-payloads.mjs in the same database
+-- workflow, using bounded statements required by Cloudflare D1.
 
 DROP INDEX IF EXISTS idx_sh_minute_fact_jobs_done_payload;
 CREATE INDEX idx_sh_minute_fact_jobs_done_payload
   ON sh_minute_fact_jobs(COALESCE(processed_at,updated_at),id)
   WHERE status='done' AND LENGTH(payload_json)>2;
-
--- Purge the existing completed payload backlog in one migration-wide statement.
--- Rows with an unfinished queue revision retain their source until the revision
--- completion trigger below proves that every dependent item has materialized.
-UPDATE sh_minute_fact_jobs
-SET payload_json='{}'
-WHERE status='done' AND LENGTH(payload_json)>2
-  AND NOT EXISTS (
-    SELECT 1 FROM sh_queue_revisions revisions
-    WHERE revisions.source_job_id=sh_minute_fact_jobs.id
-      AND (revisions.status<>'complete'
-        OR COALESCE(revisions.materialized_item_count,0)
-          <COALESCE(revisions.source_visible_count,revisions.item_count,0))
-  );
 
 DROP TRIGGER IF EXISTS trg_sh_minute_fact_payload_after_job_done;
 CREATE TRIGGER trg_sh_minute_fact_payload_after_job_done
