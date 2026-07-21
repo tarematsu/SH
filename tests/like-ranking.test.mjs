@@ -72,5 +72,5 @@ test('FACTS schema publishes observed-time indexes for cached reads', () => {
   ));
   assert.match(migration, /idx_sh_counter_current_observed_count/);
   assert.match(migration, /sh_track_counter_current\(observed_at DESC,count_value DESC\)/);
-  assert.equal(descriptor.schema, 'database/facts-migrations/025_d1_budget_hotpath_index.sql');
+  assert.equal(descriptor.schema, 'database/facts-migrations/026_remove_apple_music_compatibility.sql');
 });
