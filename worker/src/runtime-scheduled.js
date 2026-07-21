@@ -6,14 +6,13 @@ const MINUTE_RECOVERY_POLL_OFFSET_MINUTE = 1;
 
 export const RUNTIME_CRON = '* * * * *';
 export const CONSOLIDATED_MONITOR_CRON = RUNTIME_CRON;
-export const OTHER_MONITOR_CRON = '*/5 * * * *';
 export const ROLLUP_MAINTENANCE_CRON = '30 * * * *';
 export const SNAPSHOT_RETENTION_CRON = '50 * * * *';
 export const MONITOR_MAINTENANCE_MESSAGE = 'monitor-maintenance-task';
 export const RAW_COLLECTION_TASK_MESSAGE = 'raw-collection-task';
 export const RUNTIME_MINUTE_RECOVERY_MESSAGE = 'runtime-minute-recovery-dispatch';
 export const RUNTIME_MINUTE_GATE_MESSAGE = 'runtime-minute-maintenance-gate-dispatch';
-export const RUNTIME_OTHER_MONITOR_MESSAGE = 'runtime-other-monitor-dispatch';
+export const RUNTIME_STREAM_PREDICTION_MESSAGE = 'runtime-stream-prediction-dispatch';
 
 const MINUTE_FACT_MAINTENANCE_CRON = '5,7,9,15,17,19,25,27,29,35,37,39,45,47,49,55,57,59 * * * *';
 
@@ -55,7 +54,7 @@ export function minuteRecoveryPollDue(timestamp) {
     === MINUTE_RECOVERY_POLL_OFFSET_MINUTE;
 }
 
-export function otherMonitorDue(timestamp) {
+export function streamPredictionDue(timestamp) {
   const minute = utcMinute(timestamp);
   return minute === 10 || minute === 40;
 }
@@ -82,9 +81,9 @@ export function runtimeScheduledMessagesFor(scheduledAt) {
       scheduled_at: scheduledAt,
     });
   }
-  if (otherMonitorDue(scheduledAt)) {
+  if (streamPredictionDue(scheduledAt)) {
     messages.push({
-      message_type: RUNTIME_OTHER_MONITOR_MESSAGE,
+      message_type: RUNTIME_STREAM_PREDICTION_MESSAGE,
       message_version: 1,
       scheduled_at: scheduledAt,
     });
@@ -160,13 +159,13 @@ function runtimeDispatchResult(body) {
   if (type === RAW_COLLECTION_TASK_MESSAGE) return { dispatched: true, task: 'raw-collection' };
   if (type === RUNTIME_MINUTE_RECOVERY_MESSAGE) return { dispatched: true, task: 'minute-recovery' };
   if (type === RUNTIME_MINUTE_GATE_MESSAGE) return { dispatched: true, task: `minute-${body.task}` };
-  if (type === RUNTIME_OTHER_MONITOR_MESSAGE) return { dispatched: true, task: 'stream-prediction' };
+  if (type === RUNTIME_STREAM_PREDICTION_MESSAGE) return { dispatched: true, task: 'stream-prediction' };
   return { dispatched: true, task: 'maintenance', cron: body.cron };
 }
 
 export async function runRuntimeScheduled(controller, env) {
   const cron = String(controller?.cron || '');
-  if (cron !== RUNTIME_CRON && cron !== OTHER_MONITOR_CRON) {
+  if (cron !== RUNTIME_CRON) {
     return { skipped: true, reason: 'unsupported-runtime-cron', cron };
   }
   const scheduledAt = Number(controller?.scheduledTime) || Date.now();
