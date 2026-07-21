@@ -61,16 +61,22 @@ test('track history ranking keeps only the latest count for each eligible track'
   assert.ok(!Object.hasOwn(rows[0], 'average_like_count'));
 });
 
-test('FACTS schema publishes observed-time indexes for cached reads', () => {
-  const migration = readFileSync(
+test('FACTS schema publishes observed-time indexes and retired API cleanup', () => {
+  const indexMigration = readFileSync(
     new URL('../database/facts-migrations/012_counter_current_read_index.sql', import.meta.url),
+    'utf8',
+  );
+  const cleanupMigration = readFileSync(
+    new URL('../database/facts-migrations/027_purge_retired_api_read_models.sql', import.meta.url),
     'utf8',
   );
   const descriptor = JSON.parse(readFileSync(
     new URL('../database/facts-db.json', import.meta.url),
     'utf8',
   ));
-  assert.match(migration, /idx_sh_counter_current_observed_count/);
-  assert.match(migration, /sh_track_counter_current\(observed_at DESC,count_value DESC\)/);
-  assert.equal(descriptor.schema, 'database/facts-migrations/026_remove_apple_music_compatibility.sql');
+  assert.match(indexMigration, /idx_sh_counter_current_observed_count/);
+  assert.match(indexMigration, /sh_track_counter_current\(observed_at DESC,count_value DESC\)/);
+  assert.match(cleanupMigration, /dashboard-daily-changes/);
+  assert.match(cleanupMigration, /playback:buddies/);
+  assert.equal(descriptor.schema, 'database/facts-migrations/027_purge_retired_api_read_models.sql');
 });
