@@ -1,5 +1,4 @@
 import './fetch-guard.js';
-import './minute-facts-fast-store.js';
 
 import { runRuntimeQueue } from './runtime-queue.js';
 import { runRuntimeScheduled } from './runtime-scheduled.js';
