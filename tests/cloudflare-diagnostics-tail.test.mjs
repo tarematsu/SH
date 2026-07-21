@@ -40,6 +40,11 @@ function activeScripts() {
       retired: false,
       cpu_ms: { samples: 1, p95: 1, max: 1 },
     },
+    'sh-sakurazaka46jp': {
+      events: 1,
+      retired: false,
+      cpu_ms: { samples: 1, p95: 1, max: 1 },
+    },
     'sh-runtime-orchestrator': {
       events: 1,
       retired: false,
@@ -101,8 +106,8 @@ test('observability enforcement rejects events from retired Workers', () => {
     },
   };
   const { result, report } = enforce({
-    events: 4,
-    cpu_ms: { samples: 4 },
+    events: 5,
+    cpu_ms: { samples: 5 },
     scripts,
   });
   assert.equal(result.status, 1, result.stderr);
@@ -121,8 +126,8 @@ test('observability enforcement rejects an unobserved active Worker', () => {
     cpu_ms: { samples: 0, p95: null, max: null },
   };
   const { result, report } = enforce({
-    events: 2,
-    cpu_ms: { samples: 2 },
+    events: 3,
+    cpu_ms: { samples: 3 },
     scripts,
   });
   assert.equal(result.status, 1, result.stderr);
