@@ -8,7 +8,7 @@ export const API_GROUPS = Object.freeze({
     { path: '/api/health/sakurazaka46jp', methods: ['GET'], description: 'Sakurazaka monitor and official-news health' },
   ]),
   dashboard: Object.freeze([
-    { path: '/api/dashboard', methods: ['GET'], description: 'Current dashboard, queue, and recent history read model' },
+    { path: '/api/dashboard', methods: ['GET'], description: 'Current state, queue, recent history, and completed daily changes' },
   ]),
   history: Object.freeze([
     { path: '/api/history', methods: ['GET'], description: 'Daily, weekly, monthly, ranking, and broadcast history modes' },
