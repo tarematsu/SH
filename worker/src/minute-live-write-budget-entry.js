@@ -30,8 +30,9 @@ function validatePayload(payload, payloadVersion = null) {
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
     throw new Error('invalid durable minute fact payload');
   }
-  if (Number(payload.payload_version || payloadVersion || 0) !== 1) {
-    throw new Error(`unsupported minute fact payload version: ${payload.payload_version || payloadVersion}`);
+  const version = Number(payload.payload_version ?? payloadVersion ?? 1);
+  if (version !== 1) {
+    throw new Error(`unsupported minute fact payload version: ${version}`);
   }
   return payload;
 }
