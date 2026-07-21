@@ -124,28 +124,20 @@ test('host snapshot ingest creates a claim and persists one session observation'
   assert.equal(db.callsMatching(/INSERT INTO sh_host_station_snapshots/, 'run').length, 1);
 });
 
-test('important websocket events are stored while unknown events are intentionally ignored', async () => {
-  const importantDb = new FakeD1Database();
-  const important = await hostIngestPost({
+test('solo websocket raw event ingestion is permanently retired', async () => {
+  const db = new FakeD1Database();
+  const response = await hostIngestPost({
     request: post('https://skrzk.test/api/host-ingest', {
       type: 'solo_ws_event',
       observed_at: 1_751_500_300_000,
       data: { session_id: 9001, station_id: 3328626, event: 'listenerCount', data: { count: 321 } },
     }),
-    env: env(importantDb),
+    env: env(db),
   });
-  assert.equal((await responseJson(important)).stored, true);
-  assert.equal(importantDb.callsMatching(/INSERT INTO sh_host_raw_events/, 'run').length, 1);
-
-  const ignoredDb = new FakeD1Database();
-  const ignored = await hostIngestPost({
-    request: post('https://skrzk.test/api/host-ingest', {
-      type: 'solo_ws_event',
-      observed_at: 1_751_500_305_000,
-      data: { session_id: 9001, station_id: 3328626, event: 'typingIndicator', data: {} },
-    }),
-    env: env(ignoredDb),
+  assert.equal(response.status, 410);
+  assert.deepEqual(await responseJson(response), {
+    ok: false,
+    error: 'raw solo event ingestion retired',
   });
-  assert.equal((await responseJson(ignored)).stored, false);
-  assert.equal(ignoredDb.callsMatching(/INSERT INTO sh_host_raw_events/).length, 0);
+  assert.equal(db.callsMatching(/sh_host_raw_events/).length, 0);
 });
