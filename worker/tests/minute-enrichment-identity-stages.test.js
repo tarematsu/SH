@@ -30,7 +30,7 @@ function identityBody(stage = 'identity') {
     queue: {
       queue_id: 50,
       start_time: 60_000,
-      tracks: [{ position: 2, bite_count: 9, apple_music_id: 'removed' }],
+      tracks: [{ position: 2, spotify_id: 'spotify-2', isrc: 'JPTEST2', bite_count: 9 }],
     },
   };
 }
@@ -131,7 +131,7 @@ test('optimized router sends production identity through all split stages', asyn
   await processOptimizedMinuteEnrichment({}, body, {
     processMinuteIdentitySession: async (_env, value) => {
       sessionCalls += 1;
-      assert.equal(value.queue.tracks[0].apple_music_id, undefined);
+      assert.equal(value.queue.tracks[0].spotify_id, 'spotify-2');
       return { stage: 'identity', pending: true };
     },
   });
@@ -141,7 +141,7 @@ test('optimized router sends production identity through all split stages', asyn
   }, {
     processMinuteIdentityAttach: async (_env, value) => {
       attachCalls += 1;
-      assert.equal(value.queue.tracks[0].apple_music_id, undefined);
+      assert.equal(value.queue.tracks[0].isrc, 'JPTEST2');
       return { stage: IDENTITY_ATTACH_STAGE, pending: true };
     },
   });
@@ -151,7 +151,7 @@ test('optimized router sends production identity through all split stages', asyn
   }, {
     processMinuteIdentityBite: async (_env, value) => {
       biteCalls += 1;
-      assert.equal(value.queue.tracks[0].apple_music_id, undefined);
+      assert.equal(value.queue.tracks[0].bite_count, 9);
       return { stage: IDENTITY_BITE_STAGE, pending: false };
     },
   });
