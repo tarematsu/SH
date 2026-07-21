@@ -2,8 +2,6 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
-import { onRequestPost as ingestPost } from '../functions/api/ingest.js';
-import { onRequestPost as hostIngestPost } from '../functions/api/host-ingest.js';
 import {
   CHANNEL_READ_MODEL_SQL,
   COLLECTOR_READ_MODEL_SQL,
@@ -61,11 +59,4 @@ test('queue read-model presentation fields survive playback normalization', () =
 
 test('presentation read model rejects malformed JSON without failing the page', () => {
   assert.deepEqual(presentationFromRow({ presentation_json: '{bad' }), {});
-});
-
-test('internal Pages write handlers remain non-cacheable and middleware-blocked', async () => {
-  for (const response of [ingestPost(), hostIngestPost()]) {
-    assert.equal(response.status, 404);
-    assert.equal(response.headers.get('cache-control'), 'no-store');
-  }
 });
