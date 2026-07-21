@@ -3,7 +3,10 @@ import { readFileSync } from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
 import test from 'node:test';
 
-import { COMPLETE_MINUTE_FACT_JOB_SQL } from '../src/minute-facts-inbox.js';
+import {
+  CLEAR_COMPLETED_MINUTE_FACT_PAYLOADS_SQL,
+  COMPLETE_MINUTE_FACT_JOB_SQL,
+} from '../src/minute-facts-inbox.js';
 
 const migration = readFileSync(
   new URL('../../database/facts-migrations/028_purge_completed_minute_fact_payloads.sql', import.meta.url),
@@ -32,7 +35,7 @@ function database() {
   return db;
 }
 
-test('migration clears old completed payloads and waits for incomplete revisions', () => {
+test('bounded cleanup clears old completed payloads and waits for incomplete revisions', () => {
   const db = database();
   db.exec(`INSERT INTO sh_minute_fact_jobs VALUES
       (1,'done','old-complete',100,NULL,NULL,100),
@@ -40,6 +43,13 @@ test('migration clears old completed payloads and waits for incomplete revisions
     INSERT INTO sh_queue_revisions VALUES(20,2,'pending',0,3,3);`);
 
   db.exec(migration);
+  assert.equal(
+    db.prepare('SELECT payload_json FROM sh_minute_fact_jobs WHERE id=1').get().payload_json,
+    'old-complete',
+    'migration installation must not run one unbounded table-wide update',
+  );
+  const cleared = db.prepare(CLEAR_COMPLETED_MINUTE_FACT_PAYLOADS_SQL).all(200, 1000);
+  assert.deepEqual(cleared.map(({ id }) => id), [1]);
   assert.equal(db.prepare('SELECT payload_json FROM sh_minute_fact_jobs WHERE id=1').get().payload_json, '');
   assert.equal(
     db.prepare('SELECT payload_json FROM sh_minute_fact_jobs WHERE id=2').get().payload_json,
@@ -67,6 +77,15 @@ test('job completion clears immediately when its revision already finished', () 
     processed_at: 200,
     lease_until: null,
   });
+});
+
+test('database trigger also clears jobs completed outside the normal helper', () => {
+  const db = database();
+  db.exec(migration);
+  db.exec(`INSERT INTO sh_minute_fact_jobs VALUES
+      (5,'processing','trigger-completion',NULL,999,NULL,100);`);
+  db.exec(`UPDATE sh_minute_fact_jobs SET status='done',processed_at=200 WHERE id=5;`);
+  assert.equal(db.prepare('SELECT payload_json FROM sh_minute_fact_jobs WHERE id=5').get().payload_json, '');
 });
 
 test('one completed revision cannot clear a payload while another revision is pending', () => {
