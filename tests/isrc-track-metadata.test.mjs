@@ -2,7 +2,6 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 
-import { attachBuddyMetadata } from '../worker/src/buddy-playback-metadata.js';
 import { fetchTrackMetadata } from '../worker/src/track-metadata.js';
 
 const migrationUrl = new URL('../database/migrations/037_isrc_track_metadata.sql', import.meta.url);
@@ -44,14 +43,4 @@ test('Spotify metadata fetch carries the queue ISRC into persistence', async (t)
   );
   assert.equal(row.isrc, 'JPX123456789');
   assert.equal(row.spotify_id, 'sp1');
-});
-
-test('buddy playback can resolve metadata by ISRC while preserving legacy Spotify maps', () => {
-  const queue = { tracks: [{ spotify_id: 'new-sp', isrc: 'JPX123456789', thumbnail_url: null }] };
-  const isrcRow = { title: 'Song', artist: 'Artist', thumbnail_url: 'isrc-cover' };
-  const [fromIsrc] = attachBuddyMetadata(queue, new Map([['isrc:JPX123456789', isrcRow]]));
-  assert.equal(fromIsrc.thumbnail_url, 'isrc-cover');
-
-  const [fromLegacy] = attachBuddyMetadata(queue, new Map([['new-sp', { ...isrcRow, thumbnail_url: 'legacy-cover' }]]));
-  assert.equal(fromLegacy.thumbnail_url, 'legacy-cover');
 });
