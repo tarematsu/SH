@@ -10,6 +10,7 @@ const RETRY_60_SECONDS = Object.freeze({ delaySeconds: 60 });
 const GATE_RETRY_SECONDS = 4;
 const GATE_MAX_ATTEMPTS = 3;
 const REBUILD_SLOT_MS = 10 * 60_000;
+const HISTORICAL_BACKFILL_DUE_WINDOW_MS = 60_000;
 const DEFAULT_HISTORICAL_BACKFILL_INTERVAL_MS = 24 * 60 * 60_000;
 const MAX_HISTORICAL_BACKFILL_INTERVAL_MS = 7 * 24 * 60 * 60_000;
 const DEFAULT_PAYLOAD_CLEANUP_LIMIT = 1_000;
@@ -53,7 +54,7 @@ export function historicalBackfillDue(env, scheduledAt) {
   if (!enabled(env?.REBUILD_HISTORICAL_BACKFILL_ENABLED, true)) return false;
   const timestamp = finiteTimestamp(scheduledAt);
   const interval = historicalBackfillIntervalMs(env);
-  return Math.floor(timestamp / interval) !== Math.floor((timestamp - REBUILD_SLOT_MS) / interval);
+  return Math.floor(timestamp / interval) !== Math.floor((timestamp - HISTORICAL_BACKFILL_DUE_WINDOW_MS) / interval);
 }
 
 function maintenanceStage(body) {
