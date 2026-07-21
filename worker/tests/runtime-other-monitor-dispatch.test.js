@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { dispatchOtherMonitorStage } from '../src/runtime-other-monitor-dispatch.js';
+import { dispatchStreamPrediction } from '../src/runtime-stream-prediction-dispatch.js';
 import { runRuntimeQueue } from '../src/runtime-queue.js';
 
 const BASE = Date.UTC(2026, 0, 1, 0, 0, 0);
@@ -15,19 +15,19 @@ test('runtime prediction executes only at the two scheduled minute slots', async
     },
   };
 
-  const first = await dispatchOtherMonitorStage(
+  const first = await dispatchStreamPrediction(
     { scheduledTime: BASE + 10 * 60_000 },
     {},
     {},
     { dependencies },
   );
-  const second = await dispatchOtherMonitorStage(
+  const second = await dispatchStreamPrediction(
     { scheduledTime: BASE + 40 * 60_000 },
     {},
     {},
     { dependencies },
   );
-  const idle = await dispatchOtherMonitorStage(
+  const idle = await dispatchStreamPrediction(
     { scheduledTime: BASE + 25 * 60_000 },
     {},
     {},
@@ -42,7 +42,7 @@ test('runtime prediction executes only at the two scheduled minute slots', async
 
 test('successful prediction invalidates the runtime health cache once', async () => {
   let invalidations = 0;
-  await dispatchOtherMonitorStage(
+  await dispatchStreamPrediction(
     { scheduledTime: BASE + 10 * 60_000 },
     {},
     {},
