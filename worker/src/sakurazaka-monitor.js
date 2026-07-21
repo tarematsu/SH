@@ -1,5 +1,5 @@
-import { hostIngestInternal as saveHostIngest } from '../../site/functions/api/host-ingest.js';
-import { ingestInternal as savePrimaryIngest } from '../../site/functions/api/ingest.js';
+import { hostIngestInternal as saveHostIngest } from '../../site/functions/lib/host-ingest.js';
+import { ingestInternal as savePrimaryIngest } from '../../site/functions/lib/ingest.js';
 import {
   positiveNumber as positive,
   enrichTracks as sharedEnrichTracks,
