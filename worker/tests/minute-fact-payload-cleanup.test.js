@@ -97,7 +97,7 @@ test('job completion clears immediately when its revision already finished', () 
   db.prepare(COMPLETE_MINUTE_FACT_JOB_SQL).run(200, 200, 3);
   const row = db.prepare(`SELECT status,payload_json,processed_at,lease_until
     FROM sh_minute_fact_jobs WHERE id=3`).get();
-  assert.deepEqual(row, {
+  assert.deepEqual({ ...row }, {
     status: 'done',
     payload_json: '{}',
     processed_at: 200,
