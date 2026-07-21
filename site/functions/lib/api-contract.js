@@ -19,7 +19,6 @@ export const API_GROUPS = Object.freeze({
 });
 
 export const INTERNAL_API_PATHS = Object.freeze([
-  '/api/history-legacy',
   '/api/ingest',
   '/api/ingest-core',
   '/api/ingest-legacy',
