@@ -33,22 +33,23 @@ const splitQueues = [
   'stationhead-track-metadata',
   'stationhead-minute-enrichment',
   'stationhead-minute-rebuild',
-  'stationhead-buddy-playback',
+  'stationhead-sakurazaka46jp',
   'stationhead-host-monitor',
   'stationhead-pages-read-model-publication',
   'stationhead-read-model',
 ];
 
-test('manual deploy exposes Pages and the three active Workers only', () => {
+test('manual deploy exposes Pages and the four active Workers only', () => {
   assert.match(deployWorkflow, /^\s{2}workflow_dispatch:/m);
   assert.doesNotMatch(deployWorkflow, /^\s{2}push:/m);
   assert.match(deployWorkflow, /wrangler pages deploy/);
-  for (const target of ['ingest', 'minute-enrichment', 'runtime']) {
+  for (const target of ['ingest', 'minute-enrichment', 'sakurazaka46jp', 'runtime']) {
     assert.match(deployWorkflow, new RegExp(`- ${target}`));
   }
   for (const command of [
     'deploy:ingest',
     'deploy:minute-enrichment',
+    'deploy:sakurazaka46jp',
     'deploy:runtime',
   ]) {
     assert.match(deployWorkflow, new RegExp(command));
@@ -89,12 +90,14 @@ test('Worker package scripts contain only active deployment and bundle operation
       deploy: 'node scripts/deploy-connected-worker.mjs',
       'deploy:ingest': 'node scripts/deploy-ingest.mjs',
       'deploy:minute-enrichment': 'node scripts/deploy-minute-enrichment.mjs',
+      'deploy:sakurazaka46jp': 'node scripts/deploy-sakurazaka46jp.mjs',
       'deploy:runtime': 'node scripts/deploy-runtime.mjs',
     },
   );
   assert.equal(workerPackage.scripts.postinstall, undefined);
   assert.equal(workerPackage.scripts['check:ingest-bundle'] !== undefined, true);
   assert.equal(workerPackage.scripts['check:minute-enrichment-bundle'] !== undefined, true);
+  assert.equal(workerPackage.scripts['check:sakurazaka46jp-bundle'] !== undefined, true);
   assert.equal(workerPackage.scripts['check:runtime-bundle'] !== undefined, true);
 
   for (const path of [
@@ -124,6 +127,7 @@ test('observability requires active Workers and tolerates retired names during c
   for (const worker of [
     'sh-buddies-ingest',
     'sh-minute-enrichment',
+    'sh-sakurazaka46jp',
     'sh-runtime-orchestrator',
   ]) {
     assert.match(observabilityAnalyzer, new RegExp(worker));
