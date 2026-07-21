@@ -2,7 +2,7 @@ import {
   MATERIALIZED_API_VARIANTS,
   materializedResponseCadenceSeconds,
 } from '../../site/functions/lib/api-contract.js';
-import { runTrackHistoryCycleStep } from './pages-track-history-cycle.js';
+import { runSplitTrackHistoryCycleStep } from './pages-track-history-split-cycle.js';
 import { saveMaterializedResponse } from './pages-response-store.js';
 
 const MINUTE_MS = 60_000;
@@ -159,7 +159,7 @@ export async function runPagesSixHourTask(env, now = Date.now(), dependencies = 
 
   if (task.kind === 'track-history-step') {
     requireBindings(env, ['BUDDIES_DB', 'MINUTE_DB']);
-    const runStep = dependencies.runTrackHistoryStep || runTrackHistoryCycleStep;
+    const runStep = dependencies.runTrackHistoryStep || runSplitTrackHistoryCycleStep;
     return runStep(env, timestamp, dependencies);
   }
 
