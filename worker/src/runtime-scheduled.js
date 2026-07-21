@@ -1,7 +1,6 @@
 const EMPTY_OPTIONS = Object.freeze({});
 const JSON_QUEUE_SEND_OPTIONS = Object.freeze({ contentType: 'json' });
 const MINUTE_MS = 60_000;
-const OTHER_MONITOR_INTERVAL_MINUTES = 5;
 const MINUTE_RECOVERY_POLL_INTERVAL_MINUTES = 5;
 const MINUTE_RECOVERY_POLL_OFFSET_MINUTE = 1;
 
@@ -57,7 +56,8 @@ export function minuteRecoveryPollDue(timestamp) {
 }
 
 export function otherMonitorDue(timestamp) {
-  return utcMinute(timestamp) % OTHER_MONITOR_INTERVAL_MINUTES === 0;
+  const minute = utcMinute(timestamp);
+  return minute === 10 || minute === 40;
 }
 
 export function runtimeScheduledMessagesFor(scheduledAt) {
@@ -160,7 +160,7 @@ function runtimeDispatchResult(body) {
   if (type === RAW_COLLECTION_TASK_MESSAGE) return { dispatched: true, task: 'raw-collection' };
   if (type === RUNTIME_MINUTE_RECOVERY_MESSAGE) return { dispatched: true, task: 'minute-recovery' };
   if (type === RUNTIME_MINUTE_GATE_MESSAGE) return { dispatched: true, task: `minute-${body.task}` };
-  if (type === RUNTIME_OTHER_MONITOR_MESSAGE) return { dispatched: true, task: 'other-monitor' };
+  if (type === RUNTIME_OTHER_MONITOR_MESSAGE) return { dispatched: true, task: 'stream-prediction' };
   return { dispatched: true, task: 'maintenance', cron: body.cron };
 }
 
