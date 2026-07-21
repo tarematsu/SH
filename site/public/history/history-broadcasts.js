@@ -288,4 +288,5 @@
     clearTimeout(resizeTimer);
     resizeTimer = setTimeout(() => { if (active() && series.length) draw(); }, 260);
   }, { passive: true });
+  if (active()) scheduleLoad(0);
 })();
