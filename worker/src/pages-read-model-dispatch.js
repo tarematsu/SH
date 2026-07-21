@@ -9,16 +9,11 @@ let sixHourModulePromise;
 
 function cycleSlotKey(cycleMinute) {
   switch (cycleMinute) {
-    case 0: return 'dashboard-history';
     case 35: return 'history:daily';
     case 50: return 'host-history:summary';
     case 70: return 'history:weekly';
     case 105: return 'history:monthly';
     case 140: return 'history:broadcasts';
-    case 175: return 'minute-facts-current';
-    case 210: return 'track-likes';
-    case 245: return 'source:like-ranking';
-    case 246: return 'like-ranking';
     default: return null;
   }
 }
@@ -58,7 +53,7 @@ function pagesReadModelTaskAt(timestamp) {
   const key = cycleSlotKey(cycleMinute);
   if (isBackgroundSlot(key, cycleStart)) return backgroundTask(cycleMinute, cycleStart);
   return {
-    kind: key === 'source:like-ranking' ? 'source' : 'variant',
+    kind: 'variant',
     key,
     cycle_minute: cycleMinute,
     cycle_start: cycleStart,
@@ -103,6 +98,6 @@ export async function runDispatchedPagesReadModelTask(env, now = Date.now(), dep
       failed: 0,
     };
   }
-  const legacy = await loadSixHourModule();
-  return legacy.runPagesSixHourTask(env, timestamp, dependencies);
+  const materializer = await loadSixHourModule();
+  return materializer.runPagesSixHourTask(env, timestamp, dependencies);
 }
