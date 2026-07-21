@@ -265,7 +265,7 @@ test('current bite reuses the resolved track and indexed queue entry', async () 
 
   assert.equal(result, 7);
   assert.equal(queries.some((sql) => sql.includes('FROM sh_queue_revision_items')), false);
-  assert.equal(insertParams[13], 42);
+  assert.equal(insertParams[12], 42);
 });
 
 test('optimized minute storage uses canonical playback and counter logic', () => {
