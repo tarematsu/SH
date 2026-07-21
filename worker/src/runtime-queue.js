@@ -21,7 +21,6 @@ const RETRY_30_SECONDS = Object.freeze({ delaySeconds: 30 });
 
 let monitorMaintenanceModulePromise;
 let minutePipelineModulePromise;
-let otherMonitorModulePromise;
 let otherMonitorDispatchModulePromise;
 let rawCollectionFetchModulePromise;
 let rawCollectionSessionModulePromise;
@@ -34,11 +33,6 @@ function loadMonitorMaintenanceModule() {
 function loadMinutePipelineModule() {
   minutePipelineModulePromise ||= import('./minute-pipeline-entry.js');
   return minutePipelineModulePromise;
-}
-
-function loadOtherMonitorModule() {
-  otherMonitorModulePromise ||= import('./other-monitor-entry.js');
-  return otherMonitorModulePromise;
 }
 
 function loadOtherMonitorDispatchModule() {
@@ -184,7 +178,6 @@ export async function runRuntimeQueue(batch, env, ctx, options = EMPTY_OPTIONS) 
     );
   }
 
-  let otherMonitor = null;
   for (const message of messages) {
     const messageType = message?.body?.message_type;
     if (messageType === RAW_COLLECTION_TASK_MESSAGE) {
@@ -205,8 +198,11 @@ export async function runRuntimeQueue(batch, env, ctx, options = EMPTY_OPTIONS) 
       await processRuntimeDispatchMessage(message, env, ctx, options);
       continue;
     }
-    otherMonitor ||= await loadOtherMonitorModule();
-    await otherMonitor.runOtherMonitorQueue({ ...batch, messages: [message] }, env, ctx);
+    console.warn(JSON.stringify({
+      event: 'unsupported_runtime_message_discarded',
+      message_type: String(messageType || 'unknown'),
+    }));
+    message.ack();
   }
 }
 
