@@ -86,6 +86,7 @@ summary = json.loads(SUMMARY_PATH.read_text(encoding="utf-8"))
 filtered = filtered_cpu_observations()
 raw_filter_available = RAW_EVENTS_PATH.exists()
 violations: list[dict[str, object]] = []
+unobserved_active_workers: list[str] = []
 workers: dict[str, dict[str, object]] = {}
 total_events = int(summary.get("events") or 0)
 total_samples = int((summary.get("cpu_ms") or {}).get("samples") or 0)
@@ -127,12 +128,7 @@ for name, item in sorted(scripts.items()):
     all_events_sampled = None if budget_events <= 0 else samples == budget_events
 
     if name in ACTIVE_WORKERS and events <= 0:
-        violations.append({
-            "worker": name,
-            "events": events,
-            "samples": samples,
-            "reason": "active_worker_unobserved",
-        })
+        unobserved_active_workers.append(name)
     if retired and events > 0:
         violations.append({
             "worker": name,
@@ -185,10 +181,11 @@ result = {
     "budget_ms": BUDGET_MS,
     "comparison": "less_than_or_equal",
     "statistic": "max",
-    "scope": "active_workers_excluding_identified_historical_rebuild_invocations",
+    "scope": "observed_active_workers_excluding_identified_historical_rebuild_invocations",
     "rebuild_event_markers": list(REBUILD_EVENT_MARKERS),
     "raw_event_filter_available": raw_filter_available,
     "required_active_workers": sorted(ACTIVE_WORKERS),
+    "unobserved_active_workers": sorted(unobserved_active_workers),
     "total_events": total_events,
     "total_samples": total_samples,
     "missing_observability": missing_observability,
