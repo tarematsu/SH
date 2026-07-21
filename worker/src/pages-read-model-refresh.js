@@ -4,7 +4,6 @@ import {
   dailyChangesFromRows,
   utcDayStarts,
 } from '../../site/functions/api/dashboard-daily-changes.js';
-import { loadLikeRanking } from '../../site/functions/api/like-ranking.js';
 import {
   loadTrackHistoryData,
   TRACK_HISTORY_GRACE_MS,
@@ -12,16 +11,19 @@ import {
 import { mergeTrackRows } from '../../site/functions/lib/track-history-merge.js';
 import { applyTrackPeriodCompleteness } from '../../site/functions/lib/period-completeness.js';
 import { attachCompactTrackLikes } from '../../site/functions/lib/track-likes.js';
+import { loadTrackRanking } from '../../site/functions/lib/track-ranking.js';
+import {
+  mergeTrackHistoryExcludedDates,
+  trackHistoryRefreshRanges,
+} from './pages-track-history-support.js';
+
+export { mergeTrackHistoryExcludedDates, trackHistoryRefreshRanges };
 
 const DAY_MS = 86_400_000;
-const TRACK_HISTORY_DAYS = 35;
-const TRACK_HISTORY_HOURLY_DAYS = 3;
-const TRACK_HISTORY_BACKFILL_DAYS = 7;
 const TRACK_HISTORY_EPOCH = Date.UTC(2024, 4, 1);
 const TRACK_HISTORY_LIMIT = 40_000;
-const LIKE_RANKING_LIMIT = 500;
+const TRACK_RANKING_LIMIT = 500;
 const DAILY_CHANGES_CADENCE_MINUTES = 15;
-const LIKE_RANKING_CADENCE_MINUTES = 30;
 const TRACK_HISTORY_MODEL_KEY = 'track-history';
 const RESPONSE_CHUNK_SIZE = 192_000;
 const RESPONSE_MAX_CHUNKS = 80;
@@ -89,50 +91,6 @@ function validTimestamp(value) {
   return Number.isFinite(timestamp) && timestamp >= 0 ? timestamp : null;
 }
 
-export function trackHistoryRefreshRanges(now, backfillState = null, statusState = null) {
-  const currentDayStart = Math.floor(now / DAY_MS) * DAY_MS;
-  const fullRecentFrom = currentDayStart - TRACK_HISTORY_DAYS * DAY_MS;
-  const hourlyRecentFrom = currentDayStart - TRACK_HISTORY_HOURLY_DAYS * DAY_MS;
-  const toTs = currentDayStart + DAY_MS;
-  const previousFullAt = validTimestamp(
-    statusState?.full_reconciled_at ?? statusState?.generated_at,
-  );
-  const fullReconcile = previousFullAt == null || previousFullAt < currentDayStart;
-  const fullRecent = { fromTs: fullRecentFrom, toTs };
-  const recent = {
-    fromTs: fullReconcile ? fullRecentFrom : hourlyRecentFrom,
-    toTs,
-  };
-  const storedCursor = Number(backfillState?.next_to);
-  const backfillTo = Math.min(
-    Number.isFinite(storedCursor) ? storedCursor : fullRecentFrom,
-    fullRecentFrom,
-  );
-  const backfill = backfillTo <= TRACK_HISTORY_EPOCH
-    ? null
-    : {
-      fromTs: Math.max(TRACK_HISTORY_EPOCH, backfillTo - TRACK_HISTORY_BACKFILL_DAYS * DAY_MS),
-      toTs: backfillTo,
-    };
-  return {
-    recent,
-    fullRecent,
-    fullReconcile,
-    previousFullAt,
-    backfill,
-  };
-}
-
-export function mergeTrackHistoryExcludedDates(previousDates, refreshedDates, range) {
-  const fromDay = dayText(range.fromTs);
-  const toDay = dayText(range.toTs - DAY_MS);
-  const retained = Array.isArray(previousDates)
-    ? previousDates.filter((date) => String(date) < fromDay || String(date) > toDay)
-    : [];
-  const refreshed = Array.isArray(refreshedDates) ? refreshedDates : [];
-  return [...new Set([...retained, ...refreshed].map(String).filter(Boolean))].sort();
-}
-
 export function materializedVariantDue(variant, now = Date.now()) {
   const cadenceMinutes = Math.max(1, Math.trunc(Number(variant?.cadence_minutes) || 5));
   const absoluteMinute = Math.floor(Number(now) / 60_000);
@@ -142,7 +100,6 @@ export function materializedVariantDue(variant, now = Date.now()) {
 export function pagesPayloadRefreshPlan(now = Date.now()) {
   return {
     daily: materializedVariantDue({ cadence_minutes: DAILY_CHANGES_CADENCE_MINUTES }, now),
-    likes: materializedVariantDue({ cadence_minutes: LIKE_RANKING_CADENCE_MINUTES }, now),
   };
 }
 
@@ -182,21 +139,6 @@ async function refreshDailyChanges(db, now) {
   };
   await savePayload(db, 'dashboard-daily-changes', payload, now);
   return { rows: result.results?.length || 0 };
-}
-
-async function refreshLikeRanking(db, now) {
-  const ranking = await loadLikeRanking(db, { limit: LIKE_RANKING_LIMIT });
-  await savePayload(db, 'like-ranking', {
-    ok: true,
-    mode: 'likes',
-    generated_at: now,
-    limit: LIKE_RANKING_LIMIT,
-    filter: 'artist_starts_sakurazaka_or_isrc_starts_jp',
-    counter_name: 'like/bite',
-    source: 'stationhead-minute.sh_pages_payload_read_model',
-    ...ranking,
-  }, now);
-  return { rows: ranking.rows.length };
 }
 
 function pagesEnvironment(env = {}) {
@@ -273,16 +215,8 @@ async function saveResponse(db, modelKey, response, now) {
 }
 
 async function responseHandler(modelKey) {
-  if (modelKey.startsWith('playback:')) return (await import('../../site/functions/api/playback.js')).onRequestGet;
-  if (modelKey === 'dashboard') return (await import('../../site/functions/api/dashboard.js')).onRequestGet;
-  if (modelKey === 'dashboard-history') return (await import('../../site/functions/api/dashboard-history.js')).onRequestGet;
-  if (modelKey === 'dashboard-queue') return (await import('../../site/functions/api/dashboard-queue.js')).onRequestGet;
-  if (modelKey === 'comment-velocity') return (await import('../../site/functions/api/comment-velocity.js')).onRequestGet;
-  if (modelKey === 'track-likes') return (await import('../../site/functions/api/track-likes.js')).onRequestGet;
-  if (modelKey === 'like-ranking') return (await import('../../site/functions/api/like-ranking.js')).onRequestGet;
-  if (modelKey === 'minute-facts-current') return (await import('../../site/functions/api/minute-facts/current.js')).onRequestGet;
   if (modelKey.startsWith('history:')) return (await import('../../site/functions/api/history.js')).onRequestGet;
-  if (modelKey === 'track-history') return (await import('../../site/functions/api/track-history.js')).onRequestGet;
+  if (modelKey === TRACK_HISTORY_MODEL_KEY) return (await import('../../site/functions/api/track-history.js')).onRequestGet;
   if (modelKey === 'host-history:summary') return (await import('../../site/functions/api/host-history.js')).onRequestGet;
   throw new Error(`unsupported materialized API model: ${modelKey}`);
 }
@@ -331,24 +265,22 @@ export async function refreshFastPagesReadModels(env, now = Date.now(), dependen
     return { skipped: true, reason: 'db-binding-missing' };
   }
   await ensureSchema(targetDb);
-  const activeEnv = pagesEnvironment(env);
   const plan = pagesPayloadRefreshPlan(now);
-  const [daily, likes] = await Promise.all([
-    plan.daily
-      ? refreshDailyChanges(targetDb, now)
-      : Promise.resolve({ skipped: true, reason: 'not-due' }),
-    plan.likes
-      ? refreshLikeRanking(targetDb, now)
-      : Promise.resolve({ skipped: true, reason: 'not-due' }),
-  ]);
-
+  const daily = plan.daily
+    ? await refreshDailyChanges(targetDb, now)
+    : { skipped: true, reason: 'not-due' };
   const dueVariants = dueFastMaterializedVariants(now);
-  const responses = await materializeVariants(dueVariants, targetDb, activeEnv, now, dependencies);
+  const responses = await materializeVariants(
+    dueVariants,
+    targetDb,
+    pagesEnvironment(env),
+    now,
+    dependencies,
+  );
   return {
     skipped: false,
     generated_at: now,
     daily,
-    likes,
     ...responseSummary(responses),
   };
 }
@@ -401,7 +333,7 @@ async function materializeTrackHistoryRange(sourceDb, targetDb, range, now) {
   };
 }
 
-async function refreshTrackHistory(sourceDb, targetDb, now) {
+async function refreshTrackHistory(sourceDb, targetDb, now, dependencies = {}) {
   const [backfillRow, statusRow] = await Promise.all([
     payloadRow(targetDb, 'track-history-backfill'),
     payloadRow(targetDb, 'track-history-status'),
@@ -428,13 +360,16 @@ async function refreshTrackHistory(sourceDb, targetDb, now) {
 
   const fullFromDay = dayText(ranges.fullRecent.fromTs);
   const fullToDay = dayText(ranges.fullRecent.toTs - DAY_MS);
-  const coverage = await targetDb.prepare(`SELECT
-      MIN(play_date) AS earliest_date,
-      MAX(play_date) AS latest_date,
-      COALESCE(SUM(CASE WHEN play_date>=? AND play_date<=? THEN 1 ELSE 0 END),0) AS recent_row_count
-    FROM sh_pages_track_history_read_model`)
-    .bind(fullFromDay, fullToDay)
-    .first();
+  const [coverage, ranking] = await Promise.all([
+    targetDb.prepare(`SELECT
+        MIN(play_date) AS earliest_date,
+        MAX(play_date) AS latest_date,
+        COALESCE(SUM(CASE WHEN play_date>=? AND play_date<=? THEN 1 ELSE 0 END),0) AS recent_row_count
+      FROM sh_pages_track_history_read_model`)
+      .bind(fullFromDay, fullToDay)
+      .first(),
+    (dependencies.loadRanking || loadTrackRanking)(targetDb, { limit: TRACK_RANKING_LIMIT }),
+  ]);
   const previousSourceRowCount = Number(previousStatus.source_row_count);
   const previousSourceRefreshedAt = validTimestamp(
     previousStatus.source_row_count_refreshed_at
@@ -464,6 +399,9 @@ async function refreshTrackHistory(sourceDb, targetDb, now) {
     source_row_count_refreshed_at: sourceRowCountRefreshedAt,
     source_truncated: false,
     excluded_play_count_dates: excludedDates,
+    ranking: ranking.rows,
+    ranking_summary: ranking.summary,
+    ranking_scope: 'all-time-latest-counter',
     grace_ms: TRACK_HISTORY_GRACE_MS,
     backfill_completed: !ranges.backfill || ranges.backfill.fromTs <= TRACK_HISTORY_EPOCH,
     backfill_from: backfill?.from || null,
@@ -477,6 +415,7 @@ async function refreshTrackHistory(sourceDb, targetDb, now) {
   return {
     recent,
     backfill,
+    ranking: { rows: ranking.rows.length, summary: ranking.summary },
     refreshMode: ranges.fullReconcile ? 'full' : 'incremental',
     fullReconciledAt,
   };
@@ -494,7 +433,13 @@ export async function refreshTrackHistoryPagesReadModel(env, now = Date.now(), d
   if (!sourceDb || !targetDb) return { skipped: true, reason: 'db-binding-missing' };
   await ensureSchema(targetDb);
 
-  const refreshTracks = dependencies.refreshTracks || refreshTrackHistory;
+  const refreshTracks = dependencies.refreshTracks
+    || ((activeSource, activeTarget, timestamp) => refreshTrackHistory(
+      activeSource,
+      activeTarget,
+      timestamp,
+      dependencies,
+    ));
   const tracks = await refreshTracks(sourceDb, targetDb, now);
   const responses = await materializeVariants(
     [trackHistoryVariant()],
@@ -511,18 +456,21 @@ export async function refreshTrackHistoryPagesReadModel(env, now = Date.now(), d
   };
 }
 
-// Compatibility helper for manual repair paths. Production uses the cadence-aware
-// fast refresh and the track-history-only hourly refresh above.
 export async function refreshPagesReadModels(env, now = Date.now(), dependencies = {}) {
   const sourceDb = env?.BUDDIES_DB;
   const targetDb = env?.MINUTE_DB;
   if (!sourceDb || !targetDb) return { skipped: true, reason: 'db-binding-missing' };
   await ensureSchema(targetDb);
 
-  const refreshTracks = dependencies.refreshTracks || refreshTrackHistory;
-  const [daily, likes, tracks] = await Promise.all([
+  const refreshTracks = dependencies.refreshTracks
+    || ((activeSource, activeTarget, timestamp) => refreshTrackHistory(
+      activeSource,
+      activeTarget,
+      timestamp,
+      dependencies,
+    ));
+  const [daily, tracks] = await Promise.all([
     refreshDailyChanges(targetDb, now),
-    refreshLikeRanking(targetDb, now),
     refreshTracks(sourceDb, targetDb, now),
   ]);
   const responses = await materializeVariants(
@@ -536,7 +484,6 @@ export async function refreshPagesReadModels(env, now = Date.now(), dependencies
     skipped: false,
     generated_at: now,
     daily,
-    likes,
     tracks,
     ...responseSummary(responses, 1),
   };
