@@ -6,7 +6,7 @@ import {
   queueInspectionDue,
   commentsToWrite,
   planLikeObservations,
-} from '../site/functions/api/ingest.js';
+} from '../site/functions/lib/ingest.js';
 import {
   SAKURAZAKA_EVENT_SQL,
   cachedSakurazakaSeries,
