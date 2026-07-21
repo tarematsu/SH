@@ -14,9 +14,13 @@ const runtime = JSON.parse(readFileSync(
   new URL('../worker/wrangler.runtime.jsonc', import.meta.url),
   'utf8',
 ));
+const requestBudget = readFileSync(
+  new URL('../scripts/cloudflare-worker-request-budget.mjs', import.meta.url),
+  'utf8',
+);
 
 test('PR deployment applies the D1 budget hot-path indexes before the current schema tip', () => {
-  assert.equal(descriptor.schema, 'database/facts-migrations/026_remove_apple_music_compatibility.sql');
+  assert.equal(descriptor.schema, 'database/facts-migrations/028_purge_completed_minute_fact_payloads.sql');
   assert.match(
     migration,
     /ON sh_minute_facts\(\s*source_code,\s*minute_at DESC,\s*id DESC,\s*channel_id,\s*observed_at,\s*is_broadcasting\s*\)/s,
@@ -24,12 +28,16 @@ test('PR deployment applies the D1 budget hot-path indexes before the current sc
   assert.match(migration, /ON sh_minute_fact_jobs\(status, job_kind, minute_at, id\)/);
 });
 
-test('production disables historical rebuild traffic under the D1 budget', () => {
-  assert.equal(runtime.vars.HISTORICAL_REBUILD_ENABLED, false);
-  assert.equal(runtime.vars.REBUILD_HISTORICAL_BACKFILL_ENABLED, false);
+test('production resumes historical reconstruction outside the temporary request budget', () => {
+  assert.equal(runtime.vars.HISTORICAL_REBUILD_ENABLED, true);
+  assert.equal(runtime.vars.REBUILD_HISTORICAL_BACKFILL_ENABLED, true);
+  assert.equal(runtime.vars.REBUILD_HISTORICAL_BACKFILL_INTERVAL_MS, 600_000);
   const historical = runtime.queues.consumers.find(
     ({ queue }) => queue === 'stationhead-minute-derive',
   );
   assert.equal(historical.max_batch_size, 1);
   assert.equal(historical.max_concurrency, 1);
+  assert.match(requestBudget, /'stationhead-minute-derive'/);
+  assert.match(requestBudget, /'stationhead-minute-rebuild'/);
+  assert.doesNotMatch(requestBudget, /QUEUE_MESSAGES_PER_DAY[\s\S]*'stationhead-minute-derive':/);
 });
