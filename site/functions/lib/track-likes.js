@@ -91,9 +91,8 @@ export function compactTrackLikeSources(sources) {
       const key = `${row.play_date}|${identity}`;
       const previous = compact.get(key);
       if (!previous || Number(row?.observed_at || 0) >= Number(previous?.observed_at || 0)) {
-        const { apple_music_id: _unusedAppleMusicId, ...cleanRow } = row;
         compact.set(key, {
-          ...cleanRow,
+          ...row,
           isrc: normalizedIsrc(row.isrc),
           spotify_id: normalizedSpotifyId(row.spotify_id),
         });
