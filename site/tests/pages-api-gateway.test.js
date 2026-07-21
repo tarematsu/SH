@@ -18,6 +18,17 @@ import {
 } from '../functions/api/health/sakurazaka46jp.js';
 
 const NOW = 1_700_000_000_000;
+const CANONICAL_PATHS = [
+  '/api/health',
+  '/api/health/minute',
+  '/api/health/other',
+  '/api/health/sakurazaka46jp',
+  '/api/dashboard',
+  '/api/history',
+  '/api/track-history',
+  '/api/sakurazaka46jp',
+  '/api/host-history',
+];
 
 function runtimeRow(taskName, overrides = {}) {
   return {
@@ -109,7 +120,7 @@ async function withFixedNow(action) {
   }
 }
 
-test('Pages API catalog exposes only canonical routes without Worker URLs', async () => {
+test('Pages API catalog exposes exactly the canonical routes without Worker URLs', async () => {
   const catalog = apiCatalog(NOW);
   assert.equal(catalog.gateway, 'cloudflare-pages');
   assert.equal(catalog.contract_version, 3);
@@ -117,29 +128,7 @@ test('Pages API catalog exposes only canonical routes without Worker URLs', asyn
   assert.equal('compatibility' in catalog, false);
   assert.equal('retired' in catalog, false);
   const paths = Object.values(catalog.groups).flat().map(({ path }) => path);
-  for (const path of [
-    '/api/health',
-    '/api/health/minute',
-    '/api/health/other',
-    '/api/health/sakurazaka46jp',
-    '/api/dashboard',
-    '/api/history',
-    '/api/track-history',
-    '/api/sakurazaka46jp',
-    '/api/host-history',
-  ]) assert.ok(paths.includes(path), path);
-  for (const retired of [
-    '/api/minute-facts',
-    '/api/minute-facts/current',
-    '/api/minute-facts/latest',
-    '/api/dashboard-history',
-    '/api/dashboard-queue',
-    '/api/dashboard-recovery',
-    '/api/comment-velocity',
-    '/api/track-likes',
-    '/api/like-ranking',
-    '/api/broadcast-series',
-  ]) assert.equal(paths.includes(retired), false, retired);
+  assert.deepEqual(paths, CANONICAL_PATHS);
   assert.equal(new Set(paths).size, paths.length);
 
   const response = await catalogRequest({ request: new Request('https://example.com/api') });
