@@ -2,35 +2,20 @@ import {
   MATERIALIZED_API_VARIANTS,
   materializedResponseCadenceSeconds,
 } from '../../site/functions/lib/api-contract.js';
-import { loadLikeRanking } from '../../site/functions/api/like-ranking.js';
 import { runTrackHistoryCycleStep } from './pages-track-history-cycle.js';
 import { saveMaterializedResponse } from './pages-response-store.js';
 
 const MINUTE_MS = 60_000;
 export const PAGES_READ_MODEL_CYCLE_MINUTES = 6 * 60;
 export const PAGES_READ_MODEL_CYCLE_MS = PAGES_READ_MODEL_CYCLE_MINUTES * MINUTE_MS;
-export const TRACK_HISTORY_WINDOW_MINUTES = 60;
-const LIKE_RANKING_LIMIT = 500;
-
-const SCHEMA_SQL = [
-  `CREATE TABLE IF NOT EXISTS sh_pages_payload_read_model (
-    model_key TEXT PRIMARY KEY,
-    payload_json TEXT NOT NULL,
-    updated_at INTEGER NOT NULL
-  )`,
-];
+export const TRACK_HISTORY_WINDOW_MINUTES = 175;
 
 const CYCLE_SLOT_TASKS = new Map([
-  [0, 'dashboard-history'],
   [35, 'history:daily'],
   [50, 'host-history:summary'],
   [70, 'history:weekly'],
   [105, 'history:monthly'],
   [140, 'history:broadcasts'],
-  [175, 'minute-facts-current'],
-  [210, 'track-likes'],
-  [245, 'source:like-ranking'],
-  [246, 'like-ranking'],
 ]);
 
 function validTimestamp(value, fallback = Date.now()) {
@@ -68,54 +53,15 @@ export function pagesSixHourTask(now = Date.now()) {
   const { cycleStart, cycleMinute } = cyclePosition(timestamp);
   const key = CYCLE_SLOT_TASKS.get(cycleMinute) || null;
   if (!key) return backgroundTask(cycleMinute, cycleStart);
-
   if (key === 'host-history:summary' && new Date(cycleStart).getUTCHours() !== 0) {
     return backgroundTask(cycleMinute, cycleStart);
   }
-
-  const task = {
+  return {
+    kind: 'variant',
     key,
     cycle_minute: cycleMinute,
     cycle_start: cycleStart,
   };
-  if (key === 'source:like-ranking') return { kind: 'source', ...task };
-  return { kind: 'variant', ...task };
-}
-
-async function ensureSchema(db) {
-  for (const sql of SCHEMA_SQL) await db.prepare(sql).run();
-}
-
-async function savePayload(db, key, payload, now) {
-  await db.prepare(`INSERT INTO sh_pages_payload_read_model(model_key,payload_json,updated_at)
-    VALUES(?,?,?) ON CONFLICT(model_key) DO UPDATE SET
-      payload_json=excluded.payload_json,updated_at=excluded.updated_at`)
-    .bind(key, JSON.stringify(payload), now).run();
-}
-
-async function payloadUpdatedAt(db, key) {
-  const row = await db.prepare(`SELECT updated_at
-    FROM sh_pages_payload_read_model
-    WHERE model_key=?
-    LIMIT 1`).bind(key).first();
-  const updatedAt = Number(row?.updated_at);
-  return Number.isFinite(updatedAt) && updatedAt >= 0 ? updatedAt : null;
-}
-
-async function refreshLikeRankingPayload(db, now) {
-  const ranking = await loadLikeRanking(db, { limit: LIKE_RANKING_LIMIT });
-  const payload = {
-    ok: true,
-    mode: 'likes',
-    generated_at: now,
-    limit: LIKE_RANKING_LIMIT,
-    filter: 'artist_starts_sakurazaka_or_isrc_starts_jp',
-    counter_name: 'like/bite',
-    source: 'stationhead-minute.sh_pages_payload_read_model',
-    ...ranking,
-  };
-  await savePayload(db, 'like-ranking', payload, now);
-  return { rows: ranking.rows.length };
 }
 
 function pagesEnvironment(env = {}) {
@@ -134,10 +80,6 @@ function variantByKey(key) {
 }
 
 async function responseHandler(modelKey) {
-  if (modelKey === 'dashboard-history') return (await import('../../site/functions/api/dashboard-history.js')).onRequestGet;
-  if (modelKey === 'track-likes') return (await import('../../site/functions/api/track-likes.js')).onRequestGet;
-  if (modelKey === 'like-ranking') return (await import('../../site/functions/api/like-ranking.js')).onRequestGet;
-  if (modelKey === 'minute-facts-current') return (await import('../../site/functions/api/minute-facts/current.js')).onRequestGet;
   if (modelKey.startsWith('history:')) return (await import('../../site/functions/api/history.js')).onRequestGet;
   if (modelKey === 'host-history:summary') return (await import('../../site/functions/api/host-history.js')).onRequestGet;
   throw new Error(`unsupported six-hour Pages variant: ${modelKey}`);
@@ -222,26 +164,6 @@ export async function runPagesSixHourTask(env, now = Date.now(), dependencies = 
   }
 
   requireBindings(env, ['BUDDIES_DB', 'MINUTE_DB', 'OTHER_DB']);
-  await (dependencies.ensureSchema || ensureSchema)(env.MINUTE_DB);
-
-  if (task.kind === 'source') {
-    const refresh = dependencies.refreshLikeRanking || refreshLikeRankingPayload;
-    const source = await refresh(env.MINUTE_DB, timestamp);
-    return { skipped: false, generated_at: timestamp, task, source, responses: [], failed: 0 };
-  }
-
-  if (task.key === 'like-ranking') {
-    const readUpdatedAt = dependencies.payloadUpdatedAt || payloadUpdatedAt;
-    const updatedAt = await readUpdatedAt(env.MINUTE_DB, 'like-ranking');
-    if (updatedAt == null || updatedAt < task.cycle_start) {
-      return taskResponse(task, timestamp, {
-        key: task.key,
-        ok: false,
-        error: 'like-ranking source was not refreshed in the current six-hour cycle',
-      });
-    }
-  }
-
   const variant = variantByKey(task.key);
   const response = await materializeVariant(
     variant,
