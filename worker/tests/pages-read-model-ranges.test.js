@@ -6,11 +6,10 @@ import {
   materializedResponseMaximumAge,
 } from '../../site/functions/lib/api-contract.js';
 import {
-  dueFastMaterializedVariants,
-  materializedVariantDue,
   mergeTrackHistoryExcludedDates,
   trackHistoryRefreshRanges,
-} from '../src/pages-read-model-refresh.js';
+} from '../src/pages-track-history-support.js';
+import { pagesSixHourTask } from '../src/pages-six-hour-read-model.js';
 
 const DAY_MS = 86_400_000;
 const EPOCH = Date.UTC(2024, 4, 1);
@@ -102,12 +101,8 @@ test('incremental excluded-date updates replace only dates inside the refreshed 
   );
 });
 
-test('canonical materialized payloads use six-hour cadence except daily host summary', () => {
-  const midnight = Date.UTC(2026, 6, 16, 0, 0);
-  const quarterPast = Date.UTC(2026, 6, 16, 0, 15);
-  const sixHoursLater = Date.UTC(2026, 6, 16, 6, 0);
+test('canonical materialized variants keep the intended publication cadence', () => {
   const materialized = new Map(MATERIALIZED_API_VARIANTS.map((variant) => [variant.key, variant]));
-
   assert.deepEqual([...materialized.keys()], [
     'history:daily',
     'history:weekly',
@@ -120,9 +115,6 @@ test('canonical materialized payloads use six-hour cadence except daily host sum
   for (const [key, variant] of materialized) {
     if (key !== 'host-history:summary') assert.equal(variant.cadence_minutes, 360, key);
   }
-  assert.equal(materializedVariantDue(materialized.get('track-history'), midnight), true);
-  assert.equal(materializedVariantDue(materialized.get('track-history'), quarterPast), false);
-  assert.equal(materializedVariantDue(materialized.get('track-history'), sixHoursLater), true);
 });
 
 test('track history maximum age covers six-hour source refresh plus edge grace', () => {
@@ -132,25 +124,12 @@ test('track history maximum age covers six-hour source refresh plus edge grace',
   );
 });
 
-test('fast refresh publishes canonical variants only at their boundaries', () => {
-  const midnightKeys = dueFastMaterializedVariants(Date.UTC(2026, 6, 16, 0, 0)).map(({ key }) => key);
-  assert.equal(midnightKeys.includes('track-history'), false);
-  assert.deepEqual(midnightKeys, [
-    'history:daily',
-    'history:weekly',
-    'history:monthly',
-    'history:broadcasts',
-    'host-history:summary',
-  ]);
-
-  for (const minute of [5, 15, 30, 45]) {
-    assert.deepEqual(
-      dueFastMaterializedVariants(Date.UTC(2026, 6, 16, 12, minute)).map(({ key }) => key),
-      [],
-    );
-  }
-  assert.deepEqual(
-    dueFastMaterializedVariants(Date.UTC(2026, 6, 16, 13, 0)).map(({ key }) => key),
-    [],
-  );
+test('six-hour scheduler publishes canonical variants only in their assigned slots', () => {
+  const cycle = Date.UTC(2026, 6, 16, 0, 0);
+  assert.equal(pagesSixHourTask(cycle).kind, 'track-history-step');
+  assert.equal(pagesSixHourTask(cycle + 35 * 60_000).key, 'history:daily');
+  assert.equal(pagesSixHourTask(cycle + 70 * 60_000).key, 'history:weekly');
+  assert.equal(pagesSixHourTask(cycle + 105 * 60_000).key, 'history:monthly');
+  assert.equal(pagesSixHourTask(cycle + 140 * 60_000).key, 'history:broadcasts');
+  assert.equal(pagesSixHourTask(cycle + 176 * 60_000).kind, 'idle');
 });
