@@ -27,7 +27,7 @@ concurrency:
 jobs:
   audit:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 40
     env:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_BUILDS_API_TOKEN }}
       D1_USAGE_OUTPUT_DIR: d1-usage
@@ -49,7 +49,6 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           HEAD_BRANCH: ${{ github.event.pull_request.head.ref }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           BASE_BRANCH: ${{ github.event.pull_request.base.ref }}
         run: |
           set -euo pipefail
@@ -68,25 +67,32 @@ jobs:
               --data-urlencode 'event=pull_request' \
               --data-urlencode 'status=completed' \
               --data-urlencode 'per_page=100')"
-            deployed_at="$(jq -r --arg changed "$runtime_changed_at" --arg head "$HEAD_SHA" \
-              '[.workflow_runs[] | select(.conclusion == "success" and .head_sha == $head and .created_at >= $changed)] | max_by(.updated_at) | .updated_at // empty' \
+            deployed_at="$(jq -r --arg changed "$runtime_changed_at" \
+              '[.workflow_runs[] | select(.conclusion == "success" and .created_at >= $changed)] | max_by(.updated_at) | .updated_at // empty' \
               <<<"$runs")"
             if [[ -n "$deployed_at" ]]; then break; fi
             echo "Waiting for PR deployment attempt $attempt/40"
             sleep 15
           done
-          test -n "$deployed_at" || { echo 'No successful PR deployment found for this head SHA' >&2; exit 1; }
+          test -n "$deployed_at" || { echo 'No successful PR deployment found after the latest runtime change' >&2; exit 1; }
 
-          audit_since="$(date -u -d "$deployed_at + 90 seconds" +%Y-%m-%dT%H:%M:%SZ)"
-          minimum_end_epoch="$(( $(date -u -d "$audit_since" +%s) + 300 ))"
+          # D1 analytics are grouped into fifteen-minute buckets. Starting in the
+          # middle of a bucket includes pre-window traffic, so begin at the next
+          # clean bucket boundary and collect five minutes from there.
+          candidate_epoch="$(date -u -d "$deployed_at + 90 seconds" +%s)"
+          bucket_seconds=900
+          audit_start_epoch="$(( ((candidate_epoch + bucket_seconds - 1) / bucket_seconds) * bucket_seconds ))"
+          audit_since="$(date -u -d "@${audit_start_epoch}" +%Y-%m-%dT%H:%M:%SZ)"
+          minimum_end_epoch="$(( audit_start_epoch + 300 ))"
           now_epoch="$(date -u +%s)"
           if (( now_epoch < minimum_end_epoch )); then
             sleep_seconds="$(( minimum_end_epoch - now_epoch ))"
-            echo "Waiting ${sleep_seconds}s for a five-minute post-deploy D1 sample"
+            echo "Waiting ${sleep_seconds}s for a clean five-minute post-deploy D1 sample"
             sleep "$sleep_seconds"
           fi
           echo "Runtime changed at $runtime_changed_at"
           echo "Deployment completed at $deployed_at"
+          echo "D1 bucket-aligned sample starts at $audit_since"
           echo "D1_USAGE_START=$audit_since" >> "$GITHUB_ENV"
 
       - name: Query account-wide daily D1 row usage
