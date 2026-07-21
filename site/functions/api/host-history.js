@@ -135,12 +135,7 @@ export async function onRequestGet({ request, env }) {
   const mode = url.searchParams.get('mode') || 'summary';
 
   try {
-    if (mode === 'profile') {
-      return json({ ok: false, error: 'general profile history retired' }, 404);
-    }
-
     if (mode === 'sessions') {
-      const handle = url.searchParams.get('handle') || 'sakurazaka46jp';
       const limit = intParam(url.searchParams.get('limit'), 50, 1, 500);
       const result = await env.OTHER_DB.prepare(`
         SELECT id, source_scope, handle, account_id, station_id, broadcast_id,
@@ -150,11 +145,11 @@ export async function onRequestGet({ request, env }) {
                followers_start, followers_end, total_streams_start, total_streams_end,
                track_count, comment_count, last_observed_at
         FROM sh_host_broadcast_sessions
-        WHERE handle = ?
+        WHERE handle = 'sakurazaka46jp'
         ORDER BY started_at DESC
         LIMIT ?
-      `).bind(handle, limit).all();
-      return json({ ok: true, mode, handle, rows: result.results || [] });
+      `).bind(limit).all();
+      return json({ ok: true, mode, handle: 'sakurazaka46jp', rows: result.results || [] });
     }
 
     if (mode === 'session') {
@@ -168,7 +163,8 @@ export async function onRequestGet({ request, env }) {
           followers_start,followers_end,total_streams_start,total_streams_end,
           peak_listeners,listener_sum,listener_sample_count,average_listeners,
           track_count,comment_count,last_observed_at
-          FROM sh_host_broadcast_sessions WHERE id=? LIMIT 1`).bind(sessionId),
+          FROM sh_host_broadcast_sessions
+          WHERE id=? AND handle='sakurazaka46jp' LIMIT 1`).bind(sessionId),
         env.OTHER_DB.prepare(`SELECT observed_at,listener_count,guest_count,total_listens,
           is_broadcasting,current_track_id,current_spotify_id,queue_id,queue_start_time
           FROM sh_host_station_snapshots
