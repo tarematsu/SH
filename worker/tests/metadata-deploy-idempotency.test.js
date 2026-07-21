@@ -79,7 +79,7 @@ test('retired Workers are deleted after every active replacement is reachable', 
     };
   }, () => pruneRetiredWorkers(['sh-monitor-other']));
   assert.deepEqual(calls.map(({ method }) => method), [
-    'GET', 'GET', 'GET', 'DELETE', 'GET',
+    'GET', 'GET', 'GET', 'GET', 'DELETE', 'GET',
   ]);
 });
 
