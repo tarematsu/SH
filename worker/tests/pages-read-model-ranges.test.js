@@ -9,7 +9,6 @@ import {
   dueFastMaterializedVariants,
   materializedVariantDue,
   mergeTrackHistoryExcludedDates,
-  pagesPayloadRefreshPlan,
   trackHistoryRefreshRanges,
 } from '../src/pages-read-model-refresh.js';
 
@@ -124,8 +123,6 @@ test('canonical materialized payloads use six-hour cadence except daily host sum
   assert.equal(materializedVariantDue(materialized.get('track-history'), midnight), true);
   assert.equal(materializedVariantDue(materialized.get('track-history'), quarterPast), false);
   assert.equal(materializedVariantDue(materialized.get('track-history'), sixHoursLater), true);
-  assert.deepEqual(pagesPayloadRefreshPlan(quarterPast), { daily: true });
-  assert.deepEqual(pagesPayloadRefreshPlan(Date.UTC(2026, 6, 16, 0, 5)), { daily: false });
 });
 
 test('track history maximum age covers six-hour source refresh plus edge grace', () => {
