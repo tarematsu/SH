@@ -1,0 +1,58 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
+
+import { queueStructuralPayload } from '../functions/lib/d1-lean-ingest.js';
+import { inferArtistFromDisplayTitle, normalizePlaybackTrack } from '../functions/lib/playback.js';
+
+test('queue structural payload keeps only current track identities', () => {
+  const payload = queueStructuralPayload({
+    station_id: 1,
+    queue_id: 2,
+    start_time: 3,
+    tracks: [{
+      position: 0,
+      queue_track_id: 10,
+      stationhead_track_id: 20,
+      spotify_id: 'sp1',
+      deezer_id: 'dz1',
+      isrc: 'JPTEST',
+      duration_ms: 180000,
+    }],
+  });
+
+  assert.deepEqual(payload.tracks[0], {
+    position: 0,
+    queue_track_id: 10,
+    stationhead_track_id: 20,
+    spotify_id: 'sp1',
+    deezer_id: 'dz1',
+    isrc: 'JPTEST',
+    duration_ms: 180000,
+  });
+});
+
+test('dashboard playback presentation exposes metadata without storage identities', () => {
+  const track = normalizePlaybackTrack({
+    observed_at: 100,
+    station_id: 1,
+    queue_id: 2,
+    start_time: 3,
+    position: 0,
+    queue_track_id: 10,
+    stationhead_track_id: 20,
+    spotify_id: 'sp1',
+    duration_ms: 180000,
+    title: 'Song',
+    artist: 'Artist',
+  }, 0, { currentIndex: 0, progressMs: 123 });
+
+  assert.equal(track.title, 'Song');
+  assert.equal(track.artist, 'Artist');
+  assert.equal('spotify_id' in track, false);
+  assert.equal('queue_track_id' in track, false);
+  assert.equal('stationhead_track_id' in track, false);
+});
+
+test('playback derives artist from UTF-8 dash-separated display titles', () => {
+  assert.equal(inferArtistFromDisplayTitle('Song \u2014 Artist', 'Song'), 'Artist');
+});
