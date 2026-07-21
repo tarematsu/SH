@@ -4,7 +4,7 @@ import test from 'node:test';
 import { queueStructuralPayload } from '../functions/lib/d1-lean-ingest.js';
 import { inferArtistFromDisplayTitle, normalizePlaybackTrack } from '../functions/lib/playback.js';
 
-test('queue structural payload keeps only current track identities', () => {
+test('queue structural payload keeps current track identities and normalized metadata', () => {
   const payload = queueStructuralPayload({
     station_id: 1,
     queue_id: 2,
@@ -28,6 +28,7 @@ test('queue structural payload keeps only current track identities', () => {
     deezer_id: 'dz1',
     isrc: 'JPTEST',
     duration_ms: 180000,
+    preview_url: null,
   });
 });
 
