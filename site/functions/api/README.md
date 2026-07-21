@@ -16,7 +16,7 @@ Use `GET /api` for the machine-readable endpoint catalog. The public API surface
 - `GET /api/sakurazaka46jp`
 - `GET /api/host-history`
 
-`/api/dashboard` includes the current queue and recent dashboard history. `track-history` includes track like data and the latest all-time ranking. `sakurazaka46jp` provides official broadcast listener series.
+`/api/dashboard` includes current state, the complete queue, recent dashboard history, and completed UTC-day member and stream changes. `track-history` includes track like data and the latest all-time ranking. `sakurazaka46jp` provides official broadcast listener series.
 
 Removed endpoints do not have compatibility handlers or catalog entries. File absence is the public 404 boundary.
 
