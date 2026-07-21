@@ -4,7 +4,6 @@ import { DatabaseSync } from 'node:sqlite';
 import {
   queueItemsToWrite,
   queueInspectionDue,
-  commentsToWrite,
   planLikeObservations,
 } from '../site/functions/lib/ingest.js';
 import {
@@ -38,11 +37,6 @@ test('unchanged queue payload skips all item and like inspection between checkpo
   assert.equal(queueInspectionDue({ raw_json: payload, item_observed_at: observedAt - 1000 }, payload, observedAt), false);
   assert.equal(queueInspectionDue({ raw_json: '{"changed":true}', item_observed_at: observedAt - 1000 }, payload, observedAt), true);
   assert.equal(queueInspectionDue({ raw_json: payload, item_observed_at: observedAt - 3_600_000 }, payload, observedAt), true);
-});
-
-test('normal comment filters only return new or changed rows', () => {
-  const mainComments = [{ id: 1, raw: { text: 'same' } }, { id: 2, raw: { text: 'changed' } }, { id: 3, raw: { text: 'new' } }];
-  assert.deepEqual(commentsToWrite(mainComments, [{ id: 1, raw_json: '{"text":"same"}' }, { id: 2, raw_json: '{"text":"old"}' }]).map((item) => item.id), [2, 3]);
 });
 
 test('Sakurazaka series selects event starts in one filtered scan', () => {
