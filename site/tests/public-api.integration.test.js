@@ -13,9 +13,7 @@ import {
   onRequestGet as historyGet,
   resetHistoryLoadCache,
 } from '../functions/api/history.js';
-import { onRequestGet as broadcastSeriesGet } from '../functions/api/broadcast-series.js';
-import { onRequestGet as officialHistoryGet } from '../functions/api/official-history.js';
-import { onRequestGet as trackLikesGet } from '../functions/api/track-likes.js';
+import { onRequestGet as sakurazakaGet } from '../functions/api/sakurazaka46jp.js';
 import { FakeD1Database, responseJson } from './helpers/fake-d1.js';
 
 test('history endpoint rejects unknown modes and never caches errors', async () => {
@@ -69,10 +67,7 @@ test('history endpoint restores the ranking leaderboard from OTHER_DB', async ()
     });
   const response = await historyGet({
     request: new Request('https://skrzk.test/api/history?mode=ranking&from=2026-07-01&to=2026-07-31'),
-    env: {
-      DB: new FakeD1Database(),
-      OTHER_DB: otherDb,
-    },
+    env: { DB: new FakeD1Database(), OTHER_DB: otherDb },
   });
   const body = await responseJson(response);
   assert.equal(response.status, 200);
@@ -88,12 +83,8 @@ test('history endpoint restores the ranking leaderboard from OTHER_DB', async ()
 
 test('history rejects impossible dates before querying D1', async () => {
   const env = {
-    DB: {
-      prepare() { throw new Error('D1 should not be queried'); },
-    },
-    OTHER_DB: {
-      prepare() { throw new Error('D1 should not be queried'); },
-    },
+    DB: { prepare() { throw new Error('D1 should not be queried'); } },
+    OTHER_DB: { prepare() { throw new Error('D1 should not be queried'); } },
   };
   const response = await historyGet({
     request: new Request('https://skrzk.test/api/history?mode=broadcasts&from=2026-02-30&to=2026-03-01'),
@@ -106,56 +97,16 @@ test('history rejects impossible dates before querying D1', async () => {
   });
 });
 
-test('broadcast series rejects impossible dates before querying D1', async () => {
+test('Sakurazaka series rejects impossible dates before querying D1', async () => {
   const env = {
-    OTHER_DB: {
-      prepare() { throw new Error('D1 should not be queried'); },
-    },
-    MINUTE_DB: {
-      prepare() { throw new Error('D1 should not be queried'); },
-    },
+    OTHER_DB: { prepare() { throw new Error('D1 should not be queried'); } },
+    MINUTE_DB: { prepare() { throw new Error('D1 should not be queried'); } },
   };
-  const response = await broadcastSeriesGet({
-    request: new Request('https://skrzk.test/api/broadcast-series?from=2026-02-30&to=2026-03-01'),
+  const response = await sakurazakaGet({
+    request: new Request('https://skrzk.test/api/sakurazaka46jp?from=2026-02-30&to=2026-03-01'),
     env,
   });
   assert.equal(response.status, 400);
-  assert.deepEqual(await responseJson(response), {
-    ok: false,
-    error: 'from and to must be valid YYYY-MM-DD dates',
-  });
-});
-
-test('official history rejects impossible dates before querying D1', async () => {
-  const env = {
-    OTHER_DB: {
-      prepare() { throw new Error('D1 should not be queried'); },
-    },
-  };
-  const response = await officialHistoryGet({
-    request: new Request('https://skrzk.test/api/official-history?from=2026-02-30&to=2026-03-01'),
-    env,
-  });
-  assert.equal(response.status, 400);
-  assert.equal(response.headers.get('cache-control'), 'no-store');
-  assert.deepEqual(await responseJson(response), {
-    ok: false,
-    error: 'from and to must be valid YYYY-MM-DD dates',
-  });
-});
-
-test('track likes rejects impossible dates before querying D1', async () => {
-  const env = {
-    DB: {
-      prepare() { throw new Error('D1 should not be queried'); },
-    },
-  };
-  const response = await trackLikesGet({
-    request: new Request('https://skrzk.test/api/track-likes?from=2026-02-30&to=2026-03-01'),
-    env,
-  });
-  assert.equal(response.status, 400);
-  assert.equal(response.headers.get('cache-control'), 'no-store');
   assert.deepEqual(await responseJson(response), {
     ok: false,
     error: 'from and to must be valid YYYY-MM-DD dates',
