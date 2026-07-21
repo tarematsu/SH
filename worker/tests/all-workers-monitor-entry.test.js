@@ -17,12 +17,13 @@ test('monitor maintenance caches only current rollup and retention modules', () 
 });
 
 test('runtime stream prediction is a single lazy scheduled dependency', () => {
-  const dispatch = source('../src/runtime-other-monitor-dispatch.js');
+  const dispatch = source('../src/runtime-stream-prediction-dispatch.js');
   assert.match(dispatch, /predictionModulePromise \|\|=/);
   assert.match(dispatch, /runStreamGoalPrediction/);
-  assert.match(dispatch, /otherMonitorDue/);
+  assert.match(dispatch, /streamPredictionDue/);
   assert.doesNotMatch(dispatch, /buddy|host|officialNews|Queue/i);
   assert.equal(existsSync(new URL('../src/other-monitor-entry.js', import.meta.url)), false);
+  assert.equal(existsSync(new URL('../src/runtime-other-monitor-dispatch.js', import.meta.url)), false);
 });
 
 test('runtime orchestration is split by scheduled, Queue, and environment responsibilities', () => {
@@ -40,7 +41,7 @@ test('runtime orchestration is split by scheduled, Queue, and environment respon
   assert.match(scheduled, /sendBatch/);
   assert.match(scheduled, /RUNTIME_MINUTE_RECOVERY_MESSAGE/);
   assert.match(scheduled, /RUNTIME_MINUTE_GATE_MESSAGE/);
-  assert.match(scheduled, /RUNTIME_OTHER_MONITOR_MESSAGE/);
+  assert.match(scheduled, /RUNTIME_STREAM_PREDICTION_MESSAGE/);
   assert.doesNotMatch(scheduled, /buddy|host-monitor-task|other-monitor-select/i);
 
   const queue = source('../src/runtime-queue.js');
@@ -49,7 +50,7 @@ test('runtime orchestration is split by scheduled, Queue, and environment respon
   assert.match(queue, /rawCollectionFetchModulePromise \|\|=/);
   assert.match(queue, /processRuntimeDispatchMessage/);
   assert.match(queue, /unsupported_runtime_message_discarded/);
-  assert.doesNotMatch(queue, /otherMonitorModulePromise|runOtherMonitorQueue/);
+  assert.doesNotMatch(queue, /otherMonitorModulePromise|runOtherMonitorQueue|runtime-other-monitor/);
 
   const env = source('../src/runtime-env.js');
   assert.match(env, /function withDatabaseAlias/);
