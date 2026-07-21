@@ -22,7 +22,7 @@ export const ACTIVE_CONFIGS = Object.freeze([
 // - runtime host queue: raw session + raw fetch, recovery/gate/monitor dispatch
 //   stages, maintenance, downstream monitor work, and a success checkpoint
 // - live derive: trigger + revision prepare + fact write + compact revision close
-// - enrichment: identity/playback continuation allowance
+// - enrichment: playback + playback patch + identity resolve + identity attach + bite
 export const QUEUE_MESSAGES_PER_DAY = Object.freeze({
   'stationhead-comments': 288,
   'stationhead-raw-collection': 1_440,
@@ -32,7 +32,7 @@ export const QUEUE_MESSAGES_PER_DAY = Object.freeze({
   'stationhead-host-monitor': 4_932,
   'stationhead-minute-derive': 1_440,
   'stationhead-minute-live-derive': 5_760,
-  'stationhead-minute-enrichment': 4_320,
+  'stationhead-minute-enrichment': 7_200,
   'stationhead-track-metadata': 1_440,
   'stationhead-buddies-facts': 1_440,
   'stationhead-minute-rebuild': 144,
@@ -55,7 +55,7 @@ export function cronInvocationsPerDay(expression) {
 }
 
 function configValue(source, key) {
-  const match = source.match(new RegExp(`"${key}"\\s*:\\s*"([^"]+)"`));
+  const match = source.match(new RegExp(`"${key}"\s*:\s*"([^"]+)"`));
   return match?.[1] || null;
 }
 
