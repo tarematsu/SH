@@ -31,7 +31,10 @@ test('sparse revision preparation recovers the row that won the storage-key race
   let reusableLookups = 0;
   let inserted = 0;
   let recovered = 0;
-  const result = await prepareSparseLiveRevision({ MINUTE_DB: {} }, payload, {
+  const result = await prepareSparseLiveRevision({
+    MINUTE_DB: {},
+    DERIVE_REVISION_STAGE_TRACKS: 1,
+  }, payload, {
     sourceJobId: 7,
   }, {
     resolveLiveSession: async () => 50,
