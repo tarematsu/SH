@@ -240,8 +240,6 @@ export const TRACK_HISTORY_SQL = `WITH RECURSIVE queue_starts AS (
            AND current_first.stationhead_track_id=previous_item.stationhead_track_id)
          OR (current_first.spotify_id IS NOT NULL
            AND current_first.spotify_id=previous_item.spotify_id)
-         OR (current_first.apple_music_id IS NOT NULL
-           AND current_first.apple_music_id=previous_item.apple_music_id)
          OR (current_first.isrc IS NOT NULL
            AND UPPER(current_first.isrc)=UPPER(previous_item.isrc))
        )
@@ -279,7 +277,7 @@ export const TRACK_HISTORY_SQL = `WITH RECURSIVE queue_starts AS (
       SELECT
         strftime('%Y-%m-%d', p.played_at / 1000, 'unixepoch') AS play_date,
         p.played_at,p.position,p.queue_track_id,p.stationhead_track_id,
-        p.spotify_id,p.apple_music_id,p.isrc,p.bite_count AS queue_like_count,
+        p.spotify_id,p.isrc,p.bite_count AS queue_like_count,
         NULLIF(m.title, '') AS title,
         NULLIF(m.artist, '') AS artist,
         NULLIF(m.display_title, '') AS display_title,
@@ -351,7 +349,7 @@ export const TRACK_HISTORY_SQL = `WITH RECURSIVE queue_starts AS (
       MAX(plays.queue_like_count) AS like_count,
       MIN(plays.position) AS position,
       MIN(plays.queue_track_id) AS queue_track_id,
-      plays.stationhead_track_id,plays.spotify_id,plays.apple_music_id,plays.isrc,
+      plays.stationhead_track_id,plays.spotify_id,plays.isrc,
       MAX(plays.title) AS title,MAX(plays.artist) AS artist,
       MAX(plays.display_title) AS display_title,MAX(plays.spotify_url) AS spotify_url,
       MAX(plays.raw_title) AS raw_title,MAX(plays.raw_artist) AS raw_artist,
@@ -360,14 +358,14 @@ export const TRACK_HISTORY_SQL = `WITH RECURSIVE queue_starts AS (
     FROM plays
     LEFT JOIN coverage ON coverage.play_date=plays.play_date
     GROUP BY
-      plays.play_date,plays.stationhead_track_id,plays.spotify_id,plays.apple_music_id,plays.isrc,
+      plays.play_date,plays.stationhead_track_id,plays.spotify_id,plays.isrc,
       CASE
-        WHEN plays.spotify_id IS NULL AND plays.apple_music_id IS NULL AND plays.isrc IS NULL
+        WHEN plays.spotify_id IS NULL AND plays.isrc IS NULL
           AND plays.stationhead_track_id IS NULL THEN plays.queue_track_id
         ELSE NULL
       END,
       CASE
-        WHEN plays.spotify_id IS NULL AND plays.apple_music_id IS NULL AND plays.isrc IS NULL
+        WHEN plays.spotify_id IS NULL AND plays.isrc IS NULL
           AND plays.stationhead_track_id IS NULL AND plays.queue_track_id IS NULL THEN plays.position
         ELSE NULL
       END
