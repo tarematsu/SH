@@ -1,10 +1,15 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { existsSync, readFileSync } from 'node:fs';
 
 import { normalizeComments } from '../worker/src/shared.js';
-import { commentsToWrite } from '../site/functions/lib/ingest.js';
 
-test('normal comment payloads drop duplicate upstream IDs', () => {
+const ingestSource = readFileSync(
+  new URL('../site/functions/lib/ingest.js', import.meta.url),
+  'utf8',
+);
+
+ test('normal comment payloads drop duplicate upstream IDs', () => {
   const normalized = normalizeComments({
     chats: {
       items: [
@@ -18,22 +23,9 @@ test('normal comment payloads drop duplicate upstream IDs', () => {
   assert.deepEqual(normalized.map((comment) => comment.id), [101, 102]);
 });
 
-test('normal comment storage writes each numeric ID at most once', () => {
-  const changed = commentsToWrite([
-    { id: 101, raw: { id: 101, text: 'old' } },
-    { id: 101, raw: { id: 101, text: 'new' } },
-    { id: 102, raw: { id: 102, text: 'second' } },
-  ], []);
-
-  assert.deepEqual(changed.map((comment) => comment.id), [101, 102]);
-  assert.equal(changed[0].raw.text, 'new');
-});
-
-test('already stored identical normal comments are skipped', () => {
-  const raw = JSON.stringify({ id: 101, text: 'same' });
-  const normal = commentsToWrite([
-    { id: 101, raw: { id: 101, text: 'same' } },
-  ], [{ id: 101, raw_json: raw }]);
-
-  assert.deepEqual(normal, []);
+test('comment ingest persists aggregate counts without a raw comment writer', () => {
+  assert.match(ingestSource, /saveCommentCounts/);
+  assert.doesNotMatch(ingestSource, /sh_comments|text_with_xml|commentWriteStatements/);
+  assert.equal(existsSync(new URL('../site/functions/lib/ingest-legacy.mjs', import.meta.url)), false);
+  assert.equal(existsSync(new URL('../site/functions/lib/ingest-core.js', import.meta.url)), false);
 });
