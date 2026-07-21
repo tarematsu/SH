@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { normalizeComments } from '../worker/src/shared.js';
-import { commentsToWrite } from '../site/functions/api/ingest.js';
+import { commentsToWrite } from '../site/functions/lib/ingest.js';
 
 test('normal comment payloads drop duplicate upstream IDs', () => {
   const normalized = normalizeComments({
