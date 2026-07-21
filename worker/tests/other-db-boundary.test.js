@@ -6,13 +6,15 @@ import { STREAM_GOAL_PREDICTION_AGGREGATE_SQL } from '../src/stream-goal-predict
 import { OFFICIAL_PROBE_CONTEXT_SQL } from '../src/official-news-probe.js';
 
 const OWNED = [
-  'buddy-playback.js', 'buddy-playback-metadata.js', 'cloud-host-monitor.js',
-  'official-news-probe.js', 'official-news-reconcile.js', 'stream-goal-prediction.js',
-  'scheduled-maintenance.js', 'snapshot-retention.js', 'other-health.js',
-  'health-alert.js', 'optimized-health.js',
+  'official-news-probe.js',
+  'official-news-reconcile.js',
+  'stream-goal-prediction.js',
+  'snapshot-retention.js',
+  'other-health.js',
+  'sakurazaka-monitor.js',
 ];
 
-test('other-owned modules have no runtime env.DB dependency', () => {
+test('OTHER_DB-owned modules do not fall back to an ambiguous env.DB binding', () => {
   for (const file of OWNED) {
     const source = readFileSync(new URL(`../src/${file}`, import.meta.url), 'utf8');
     assert.doesNotMatch(source, /env\??\.DB\b/, file);
@@ -25,7 +27,9 @@ test('stream-goal prediction reads minute facts and presentation read model', ()
   assert.doesNotMatch(STREAM_GOAL_PREDICTION_AGGREGATE_SQL, /sh_channel_snapshots/);
 });
 
-test('other uses its buddy46 session instead of assuming a primary collector row', () => {
-  assert.match(OFFICIAL_PROBE_CONTEXT_SQL, /id='buddy46'/);
-  assert.doesNotMatch(OFFICIAL_PROBE_CONTEXT_SQL, /id='stationhead'/);
+test('official probing resolves the dedicated Sakurazaka authentication state', () => {
+  const source = readFileSync(new URL('../src/official-news-probe.js', import.meta.url), 'utf8');
+  assert.match(OFFICIAL_PROBE_CONTEXT_SQL, /WHERE id=\?/);
+  assert.match(source, /SAKURAZAKA_AUTH_STATE_ID/);
+  assert.match(source, /sakurazaka46jp/);
 });
