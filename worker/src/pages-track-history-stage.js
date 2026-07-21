@@ -6,10 +6,12 @@ import {
 import { mergeTrackRows } from '../../site/functions/lib/track-history-merge.js';
 import { applyTrackPeriodCompleteness } from '../../site/functions/lib/period-completeness.js';
 import { attachCompactTrackLikes } from '../../site/functions/lib/track-likes.js';
+import { loadTrackRanking } from '../../site/functions/lib/track-ranking.js';
 import { mergeTrackHistoryExcludedDates } from './pages-track-history-support.js';
 import { TRACK_HISTORY_STAGE_KEY } from './pages-track-history-cycle.js';
 
 const TRACK_HISTORY_LIMIT = 40_000;
+const TRACK_RANKING_LIMIT = 500;
 const BACKFILL_KEY = 'track-history-backfill';
 const STATUS_KEY = 'track-history-status';
 const TRACK_HISTORY_EPOCH = Date.UTC(2024, 4, 1);
@@ -225,10 +227,11 @@ function backfillStatus(stage, now) {
 }
 
 export async function finalizeTrackHistoryStatus(env, stage, now, dependencies = {}) {
-  const coverage = await (dependencies.coverage || trackHistoryCoverage)(
-    env.MINUTE_DB,
-    stage.ranges.full_recent,
-  );
+  const loadRanking = dependencies.loadRanking || loadTrackRanking;
+  const [coverage, ranking] = await Promise.all([
+    (dependencies.coverage || trackHistoryCoverage)(env.MINUTE_DB, stage.ranges.full_recent),
+    loadRanking(env.MINUTE_DB, { limit: TRACK_RANKING_LIMIT }),
+  ]);
   const recentResults = completedResults(stage, 'recent');
   const previousSourceRowCount = Number(stage.previous_status?.source_row_count);
   const previousSourceRefreshedAt = validTimestamp(
@@ -255,6 +258,9 @@ export async function finalizeTrackHistoryStatus(env, stage, now, dependencies =
     source_row_count_refreshed_at: sourceRowCountRefreshedAt,
     source_truncated: false,
     excluded_play_count_dates: excludedDates,
+    ranking: ranking.rows,
+    ranking_summary: ranking.summary,
+    ranking_scope: 'all-time-latest-counter',
     grace_ms: TRACK_HISTORY_GRACE_MS,
     backfill_completed: !backfillRange || backfillRange.fromTs <= TRACK_HISTORY_EPOCH,
     backfill_from: backfillRange ? dayText(backfillRange.fromTs) : null,
