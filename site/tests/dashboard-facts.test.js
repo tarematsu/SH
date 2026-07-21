@@ -17,6 +17,7 @@ const dayText = (value) => new Date(value).toISOString().slice(0, 10);
 
 test('facts dashboard SQL preserves the unified dashboard response contract', () => {
   assert.match(FACTS_LATEST_SQL, /FROM sh_minute_facts AS f/);
+  assert.match(FACTS_LATEST_SQL, /INDEXED BY idx_sh_minute_facts_live_minute/);
   assert.match(FACTS_LATEST_SQL, /reported_total_listens AS total_listens/);
   assert.match(FACTS_LATEST_SQL, /reported_current_stream_count AS current_stream_count/);
   assert.match(FACTS_LATEST_SQL, /LEFT JOIN sh_minute_fact_context/);
@@ -80,7 +81,7 @@ test('unified dashboard includes facts, history and completed daily summaries', 
     })
     .route('all', 'WITH latest_station AS', { results: [] });
   const facts = new FakeD1Database()
-    .route('first', 'FROM sh_minute_facts AS f\nLEFT JOIN sh_minute_fact_context', {
+    .route('first', 'FROM sh_minute_facts AS f', {
       id: 10,
       observed_at: now - 2_000,
       channel_id: 318,
