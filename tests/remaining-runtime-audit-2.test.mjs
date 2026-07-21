@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { requestWithParsedJson } from '../site/functions/lib/parsed-request.js';
-import { saveStationSnapshot } from '../site/functions/api/host-ingest.js';
+import { saveStationSnapshot } from '../site/functions/lib/host-ingest.js';
 import {
   OFFICIAL_HEALTH_SQL,
   loadOfficialHealthState,
@@ -12,10 +12,10 @@ import {
 } from '../worker/src/official-news-index.js';
 
 test('parsed request wrapper reuses one consumed JSON body', async () => {
-  const request = new Request('https://example.test/host-ingest', {
+  const request = new Request('https://worker.internal/host-ingest', {
     method: 'POST',
     headers: { authorization: 'Bearer secret', 'content-type': 'application/json' },
-    body: JSON.stringify({ type: 'legacy', data: { value: 1 } }),
+    body: JSON.stringify({ type: 'fallback', data: { value: 1 } }),
   });
   const body = await request.json();
   const wrapped = requestWithParsedJson(request, body);
