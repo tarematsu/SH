@@ -98,17 +98,15 @@ async function commitLiveWrite(env, body, dependencies = {}) {
   const activeEnv = activeQueueEnvironment(env);
   const payload = await loadDurableLivePayload(activeEnv, body, dependencies);
   const [
-    { withAppleMusicFreeRuntime },
     { withMinuteD1WriteThrottling },
     deriveQueue,
     fastStore,
   ] = await Promise.all([
-    dependencies.appleRuntime || import('../../site/functions/lib/apple-music-d1-pruner.js'),
     dependencies.writeThrottle || import('./minute-d1-write-throttle.js'),
     dependencies.deriveQueue || import('./minute-derive-queue.js'),
     dependencies.fastStore || import('./minute-facts-fast-store.js'),
   ]);
-  const budgetEnv = withMinuteD1WriteThrottling(withAppleMusicFreeRuntime(activeEnv));
+  const budgetEnv = withMinuteD1WriteThrottling(activeEnv);
   const preparedRevision = body.prepared_revision || null;
   const result = await deriveQueue.processMinuteDeriveWriteStage(
     budgetEnv,
