@@ -18,10 +18,6 @@ export const API_GROUPS = Object.freeze({
   ]),
 });
 
-export const INTERNAL_API_PATHS = Object.freeze([]);
-
-const blockedApiPaths = new Set(INTERNAL_API_PATHS);
-
 export const API_EDGE_TTL_SECONDS = 300;
 export const API_BROWSER_TTL_SECONDS = 30;
 export const MATERIALIZED_RESPONSE_MAX_AGE_MS = 15 * 60_000;
@@ -69,11 +65,9 @@ export function materializedApiKey(input) {
 
 export function edgeCacheableApiRequest(request) {
   if (request.method !== 'GET' || request.headers.has('authorization')) return false;
-  const url = new URL(request.url);
-  const pathname = normalizedPathname(url.pathname);
-  if (!pathname.startsWith('/api/') || blockedApiPaths.has(pathname)) return false;
-  if (pathname.startsWith('/api/health')) return false;
-  return true;
+  const pathname = normalizedPathname(new URL(request.url).pathname);
+  if (!pathname.startsWith('/api/')) return false;
+  return !pathname.startsWith('/api/health');
 }
 
 export function apiCacheTtlSeconds() {
