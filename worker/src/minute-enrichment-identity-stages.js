@@ -6,6 +6,7 @@ import {
 import { integer } from './minute-facts-track-descriptor.js';
 import { writeCurrentBite } from './minute-facts-legacy-revision.js';
 
+export const IDENTITY_ATTACH_STAGE = 'identity-attach';
 export const IDENTITY_BITE_STAGE = 'identity-bite';
 
 const EMPTY_DEPENDENCIES = Object.freeze({});
@@ -89,11 +90,11 @@ async function attachSessionAndFact(db, body, identity, sessionId) {
   await db.batch(statements);
 }
 
-function biteMessage(body, sessionId, hostId) {
+function continuationMessage(body, stage, extra = {}) {
   return {
     message_type: 'minute-fact-enrichment',
     message_version: 1,
-    stage: IDENTITY_BITE_STAGE,
+    stage,
     channel_id: body.channel_id,
     station_id: body.station_id,
     minute_at: body.minute_at,
@@ -102,12 +103,11 @@ function biteMessage(body, sessionId, hostId) {
     queue: body.queue || null,
     queue_position: body.queue_position,
     track_id: body.track_id,
-    session_id: sessionId,
-    host_id: hostId,
+    ...extra,
   };
 }
 
-async function sendBiteStage(env, message) {
+async function sendStage(env, message) {
   if (!env?.MINUTE_ENRICHMENT_QUEUE?.send) {
     throw new Error('MINUTE_ENRICHMENT_QUEUE binding is missing');
   }
@@ -137,16 +137,55 @@ export async function processMinuteIdentitySession(
   }, identity.observedAt);
   const resolveSession = dependencies.resolveSession || resolveOrderedSession;
   const sessionId = await resolveSession(db, body, identity, hostId);
-  const attach = dependencies.attachSessionAndFact || attachSessionAndFact;
-  await attach(db, body, identity, sessionId);
-  const message = biteMessage(body, sessionId, hostId);
-  const send = dependencies.sendBiteStage || sendBiteStage;
+  const message = continuationMessage(body, IDENTITY_ATTACH_STAGE, {
+    session_id: sessionId,
+    host_id: hostId,
+  });
+  const send = dependencies.sendAttachStage || sendStage;
   await send(env, message);
 
   return {
     skipped: false,
     pending: true,
     stage: 'identity',
+    ...identity,
+    session_id: sessionId,
+    host_id: hostId,
+    attach_deferred: true,
+  };
+}
+
+export async function processMinuteIdentityAttach(
+  env,
+  body,
+  dependencies = EMPTY_DEPENDENCIES,
+) {
+  const identity = identityFrom(body, IDENTITY_ATTACH_STAGE);
+  const db = env?.MINUTE_DB;
+  if (!db?.prepare && !dependencies.loadCurrentMinute) {
+    throw new Error('MINUTE_DB binding is missing');
+  }
+  const loadCurrent = dependencies.loadCurrentMinute || loadCurrentMinute;
+  const current = await loadCurrent(db, identity);
+  if (staleWinner(current, identity)) {
+    return { skipped: true, reason: 'stale-minute-winner', stage: IDENTITY_ATTACH_STAGE, ...identity };
+  }
+
+  const sessionId = integer(body.session_id);
+  const hostId = integer(body.host_id);
+  const attach = dependencies.attachSessionAndFact || attachSessionAndFact;
+  await attach(db, body, identity, sessionId);
+  const message = continuationMessage(body, IDENTITY_BITE_STAGE, {
+    session_id: sessionId,
+    host_id: hostId,
+  });
+  const send = dependencies.sendBiteStage || sendStage;
+  await send(env, message);
+
+  return {
+    skipped: false,
+    pending: true,
+    stage: IDENTITY_ATTACH_STAGE,
     ...identity,
     session_id: sessionId,
     host_id: hostId,
