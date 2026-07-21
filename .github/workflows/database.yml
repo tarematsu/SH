@@ -10,6 +10,7 @@ on:
       - 'worker/scripts/provision-facts-db.mjs'
       - 'worker/scripts/provision-current-facts-db.mjs'
       - 'worker/scripts/apply-facts-pr-schema.mjs'
+      - 'worker/scripts/purge-completed-minute-fact-payloads.mjs'
       - 'worker/scripts/verify-facts-live.mjs'
       - 'worker/scripts/repair-july-stream-facts.mjs'
       - 'database/other-migrations/**'
@@ -59,6 +60,8 @@ jobs:
       FACTS_DATABASE_NAME: stationhead-minute
       FACTS_VERIFY_ATTEMPTS: '5'
       FACTS_VERIFY_DELAY_MS: '20000'
+      MINUTE_FACT_PAYLOAD_PURGE_BATCH_SIZE: '1000'
+      MINUTE_FACT_PAYLOAD_PURGE_MAX_BATCHES: '10000'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -69,6 +72,8 @@ jobs:
       - run: npm ci --no-audit --no-fund
       - name: Create or update database
         run: node scripts/provision-current-facts-db.mjs
+      - name: Purge completed minute fact payloads
+        run: node scripts/purge-completed-minute-fact-payloads.mjs
       - name: Repair contaminated July stream facts
         run: node scripts/repair-july-stream-facts.mjs
       - name: Verify live data
