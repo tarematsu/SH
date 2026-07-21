@@ -6,10 +6,8 @@ import {
   observedAtFrom,
   rawJson,
   readJsonBody,
-  stripAppleMusicFields,
   text,
 } from '../lib/api-utils.js';
-import { withAppleMusicFreeD1 } from '../lib/apple-music-d1-pruner.js';
 import { saveCommentCounts } from '../lib/comment-counts.js';
 import { saveLeanHeartbeat, saveLeanQueue, saveLeanSnapshot } from '../lib/d1-optimized-ingest.js';
 import { requestWithParsedJson } from '../lib/parsed-request.js';
@@ -78,10 +76,9 @@ export function supportsOptimizedIngestType(type) {
 
 export function ingestOptimizedBody(env, body) {
   if (!env?.DB) return NO_OPTIMIZED_INGEST;
-  const activeEnv = withAppleMusicFreeD1(env);
   const handler = INGEST_HANDLERS[body?.type];
   if (!handler) return NO_OPTIMIZED_INGEST;
-  return handler(activeEnv, body, observedAtFrom(body), body?.data ?? {});
+  return handler(env, body, observedAtFrom(body), body?.data ?? {});
 }
 
 // Internal entry point used by the collector Worker. It is deliberately not
@@ -91,7 +88,7 @@ export async function ingestInternal(context) {
   if (!authorized(request, env) || !env.DB) return corePost(context);
   const parsed = await readJsonBody(request, { clone: true });
   if (!parsed.ok) return corePost(context);
-  const body = stripAppleMusicFields(parsed.body);
+  const body = parsed.body;
   const fallbackContext = {
     ...context,
     request: requestWithParsedJson(request, body),
