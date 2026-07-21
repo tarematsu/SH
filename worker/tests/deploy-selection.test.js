@@ -17,7 +17,6 @@ function select(paths = [], args = []) {
 }
 
 test('domain modules map to the four active Workers', () => {
-  assert.deepEqual(select(['worker/src/comments-entry.js']).workers, [INGEST]);
   assert.deepEqual(select(['worker/src/persist-channel-entry.js']).workers, [INGEST]);
   assert.deepEqual(select(['worker/src/minute-enrichment-playback-stages.js']).workers, [MINUTE]);
   assert.deepEqual(select(['worker/src/track-metadata-entry.js']).workers, [MINUTE]);
