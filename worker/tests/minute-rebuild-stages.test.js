@@ -189,14 +189,19 @@ test('gap commit dispatches at most the first prepared candidate per invocation'
   assert.deepEqual(sent.map((body) => body.minute_at), [60_000]);
 });
 
-test('recovery throughput uses direct dispatch while bounding work per runtime delivery', () => {
+test('thirty-day reconstruction is enabled with expanded recovery throughput', () => {
   const runtime = JSON.parse(readFileSync(new URL('../wrangler.runtime.jsonc', import.meta.url), 'utf8'));
   const rebuild = runtime.queues.consumers.find(({ queue }) => queue === 'stationhead-minute-rebuild');
 
-  assert.equal(runtime.vars.DERIVE_DISPATCH_LIMIT, 10);
-  assert.equal(runtime.vars.REBUILD_SOURCE_ROWS, 1);
-  assert.equal(runtime.vars.REBUILD_MAX_JOBS, 1);
-  assert.equal(runtime.vars.GAP_SCAN_MAX_JOBS, 1);
+  assert.equal(runtime.vars.HISTORICAL_REBUILD_ENABLED, true);
+  assert.equal(runtime.vars.REBUILD_HISTORICAL_BACKFILL_ENABLED, true);
+  assert.equal(runtime.vars.REBUILD_HISTORICAL_BACKFILL_INTERVAL_MS, 600_000);
+  assert.equal(runtime.vars.DERIVE_DISPATCH_LIMIT, 20);
+  assert.equal(runtime.vars.DERIVE_REVISION_RECOVERY_LIMIT, 5);
+  assert.equal(runtime.vars.REBUILD_SOURCE_ROWS, 100);
+  assert.equal(runtime.vars.REBUILD_MAX_JOBS, 20);
+  assert.equal(runtime.vars.GAP_SCAN_WINDOW_MINUTES, 1440);
+  assert.equal(runtime.vars.GAP_SCAN_MAX_JOBS, 20);
   assert.equal(rebuild.max_batch_size, 1);
   assert.equal(rebuild.max_concurrency, 1);
   assert.equal(
