@@ -1,4 +1,3 @@
-import { stripAppleMusicFields } from '../../site/functions/lib/api-utils.js';
 import { normalizeComments as sharedNormalizeComments } from './shared.js';
 
 export function finite(value) {
@@ -38,7 +37,6 @@ export function normalizeProfile(account, fallbackHandle) {
     medium_url: account.medium?.url ?? null,
     main_url: account.main?.url ?? null,
     badges: Array.isArray(account.badges) ? account.badges : [],
-    raw: stripAppleMusicFields(account),
   };
 }
 
@@ -62,7 +60,6 @@ export function normalizeQueue(station, observedAt) {
       duration_ms: finite(track?.duration),
       preview_url: track?.preview ?? null,
       bite_count: finite(track?.bite_count ?? track?.biteCount ?? track?.likes ?? track?.like_count),
-      raw: stripAppleMusicFields(item),
     };
   });
 
@@ -89,7 +86,6 @@ export function normalizeQueue(station, observedAt) {
     current_track_id: currentTrack?.stationhead_track_id ?? null,
     current_spotify_id: currentTrack?.spotify_id ?? null,
     tracks,
-    raw: stripAppleMusicFields(queue),
   };
 }
 
