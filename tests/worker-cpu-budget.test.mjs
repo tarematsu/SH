@@ -16,11 +16,17 @@ const enforcementScript = fileURLToPath(
   new URL('../.github/scripts/enforce-worker-cpu-budget.py', import.meta.url),
 );
 
-function runBudget(summary) {
+function runBudget(summary, rawEvents = null) {
   const directory = mkdtempSync(join(tmpdir(), 'sh-cpu-budget-'));
   const outputDirectory = join(directory, 'observability-logs');
   mkdirSync(outputDirectory);
   writeFileSync(join(outputDirectory, 'summary.json'), JSON.stringify(summary));
+  if (rawEvents) {
+    writeFileSync(
+      join(outputDirectory, 'sh-workers.ndjson'),
+      `${rawEvents.map((event) => JSON.stringify(event)).join('\n')}\n`,
+    );
+  }
 
   try {
     const python = process.platform === 'win32' ? 'python' : 'python3';
@@ -63,6 +69,15 @@ function summaryFor(maximum, { events = 1, samples = events } = {}) {
   };
 }
 
+function rawEvent(script, cpu, extra = {}) {
+  return {
+    ScriptName: script,
+    CPUTimeMs: cpu,
+    Outcome: 'ok',
+    ...extra,
+  };
+}
+
 test('10 ms is accepted as the inclusive per-invocation CPU ceiling', () => {
   const { result, report } = runBudget(summaryFor(10));
   assert.equal(result.status, 0, result.stderr);
@@ -84,4 +99,46 @@ test('an invocation without a CPU sample fails the budget', () => {
   const { result, report } = runBudget(summaryFor(4, { events: 2, samples: 1 }));
   assert.equal(result.status, 1);
   assert.deepEqual(report.violations.map(({ reason }) => reason), ['incomplete_cpu_samples']);
+});
+
+test('identified historical rebuild CPU is excluded without exempting normal runtime work', () => {
+  const summary = summaryFor(50, { events: 2, samples: 2 });
+  const rawEvents = [
+    rawEvent('sh-buddies-ingest', 1),
+    rawEvent('sh-minute-enrichment', 1),
+    rawEvent('sh-sakurazaka46jp', 1),
+    rawEvent('sh-runtime-orchestrator', 50, {
+      Event: { QueueName: 'stationhead-minute-rebuild' },
+      Logs: [{ Message: 'minute_rebuild_stage_completed' }],
+    }),
+    rawEvent('sh-runtime-orchestrator', 5, {
+      Event: { QueueName: 'stationhead-host-monitor' },
+    }),
+  ];
+  const { result, report } = runBudget(summary, rawEvents);
+  assert.equal(result.status, 0, result.stderr);
+  const runtime = report.workers['sh-runtime-orchestrator'];
+  assert.equal(runtime.events, 2);
+  assert.equal(runtime.cpu_budget_events, 1);
+  assert.equal(runtime.cpu_budget_excluded_rebuild_events, 1);
+  assert.equal(runtime.max_ms, 5);
+  assert.equal(runtime.max_within_budget, true);
+});
+
+test('a non-rebuild runtime invocation above the ceiling still fails', () => {
+  const summary = summaryFor(25, { events: 2, samples: 2 });
+  const rawEvents = [
+    rawEvent('sh-buddies-ingest', 1),
+    rawEvent('sh-minute-enrichment', 1),
+    rawEvent('sh-sakurazaka46jp', 1),
+    rawEvent('sh-runtime-orchestrator', 25, {
+      Event: { QueueName: 'stationhead-host-monitor' },
+    }),
+    rawEvent('sh-runtime-orchestrator', 2, {
+      Event: { QueueName: 'stationhead-minute-rebuild' },
+    }),
+  ];
+  const { result, report } = runBudget(summary, rawEvents);
+  assert.equal(result.status, 1);
+  assert.deepEqual(report.violations.map(({ reason }) => reason), ['invocation_above_budget']);
 });
