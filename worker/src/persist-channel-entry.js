@@ -1,4 +1,4 @@
-import { ingestOptimizedBody } from '../../site/functions/api/ingest.js';
+import { ingestOptimizedBody } from '../../site/functions/lib/ingest.js';
 import { restoreQueueAnalysis } from './queue-analysis-transfer.js';
 import { recordQueueMaterialization } from './queue-materialization.js';
 import {
