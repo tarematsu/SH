@@ -4,7 +4,6 @@ import test from 'node:test';
 import { isBlockedApiPath, onRequest } from '../functions/api/_middleware.js';
 
 const INTERNAL = [
-  '/api/history-legacy',
   '/api/ingest',
   '/api/ingest-core',
   '/api/ingest-legacy',
