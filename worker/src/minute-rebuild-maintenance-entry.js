@@ -1,5 +1,6 @@
 import { withBackfillCursorSeek } from './backfill-cursor-seek.js';
 import { historicalRebuildEnabled } from './historical-rebuild-policy.js';
+import { clearCompletedMinuteFactPayloads } from './minute-facts-inbox.js';
 import rebuildWorker from './minute-rebuild-entry.js';
 import { runMinuteScheduled } from './minute-entry.js';
 
@@ -11,11 +12,19 @@ const GATE_MAX_ATTEMPTS = 3;
 const REBUILD_SLOT_MS = 10 * 60_000;
 const DEFAULT_HISTORICAL_BACKFILL_INTERVAL_MS = 24 * 60 * 60_000;
 const MAX_HISTORICAL_BACKFILL_INTERVAL_MS = 7 * 24 * 60 * 60_000;
+const DEFAULT_PAYLOAD_CLEANUP_LIMIT = 1_000;
+const MAX_PAYLOAD_CLEANUP_LIMIT = 10_000;
 
 function finiteTimestamp(value) {
   if (typeof value === 'number') return Number.isFinite(value) && value >= 0 ? value : Date.now();
   const parsed = Number(value);
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : Date.now();
+}
+
+function positiveInteger(value, fallback, maximum = Number.MAX_SAFE_INTEGER) {
+  const parsed = Math.trunc(Number(value));
+  if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
+  return Math.min(parsed, maximum);
 }
 
 function enabled(value, fallback = true) {
@@ -29,6 +38,14 @@ function historicalBackfillIntervalMs(env = {}) {
     return DEFAULT_HISTORICAL_BACKFILL_INTERVAL_MS;
   }
   return Math.min(parsed, MAX_HISTORICAL_BACKFILL_INTERVAL_MS);
+}
+
+function payloadCleanupLimit(env = {}) {
+  return positiveInteger(
+    env.MINUTE_FACT_PAYLOAD_CLEANUP_LIMIT,
+    DEFAULT_PAYLOAD_CLEANUP_LIMIT,
+    MAX_PAYLOAD_CLEANUP_LIMIT,
+  );
 }
 
 export function historicalBackfillDue(env, scheduledAt) {
@@ -174,7 +191,13 @@ export async function processMinuteMaintenanceRun(env, body, dependencies = EMPT
 export async function processMinuteMaintenanceSync(env, body, dependencies = EMPTY_DEPENDENCIES) {
   const task = validateMaintenanceTask(body);
   if (task.task !== 'sync') throw new Error('maintenance sync stage requires a sync task');
-  return processMinuteMaintenanceRun(env, { ...body, stage: 'maintenance-run' }, dependencies);
+  const clearPayloads = dependencies.clearCompletedPayloads || clearCompletedMinuteFactPayloads;
+  const payloadCleanup = await clearPayloads(env, {
+    now: task.scheduledAt,
+    limit: payloadCleanupLimit(env),
+  });
+  const result = await processMinuteMaintenanceRun(env, { ...body, stage: 'maintenance-run' }, dependencies);
+  return { ...result, payload_cleanup: payloadCleanup };
 }
 
 function logMaintenanceGateResult(result) {
@@ -190,6 +213,7 @@ function logMaintenanceGateResult(result) {
     attempt: result?.attempt,
     dispatched_stage: result?.dispatched_stage,
     historical_backfill_due: result?.historical_backfill_due,
+    payloads_cleared: result?.payload_cleanup?.cleared,
   }));
 }
 
@@ -204,7 +228,9 @@ async function processMinuteRebuildBatch(batch, env, ctx) {
       ? await processMinuteMaintenanceGate(env, message.body)
       : stage === 'maintenance-sync'
         ? await processMinuteMaintenanceSync(env, message.body)
-        : await processMinuteMaintenanceRun(env, message.body);
+        : message.body?.maintenance_task === 'sync'
+          ? await processMinuteMaintenanceSync(env, message.body)
+          : await processMinuteMaintenanceRun(env, message.body);
     logMaintenanceGateResult(result);
     message.ack();
   } catch (error) {
