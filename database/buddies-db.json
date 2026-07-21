@@ -3,5 +3,5 @@
   "database_name": "stationhead-buddies",
   "database_id": "f361aae0-05f0-42bc-8784-77100e80133d",
   "migrations_dir": "database/buddies-migrations",
-  "schema": "database/buddies-migrations/007_d1_budget_indexes.sql"
+  "schema": "database/buddies-migrations/008_remove_apple_music_compatibility.sql"
 }
