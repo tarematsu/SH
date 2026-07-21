@@ -6,7 +6,7 @@
 
 CREATE INDEX IF NOT EXISTS idx_sh_minute_fact_jobs_done_payload
   ON sh_minute_fact_jobs(processed_at,id)
-  WHERE status='done' AND payload_json<>'';
+  WHERE status='done' AND LENGTH(payload_json)>0;
 
 DROP TRIGGER IF EXISTS trg_sh_minute_fact_payload_after_job_done;
 CREATE TRIGGER trg_sh_minute_fact_payload_after_job_done
