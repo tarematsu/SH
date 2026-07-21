@@ -2,7 +2,9 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+  IDENTITY_ATTACH_STAGE,
   IDENTITY_BITE_STAGE,
+  processMinuteIdentityAttach,
   processMinuteIdentityBite,
   processMinuteIdentitySession,
 } from '../src/minute-enrichment-identity-stages.js';
@@ -33,7 +35,7 @@ function identityBody(stage = 'identity') {
   };
 }
 
-test('identity session work commits context then defers bite work', async () => {
+test('identity resolution defers attachment after host and session work', async () => {
   const body = identityBody();
   const events = [];
   let sent = null;
@@ -41,14 +43,35 @@ test('identity session work commits context then defers bite work', async () => 
     loadCurrentMinute: async () => ({ observed_at: body.observed_at }),
     resolveHost: async () => { events.push('host'); return 41; },
     resolveSession: async () => { events.push('session'); return 26; },
+    sendAttachStage: async (_env, message) => { events.push('send'); sent = message; },
+  });
+
+  assert.deepEqual(events, ['host', 'session', 'send']);
+  assert.equal(result.pending, true);
+  assert.equal(result.attach_deferred, true);
+  assert.equal(result.session_id, 26);
+  assert.equal(sent.stage, IDENTITY_ATTACH_STAGE);
+  assert.equal(sent.session_id, 26);
+  assert.equal(sent.host_id, 41);
+});
+
+test('identity attachment commits context then defers bite work', async () => {
+  const body = {
+    ...identityBody(IDENTITY_ATTACH_STAGE),
+    session_id: 26,
+    host_id: 41,
+  };
+  const events = [];
+  let sent = null;
+  const result = await processMinuteIdentityAttach({ MINUTE_DB: {} }, body, {
+    loadCurrentMinute: async () => ({ observed_at: body.observed_at }),
     attachSessionAndFact: async () => { events.push('attach'); },
     sendBiteStage: async (_env, message) => { events.push('send'); sent = message; },
   });
 
-  assert.deepEqual(events, ['host', 'session', 'attach', 'send']);
+  assert.deepEqual(events, ['attach', 'send']);
   assert.equal(result.pending, true);
   assert.equal(result.bite_deferred, true);
-  assert.equal(result.session_id, 26);
   assert.equal(sent.stage, IDENTITY_BITE_STAGE);
   assert.equal(sent.session_id, 26);
   assert.equal(sent.host_id, 41);
@@ -75,31 +98,51 @@ test('identity bite stage performs only the canonical counter write', async () =
   assert.equal(input.trackId, 300);
 });
 
-test('both identity stages reject an older minute winner before mutation', async () => {
+test('all identity stages reject an older minute winner before mutation', async () => {
   let mutations = 0;
   const stale = async () => ({ observed_at: 126_000 });
   const session = await processMinuteIdentitySession({ MINUTE_DB: {} }, identityBody(), {
     loadCurrentMinute: stale,
     resolveHost: async () => { mutations += 1; },
   });
+  const attach = await processMinuteIdentityAttach({ MINUTE_DB: {} }, {
+    ...identityBody(IDENTITY_ATTACH_STAGE),
+    session_id: 26,
+    host_id: 41,
+  }, {
+    loadCurrentMinute: stale,
+    attachSessionAndFact: async () => { mutations += 1; },
+  });
   const bite = await processMinuteIdentityBite({ MINUTE_DB: {} }, identityBody(IDENTITY_BITE_STAGE), {
     loadCurrentMinute: stale,
     writeCurrentBite: async () => { mutations += 1; },
   });
   assert.equal(session.reason, 'stale-minute-winner');
+  assert.equal(attach.reason, 'stale-minute-winner');
   assert.equal(bite.reason, 'stale-minute-winner');
   assert.equal(mutations, 0);
 });
 
-test('optimized router sends production identity through the split stages', async () => {
+test('optimized router sends production identity through all split stages', async () => {
   const body = identityBody();
   let sessionCalls = 0;
+  let attachCalls = 0;
   let biteCalls = 0;
   await processOptimizedMinuteEnrichment({}, body, {
     processMinuteIdentitySession: async (_env, value) => {
       sessionCalls += 1;
       assert.equal(value.queue.tracks[0].apple_music_id, undefined);
       return { stage: 'identity', pending: true };
+    },
+  });
+  await processOptimizedMinuteEnrichment({}, {
+    ...body,
+    stage: IDENTITY_ATTACH_STAGE,
+  }, {
+    processMinuteIdentityAttach: async (_env, value) => {
+      attachCalls += 1;
+      assert.equal(value.queue.tracks[0].apple_music_id, undefined);
+      return { stage: IDENTITY_ATTACH_STAGE, pending: true };
     },
   });
   await processOptimizedMinuteEnrichment({}, {
@@ -113,5 +156,6 @@ test('optimized router sends production identity through the split stages', asyn
     },
   });
   assert.equal(sessionCalls, 1);
+  assert.equal(attachCalls, 1);
   assert.equal(biteCalls, 1);
 });
