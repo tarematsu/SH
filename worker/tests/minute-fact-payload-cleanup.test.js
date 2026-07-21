@@ -12,6 +12,14 @@ const migration = readFileSync(
   new URL('../../database/facts-migrations/028_purge_completed_minute_fact_payloads.sql', import.meta.url),
   'utf8',
 );
+const purgeScript = readFileSync(
+  new URL('../scripts/purge-completed-minute-fact-payloads.mjs', import.meta.url),
+  'utf8',
+);
+const databaseWorkflow = readFileSync(
+  new URL('../../.github/workflows/database.yml', import.meta.url),
+  'utf8',
+);
 
 function database() {
   const db = new DatabaseSync(':memory:');
@@ -35,7 +43,17 @@ function database() {
   return db;
 }
 
-test('migration purges the existing completed payload backlog in one statement', () => {
+test('database workflow purges every eligible existing payload in one job using bounded statements', () => {
+  assert.doesNotMatch(migration, /UPDATE sh_minute_fact_jobs\s+SET payload_json='\{\}'\s+WHERE status='done'/);
+  assert.match(purgeScript, /while \(batches < maxBatches\)/);
+  assert.match(purgeScript, /LIMIT \$\{batchSize\}/);
+  assert.match(purgeScript, /if \(cleared < batchSize\) break/);
+  assert.match(purgeScript, /after\.eligible_jobs !== 0/);
+  assert.match(databaseWorkflow, /name: Purge completed minute fact payloads/);
+  assert.match(databaseWorkflow, /node scripts\/purge-completed-minute-fact-payloads\.mjs/);
+});
+
+test('bounded purge clears completed payloads and waits for incomplete revisions', () => {
   const db = database();
   db.exec(`INSERT INTO sh_minute_fact_jobs VALUES
       (1,'done','old-complete',100,NULL,NULL,100),
@@ -43,6 +61,8 @@ test('migration purges the existing completed payload backlog in one statement',
     INSERT INTO sh_queue_revisions VALUES(20,2,'pending',0,3,3);`);
 
   db.exec(migration);
+  const cleared = db.prepare(CLEAR_COMPLETED_MINUTE_FACT_PAYLOADS_SQL).all(200, 1000);
+  assert.deepEqual(cleared.map(({ id }) => id), [1]);
   assert.equal(db.prepare('SELECT payload_json FROM sh_minute_fact_jobs WHERE id=1').get().payload_json, '{}');
   assert.equal(
     db.prepare('SELECT payload_json FROM sh_minute_fact_jobs WHERE id=2').get().payload_json,
