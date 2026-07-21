@@ -118,7 +118,7 @@ test('observability enforcement rejects events from retired Workers', () => {
   );
 });
 
-test('observability enforcement rejects an unobserved active Worker', () => {
+test('observability enforcement reports an idle active Worker without inventing a CPU violation', () => {
   const scripts = activeScripts();
   scripts['sh-buddies-ingest'] = {
     events: 0,
@@ -130,10 +130,8 @@ test('observability enforcement rejects an unobserved active Worker', () => {
     cpu_ms: { samples: 3 },
     scripts,
   });
-  assert.equal(result.status, 1, result.stderr);
-  assert.equal(report.ok, false);
-  assert.deepEqual(
-    report.violations.map(({ worker, reason }) => ({ worker, reason })),
-    [{ worker: 'sh-buddies-ingest', reason: 'active_worker_unobserved' }],
-  );
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(report.ok, true);
+  assert.deepEqual(report.violations, []);
+  assert.deepEqual(report.unobserved_active_workers, ['sh-buddies-ingest']);
 });
