@@ -1,20 +1,47 @@
 import assert from 'node:assert/strict';
-import { existsSync } from 'node:fs';
+import { existsSync, readdirSync } from 'node:fs';
+import path from 'node:path';
 import test from 'node:test';
+import { fileURLToPath } from 'node:url';
 
 import { apiCatalog } from '../functions/api/index.js';
+import { INTERNAL_API_PATHS } from '../functions/lib/api-contract.js';
 
-function routeCandidates(path) {
-  const relative = path.replace(/^\/api\/?/, '');
+const apiRoot = fileURLToPath(new URL('../functions/api/', import.meta.url));
+
+function routeCandidates(routePath) {
+  const relative = routePath.replace(/^\/api\/?/, '');
   if (!relative) return [new URL('../functions/api/index.js', import.meta.url)];
   return [
     new URL(`../functions/api/${relative}.js`, import.meta.url),
+    new URL(`../functions/api/${relative}.mjs`, import.meta.url),
     new URL(`../functions/api/${relative}/index.js`, import.meta.url),
+    new URL(`../functions/api/${relative}/index.mjs`, import.meta.url),
   ];
 }
 
-function routeExists(path) {
-  return routeCandidates(path).some((candidate) => existsSync(candidate));
+function routeExists(routePath) {
+  return routeCandidates(routePath).some((candidate) => existsSync(candidate));
+}
+
+function sourceFiles(directory = apiRoot) {
+  return readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
+    const absolute = path.join(directory, entry.name);
+    if (entry.isDirectory()) return sourceFiles(absolute);
+    if (!/\.(?:m?js)$/.test(entry.name) || entry.name === '_middleware.js') return [];
+    return [absolute];
+  });
+}
+
+function routeForFile(absolute) {
+  const relative = path.relative(apiRoot, absolute).replaceAll(path.sep, '/');
+  const withoutExtension = relative.replace(/\.(?:m?js)$/, '');
+  const route = withoutExtension === 'index'
+    ? ''
+    : withoutExtension.endsWith('/index')
+      ? withoutExtension.slice(0, -'/index'.length)
+      : withoutExtension;
+  return `/api${route ? `/${route}` : ''}`;
 }
 
 test('every documented canonical Pages API has exactly one Function route', () => {
@@ -27,4 +54,14 @@ test('every documented canonical Pages API has exactly one Function route', () =
     assert.equal(matches.length, 1, `${route.path} must have exactly one Function file`);
     assert.equal(routeExists(route.path), true, `${route.path} must be routable`);
   }
+});
+
+test('Pages API directory contains no undeclared JavaScript routes', () => {
+  const catalog = apiCatalog(0);
+  const canonical = Object.values(catalog.groups).flat().map(({ path: routePath }) => routePath);
+  const expected = new Set(['/api', ...canonical, ...INTERNAL_API_PATHS]);
+  const actual = sourceFiles().map(routeForFile).sort();
+
+  assert.equal(new Set(actual).size, actual.length, 'Pages API routes must not have duplicate files');
+  assert.deepEqual(actual, [...expected].sort());
 });
