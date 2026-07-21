@@ -131,7 +131,7 @@ test('active track-history minute delegates exactly one shard step', async () =>
   assert.deepEqual(calls, [BASE + 45 * MINUTE_MS]);
 });
 
-test('legacy track-history cycle rejects work outside its first hour before reading env', async () => {
+test('track-history shard core rejects work outside its first hour before reading env', async () => {
   const env = new Proxy({}, {
     get() { assert.fail('inactive track-history minute must not inspect the environment'); },
   });
