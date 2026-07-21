@@ -25,14 +25,16 @@ function stationHeaders(cfg, session) {
 }
 
 export const OFFICIAL_PROBE_CONTEXT_SQL = `SELECT auth_token,device_uid
-FROM sh_worker_collector_state WHERE id='buddy46' LIMIT 1`;
+FROM sh_worker_collector_state WHERE id=? LIMIT 1`;
 
 export const OFFICIAL_BUDDIES_STATION_SQL = `SELECT station_id AS buddies_station_id
 FROM sh_queue_read_model_current ORDER BY observed_at DESC LIMIT 1`;
 
 export async function loadOfficialProbeContext(env) {
+  const stateId = String(env?.SAKURAZAKA_AUTH_STATE_ID || 'sakurazaka46jp').trim().toLowerCase()
+    || 'sakurazaka46jp';
   const [session, station] = await Promise.all([
-    env.OTHER_DB.prepare(OFFICIAL_PROBE_CONTEXT_SQL).first(),
+    env.OTHER_DB.prepare(OFFICIAL_PROBE_CONTEXT_SQL).bind(stateId).first(),
     env.MINUTE_DB.prepare(OFFICIAL_BUDDIES_STATION_SQL).first(),
   ]);
   return { ...session, buddies_station_id: station?.buddies_station_id ?? null };
