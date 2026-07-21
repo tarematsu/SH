@@ -243,7 +243,7 @@ const LIKE_CURRENT_SQL = `INSERT INTO sh_track_like_current (
   ON CONFLICT(station_id,track_key) DO UPDATE SET
     queue_id=excluded.queue_id,start_time=excluded.start_time,position=excluded.position,
     queue_track_id=excluded.queue_track_id,stationhead_track_id=excluded.stationhead_track_id,
-    spotify_id=excluded.spotify_id,apple_music_id=NULL,isrc=excluded.isrc,
+    spotify_id=excluded.spotify_id,isrc=excluded.isrc,
     like_count=excluded.like_count,observed_at=excluded.observed_at
   WHERE excluded.observed_at>=sh_track_like_current.observed_at
     AND excluded.like_count IS NOT sh_track_like_current.like_count`;
