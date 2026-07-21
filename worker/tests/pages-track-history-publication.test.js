@@ -66,7 +66,7 @@ test('paged track-history chunks assemble the existing API response contract', (
     { index: 2, title: 'Song 2' },
   ]);
   assert.equal(payload.truncated, false);
-  assert.equal(payload.likes_included, false);
+  assert.equal(payload.likes_included, true);
   assert.equal(payload.source_row_count, 2);
   assert.deepEqual(payload.excluded_play_count_dates, ['2026-07-01']);
   assert.equal(payload.historical_recovery, 'worker_materialized_read_model');
@@ -220,7 +220,7 @@ test('cron keeps lightweight stalled-publication recovery active through minute 
   assert.equal(pagesReadModelTask(CYCLE_START + 59 * 60_000).kind, 'track-history-step');
   assert.equal(pagesReadModelTask(CYCLE_START + 60 * 60_000).kind, 'track-history-step');
   assert.equal(pagesReadModelTask(CYCLE_START + 174 * 60_000).kind, 'track-history-step');
-  assert.equal(pagesReadModelTask(CYCLE_START + 175 * 60_000).key, 'minute-facts-current');
+  assert.equal(pagesReadModelTask(CYCLE_START + 175 * 60_000).key, 'six-hour-cycle-idle');
 
   const config = JSON.parse(readFileSync(new URL('../wrangler.minute-enrichment.jsonc', import.meta.url), 'utf8'));
   assert.equal(config.vars.PAGES_TRACK_HISTORY_ROWS_PER_STEP, 40);
