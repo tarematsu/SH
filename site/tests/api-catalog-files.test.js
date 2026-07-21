@@ -18,33 +18,34 @@ function routeExists(path) {
 }
 
 test('documented canonical Pages APIs have Function files', () => {
-  const routes = Object.values(apiCatalog(0).groups).flat();
+  const catalog = apiCatalog(0);
+  const routes = Object.values(catalog.groups).flat();
+  assert.equal(catalog.contract_version, 3);
+  assert.equal('retired' in catalog, false);
   for (const route of routes) {
     assert.equal(routeExists(route.path), true, `${route.path} must have a Function file`);
   }
 });
 
-test('retired APIs are not advertised as active groups', () => {
-  const catalog = apiCatalog(0);
-  const active = new Set(Object.values(catalog.groups).flat().map(({ path }) => path));
-  assert.equal(catalog.public_write_api, false);
-  for (const route of catalog.retired) {
-    assert.equal(active.has(route.path), false, `${route.path} must not be active`);
-    assert.equal(route.status, 404);
-  }
-});
-
-test('standalone exact aliases are physically removed', () => {
+test('removed public API files remain physically absent', () => {
   for (const path of [
     '/api/health/collector',
     '/api/history-current',
     '/api/history-migrated',
+    '/api/history-raw',
+    '/api/official-history',
+    '/api/playback',
+    '/api/dashboard-history',
+    '/api/dashboard-queue',
+    '/api/dashboard-recovery',
+    '/api/minute-facts',
+    '/api/minute-facts/current',
+    '/api/minute-facts/latest',
+    '/api/comment-velocity',
+    '/api/track-likes',
+    '/api/like-ranking',
+    '/api/broadcast-series',
   ]) {
     assert.equal(routeExists(path), false, `${path} route file must be removed`);
   }
-});
-
-test('blocked history implementation modules remain available to canonical history modes', () => {
-  assert.equal(routeExists('/api/history-raw'), true);
-  assert.equal(routeExists('/api/official-history'), true);
 });
