@@ -4,6 +4,9 @@ import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 
 const selector = fileURLToPath(new URL('../scripts/select-worker-deploys.mjs', import.meta.url));
+const MINUTE = 'sh-minute-enrichment';
+const INGEST = 'sh-buddies-ingest';
+const SAKURAZAKA = 'sh-sakurazaka46jp';
 const RUNTIME = 'sh-runtime-orchestrator';
 
 function select(paths = [], args = []) {
@@ -13,16 +16,16 @@ function select(paths = [], args = []) {
   }));
 }
 
-test('domain modules map to the three active Workers', () => {
-  assert.deepEqual(select(['worker/src/comments-entry.js']).workers, ['sh-buddies-ingest']);
-  assert.deepEqual(select(['worker/src/persist-channel-entry.js']).workers, ['sh-buddies-ingest']);
-  assert.deepEqual(select(['worker/src/minute-enrichment-entry.js']).workers, ['sh-minute-enrichment']);
-  assert.deepEqual(select(['worker/src/track-metadata-entry.js']).workers, ['sh-minute-enrichment']);
-  assert.deepEqual(select(['worker/src/read-model-entry.js']).workers, ['sh-minute-enrichment']);
+test('domain modules map to the four active Workers', () => {
+  assert.deepEqual(select(['worker/src/comments-entry.js']).workers, [INGEST]);
+  assert.deepEqual(select(['worker/src/persist-channel-entry.js']).workers, [INGEST]);
+  assert.deepEqual(select(['worker/src/minute-enrichment-playback-stages.js']).workers, [MINUTE]);
+  assert.deepEqual(select(['worker/src/track-metadata-entry.js']).workers, [MINUTE]);
+  assert.deepEqual(select(['worker/src/pages-read-model-entry.js']).workers, [MINUTE]);
+  assert.deepEqual(select(['worker/src/sakurazaka-monitor.js']).workers, [SAKURAZAKA]);
+  assert.deepEqual(select(['worker/src/official-news-index.js']).workers, [SAKURAZAKA]);
   assert.deepEqual(select(['worker/src/minute-derive-entry.js']).workers, [RUNTIME]);
   assert.deepEqual(select(['worker/src/minute-rebuild-batched-entry.js']).workers, [RUNTIME]);
-  assert.deepEqual(select(['worker/src/buddy-playback-entry.js']).workers, [RUNTIME]);
-  assert.deepEqual(select(['worker/src/host-monitor-entry.js']).workers, [RUNTIME]);
   assert.deepEqual(select(['worker/src/runtime-queue.js']).workers, [RUNTIME]);
   assert.deepEqual(select(['worker/src/runtime-scheduled.js']).workers, [RUNTIME]);
 });
@@ -34,8 +37,9 @@ test('deployment support changes select the owning Worker', () => {
     commands: ['deploy:runtime'],
     diagnostics: [RUNTIME],
   });
-  assert.deepEqual(select(['worker/scripts/deploy-minute-enrichment.mjs']).workers, ['sh-minute-enrichment']);
-  assert.deepEqual(select(['worker/scripts/deploy-ingest.mjs']).workers, ['sh-buddies-ingest']);
+  assert.deepEqual(select(['worker/scripts/deploy-minute-enrichment.mjs']).workers, [MINUTE]);
+  assert.deepEqual(select(['worker/scripts/deploy-ingest.mjs']).workers, [INGEST]);
+  assert.deepEqual(select(['worker/scripts/deploy-sakurazaka46jp.mjs']).workers, [SAKURAZAKA]);
 });
 
 test('shared deployment infrastructure selects every Worker', () => {
@@ -48,13 +52,14 @@ test('shared deployment infrastructure selects every Worker', () => {
     'worker/scripts/deploy-connected-worker.mjs',
     'worker/scripts/wrangler-command.mjs',
   ]) {
-    assert.equal(select([path]).workers.length, 3, path);
+    assert.equal(select([path]).workers.length, 4, path);
   }
 });
 
 test('Wrangler config changes map directly to their Worker', () => {
-  assert.deepEqual(select(['worker/wrangler.minute-enrichment.jsonc']).workers, ['sh-minute-enrichment']);
-  assert.deepEqual(select(['worker/wrangler.ingest.jsonc']).workers, ['sh-buddies-ingest']);
+  assert.deepEqual(select(['worker/wrangler.minute-enrichment.jsonc']).workers, [MINUTE]);
+  assert.deepEqual(select(['worker/wrangler.ingest.jsonc']).workers, [INGEST]);
+  assert.deepEqual(select(['worker/wrangler.sakurazaka46jp.jsonc']).workers, [SAKURAZAKA]);
   assert.deepEqual(select(['worker/wrangler.runtime.jsonc']).workers, [RUNTIME]);
 });
 
@@ -68,20 +73,17 @@ test('tests and unrelated verification scripts do not deploy Workers', () => {
 });
 
 test('shared package and unresolved runtime source changes select all Workers', () => {
-  assert.equal(select(['packages/sh-shared/index.mjs']).workers.length, 3);
-  assert.equal(select(['worker/src/deleted-runtime-module.js']).workers.length, 3);
+  assert.equal(select(['packages/sh-shared/index.mjs']).workers.length, 4);
+  assert.equal(select(['worker/src/deleted-runtime-module.js']).workers.length, 4);
 });
 
 test('manual selection preserves dependency order', () => {
   const result = select([], ['--all']);
-  assert.deepEqual(result.workers, [
-    'sh-minute-enrichment',
-    'sh-buddies-ingest',
-    RUNTIME,
-  ]);
+  assert.deepEqual(result.workers, [MINUTE, INGEST, SAKURAZAKA, RUNTIME]);
   assert.deepEqual(result.commands, [
     'deploy:minute-enrichment',
     'deploy:ingest',
+    'deploy:sakurazaka46jp',
     'deploy:runtime',
   ]);
 });
