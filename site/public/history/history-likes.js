@@ -1,7 +1,7 @@
 (() => {
   'use strict';
 
-  const CACHE_PREFIX = 'sh.like-ranking.v2:';
+  const CACHE_PREFIX = 'sh.track-history-ranking.v3:';
   const CACHE_MS = 10 * 60_000;
   const number = new Intl.NumberFormat('ja-JP', { maximumFractionDigits: 1 });
   const dateTime = new Intl.DateTimeFormat('ja-JP', {
@@ -42,9 +42,7 @@
   function writeCache(url, data) {
     try {
       sessionStorage.setItem(`${CACHE_PREFIX}${url}`, JSON.stringify({ at: Date.now(), data }));
-    } catch {
-      // The page remains usable without browser storage.
-    }
+    } catch {}
   }
 
   async function fetchJson(url, signal, force) {
@@ -76,7 +74,7 @@
     return [...new Set(keys)];
   }
 
-  function attachWeeklyPlays(likeRows, weekRows) {
+  function attachWeeklyPlays(rankingRows, weekRows) {
     const parent = new Map();
     const ensure = (key) => { if (!parent.has(key)) parent.set(key, key); };
     const find = (key) => {
@@ -96,14 +94,11 @@
       const rightRoot = find(right);
       if (leftRoot !== rightRoot) parent.set(rightRoot, leftRoot);
     };
-
-    for (const row of [...likeRows, ...weekRows]) {
+    for (const row of [...rankingRows, ...weekRows]) {
       const keys = identityKeys(row);
-      if (!keys.length) continue;
       keys.forEach(ensure);
       for (let index = 1; index < keys.length; index += 1) union(keys[0], keys[index]);
     }
-
     const totals = new Map();
     for (const row of weekRows) {
       const key = identityKeys(row)[0];
@@ -111,20 +106,14 @@
       const root = find(key);
       totals.set(root, (totals.get(root) || 0) + (finite(row.play_count) || 0));
     }
-
-    return likeRows.map((row) => {
+    return rankingRows.map((row) => {
       const key = identityKeys(row)[0];
       return { ...row, week_play_count: key ? totals.get(find(key)) || 0 : 0 };
     });
   }
 
-  function trackName(row) {
-    return row.title || row.isrc || row.spotify_id || row.track_identity || '曲名不明';
-  }
-
-  function artistName(row) {
-    return row.artist || '—';
-  }
+  const trackName = (row) => row.title || row.isrc || row.spotify_id || row.track_identity || '曲名不明';
+  const artistName = (row) => row.artist || '—';
 
   function renderSummary() {
     el('trackCount').textContent = fmt(state.summary.track_count || 0);
@@ -155,16 +144,13 @@
       list.appendChild(empty);
       return;
     }
-
     const fragment = document.createDocumentFragment();
     for (const row of rows) {
       const item = document.createElement('li');
       item.className = 'like-rank-item';
-
       const rank = document.createElement('strong');
       rank.className = 'like-rank-number';
       rank.textContent = String(row.rank);
-
       const content = document.createElement('div');
       content.className = 'like-rank-content';
       const heading = document.createElement('div');
@@ -175,14 +161,12 @@
       const artist = document.createElement('small');
       artist.textContent = artistName(row);
       content.append(heading, artist);
-
       const metrics = document.createElement('div');
       metrics.className = 'like-rank-metrics';
       metrics.append(
         metric('最新いいね', fmt(row.latest_like_count)),
         metric('今週再生', `${fmt(row.week_play_count)}回`),
       );
-
       item.append(rank, content, metrics);
       fragment.appendChild(item);
     }
@@ -194,7 +178,6 @@
     body.replaceChildren();
     if (!state.rows.length) {
       const row = document.createElement('tr');
-      row.className = 'empty-row';
       const cell = document.createElement('td');
       cell.colSpan = 6;
       cell.textContent = 'データがありません。';
@@ -202,19 +185,17 @@
       body.appendChild(row);
       return;
     }
-
     const fragment = document.createDocumentFragment();
     for (const item of state.rows) {
       const row = document.createElement('tr');
-      const values = [
+      for (const value of [
         item.rank,
         trackName(item),
         artistName(item),
         fmt(item.latest_like_count),
         `${fmt(item.week_play_count)}回`,
         item.latest_observed_at ? dateTime.format(new Date(Number(item.latest_observed_at))) : '—',
-      ];
-      for (const value of values) {
+      ]) {
         const cell = document.createElement('td');
         cell.textContent = String(value);
         row.appendChild(cell);
@@ -236,32 +217,24 @@
     state.controller = controller;
     el('load').disabled = true;
     setNotice('読み込み中…');
-
     const weekFrom = mondayUtc();
     const weekTo = todayUtc();
     state.weekFrom = weekFrom;
     state.weekTo = weekTo;
-    const likeUrl = '/api/like-ranking?limit=500';
-    const trackUrl = `/api/track-history?${new URLSearchParams({ from: weekFrom, to: weekTo, limit: '5000' })}`;
-
+    const url = `/api/track-history?${new URLSearchParams({ from: weekFrom, to: weekTo, limit: '5000' })}`;
     try {
-      const [likeResult, trackResult] = await Promise.all([
-        fetchJson(likeUrl, controller.signal, force),
-        fetchJson(trackUrl, controller.signal, force),
-      ]);
+      const result = await fetchJson(url, controller.signal, force);
       if (controller.signal.aborted) return;
-
-      const likeRows = Array.isArray(likeResult.data.rows) ? likeResult.data.rows : [];
-      const weekRows = Array.isArray(trackResult.data.rows) ? trackResult.data.rows : [];
-      state.rows = attachWeeklyPlays(likeRows, weekRows);
+      const rankingRows = Array.isArray(result.data.ranking) ? result.data.ranking : [];
+      const weekRows = Array.isArray(result.data.rows) ? result.data.rows : [];
+      state.rows = attachWeeklyPlays(rankingRows, weekRows);
       state.weekRows = weekRows;
-      const weekPlayCount = state.rows.reduce((sum, row) => sum + (finite(row.week_play_count) || 0), 0);
       state.summary = {
-        ...(likeResult.data.summary || {}),
-        week_play_count: weekPlayCount,
+        ...(result.data.ranking_summary || {}),
+        week_play_count: state.rows.reduce((sum, row) => sum + (finite(row.week_play_count) || 0), 0),
       };
       render();
-      const cached = likeResult.cached && trackResult.cached ? ' · キャッシュ' : '';
+      const cached = result.cached ? ' · キャッシュ' : '';
       setNotice(`${fmt(state.rows.length)}曲 · 今週 ${weekFrom.replaceAll('-', '/')}〜${weekTo.replaceAll('-', '/')}${cached}`);
     } catch (error) {
       if (error?.name === 'AbortError') return;
@@ -289,7 +262,7 @@
     const blob = new Blob([`\uFEFF${lines.join('\n')}`], { type: 'text/csv;charset=utf-8' });
     const link = document.createElement('a');
     link.href = URL.createObjectURL(blob);
-    link.download = `sh-like-ranking-${state.weekFrom}-${state.weekTo}.csv`;
+    link.download = `sh-track-ranking-${state.weekFrom}-${state.weekTo}.csv`;
     link.click();
     URL.revokeObjectURL(link.href);
   }
