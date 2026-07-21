@@ -117,6 +117,7 @@ test('history display layer uses current canonical modules only', () => {
     'utf8',
   );
   assert.match(source, /CACHE_PREFIX = 'sh\.history\.v3:'/);
-  assert.match(source, /tracks: \{ label: '楽曲'/);
-  assert.match(source, /broadcasts: \{ label: '公式配信比較'/);
+  assert.match(source, /tracks: \{ title: '再生曲', table: '再生曲一覧'/);
+  assert.match(source, /broadcasts: \{ title: '公式ストリーム比較', table: '公式ストリーム一覧'/);
+  assert.doesNotMatch(source, /history-copy-fixes|history-track-likes/);
 });
