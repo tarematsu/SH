@@ -173,7 +173,6 @@ test('budget live write commit persists the fact and forwards full revision stat
     prepared_revision: revision,
   };
   await processBudgetedLiveWriteMessage({ MINUTE_LIVE_DERIVE_QUEUE: {} }, body, {
-    appleRuntime: { withAppleMusicFreeRuntime: (env) => env },
     writeThrottle: { withMinuteD1WriteThrottling: (env) => env },
     deriveQueue: {
       async processMinuteDeriveWriteStage(env, activeBody, dependencies) {
@@ -232,7 +231,6 @@ test('live write continuations never leak into the disabled rebuild queue', asyn
   assert.equal(liveMessages[0].body.stage, BUDGET_LIVE_WRITE_STAGE);
 
   await processBudgetedLiveWriteMessage(env, liveMessages[0].body, {
-    appleRuntime: { withAppleMusicFreeRuntime: (active) => active },
     writeThrottle: { withMinuteD1WriteThrottling: (active) => active },
     deriveQueue: {
       async processMinuteDeriveWriteStage(active, activeBody, dependencies) {
