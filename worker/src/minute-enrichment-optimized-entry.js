@@ -3,7 +3,9 @@ import { stripAppleMusicFields } from '../../site/functions/lib/api-utils.js';
 import { withMinuteD1WriteThrottling } from './minute-d1-write-throttle.js';
 import { processMinuteEnrichment } from './minute-enrichment-entry.js';
 import {
+  IDENTITY_ATTACH_STAGE,
   IDENTITY_BITE_STAGE,
+  processMinuteIdentityAttach,
   processMinuteIdentityBite,
   processMinuteIdentitySession,
 } from './minute-enrichment-identity-stages.js';
@@ -51,6 +53,7 @@ function logMinuteEnrichmentResult(result) {
     track_id: result?.track_id,
     requested_materialized_tracks: result?.requested_materialized_tracks,
     playback_patch_deferred: result?.playback_patch_deferred === true,
+    attach_deferred: result?.attach_deferred === true,
     bite_deferred: result?.bite_deferred === true,
     session_id: result?.session_id,
     host_id: result?.host_id,
@@ -88,7 +91,9 @@ function sanitizeIdentityBody(body) {
 }
 
 function activeEnrichmentBody(body) {
-  return body?.stage === 'identity' || body?.stage === IDENTITY_BITE_STAGE
+  return body?.stage === 'identity'
+      || body?.stage === IDENTITY_ATTACH_STAGE
+      || body?.stage === IDENTITY_BITE_STAGE
     ? sanitizeIdentityBody(body)
     : stripAppleMusicFields(body);
 }
@@ -110,6 +115,10 @@ async function processOptimizedMinuteEnrichment(env, body, dependencies = EMPTY_
   if (activeBody?.stage === PLAYBACK_PATCH_STAGE) {
     const run = dependencies.processMinutePlaybackPatch || processMinutePlaybackPatch;
     return run(env, activeBody, dependencies.playback || EMPTY_DEPENDENCIES);
+  }
+  if (activeBody?.stage === IDENTITY_ATTACH_STAGE) {
+    const run = dependencies.processMinuteIdentityAttach || processMinuteIdentityAttach;
+    return run(env, activeBody, dependencies.identity || EMPTY_DEPENDENCIES);
   }
   if (activeBody?.stage === IDENTITY_BITE_STAGE) {
     const run = dependencies.processMinuteIdentityBite || processMinuteIdentityBite;
