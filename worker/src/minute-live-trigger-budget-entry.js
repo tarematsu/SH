@@ -1,4 +1,5 @@
 import { claimMinuteDeriveJob } from './minute-derive-queue.js';
+import { releaseMinuteFactJobs } from './minute-facts-inbox.js';
 import { parseMinuteDeriveTrigger } from './minute-derive-trigger.js';
 
 const RETRY_60_SECONDS = Object.freeze({ delaySeconds: 60 });
@@ -42,14 +43,20 @@ export async function processBudgetedLiveTriggerMessage(env, body, dependencies 
   if (!job) {
     return { skipped: true, reason: 'not-pending', pending: false };
   }
-  await sendWriteStage(env, {
-    message_type: 'minute-fact-derive-stage',
-    message_version: 1,
-    stage: 'write',
-    job: compactJob(job),
-    started_at: now,
-    durable_payload: true,
-  }, dependencies);
+  try {
+    await sendWriteStage(env, {
+      message_type: 'minute-fact-derive-stage',
+      message_version: 1,
+      stage: 'write',
+      job: compactJob(job),
+      started_at: now,
+      durable_payload: true,
+    }, dependencies);
+  } catch (error) {
+    const release = dependencies.release || releaseMinuteFactJobs;
+    await release(env, [job.id], { now }).catch(() => {});
+    throw error;
+  }
   return {
     skipped: false,
     pending: true,
