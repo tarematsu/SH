@@ -24,6 +24,11 @@ function historicalStage(body) {
       .includes(String(body?.stage || ''));
 }
 
+function syncMaintenance(body, stage) {
+  return stage === 'maintenance-sync'
+    || (stage === 'maintenance-run' && body?.maintenance_task === 'sync');
+}
+
 async function processOneMinuteRebuildMessage(message, env, dependencies = EMPTY_DEPENDENCIES) {
   const stage = maintenanceStage(message?.body);
   try {
@@ -36,7 +41,7 @@ async function processOneMinuteRebuildMessage(message, env, dependencies = EMPTY
     } else if (stage) {
       const run = stage === 'maintenance-gate'
         ? dependencies.processMinuteMaintenanceGate || processMinuteMaintenanceGate
-        : stage === 'maintenance-sync'
+        : syncMaintenance(message.body, stage)
           ? dependencies.processMinuteMaintenanceSync || processMinuteMaintenanceSync
           : dependencies.processMinuteMaintenanceRun || processMinuteMaintenanceRun;
       const result = await run(env, message.body, dependencies.maintenance || EMPTY_DEPENDENCIES);
@@ -52,6 +57,7 @@ async function processOneMinuteRebuildMessage(message, env, dependencies = EMPTY
         attempt: result?.attempt,
         dispatched_stage: result?.dispatched_stage,
         historical_backfill_due: result?.historical_backfill_due,
+        payloads_cleared: result?.payload_cleanup?.cleared,
       }));
     } else {
       const run = dependencies.processMinuteRebuildStage || processMinuteRebuildStage;
@@ -84,6 +90,7 @@ export {
   historicalStage,
   maintenanceStage,
   processOneMinuteRebuildMessage,
+  syncMaintenance,
 };
 
 export default {
