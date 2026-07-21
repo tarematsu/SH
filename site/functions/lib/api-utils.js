@@ -47,11 +47,11 @@ export function num(value) {
 }
 
 export function isRealIsoDate(value) {
-  const text = String(value || '');
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(text)) return false;
-  const timestamp = Date.parse(`${text}T00:00:00Z`);
+  const valueText = String(value || '');
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(valueText)) return false;
+  const timestamp = Date.parse(`${valueText}T00:00:00Z`);
   return Number.isFinite(timestamp)
-    && new Date(timestamp).toISOString().slice(0, 10) === text;
+    && new Date(timestamp).toISOString().slice(0, 10) === valueText;
 }
 
 export function bool(value) {
@@ -74,110 +74,6 @@ export function text(value) {
   return value === undefined || value === null ? null : String(value);
 }
 
-export function normalizedPlaybackKey(key) {
-  return String(key || '').replace(/[_\s-]+/g, '').toLowerCase();
-}
-
-export function isAppleMusicKey(key) {
-  const normalized = normalizedPlaybackKey(key);
-  return normalized === 'apple' || normalized.includes('applemusic');
-}
-
-export function isPreviewKey(key) {
-  const normalized = normalizedPlaybackKey(key);
-  return normalized === 'preview' || normalized === 'previewurl';
-}
-
-export function shouldStripPlaybackKey(key) {
-  return isAppleMusicKey(key) || isPreviewKey(key);
-}
-
-export function isUnusedPublicPlaybackKey(key) {
-  const normalized = normalizedPlaybackKey(key);
-  return normalized === 'deezer'
-    || normalized === 'deezerid'
-    || normalized === 'stationheadtrackid'
-    || normalized === 'displaytitle'
-    || normalized === 'queueid'
-    || normalized === 'queuetrackid'
-    || normalized === 'isrc'
-    || normalized === 'metadatafetchedat'
-    || normalized === 'rawjson'
-    || normalized === 'metadatarawjson'
-    || normalized === 'responsetimestamp'
-    || normalized === 'type';
-}
-
-export function shouldStripPublicPlaybackKey(key) {
-  return shouldStripPlaybackKey(key) || isUnusedPublicPlaybackKey(key);
-}
-
-function copyPriorObjectEntries(entries, stop) {
-  const output = {};
-  for (let index = 0; index < stop; index += 1) {
-    const [key, child] = entries[index];
-    output[key] = child;
-  }
-  return output;
-}
-
-function stripArrayFields(value, shouldStripKey) {
-  let output = null;
-  for (let index = 0; index < value.length; index += 1) {
-    const child = value[index];
-    const stripped = stripFields(child, shouldStripKey);
-    if (output) {
-      output.push(stripped);
-    } else if (stripped !== child) {
-      output = value.slice(0, index);
-      output.push(stripped);
-    }
-  }
-  return output || value;
-}
-
-function stripObjectFields(value, shouldStripKey) {
-  const entries = Object.entries(value);
-  let output = null;
-  for (let index = 0; index < entries.length; index += 1) {
-    const [key, child] = entries[index];
-    if (shouldStripKey(key)) {
-      output ||= copyPriorObjectEntries(entries, index);
-      continue;
-    }
-    const stripped = stripFields(child, shouldStripKey);
-    if (output) {
-      output[key] = stripped;
-    } else if (stripped !== child) {
-      output = copyPriorObjectEntries(entries, index);
-      output[key] = stripped;
-    }
-  }
-  return output || value;
-}
-
-function stripFields(value, shouldStripKey) {
-  if (Array.isArray(value)) return stripArrayFields(value, shouldStripKey);
-  if (!value || typeof value !== 'object') return value;
-  return stripObjectFields(value, shouldStripKey);
-}
-
-export function stripPlaybackFields(value) {
-  return stripFields(value, shouldStripPlaybackKey);
-}
-
-export function stripPlaybackPublicFields(value) {
-  return stripFields(value, shouldStripPublicPlaybackKey);
-}
-
-export function stripAppleMusicFields(value) {
-  return stripPlaybackFields(value);
-}
-
-function playbackJsonReplacer(key, child) {
-  return shouldStripPlaybackKey(key) ? undefined : child;
-}
-
 export function rawJson(value) {
-  return JSON.stringify(value ?? null, playbackJsonReplacer);
+  return JSON.stringify(value ?? null);
 }
