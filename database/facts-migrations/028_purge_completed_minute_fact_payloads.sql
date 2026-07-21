@@ -1,18 +1,19 @@
 -- Keep the durable job ledger, but discard the large source payload as soon as
 -- the minute fact and every queue-revision item that depends on it are complete.
--- Empty TEXT is used because payload_json is historically NOT NULL. Existing
--- rows are drained in bounded maintenance batches rather than one migration-wide
--- UPDATE that could exceed D1 statement limits on a multi-hundred-megabyte table.
+-- The cleared value is the valid minimal JSON object `{}` because downstream
+-- duplicate deliveries may still evaluate payload_json with SQLite JSON functions.
+-- Existing rows are drained in bounded maintenance batches rather than one
+-- migration-wide UPDATE that could exceed D1 statement limits.
 
 DROP INDEX IF EXISTS idx_sh_minute_fact_jobs_done_payload;
 CREATE INDEX idx_sh_minute_fact_jobs_done_payload
   ON sh_minute_fact_jobs(COALESCE(processed_at,updated_at),id)
-  WHERE status='done' AND LENGTH(payload_json)>0;
+  WHERE status='done' AND LENGTH(payload_json)>2;
 
 DROP TRIGGER IF EXISTS trg_sh_minute_fact_payload_after_job_done;
 CREATE TRIGGER trg_sh_minute_fact_payload_after_job_done
 AFTER UPDATE OF status ON sh_minute_fact_jobs
-WHEN NEW.status='done' AND NEW.payload_json<>''
+WHEN NEW.status='done' AND LENGTH(NEW.payload_json)>2
   AND NOT EXISTS (
     SELECT 1 FROM sh_queue_revisions revisions
     WHERE revisions.source_job_id=NEW.id
@@ -21,7 +22,7 @@ WHEN NEW.status='done' AND NEW.payload_json<>''
           <COALESCE(revisions.source_visible_count,revisions.item_count,0))
   )
 BEGIN
-  UPDATE sh_minute_fact_jobs SET payload_json='' WHERE id=NEW.id;
+  UPDATE sh_minute_fact_jobs SET payload_json='{}' WHERE id=NEW.id;
 END;
 
 DROP TRIGGER IF EXISTS trg_sh_minute_fact_payload_after_revision_insert;
@@ -33,8 +34,8 @@ WHEN NEW.source_job_id IS NOT NULL
     >=COALESCE(NEW.source_visible_count,NEW.item_count,0)
 BEGIN
   UPDATE sh_minute_fact_jobs
-  SET payload_json=''
-  WHERE id=NEW.source_job_id AND status='done' AND payload_json<>''
+  SET payload_json='{}'
+  WHERE id=NEW.source_job_id AND status='done' AND LENGTH(payload_json)>2
     AND NOT EXISTS (
       SELECT 1 FROM sh_queue_revisions revisions
       WHERE revisions.source_job_id=NEW.source_job_id
@@ -54,8 +55,8 @@ WHEN NEW.source_job_id IS NOT NULL
     >=COALESCE(NEW.source_visible_count,NEW.item_count,0)
 BEGIN
   UPDATE sh_minute_fact_jobs
-  SET payload_json=''
-  WHERE id=NEW.source_job_id AND status='done' AND payload_json<>''
+  SET payload_json='{}'
+  WHERE id=NEW.source_job_id AND status='done' AND LENGTH(payload_json)>2
     AND NOT EXISTS (
       SELECT 1 FROM sh_queue_revisions revisions
       WHERE revisions.source_job_id=NEW.source_job_id
