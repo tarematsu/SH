@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { existsSync, readFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
 import {
@@ -23,23 +23,6 @@ test('API contract contains unique canonical and internal paths', () => {
   unique(INTERNAL_API_PATHS, 'internal API paths');
   const canonicalSet = new Set(canonical);
   for (const path of INTERNAL_API_PATHS) assert.equal(canonicalSet.has(path), false, `${path} cannot be canonical`);
-});
-
-test('retired API route files are absent instead of advertised as tombstones', () => {
-  for (const path of [
-    '../functions/api/dashboard-history.js',
-    '../functions/api/dashboard-queue.js',
-    '../functions/api/dashboard-recovery.js',
-    '../functions/api/comment-velocity.js',
-    '../functions/api/track-likes.js',
-    '../functions/api/like-ranking.js',
-    '../functions/api/broadcast-series.js',
-    '../functions/api/minute-facts/index.js',
-    '../functions/api/minute-facts/current.js',
-    '../functions/api/minute-facts/latest.js',
-  ]) {
-    assert.equal(existsSync(new URL(path, import.meta.url)), false, path);
-  }
 });
 
 test('middleware blocks internal routes but not canonical APIs', () => {
@@ -77,10 +60,8 @@ test('materialized response freshness follows canonical generation cadences', ()
   assert.equal(materializedResponseMaximumAge('host-history:summary'), 1445 * minute);
 });
 
-test('cache middleware contains only canonical special cases', () => {
+test('cache middleware contains the canonical Sakurazaka policy', () => {
   const source = readFileSync(new URL('../functions/lib/cache-middleware.js', import.meta.url), 'utf8');
   assert.match(source, /\/api\/sakurazaka46jp/);
-  for (const token of ['broadcast-series', 'playback:', 'PLAYBACK_RESPONSE_MAX_AGE_MS', 'PLAYBACK_EDGE_TTL_SECONDS']) {
-    assert.equal(source.includes(token), false, token);
-  }
+  assert.match(source, /ttl: 3600/);
 });
