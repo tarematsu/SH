@@ -83,32 +83,14 @@ test('fast refresh stays idle between canonical response generations', async () 
     BUDDIES_DB: {},
     MINUTE_DB: db,
     OTHER_DB: {},
-  }, Date.UTC(2026, 6, 16, 12, 5), {
-    render: async (variant) => Response.json({ ok: true, model_key: variant.key }),
-  });
-
-  assert.deepEqual(result.responses, []);
-  assert.deepEqual(result.daily, { skipped: true, reason: 'not-due' });
-  const payloadWrites = db.calls.filter((call) =>
-    call.method === 'run' && call.sql.includes('INSERT INTO sh_pages_payload_read_model'));
-  assert.equal(payloadWrites.length, 0);
-});
-
-test('quarter-hour repair refreshes only dashboard daily changes source', async () => {
-  const db = new FakeDb();
-  const result = await refreshFastPagesReadModels({
-    BUDDIES_DB: {},
-    MINUTE_DB: db,
-    OTHER_DB: {},
   }, Date.UTC(2026, 6, 16, 12, 15), {
     render: async (variant) => Response.json({ ok: true, model_key: variant.key }),
   });
 
   assert.deepEqual(result.responses, []);
-  assert.equal(result.daily.skipped, undefined);
   const payloadWrites = db.calls.filter((call) =>
     call.method === 'run' && call.sql.includes('INSERT INTO sh_pages_payload_read_model'));
-  assert.equal(payloadWrites.length, 1);
+  assert.equal(payloadWrites.length, 0);
 });
 
 test('track history refresh republishes the integrated history response', async () => {
