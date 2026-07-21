@@ -4,8 +4,9 @@
 -- rows are drained in bounded maintenance batches rather than one migration-wide
 -- UPDATE that could exceed D1 statement limits on a multi-hundred-megabyte table.
 
-CREATE INDEX IF NOT EXISTS idx_sh_minute_fact_jobs_done_payload
-  ON sh_minute_fact_jobs(processed_at,id)
+DROP INDEX IF EXISTS idx_sh_minute_fact_jobs_done_payload;
+CREATE INDEX idx_sh_minute_fact_jobs_done_payload
+  ON sh_minute_fact_jobs(COALESCE(processed_at,updated_at),id)
   WHERE status='done' AND LENGTH(payload_json)>0;
 
 DROP TRIGGER IF EXISTS trg_sh_minute_fact_payload_after_job_done;
