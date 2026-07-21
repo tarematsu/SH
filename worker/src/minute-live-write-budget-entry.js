@@ -2,6 +2,11 @@ const RETRY_60_SECONDS = Object.freeze({ delaySeconds: 60 });
 const JSON_QUEUE_SEND_OPTIONS = Object.freeze({ contentType: 'json' });
 export const BUDGET_LIVE_WRITE_STAGE = 'budget-live-write';
 
+function integer(value) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? Math.trunc(parsed) : null;
+}
+
 function activeQueueEnvironment(env) {
   const liveQueue = env?.MINUTE_LIVE_DERIVE_QUEUE;
   if (!liveQueue || env?.MINUTE_DERIVE_QUEUE === liveQueue) return env;
@@ -21,6 +26,41 @@ function validStageBody(body, stage) {
     && body?.payload?.rebuild !== true;
 }
 
+function validatePayload(payload, payloadVersion = null) {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+    throw new Error('invalid durable minute fact payload');
+  }
+  if (Number(payload.payload_version || payloadVersion || 0) !== 1) {
+    throw new Error(`unsupported minute fact payload version: ${payload.payload_version || payloadVersion}`);
+  }
+  return payload;
+}
+
+export async function loadDurableLivePayload(env, body, dependencies = {}) {
+  if (body?.payload != null) return validatePayload(body.payload, body?.job?.payload_version);
+  if (dependencies.loadPayload) {
+    return validatePayload(await dependencies.loadPayload(env, body), body?.job?.payload_version);
+  }
+  const jobId = integer(body?.job?.id);
+  const db = env?.MINUTE_DB;
+  if (jobId == null || !db?.prepare) throw new Error('durable minute fact job identity is missing');
+  const row = await db.prepare(`SELECT payload_json,payload_version
+    FROM sh_minute_fact_jobs WHERE id=? LIMIT 1`).bind(jobId).first();
+  if (!row) throw new Error(`minute fact job ${jobId} source payload is missing`);
+  let payload;
+  try {
+    payload = JSON.parse(String(row.payload_json || ''));
+  } catch (error) {
+    throw new Error(`invalid minute fact job payload: ${error?.message || error}`);
+  }
+  return validatePayload(payload, row.payload_version ?? body?.job?.payload_version);
+}
+
+function compactStageBody(body) {
+  const { payload: _payload, ...compact } = body || {};
+  return { ...compact, durable_payload: true };
+}
+
 async function sendStage(env, body, dependencies = {}) {
   if (dependencies.sendStage) return dependencies.sendStage(body);
   const queue = env?.MINUTE_LIVE_DERIVE_QUEUE || env?.MINUTE_DERIVE_QUEUE;
@@ -29,18 +69,23 @@ async function sendStage(env, body, dependencies = {}) {
 }
 
 async function prepareLiveWrite(env, body, dependencies = {}) {
+  const payload = await loadDurableLivePayload(env, body, dependencies);
   const materializer = dependencies.materializer || await import('./minute-revision-materializer.js');
-  if (!materializer.shouldMaterializeLiveRevision(env, body.payload)) {
-    return commitLiveWrite(env, { ...body, stage: BUDGET_LIVE_WRITE_STAGE }, dependencies);
+  if (!materializer.shouldMaterializeLiveRevision(env, payload)) {
+    await sendStage(env, {
+      ...compactStageBody(body),
+      stage: BUDGET_LIVE_WRITE_STAGE,
+    }, dependencies);
+    return { prepared: true, revision_id: null };
   }
   const revision = await materializer.prepareSparseLiveRevision(
     env,
-    body.payload,
+    payload,
     { sourceJobId: body?.job?.id },
     dependencies.materializerDependencies || {},
   );
   await sendStage(env, {
-    ...body,
+    ...compactStageBody(body),
     stage: BUDGET_LIVE_WRITE_STAGE,
     prepared_revision: revision,
   }, dependencies);
@@ -49,6 +94,7 @@ async function prepareLiveWrite(env, body, dependencies = {}) {
 
 async function commitLiveWrite(env, body, dependencies = {}) {
   const activeEnv = activeQueueEnvironment(env);
+  const payload = await loadDurableLivePayload(activeEnv, body, dependencies);
   const [
     { withAppleMusicFreeRuntime },
     { withMinuteD1WriteThrottling },
@@ -64,12 +110,12 @@ async function commitLiveWrite(env, body, dependencies = {}) {
   const preparedRevision = body.prepared_revision || null;
   const result = await deriveQueue.processMinuteDeriveWriteStage(
     budgetEnv,
-    { ...body, stage: 'write' },
+    { ...body, stage: 'write', payload },
     {
       stageRevision: false,
-      async write(active, payload) {
+      async write(active, value) {
         return fastStore.saveOptimizedMinuteFactWithinBudget(active, {
-          ...payload,
+          ...value,
           ...(preparedRevision ? { prepared_revision: preparedRevision } : {}),
         });
       },
