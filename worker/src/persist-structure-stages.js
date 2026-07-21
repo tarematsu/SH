@@ -201,7 +201,7 @@ function queueItemStatements(db, tracks, observedAt, plan) {
       ON CONFLICT(station_id,start_time,position) DO UPDATE SET
         observed_at=excluded.observed_at,queue_id=excluded.queue_id,
         queue_track_id=excluded.queue_track_id,stationhead_track_id=excluded.stationhead_track_id,
-        spotify_id=excluded.spotify_id,apple_music_id=NULL,
+        spotify_id=excluded.spotify_id,
         deezer_id=excluded.deezer_id,isrc=excluded.isrc,duration_ms=excluded.duration_ms,
         preview_url=excluded.preview_url,raw_json=excluded.raw_json
       WHERE excluded.observed_at>=COALESCE((
