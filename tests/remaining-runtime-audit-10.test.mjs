@@ -5,13 +5,9 @@ import { DatabaseSync } from 'node:sqlite';
 
 import { HOST_SUMMARY_SQL, loadHostSummary } from '../site/functions/api/host-history.js';
 
-test('host summary returns profile, active session and recent sessions from one SQL statement', async () => {
+test('host summary returns active and recent Sakurazaka sessions from one SQL statement', async () => {
   const db = new DatabaseSync(':memory:');
   db.exec(`
-    CREATE TABLE sh_host_profile_snapshots (
-      observed_at INTEGER,handle TEXT,account_id INTEGER,followers INTEGER,
-      following INTEGER,total_streams INTEGER,active_stream_days INTEGER,thumbnail_url TEXT
-    );
     CREATE TABLE sh_host_broadcast_sessions (
       id INTEGER,handle TEXT,station_id INTEGER,started_at INTEGER,confirmed_at INTEGER,
       ended_at INTEGER,status TEXT,peak_listeners INTEGER,average_listeners REAL,
@@ -19,9 +15,6 @@ test('host summary returns profile, active session and recent sessions from one 
       track_count INTEGER,comment_count INTEGER,last_observed_at INTEGER
     );
   `);
-  db.prepare(`INSERT INTO sh_host_profile_snapshots VALUES
-    (100,'sakuramankai',1,10,20,30,40,'old'),
-    (200,'sakuramankai',1,11,21,31,41,'latest')`).run();
   db.prepare(`INSERT INTO sh_host_broadcast_sessions VALUES
     (1,'sakurazaka46jp',10,100,110,200,'ended',30,20,1000,1100,2,3,4,200),
     (2,'sakurazaka46jp',11,300,310,NULL,'active',40,NULL,1200,NULL,3,4,5,320)`).run();
@@ -37,7 +30,7 @@ test('host summary returns profile, active session and recent sessions from one 
   };
   const summary = await loadHostSummary(wrapped);
   assert.equal(statements, 1);
-  assert.equal(summary.latestProfile.followers, 11);
+  assert.equal('latestProfile' in summary, false);
   assert.equal(summary.activeSession.id, 2);
   assert.deepEqual(summary.recentSessions.map((row) => row.id), [2, 1]);
 });
