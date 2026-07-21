@@ -1,4 +1,4 @@
-const DASHBOARD_CACHE_KEY = 'sh.dashboard-lite.v1';
+const DASHBOARD_CACHE_KEY = 'sh.dashboard.v3';
 const DAILY_REFRESH_MS = 5 * 60_000;
 const integer = new Intl.NumberFormat('ja-JP');
 const nativeFetch = window.fetch.bind(window);
@@ -133,7 +133,7 @@ setInterval(() => {
 document.addEventListener('visibilitychange', () => {
   if (!document.hidden) void loadDailyChanges();
 });
-void import('/app-main.js').catch((error) => {
+void import('/dashboard-client.js').catch((error) => {
   console.error('dashboard client failed to start', error);
   const status = byId('statusMessage');
   if (status) {
