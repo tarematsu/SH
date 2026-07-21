@@ -20,7 +20,10 @@ test('newest live fact probes have a covering descending index', () => {
     migration,
     /idx_sh_minute_facts_live_minute\s*\nON sh_minute_facts\(\s*source_code,\s*minute_at DESC,\s*id DESC,\s*channel_id,\s*observed_at,\s*is_broadcasting\s*\)/s,
   );
-  assert.match(playback, /WHERE f\.source_code=1\s*\n\s*ORDER BY f\.minute_at DESC,f\.id DESC/);
+  assert.match(
+    playback,
+    /FROM sh_minute_facts f INDEXED BY idx_sh_minute_facts_live_minute\s*\n\s*WHERE f\.source_code=1\s*\n\s*ORDER BY f\.minute_at DESC,f\.id DESC/,
+  );
   assert.match(
     verification,
     /FROM sh_minute_facts INDEXED BY idx_sh_minute_facts_live_minute\s*\n\s*WHERE source_code=1/,
