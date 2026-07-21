@@ -58,9 +58,3 @@ export function mergeTrackHistoryExcludedDates(previousDates, refreshedDates, ra
   const refreshed = Array.isArray(refreshedDates) ? refreshedDates : [];
   return [...new Set([...retained, ...refreshed].map(String).filter(Boolean))].sort();
 }
-
-export async function refreshTrackHistoryPagesReadModel(env, now = Date.now(), dependencies = {}) {
-  const refresh = dependencies.publishTrackHistory
-    || (await import('./pages-read-model-refresh.js')).refreshTrackHistoryPagesReadModel;
-  return refresh(env, now, dependencies);
-}
