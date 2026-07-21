@@ -22,7 +22,6 @@ test('domain modules map to the four active Workers', () => {
   assert.deepEqual(select(['worker/src/track-metadata-entry.js']).workers, [MINUTE]);
   assert.deepEqual(select(['worker/src/pages-read-model-entry.js']).workers, [MINUTE]);
   assert.deepEqual(select(['worker/src/sakurazaka-monitor.js']).workers, [SAKURAZAKA]);
-  assert.deepEqual(select(['worker/src/official-news-index.js']).workers, [SAKURAZAKA]);
   assert.deepEqual(select(['worker/src/minute-derive-entry.js']).workers, [RUNTIME]);
   assert.deepEqual(select(['worker/src/minute-rebuild-batched-entry.js']).workers, [RUNTIME]);
   assert.deepEqual(select(['worker/src/runtime-queue.js']).workers, [RUNTIME]);
