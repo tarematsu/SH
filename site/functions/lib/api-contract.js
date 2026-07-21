@@ -18,14 +18,7 @@ export const API_GROUPS = Object.freeze({
   ]),
 });
 
-export const INTERNAL_API_PATHS = Object.freeze([
-  '/api/ingest',
-  '/api/ingest-core',
-  '/api/ingest-legacy',
-  '/api/host-ingest',
-  '/api/host-ingest-core',
-  '/api/host-ingest-legacy',
-]);
+export const INTERNAL_API_PATHS = Object.freeze([]);
 
 const blockedApiPaths = new Set(INTERNAL_API_PATHS);
 
