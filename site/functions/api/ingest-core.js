@@ -202,20 +202,20 @@ export function queueInspectionDue(previous, payloadJson, observedAt) {
 function queueItemWriteStatements(db, tracks, observedAt, stationId, queueId, startTime) {
   return tracks.map((track) => db.prepare(`INSERT INTO sh_queue_items (
       observed_at,station_id,queue_id,start_time,position,
-      queue_track_id,stationhead_track_id,spotify_id,apple_music_id,
+      queue_track_id,stationhead_track_id,spotify_id,
       deezer_id,isrc,duration_ms,preview_url,bite_count,raw_json
-    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
     ON CONFLICT(station_id,start_time,position) DO UPDATE SET
       observed_at=excluded.observed_at,queue_id=excluded.queue_id,
       queue_track_id=excluded.queue_track_id,stationhead_track_id=excluded.stationhead_track_id,
-      spotify_id=excluded.spotify_id,apple_music_id=NULL,
+      spotify_id=excluded.spotify_id,
       deezer_id=excluded.deezer_id,isrc=excluded.isrc,duration_ms=excluded.duration_ms,
       preview_url=excluded.preview_url,bite_count=excluded.bite_count,raw_json=excluded.raw_json`)
     .bind(
       observedAt, stationId, queueId, startTime, num(track.position),
       num(track.queue_track_id), num(track.stationhead_track_id),
-      text(track.spotify_id), null, text(track.deezer_id),
-      text(track.isrc), num(track.duration_ms), text(track.preview_url),
+      text(track.spotify_id), text(track.deezer_id), text(track.isrc),
+      num(track.duration_ms), text(track.preview_url),
       num(track.bite_count), queueItemState(track, queueId).raw_json,
     ));
 }
@@ -223,12 +223,12 @@ function queueItemWriteStatements(db, tracks, observedAt, stationId, queueId, st
 function likeObservationWriteStatements(db, observations, observedAt, stationId, queueId, startTime) {
   return observations.map(({ trackKey, track }) => db.prepare(`INSERT OR IGNORE INTO sh_track_like_observations (
       observed_at,station_id,queue_id,start_time,position,
-      queue_track_id,stationhead_track_id,spotify_id,apple_music_id,isrc,
+      queue_track_id,stationhead_track_id,spotify_id,isrc,
       track_key,like_count,source,raw_json
-    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).bind(
+    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`).bind(
     observedAt, stationId, queueId, startTime, num(track.position),
     num(track.queue_track_id), num(track.stationhead_track_id),
-    text(track.spotify_id), null, text(track.isrc),
+    text(track.spotify_id), text(track.isrc),
     trackKey, num(track.bite_count), 'collector', rawJson({ bite_count: num(track.bite_count) }),
   ));
 }
