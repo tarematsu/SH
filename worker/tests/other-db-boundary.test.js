@@ -10,7 +10,6 @@ const OWNED = [
   'official-news-reconcile.js',
   'stream-goal-prediction.js',
   'snapshot-retention.js',
-  'other-health.js',
   'sakurazaka-monitor.js',
 ];
 
