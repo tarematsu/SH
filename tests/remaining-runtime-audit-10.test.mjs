@@ -45,10 +45,10 @@ test('history runtime consolidates enhancements and reuses prepared chart state'
     new URL('../site/public/history/history-lite.js', import.meta.url),
     'utf8',
   );
-  assert.match(runtime, /function positionsFromTimes/);
-  assert.match(runtime, /function drawDateAxis/);
-  assert.match(runtime, /state\.chartModel = \{ type: 'summary', positions, rows \}/);
-  assert.match(runtime, /const positions = state\.chartModel\.positions/);
+  assert.match(runtime, /function prepareCanvas\(\)/);
+  assert.match(runtime, /function drawSummaryChart\(\)/);
+  assert.match(runtime, /state\.chartModel = \{ positions, rows \}/);
+  assert.match(runtime, /state\.chartModel\.positions\.forEach/);
   assert.match(runtime, /const PAGE_SIZE = 200/);
   assert.match(runtime, /sessionStorage\.getItem/);
 });
