@@ -4,7 +4,6 @@ export const OTHER_MONITOR_CRON = '*/5 * * * *';
 const MINUTE_MS = 60_000;
 const OTHER_CRON_SUCCESS_CHECKPOINT_MS = 10 * MINUTE_MS;
 const EMPTY_DEPENDENCIES = Object.freeze({});
-const OTHER_SUCCESS_MESSAGE = 'other-monitor-success';
 const OTHER_CRON_SUCCESS_SQL = `INSERT INTO sh_collector_status (
     collector_id,status,last_attempt_at,last_success_at,last_error,
     failure_code,failure_stage,failure_summary,failure_hint,tracks,changed,updated_at
@@ -92,8 +91,11 @@ export async function runOtherMonitorCron(controller, env, ctx, options = {}) {
 
 export async function runOtherMonitorQueue(batch) {
   for (const message of batch?.messages || []) {
-    if (message?.body?.message_type === OTHER_SUCCESS_MESSAGE) message.ack();
-    else message.retry();
+    console.warn(JSON.stringify({
+      event: 'retired_runtime_message_discarded',
+      message_type: String(message?.body?.message_type || 'unknown'),
+    }));
+    message.ack();
   }
 }
 
