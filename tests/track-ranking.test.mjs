@@ -84,6 +84,7 @@ test('FACTS schema publishes observed-time indexes, retired API cleanup, and pay
   assert.match(payloadMigration, /trg_sh_minute_fact_payload_after_job_done/);
   assert.match(payloadMigration, /SET payload_json='\{\}'/);
   assert.match(purgeScript, /UPDATE sh_minute_fact_jobs SET payload_json='\{\}'/);
-  assert.match(purgeScript, /after\.eligible_jobs !== 0/);
+  assert.match(purgeScript, /remainingEligibleJobId != null/);
+  assert.doesNotMatch(purgeScript, /SUM\(LENGTH\(payload_json\)\)/);
   assert.equal(descriptor.schema, 'database/facts-migrations/028_purge_completed_minute_fact_payloads.sql');
 });
