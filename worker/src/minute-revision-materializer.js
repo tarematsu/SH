@@ -226,7 +226,6 @@ const SOURCE_TRACKS_SQL = `WITH raw AS (
       CAST(json_extract(track.value,'$.queue_track_id') AS INTEGER) AS queue_track_id,
       CAST(json_extract(track.value,'$.stationhead_track_id') AS INTEGER) AS stationhead_track_id,
       json_extract(track.value,'$.spotify_id') AS spotify_id,
-      json_extract(track.value,'$.apple_music_id') AS apple_music_id,
       json_extract(track.value,'$.deezer_id') AS deezer_id,
       json_extract(track.value,'$.isrc') AS isrc,
       json_extract(track.value,'$.title') AS title,
