@@ -78,6 +78,20 @@ test('budgeted live triggers enqueue only durable job identity', async () => {
   assert.ok(JSON.stringify(sent).length < 500);
 });
 
+test('failed live trigger dispatch releases the claimed job immediately', async () => {
+  let released = null;
+  await assert.rejects(
+    processBudgetedLiveTriggerMessage({}, trigger(), {
+      now: () => 124_000,
+      claim: async () => job(),
+      sendStage: async () => { throw new Error('queue unavailable'); },
+      release: async (_env, jobIds, options) => { released = { jobIds, options }; },
+    }),
+    /queue unavailable/,
+  );
+  assert.deepEqual(released, { jobIds: [7], options: { now: 124_000 } });
+});
+
 test('compact live triggers are selected when revision materialization is disabled', () => {
   assert.equal(budgetedLiveTriggerBatch({ messages: [{ body: trigger() }] }, {
     HISTORICAL_REBUILD_ENABLED: false,
