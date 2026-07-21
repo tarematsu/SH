@@ -4,7 +4,7 @@ import {
   officialNewsStageTask,
   processOfficialNewsStage,
 } from './other-official-news-stages.js';
-import { officialNewsProbeDue, scheduledTimestamp } from './other-monitor-support.js';
+import { officialNewsProbeDue, scheduledTimestamp } from './sakurazaka-support.js';
 import { ensureSakurazakaSession } from './sakurazaka-auth.js';
 import { runSakurazakaMonitor } from './sakurazaka-monitor.js';
 
