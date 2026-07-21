@@ -58,7 +58,7 @@ async function serviceMaterializedResponse(context, modelKey) {
 }
 
 async function d1MaterializedResponse(context, modelKey, now = Date.now()) {
-  if (!modelKey || !context.env?.MINUTE_DB) return null;
+  if (!SERVICE_MATERIALIZED_MODEL_KEYS.has(modelKey) || !context.env?.MINUTE_DB) return null;
   const db = context.env.MINUTE_DB;
   try {
     const manifest = await db.prepare(`SELECT generation,status,headers_json,chunk_count,updated_at
@@ -148,7 +148,7 @@ export async function onRequest(context) {
   const now = Date.now();
   const modelKey = materializedApiKey(new URL(request.url));
   let prebuilt = null;
-  if (modelKey) {
+  if (SERVICE_MATERIALIZED_MODEL_KEYS.has(modelKey)) {
     const serviceResponse = await serviceMaterializedResponse(context, modelKey);
     prebuilt = serviceResponse || await d1MaterializedResponse(context, modelKey, now);
   }
