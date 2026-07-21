@@ -7,6 +7,12 @@ on:
     paths:
       - '.github/scripts/agent-fix-pr-555.mjs'
       - '.github/workflows/agent-fix-pr-555.yml'
+  pull_request:
+    branches:
+      - main
+    paths:
+      - '.github/scripts/agent-fix-pr-555.mjs'
+      - '.github/workflows/agent-fix-pr-555.yml'
 
 permissions:
   contents: write
