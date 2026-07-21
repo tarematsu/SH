@@ -1,7 +1,4 @@
-import {
-  ingestOptimizedBody,
-  isPendingStreamSchemaError,
-} from '../../site/functions/lib/ingest.js';
+import { ingestOptimizedBody } from '../../site/functions/lib/ingest.js';
 import { serializedQueueAnalysis } from './queue-analysis-transfer.js';
 import { savePreparedSnapshot } from './snapshot-analysis-transfer.js';
 
@@ -23,16 +20,8 @@ export function snapshotPersistenceDue(env, observedAt) {
 }
 
 async function resolveIngestResult(result, type, options) {
-  let directResult = null;
-  try {
-    directResult = await result;
-  } catch (error) {
-    if (type !== 'snapshot' || !isPendingStreamSchemaError(error)) throw error;
-  }
-
-  if (!directResult) {
-    throw new Error(`Direct D1 ingest is unavailable for type=${type}`);
-  }
+  const directResult = await result;
+  if (!directResult) throw new Error(`Direct D1 ingest is unavailable for type=${type}`);
   return options?.returnDetails === true ? directResult : null;
 }
 
