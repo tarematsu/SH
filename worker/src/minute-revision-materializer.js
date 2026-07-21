@@ -59,6 +59,16 @@ async function findReusableRevision(db, input) {
     .first();
 }
 
+async function findStoredRevision(db, input) {
+  return db.prepare(`SELECT id,status,effective_at,item_count,materialized_item_count,
+      coverage_complete,source_job_id,source_visible_count
+    FROM sh_queue_revisions
+    WHERE channel_id=? AND effective_at=? AND structural_hash=?
+    LIMIT 1`)
+    .bind(input.channelId, input.observedAt, input.structuralHash)
+    .first();
+}
+
 async function revisionProgress(db, revisionId) {
   const row = await db.prepare(
     'SELECT COUNT(*) AS item_count FROM sh_queue_revision_items WHERE revision_id=?',
@@ -142,6 +152,10 @@ export async function prepareSparseLiveRevision(env, payload, options = {}, depe
       queueStart,
       structuralHash,
     });
+    if (!revision) {
+      const findStored = dependencies.findStoredRevision || findStoredRevision;
+      revision = await findStored(db, { channelId, observedAt, structuralHash });
+    }
   }
 
   const revisionId = Number(revision?.id);
