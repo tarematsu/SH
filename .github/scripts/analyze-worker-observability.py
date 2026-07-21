@@ -17,6 +17,7 @@ from typing import Any, Callable, Iterable
 EXPECTED_SCRIPTS = {
     "sh-buddies-ingest",
     "sh-minute-enrichment",
+    "sh-sakurazaka46jp",
     "sh-runtime-orchestrator",
 }
 RETIRED_SCRIPTS = {
@@ -38,6 +39,7 @@ RETIRED_SCRIPTS = {
 }
 SCHEDULES: dict[str, Callable[[dt.datetime], bool]] = {
     "sh-runtime-orchestrator": lambda minute: True,
+    "sh-sakurazaka46jp": lambda minute: minute.minute % 5 == 0,
 }
 
 BAD_LOG_LEVELS = {"error", "fatal", "critical"}
