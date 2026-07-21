@@ -8,7 +8,7 @@ const MAX_QUEUE_ITEMS = 100;
 
 export const PRIMARY_PLAYBACK_STATE_SQL = `WITH latest_fact AS (
   SELECT f.id,f.channel_id,f.observed_at,f.is_broadcasting
-  FROM sh_minute_facts f
+  FROM sh_minute_facts f INDEXED BY idx_sh_minute_facts_live_minute
   WHERE f.source_code=1
   ORDER BY f.minute_at DESC,f.id DESC
   LIMIT 1
