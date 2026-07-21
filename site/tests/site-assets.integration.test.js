@@ -54,18 +54,19 @@ test('dashboard renders audience and comment velocity from one response', async 
   assert.match(client, /comment_velocity/);
 });
 
-test('dashboard displays total streams and completed UTC-day changes', async () => {
+test('dashboard displays completed UTC-day changes from the canonical response', async () => {
   const html = await text('public/index.html');
-  const source = await text('public/dashboard-metrics.js');
-  const endpoint = await text('functions/api/dashboard-daily-changes.js');
+  const entry = await text('public/dashboard-metrics.js');
+  const renderer = await text('public/dashboard-daily-summaries.js');
+  const endpoint = await text('functions/api/dashboard.js');
+  const loader = await text('functions/lib/dashboard-daily-summaries.js');
   assert.match(html, />総メンバー数</);
   assert.match(html, />総再生数</);
-  assert.match(source, /current_stream_count/);
-  assert.match(source, /\/api\/dashboard-daily-changes/);
-  assert.match(source, /member_growth/);
-  assert.match(source, /stream_growth/);
-  assert.match(endpoint, /reported_current_stream_count/);
-  assert.match(endpoint, /sh_total_member_daily/);
+  assert.match(entry, /renderDashboardDailySummaries/);
+  assert.match(endpoint, /daily_summaries/);
+  assert.match(loader, /FROM sh_daily_summary/);
+  assert.match(renderer, /member_growth/);
+  assert.match(renderer, /stream_growth/);
 });
 
 test('dashboard declares and implements a light white-base theme', async () => {
@@ -113,7 +114,7 @@ test('dashboard client renders the complete fetched queue', async () => {
   assert.match(source, /function spotifyUrl/);
   assert.match(source, /state\.queue\.slice/);
 
-  const endpoint = await text('functions/api/dashboard.js');
+  const endpoint = await text('functions/api/dashboard-core.js');
   assert.match(endpoint, /const enrichedQueue = queue\.map/);
   assert.match(endpoint, /queue_status/);
 });
