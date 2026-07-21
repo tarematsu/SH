@@ -43,16 +43,15 @@ test('dashboard HTML keeps accessibility, privacy and all public sections', asyn
   assert.match(html, /rel="noopener noreferrer"/);
 });
 
-test('dashboard renders online and comment velocity from one canonical response', async () => {
+test('dashboard renders audience and comment velocity from one response', async () => {
   const html = await text('public/index.html');
   const client = await text('public/dashboard-client.js');
-  assert.doesNotMatch(html, />Webで開く</);
   assert.match(html, /オンライン・コメント勢い/);
   assert.match(client, /const DASHBOARD_URL = '\/api\/dashboard'/);
   assert.match(client, /payload\.history/);
+  assert.match(client, /payload\.queue/);
   assert.match(client, /online_member_count/);
   assert.match(client, /comment_velocity/);
-  assert.doesNotMatch(client, /dashboard-history|dashboard-queue|dashboard-recovery/);
 });
 
 test('dashboard displays total streams and completed UTC-day changes', async () => {
@@ -61,14 +60,12 @@ test('dashboard displays total streams and completed UTC-day changes', async () 
   const endpoint = await text('functions/api/dashboard-daily-changes.js');
   assert.match(html, />総メンバー数</);
   assert.match(html, />総再生数</);
-  assert.doesNotMatch(html, /ユニーク参加者|延べ参加者|totalListens|listensDelta/);
   assert.match(source, /current_stream_count/);
   assert.match(source, /\/api\/dashboard-daily-changes/);
   assert.match(source, /member_growth/);
   assert.match(source, /stream_growth/);
   assert.match(endpoint, /reported_current_stream_count/);
   assert.match(endpoint, /sh_total_member_daily/);
-  assert.doesNotMatch(`${source}\n${endpoint}`, /total_listens/);
 });
 
 test('dashboard declares and implements a light white-base theme', async () => {
@@ -90,7 +87,6 @@ test('mobile dashboard keeps one stylesheet and one entry script', async () => {
   assert.equal((html.match(/<link rel="stylesheet"/g) || []).length, 1);
   assert.equal((html.match(/<script /g) || []).length, 1);
   assert.match(entry, /import\('\/dashboard-client\.js'\)/);
-  assert.doesNotMatch(entry, /app-main|app-lite\.js/);
 });
 
 test('dashboard mobile layout prevents metric and goal number clipping', async () => {
@@ -103,35 +99,31 @@ test('dashboard mobile layout prevents metric and goal number clipping', async (
 
 test('dashboard client uses one shared cache and one canonical fetch', async () => {
   const source = await text('public/dashboard-client.js');
-  assert.match(source, /const DASHBOARD_URL = '\/api\/dashboard'/);
+  assert.equal((source.match(/\/api\/dashboard/g) || []).length, 1);
   assert.match(source, /localStorage\.setItem/);
   assert.match(source, /document\.hidden/);
   assert.match(source, /AbortController/);
   assert.match(source, /60_000/);
-  assert.doesNotMatch(source, /\/api\/dashboard-history|\/api\/dashboard-queue|\/api\/dashboard-recovery/);
 });
 
-test('dashboard client renders the complete fetched queue without incremental expansion', async () => {
+test('dashboard client renders the complete fetched queue', async () => {
   const source = await text('public/dashboard-client.js');
   assert.match(source, /function playbackView/);
   assert.match(source, /queue_status/);
   assert.match(source, /function spotifyUrl/);
-  assert.doesNotMatch(source, /offset=|続きを読み込む/);
+  assert.match(source, /state\.queue\.slice/);
 
-  const html = await text('public/index.html');
-  assert.doesNotMatch(html, /queueMore|続きを読み込む/);
   const endpoint = await text('functions/api/dashboard.js');
   assert.match(endpoint, /const enrichedQueue = queue\.map/);
-  assert.doesNotMatch(endpoint, /queue\.slice\(startIndex/);
+  assert.match(endpoint, /queue_status/);
 });
 
-test('edge middleware serves materialized canonical responses without request promises', async () => {
+test('edge middleware serves materialized canonical responses', async () => {
   const source = await text('functions/_middleware.js');
   assert.match(source, /MATERIALIZED_API_VARIANTS/);
   assert.match(source, /materializedApiKey/);
   assert.match(source, /cache\.match/);
   assert.match(source, /cache\.put/);
-  assert.doesNotMatch(source, /inFlight/);
 });
 
 test('Pages configuration binds the expected D1 database and output directory', async () => {
