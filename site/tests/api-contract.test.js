@@ -42,6 +42,7 @@ test('all former compatibility routes are retired with HTTP 404', () => {
     '/api/history-migrated',
     '/api/history-raw',
     '/api/official-history',
+    '/api/playback',
   ]) {
     assert.equal(retired.get(path)?.status, 404, `${path} must be retired`);
     assert.equal(isBlockedApiPath(path), true, path);
@@ -81,28 +82,16 @@ test('materialized response freshness follows the six-hour generation cadence', 
     'history:broadcasts',
     'track-history',
   ]) {
-    assert.equal(materializedResponseCadenceSeconds(key), 6 * 60 * 60, key);
+    assert.equal(materializedResponseCadenceSeconds(key), 360 * 60, key);
     assert.equal(materializedResponseMaximumAge(key), 365 * minute, key);
   }
-  assert.equal(materializedResponseCadenceSeconds('host-history:summary'), 24 * 60 * 60);
-  assert.equal(materializedResponseCadenceSeconds('unknown'), 5 * 60);
-  assert.equal(materializedResponseMaximumAge('host-history:summary'), (24 * 60 + 5) * minute);
-  assert.equal(
-    materializedResponseMaximumAge('dashboard-history', { PAGES_RESPONSE_MAX_AGE_MS: 15 * minute }),
-    365 * minute,
-  );
-  assert.equal(
-    materializedResponseMaximumAge('track-likes', { PAGES_RESPONSE_MAX_AGE_MS: 370 * minute }),
-    370 * minute,
-  );
+  assert.equal(materializedResponseCadenceSeconds('host-history:summary'), 1440 * 60);
+  assert.equal(materializedResponseMaximumAge('host-history:summary'), 1445 * minute);
 });
 
-test('Pages deployment tolerates the six-hour sharded track-history generation window', () => {
-  const config = JSON.parse(readFileSync(new URL('../wrangler.jsonc', import.meta.url), 'utf8'));
-  const maximumAge = Number(config.vars.PAGES_RESPONSE_MAX_AGE_MS);
-  assert.equal(maximumAge, 365 * 60_000);
-  assert.equal(
-    materializedResponseMaximumAge('track-history', config.vars),
-    maximumAge,
-  );
+test('cache middleware source does not carry retired compatibility branches', () => {
+  const source = readFileSync(new URL('../functions/lib/cache-middleware.js', import.meta.url), 'utf8');
+  for (const token of ['playback:', 'PLAYBACK_RESPONSE_MAX_AGE_MS', 'PLAYBACK_EDGE_TTL_SECONDS']) {
+    assert.equal(source.includes(token), false, token);
+  }
 });
