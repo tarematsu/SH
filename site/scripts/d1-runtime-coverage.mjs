@@ -15,20 +15,19 @@ export const DATA_ONLY_MIGRATIONS = new Set([
 export const D1_APPLY_ONLY_MIGRATIONS = new Set([
   '037_isrc_track_metadata.sql',
 ]);
+// The associated Buddy playback/status runtime modules were intentionally
+// removed. The historical migrations remain valid for older databases but no
+// active Worker is allowed to bootstrap or depend on these tables anymore.
+export const RETIRED_RUNTIME_MIGRATIONS = new Set([
+  '127_add_secondary_playback_current.sql',
+  '128_add_collector_status.sql',
+]);
 export const RUNTIME_MIGRATION_COVERAGE = {
   '008_buddy_auth_control.sql': {
     runtime_file: 'worker/src/auth-state.js',
     required_tables: ['sh_worker_auth_control'],
     allowed_statement_prefixes: ['INSERT OR IGNORE INTO sh_worker_auth_control'],
     runtime_fragments: ['INSERT OR IGNORE INTO sh_worker_auth_control'],
-  },
-  '127_add_secondary_playback_current.sql': {
-    runtime_file: 'worker/src/buddy-runtime.js',
-    required_tables: ['sh_playback_channel_current'],
-  },
-  '128_add_collector_status.sql': {
-    runtime_file: 'worker/src/buddy-health.js',
-    required_tables: ['sh_collector_status'],
   },
   '130_add_primary_run_lock.sql': {
     runtime_file: 'worker/src/primary-run-lock.js',
@@ -59,7 +58,11 @@ function knownMigrationNames(repositoryRoot) {
   if (!existsSync(migrationDirectory)) return [];
   return readdirSync(migrationDirectory)
     .filter((name) => /^\d+_[A-Za-z0-9._-]+\.sql$/.test(name))
-    .filter((name) => RUNTIME_MIGRATION_COVERAGE[name] || DATA_ONLY_MIGRATIONS.has(name));
+    .filter((name) => (
+      RUNTIME_MIGRATION_COVERAGE[name]
+      || DATA_ONLY_MIGRATIONS.has(name)
+      || RETIRED_RUNTIME_MIGRATIONS.has(name)
+    ));
 }
 
 export function changedMigrationNames(repositoryRoot) {
@@ -87,6 +90,7 @@ export function uncoveredRuntimeMigrations(names, coverage = RUNTIME_MIGRATION_C
     !coverage[name]
     && !DATA_ONLY_MIGRATIONS.has(name)
     && !D1_APPLY_ONLY_MIGRATIONS.has(name)
+    && !RETIRED_RUNTIME_MIGRATIONS.has(name)
   ));
 }
 
@@ -112,7 +116,11 @@ export function assertRuntimeMigrationCoverage(repositoryRoot, names = null) {
   }
 
   for (const migrationName of changed) {
-    if (DATA_ONLY_MIGRATIONS.has(migrationName) || D1_APPLY_ONLY_MIGRATIONS.has(migrationName)) continue;
+    if (
+      DATA_ONLY_MIGRATIONS.has(migrationName)
+      || D1_APPLY_ONLY_MIGRATIONS.has(migrationName)
+      || RETIRED_RUNTIME_MIGRATIONS.has(migrationName)
+    ) continue;
     const definition = RUNTIME_MIGRATION_COVERAGE[migrationName];
     if (!definition) continue;
     const migrationPath = path.join(repositoryRoot, 'database', 'migrations', migrationName);
@@ -128,7 +136,7 @@ export function assertRuntimeMigrationCoverage(repositoryRoot, names = null) {
     const tables = createdTables(migrationSql);
     const allowedStatements = [
       ...definition.required_tables.map(
-      (table) => new RegExp(`^CREATE\\s+TABLE\\s+IF\\s+NOT\\s+EXISTS\\s+${table}\\b`, 'i'),
+        (table) => new RegExp(`^CREATE\\s+TABLE\\s+IF\\s+NOT\\s+EXISTS\\s+${table}\\b`, 'i'),
       ),
       ...(definition.allowed_statement_prefixes || []).map(
         (prefix) => new RegExp(`^${prefix}\\b`, 'i'),
