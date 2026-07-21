@@ -16,37 +16,21 @@ const MINUTE_MS = 60_000;
 const BASE = Date.UTC(2026, 0, 1, 0, 0, 0);
 
 class FakeStatement {
-  constructor(sql) {
-    this.sql = sql;
-    this.params = [];
-  }
-
-  bind(...params) {
-    this.params = params;
-    return this;
-  }
-
-  async run() {
-    return { success: true };
-  }
+  constructor(sql) { this.sql = sql; this.params = []; }
+  bind(...params) { this.params = params; return this; }
+  async run() { return { success: true }; }
 }
 
 class FakeDb {
-  constructor() {
-    this.batches = [];
-  }
-
-  prepare(sql) {
-    return new FakeStatement(sql);
-  }
-
+  constructor() { this.batches = []; }
+  prepare(sql) { return new FakeStatement(sql); }
   async batch(statements) {
     this.batches.push(statements);
     return statements.map(() => ({ success: true }));
   }
 }
 
-test('six-hour Pages work distributes API tasks and leaves later minutes fully idle', () => {
+test('six-hour Pages work reserves only canonical history variants', () => {
   const reserved = [];
   const trackSteps = [];
   const idle = [];
@@ -58,22 +42,18 @@ test('six-hour Pages work distributes API tasks and leaves later minutes fully i
   }
 
   assert.deepEqual(reserved, [
-    [0, 'variant', 'dashboard-history'],
     [35, 'variant', 'history:daily'],
     [50, 'variant', 'host-history:summary'],
     [70, 'variant', 'history:weekly'],
     [105, 'variant', 'history:monthly'],
     [140, 'variant', 'history:broadcasts'],
-    [175, 'variant', 'minute-facts-current'],
-    [210, 'variant', 'track-likes'],
-    [245, 'source', 'source:like-ranking'],
-    [246, 'variant', 'like-ranking'],
   ]);
-  assert.equal(TRACK_HISTORY_WINDOW_MINUTES, 60);
+  assert.equal(TRACK_HISTORY_WINDOW_MINUTES, 175);
   assert.equal(TRACK_HISTORY_ACTIVE_MINUTES, 60);
-  assert.equal(trackSteps.length, 57);
-  assert.equal(idle.length, 293);
-  assert.equal(idle.includes(60), true);
+  assert.equal(trackSteps.length, 170);
+  assert.equal(idle.length, 185);
+  assert.equal(trackSteps.includes(0), true);
+  assert.equal(idle.includes(175), true);
   assert.equal(idle.includes(359), true);
 
   assert.deepEqual(
@@ -87,66 +67,43 @@ test('six-hour Pages work distributes API tasks and leaves later minutes fully i
   );
 });
 
-test('like-ranking source and response are separate cycle-minute tasks', async () => {
+test('canonical history variant renders and persists one response', async () => {
   const db = new FakeDb();
   const env = { BUDDIES_DB: {}, MINUTE_DB: db, OTHER_DB: {} };
   const calls = [];
-
-  const sourceAt = BASE + 245 * MINUTE_MS;
-  const source = await runPagesSixHourTask(env, sourceAt, {
-    ensureSchema: async () => calls.push('schema'),
-    refreshLikeRanking: async (_db, now) => {
-      calls.push(['source', now]);
-      return { rows: 12 };
-    },
-    render: async () => assert.fail('source minute must not render a response'),
-  });
-  assert.equal(source.task.key, 'source:like-ranking');
-  assert.deepEqual(source.source, { rows: 12 });
-
-  const responseAt = BASE + 246 * MINUTE_MS;
-  const response = await runPagesSixHourTask(env, responseAt, {
-    ensureSchema: async () => calls.push('schema'),
-    payloadUpdatedAt: async () => sourceAt,
+  const result = await runPagesSixHourTask(env, BASE + 35 * MINUTE_MS, {
     render: async (variant) => {
-      calls.push(['render', variant.key]);
+      calls.push(variant.key);
       return Response.json({ ok: true, rows: [] });
     },
+    saveResponse: async (_db, _kv, key) => {
+      calls.push(`save:${key}`);
+      return { bytes: 20, chunks: 1 };
+    },
   });
-  assert.deepEqual(response.responses.map(({ key }) => key), ['like-ranking']);
-  assert.equal(response.failed, 0);
-  assert.equal(db.batches.length, 1);
-  assert.deepEqual(calls, [
-    'schema',
-    ['source', sourceAt],
-    'schema',
-    ['render', 'like-ranking'],
-  ]);
+
+  assert.deepEqual(result.responses.map(({ key }) => key), ['history:daily']);
+  assert.equal(result.failed, 0);
+  assert.deepEqual(calls, ['history:daily', 'save:history:daily']);
 });
 
-test('like-ranking publication refuses a source from the previous six-hour cycle', async () => {
-  const db = new FakeDb();
-  const env = { BUDDIES_DB: {}, MINUTE_DB: db, OTHER_DB: {} };
-  const result = await runPagesSixHourTask(env, BASE + (6 * 60 + 246) * MINUTE_MS, {
-    ensureSchema: async () => {},
-    payloadUpdatedAt: async () => BASE + 245 * MINUTE_MS,
-    render: async () => assert.fail('stale source must not be published'),
-  });
-
-  assert.equal(result.failed, 1);
-  assert.deepEqual(result.responses, [{
-    key: 'like-ranking',
-    ok: false,
-    error: 'like-ranking source was not refreshed in the current six-hour cycle',
-  }]);
-  assert.equal(db.batches.length, 0);
+test('retired API cycle minutes are reassigned to track-history or idle work', () => {
+  for (const minute of [0, 175, 210, 245, 246]) {
+    const task = pagesSixHourTask(BASE + minute * MINUTE_MS);
+    assert.equal(['track-history-step', 'idle'].includes(task.kind), true, `${minute}:${task.kind}`);
+    assert.equal([
+      'dashboard-history',
+      'minute-facts-current',
+      'track-likes',
+      'source:like-ranking',
+      'like-ranking',
+    ].includes(task.key), false);
+  }
 });
 
 test('idle cycle minutes do not inspect bindings or touch D1', async () => {
   const env = new Proxy({}, {
-    get() {
-      assert.fail('idle task must not inspect the environment');
-    },
+    get() { assert.fail('idle task must not inspect the environment'); },
   });
   const result = await runPagesSixHourTask(env, BASE + 300 * MINUTE_MS);
   assert.equal(result.skipped, true);
@@ -174,11 +131,9 @@ test('active track-history minute delegates exactly one shard step', async () =>
   assert.deepEqual(calls, [BASE + 45 * MINUTE_MS]);
 });
 
-test('track-history cycle rejects work outside the first hour before reading env', async () => {
+test('legacy track-history cycle rejects work outside its first hour before reading env', async () => {
   const env = new Proxy({}, {
-    get() {
-      assert.fail('inactive track-history minute must not inspect the environment');
-    },
+    get() { assert.fail('inactive track-history minute must not inspect the environment'); },
   });
   const result = await runTrackHistoryCycleStep(env, BASE + 90 * MINUTE_MS);
   assert.equal(result.skipped, true);
