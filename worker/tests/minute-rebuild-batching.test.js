@@ -42,6 +42,33 @@ test('mixed maintenance and rebuild messages keep independent ack handling', asy
   assert.deepEqual(events, ['ack:1', 'ack:2']);
 });
 
+test('maintenance-run sync is routed through payload cleanup ownership', async () => {
+  const events = [];
+  const calls = [];
+  const message = queueMessage(1, {
+    message_type: 'minute-rebuild-stage',
+    message_version: 1,
+    stage: 'maintenance-run',
+    maintenance_task: 'sync',
+  }, events);
+  await processMinuteRebuildBatch({ messages: [message] }, {}, null, {
+    async processMinuteMaintenanceSync() {
+      calls.push('sync-cleanup');
+      return {
+        stage: 'maintenance-run',
+        task: 'sync',
+        payload_cleanup: { cleared: 1000 },
+      };
+    },
+    async processMinuteMaintenanceRun() {
+      calls.push('plain-run');
+      return { stage: 'maintenance-run', task: 'sync' };
+    },
+  });
+  assert.deepEqual(calls, ['sync-cleanup']);
+  assert.deepEqual(events, ['ack:1']);
+});
+
 test('one failed message retries without discarding a successful sibling', async () => {
   const events = [];
   let calls = 0;
