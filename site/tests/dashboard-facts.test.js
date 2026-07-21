@@ -10,7 +10,10 @@ import {
   factsAreFresh,
   mergeFactsLatest,
 } from '../functions/lib/dashboard-facts.js';
+import { resetDashboardDailySummariesCache } from '../functions/lib/dashboard-daily-summaries.js';
 import { FakeD1Database, responseJson } from './helpers/fake-d1.js';
+
+const dayText = (value) => new Date(value).toISOString().slice(0, 10);
 
 test('facts dashboard SQL preserves the unified dashboard response contract', () => {
   assert.match(FACTS_LATEST_SQL, /FROM sh_minute_facts AS f/);
@@ -56,8 +59,10 @@ test('facts telemetry overrides collector metrics while retaining presentation f
   assert.equal(merged.online_member_count, 167);
 });
 
-test('unified dashboard prefers fresh MINUTE_DB metrics and includes history', async () => {
+test('unified dashboard includes facts, history and completed daily summaries', async () => {
+  resetDashboardDailySummariesCache();
   const now = Date.now();
+  const currentDay = Math.floor(now / 86_400_000) * 86_400_000;
   const db = new FakeD1Database()
     .route('first', 'FROM sh_channel_snapshots AS snapshots ORDER BY', {
       id: 1,
@@ -108,10 +113,16 @@ test('unified dashboard prefers fresh MINUTE_DB metrics and includes history', a
       observed_at: now - 86_400_000,
       total_listens: 790_000,
     });
+  const other = new FakeD1Database().route('all', 'FROM sh_daily_summary', {
+    results: [
+      { period_key: dayText(currentDay - 2 * 86_400_000), member_growth: 7, stream_growth: 40 },
+      { period_key: dayText(currentDay - 86_400_000), member_growth: 11, stream_growth: 55 },
+    ],
+  });
 
   const response = await dashboardGet({
     request: new Request('https://skrzk.test/api/dashboard'),
-    env: { DB: db, MINUTE_DB: facts },
+    env: { DB: db, MINUTE_DB: facts, OTHER_DB: other },
   });
   const payload = await responseJson(response);
   assert.equal(response.status, 200);
@@ -123,5 +134,9 @@ test('unified dashboard prefers fresh MINUTE_DB metrics and includes history', a
   assert.equal(payload.history[0].online_member_count, 167);
   assert.equal(payload.daily_change.total_member_count, 99);
   assert.equal(payload.daily_change.total_listens, 366);
+  assert.equal(payload.daily_summaries.yesterday.member_growth, 11);
+  assert.equal(payload.daily_summaries.yesterday.stream_growth, 55);
+  assert.equal(payload.daily_summaries.day_before_yesterday.member_growth, 7);
+  assert.equal(other.calls.length, 1);
   assert.equal(db.callsMatching(/snapshots\.observed_at >=/).length, 0);
 });
