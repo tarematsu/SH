@@ -1,23 +1,9 @@
 import './fetch-guard.js';
-import {
-  OFFICIAL_NEWS_STAGE_MESSAGE,
-  officialNewsStageTask,
-  processOfficialNewsStage,
-} from './other-official-news-stages.js';
-import {
-  officialNewsProbeDue,
-  runOfficialNewsWithReconcile,
-  scheduledTimestamp,
-} from './other-monitor-support.js';
 
 export const OTHER_MONITOR_CRON = '*/5 * * * *';
 const MINUTE_MS = 60_000;
 const OTHER_CRON_SUCCESS_CHECKPOINT_MS = 10 * MINUTE_MS;
 const EMPTY_DEPENDENCIES = Object.freeze({});
-const EMPTY_OPTIONS = Object.freeze({});
-const JSON_QUEUE_SEND_OPTIONS = Object.freeze({ contentType: 'json' });
-const OTHER_TASK_MESSAGE = 'other-monitor-task';
-const OTHER_SELECT_MESSAGE = 'other-monitor-select';
 const OTHER_SUCCESS_MESSAGE = 'other-monitor-success';
 const OTHER_CRON_SUCCESS_SQL = `INSERT INTO sh_collector_status (
     collector_id,status,last_attempt_at,last_success_at,last_error,
@@ -29,162 +15,66 @@ const OTHER_CRON_SUCCESS_SQL = `INSERT INTO sh_collector_status (
     updated_at=excluded.updated_at
   WHERE sh_collector_status.last_success_at IS NULL
     OR excluded.last_success_at >= sh_collector_status.last_success_at + ${OTHER_CRON_SUCCESS_CHECKPOINT_MS}`;
-let loadedHealthApp = null;
-let buddyPipelineModulePromise;
-let hostMonitorModulePromise;
-let buddyQueueModulePromise;
-let hostQueueModulePromise;
+
 let predictionModulePromise;
-let buddyHealthModulePromise;
-
-function loadBuddyPipelineModule() {
-  buddyPipelineModulePromise ||= import('./buddy-playback-pipeline.js');
-  return buddyPipelineModulePromise;
-}
-
-function loadHostMonitorModule() {
-  hostMonitorModulePromise ||= import('./cloud-host-monitor.js');
-  return hostMonitorModulePromise;
-}
-
-function loadBuddyQueueModule() {
-  buddyQueueModulePromise ||= import('./buddy-playback-entry.js');
-  return buddyQueueModulePromise;
-}
-
-function loadHostQueueModule() {
-  hostQueueModulePromise ||= import('./host-monitor-entry.js');
-  return hostQueueModulePromise;
-}
 
 function loadPredictionModule() {
   predictionModulePromise ||= import('./stream-goal-prediction.js');
   return predictionModulePromise;
 }
 
-function loadBuddyHealthModule() {
-  buddyHealthModulePromise ||= import('./buddy-health.js');
-  return buddyHealthModulePromise;
+function scheduledTimestamp(controller, fallback = Date.now()) {
+  const value = Number(controller?.scheduledTime);
+  return Number.isFinite(value) && value >= 0 ? value : fallback;
 }
 
 export function otherMonitorTask(now) {
-  const minute = Math.floor(now / MINUTE_MS) % 60;
-  const buddySlot = minute % 30;
-  if (buddySlot === 0 || buddySlot === 5 || buddySlot === 15) return 'buddy';
-  if (minute === 10 || minute === 40) return 'prediction';
-  if (minute === 20) return 'officialNews';
-  return 'host';
+  const minute = Math.floor(Number(now) / MINUTE_MS) % 60;
+  return minute === 10 || minute === 40 ? 'prediction' : 'idle';
 }
 
-async function defaultRunner(name) {
-  if (name === 'buddy') return (await loadBuddyPipelineModule()).scheduleBuddyPlaybackPipeline;
-  if (name === 'host') return (await loadHostMonitorModule()).runCloudHostMonitor;
-  if (name === 'prediction') return (await loadPredictionModule()).runStreamGoalPrediction;
-  if (name === 'officialNews') return runOfficialNewsWithReconcile;
-  throw new Error(`unsupported other monitor task: ${name}`);
-}
-
-async function dispatchQueue(queue, body) {
-  if (!queue?.send) return null;
-  await queue.send(body, JSON_QUEUE_SEND_OPTIONS);
-  return body;
-}
-
-async function dispatchBuddyPlayback(env, now) {
-  const body = await dispatchQueue(env?.BUDDY_PLAYBACK_QUEUE, {
-    message_type: 'buddy-playback-stage',
-    message_version: 1,
-    scheduled_at: now,
-    observed_at: now,
-  });
-  return body ? { dispatched: true, task: 'buddy', scheduled_at: now } : null;
-}
-
-async function dispatchHostMonitor(env, now) {
-  const body = await dispatchQueue(env?.HOST_MONITOR_QUEUE, {
-    message_type: 'host-monitor-task',
-    message_version: 1,
-    scheduled_at: now,
-    observed_at: now,
-  });
-  return body ? { dispatched: true, task: 'host', scheduled_at: now } : null;
-}
-
-async function dispatchDeferredTask(env, task, now) {
-  const body = await dispatchQueue(env?.HOST_MONITOR_QUEUE, {
-    message_type: OTHER_TASK_MESSAGE,
-    message_version: 1,
-    task,
-    scheduled_at: now,
-  });
-  return body ? { dispatched: true, task, scheduled_at: now } : null;
-}
-
-async function dispatchHostSelection(env, now) {
-  const body = await dispatchQueue(env?.HOST_MONITOR_QUEUE, {
-    message_type: OTHER_SELECT_MESSAGE,
-    message_version: 1,
-    scheduled_at: now,
-  });
-  return body ? { dispatched: true, task: 'host-or-official-news', scheduled_at: now } : null;
-}
-
-async function runDirectTask(name, env, ctx, now, dependencies = EMPTY_DEPENDENCIES) {
-  const runner = dependencies[name] || await defaultRunner(name);
-  if (name === 'buddy') return runner(env, ctx, now);
-  if (name === 'host') return runner(env);
-  return runner(env, now);
-}
-
-async function runTask(name, env, ctx, now, dependencies = EMPTY_DEPENDENCIES) {
-  let dispatched = null;
-  if (name === 'buddy') dispatched = await dispatchBuddyPlayback(env, now);
-  else if (name === 'host') dispatched = await dispatchHostMonitor(env, now);
-  else if (dependencies[name]) return runDirectTask(name, env, ctx, now, dependencies);
-  else if (name === 'prediction' || name === 'officialNews') {
-    dispatched = await dispatchDeferredTask(env, name, now);
-  }
-  return dispatched || runDirectTask(name, env, ctx, now, dependencies);
-}
-
-export async function runOtherMonitorScheduled(controller, env, ctx, dependencies = EMPTY_DEPENDENCIES) {
-  const rawCron = controller?.cron;
-  const cron = rawCron === OTHER_MONITOR_CRON ? rawCron : String(rawCron || '');
-  if (cron !== OTHER_MONITOR_CRON) {
-    return [{ skipped: true, reason: 'unsupported-other-monitor-cron', cron }];
-  }
-  const now = scheduledTimestamp(controller);
-  let task = otherMonitorTask(now);
-  if (task === 'host') {
-    if (dependencies === EMPTY_DEPENDENCIES) {
-      const selected = await dispatchHostSelection(env, now);
-      if (selected) return [selected];
-    }
-    const due = dependencies.officialNewsDue || officialNewsProbeDue;
-    if (await due(env, now)) task = 'officialNews';
-  }
-  return [await runTask(task, env, ctx, now, dependencies)];
-}
-
-async function recordOtherCronSuccessFast(env, at = Date.now()) {
+async function recordSuccess(env, at) {
   if (!env?.OTHER_DB?.prepare) return false;
   try {
     await env.OTHER_DB.prepare(OTHER_CRON_SUCCESS_SQL).bind(at, at, at).run();
     return true;
   } catch (error) {
-    if (!/no such table/i.test(String(error?.message || error))) throw error;
-    return (await loadBuddyHealthModule()).recordOtherCronSuccess(env, at);
+    if (/no such table/i.test(String(error?.message || error))) return false;
+    throw error;
   }
 }
 
-async function recordOtherCronFailureLazy(env, error) {
-  return (await loadBuddyHealthModule()).recordOtherCronFailure(env, error);
+async function recordFailure(env, error, at) {
+  if (!env?.OTHER_DB?.prepare) return false;
+  const message = String(error?.message || error).slice(0, 800);
+  try {
+    await env.OTHER_DB.prepare(`INSERT INTO sh_collector_status (
+        collector_id,status,last_attempt_at,last_error,failure_code,failure_stage,
+        failure_summary,updated_at
+      ) VALUES ('other-cron','error',?,'stream prediction failed','prediction','prediction',?,?)
+      ON CONFLICT(collector_id) DO UPDATE SET
+        status='error',last_attempt_at=excluded.last_attempt_at,last_error=excluded.last_error,
+        failure_code=excluded.failure_code,failure_stage=excluded.failure_stage,
+        failure_summary=excluded.failure_summary,updated_at=excluded.updated_at`)
+      .bind(at, message, at).run();
+    return true;
+  } catch (stateError) {
+    if (/no such table/i.test(String(stateError?.message || stateError))) return false;
+    throw stateError;
+  }
 }
 
-export async function runOtherMonitorCron(controller, env, ctx, options = EMPTY_OPTIONS) {
-  const health = options.healthApp || loadedHealthApp;
-  const recordSuccess = options.recordSuccess || recordOtherCronSuccessFast;
-  const recordFailure = options.recordFailure || recordOtherCronFailureLazy;
+export async function runOtherMonitorScheduled(controller, env, _ctx, dependencies = EMPTY_DEPENDENCIES) {
+  const cron = String(controller?.cron || '');
+  if (cron !== OTHER_MONITOR_CRON) return [{ skipped: true, reason: 'unsupported-other-monitor-cron', cron }];
+  const now = scheduledTimestamp(controller);
+  if (otherMonitorTask(now) !== 'prediction') return [{ skipped: true, reason: 'prediction-not-due' }];
+  const run = dependencies.prediction || (await loadPredictionModule()).runStreamGoalPrediction;
+  return [await run(env, now)];
+}
+
+export async function runOtherMonitorCron(controller, env, ctx, options = {}) {
+  const now = scheduledTimestamp(controller);
   try {
     const result = await runOtherMonitorScheduled(
       controller,
@@ -192,150 +82,30 @@ export async function runOtherMonitorCron(controller, env, ctx, options = EMPTY_
       ctx,
       options.dependencies || EMPTY_DEPENDENCIES,
     );
-    const scheduledAt = scheduledTimestamp(controller);
-    // Keep the success checkpoint in the existing Cron invocation. Sending a
-    // second Queue message only to write this status added one request and one
-    // Worker invocation without changing the health result. The queue handler
-    // below remains for already-delivered legacy heartbeat messages.
-    await recordSuccess(env, scheduledAt);
+    await (options.recordSuccess || recordSuccess)(env, now);
     return result;
   } catch (error) {
-    await recordFailure(env, error).catch(() => {});
+    await (options.recordFailure || recordFailure)(env, error, now).catch(() => {});
     throw error;
-  } finally {
-    health?.invalidateHealthCache?.();
   }
 }
 
-async function processHostSelection(message, env) {
-  const body = message.body;
-  const now = scheduledTimestamp({ scheduledTime: body?.scheduled_at });
-  try {
-    const due = await officialNewsProbeDue(env, now);
-    const dispatched = due
-      ? await dispatchDeferredTask(env, 'officialNews', now)
-      : await dispatchHostMonitor(env, now);
-    if (!dispatched) throw new Error('HOST_MONITOR_QUEUE binding is missing');
-    console.log(JSON.stringify({
-      event: 'other_monitor_selection_dispatched',
-      task: dispatched.task,
-      scheduled_at: now,
-    }));
-    message.ack();
-  } catch (error) {
-    console.error(JSON.stringify({
-      event: 'other_monitor_selection_failed',
-      error: String(error?.message || error).slice(0, 800),
-    }));
-    message.retry();
+export async function runOtherMonitorQueue(batch) {
+  for (const message of batch?.messages || []) {
+    if (message?.body?.message_type === OTHER_SUCCESS_MESSAGE) message.ack();
+    else message.retry();
   }
-}
-
-async function processDeferredTask(message, env, ctx) {
-  const body = message.body;
-  const task = body?.task;
-  if (task !== 'prediction' && task !== 'officialNews') {
-    console.error(JSON.stringify({
-      event: 'other_monitor_queue_task_failed',
-      error: `unsupported deferred monitor task: ${String(task || 'unknown')}`,
-    }));
-    message.retry();
-    return;
-  }
-  const now = scheduledTimestamp({ scheduledTime: body?.scheduled_at });
-  try {
-    const result = task === 'officialNews'
-      ? await processOfficialNewsStage(env, { stage: 'probe', scheduledAt: now })
-      : await runDirectTask(task, env, ctx, now, EMPTY_DEPENDENCIES);
-    console.log(JSON.stringify({
-      event: 'other_monitor_task_completed',
-      task,
-      stage: result?.stage ?? null,
-      scheduled_at: now,
-      pending: result?.pending === true,
-      skipped: result?.skipped === true,
-      reason: result?.reason ?? null,
-    }));
-    message.ack();
-  } catch (error) {
-    console.error(JSON.stringify({
-      event: 'other_monitor_task_failed',
-      task,
-      error: String(error?.message || error).slice(0, 800),
-    }));
-    message.retry();
-  }
-}
-
-async function processOfficialNewsStageMessage(message, env) {
-  try {
-    const task = officialNewsStageTask(message.body);
-    const result = await processOfficialNewsStage(env, task);
-    console.log(JSON.stringify({
-      event: 'other_official_news_stage_completed',
-      stage: result?.stage || task.stage,
-      scheduled_at: task.scheduledAt,
-      pending: result?.pending === true,
-      skipped: result?.skipped === true,
-      reason: result?.reason ?? null,
-    }));
-    message.ack();
-  } catch (error) {
-    console.error(JSON.stringify({
-      event: 'other_official_news_stage_failed',
-      error: String(error?.message || error).slice(0, 800),
-    }));
-    message.retry();
-  }
-}
-
-async function processSuccessRecord(message, env) {
-  try {
-    await recordOtherCronSuccessFast(env, Number(message.body?.at) || Date.now());
-    message.ack();
-  } catch (error) {
-    console.error(JSON.stringify({
-      event: 'other_monitor_success_record_failed',
-      error: String(error?.message || error).slice(0, 800),
-    }));
-    message.retry();
-  }
-}
-
-export async function runOtherMonitorQueue(batch, env, ctx) {
-  const messages = batch?.messages;
-  if (!messages?.length) return;
-  const message = messages[0];
-  const messageType = message?.body?.message_type;
-  if (messageType === 'buddy-playback-stage') {
-    return (await loadBuddyQueueModule()).runBuddyPlaybackQueue(batch, env);
-  }
-  if (messageType === 'host-monitor-task') {
-    return (await loadHostQueueModule()).runHostMonitorQueue(batch, env);
-  }
-  if (messageType === OTHER_SELECT_MESSAGE) return processHostSelection(message, env);
-  if (messageType === OTHER_TASK_MESSAGE) return processDeferredTask(message, env, ctx);
-  if (messageType === OFFICIAL_NEWS_STAGE_MESSAGE) return processOfficialNewsStageMessage(message, env);
-  if (messageType === OTHER_SUCCESS_MESSAGE) return processSuccessRecord(message, env);
-  console.error(JSON.stringify({
-    event: 'other_monitor_queue_task_failed',
-    error: `unsupported monitor queue task: ${String(messageType || 'unknown')}`,
-  }));
-  message.retry();
-}
-
-async function healthApp() {
-  if (!loadedHealthApp) loadedHealthApp = (await import('./other-health.js')).createOtherHealthApp();
-  return loadedHealthApp;
 }
 
 export default {
   scheduled: runOtherMonitorCron,
   queue: runOtherMonitorQueue,
-  async fetch(request, env, ctx) {
+  async fetch(request) {
     const url = new URL(request.url);
     if (request.method === 'GET' && (url.pathname === '/' || url.pathname === '/health')) {
-      return (await healthApp()).fetch(request, env, ctx);
+      return Response.json({ ok: true, worker: 'sh-runtime-orchestrator', scope: 'stream-prediction' }, {
+        headers: { 'cache-control': 'no-store' },
+      });
     }
     return Response.json({ ok: false, error: 'not found' }, { status: 404 });
   },
