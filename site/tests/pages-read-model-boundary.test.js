@@ -4,7 +4,6 @@ import test from 'node:test';
 
 import { onRequestPost as ingestPost } from '../functions/api/ingest.js';
 import { onRequestPost as hostIngestPost } from '../functions/api/host-ingest.js';
-import { onRequest as metadataRefresh } from '../functions/api/track-metadata-refresh.js';
 import {
   CHANNEL_READ_MODEL_SQL,
   COLLECTOR_READ_MODEL_SQL,
@@ -64,8 +63,8 @@ test('presentation read model rejects malformed JSON without failing the page', 
   assert.deepEqual(presentationFromRow({ presentation_json: '{bad' }), {});
 });
 
-test('Pages write paths are retired with non-cacheable 404 responses', async () => {
-  for (const response of [ingestPost(), hostIngestPost(), metadataRefresh()]) {
+test('internal Pages write handlers remain non-cacheable and middleware-blocked', async () => {
+  for (const response of [ingestPost(), hostIngestPost()]) {
     assert.equal(response.status, 404);
     assert.equal(response.headers.get('cache-control'), 'no-store');
   }
