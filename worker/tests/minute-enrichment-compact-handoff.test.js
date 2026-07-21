@@ -63,7 +63,6 @@ test('playback handoff carries only identity fields and the current bite track',
     queue_track_id: 1_000 + position,
     stationhead_track_id: 2_000 + position,
     spotify_id: `spotify-${position}`,
-    apple_music_id: `apple-${position}`,
     isrc: `ISRC${position}`,
     bite_count: 3_000 + position,
     title: `Song ${position}`,
@@ -91,10 +90,10 @@ test('playback handoff carries only identity fields and the current bite track',
     queue_track_id: 1_027,
     stationhead_track_id: 2_027,
     spotify_id: 'spotify-27',
-    apple_music_id: 'apple-27',
     isrc: 'ISRC27',
     bite_count: 3_027,
   }]);
+  assert.equal(Object.hasOwn(sent.value.queue.tracks[0], 'apple_music_id'), false);
   assert.equal(Object.hasOwn(sent.value.queue.tracks[0], 'title'), false);
   assert.equal(Object.hasOwn(sent.value, 'queue_start_time'), false);
   assert.equal(Object.hasOwn(sent.value, 'is_paused'), false);
@@ -129,10 +128,10 @@ test('playback handoff uses the normalized patch result instead of re-reading pl
     queue_track_id: 109,
     stationhead_track_id: null,
     spotify_id: null,
-    apple_music_id: null,
     isrc: null,
     bite_count: 19,
   }]);
+  assert.equal(Object.hasOwn(sent.value.queue.tracks[0], 'apple_music_id'), false);
 });
 
 test('playback handoff drops the queue when no bite position was resolved', async () => {
