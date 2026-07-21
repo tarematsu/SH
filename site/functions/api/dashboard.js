@@ -1,7 +1,7 @@
-import { onRequestGet as dashboardCore } from './dashboard-core.js';
+import { onRequestGet as dashboardCore } from '../lib/dashboard-core.js';
 import { loadDashboardDailySummaries } from '../lib/dashboard-daily-summaries.js';
 
-export * from './dashboard-core.js';
+export * from '../lib/dashboard-core.js';
 
 async function dailySummaries(env, now) {
   try {
