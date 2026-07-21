@@ -74,7 +74,7 @@ test('rebuild preparation transports one compact candidate to a commit invocatio
   assert.deepEqual(h.recorded, []);
 });
 
-test('rebuild commit records the logical backfill and resumes scanning after draining state', async () => {
+test('rebuild commit stops after draining the prepared source batch', async () => {
   const h = harness();
   const prepared = {
     candidate: {
@@ -96,17 +96,14 @@ test('rebuild commit records the logical backfill and resumes scanning after dra
     },
   });
 
-  assert.equal(result.pending, true);
+  assert.equal(result.pending, false);
+  assert.equal(result.result.processed_jobs, 1);
+  assert.equal(result.result.paused_for_budget, false);
   assert.deepEqual(h.recorded.map((item) => item.stage), ['backfill']);
-  assert.deepEqual(h.enqueued, [{
-    runId: base.run_id,
-    stage: 'backfill',
-    delaySeconds: 1,
-    details: null,
-  }]);
+  assert.deepEqual(h.enqueued, []);
 });
 
-test('rebuild commit continues with the next pending candidate before scanning more source rows', async () => {
+test('rebuild commit spaces the next pending candidate across the hourly budget', async () => {
   const h = harness();
   const result = await processMinuteRebuildStage(env, {
     ...base,
@@ -118,8 +115,36 @@ test('rebuild commit continues with the next pending candidate before scanning m
   });
 
   assert.equal(result.pending, true);
-  assert.equal(h.enqueued[0].stage, 'backfill-prepare');
-  assert.equal(h.enqueued[0].delaySeconds, 1);
+  assert.equal(result.result.processed_jobs, 1);
+  assert.equal(result.result.paused_for_budget, false);
+  assert.deepEqual(h.enqueued, [{
+    runId: base.run_id,
+    stage: 'backfill-prepare',
+    delaySeconds: 900,
+    details: { processed_jobs: 1 },
+  }]);
+});
+
+test('rebuild commit pauses durable pending work at the configured per-run limit', async () => {
+  const h = harness();
+  const result = await processMinuteRebuildStage({
+    ...env,
+    REBUILD_MAX_JOBS: 2,
+  }, {
+    ...base,
+    stage: 'backfill-commit',
+    processed_jobs: 1,
+    prepared: { candidate: { snapshot: { channel_id: 10 }, minuteAt: 120_000 } },
+  }, {
+    ...h.dependencies,
+    commitBackfill: async () => ({ enqueued: 1, pending_candidates: 2 }),
+  });
+
+  assert.equal(result.pending, true);
+  assert.equal(result.result.processed_jobs, 2);
+  assert.equal(result.result.max_jobs, 2);
+  assert.equal(result.result.paused_for_budget, true);
+  assert.deepEqual(h.enqueued, []);
 });
 
 test('durable rebuild commit dispatches one derive trigger without batching fact work', async () => {
@@ -191,6 +216,7 @@ test('gap commit dispatches at most the first prepared candidate per invocation'
 
 test('thirty-day reconstruction stays enabled with D1-budgeted recovery throughput', () => {
   const runtime = JSON.parse(readFileSync(new URL('../wrangler.runtime.jsonc', import.meta.url), 'utf8'));
+  const entry = readFileSync(new URL('../src/minute-rebuild-entry.js', import.meta.url), 'utf8');
   const rebuild = runtime.queues.consumers.find(({ queue }) => queue === 'stationhead-minute-rebuild');
 
   assert.equal(runtime.vars.HISTORICAL_REBUILD_ENABLED, true);
@@ -202,6 +228,8 @@ test('thirty-day reconstruction stays enabled with D1-budgeted recovery throughp
   assert.equal(runtime.vars.REBUILD_MAX_JOBS, 4);
   assert.equal(runtime.vars.GAP_SCAN_WINDOW_MINUTES, 1440);
   assert.equal(runtime.vars.GAP_SCAN_MAX_JOBS, 4);
+  assert.match(entry, /DEFAULT_REBUILD_STAGE_INTERVAL_SECONDS = 15 \* 60/);
+  assert.match(entry, /processed_jobs/);
   assert.equal(rebuild.max_batch_size, 1);
   assert.equal(rebuild.max_concurrency, 1);
   assert.equal(
