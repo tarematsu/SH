@@ -1,17 +1,9 @@
-import { loadTrackHistoryData } from '../../site/functions/lib/track-history-restored-handler.js';
-import { mergeTrackRows } from '../../site/functions/lib/track-history-merge.js';
-import { applyTrackPeriodCompleteness } from '../../site/functions/lib/period-completeness.js';
-import { attachCompactTrackLikes } from '../../site/functions/lib/track-likes.js';
-import {
-  refreshTrackHistoryPagesReadModel,
-  trackHistoryRefreshRanges,
-} from './pages-track-history-support.js';
+import { trackHistoryRefreshRanges } from './pages-track-history-support.js';
 
 const DAY_MS = 86_400_000;
 const MINUTE_MS = 60_000;
 export const TRACK_HISTORY_CYCLE_MS = 6 * 60 * MINUTE_MS;
 export const TRACK_HISTORY_ACTIVE_MINUTES = 60;
-const TRACK_HISTORY_LIMIT = 40_000;
 export const TRACK_HISTORY_STAGE_KEY = 'track-history-cycle-stage';
 const BACKFILL_KEY = 'track-history-backfill';
 const STATUS_KEY = 'track-history-status';
@@ -43,18 +35,6 @@ function parsedPayload(row) {
   } catch {
     return null;
   }
-}
-
-function trackRowKey(row) {
-  return [
-    row.play_date || '',
-    row.stationhead_track_id ?? '',
-    row.isrc || '',
-    row.spotify_id || '',
-    row.queue_track_id ?? '',
-    row.position ?? '',
-    row.first_played_at ?? row.played_at ?? '',
-  ].join('|');
 }
 
 export function splitTrackHistoryRange(range) {
@@ -105,16 +85,13 @@ async function ensureShardSchema(db) {
   await db.batch(SHARD_SCHEMA_SQL.map((sql) => db.prepare(sql)));
 }
 
-async function payloadRow(db, key) {
-  return db.prepare(`SELECT payload_json
-    FROM sh_pages_payload_read_model
-    WHERE model_key=?
-    LIMIT 1`).bind(key).first();
-}
-
-async function loadPayload(db, key) {
+async function defaultLoadPayload(db, key) {
   try {
-    return parsedPayload(await payloadRow(db, key));
+    const row = await db.prepare(`SELECT payload_json
+      FROM sh_pages_payload_read_model
+      WHERE model_key=?
+      LIMIT 1`).bind(key).first();
+    return parsedPayload(row);
   } catch (error) {
     if (!/no such table/i.test(String(error?.message || error))) throw error;
     await ensureShardSchema(db);
@@ -122,82 +99,16 @@ async function loadPayload(db, key) {
   }
 }
 
-async function savePayload(db, key, payload, now) {
+async function defaultSavePayload(db, key, payload, now) {
   await db.prepare(`INSERT INTO sh_pages_payload_read_model(model_key,payload_json,updated_at)
     VALUES(?,?,?) ON CONFLICT(model_key) DO UPDATE SET
       payload_json=excluded.payload_json,updated_at=excluded.updated_at`)
     .bind(key, JSON.stringify(payload), now).run();
 }
 
-async function materializeTrackHistoryDay(sourceDb, targetDb, range, now) {
-  const { result, likeRows } = await loadTrackHistoryData(
-    sourceDb,
-    range.fromTs,
-    range.toTs,
-    TRACK_HISTORY_LIMIT,
-    true,
-  );
-  const groupedRows = result.results || [];
-  if (groupedRows.length > TRACK_HISTORY_LIMIT) {
-    throw new Error(`track history read-model day exceeded ${TRACK_HISTORY_LIMIT} grouped rows`);
-  }
-  const mergedRows = mergeTrackRows(groupedRows);
-  const likedRows = attachCompactTrackLikes(mergedRows, likeRows);
-  const completed = applyTrackPeriodCompleteness(likedRows, groupedRows);
-  const rows = completed.rows;
-  const fromDay = dayText(range.fromTs);
-  const toDay = dayText(range.toTs - 1);
-  const statements = rows.map((row) => targetDb.prepare(`INSERT INTO sh_pages_track_history_read_model(
-      row_key,play_date,first_played_at,row_json,updated_at
-    ) VALUES(?,?,?,?,?) ON CONFLICT(row_key) DO UPDATE SET
-      play_date=excluded.play_date,
-      first_played_at=excluded.first_played_at,
-      row_json=excluded.row_json,
-      updated_at=excluded.updated_at`)
-    .bind(
-      trackRowKey(row),
-      row.play_date,
-      Number(row.first_played_at || row.played_at || 0) || null,
-      JSON.stringify(row),
-      now,
-    ));
-  for (let offset = 0; offset < statements.length; offset += 100) {
-    await targetDb.batch(statements.slice(offset, offset + 100));
-  }
-  await targetDb.prepare(`DELETE FROM sh_pages_track_history_read_model
-    WHERE play_date>=? AND play_date<=? AND updated_at<>?`)
-    .bind(fromDay, toDay, now).run();
-  return {
-    from: fromDay,
-    to: toDay,
-    rows: rows.length,
-    groupedRows: groupedRows.length,
-    sourceRowCount: groupedRows.reduce((sum, row) => sum + (Number(row.play_count) || 0), 0),
-    excludedDates: completed.excludedDates,
-  };
-}
-
-async function finalizeTrackHistoryStage(env, stage, now, dependencies = {}) {
-  const { finalizeTrackHistoryStatus } = await import('./pages-track-history-stage.js');
-  const status = await finalizeTrackHistoryStatus(env, stage, now, dependencies);
-  const publish = dependencies.publish || refreshTrackHistoryPagesReadModel;
-  const publication = await publish(env, now, {
-    ...dependencies,
-    refreshTracks: async () => ({ staged: true, generation: stage.generation }),
-  });
-  if (Number(publication?.failed || 0) > 0) return { publication, status, published: false };
-
-  stage.published = true;
-  stage.published_at = now;
-  stage.updated_at = now;
-  const save = dependencies.savePayload || savePayload;
-  await save(env.MINUTE_DB, TRACK_HISTORY_STAGE_KEY, stage, now);
-  return { publication, status, published: true };
-}
-
 async function loadOrCreateStage(targetDb, now, dependencies = {}) {
-  const load = dependencies.loadPayload || loadPayload;
-  const save = dependencies.savePayload || savePayload;
+  const load = dependencies.loadPayload || defaultLoadPayload;
+  const save = dependencies.savePayload || defaultSavePayload;
   const generation = Math.floor(now / TRACK_HISTORY_CYCLE_MS) * TRACK_HISTORY_CYCLE_MS;
   const existing = await load(targetDb, TRACK_HISTORY_STAGE_KEY);
   if (existing && !existing.published) {
@@ -219,25 +130,27 @@ async function loadOrCreateStage(targetDb, now, dependencies = {}) {
   return stage;
 }
 
+function idleResult(timestamp, cycleStart, cycleMinute) {
+  return {
+    skipped: true,
+    reason: 'track-history-cycle-idle',
+    generated_at: timestamp,
+    task: {
+      kind: 'track-history-idle',
+      key: TRACK_HISTORY_STAGE_KEY,
+      cycle_start: cycleStart,
+      cycle_minute: cycleMinute,
+    },
+    responses: [],
+    failed: 0,
+  };
+}
+
 export async function runTrackHistoryCycleStep(env, now = Date.now(), dependencies = {}) {
   const timestamp = Number(now);
   const cycleStart = Math.floor(timestamp / TRACK_HISTORY_CYCLE_MS) * TRACK_HISTORY_CYCLE_MS;
   const cycleMinute = Math.floor((timestamp - cycleStart) / MINUTE_MS);
-  if (cycleMinute >= TRACK_HISTORY_ACTIVE_MINUTES) {
-    return {
-      skipped: true,
-      reason: 'track-history-cycle-idle',
-      generated_at: timestamp,
-      task: {
-        kind: 'track-history-idle',
-        key: TRACK_HISTORY_STAGE_KEY,
-        cycle_start: cycleStart,
-        cycle_minute: cycleMinute,
-      },
-      responses: [],
-      failed: 0,
-    };
-  }
+  if (cycleMinute >= TRACK_HISTORY_ACTIVE_MINUTES) return idleResult(timestamp, cycleStart, cycleMinute);
   if (!env?.BUDDIES_DB || !env?.MINUTE_DB) {
     throw new Error('track-history cycle step is missing BUDDIES_DB or MINUTE_DB');
   }
@@ -255,48 +168,22 @@ export async function runTrackHistoryCycleStep(env, now = Date.now(), dependenci
   }
 
   const nextTask = stage.tasks.find((task) => !stage.completed?.[task.id]);
-  if (nextTask) {
-    const refreshDay = dependencies.refreshDay || materializeTrackHistoryDay;
-    const result = await refreshDay(env.BUDDIES_DB, env.MINUTE_DB, nextTask.range, timestamp);
-    stage.completed = { ...(stage.completed || {}), [nextTask.id]: result };
-    stage.updated_at = timestamp;
-    const save = dependencies.savePayload || savePayload;
-    await save(env.MINUTE_DB, TRACK_HISTORY_STAGE_KEY, stage, timestamp);
+  if (!nextTask) {
     return {
-      skipped: false,
+      skipped: true,
+      reason: 'track-history-shards-complete',
       generated_at: timestamp,
-      task: {
-        kind: 'track-history-shard',
-        key: nextTask.id,
-        generation: stage.generation,
-        shard_kind: nextTask.kind,
-        from: result.from,
-        to: result.to,
-      },
-      shard: result,
-      completed: Object.keys(stage.completed).length,
-      total: stage.tasks.length,
+      task: { kind: 'track-history-publish-ready', key: 'track-history', generation: stage.generation },
       responses: [],
       failed: 0,
     };
   }
 
-  const finalized = await finalizeTrackHistoryStage(env, stage, timestamp, dependencies);
-  return {
-    skipped: false,
-    generated_at: timestamp,
-    task: {
-      kind: 'track-history-publish',
-      key: 'track-history',
-      generation: stage.generation,
-    },
-    stage: {
-      refresh_mode: stage.refresh_mode,
-      shards: stage.tasks.length,
-      published: finalized.published,
-    },
-    responses: finalized.publication?.responses || [],
-    succeeded: Number(finalized.publication?.succeeded || 0),
-    failed: Number(finalized.publication?.failed || 0),
-  };
+  const { runLateTrackHistoryShard } = await import('./pages-track-history-stage.js');
+  const save = dependencies.savePayload || defaultSavePayload;
+  return runLateTrackHistoryShard(env, stage, timestamp, {
+    ...dependencies,
+    saveStage: dependencies.saveStage
+      || ((db, nextStage, at) => save(db, TRACK_HISTORY_STAGE_KEY, nextStage, at)),
+  });
 }
