@@ -1,20 +1,23 @@
-const DEFAULT_RETENTION_MS = 30 * 24 * 60 * 60_000;
-const MIN_RETENTION_MS = 24 * 60 * 60_000;
+export const REBUILD_SOURCE_RETENTION_MS = 30 * 24 * 60 * 60_000;
+const DEFAULT_RETENTION_MS = REBUILD_SOURCE_RETENTION_MS;
+const MIN_RETENTION_MS = REBUILD_SOURCE_RETENTION_MS;
 const DEFAULT_INTERVAL_MS = 60 * 60_000;
 const MIN_INTERVAL_MS = 15 * 60_000;
 const DEFAULT_BATCH_SIZE = 1000;
 const MAX_BATCH_SIZE = 5000;
 // Kept small on purpose: this worker shares a D1 database with the
-// sh-buddies-monitor and sh-buddies-ingest pipeline, which writes into these
-// same tables every minute. A shorter worst-case burst (5 batches instead of a
-// larger number) means less time this task can hold up collection writes if it
-// runs mid-collection; a large initial backlog drains over more hourly runs.
+// sh-buddies-ingest pipeline, which writes into these same tables every minute.
+// A shorter worst-case burst lets a large initial backlog drain across hourly
+// runs without holding collection writes for one prolonged invocation.
 const DEFAULT_MAX_BATCHES = 5;
 const MAX_MAX_BATCHES = 100;
 const STATE_ID = 'snapshot-retention-v1';
 const TABLES = [
+  // These three sources are required to reconstruct minute facts and therefore
+  // must never be configured below the thirty-day rebuild horizon.
   { name: 'sh_channel_snapshots', timeColumn: 'observed_at', keyColumn: 'id' },
   { name: 'sh_queue_snapshots', timeColumn: 'observed_at', keyColumn: 'id' },
+  { name: 'sh_comment_minute_counts', timeColumn: 'bucket_start', keyColumn: 'rowid' },
   { name: 'sh_queue_items', timeColumn: 'observed_at', keyColumn: 'id' },
   { name: 'sh_track_like_observations', timeColumn: 'observed_at', keyColumn: 'id' },
   { name: 'sh_track_metadata', timeColumn: 'fetched_at', keyColumn: 'rowid' },
@@ -73,8 +76,6 @@ async function runDeleteRound(db, tables, cutoff, size) {
 
 // Delete one bounded batch from every active table per D1 round. Tables that
 // return a short batch are complete for this run; only full batches continue.
-// This preserves each table's deletion cap while collapsing the normal empty or
-// low-volume path from seven D1 awaits to one native batch call.
 async function pruneTables(db, cutoff, size, batches) {
   const deleted = Object.fromEntries(TABLES.map((table) => [table.name, 0]));
   let active = TABLES;
