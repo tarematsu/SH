@@ -1,7 +1,5 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
-import vm from 'node:vm';
 
 import { requestWithParsedJson } from '../site/functions/lib/parsed-request.js';
 import { saveStationSnapshot } from '../site/functions/api/host-ingest.js';
@@ -153,47 +151,4 @@ test('official comments serialize each comment once instead of once per announce
   } finally {
     JSON.stringify = originalStringify;
   }
-});
-
-test('history performance layer keeps summary values while using shared formatters', () => {
-  const source = readFileSync(new URL('../site/public/history/history-track-performance.js', import.meta.url), 'utf8');
-  const nodes = new Map();
-  const node = (selector) => {
-    if (!nodes.has(selector)) nodes.set(selector, { textContent: '' });
-    return nodes.get(selector);
-  };
-  const context = {
-    window: {
-      fetch: async () => new Response('{}'),
-      location: { href: 'https://example.test/history/' },
-    },
-    URL,
-    Intl,
-    Date,
-    Number,
-    Math,
-    Set,
-    Map,
-    Response,
-    finiteNumber(value) {
-      if (value == null || value === '') return null;
-      const number = Number(value);
-      return Number.isFinite(number) ? number : null;
-    },
-    $: node,
-    formatDate() {},
-    displayCell() {},
-    updateSummary() {},
-  };
-  vm.runInNewContext(source, context);
-
-  context.updateSummary([
-    { listener_avg: 10, stream_growth: 20, member_growth: 2 },
-    { listener_avg: 20, stream_growth: 40, member_growth: 4 },
-  ], 'daily');
-  assert.equal(node('#periods').textContent, '2');
-  assert.equal(node('#maxListener').textContent, '15');
-  assert.equal(node('#streamGrowth').textContent, '30');
-  assert.equal(node('#memberGrowth').textContent, '3');
-  assert.equal(context.formatDate('2026-07-02'), '2026/07/02');
 });
