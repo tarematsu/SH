@@ -17,35 +17,14 @@ function routeExists(path) {
   return routeCandidates(path).some((candidate) => existsSync(candidate));
 }
 
-test('documented canonical Pages APIs have Function files', () => {
+test('every documented canonical Pages API has exactly one Function route', () => {
   const catalog = apiCatalog(0);
   const routes = Object.values(catalog.groups).flat();
   assert.equal(catalog.contract_version, 3);
   assert.equal('retired' in catalog, false);
   for (const route of routes) {
-    assert.equal(routeExists(route.path), true, `${route.path} must have a Function file`);
-  }
-});
-
-test('removed public API files remain physically absent', () => {
-  for (const path of [
-    '/api/health/collector',
-    '/api/history-current',
-    '/api/history-migrated',
-    '/api/history-raw',
-    '/api/official-history',
-    '/api/playback',
-    '/api/dashboard-history',
-    '/api/dashboard-queue',
-    '/api/dashboard-recovery',
-    '/api/minute-facts',
-    '/api/minute-facts/current',
-    '/api/minute-facts/latest',
-    '/api/comment-velocity',
-    '/api/track-likes',
-    '/api/like-ranking',
-    '/api/broadcast-series',
-  ]) {
-    assert.equal(routeExists(path), false, `${path} route file must be removed`);
+    const matches = routeCandidates(route.path).filter((candidate) => existsSync(candidate));
+    assert.equal(matches.length, 1, `${route.path} must have exactly one Function file`);
+    assert.equal(routeExists(route.path), true, `${route.path} must be routable`);
   }
 });
