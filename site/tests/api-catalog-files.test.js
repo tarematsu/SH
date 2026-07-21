@@ -5,7 +5,6 @@ import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 
 import { apiCatalog } from '../functions/api/index.js';
-import { INTERNAL_API_PATHS } from '../functions/lib/api-contract.js';
 
 const apiRoot = fileURLToPath(new URL('../functions/api/', import.meta.url));
 
@@ -28,8 +27,7 @@ function sourceFiles(directory = apiRoot) {
   return readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
     const absolute = path.join(directory, entry.name);
     if (entry.isDirectory()) return sourceFiles(absolute);
-    if (!/\.(?:m?js)$/.test(entry.name) || entry.name === '_middleware.js') return [];
-    return [absolute];
+    return /\.(?:m?js)$/.test(entry.name) ? [absolute] : [];
   });
 }
 
@@ -56,10 +54,10 @@ test('every documented canonical Pages API has exactly one Function route', () =
   }
 });
 
-test('Pages API directory contains no undeclared JavaScript routes', () => {
+test('Pages API directory contains only declared JavaScript routes', () => {
   const catalog = apiCatalog(0);
   const canonical = Object.values(catalog.groups).flat().map(({ path: routePath }) => routePath);
-  const expected = new Set(['/api', ...canonical, ...INTERNAL_API_PATHS]);
+  const expected = new Set(['/api', ...canonical]);
   const actual = sourceFiles().map(routeForFile).sort();
 
   assert.equal(new Set(actual).size, actual.length, 'Pages API routes must not have duplicate files');
