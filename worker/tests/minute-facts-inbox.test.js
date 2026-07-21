@@ -40,12 +40,13 @@ test('job completion clears its payload only after dependent revisions are compl
   assert.match(COMPLETE_MINUTE_FACT_JOB_SQL, /source_job_id=sh_minute_fact_jobs\.id/);
   assert.match(COMPLETE_MINUTE_FACT_JOB_SQL, /revisions\.status<>'complete'/);
   assert.match(COMPLETE_MINUTE_FACT_JOB_SQL, /materialized_item_count/);
-  assert.match(COMPLETE_MINUTE_FACT_JOB_SQL, /THEN payload_json ELSE '' END/);
+  assert.match(COMPLETE_MINUTE_FACT_JOB_SQL, /THEN payload_json ELSE '\{\}' END/);
 });
 
-test('bounded backlog cleanup preserves payloads that an incomplete revision still needs', () => {
+test('bounded fallback cleanup preserves payloads that an incomplete revision still needs', () => {
   assert.match(CLEAR_COMPLETED_MINUTE_FACT_PAYLOADS_SQL, /jobs\.status='done'/);
-  assert.match(CLEAR_COMPLETED_MINUTE_FACT_PAYLOADS_SQL, /LENGTH\(jobs\.payload_json\)>0/);
+  assert.match(CLEAR_COMPLETED_MINUTE_FACT_PAYLOADS_SQL, /LENGTH\(jobs\.payload_json\)>2/);
+  assert.match(CLEAR_COMPLETED_MINUTE_FACT_PAYLOADS_SQL, /payload_json='\{\}'/);
   assert.match(CLEAR_COMPLETED_MINUTE_FACT_PAYLOADS_SQL, /NOT EXISTS/);
   assert.match(CLEAR_COMPLETED_MINUTE_FACT_PAYLOADS_SQL, /LIMIT \?/);
   assert.match(CLEAR_COMPLETED_MINUTE_FACT_PAYLOADS_SQL, /RETURNING id/);
