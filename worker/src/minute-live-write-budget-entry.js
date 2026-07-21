@@ -57,7 +57,8 @@ export async function loadDurableLivePayload(env, body, dependencies = {}) {
   return validatePayload(payload, row.payload_version ?? body?.job?.payload_version);
 }
 
-function compactStageBody(body) {
+function compactStageBody(env, body) {
+  if (body?.durable_payload !== true && !env?.MINUTE_DB?.prepare) return { ...body };
   const { payload: _payload, ...compact } = body || {};
   return { ...compact, durable_payload: true };
 }
@@ -74,7 +75,7 @@ async function prepareLiveWrite(env, body, dependencies = {}) {
   const materializer = dependencies.materializer || await import('./minute-revision-materializer.js');
   if (!materializer.shouldMaterializeLiveRevision(env, payload)) {
     await sendStage(env, {
-      ...compactStageBody(body),
+      ...compactStageBody(env, body),
       stage: BUDGET_LIVE_WRITE_STAGE,
     }, dependencies);
     return { prepared: true, revision_id: null };
@@ -86,7 +87,7 @@ async function prepareLiveWrite(env, body, dependencies = {}) {
     dependencies.materializerDependencies || {},
   );
   await sendStage(env, {
-    ...compactStageBody(body),
+    ...compactStageBody(env, body),
     stage: BUDGET_LIVE_WRITE_STAGE,
     prepared_revision: revision,
   }, dependencies);
