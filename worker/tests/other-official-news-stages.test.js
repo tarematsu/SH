@@ -190,8 +190,8 @@ test('task validation bounds candidate payloads and preserves rollout stages', (
   assert.equal(officialNewsStageTask(messageStage('station-probe')).stage, 'station-probe');
   assert.equal(officialNewsStageTask(messageStage('reconcile')).stage, 'reconcile');
 
-  const source = readFileSync(new URL('../src/other-monitor-entry.js', import.meta.url), 'utf8');
-  assert.match(source, /messageType === OFFICIAL_NEWS_STAGE_MESSAGE/);
-  assert.match(source, /processOfficialNewsStageMessage/);
-  assert.match(source, /const message = messages\[0\]/);
+  const source = readFileSync(new URL('../src/sakurazaka-entry.js', import.meta.url), 'utf8');
+  assert.match(source, /body\.message_type === OFFICIAL_NEWS_STAGE_MESSAGE/);
+  assert.match(source, /processOfficialNewsStage/);
+  assert.match(source, /for \(const message of messages\)/);
 });
