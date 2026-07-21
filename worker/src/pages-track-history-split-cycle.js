@@ -1,5 +1,5 @@
 import {
-  runTrackHistoryCycleStep as runLegacyTrackHistoryCycleStep,
+  runTrackHistoryCycleStep as runTrackHistoryShardStep,
   TRACK_HISTORY_ACTIVE_MINUTES,
   TRACK_HISTORY_CYCLE_MS,
   TRACK_HISTORY_STAGE_KEY,
@@ -122,7 +122,7 @@ export async function runSplitTrackHistoryCycleStep(env, now = Date.now(), depen
   const stage = await load(env.MINUTE_DB);
   const currentGeneration = Math.floor(timestamp / TRACK_HISTORY_CYCLE_MS) * TRACK_HISTORY_CYCLE_MS;
   if (!stage || (stage.published && Number(stage.generation) !== currentGeneration)) {
-    return runLegacyTrackHistoryCycleStep(env, timestamp, dependencies);
+    return runTrackHistoryShardStep(env, timestamp, dependencies);
   }
   const queued = hasPublicationQueue(env, dependencies);
   if (stage.published && !stage.publication) {
@@ -146,15 +146,11 @@ export async function runSplitTrackHistoryCycleStep(env, now = Date.now(), depen
     const cycleStart = Math.floor(timestamp / TRACK_HISTORY_CYCLE_MS) * TRACK_HISTORY_CYCLE_MS;
     const cycleMinute = Math.floor((timestamp - cycleStart) / 60_000);
     if (cycleMinute < TRACK_HISTORY_ACTIVE_MINUTES) {
-      return runLegacyTrackHistoryCycleStep(env, timestamp, dependencies);
+      return runTrackHistoryShardStep(env, timestamp, dependencies);
     }
     return runLateTrackHistoryShard(env, stage, timestamp, dependencies);
   }
-  if (!queued) {
-    return stage.publication
-      ? initializePublicationInline(env, stage, timestamp, dependencies)
-      : initializePublicationInline(env, stage, timestamp, dependencies);
-  }
+  if (!queued) return initializePublicationInline(env, stage, timestamp, dependencies);
 
   if (!stage.publication && !stage.publication_status && !stage.publication_initializing_at) {
     return beginPublicationInitialization(env, stage, timestamp, dependencies, 'initialized');
