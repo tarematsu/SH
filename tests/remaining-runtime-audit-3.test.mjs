@@ -6,7 +6,7 @@ import { parseAuthState } from '../worker/src/auth-state.js';
 import { collectorStateFromAuthState } from '../worker/src/index.js';
 import { authHealth, withAuthState } from '../worker/src/optimized-index.js';
 import { loadTrackLikeRows } from '../site/functions/lib/track-likes.js';
-import { loadHostSummary } from '../site/functions/api/host-history.js';
+import { HOST_SUMMARY_SQL, loadHostSummary } from '../site/functions/api/host-history.js';
 
 test('auth state carries collector fields for same-invocation reuse', () => {
   const state = parseAuthState({
@@ -96,26 +96,31 @@ test('track likes use one compact realtime D1 query', async () => {
   assert.equal(spotify.source, 'collector');
 });
 
-test('host summary loads three result sets in one D1 batch', async () => {
-  let batchCalls = 0;
+test('host summary loads active and recent sessions through one statement', async () => {
+  let prepares = 0;
   const db = {
-    prepare(sql) { return { sql }; },
-    async batch(statements) {
-      batchCalls += 1;
-      assert.equal(statements.length, 3);
-      return [
-        { results: [{ handle: 'sakuramankai', followers: 1 }] },
-        { results: [{ handle: 'sakurazaka46jp', status: 'active' }] },
-        { results: [{ id: 2 }, { id: 1 }] },
-      ];
+    prepare(sql) {
+      prepares += 1;
+      assert.equal(sql, HOST_SUMMARY_SQL);
+      return {
+        async all() {
+          return {
+            results: [
+              { result_kind: 1, id: 2, handle: 'sakurazaka46jp', status: 'active' },
+              { result_kind: 2, id: 2, handle: 'sakurazaka46jp', status: 'active' },
+              { result_kind: 2, id: 1, handle: 'sakurazaka46jp', status: 'ended' },
+            ],
+          };
+        },
+      };
     },
   };
 
   const summary = await loadHostSummary(db);
-  assert.equal(batchCalls, 1);
-  assert.equal(summary.latestProfile.handle, 'sakuramankai');
+  assert.equal(prepares, 1);
   assert.equal(summary.activeSession.status, 'active');
   assert.deepEqual(summary.recentSessions.map((row) => row.id), [2, 1]);
+  assert.equal('latestProfile' in summary, false);
 });
 
 test('dashboard delta layer reuses formatters and avoids legacy mutation helpers', () => {
