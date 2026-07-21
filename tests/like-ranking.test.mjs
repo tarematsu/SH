@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
 
-import { likeRankingSql } from '../site/functions/api/like-ranking.js';
+import { TRACK_RANKING_SQL } from '../site/functions/lib/track-ranking.js';
 
 function rankingDatabase() {
   const db = new DatabaseSync(':memory:');
@@ -38,18 +38,18 @@ function rankingDatabase() {
   return db;
 }
 
-test('like ranking keeps Sakurazaka artists and JP-prefixed ISRC tracks only', () => {
+test('track history ranking keeps Sakurazaka artists and JP-prefixed ISRC tracks only', () => {
   const db = rankingDatabase();
-  const rows = db.prepare(likeRankingSql()).all(500);
+  const rows = db.prepare(TRACK_RANKING_SQL).all(500);
   assert.equal(rows.length, 2);
   assert.deepEqual(rows.map((row) => row.title), ['Song B', 'Song A']);
   assert.ok(rows.every((row) => row.artist.startsWith('櫻坂') || row.isrc.startsWith('JP')));
   assert.ok(!rows.some((row) => row.title === 'Song C'));
 });
 
-test('like ranking keeps only the latest like or bite count for each eligible track', () => {
+test('track history ranking keeps only the latest count for each eligible track', () => {
   const db = rankingDatabase();
-  const rows = db.prepare(likeRankingSql()).all(500);
+  const rows = db.prepare(TRACK_RANKING_SQL).all(500);
   assert.equal(rows[0].latest_like_count, 25);
   assert.equal(rows[0].latest_observed_at, 2500);
   assert.equal(rows[1].latest_like_count, 5);
