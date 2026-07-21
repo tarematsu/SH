@@ -76,6 +76,10 @@ test('FACTS schema publishes observed-time indexes, retired API cleanup, and pay
     new URL('../database/facts-migrations/028_purge_completed_minute_fact_payloads.sql', import.meta.url),
     'utf8',
   );
+  const purgeScript = readFileSync(
+    new URL('../worker/scripts/purge-completed-minute-fact-payloads.mjs', import.meta.url),
+    'utf8',
+  );
   const descriptor = JSON.parse(readFileSync(
     new URL('../database/facts-db.json', import.meta.url),
     'utf8',
@@ -84,7 +88,9 @@ test('FACTS schema publishes observed-time indexes, retired API cleanup, and pay
   assert.match(indexMigration, /sh_track_counter_current\(observed_at DESC,count_value DESC\)/);
   assert.match(cleanupMigration, /dashboard-daily-changes/);
   assert.match(cleanupMigration, /playback:buddies/);
-  assert.match(payloadMigration, /UPDATE sh_minute_fact_jobs/);
+  assert.match(payloadMigration, /trg_sh_minute_fact_payload_after_job_done/);
   assert.match(payloadMigration, /SET payload_json='\{\}'/);
+  assert.match(purgeScript, /UPDATE sh_minute_fact_jobs SET payload_json='\{\}'/);
+  assert.match(purgeScript, /after\.eligible_jobs !== 0/);
   assert.equal(descriptor.schema, 'database/facts-migrations/028_purge_completed_minute_fact_payloads.sql');
 });
