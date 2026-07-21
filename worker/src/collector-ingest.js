@@ -1,7 +1,7 @@
 import {
   ingestOptimizedBody,
   isPendingStreamSchemaError,
-} from '../../site/functions/api/ingest.js';
+} from '../../site/functions/lib/ingest.js';
 import { serializedQueueAnalysis } from './queue-analysis-transfer.js';
 import { savePreparedSnapshot } from './snapshot-analysis-transfer.js';
 
