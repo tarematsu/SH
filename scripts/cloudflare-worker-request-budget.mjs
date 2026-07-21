@@ -7,6 +7,14 @@ export const TARGET_DAILY_REQUESTS = 80_000;
 export const TARGET_RATIO = TARGET_DAILY_REQUESTS / FREE_DAILY_REQUESTS;
 export const CONTINUATION_RESERVE_PER_DAY = 5_000;
 
+// Historical minute-fact reconstruction is intentionally outside the temporary
+// request budget while the thirty-day backlog is being restored. Live minute
+// derivation remains counted through stationhead-minute-live-derive.
+export const REQUEST_BUDGET_EXCLUDED_QUEUES = Object.freeze([
+  'stationhead-minute-derive',
+  'stationhead-minute-rebuild',
+]);
+
 // These are the only production Worker configs selected by
 // worker/scripts/select-worker-deploys.mjs.
 export const ACTIVE_CONFIGS = Object.freeze([
@@ -17,13 +25,8 @@ export const ACTIVE_CONFIGS = Object.freeze([
 ]);
 
 // A queue message normally becomes one consumer invocation with the current
-// one-message CPU boundaries. Continuation-heavy queues include every normal
-// stage rather than pretending one source poll equals one request:
-// - persistence: persist + likes + up to four likes-write chunks + finalize
-// - runtime dispatch: raw session, recovery/gate/prediction, and maintenance
-// - Sakurazaka: five-minute cycle plus official-news continuation stages
-// - live derive: trigger + revision prepare + fact write + compact revision close
-// - enrichment: playback + playback patch + identity resolve + identity attach + bite
+// one-message CPU boundaries. Reconstruction-only queues above are deliberately
+// excluded until the historical backlog is complete.
 export const QUEUE_MESSAGES_PER_DAY = Object.freeze({
   'stationhead-comments': 288,
   'stationhead-raw-collection': 1_440,
@@ -31,12 +34,10 @@ export const QUEUE_MESSAGES_PER_DAY = Object.freeze({
   'stationhead-buddies-persist': 10_080,
   'stationhead-host-monitor': 2_256,
   'stationhead-sakurazaka46jp': 720,
-  'stationhead-minute-derive': 1_440,
   'stationhead-minute-live-derive': 5_760,
   'stationhead-minute-enrichment': 7_200,
   'stationhead-track-metadata': 1_440,
   'stationhead-buddies-facts': 1_440,
-  'stationhead-minute-rebuild': 144,
   'stationhead-pages-read-model-publication': 1_440,
   'stationhead-read-model': 1_440,
 });
@@ -112,6 +113,7 @@ export function calculateDailyRequestBudget({
     queue_consumer_requests: queueRequests,
     estimated_daily_requests: total,
     headroom: TARGET_DAILY_REQUESTS - total,
+    request_budget_excluded_queues: [...REQUEST_BUDGET_EXCLUDED_QUEUES],
     workers,
     queue,
   };
@@ -143,6 +145,7 @@ async function main() {
     `Estimated requests: ${report.estimated_daily_requests}`,
     `Target: <${report.target_daily_requests}/day`,
     `Continuation and burst reserve: ${report.continuation_and_burst_reserve}`,
+    `Excluded reconstruction queues: ${report.request_budget_excluded_queues.join(', ')}`,
     `Headroom: ${report.headroom}`,
     '',
     `Budget result: ${report.ok ? 'PASS' : 'FAIL'}`,
