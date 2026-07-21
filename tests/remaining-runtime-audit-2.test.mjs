@@ -7,7 +7,6 @@ import { requestWithParsedJson } from '../site/functions/lib/parsed-request.js';
 import { saveStationSnapshot } from '../site/functions/api/host-ingest.js';
 import {
   OFFICIAL_HEALTH_SQL,
-  OFFICIAL_PROBE_CONTEXT_SQL,
   loadOfficialHealthState,
   loadOfficialProbeContext,
   officialCommentWriteCounts,
@@ -84,8 +83,11 @@ test('official probe context loads worker session and Buddies station from their
         prepares += 1;
         assert.match(sql, /sh_worker_collector_state/);
         return {
+          values: [],
+          bind(...values) { this.values = values; return this; },
           async first() {
             firstCalls += 1;
+            assert.deepEqual(this.values, ['sakurazaka46jp']);
             return { auth_token: 'token', device_uid: 'device' };
           },
         };
