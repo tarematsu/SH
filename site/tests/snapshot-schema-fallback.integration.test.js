@@ -4,11 +4,11 @@ import test from 'node:test';
 import {
   isPendingStreamSchemaError,
   ingestInternal as ingestPost,
-} from '../functions/api/ingest.js';
+} from '../functions/lib/ingest.js';
 import { FakeD1Database, responseJson } from './helpers/fake-d1.js';
 
 function snapshotRequest() {
-  return new Request('https://collector.test/api/ingest', {
+  return new Request('https://worker.internal/ingest', {
     method: 'POST',
     headers: {
       authorization: 'Bearer test-key',
@@ -35,7 +35,7 @@ test('recognizes only stream-continuity schema gaps', () => {
   assert.equal(isPendingStreamSchemaError(new Error('no such table: unrelated')), false);
 });
 
-test('snapshot ingest falls back to the legacy writer while migration is pending', async () => {
+test('snapshot ingest falls back to the schema-compatible writer while migration is pending', async () => {
   const db = new FakeD1Database().route(
     'first',
     /FROM sh_snapshot_current/,
