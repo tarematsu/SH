@@ -114,7 +114,7 @@ test('dashboard client renders the complete fetched queue', async () => {
   assert.match(source, /function spotifyUrl/);
   assert.match(source, /state\.queue\.slice/);
 
-  const endpoint = await text('functions/api/dashboard-core.js');
+  const endpoint = await text('functions/lib/dashboard-core.js');
   assert.match(endpoint, /const enrichedQueue = queue\.map/);
   assert.match(endpoint, /queue_status/);
 });
