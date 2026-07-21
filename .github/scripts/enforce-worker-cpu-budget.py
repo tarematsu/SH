@@ -13,6 +13,7 @@ OUTPUT_PATH = pathlib.Path("observability-logs/cpu-budget.json")
 ACTIVE_WORKERS = frozenset({
     "sh-buddies-ingest",
     "sh-minute-enrichment",
+    "sh-sakurazaka46jp",
     "sh-runtime-orchestrator",
 })
 
