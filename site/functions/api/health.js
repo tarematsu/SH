@@ -21,8 +21,6 @@ export async function cachedSnapshotCount(db, now = Date.now()) {
   if (snapshotCountCache.value != null && snapshotCountCache.expiresAt > now) {
     return snapshotCountCache.value;
   }
-  // Health only needs a monotonic high-water estimate. COUNT(*) scans the complete
-  // facts table on D1, while MAX(id) uses the INTEGER PRIMARY KEY b-tree.
   const row = await db.prepare('SELECT COALESCE(MAX(id),0) AS count FROM sh_minute_facts').first();
   const value = Number(row?.count || 0);
   snapshotCountCache.value = value;
@@ -34,32 +32,6 @@ export function resetSnapshotCountCache() {
   snapshotCountCache.value = null;
   snapshotCountCache.expiresAt = 0;
   snapshotCountCache.pending = null;
-}
-
-async function loadCollectorOnly(db) {
-  const row = await db.prepare(`SELECT last_run_at,last_success_at,last_error
-    FROM sh_worker_collector_state WHERE id='stationhead'`).first();
-  return {
-    ...row,
-    alert_setup_required: true,
-    delivery_setup_required: true,
-  };
-}
-
-async function loadAlertWithoutDelivery(db) {
-  const row = await db.prepare(`SELECT
-      collector.last_run_at,collector.last_success_at,collector.last_error,
-      alert.incident_open,alert.incident_started_at,alert.last_alert_at,
-      alert.last_recovery_at,alert.last_observed_success_at,
-      alert.last_error AS alert_last_error,alert.updated_at AS alert_updated_at
-    FROM (SELECT 'stationhead-collector' AS id) requested
-    LEFT JOIN sh_worker_collector_state collector ON collector.id='stationhead'
-    LEFT JOIN sh_health_alert_state alert ON alert.id=requested.id`).first();
-  return {
-    ...row,
-    alert_setup_required: false,
-    delivery_setup_required: true,
-  };
 }
 
 async function loadCollectorState(db) {
@@ -115,7 +87,7 @@ export async function onRequestGet(context) {
     const health = publicCollectorHealth(state, now, staleAfterMs);
     return Response.json({
       ok: health.healthy,
-      service: 'sh-monitor',
+      service: 'sh-buddies-ingest',
       snapshotCount,
       time: new Date(now).toISOString(),
       collector_last_run_at: health.lastRunAt,
@@ -144,7 +116,7 @@ export async function onRequestGet(context) {
     }));
     return Response.json({
       ok: false,
-      service: 'sh-monitor',
+      service: 'sh-buddies-ingest',
       error: 'health_check_failed',
       checked_at: now,
     }, {
