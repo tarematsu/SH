@@ -4,8 +4,8 @@ import { DatabaseSync } from 'node:sqlite';
 
 import { liveSummarySql, combineSummaryRows, BROADCAST_SUMMARY_SQL } from '../site/functions/api/history.js';
 
-import { planLikeObservations, latestLikesSql } from '../site/functions/api/ingest.js';
-import { listenerAggregateDelta } from '../site/functions/api/host-ingest.js';
+import { planLikeObservations, latestLikesSql } from '../site/functions/lib/ingest.js';
+import { listenerAggregateDelta } from '../site/functions/lib/host-ingest.js';
 import { cachedPrediction, resetPredictionCache } from '../site/functions/api/dashboard.js';
 
 test('live daily history is aggregated by UTC day beginning at 09:00 in Japan', () => {
