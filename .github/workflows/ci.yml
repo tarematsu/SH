@@ -268,6 +268,7 @@ jobs:
           import json
           import os
           import re
+          import urllib.error
           import urllib.request
 
           token = os.environ['CLOUDFLARE_API_TOKEN'].strip()
@@ -308,7 +309,12 @@ jobs:
 
           print('PUBLIC_HEALTH')
           for path in ('health', 'health/minute', 'health/other', 'health/sakurazaka46jp', 'dashboard'):
-              data = request(f'https://skrzk.pages.dev/api/{path}')
+              try:
+                  data = request(f'https://skrzk.pages.dev/api/{path}')
+              except urllib.error.HTTPError as error:
+                  body = error.read().decode('utf-8', errors='replace')
+                  print(path, json.dumps({'http_status': error.code, 'body': body[:500]}, ensure_ascii=False))
+                  continue
               print(path, json.dumps(timestamps(data), ensure_ascii=False, sort_keys=True)[:12000])
 
           accounts = request(
