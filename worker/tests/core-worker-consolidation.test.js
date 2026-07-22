@@ -115,18 +115,31 @@ test('one Durable Object tick runs routine Pages work without a per-minute Queue
   assert.deepEqual(result, { runtime: ['runtime'], pages: { inline: true } });
 });
 
-test('scheduled work claims one short Durable Object ticket before running outside it', async () => {
+test('scheduled work claims and releases a Durable Object overlap lease', async () => {
   const calls = [];
   const controller = { cron: '* * * * *', scheduledTime: 123 };
   const coordinated = await runCoordinatedScheduled(controller, {}, {}, {
-    stub: { async claim(value) { calls.push(['do', value]); return { claimed: true }; } },
+    stub: {
+      async claim(value) {
+        calls.push(['claim', value]);
+        return { claimed: true, holder_id: 'lease-123', lease_until: 70_123 };
+      },
+      async release(holderId) {
+        calls.push(['release', holderId]);
+        return { released: true };
+      },
+    },
     runDirect: async (_controller, env) => {
       calls.push(['direct', env.PRIMARY_RUN_LOCK_ENABLED]);
       return 'direct';
     },
   });
   assert.equal(coordinated, 'direct');
-  assert.deepEqual(calls, [['do', controller], ['direct', false]]);
+  assert.deepEqual(calls, [
+    ['claim', { cron: '* * * * *', scheduledTime: 123, leaseMs: 70_000 }],
+    ['direct', false],
+    ['release', 'lease-123'],
+  ]);
 
   const duplicate = await runCoordinatedScheduled(controller, {}, {}, {
     stub: { async claim() { return { claimed: false }; } },
@@ -134,14 +147,38 @@ test('scheduled work claims one short Durable Object ticket before running outsi
   });
   assert.deepEqual(duplicate, { skipped: true, reason: 'runtime-coordinator-duplicate' });
 
-  const fallback = await runCoordinatedScheduled(controller, {}, {}, {
-    stub: { async claim() { throw new Error('temporary DO failure'); } },
-    runDirect: async () => 'direct',
+  const overlap = await runCoordinatedScheduled(controller, {}, {}, {
+    stub: { async claim() { return { claimed: false, reason: 'primary-run-in-progress' }; } },
+    runDirect: async () => assert.fail('overlapping tick must not run'),
   });
-  assert.deepEqual(fallback, { skipped: true, reason: 'runtime-coordinator-error' });
+  assert.deepEqual(overlap, { skipped: true, reason: 'primary-run-in-progress' });
 });
 
-test('RuntimeCoordinator persists one overwritten ticket and rejects a duplicate tick', async () => {
+test('coordinator failure falls back to the D1 lease and direct failures keep the DO lease', async () => {
+  const controller = { cron: '* * * * *', scheduledTime: 123 };
+  const fallbackCalls = [];
+  const fallback = await runCoordinatedScheduled(controller, {}, {}, {
+    stub: { async claim() { throw new Error('temporary DO failure'); } },
+    runDirect: async (_controller, env) => {
+      fallbackCalls.push(env.PRIMARY_RUN_LOCK_ENABLED);
+      return 'direct';
+    },
+  });
+  assert.equal(fallback, 'direct');
+  assert.deepEqual(fallbackCalls, [undefined]);
+
+  let releases = 0;
+  await assert.rejects(runCoordinatedScheduled(controller, {}, {}, {
+    stub: {
+      async claim() { return { claimed: true, holder_id: 'lease-123' }; },
+      async release() { releases += 1; },
+    },
+    runDirect: async () => { throw new Error('collection failed'); },
+  }), /collection failed/);
+  assert.equal(releases, 0);
+});
+
+test('RuntimeCoordinator persists, releases, and expires one overlap lease row', async () => {
   const rows = new Map();
   const state = {
     storage: {
@@ -150,14 +187,47 @@ test('RuntimeCoordinator persists one overwritten ticket and rejects a duplicate
     },
   };
   const coordinator = new RuntimeCoordinator(state);
-  const controller = { cron: '* * * * *', scheduledTime: 123 };
-  assert.deepEqual(await coordinator.claim(controller), { claimed: true });
+  const controller = {
+    cron: '* * * * *',
+    scheduledTime: 123,
+    now: 1_000,
+    leaseMs: 70_000,
+  };
+  assert.deepEqual(await coordinator.claim(controller), {
+    claimed: true,
+    holder_id: '* * * * *:123',
+    lease_until: 71_000,
+  });
   assert.deepEqual(await coordinator.claim(controller), {
     claimed: false,
     reason: 'runtime-coordinator-duplicate',
   });
   assert.equal(rows.size, 1);
-  assert.deepEqual(await coordinator.claim({ ...controller, scheduledTime: 124 }), { claimed: true });
+
+  assert.deepEqual(await coordinator.claim({
+    ...controller,
+    scheduledTime: 124,
+    now: 60_000,
+  }), {
+    claimed: false,
+    reason: 'primary-run-in-progress',
+    lease_until: 71_000,
+  });
+  assert.deepEqual(await coordinator.release('* * * * *:123', 55_000), { released: true });
+  assert.equal(rows.size, 1);
+  assert.deepEqual(await coordinator.claim({
+    ...controller,
+    scheduledTime: 124,
+    now: 60_000,
+  }), {
+    claimed: true,
+    holder_id: '* * * * *:124',
+    lease_until: 130_000,
+  });
+  assert.deepEqual(await coordinator.release('wrong-owner', 61_000), {
+    released: false,
+    reason: 'runtime-coordinator-owner-mismatch',
+  });
   assert.equal(rows.size, 1);
 
   const config = JSON.parse(readFileSync(new URL('../wrangler.runtime.jsonc', import.meta.url), 'utf8'));
