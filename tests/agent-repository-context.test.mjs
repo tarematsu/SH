@@ -16,6 +16,8 @@ test('agent instructions pin repository and active Cloudflare topology', async (
   assert.match(instructions, /`tarematsu\/SH`/);
   assert.match(instructions, /`C:\\SH`/);
   assert.match(instructions, /https:\/\/github\.com\/tarematsu\/SH\.git/);
+  assert.match(instructions, /git@github\.com:tarematsu\/SH\.git/);
+  assert.match(instructions, /origin.*resolve to `tarematsu\/SH`/);
   assert.match(instructions, /older chats/);
   assert.match(instructions, /existing browser tab/);
 
