@@ -7,22 +7,27 @@ const runtimeScheduled = readFileSync(
   'utf8',
 );
 
-test('healthy minute maintenance scheduling removes the host-monitor relay hop', () => {
+test('healthy runtime scheduling removes recovery and maintenance relay hops', () => {
+  assert.match(runtimeScheduled, /dispatchMinuteRecoveryWithFallback/);
   assert.match(runtimeScheduled, /dispatchMinuteGateWithFallback/);
-  assert.match(runtimeScheduled, /body !== rawMessage && body !== gateMessage/);
+  assert.match(
+    runtimeScheduled,
+    /body !== rawMessage && body !== recoveryMessage && body !== gateMessage/,
+  );
+  assert.match(runtimeScheduled, /inline_minute_recovery_failed/);
   assert.match(runtimeScheduled, /inline_minute_maintenance_gate_failed/);
 
-  // Recovery polling: 288/day; prediction: 48/day; hourly maintenance: 48/day;
-  // heavy Pages variants: 17/day; pathological raw fallback: two messages every
-  // five minutes. Healthy maintenance gates go straight to MINUTE_REBUILD_QUEUE.
-  const healthyMessages = 288 + 48 + 48 + 17 + 288 * 2;
+  // Prediction: 48/day; hourly maintenance: 48/day; heavy Pages variants:
+  // 17/day; pathological raw fallback: two messages every five minutes.
+  // Recovery polls and maintenance gates run directly on the healthy path.
+  const healthyMessages = 48 + 48 + 17 + 288 * 2;
   const healthyQueueOperations = healthyMessages * 3;
-  assert.equal(healthyQueueOperations, 2_931);
+  assert.equal(healthyQueueOperations, 2_067);
   assert.ok(healthyQueueOperations < 8_000);
 
-  // If every one of the 432 daily direct gate sends fails, the old relay path
-  // is restored for those messages and remains below the same policy ceiling.
-  const fullGateFallbackQueueOperations = healthyQueueOperations + 432 * 3;
-  assert.equal(fullGateFallbackQueueOperations, 4_227);
-  assert.ok(fullGateFallbackQueueOperations < 8_000);
+  // If all 288 recovery polls and all 432 maintenance gates fall back to the
+  // previous relay path, operations remain at the original policy ceiling.
+  const fullRelayFallbackQueueOperations = healthyQueueOperations + (288 + 432) * 3;
+  assert.equal(fullRelayFallbackQueueOperations, 4_227);
+  assert.ok(fullRelayFallbackQueueOperations < 8_000);
 });
