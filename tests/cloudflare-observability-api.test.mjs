@@ -46,12 +46,14 @@ test('observability workflow uses Cloudflare APIs on PRs and main pushes', () =>
 test('query and audit scripts use Cloudflare APIs without R2', () => {
   assert.match(queryScript, /workersInvocationsAdaptive/);
   assert.match(queryScript, /workers\/observability\/telemetry\/query/);
+  assert.match(queryScript, /"view": "events"/);
   assert.match(queryScript, /GITHUB_STEP_SUMMARY/);
   assert.match(queryScript, /urlunsplit/);
-  assert.match(auditScript, /\$workers\.cpuTimeMs/);
+  assert.match(auditScript, /workers\.get\("cpuTimeMs"\)/);
+  assert.match(auditScript, /"view": "events"/);
   assert.match(auditScript, /CPU_BUDGET_MS/);
   assert.match(auditScript, /coverage_ok/);
-  assert.match(auditScript, /No persisted invocation CPU samples were returned/);
+  assert.match(auditScript, /No complete invocation CPU sample set was returned/);
   assert.doesNotMatch(`${queryScript}\n${auditScript}`, /r2\.cloudflarestorage|aws s3|R2_BUCKET/);
 });
 
