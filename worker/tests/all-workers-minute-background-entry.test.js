@@ -10,14 +10,20 @@ function config(path) {
   return JSON.parse(source(path));
 }
 
-test('minute enrichment deploys the queue-only one-message wrapper', () => {
-  const enrichment = config('../wrangler.minute-enrichment.jsonc');
+test('core Worker routes enrichment through a queue-only one-message wrapper', () => {
+  const runtime = config('../wrangler.runtime.jsonc');
   const entry = source('../src/minute-enrichment-optimized-entry.js');
-  assert.equal(enrichment.main, 'src/minute-enrichment-optimized-entry.js');
-  assert.equal(enrichment.queues.consumers.every(({ max_batch_size }) => max_batch_size === 1), true);
+  const router = source('../src/runtime-orchestrator-entry.js');
+  const enrichment = runtime.queues.consumers.find(
+    ({ queue }) => queue === 'stationhead-minute-enrichment',
+  );
+  assert.equal(runtime.main, 'src/runtime-orchestrator-entry.js');
+  assert.equal(enrichment.max_batch_size, 1);
+  assert.equal(enrichment.max_concurrency, 1);
+  assert.match(router, /minute-enrichment-optimized-entry\.js/);
   assert.match(entry, /const message = messages\[0\]/);
   assert.match(entry, /function logMinuteEnrichmentResult/);
-  assert.doesNotMatch(entry, /for\s*\(|Symbol\.iterator|fetch\s*\(/);
+  assert.doesNotMatch(entry, /Symbol\.iterator|fetch\s*\(/);
 });
 
 test('runtime Worker owns single-message rebuild delivery while preserving cached core stages', () => {
