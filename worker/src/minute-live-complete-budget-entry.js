@@ -1,6 +1,6 @@
 const RETRY_60_SECONDS = Object.freeze({ delaySeconds: 60 });
 
-const COMPLETE_LIVE_MINUTE_FACT_JOB_SQL = `UPDATE sh_minute_fact_jobs SET
+export const COMPLETE_LIVE_MINUTE_FACT_JOB_SQL = `UPDATE sh_minute_fact_jobs SET
     status='done',lease_until=NULL,processed_at=?,last_error=NULL,
     payload_json=CASE WHEN EXISTS (
       SELECT 1 FROM sh_queue_revisions revisions
@@ -23,6 +23,7 @@ export function budgetedLiveCompleteMessage(body) {
     && Number(body?.message_version) === 1
     && body?.stage === 'complete'
     && jobId != null
+    && jobId > 0
     && String(body?.job?.job_kind || 'live') !== 'rebuild';
 }
 
