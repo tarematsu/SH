@@ -123,7 +123,7 @@ test('runtime owns minute dispatch and maintenance without comment work', async 
   const runtimeSource = readFileSync(new URL('../src/runtime-scheduled.js', import.meta.url), 'utf8');
   const minuteSource = readFileSync(new URL('../src/minute-maintenance-entry.js', import.meta.url), 'utf8');
   assert.equal(config.name, 'sh-runtime-orchestrator');
-  assert.equal(config.main, 'src/runtime-orchestrator-entry.js');
+  assert.equal(config.main, 'src/runtime-orchestrator-deployed-entry.js');
   assert.deepEqual(config.triggers.crons, ['* * * * *']);
   assert.equal(MINUTE_FACT_WORKER_CRON, MINUTE_FACT_DERIVE_CRON);
   assert.doesNotMatch(minuteSource, /minute-comments\.js|runMinuteCommentTasks/);

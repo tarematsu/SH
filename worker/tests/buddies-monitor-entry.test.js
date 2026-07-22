@@ -20,7 +20,7 @@ test('the runtime orchestrator owns scheduled raw collection', () => {
   ));
 
   assert.equal(config.name, 'sh-runtime-orchestrator');
-  assert.equal(config.main, 'src/runtime-orchestrator-entry.js');
+  assert.equal(config.main, 'src/runtime-orchestrator-deployed-entry.js');
   assert.equal(config.queues.producers.find(({ binding }) => binding === 'RAW_COLLECTION_QUEUE').queue, 'stationhead-raw-collection');
 });
 

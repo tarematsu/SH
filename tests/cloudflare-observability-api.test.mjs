@@ -12,10 +12,10 @@ const queryScript = readFileSync(
   new URL('../.github/scripts/query-cloudflare-observability.py', import.meta.url),
   'utf8',
 );
-const auditScript = readFileSync(
-  new URL('../.github/scripts/audit-cloudflare-telemetry.py', import.meta.url),
-  'utf8',
-);
+const auditScript = [
+  '../.github/scripts/audit-cloudflare-telemetry.py',
+  '../.github/scripts/audit-cloudflare-telemetry-core.py',
+].map((path) => readFileSync(new URL(path, import.meta.url), 'utf8')).join('\n');
 const deployedAuditUrl = new URL(
   '../.github/scripts/audit-deployed-cloudflare-telemetry.py',
   import.meta.url,
@@ -92,6 +92,7 @@ test('query and audit scripts use Cloudflare APIs without R2', () => {
   assert.match(auditScript, /coverage_ok/);
   assert.match(auditScript, /missing_workers/);
   assert.match(auditScript, /incomplete coverage/);
+  assert.match(auditScript, /exceededCpu/);
   assert.match(deployedAuditScript, /workers\/scripts\/\{encoded\}\/deployments/);
   assert.match(deployedAuditScript, /deployments\[0\]/);
   assert.match(deployedAuditScript, /percentage/);

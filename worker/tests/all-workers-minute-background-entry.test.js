@@ -17,7 +17,7 @@ test('core Worker routes enrichment through a queue-only one-message wrapper', (
   const enrichment = runtime.queues.consumers.find(
     ({ queue }) => queue === 'stationhead-minute-enrichment',
   );
-  assert.equal(runtime.main, 'src/runtime-orchestrator-entry.js');
+  assert.equal(runtime.main, 'src/runtime-orchestrator-deployed-entry.js');
   assert.equal(enrichment.max_batch_size, 1);
   assert.equal(enrichment.max_concurrency, 1);
   assert.match(router, /minute-enrichment-optimized-entry\.js/);

@@ -48,7 +48,7 @@ test('legacy production entry exposes no HTTP control or health endpoints', asyn
 test('runtime Wrangler configuration owns every non-Sakurazaka pipeline', () => {
   const config = JSON.parse(readFileSync(new URL('../wrangler.runtime.jsonc', import.meta.url), 'utf8'));
   const source = readFileSync(new URL('../src/raw-collector-entry.js', import.meta.url), 'utf8');
-  assert.equal(config.main, 'src/runtime-orchestrator-entry.js');
+  assert.equal(config.main, 'src/runtime-orchestrator-deployed-entry.js');
   assert.deepEqual(config.triggers?.crons, ['* * * * *']);
   assert.deepEqual(config.d1_databases.map(({ binding }) => binding), ['BUDDIES_DB', 'MINUTE_DB', 'OTHER_DB']);
   assert.equal(config.d1_databases[0].database_name, 'stationhead-buddies');

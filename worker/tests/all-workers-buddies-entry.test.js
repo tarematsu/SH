@@ -13,7 +13,7 @@ function config(path) {
 test('runtime orchestration retains the narrow raw collection surface', () => {
   const runtime = config('../wrangler.runtime.jsonc');
   const entry = source('../src/raw-collector-entry.js');
-  assert.equal(runtime.main, 'src/runtime-orchestrator-entry.js');
+  assert.equal(runtime.main, 'src/runtime-orchestrator-deployed-entry.js');
   assert.equal(runtime.queues.producers.find(({ binding }) => binding === 'RAW_COLLECTION_QUEUE').queue, 'stationhead-raw-collection');
   assert.match(entry, /const RAW_COLLECTION_QUEUE_OPTIONS = Object\.freeze/);
   assert.match(entry, /export default \{\s*scheduled\(_controller, env, ctx\)/s);

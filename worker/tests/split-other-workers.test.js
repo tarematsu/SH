@@ -36,7 +36,7 @@ function queueMessage(body, events, prefix = '') {
 test('runtime Worker config owns every non-Sakurazaka Queue boundary', () => {
   const worker = config('wrangler.runtime.jsonc');
   assert.equal(worker.name, 'sh-runtime-orchestrator');
-  assert.equal(worker.main, 'src/runtime-orchestrator-entry.js');
+  assert.equal(worker.main, 'src/runtime-orchestrator-deployed-entry.js');
   assert.deepEqual(worker.triggers.crons, [RUNTIME_CRON]);
   assert.deepEqual(worker.d1_databases.map(({ binding }) => binding), [
     'BUDDIES_DB',
