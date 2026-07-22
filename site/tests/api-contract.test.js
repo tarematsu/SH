@@ -40,13 +40,14 @@ test('materialized response freshness follows canonical generation cadences', ()
     'history:weekly',
     'history:monthly',
     'history:broadcasts',
-    'track-history',
   ]) {
     assert.equal(materializedResponseCadenceSeconds(key), 360 * 60, key);
     assert.equal(materializedResponseMaximumAge(key), 365 * minute, key);
   }
-  assert.equal(materializedResponseCadenceSeconds('host-history:summary'), 1440 * 60);
-  assert.equal(materializedResponseMaximumAge('host-history:summary'), 1445 * minute);
+  for (const key of ['track-history', 'host-history:summary']) {
+    assert.equal(materializedResponseCadenceSeconds(key), 1440 * 60, key);
+    assert.equal(materializedResponseMaximumAge(key), 1445 * minute, key);
+  }
 });
 
 test('cache middleware contains the canonical Sakurazaka policy', () => {
