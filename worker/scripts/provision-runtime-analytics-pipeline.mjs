@@ -14,6 +14,12 @@ export const RUNTIME_ANALYTICS_BINDING = 'RUNTIME_ANALYTICS_STREAM';
 const STREAM_SCHEMA = 'pipelines/runtime-analytics.schema.json';
 const PIPELINE_SQL = 'pipelines/runtime-analytics.sql';
 
+export function sanitizedProvisionError(error) {
+  return String(error?.message || error)
+    .replaceAll(/\/accounts\/[^/\s]+/g, '/accounts/[redacted]')
+    .slice(0, 500);
+}
+
 function required(value, label) {
   const normalized = String(value || '').trim();
   if (!normalized) throw new Error(`${label} is required`);
