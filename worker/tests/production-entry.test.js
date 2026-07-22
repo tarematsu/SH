@@ -45,7 +45,7 @@ test('legacy production entry exposes no HTTP control or health endpoints', asyn
   assert.equal((await productionApp.fetch(new Request('https://buddies.test/favicon.ico'), {}, {})).status, 204);
 });
 
-test('runtime Wrangler configuration owns collection and orchestration only', () => {
+test('runtime Wrangler configuration owns every non-Sakurazaka pipeline', () => {
   const config = JSON.parse(readFileSync(new URL('../wrangler.runtime.jsonc', import.meta.url), 'utf8'));
   const source = readFileSync(new URL('../src/raw-collector-entry.js', import.meta.url), 'utf8');
   assert.equal(config.main, 'src/runtime-orchestrator-entry.js');
@@ -55,11 +55,21 @@ test('runtime Wrangler configuration owns collection and orchestration only', ()
   assert.deepEqual(config.queues?.producers.map(({ binding }) => binding), [
     'RAW_COLLECTION_QUEUE',
     'HOST_MONITOR_QUEUE',
+    'PERSIST_QUEUE',
+    'INGEST_FINALIZE_QUEUE',
+    'COMMENTS_QUEUE',
+    'MINUTE_FACT_QUEUE',
     'MINUTE_DERIVE_QUEUE',
     'MINUTE_LIVE_DERIVE_QUEUE',
     'MINUTE_ENRICHMENT_QUEUE',
     'MINUTE_REBUILD_QUEUE',
+    'TRACK_METADATA_QUEUE',
+    'READ_MODEL_QUEUE',
+    'PAGES_READ_MODEL_QUEUE',
   ]);
+  assert.equal(config.queues.consumers.length, 13);
+  assert.equal(config.kv_namespaces[0].binding, 'PAGES_RESPONSE_KV');
+  assert.equal(config.r2_buckets[0].binding, 'PAGES_RESPONSE_R2');
   assert.match(source, /JSON\.parse/);
   assert.match(source, /normalizeSnapshot/);
   assert.match(source, /extractQueue/);
