@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 
 import {
   hasConsumer,
@@ -9,21 +10,38 @@ import {
   runWrangler,
 } from './cloudflare-queues.mjs';
 import { pruneRetiredWorkers } from './cloudflare-workers.mjs';
+import { preparePagesReadModelDeployConfig } from './pages-response-kv-namespace.mjs';
 
+const workerRoot = fileURLToPath(new URL('..', import.meta.url));
 const configName = 'wrangler.runtime.jsonc';
 const config = JSON.parse(readFileSync(new URL(`../${configName}`, import.meta.url), 'utf8'));
 const runtimeScript = config.name;
-const previousScript = 'sh-monitor-other';
+const previousScriptByQueue = new Map([
+  ['stationhead-raw-collection', 'sh-buddies-ingest'],
+  ['stationhead-ingest-finalize', 'sh-buddies-ingest'],
+  ['stationhead-comments', 'sh-buddies-ingest'],
+  ['stationhead-buddies-persist', 'sh-buddies-ingest'],
+  ['stationhead-minute-enrichment', 'sh-minute-enrichment'],
+  ['stationhead-track-metadata', 'sh-minute-enrichment'],
+  ['stationhead-pages-read-model-publication', 'sh-minute-enrichment'],
+  ['stationhead-read-model', 'sh-minute-enrichment'],
+]);
 const migrations = Object.freeze(config.queues.consumers.map((consumer) => Object.freeze({
   queue: consumer.queue,
-  oldScript: previousScript,
+  oldScript: previousScriptByQueue.get(consumer.queue) || null,
   deadLetterQueue: consumer.dead_letter_queue,
   batchSize: consumer.max_batch_size,
   maxConcurrency: consumer.max_concurrency,
 })));
 
+const deploy = await preparePagesReadModelDeployConfig(workerRoot, {
+  sourcePath: `${workerRoot}/${configName}`,
+  temporaryPath: `${workerRoot}/.wrangler.runtime.deploy-${process.pid}.jsonc`,
+});
 const previousConsumers = new Set(
-  migrations.filter(({ queue }) => hasConsumer(queue, previousScript)).map(({ queue }) => queue),
+  migrations
+    .filter(({ queue, oldScript }) => oldScript && hasConsumer(queue, oldScript))
+    .map(({ queue }) => queue),
 );
 const runtimeConsumers = new Set(
   migrations.filter(({ queue }) => hasConsumer(queue, runtimeScript)).map(({ queue }) => queue),
@@ -33,21 +51,21 @@ const removed = new Set();
 
 try {
   for (const migration of migrations) {
-    if (!previousConsumers.has(migration.queue)) continue;
+    if (!migration.oldScript || !previousConsumers.has(migration.queue)) continue;
     pauseQueue(migration.queue);
     paused.add(migration.queue);
-    removeConsumer(migration.queue, previousScript);
+    removeConsumer(migration.queue, migration.oldScript);
     removed.add(migration.queue);
   }
 
-  runWrangler(['deploy', '--config', configName]);
+  runWrangler(['deploy', '--config', deploy.configPath]);
 
-  for (const { queue } of migrations) {
+  for (const { queue, oldScript } of migrations) {
     if (!hasConsumer(queue, runtimeScript)) {
       throw new Error(`runtime orchestrator consumer missing for ${queue}`);
     }
-    if (hasConsumer(queue, previousScript)) {
-      throw new Error(`retired runtime consumer still attached for ${queue}`);
+    if (oldScript && hasConsumer(queue, oldScript)) {
+      throw new Error(`retired core consumer still attached: ${oldScript} on ${queue}`);
     }
   }
 
@@ -61,10 +79,12 @@ try {
         console.error(`Failed to remove ${runtimeScript} from ${migration.queue}: ${rollbackError.message}`);
       }
     }
-    if (removed.has(migration.queue) && !hasConsumer(migration.queue, previousScript)) {
+    if (migration.oldScript
+        && removed.has(migration.queue)
+        && !hasConsumer(migration.queue, migration.oldScript)) {
       try { restoreConsumer(migration); }
       catch (rollbackError) {
-        console.error(`Failed to restore ${previousScript} on ${migration.queue}: ${rollbackError.message}`);
+        console.error(`Failed to restore ${migration.oldScript} on ${migration.queue}: ${rollbackError.message}`);
       }
     }
   }
@@ -73,15 +93,16 @@ try {
     catch (resumeError) { console.error(`Failed to resume ${queue}: ${resumeError.message}`); }
   }
   throw error;
+} finally {
+  deploy.cleanup();
 }
 
-// Worker retirement is intentionally after the reversible Queue cutover. A
-// deletion failure leaves the new runtime active and is safe to retry.
 await pruneRetiredWorkers();
 
 console.log(JSON.stringify({
-  event: 'runtime_orchestrator_deployed',
+  event: 'core_runtime_worker_deployed',
   script: runtimeScript,
-  retired_script: previousScript,
+  retired_scripts: [...new Set(previousScriptByQueue.values())],
   queues: migrations.map(({ queue }) => queue),
+  pages_response_kv_namespace: deploy.namespace.id,
 }));
