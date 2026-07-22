@@ -1,6 +1,8 @@
-import { claimMinuteDeriveJob } from './minute-derive-queue.js';
-import { releaseMinuteFactJobs } from './minute-facts-inbox.js';
 import { parseMinuteDeriveTrigger } from './minute-derive-trigger.js';
+import {
+  claimBudgetedLiveDeriveJob,
+  releaseBudgetedLiveDeriveJob,
+} from './minute-live-trigger-lease.js';
 
 const RETRY_60_SECONDS = Object.freeze({ delaySeconds: 60 });
 const JSON_QUEUE_SEND_OPTIONS = Object.freeze({ contentType: 'json' });
@@ -36,10 +38,15 @@ async function sendWriteStage(env, body, dependencies = {}) {
 
 export async function processBudgetedLiveTriggerMessage(env, body, dependencies = {}) {
   const trigger = parseMinuteDeriveTrigger(body);
+  if (String(trigger.job_kind || 'live') !== 'live') {
+    const error = new Error('invalid minute live derive trigger job kind');
+    error.code = 'MINUTE_DERIVE_INVALID_TRIGGER';
+    throw error;
+  }
   const now = (dependencies.now || Date.now)();
   const leaseMs = positiveInteger(env?.DERIVE_LEASE_MS, 60_000, 10 * 60_000);
-  const claim = dependencies.claim || claimMinuteDeriveJob;
-  const job = await claim(env, trigger, { now, leaseMs, parsedTrigger: trigger });
+  const claim = dependencies.claim || claimBudgetedLiveDeriveJob;
+  const job = await claim(env, trigger, { now, leaseMs });
   if (!job) {
     return { skipped: true, reason: 'not-pending', pending: false };
   }
@@ -53,8 +60,8 @@ export async function processBudgetedLiveTriggerMessage(env, body, dependencies 
       durable_payload: true,
     }, dependencies);
   } catch (error) {
-    const release = dependencies.release || releaseMinuteFactJobs;
-    await release(env, [job.id], { now }).catch(() => {});
+    const release = dependencies.release || releaseBudgetedLiveDeriveJob;
+    await release(env, job.id, { now }).catch(() => {});
     throw error;
   }
   return {
