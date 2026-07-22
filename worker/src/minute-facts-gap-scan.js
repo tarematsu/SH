@@ -13,7 +13,7 @@ const SNAPSHOT_COLUMNS = `id,observed_at,channel_id,channel_alias,channel_name,s
   guest_count,total_listens,stream_goal,current_stream_count,host_account_id,host_handle,broadcast_start_time`;
 
 export const PREVIOUS_GAP_SNAPSHOT_SQL = `SELECT ${SNAPSHOT_COLUMNS}
-  FROM sh_channel_snapshots INDEXED BY idx_sh_channel_snapshots_channel_time_id
+  FROM sh_channel_snapshots
   WHERE channel_id=? AND observed_at<?
   ORDER BY observed_at DESC,id DESC
   LIMIT 1`;
