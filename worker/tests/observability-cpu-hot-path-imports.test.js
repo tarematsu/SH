@@ -31,7 +31,7 @@ const pagesReadModelDispatch = readFileSync(
   'utf8',
 );
 
- test('live derive uses preloaded budget stages and keeps the full graph lazy', () => {
+test('live derive fallback keeps budget stages available and the full graph lazy', () => {
   for (const moduleName of [
     'minute-live-trigger-budget-entry.js',
     'minute-live-revision-budget-entry.js',
@@ -46,6 +46,20 @@ const pagesReadModelDispatch = readFileSync(
   assert.match(minutePipeline, /import\('\.\/minute-derive-entry\.js'\)/);
   assert.match(minutePipeline, /import\('\.\/minute-rebuild-batched-entry\.js'\)/);
   assert.match(runtimeConfig, /"LIVE_REVISION_MATERIALIZATION_ENABLED"\s*:\s*false/);
+});
+
+test('core queue routes recurring live stages before loading the shared runtime graph', () => {
+  for (const moduleName of [
+    'minute-live-trigger-budget-entry.js',
+    'minute-live-revision-budget-entry.js',
+    'minute-live-write-budget-entry.js',
+  ]) {
+    assert.match(runtimeEntry, new RegExp(`import\\('./${moduleName.replaceAll('.', '\\.')}'\\)`));
+    assert.doesNotMatch(runtimeEntry, new RegExp(`from './${moduleName.replaceAll('.', '\\.')}'`));
+  }
+  assert.match(runtimeEntry, /from '\.\/minute-live-complete-budget-entry\.js'/);
+  assert.match(runtimeEntry, /lightweightLiveBudgetKind/);
+  assert.match(runtimeEntry, /if \(liveKind\) return runLightweightLiveQueue/);
 });
 
 test('track metadata modules are loaded before metadata queue work', () => {
