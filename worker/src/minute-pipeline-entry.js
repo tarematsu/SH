@@ -1,4 +1,5 @@
 import { historicalRebuildEnabled } from './historical-rebuild-policy.js';
+import { processBudgetedLiveCompleteBatch } from './minute-live-complete-budget-entry.js';
 import { processBudgetedLiveRevisionBatch } from './minute-live-revision-budget-entry.js';
 import { processBudgetedLiveTriggerBatch } from './minute-live-trigger-budget-entry.js';
 import { processBudgetedLiveWriteBatch } from './minute-live-write-budget-entry.js';
@@ -59,6 +60,18 @@ function budgetedLiveWriteBatch(batch, env) {
   });
 }
 
+function budgetedLiveCompleteBatch(batch, env) {
+  if (liveRevisionMaterializationEnabled(env)) return false;
+  const messages = batch?.messages || [];
+  return messages.length > 0 && messages.every((message) => {
+    const body = message?.body;
+    return body?.message_type === 'minute-fact-derive-stage'
+      && Number(body?.message_version) === 1
+      && body?.stage === 'complete'
+      && String(body?.job?.job_kind || 'live') !== 'rebuild';
+  });
+}
+
 function rebuildEnvironment(env) {
   if (env?.BUDDIES_DB || !env?.DB) return env;
   const active = Object.create(env);
@@ -72,12 +85,7 @@ function rebuildEnvironment(env) {
 
 async function processRebuildBatch(batch, env, ctx, dependencies) {
   const rebuild = await (rebuildModulePromise ||= import('./minute-rebuild-batched-entry.js'));
-  return rebuild.processMinuteRebuildBatch(
-    batch,
-    rebuildEnvironment(env),
-    ctx,
-    dependencies,
-  );
+  return rebuild.processMinuteRebuildBatch(batch, rebuildEnvironment(env), ctx, dependencies);
 }
 
 function acknowledgeDisabledHistoricalDerive(batch) {
@@ -89,11 +97,6 @@ function acknowledgeDisabledHistoricalDerive(batch) {
   }));
 }
 
-/**
- * Keep the minute Queue boundaries independent while sharing one deployment.
- * The small live stages remain preloaded; the full derive and rebuild graphs
- * are loaded only when a message genuinely needs those legacy/heavy paths.
- */
 export async function processMinutePipelineBatch(batch, env, ctx, dependencies = EMPTY_DEPENDENCIES) {
   const queueName = String(batch?.queue || '');
   if (queueName === MINUTE_FACTS_QUEUE_NAME) {
@@ -109,11 +112,15 @@ export async function processMinutePipelineBatch(batch, env, ctx, dependencies =
   }
   if (queueName === LIVE_DERIVE_QUEUE_NAME && budgetedLiveRevisionBatch(batch, env)) {
     const run = dependencies.processBudgetedLiveRevisionBatch || processBudgetedLiveRevisionBatch;
-    return run(batch, env);
+    return run(batch, env, dependencies.liveRevision);
   }
   if (queueName === LIVE_DERIVE_QUEUE_NAME && budgetedLiveWriteBatch(batch, env)) {
     const run = dependencies.processBudgetedLiveWriteBatch || processBudgetedLiveWriteBatch;
     return run(batch, env, dependencies.liveWrite);
+  }
+  if (queueName === LIVE_DERIVE_QUEUE_NAME && budgetedLiveCompleteBatch(batch, env)) {
+    const run = dependencies.processBudgetedLiveCompleteBatch || processBudgetedLiveCompleteBatch;
+    return run(batch, env, dependencies.liveComplete);
   }
   if (queueName === REBUILD_DERIVE_QUEUE_NAME || queueName === LIVE_DERIVE_QUEUE_NAME) {
     const run = dependencies.processMinuteDeriveBatch;
@@ -128,6 +135,7 @@ export async function processMinutePipelineBatch(batch, env, ctx, dependencies =
 
 export {
   acknowledgeDisabledHistoricalDerive,
+  budgetedLiveCompleteBatch,
   budgetedLiveTriggerBatch,
   budgetedLiveRevisionBatch,
   budgetedLiveWriteBatch,
