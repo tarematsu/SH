@@ -30,6 +30,9 @@ let ingestModulePromise;
 let enrichmentModulePromise;
 let pagesModulePromise;
 let runtimeQueueModulePromise;
+let liveTriggerModulePromise;
+let liveRevisionModulePromise;
+let liveWriteModulePromise;
 
 function enabled(value, fallback = true) {
   if (value == null || value === '') return fallback;
@@ -42,12 +45,35 @@ function liveRevisionMaterializationEnabled(env = {}) {
   return enabled(value, true);
 }
 
-export function lightweightLiveCompleteBatch(batch, env) {
-  if (String(batch?.queue || '') !== LIVE_DERIVE_QUEUE_NAME) return false;
-  if (liveRevisionMaterializationEnabled(env)) return false;
+function lightweightLiveMessageKind(body) {
+  if (body?.message_type === 'minute-fact-derive'
+      && Number(body?.message_version) === 1) return 'trigger';
+  if (body?.message_type !== 'minute-fact-derive-stage'
+      || Number(body?.message_version) !== 1) return null;
+  if (body?.stage === 'revision-materialize'
+      && body?.revision?.sparse === true
+      && body?.revision?.rebuild !== true) return 'revision';
+  if ((body?.stage === 'write' || body?.stage === 'budget-live-write')
+      && body?.payload?.rebuild !== true
+      && String(body?.job?.job_kind || 'live') !== 'rebuild') return 'write';
+  if (budgetedLiveCompleteMessage(body)) return 'complete';
+  return null;
+}
+
+export function lightweightLiveBudgetKind(batch, env) {
+  if (String(batch?.queue || '') !== LIVE_DERIVE_QUEUE_NAME) return null;
+  if (liveRevisionMaterializationEnabled(env)) return null;
   const messages = batch?.messages || [];
-  return messages.length > 0
-    && messages.every((message) => budgetedLiveCompleteMessage(message?.body));
+  if (!messages.length) return null;
+  const kind = lightweightLiveMessageKind(messages[0]?.body);
+  if (!kind) return null;
+  return messages.every((message) => lightweightLiveMessageKind(message?.body) === kind)
+    ? kind
+    : null;
+}
+
+export function lightweightLiveCompleteBatch(batch, env) {
+  return lightweightLiveBudgetKind(batch, env) === 'complete';
 }
 
 function loadIngestModule() {
@@ -70,6 +96,41 @@ function loadRuntimeQueueModule() {
   return runtimeQueueModulePromise;
 }
 
+function loadLiveTriggerModule() {
+  liveTriggerModulePromise ||= import('./minute-live-trigger-budget-entry.js');
+  return liveTriggerModulePromise;
+}
+
+function loadLiveRevisionModule() {
+  liveRevisionModulePromise ||= import('./minute-live-revision-budget-entry.js');
+  return liveRevisionModulePromise;
+}
+
+function loadLiveWriteModule() {
+  liveWriteModulePromise ||= import('./minute-live-write-budget-entry.js');
+  return liveWriteModulePromise;
+}
+
+async function runLightweightLiveQueue(kind, batch, env, dependencies) {
+  if (kind === 'complete') {
+    const run = dependencies.runLiveCompleteQueue || processBudgetedLiveCompleteBatch;
+    return run(batch, env, dependencies.liveComplete || EMPTY_DEPENDENCIES);
+  }
+  if (kind === 'trigger') {
+    const run = dependencies.runLiveTriggerQueue
+      || (await loadLiveTriggerModule()).processBudgetedLiveTriggerBatch;
+    return run(batch, env, dependencies.liveTrigger || EMPTY_DEPENDENCIES);
+  }
+  if (kind === 'revision') {
+    const run = dependencies.runLiveRevisionQueue
+      || (await loadLiveRevisionModule()).processBudgetedLiveRevisionBatch;
+    return run(batch, env, dependencies.liveRevision || EMPTY_DEPENDENCIES);
+  }
+  const run = dependencies.runLiveWriteQueue
+    || (await loadLiveWriteModule()).processBudgetedLiveWriteBatch;
+  return run(batch, env, dependencies.liveWrite || EMPTY_DEPENDENCIES);
+}
+
 export async function runCoreQueue(batch, env, ctx, dependencies = EMPTY_DEPENDENCIES) {
   const queueName = String(batch?.queue || '');
   if (INGEST_QUEUE_NAMES.has(queueName)) {
@@ -85,10 +146,8 @@ export async function runCoreQueue(batch, env, ctx, dependencies = EMPTY_DEPENDE
       || (await loadEnrichmentModule()).processConsolidatedEnrichmentBatch;
     return run(batch, env, dependencies.enrichment || EMPTY_DEPENDENCIES);
   }
-  if (lightweightLiveCompleteBatch(batch, env)) {
-    const run = dependencies.runLiveCompleteQueue || processBudgetedLiveCompleteBatch;
-    return run(batch, env, dependencies.liveComplete || EMPTY_DEPENDENCIES);
-  }
+  const liveKind = lightweightLiveBudgetKind(batch, env);
+  if (liveKind) return runLightweightLiveQueue(liveKind, batch, env, dependencies);
   const run = dependencies.runRuntimeQueue || (await loadRuntimeQueueModule()).runRuntimeQueue;
   return run(batch, env, ctx, dependencies.runtime || EMPTY_DEPENDENCIES);
 }
