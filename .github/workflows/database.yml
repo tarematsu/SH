@@ -51,7 +51,7 @@ jobs:
     name: Provision or update stationhead-minute
     if: github.event_name == 'push' || inputs.operation == 'facts-db'
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 120
     defaults:
       run:
         working-directory: worker
@@ -62,7 +62,9 @@ jobs:
       FACTS_VERIFY_ATTEMPTS: '5'
       FACTS_VERIFY_DELAY_MS: '20000'
       MINUTE_FACT_PAYLOAD_PURGE_BATCH_SIZE: '1000'
+      MINUTE_FACT_PAYLOAD_PURGE_STATEMENTS_PER_REQUEST: '20'
       MINUTE_FACT_PAYLOAD_PURGE_MAX_BATCHES: '10000'
+      MINUTE_FACT_PAYLOAD_PURGE_MAX_ATTEMPTS: '6'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -84,7 +86,7 @@ jobs:
     name: Drain existing stationhead-minute payload backlog
     if: github.event_name == 'workflow_dispatch' && inputs.operation == 'payload-purge'
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 120
     defaults:
       run:
         working-directory: worker
@@ -93,15 +95,14 @@ jobs:
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID || secrets.CF_ACCOUNT_ID }}
       FACTS_DATABASE_NAME: stationhead-minute
       MINUTE_FACT_PAYLOAD_PURGE_BATCH_SIZE: '1000'
+      MINUTE_FACT_PAYLOAD_PURGE_STATEMENTS_PER_REQUEST: '20'
       MINUTE_FACT_PAYLOAD_PURGE_MAX_BATCHES: '10000'
+      MINUTE_FACT_PAYLOAD_PURGE_MAX_ATTEMPTS: '6'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-          cache: npm
-          cache-dependency-path: worker/package-lock.json
-      - run: npm ci --no-audit --no-fund
       - name: Drain all eligible payload backlog
         run: node scripts/purge-completed-minute-fact-payloads.mjs
 
