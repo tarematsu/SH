@@ -21,6 +21,7 @@ WORKER = os.environ.get("CLOUDFLARE_RUNTIME_WORKER", "sh-runtime-orchestrator").
 CONFIGS = tuple(x.strip() for x in os.environ.get("CLOUDFLARE_CONFIG_GLOBS", "").split(",") if x.strip())
 EXTRA_BUCKETS = tuple(x.strip() for x in os.environ.get("CLOUDFLARE_STORAGE_BUCKETS", "").split(",") if x.strip())
 KV_BINDINGS = tuple(x.strip() for x in os.environ.get("CLOUDFLARE_KV_BINDINGS", "").split(",") if x.strip())
+DO_BINDINGS = tuple(x.strip() for x in os.environ.get("CLOUDFLARE_DO_BINDINGS", "RUNTIME_COORDINATOR").split(",") if x.strip())
 PIPELINE_NAMES = tuple(x.strip() for x in os.environ.get("CLOUDFLARE_PIPELINE_NAMES", "").split(",") if x.strip())
 OUT = Path(os.environ.get("FREE_TIER_USAGE_OUTPUT_DIR", "free-tier-usage"))
 GB = 1_000_000_000
@@ -127,6 +128,55 @@ def paginated(account: str, path: str) -> list[dict[str, Any]]:
         page += 1
 
 
+def durable_object_namespace_ids(
+    bindings: list[dict[str, Any]],
+    namespaces: list[dict[str, Any]],
+    worker: str = WORKER,
+    binding_names: tuple[str, ...] = DO_BINDINGS,
+) -> set[str]:
+    expected = set(binding_names)
+    durable_types = {"durable_object_namespace", "durable_object"}
+    binding_rows = [
+        row for row in bindings
+        if str(row.get("type") or "").lower() in durable_types
+        and str(row.get("name") or "") in expected
+    ]
+    resolved_names = {str(row.get("name") or "") for row in binding_rows}
+    missing = expected - resolved_names
+    if missing:
+        raise RuntimeError(f"Configured Durable Object bindings missing from deployed Worker: {', '.join(sorted(missing))}")
+
+    # Prefer namespace IDs attached to the selected Worker's deployed bindings.
+    # This is unambiguous even when another Worker uses the same class name.
+    direct = {
+        str(row.get("namespace_id") or row.get("id"))
+        for row in binding_rows
+        if row.get("namespace_id") or row.get("id")
+    }
+    if direct:
+        return direct
+
+    expected_classes = {
+        str(row.get("class_name") or row.get("class") or "")
+        for row in binding_rows
+        if row.get("class_name") or row.get("class")
+    }
+    result: set[str] = set()
+    for row in namespaces:
+        script = str(row.get("script") or row.get("script_name") or row.get("worker") or "")
+        class_name = str(row.get("class") or row.get("class_name") or row.get("name") or "")
+        if script != worker:
+            continue
+        if expected_classes and class_name and class_name not in expected_classes:
+            continue
+        identifier = row.get("id") or row.get("namespace_id")
+        if identifier:
+            result.add(str(identifier))
+    if not result:
+        raise RuntimeError(f"No Durable Object namespace resolved for {worker}")
+    return result
+
+
 def resource_ids(account: str, queue_names: set[str]) -> tuple[set[str], set[str], set[str], set[str]]:
     queue_rows = paginated(account, "queues")
     queue_ids = {
@@ -139,20 +189,11 @@ def resource_ids(account: str, queue_names: set[str]) -> tuple[set[str], set[str
     if missing:
         raise RuntimeError(f"Configured Queues missing from Cloudflare: {', '.join(sorted(missing))}")
 
-    namespaces = paginated(account, "workers/durable_objects/namespaces")
-    namespace_ids = set()
-    for row in namespaces:
-        script = str(row.get("script") or row.get("script_name") or row.get("worker") or "")
-        class_name = str(row.get("class") or row.get("class_name") or row.get("name") or "")
-        if script == WORKER or class_name == "RuntimeCoordinator":
-            identifier = row.get("id") or row.get("namespace_id")
-            if identifier:
-                namespace_ids.add(str(identifier))
-    if not namespace_ids:
-        raise RuntimeError(f"No Durable Object namespace resolved for {WORKER}")
-
     worker_settings = api(f"{API}/accounts/{account}/workers/scripts/{urllib.parse.quote(WORKER, safe='')}/settings").get("result") or {}
     bindings = worker_settings.get("bindings") or []
+    namespaces = paginated(account, "workers/durable_objects/namespaces")
+    namespace_ids = durable_object_namespace_ids(bindings, namespaces)
+
     kv_ids = {
         str(row.get("namespace_id") or row.get("id"))
         for row in bindings
@@ -336,6 +377,19 @@ def self_test() -> int:
     document = graphql_document()
     for dataset in ("queueMessageOperationsAdaptiveGroups", "r2OperationsAdaptiveGroups", "durableObjectsPeriodicGroups", "kvOperationsAdaptiveGroups", "pipelinesOperatorAdaptiveGroups", "pipelinesSinkAdaptiveGroups"):
         assert dataset in document
+    bindings = [{
+        "type": "durable_object_namespace",
+        "name": "RUNTIME_COORDINATOR",
+        "namespace_id": "own",
+        "class_name": "RuntimeCoordinator",
+    }]
+    namespaces = [
+        {"id": "own-fallback", "script": "sh-runtime-orchestrator", "class": "RuntimeCoordinator"},
+        {"id": "other", "script": "other-worker", "class": "RuntimeCoordinator"},
+    ]
+    assert durable_object_namespace_ids(bindings, namespaces) == {"own"}
+    bindings_without_id = [{**bindings[0], "namespace_id": None}]
+    assert durable_object_namespace_ids(bindings_without_id, namespaces) == {"own-fallback"}
     usage = aggregate({
         "queues": [{"dimensions": {"queueId": "q"}, "sum": {"billableOperations": 30}}],
         "r2ops": [
@@ -369,8 +423,8 @@ def self_test() -> int:
 def main() -> int:
     if "--self-test" in sys.argv:
         return self_test()
-    if not TOKEN or not CONFIGS or not WORKER or not KV_BINDINGS or not PIPELINE_NAMES:
-        raise RuntimeError("Cloudflare credentials, runtime Worker, config globs, KV bindings, and Pipeline names are required")
+    if not TOKEN or not CONFIGS or not WORKER or not KV_BINDINGS or not DO_BINDINGS or not PIPELINE_NAMES:
+        raise RuntimeError("Cloudflare credentials, runtime Worker, config globs, KV/DO bindings, and Pipeline names are required")
     account = account_id()
     queue_names, buckets = configured_resources()
     queue_ids, namespace_ids, kv_ids, pipeline_ids = resource_ids(account, queue_names)
