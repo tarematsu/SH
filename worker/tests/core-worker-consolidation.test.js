@@ -63,7 +63,7 @@ test('all budgeted live stages bypass the common runtime and derive graphs', asy
       message_type: 'minute-fact-derive-stage',
       message_version: 1,
       stage: 'revision-materialize',
-      revision: { sparse: true, rebuild: false },
+      revision: { revision_id: 7, sparse: true, rebuild: false },
     }],
     ['write', {
       message_type: 'minute-fact-derive-stage',
