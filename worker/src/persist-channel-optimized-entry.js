@@ -1,4 +1,5 @@
 import { logSampledSuccess } from './sampled-success-log.js';
+import { saveQueuePlanR2 } from './queue-plan-r2.js';
 
 const RETRY_30_SECONDS = Object.freeze({ delaySeconds: 30 });
 const EMPTY_DEPENDENCIES = Object.freeze({});
@@ -43,7 +44,14 @@ async function processLikesPlanTask(env, body, dependencies) {
 
 async function processLikesWriteTask(env, body, dependencies) {
   const module = await (likesWriteModulePromise ||= import('./persist-likes-stages.js'));
-  return module.processOptimizedQueueLikesTask(env, body, dependencies);
+  const result = await module.processOptimizedQueueLikesTask(env, body, dependencies);
+  if (result?.likes_write_complete === true
+      && result?.finalization_deferred === true
+      && body?.likes_plan) {
+    const savePlanCache = dependencies?.saveQueuePlanCache || saveQueuePlanR2;
+    await savePlanCache(env?.PAGES_RESPONSE_R2, body, body.observed_at, body.likes_plan);
+  }
+  return result;
 }
 
 async function processFallbackTask(env, body, dependencies) {
