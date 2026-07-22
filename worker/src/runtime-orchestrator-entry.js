@@ -58,7 +58,8 @@ function lightweightLiveMessageKind(body) {
       || Number(body?.message_version) !== 1) return null;
   if (body?.stage === 'revision-materialize'
       && body?.revision?.sparse === true
-      && body?.revision?.rebuild !== true) return 'revision';
+      && body?.revision?.rebuild !== true
+      && positiveInteger(body?.revision?.revision_id) != null) return 'revision';
   if ((body?.stage === 'write' || body?.stage === 'budget-live-write')
       && positiveInteger(body?.job?.id) != null
       && body?.payload?.rebuild !== true
