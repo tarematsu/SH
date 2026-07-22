@@ -79,6 +79,18 @@ test('one GitHub Actions workflow owns automatic and manual production deploymen
   assert.match(deploymentWorkflow, /needs\.workers\.result == 'success' \|\| needs\.workers\.result == 'skipped'/);
 });
 
+test('Pages-bound legacy Worker is retired only after a successful binding cutover', () => {
+  const pagesDeploy = deploymentWorkflow.indexOf('name: Deploy Pages from GitHub Actions');
+  const retirement = deploymentWorkflow.indexOf('name: Retire legacy Pages-bound Worker after binding cutover');
+  assert.ok(pagesDeploy >= 0);
+  assert.ok(retirement > pagesDeploy);
+  assert.match(
+    deploymentWorkflow,
+    /contains\(fromJSON\(needs\.select\.outputs\.workers\), 'sh-runtime-orchestrator'\)/,
+  );
+  assert.match(deploymentWorkflow, /pruneRetiredWorkers\(\['sh-minute-enrichment'\]\)/);
+});
+
 test('automatic production deploy selects affected Workers and Pages from changed files', () => {
   assert.match(deploymentWorkflow, /select-worker-deploys\.mjs/);
   assert.match(deploymentWorkflow, /site\/functions\/\*\*/);
