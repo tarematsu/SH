@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
 import {
@@ -14,6 +14,10 @@ import {
   pruneRetiredWorkers,
 } from './cloudflare-workers.mjs';
 import { preparePagesReadModelDeployConfig } from './pages-response-kv-namespace.mjs';
+import {
+  ensureRuntimeAnalyticsResources,
+  runtimeConfigWithAnalyticsStream,
+} from './provision-runtime-analytics-pipeline.mjs';
 
 const workerRoot = fileURLToPath(new URL('..', import.meta.url));
 const configName = 'wrangler.runtime.jsonc';
@@ -42,18 +46,35 @@ const deploy = await preparePagesReadModelDeployConfig(workerRoot, {
   sourcePath: `${workerRoot}/${configName}`,
   temporaryPath: `${workerRoot}/.wrangler.runtime.deploy-${process.pid}.jsonc`,
 });
-const previousConsumers = new Set(
-  migrations
-    .filter(({ queue, oldScript }) => oldScript && hasConsumer(queue, oldScript))
-    .map(({ queue }) => queue),
-);
-const runtimeConsumers = new Set(
-  migrations.filter(({ queue }) => hasConsumer(queue, runtimeScript)).map(({ queue }) => queue),
-);
 const paused = new Set();
 const removed = new Set();
+let previousConsumers = new Set();
+let runtimeConsumers = new Set();
+let analyticsResources = null;
 
 try {
+  // Provision the Pipelines stream, R2 Parquet sink, and SQL pipeline before any
+  // Queue consumer is paused. A missing Pipelines permission therefore fails
+  // closed without disrupting the production ingestion topology.
+  analyticsResources = ensureRuntimeAnalyticsResources();
+  writeFileSync(
+    deploy.configPath,
+    runtimeConfigWithAnalyticsStream(
+      readFileSync(deploy.configPath, 'utf8'),
+      analyticsResources.stream.id,
+    ),
+    'utf8',
+  );
+
+  previousConsumers = new Set(
+    migrations
+      .filter(({ queue, oldScript }) => oldScript && hasConsumer(queue, oldScript))
+      .map(({ queue }) => queue),
+  );
+  runtimeConsumers = new Set(
+    migrations.filter(({ queue }) => hasConsumer(queue, runtimeScript)).map(({ queue }) => queue),
+  );
+
   for (const migration of migrations) {
     if (!migration.oldScript || !previousConsumers.has(migration.queue)) continue;
     pauseQueue(migration.queue);
@@ -116,4 +137,7 @@ console.log(JSON.stringify({
   deferred_retired_scripts: [...DEFERRED_RETIREMENT_WORKERS],
   queues: migrations.map(({ queue }) => queue),
   pages_response_kv_namespace: deploy.namespace.id,
+  runtime_analytics_stream: analyticsResources?.stream || null,
+  runtime_analytics_sink: analyticsResources?.sink || null,
+  runtime_analytics_pipeline: analyticsResources?.pipeline || null,
 }));
