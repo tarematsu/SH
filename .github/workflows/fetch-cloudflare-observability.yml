@@ -53,6 +53,7 @@ jobs:
         run: |
           python3 .github/scripts/audit-cloudflare-daily-usage.py --self-test
           python3 .github/scripts/audit-cloudflare-telemetry.py --self-test
+          python3 .github/scripts/audit-deployed-cloudflare-telemetry.py --self-test
 
       - name: Enforce UTC daily request and D1 budgets
         shell: bash
@@ -91,14 +92,14 @@ jobs:
           fi
           exit "$query_status"
 
-      - name: Enforce current-version persisted and live CPU policy
+      - name: Enforce current-deployment persisted and live CPU policy
         if: github.event_name != 'schedule' || github.event.schedule == '11 3 * * *'
         env:
           LIVE_TAIL_LOG: live-tail.log
         shell: bash
         run: |
           set -o pipefail
-          python3 .github/scripts/audit-cloudflare-telemetry.py 2>&1 | tee telemetry-audit.log
+          python3 .github/scripts/audit-deployed-cloudflare-telemetry.py 2>&1 | tee telemetry-audit.log
 
       - name: Upload sanitized observability report
         if: ${{ failure() || github.event_name != 'schedule' || github.event.schedule == '11 3 * * *' }}

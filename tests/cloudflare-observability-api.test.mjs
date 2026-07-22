@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
 import test from 'node:test';
+import { fileURLToPath } from 'node:url';
 
 const workflow = readFileSync(
   new URL('../.github/workflows/fetch-cloudflare-observability.yml', import.meta.url),
@@ -14,6 +16,11 @@ const auditScript = readFileSync(
   new URL('../.github/scripts/audit-cloudflare-telemetry.py', import.meta.url),
   'utf8',
 );
+const deployedAuditUrl = new URL(
+  '../.github/scripts/audit-deployed-cloudflare-telemetry.py',
+  import.meta.url,
+);
+const deployedAuditScript = readFileSync(deployedAuditUrl, 'utf8');
 const dailyBudgetScript = readFileSync(
   new URL('../.github/scripts/audit-cloudflare-daily-usage.py', import.meta.url),
   'utf8',
@@ -42,7 +49,7 @@ test('observability uses measured hourly budgets and post-deploy Cloudflare API 
   assert.match(workflow, /secrets\.CLOUDFLARE_BUILDS_API_TOKEN/);
   assert.match(workflow, /audit-cloudflare-daily-usage\.py/);
   assert.match(workflow, /query-cloudflare-observability\.py/);
-  assert.match(workflow, /audit-cloudflare-telemetry\.py/);
+  assert.match(workflow, /audit-deployed-cloudflare-telemetry\.py/);
   assert.match(workflow, /LIVE_TAIL_LOG: live-tail\.log/);
   assert.doesNotMatch(workflow, /audit-cloudflare-live-tail\.py/);
   assert.match(workflow, /CPU_BUDGET_MS: "10"/);
@@ -76,15 +83,32 @@ test('query and audit scripts use Cloudflare APIs without R2', () => {
   assert.match(auditScript, /coverage_ok/);
   assert.match(auditScript, /missing_workers/);
   assert.match(auditScript, /incomplete coverage/);
+  assert.match(deployedAuditScript, /workers\/scripts\/\{encoded\}\/deployments/);
+  assert.match(deployedAuditScript, /deployments\[0\]/);
+  assert.match(deployedAuditScript, /percentage/);
+  assert.match(deployedAuditScript, /version_id/);
+  assert.match(deployedAuditScript, /deployed_current_events/);
+  assert.match(deployedAuditScript, /audit\.current_events/);
+  assert.match(deployedAuditScript, /old_late/);
   assert.match(dailyBudgetScript, /workersInvocationsAdaptive/);
   assert.match(dailyBudgetScript, /d1AnalyticsAdaptiveGroups/);
   assert.match(dailyBudgetScript, /rowsRead rowsWritten/);
   assert.match(dailyBudgetScript, /measuredRequests/);
   assert.match(dailyBudgetScript, /requestReserve/);
   assert.doesNotMatch(
-    `${queryScript}\n${auditScript}\n${dailyBudgetScript}`,
+    `${queryScript}\n${auditScript}\n${deployedAuditScript}\n${dailyBudgetScript}`,
     /r2\.cloudflarestorage|aws s3|R2_BUCKET/,
   );
+});
+
+test('deployment-backed telemetry selector passes its executable self-test', () => {
+  const result = spawnSync(
+    'python3',
+    [fileURLToPath(deployedAuditUrl), '--self-test'],
+    { encoding: 'utf8' },
+  );
+  assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+  assert.match(result.stdout, /deployed telemetry audit self-test passed/);
 });
 
 test('live-tail diagnostics redact sensitive request fields', () => {

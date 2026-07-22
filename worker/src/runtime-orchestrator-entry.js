@@ -1,12 +1,7 @@
 import './fetch-guard.js';
 
-import {
-  budgetedLiveCompleteMessage,
-  processBudgetedLiveCompleteBatch,
-} from './minute-live-complete-budget-entry.js';
-import { dispatchPagesReadModelScheduled } from './pages-read-model-scheduled-dispatch.js';
+import { budgetedLiveCompleteMessage } from './minute-live-complete-message.js';
 import { rawCollectorEnv } from './runtime-env.js';
-import { runRuntimeScheduled as runRuntimeDispatchScheduled } from './runtime-scheduled.js';
 
 const EMPTY_DEPENDENCIES = Object.freeze({});
 const LIVE_DERIVE_QUEUE_NAME = 'stationhead-minute-live-derive';
@@ -30,9 +25,12 @@ let ingestModulePromise;
 let enrichmentModulePromise;
 let pagesModulePromise;
 let runtimeQueueModulePromise;
+let runtimeScheduledModulePromise;
+let pagesScheduledModulePromise;
 let liveTriggerModulePromise;
 let liveRevisionModulePromise;
 let liveWriteModulePromise;
+let liveCompleteModulePromise;
 
 function enabled(value, fallback = true) {
   if (value == null || value === '') return fallback;
@@ -104,6 +102,16 @@ function loadRuntimeQueueModule() {
   return runtimeQueueModulePromise;
 }
 
+function loadRuntimeScheduledModule() {
+  runtimeScheduledModulePromise ||= import('./runtime-scheduled.js');
+  return runtimeScheduledModulePromise;
+}
+
+function loadPagesScheduledModule() {
+  pagesScheduledModulePromise ||= import('./pages-read-model-scheduled-dispatch.js');
+  return pagesScheduledModulePromise;
+}
+
 function loadLiveTriggerModule() {
   liveTriggerModulePromise ||= import('./minute-live-trigger-budget-entry.js');
   return liveTriggerModulePromise;
@@ -119,9 +127,15 @@ function loadLiveWriteModule() {
   return liveWriteModulePromise;
 }
 
+function loadLiveCompleteModule() {
+  liveCompleteModulePromise ||= import('./minute-live-complete-budget-entry.js');
+  return liveCompleteModulePromise;
+}
+
 async function runLightweightLiveQueue(kind, batch, env, dependencies) {
   if (kind === 'complete') {
-    const run = dependencies.runLiveCompleteQueue || processBudgetedLiveCompleteBatch;
+    const run = dependencies.runLiveCompleteQueue
+      || (await loadLiveCompleteModule()).processBudgetedLiveCompleteBatch;
     return run(batch, env, dependencies.liveComplete || EMPTY_DEPENDENCIES);
   }
   if (kind === 'trigger') {
@@ -161,8 +175,12 @@ export async function runCoreQueue(batch, env, ctx, dependencies = EMPTY_DEPENDE
 }
 
 export async function runCoreScheduled(controller, env, ctx, dependencies = EMPTY_DEPENDENCIES) {
-  const runtime = dependencies.runRuntimeScheduled || runRuntimeDispatchScheduled;
-  const pages = dependencies.dispatchPagesScheduled || dispatchPagesReadModelScheduled;
+  const [runtimeModule, pagesModule] = await Promise.all([
+    dependencies.runRuntimeScheduled ? null : loadRuntimeScheduledModule(),
+    dependencies.dispatchPagesScheduled ? null : loadPagesScheduledModule(),
+  ]);
+  const runtime = dependencies.runRuntimeScheduled || runtimeModule.runRuntimeScheduled;
+  const pages = dependencies.dispatchPagesScheduled || pagesModule.dispatchPagesReadModelScheduled;
   const [runtimeResult, pagesResult] = await Promise.all([
     runtime(controller, env, ctx, dependencies.runtime || EMPTY_DEPENDENCIES),
     pages(controller, env, dependencies.pages || EMPTY_DEPENDENCIES),

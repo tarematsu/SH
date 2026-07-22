@@ -14,6 +14,14 @@ const runtimeEntry = readFileSync(
   new URL('../src/runtime-orchestrator-entry.js', import.meta.url),
   'utf8',
 );
+const liveCompleteMessage = readFileSync(
+  new URL('../src/minute-live-complete-message.js', import.meta.url),
+  'utf8',
+);
+const liveCompleteEntry = readFileSync(
+  new URL('../src/minute-live-complete-budget-entry.js', import.meta.url),
+  'utf8',
+);
 const liveTriggerEntry = readFileSync(
   new URL('../src/minute-live-trigger-budget-entry.js', import.meta.url),
   'utf8',
@@ -57,11 +65,14 @@ test('core queue routes recurring live stages before loading the shared runtime 
     'minute-live-trigger-budget-entry.js',
     'minute-live-revision-budget-entry.js',
     'minute-live-write-budget-entry.js',
+    'minute-live-complete-budget-entry.js',
   ]) {
     assert.match(runtimeEntry, new RegExp(`import\\('./${moduleName.replaceAll('.', '\\.')}'\\)`));
     assert.doesNotMatch(runtimeEntry, new RegExp(`from './${moduleName.replaceAll('.', '\\.')}'`));
   }
-  assert.match(runtimeEntry, /from '\.\/minute-live-complete-budget-entry\.js'/);
+  assert.match(runtimeEntry, /from '\.\/minute-live-complete-message\.js'/);
+  assert.match(liveCompleteEntry, /from '\.\/minute-live-complete-message\.js'/);
+  assert.doesNotMatch(liveCompleteMessage, /COMPLETE_LIVE_MINUTE_FACT_JOB_SQL/);
   assert.match(runtimeEntry, /lightweightLiveBudgetKind/);
   assert.match(runtimeEntry, /if \(liveKind\) return runLightweightLiveQueue/);
 });
@@ -79,15 +90,17 @@ test('track metadata modules are loaded before metadata queue work', () => {
   assert.doesNotMatch(trackMetadata, /import\('\.\/read-model-stages\.js'\)/);
 });
 
-test('core router keeps domain graphs lazy while cron dispatch stays preloaded', () => {
-  assert.match(runtimeEntry, /from '\.\/pages-read-model-scheduled-dispatch\.js'/);
+test('core router keeps queue, fetch and scheduled graphs behind their event routes', () => {
   for (const moduleName of [
     'ingest-channel-optimized-entry.js',
     'minute-enrichment-optimized-entry.js',
     'pages-read-model-entry.js',
     'runtime-queue.js',
+    'runtime-scheduled.js',
+    'pages-read-model-scheduled-dispatch.js',
   ]) {
     assert.match(runtimeEntry, new RegExp(`import\\('./${moduleName.replaceAll('.', '\\.')}'\\)`));
+    assert.doesNotMatch(runtimeEntry, new RegExp(`from './${moduleName.replaceAll('.', '\\.')}'`));
   }
   assert.doesNotMatch(runtimeEntry, /from '\.\/ingest-channel-optimized-entry\.js'/);
   assert.doesNotMatch(runtimeEntry, /from '\.\/minute-enrichment-optimized-entry\.js'/);
