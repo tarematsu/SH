@@ -20,21 +20,29 @@ test('runtime orchestration retains the narrow raw collection surface', () => {
   assert.doesNotMatch(entry, /export default \{[^}]*\bfetch\s*:/s);
 });
 
-test('buddies ingest uses one-message switch dispatch and no HTTP handler', () => {
-  const ingest = config('../wrangler.ingest.jsonc');
+test('core Worker uses one-message ingest switch dispatch and no ingest HTTP handler', () => {
+  const runtime = config('../wrangler.runtime.jsonc');
   const entry = source('../src/ingest-channel-optimized-entry.js');
-  assert.equal(ingest.main, 'src/ingest-channel-optimized-entry.js');
-  assert.equal(ingest.queues.consumers.every(({ max_batch_size }) => max_batch_size === 1), true);
+  const queues = [
+    'stationhead-raw-collection',
+    'stationhead-ingest-finalize',
+    'stationhead-comments',
+    'stationhead-buddies-persist',
+  ];
+  for (const queue of queues) {
+    const consumer = runtime.queues.consumers.find((item) => item.queue === queue);
+    assert.equal(consumer.max_batch_size, 1, queue);
+  }
   assert.match(entry, /const message = messages\[0\]/);
   assert.match(entry, /switch \(type\)/);
   assert.match(entry, /const EMPTY_DEPENDENCIES = Object\.freeze/);
   assert.doesNotMatch(entry, /fetch\s*\(/);
 });
 
-test('persist and comments are lazy Queue lanes of the ingest Worker', () => {
-  const ingest = config('../wrangler.ingest.jsonc');
+test('persist and comments remain lazy Queue lanes of the core Worker', () => {
+  const runtime = config('../wrangler.runtime.jsonc');
   const entry = source('../src/ingest-channel-optimized-entry.js');
-  const consumers = new Map(ingest.queues.consumers.map((consumer) => [consumer.queue, consumer]));
+  const consumers = new Map(runtime.queues.consumers.map((consumer) => [consumer.queue, consumer]));
   for (const queue of ['stationhead-comments', 'stationhead-buddies-persist']) {
     assert.equal(consumers.get(queue).max_batch_size, 1);
     assert.equal(consumers.get(queue).max_concurrency, 1);
