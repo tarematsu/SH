@@ -3,7 +3,7 @@ import { runSplitTrackHistoryCycleStep } from './pages-track-history-split-cycle
 const MINUTE_MS = 60_000;
 const HOUR_MS = 60 * MINUTE_MS;
 const CYCLE_MS = 6 * HOUR_MS;
-const TRACK_HISTORY_WINDOW_MINUTES = 175;
+const TRACK_HISTORY_WINDOW_MINUTES = 355;
 const EMPTY_DEPENDENCIES = Object.freeze({});
 
 let sixHourModulePromise;
