@@ -107,6 +107,21 @@ test('heartbeat metadata changes bypass cadence suppression', async () => {
   resetD1OptimizerState(db);
 });
 
+test('heartbeat checkpoints every thirty minutes', async () => {
+  const db = fakeDb();
+  let now = 1_000;
+  const write = () => withDuplicateVelocityReadRemoved({ DB: db }, () => now)
+    .DB.prepare(HEARTBEAT_SQL)
+    .bind('worker', now, now, 'host', '1.0.0', '{}').run();
+  await write();
+  now += 29 * 60_000;
+  assert.equal((await write()).meta.skip_reason, 'heartbeat-cadence');
+  now += 60_000;
+  await write();
+  assert.equal(db.calls.filter((call) => call.type === 'run').length, 2);
+  resetD1OptimizerState(db);
+});
+
 test('repeated failure-state clears skip D1 until a new failure is written', async () => {
   const db = fakeDb();
   let now = 1_000;
@@ -126,7 +141,7 @@ test('repeated failure-state clears skip D1 until a new failure is written', asy
   resetD1OptimizerState(db);
 });
 
-test('collector state read is cached for five minutes across cron invocations', async () => {
+test('collector state read is cached for twenty minutes across cron invocations', async () => {
   const row = {
     auth_token: 'token', device_uid: 'device', token_expires_at: 99,
     last_run_at: 10, last_success_at: 10, last_error: null,
@@ -136,7 +151,7 @@ test('collector state read is cached for five minutes across cron invocations', 
   let now = 1_000;
   const first = await withDuplicateVelocityReadRemoved({ DB: db }, () => now)
     .DB.prepare(STATE_READ_SQL).first();
-  now += 60_000;
+  now += 19 * 60_000;
   const second = await withDuplicateVelocityReadRemoved({ DB: db }, () => now)
     .DB.prepare(STATE_READ_SQL).first();
 
@@ -179,7 +194,7 @@ test('auth state saves always execute and invalidate the collector state cache',
   resetD1OptimizerState(db);
 });
 
-test('collector state timestamps checkpoint every five minutes', async () => {
+test('collector state timestamps checkpoint every twenty minutes', async () => {
   const db = fakeDb();
   let now = 1_000;
   const write = (lastRun, lastSuccess, error = null) => withDuplicateVelocityReadRemoved({ DB: db }, () => now)
@@ -193,7 +208,7 @@ test('collector state timestamps checkpoint every five minutes', async () => {
   assert.equal(skipped.meta.skip_reason, 'collector-state-checkpoint');
   assert.equal(db.calls.filter((call) => call.type === 'run').length, 1);
 
-  now += 5 * 60_000;
+  now += 20 * 60_000;
   await write(now, now);
   assert.equal(db.calls.filter((call) => call.type === 'run').length, 2);
   resetD1OptimizerState(db);
