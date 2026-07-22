@@ -7,6 +7,12 @@ import {
   CLEAR_COMPLETED_MINUTE_FACT_PAYLOADS_SQL,
   COMPLETE_MINUTE_FACT_JOB_SQL,
 } from '../src/minute-facts-inbox.js';
+import {
+  payloadPurgeBatch,
+  payloadPurgeStatement,
+  purgeCompletedMinuteFactPayloads,
+  summarizePurgeBatch,
+} from '../scripts/purge-completed-minute-fact-payloads.mjs';
 
 const migration = readFileSync(
   new URL('../../database/facts-migrations/028_purge_completed_minute_fact_payloads.sql', import.meta.url),
@@ -43,13 +49,24 @@ function database() {
   return db;
 }
 
-test('database workflow purges every eligible existing payload in one job using bounded statements', () => {
+function response(result, options = {}) {
+  return {
+    ok: options.ok ?? true,
+    status: options.status ?? 200,
+    async json() {
+      return options.body ?? { success: true, result };
+    },
+  };
+}
+
+test('database workflow drains every eligible payload through batched D1 API requests', () => {
   assert.doesNotMatch(migration, /UPDATE sh_minute_fact_jobs\s+SET payload_json='\{\}'\s+WHERE status='done'/);
-  assert.match(purgeScript, /while \(batches < maxBatches\)/);
-  assert.match(purgeScript, /LIMIT \$\{batchSize\}/);
-  assert.match(purgeScript, /if \(cleared < batchSize\) break/);
-  assert.match(purgeScript, /firstEligibleJobId/);
-  assert.match(purgeScript, /remainingEligibleJobId != null/);
+  assert.match(purgeScript, /api\.cloudflare\.com\/client\/v4\/accounts/);
+  assert.match(purgeScript, /payloadPurgeBatch/);
+  assert.match(purgeScript, /statementsPerRequest/);
+  assert.match(purgeScript, /minute_fact_payload_purge_retry/);
+  assert.doesNotMatch(purgeScript, /execFileSync|wranglerScript/);
+  assert.doesNotMatch(purgeScript, /RETURNING id/);
   assert.doesNotMatch(purgeScript, /SUM\(LENGTH\(payload_json\)\)/);
   assert.match(databaseWorkflow, /name: Purge completed minute fact payloads/);
   assert.match(databaseWorkflow, /node scripts\/purge-completed-minute-fact-payloads\.mjs/);
@@ -57,6 +74,82 @@ test('database workflow purges every eligible existing payload in one job using 
   assert.match(databaseWorkflow, /inputs\.operation == 'payload-purge'/);
   assert.match(databaseWorkflow, /name: Drain existing stationhead-minute payload backlog/);
   assert.match(databaseWorkflow, /name: Drain all eligible payload backlog/);
+  assert.match(databaseWorkflow, /MINUTE_FACT_PAYLOAD_PURGE_BATCH_SIZE: '1000'/);
+  assert.match(databaseWorkflow, /MINUTE_FACT_PAYLOAD_PURGE_STATEMENTS_PER_REQUEST: '20'/);
+  assert.match(databaseWorkflow, /payload-purge:[\s\S]*?timeout-minutes: 120/);
+});
+
+test('payload purge request contains bounded updates and stops after a partial statement', () => {
+  const sql = payloadPurgeStatement(1000);
+  assert.match(sql, /LIMIT 1000/);
+  assert.match(sql, /status='done'/);
+  assert.match(sql, /NOT EXISTS/);
+  assert.doesNotMatch(sql, /RETURNING/);
+
+  const payload = payloadPurgeBatch(1000, 3);
+  assert.equal(payload.batch.length, 3);
+  assert.ok(payload.batch.every((entry) => entry.sql === sql));
+  assert.deepEqual(
+    summarizePurgeBatch([
+      { meta: { changes: 1000 } },
+      { meta: { changes: 250 } },
+      { meta: { changes: 0 } },
+    ], 1000),
+    { cleared: 1250, completed: true, statements: 3 },
+  );
+});
+
+test('one purge invocation drains multiple statements and verifies completion', async () => {
+  const calls = [];
+  const fetchImpl = async (url, request) => {
+    const payload = JSON.parse(request.body);
+    calls.push({ url, request, payload });
+    if (calls.length === 1) {
+      return response([
+        { success: true, results: [], meta: { changes: 1000 } },
+        { success: true, results: [], meta: { changes: 1000 } },
+        { success: true, results: [], meta: { changes: 250 } },
+      ]);
+    }
+    return response([
+      { success: true, results: [], meta: { changes: 0 } },
+      { success: true, results: [{ id: 99 }], meta: { changes: 0 } },
+    ]);
+  };
+
+  const summary = await purgeCompletedMinuteFactPayloads({
+    accountId: 'account',
+    apiToken: 'token',
+    databaseId: 'database',
+    databaseName: 'stationhead-minute',
+    batchSize: 1000,
+    statementsPerRequest: 3,
+    maxBatches: 10,
+    maxAttempts: 1,
+    fetchImpl,
+  });
+
+  assert.equal(calls.length, 2);
+  assert.equal(
+    calls[0].url,
+    'https://api.cloudflare.com/client/v4/accounts/account/d1/database/database/query',
+  );
+  assert.equal(calls[0].request.headers.authorization, 'Bearer token');
+  assert.equal(calls[0].payload.batch.length, 3);
+  assert.equal(calls[1].payload.batch.length, 2);
+  assert.deepEqual(summary, {
+    ok: true,
+    event: 'minute_fact_payload_purge_complete',
+    database_name: 'stationhead-minute',
+    database_id: 'database',
+    batch_size: 1000,
+    statements_per_request: 3,
+    requests: 1,
+    batches: 3,
+    cleared_jobs: 2250,
+    remaining_eligible_job_id: null,
+    blocked_revision_payloads_remain: true,
+  });
 });
 
 test('bounded purge clears completed payloads and waits for incomplete revisions', () => {
