@@ -10,6 +10,10 @@ const migration = readFileSync(
   new URL('../database/facts-migrations/025_d1_budget_hotpath_index.sql', import.meta.url),
   'utf8',
 );
+const publicationCursorMigration = readFileSync(
+  new URL('../database/facts-migrations/029_track_history_publication_cursor_index.sql', import.meta.url),
+  'utf8',
+);
 const prSchema = readFileSync(
   new URL('../worker/scripts/apply-facts-pr-schema.mjs', import.meta.url),
   'utf8',
@@ -24,6 +28,7 @@ const expectedMigrations = [
   'database/facts-migrations/026_remove_apple_music_compatibility.sql',
   'database/facts-migrations/027_purge_retired_api_read_models.sql',
   'database/facts-migrations/028_purge_completed_minute_fact_payloads.sql',
+  'database/facts-migrations/029_track_history_publication_cursor_index.sql',
 ];
 
 test('PR deployment applies the ordered FACTS migration set through the current schema tip', () => {
@@ -38,6 +43,10 @@ test('PR deployment applies the ordered FACTS migration set through the current 
     /ON sh_minute_facts\(\s*source_code,\s*minute_at DESC,\s*id DESC,\s*channel_id,\s*observed_at,\s*is_broadcasting\s*\)/s,
   );
   assert.match(migration, /ON sh_minute_fact_jobs\(status, job_kind, minute_at, id\)/);
+  assert.match(
+    publicationCursorMigration,
+    /ON sh_pages_track_history_read_model\(\s*play_date,\s*COALESCE\(first_played_at,-1\),\s*row_key\s*\)/s,
+  );
 });
 
 test('production keeps historical reconstruction serialized for measured daily budgets', () => {
