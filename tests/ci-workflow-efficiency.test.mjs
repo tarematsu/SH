@@ -18,7 +18,6 @@ const ci = workflow('ci.yml');
 const productionDeploy = workflow('deploy-split-pipeline.yml');
 const d1Usage = workflow('fetch-cloudflare-d1-usage.yml');
 const observability = workflow('fetch-cloudflare-observability.yml');
-const hourlyCpu = workflow('fetch-cloudflare-observability-hourly.yml');
 const sitePackage = JSON.parse(readFileSync(new URL('../site/package.json', import.meta.url), 'utf8'));
 const workerDependencyGuard = readFileSync(
   new URL('../site/scripts/ensure-worker-test-deps.mjs', import.meta.url),
@@ -80,13 +79,22 @@ test('the single production deployment workflow caches Pages and Worker dependen
   assert.match(productionDeploy, /npm ci --prefer-offline/);
 });
 
-test('production checks run only for runtime or schema changes', () => {
-  for (const source of [d1Usage, observability, hourlyCpu]) {
-    assert.doesNotMatch(source, /^\s*- ["']worker\/\*\*["']\s*$/m);
-    assert.doesNotMatch(source, /^\s*- ["']\.github\/(?:workflows|scripts)\//m);
-    assert.match(source, /worker\/src\/\*\*/);
-    assert.match(source, /worker\/wrangler\*\.jsonc/);
-  }
+test('D1 production checks run only for runtime or schema changes', () => {
+  assert.doesNotMatch(d1Usage, /^\s*- ["']worker\/\*\*["']\s*$/m);
+  assert.doesNotMatch(d1Usage, /^\s*- ["']\.github\/(?:workflows|scripts)\//m);
+  assert.match(d1Usage, /worker\/src\/\*\*/);
+  assert.match(d1Usage, /worker\/wrangler\*\.jsonc/);
   assert.match(d1Usage, /worker-insights-/);
   assert.match(d1Usage, /uses: actions\/cache@v4/);
+});
+
+test('Cloudflare observability runs for every PR and main push without R2 polling', () => {
+  assert.match(observability, /^  pull_request:\n/m);
+  assert.match(observability, /^  push:\n/m);
+  assert.match(observability, /branches: \[main\]/);
+  assert.match(observability, /secrets\.CLOUDFLARE_BUILDS_API_TOKEN/);
+  assert.match(observability, /query-cloudflare-observability\.py/);
+  assert.doesNotMatch(observability, /R2_BUCKET|AWS_ACCESS_KEY_ID|aws s3api/);
+  assert.doesNotMatch(observability, /^  schedule:\n/m);
+  assert.doesNotMatch(observability, /actions\/upload-artifact/);
 });
