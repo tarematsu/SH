@@ -1,11 +1,11 @@
 export const ACTIVE_WORKER_NAMES = Object.freeze([
-  'sh-buddies-ingest',
-  'sh-minute-enrichment',
   'sh-sakurazaka46jp',
   'sh-runtime-orchestrator',
 ]);
 
 export const RETIRED_WORKER_NAMES = Object.freeze([
+  'sh-buddies-ingest',
+  'sh-minute-enrichment',
   'sh-monitor-other',
   'sh-buddies-monitor',
   'sh-buddies-persist',

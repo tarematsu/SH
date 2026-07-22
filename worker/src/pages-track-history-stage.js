@@ -126,7 +126,7 @@ export async function loadTrackHistoryStage(db) {
 export async function saveTrackHistoryPayload(db, key, payload, now) {
   await db.prepare(`INSERT INTO sh_pages_payload_read_model(model_key,payload_json,updated_at)
     VALUES(?,?,?) ON CONFLICT(model_key) DO UPDATE SET
-      payload_json=excluded.payload_json,updated_at=excluded.updated_at`)
+    payload_json=excluded.payload_json,updated_at=excluded.updated_at`)
     .bind(key, JSON.stringify(payload), now).run();
 }
 
@@ -134,7 +134,7 @@ export function saveTrackHistoryStage(db, stage, now) {
   return saveTrackHistoryPayload(db, TRACK_HISTORY_STAGE_KEY, stage, now);
 }
 
-async function materializeTrackHistoryDay(sourceDb, targetDb, range, now) {
+async function materializeTrackHistoryDay(sourceDb, targetDb, range, now, options = {}) {
   const { result, likeRows } = await loadTrackHistoryData(
     boundedTrackHistoryDatabase(sourceDb),
     range.fromTs,
@@ -152,6 +152,7 @@ async function materializeTrackHistoryDay(sourceDb, targetDb, range, now) {
   const rows = completed.rows;
   const fromDay = dayText(range.fromTs);
   const toDay = dayText(range.toTs - 1);
+  const generation = validTimestamp(options.generation) ?? now;
   const statements = rows.map((row) => targetDb.prepare(`INSERT INTO sh_pages_track_history_read_model(
       row_key,play_date,first_played_at,row_json,updated_at
     ) VALUES(?,?,?,?,?) ON CONFLICT(row_key) DO UPDATE SET
@@ -164,14 +165,17 @@ async function materializeTrackHistoryDay(sourceDb, targetDb, range, now) {
       row.play_date,
       Number(row.first_played_at || row.played_at || 0) || null,
       JSON.stringify(row),
-      now,
+      generation,
     ));
   for (let offset = 0; offset < statements.length; offset += 100) {
     await targetDb.batch(statements.slice(offset, offset + 100));
   }
-  await targetDb.prepare(`DELETE FROM sh_pages_track_history_read_model
-    WHERE play_date>=? AND play_date<=? AND updated_at<>?`)
-    .bind(fromDay, toDay, now).run();
+  const cleanupDay = options.cleanupDay !== false;
+  if (cleanupDay) {
+    await targetDb.prepare(`DELETE FROM sh_pages_track_history_read_model
+      WHERE play_date>=? AND play_date<=? AND updated_at<>?`)
+      .bind(fromDay, toDay, generation).run();
+  }
   return {
     from: fromDay,
     to: toDay,
@@ -179,6 +183,7 @@ async function materializeTrackHistoryDay(sourceDb, targetDb, range, now) {
     groupedRows: groupedRows.length,
     sourceRowCount: groupedRows.reduce((sum, row) => sum + (Number(row.play_count) || 0), 0),
     excludedDates: completed.excludedDates,
+    cleanupDay,
   };
 }
 
@@ -281,7 +286,16 @@ export async function runLateTrackHistoryShard(env, stage, timestamp, dependenci
   const nextTask = stage.tasks.find((task) => !stage.completed?.[task.id]);
   if (!nextTask) return null;
   const refreshDay = dependencies.refreshDay || materializeTrackHistoryDay;
-  const result = await refreshDay(env.BUDDIES_DB, env.MINUTE_DB, nextTask.range, timestamp);
+  const result = await refreshDay(
+    env.BUDDIES_DB,
+    env.MINUTE_DB,
+    nextTask.range,
+    timestamp,
+    {
+      generation: stage.generation,
+      cleanupDay: nextTask.cleanup_day !== false,
+    },
+  );
   stage.completed = { ...(stage.completed || {}), [nextTask.id]: result };
   stage.updated_at = timestamp;
   const save = dependencies.saveStage || saveTrackHistoryStage;

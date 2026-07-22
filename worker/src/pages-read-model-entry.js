@@ -1,5 +1,7 @@
 import './fetch-guard.js';
 import { materializedResponseMaximumAge } from '../../site/functions/lib/api-contract.js';
+import { runDispatchedPagesReadModelTask } from './pages-read-model-dispatch.js';
+import { processTrackHistoryPublicationTask } from './pages-track-history-publication-queue.js';
 
 export const PAGES_READ_MODEL_CRON = '* * * * *';
 export const MINUTE_READ_MODEL_QUEUE = 'stationhead-read-model';
@@ -10,18 +12,12 @@ const EMPTY_DEPENDENCIES = Object.freeze({});
 const JSON_QUEUE_SEND_OPTIONS = Object.freeze({ contentType: 'json' });
 const INTERNAL_RESPONSE_PATH = '/_internal/pages-response';
 const MINUTE_MS = 60_000;
-const PAGES_CYCLE_MINUTES = 6 * 60;
+const PAGES_CYCLE_MINUTES = 24 * 60;
+const VARIANT_CADENCE_MINUTES = 6 * 60;
 
-let publicationModulePromise;
-let cronModulePromise;
 let readModelQueueModulePromise;
 let responseR2ModulePromise;
 let responseStoreModulePromise;
-
-function loadCronModule() {
-  cronModulePromise ||= import('./pages-read-model-dispatch.js');
-  return cronModulePromise;
-}
 
 function loadReadModelQueueModule() {
   readModelQueueModulePromise ||= import('./read-model-entry.js');
@@ -36,11 +32,6 @@ function loadResponseR2Module() {
 function loadResponseStoreModule() {
   responseStoreModulePromise ||= import('./pages-response-store.js');
   return responseStoreModulePromise;
-}
-
-function loadPublicationModule() {
-  publicationModulePromise ||= import('./pages-track-history-publication-queue.js');
-  return publicationModulePromise;
 }
 
 function scheduledTimestamp(controller) {
@@ -58,13 +49,16 @@ function cycleMinute(timestamp) {
 }
 
 export function pagesVariantDispatchDue(timestamp) {
-  switch (cycleMinute(timestamp)) {
+  const minute = cycleMinute(timestamp);
+  const slotMinute = minute % VARIANT_CADENCE_MINUTES;
+  switch (slotMinute) {
     case 35:
-    case 50:
     case 70:
     case 105:
     case 140:
       return true;
+    case 50:
+      return minute === 50;
     default:
       return false;
   }
@@ -239,8 +233,7 @@ export async function runPagesReadModelCron(controller, env, dependencies = EMPT
   if (!dependencies.runTask && pagesVariantDispatchDue(now)) {
     return dispatchPagesVariant(env, now, dependencies);
   }
-  const runTask = dependencies.runTask
-    || (await loadCronModule()).runDispatchedPagesReadModelTask;
+  const runTask = dependencies.runTask || runDispatchedPagesReadModelTask;
   return assertRefreshSucceeded(await runTask(env, now, dependencies));
 }
 
@@ -252,8 +245,7 @@ function dispatchedPagesTask(body) {
 
 async function processDispatchedPagesTask(message, env, dependencies) {
   try {
-    const runTask = dependencies.runTask
-      || (await loadCronModule()).runDispatchedPagesReadModelTask;
+    const runTask = dependencies.runTask || runDispatchedPagesReadModelTask;
     const result = assertRefreshSucceeded(await runTask(
       env,
       scheduledTimestamp({ scheduledTime: message.body.scheduled_at }),
@@ -285,7 +277,7 @@ export async function runPagesReadModelQueue(batch, env, dependencies = EMPTY_DE
     return runMinuteReadModel(batch, env);
   }
   const processPublication = dependencies.processTrackHistoryPublicationTask
-    || (await loadPublicationModule()).processTrackHistoryPublicationTask;
+    || processTrackHistoryPublicationTask;
   try {
     const result = await processPublication(env, message.body, dependencies);
     console.log(JSON.stringify(result));

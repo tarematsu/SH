@@ -6,17 +6,22 @@ import { runSplitTrackHistoryCycleStep } from './pages-track-history-split-cycle
 import { saveMaterializedResponse } from './pages-response-store.js';
 
 const MINUTE_MS = 60_000;
-export const PAGES_READ_MODEL_CYCLE_MINUTES = 6 * 60;
+const VARIANT_CADENCE_MINUTES = 6 * 60;
+export const PAGES_READ_MODEL_CYCLE_MINUTES = 24 * 60;
 export const PAGES_READ_MODEL_CYCLE_MS = PAGES_READ_MODEL_CYCLE_MINUTES * MINUTE_MS;
-export const TRACK_HISTORY_WINDOW_MINUTES = 175;
+export const TRACK_HISTORY_WINDOW_MINUTES = PAGES_READ_MODEL_CYCLE_MINUTES - 5;
 
-const CYCLE_SLOT_TASKS = new Map([
-  [35, 'history:daily'],
-  [50, 'host-history:summary'],
-  [70, 'history:weekly'],
-  [105, 'history:monthly'],
-  [140, 'history:broadcasts'],
-]);
+function cycleSlotKey(cycleMinute) {
+  const slotMinute = cycleMinute % VARIANT_CADENCE_MINUTES;
+  switch (slotMinute) {
+    case 35: return 'history:daily';
+    case 50: return cycleMinute === 50 ? 'host-history:summary' : null;
+    case 70: return 'history:weekly';
+    case 105: return 'history:monthly';
+    case 140: return 'history:broadcasts';
+    default: return null;
+  }
+}
 
 function validTimestamp(value, fallback = Date.now()) {
   const timestamp = Number(value);
@@ -42,7 +47,7 @@ function backgroundTask(cycleMinute, cycleStart) {
   }
   return {
     kind: 'idle',
-    key: 'six-hour-cycle-idle',
+    key: 'pages-read-model-cycle-idle',
     cycle_minute: cycleMinute,
     cycle_start: cycleStart,
   };
@@ -51,11 +56,8 @@ function backgroundTask(cycleMinute, cycleStart) {
 export function pagesSixHourTask(now = Date.now()) {
   const timestamp = validTimestamp(now);
   const { cycleStart, cycleMinute } = cyclePosition(timestamp);
-  const key = CYCLE_SLOT_TASKS.get(cycleMinute) || null;
+  const key = cycleSlotKey(cycleMinute);
   if (!key) return backgroundTask(cycleMinute, cycleStart);
-  if (key === 'host-history:summary' && new Date(cycleStart).getUTCHours() !== 0) {
-    return backgroundTask(cycleMinute, cycleStart);
-  }
   return {
     kind: 'variant',
     key,
@@ -75,14 +77,14 @@ function pagesEnvironment(env = {}) {
 
 function variantByKey(key) {
   const variant = MATERIALIZED_API_VARIANTS.find((item) => item.key === key);
-  if (!variant) throw new Error(`unsupported six-hour Pages task: ${key}`);
+  if (!variant) throw new Error(`unsupported Pages task: ${key}`);
   return variant;
 }
 
 async function responseHandler(modelKey) {
   if (modelKey.startsWith('history:')) return (await import('../../site/functions/api/history.js')).onRequestGet;
   if (modelKey === 'host-history:summary') return (await import('../../site/functions/api/host-history.js')).onRequestGet;
-  throw new Error(`unsupported six-hour Pages variant: ${modelKey}`);
+  throw new Error(`unsupported Pages variant: ${modelKey}`);
 }
 
 async function renderVariant(variant, env, dependencies = {}) {
@@ -149,7 +151,7 @@ export async function runPagesSixHourTask(env, now = Date.now(), dependencies = 
   if (task.kind === 'idle') {
     return {
       skipped: true,
-      reason: 'six-hour-cycle-idle',
+      reason: 'pages-read-model-cycle-idle',
       generated_at: timestamp,
       task,
       responses: [],

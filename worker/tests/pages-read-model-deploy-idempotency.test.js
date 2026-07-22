@@ -3,7 +3,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import test from 'node:test';
 
 const source = readFileSync(
-  new URL('../scripts/deploy-minute-enrichment.mjs', import.meta.url),
+  new URL('../scripts/deploy-runtime.mjs', import.meta.url),
   'utf8',
 );
 const workerApi = readFileSync(
@@ -11,11 +11,15 @@ const workerApi = readFileSync(
   'utf8',
 );
 
-test('read-model redeploy rollback preserves a pre-existing consolidated consumer', () => {
-  assert.match(source, /consolidatedBefore: hasConsumer\(spec\.queue, consolidatedScript\)/);
-  assert.match(source, /if \(!migration\.consolidatedBefore && hasConsumer\(migration\.queue, consolidatedScript\)\)/);
+test('read-model cutover rollback preserves pre-existing runtime consumers', () => {
+  assert.match(source, /runtimeConsumers = new Set/);
+  assert.match(source, /if \(!runtimeConsumers\.has\(migration\.queue\)/);
+  assert.match(source, /restoreConsumer\(migration\)/);
+  assert.match(source, /stationhead-pages-read-model-publication/);
+  assert.match(source, /stationhead-read-model/);
   assert.doesNotMatch(source, /capture: true, allowFailure: true/);
   assert.equal(existsSync(new URL('../scripts/deploy-pages-read-model.mjs', import.meta.url)), false);
+  assert.equal(existsSync(new URL('../scripts/deploy-minute-enrichment.mjs', import.meta.url)), false);
 });
 
 test('read-model retirement API calls have a bounded timeout', () => {

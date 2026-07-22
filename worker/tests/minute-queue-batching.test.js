@@ -91,18 +91,19 @@ test('derive isolation composes with the merged CPU, KV, and Worker topology con
     new URL('../scripts/pages-response-kv-namespace.mjs', import.meta.url),
     'utf8',
   );
-  const enrichment = config('wrangler.minute-enrichment.jsonc');
+  const runtime = config('wrangler.runtime.jsonc');
   assert.match(budget, /BUDGET_MS = 10\.0/);
   assert.match(budget, /"comparison": "less_than_or_equal"/);
   assert.match(pagesKv, /NAMESPACE_PAGE_SIZE = 1000/);
-  assert.deepEqual(
-    enrichment.queues.consumers.map(({ queue }) => queue).sort(),
-    [
-      'stationhead-minute-enrichment',
-      'stationhead-pages-read-model-publication',
-      'stationhead-read-model',
-      'stationhead-track-metadata',
-    ],
-  );
+  const consumers = new Set(runtime.queues.consumers.map(({ queue }) => queue));
+  for (const queue of [
+    'stationhead-minute-enrichment',
+    'stationhead-pages-read-model-publication',
+    'stationhead-read-model',
+    'stationhead-track-metadata',
+  ]) {
+    assert.equal(consumers.has(queue), true, queue);
+  }
   assert.equal(existsSync(new URL('../wrangler.track-metadata.jsonc', import.meta.url)), false);
+  assert.equal(existsSync(new URL('../wrangler.minute-enrichment.jsonc', import.meta.url)), false);
 });

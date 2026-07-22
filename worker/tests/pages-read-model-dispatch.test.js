@@ -9,13 +9,15 @@ import { pagesSixHourTask } from '../src/pages-six-hour-read-model.js';
 
 const cycleStart = Date.UTC(2026, 6, 18, 0, 0, 0);
 
-test('lightweight Pages dispatch preserves reserved six-hour slot selection', () => {
-  for (const minute of [0, 1, 35, 50, 59, 70, 105, 140, 175, 210, 245, 246, 359]) {
+ test('lightweight Pages dispatch matches the daily scheduler', () => {
+  for (const minute of [0, 1, 35, 50, 59, 70, 105, 140, 175, 395, 410, 430, 790, 1150, 1434, 1435, 1439]) {
     const now = cycleStart + minute * 60_000;
     assert.deepEqual(pagesReadModelTask(now), pagesSixHourTask(now));
   }
   assert.equal(pagesReadModelTask(cycleStart + 60 * 60_000).kind, 'track-history-step');
-  assert.equal(pagesReadModelTask(cycleStart + 174 * 60_000).kind, 'track-history-step');
+  assert.equal(pagesReadModelTask(cycleStart + 1_000 * 60_000).kind, 'track-history-step');
+  assert.equal(pagesReadModelTask(cycleStart + 395 * 60_000).key, 'history:daily');
+  assert.equal(pagesReadModelTask(cycleStart + 410 * 60_000).kind, 'track-history-step');
 });
 
 test('track-history minutes call only the injected stage or recovery runner', async () => {
@@ -37,8 +39,8 @@ test('track-history minutes call only the injected stage or recovery runner', as
 });
 
 test('idle Pages minutes return without loading a materializer', async () => {
-  const now = cycleStart + 176 * 60_000;
+  const now = cycleStart + 1_436 * 60_000;
   const result = await runDispatchedPagesReadModelTask({}, now);
   assert.equal(result.skipped, true);
-  assert.equal(result.reason, 'six-hour-cycle-idle');
+  assert.equal(result.reason, 'pages-read-model-cycle-idle');
 });

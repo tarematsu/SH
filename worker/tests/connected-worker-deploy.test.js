@@ -12,10 +12,11 @@ import {
 import { WRANGLER_SCRIPT } from '../scripts/wrangler-command.mjs';
 
 const RUNTIME = 'sh-runtime-orchestrator';
+const SAKURAZAKA = 'sh-sakurazaka46jp';
 
 test('connected deploy decision skips an unaffected runtime Worker', () => {
   assert.deepEqual(
-    connectedDeployDecision(RUNTIME, ['worker/src/runtime-queue.js'], ['sh-minute-enrichment']),
+    connectedDeployDecision(RUNTIME, ['worker/src/sakurazaka-monitor.js'], [SAKURAZAKA]),
     { deploy: false, reason: 'worker-unaffected', workerName: RUNTIME },
   );
 });
@@ -139,8 +140,8 @@ test('unaffected connected build exits without invoking Wrangler', async () => {
   let spawned = false;
   const result = await deployConnectedWorker({
     workerName: RUNTIME,
-    changedPaths: ['worker/src/runtime-queue.js'],
-    selectedWorkers: ['sh-minute-enrichment'],
+    changedPaths: ['worker/src/sakurazaka-monitor.js'],
+    selectedWorkers: [SAKURAZAKA],
     spawnSync() { spawned = true; return { status: 0 }; },
   });
   assert.equal(result.deploy, false);

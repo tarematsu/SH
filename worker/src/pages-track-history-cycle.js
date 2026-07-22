@@ -2,8 +2,9 @@ import { trackHistoryRefreshRanges } from './pages-track-history-support.js';
 
 const DAY_MS = 86_400_000;
 const MINUTE_MS = 60_000;
-export const TRACK_HISTORY_CYCLE_MS = 6 * 60 * MINUTE_MS;
-export const TRACK_HISTORY_ACTIVE_MINUTES = 60;
+export const TRACK_HISTORY_CYCLE_MS = DAY_MS;
+export const TRACK_HISTORY_SHARD_MS = 3 * 60 * MINUTE_MS;
+export const TRACK_HISTORY_ACTIVE_MINUTES = 24 * 60 - 5;
 export const TRACK_HISTORY_STAGE_KEY = 'track-history-cycle-stage';
 const BACKFILL_KEY = 'track-history-backfill';
 const STATUS_KEY = 'track-history-status';
@@ -29,6 +30,10 @@ function dayText(timestamp) {
   return new Date(timestamp).toISOString().slice(0, 10);
 }
 
+function shardText(timestamp) {
+  return new Date(timestamp).toISOString().slice(0, 13);
+}
+
 function parsedPayload(row) {
   try {
     return row?.payload_json ? JSON.parse(row.payload_json) : null;
@@ -40,17 +45,18 @@ function parsedPayload(row) {
 export function splitTrackHistoryRange(range) {
   if (!range || !Number.isFinite(Number(range.fromTs)) || !Number.isFinite(Number(range.toTs))) return [];
   const ranges = [];
-  for (let fromTs = Number(range.fromTs); fromTs < Number(range.toTs); fromTs += DAY_MS) {
-    ranges.push({ fromTs, toTs: Math.min(Number(range.toTs), fromTs + DAY_MS) });
+  for (let fromTs = Number(range.fromTs); fromTs < Number(range.toTs); fromTs += TRACK_HISTORY_SHARD_MS) {
+    ranges.push({ fromTs, toTs: Math.min(Number(range.toTs), fromTs + TRACK_HISTORY_SHARD_MS) });
   }
   return ranges;
 }
 
 function stageTask(kind, range, index) {
   return {
-    id: `${kind}:${index}:${dayText(range.fromTs)}`,
+    id: `${kind}:${index}:${shardText(range.fromTs)}`,
     kind,
     range,
+    cleanup_day: Number(range.toTs) % DAY_MS === 0,
   };
 }
 
@@ -102,7 +108,7 @@ async function defaultLoadPayload(db, key) {
 async function defaultSavePayload(db, key, payload, now) {
   await db.prepare(`INSERT INTO sh_pages_payload_read_model(model_key,payload_json,updated_at)
     VALUES(?,?,?) ON CONFLICT(model_key) DO UPDATE SET
-      payload_json=excluded.payload_json,updated_at=excluded.updated_at`)
+    payload_json=excluded.payload_json,updated_at=excluded.updated_at`)
     .bind(key, JSON.stringify(payload), now).run();
 }
 

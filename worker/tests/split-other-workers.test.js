@@ -32,7 +32,7 @@ function queueMessage(body, events, prefix = '') {
   };
 }
 
-test('runtime Worker config owns only current orchestration boundaries', () => {
+test('runtime Worker config owns every non-Sakurazaka Queue boundary', () => {
   const worker = config('wrangler.runtime.jsonc');
   assert.equal(worker.name, 'sh-runtime-orchestrator');
   assert.equal(worker.main, 'src/runtime-orchestrator-entry.js');
@@ -43,6 +43,14 @@ test('runtime Worker config owns only current orchestration boundaries', () => {
     'OTHER_DB',
   ]);
   assert.deepEqual(worker.queues.consumers.map(({ queue }) => queue), [
+    'stationhead-raw-collection',
+    'stationhead-ingest-finalize',
+    'stationhead-comments',
+    'stationhead-buddies-persist',
+    'stationhead-minute-enrichment',
+    'stationhead-track-metadata',
+    'stationhead-pages-read-model-publication',
+    'stationhead-read-model',
     'stationhead-host-monitor',
     'stationhead-minute-derive',
     'stationhead-minute-live-derive',
@@ -52,6 +60,7 @@ test('runtime Worker config owns only current orchestration boundaries', () => {
   assert.equal(worker.queues.consumers.some(({ queue }) => queue === 'stationhead-buddy-playback'), false);
   assert.equal(worker.queues.producers.some(({ binding }) => binding === 'BUDDY_PLAYBACK_QUEUE'), false);
   assert.equal(worker.queues.producers.some(({ binding }) => binding === 'MINUTE_ENRICHMENT_QUEUE'), true);
+  assert.equal(worker.queues.producers.some(({ binding }) => binding === 'PAGES_READ_MODEL_QUEUE'), true);
   assert.equal(worker.vars.SNAPSHOT_RETENTION_ENABLED, true);
 });
 

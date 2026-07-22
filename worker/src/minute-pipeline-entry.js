@@ -1,5 +1,12 @@
 import { historicalRebuildEnabled } from './historical-rebuild-policy.js';
-import { processBudgetedLiveRevisionBatch } from './minute-live-revision-budget-entry.js';
+import {
+  budgetedLiveCompleteMessage,
+  processBudgetedLiveCompleteBatch,
+} from './minute-live-complete-budget-entry.js';
+import {
+  budgetedLiveRevisionMessage,
+  processBudgetedLiveRevisionBatch,
+} from './minute-live-revision-budget-entry.js';
 import { processBudgetedLiveTriggerBatch } from './minute-live-trigger-budget-entry.js';
 import { processBudgetedLiveWriteBatch } from './minute-live-write-budget-entry.js';
 import { consumeMinuteQueue } from './minute-production-entry.js';
@@ -18,33 +25,40 @@ async function processDeriveBatch(batch, env, dependencies) {
   return derive.processMinuteDeriveBatch(batch, env, dependencies);
 }
 
+function positiveInteger(value) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && Math.trunc(parsed) > 0 ? Math.trunc(parsed) : null;
+}
+
 function liveRevisionMaterializationEnabled(env = {}) {
   const value = env?.LIVE_REVISION_MATERIALIZATION_ENABLED;
   if (value == null || value === '') return historicalRebuildEnabled(env);
   return !['0', 'false', 'no', 'off'].includes(String(value).trim().toLowerCase());
 }
 
-function budgetedLiveTriggerBatch(batch, env) {
-  if (liveRevisionMaterializationEnabled(env)) return false;
+function triggerBatchKind(batch, jobKind) {
   const messages = batch?.messages || [];
   return messages.length > 0 && messages.every((message) => {
     const body = message?.body;
     return body?.message_type === 'minute-fact-derive'
-      && Number(body?.message_version) === 1;
+      && Number(body?.message_version) === 1
+      && String(body?.job_kind || 'live') === jobKind;
   });
+}
+
+function budgetedLiveTriggerBatch(batch, env) {
+  return !liveRevisionMaterializationEnabled(env) && triggerBatchKind(batch, 'live');
+}
+
+function rebuildTriggerBatch(batch) {
+  return triggerBatchKind(batch, 'rebuild');
 }
 
 function budgetedLiveRevisionBatch(batch, env) {
   if (liveRevisionMaterializationEnabled(env)) return false;
   const messages = batch?.messages || [];
-  return messages.length > 0 && messages.every((message) => {
-    const body = message?.body;
-    return body?.message_type === 'minute-fact-derive-stage'
-      && Number(body?.message_version) === 1
-      && body?.stage === 'revision-materialize'
-      && body?.revision?.sparse === true
-      && body?.revision?.rebuild !== true;
-  });
+  return messages.length > 0
+    && messages.every((message) => budgetedLiveRevisionMessage(message?.body));
 }
 
 function budgetedLiveWriteBatch(batch, env) {
@@ -55,8 +69,17 @@ function budgetedLiveWriteBatch(batch, env) {
     return body?.message_type === 'minute-fact-derive-stage'
       && Number(body?.message_version) === 1
       && (body?.stage === 'write' || body?.stage === 'budget-live-write')
+      && positiveInteger(body?.job?.id) != null
+      && String(body?.job?.job_kind || 'live') !== 'rebuild'
       && body?.payload?.rebuild !== true;
   });
+}
+
+function budgetedLiveCompleteBatch(batch, env) {
+  if (liveRevisionMaterializationEnabled(env)) return false;
+  const messages = batch?.messages || [];
+  return messages.length > 0
+    && messages.every((message) => budgetedLiveCompleteMessage(message?.body));
 }
 
 function rebuildEnvironment(env) {
@@ -72,12 +95,7 @@ function rebuildEnvironment(env) {
 
 async function processRebuildBatch(batch, env, ctx, dependencies) {
   const rebuild = await (rebuildModulePromise ||= import('./minute-rebuild-batched-entry.js'));
-  return rebuild.processMinuteRebuildBatch(
-    batch,
-    rebuildEnvironment(env),
-    ctx,
-    dependencies,
-  );
+  return rebuild.processMinuteRebuildBatch(batch, rebuildEnvironment(env), ctx, dependencies);
 }
 
 function acknowledgeDisabledHistoricalDerive(batch) {
@@ -89,11 +107,6 @@ function acknowledgeDisabledHistoricalDerive(batch) {
   }));
 }
 
-/**
- * Keep the minute Queue boundaries independent while sharing one deployment.
- * The small live stages remain preloaded; the full derive and rebuild graphs
- * are loaded only when a message genuinely needs those legacy/heavy paths.
- */
 export async function processMinutePipelineBatch(batch, env, ctx, dependencies = EMPTY_DEPENDENCIES) {
   const queueName = String(batch?.queue || '');
   if (queueName === MINUTE_FACTS_QUEUE_NAME) {
@@ -103,17 +116,28 @@ export async function processMinutePipelineBatch(batch, env, ctx, dependencies =
   if (queueName === REBUILD_DERIVE_QUEUE_NAME && !historicalRebuildEnabled(env)) {
     return acknowledgeDisabledHistoricalDerive(batch);
   }
+  if (queueName === LIVE_DERIVE_QUEUE_NAME && rebuildTriggerBatch(batch)) {
+    if (!historicalRebuildEnabled(env)) return acknowledgeDisabledHistoricalDerive(batch);
+    const rebuildBatch = { ...batch, queue: REBUILD_DERIVE_QUEUE_NAME };
+    const run = dependencies.processMinuteDeriveBatch;
+    if (run) return run(rebuildBatch, env, dependencies.derive);
+    return processDeriveBatch(rebuildBatch, env, dependencies.derive);
+  }
   if (queueName === LIVE_DERIVE_QUEUE_NAME && budgetedLiveTriggerBatch(batch, env)) {
     const run = dependencies.processBudgetedLiveTriggerBatch || processBudgetedLiveTriggerBatch;
     return run(batch, env, dependencies.liveTrigger);
   }
   if (queueName === LIVE_DERIVE_QUEUE_NAME && budgetedLiveRevisionBatch(batch, env)) {
     const run = dependencies.processBudgetedLiveRevisionBatch || processBudgetedLiveRevisionBatch;
-    return run(batch, env);
+    return run(batch, env, dependencies.liveRevision);
   }
   if (queueName === LIVE_DERIVE_QUEUE_NAME && budgetedLiveWriteBatch(batch, env)) {
     const run = dependencies.processBudgetedLiveWriteBatch || processBudgetedLiveWriteBatch;
     return run(batch, env, dependencies.liveWrite);
+  }
+  if (queueName === LIVE_DERIVE_QUEUE_NAME && budgetedLiveCompleteBatch(batch, env)) {
+    const run = dependencies.processBudgetedLiveCompleteBatch || processBudgetedLiveCompleteBatch;
+    return run(batch, env, dependencies.liveComplete);
   }
   if (queueName === REBUILD_DERIVE_QUEUE_NAME || queueName === LIVE_DERIVE_QUEUE_NAME) {
     const run = dependencies.processMinuteDeriveBatch;
@@ -128,9 +152,11 @@ export async function processMinutePipelineBatch(batch, env, ctx, dependencies =
 
 export {
   acknowledgeDisabledHistoricalDerive,
+  budgetedLiveCompleteBatch,
   budgetedLiveTriggerBatch,
   budgetedLiveRevisionBatch,
   budgetedLiveWriteBatch,
+  rebuildTriggerBatch,
 };
 
 export default {

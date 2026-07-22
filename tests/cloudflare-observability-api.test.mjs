@@ -23,8 +23,6 @@ const liveTailScript = readFileSync(
   'utf8',
 );
 const wranglerFiles = [
-  'wrangler.ingest.jsonc',
-  'wrangler.minute-enrichment.jsonc',
   'wrangler.sakurazaka46jp.jsonc',
   'wrangler.runtime.jsonc',
 ].map((name) => ({
@@ -38,7 +36,9 @@ test('observability uses measured hourly budgets and post-deploy Cloudflare API 
   assert.match(workflow, /^  schedule:\n/m);
   assert.doesNotMatch(workflow, /^  pull_request:\n/m);
   assert.doesNotMatch(workflow, /^  push:\n/m);
-  assert.match(workflow, /CLOUDFLARE_WORKERS: sh-buddies-ingest,sh-minute-enrichment,sh-sakurazaka46jp,sh-runtime-orchestrator/);
+  assert.match(workflow, /CLOUDFLARE_WORKERS: sh-sakurazaka46jp,sh-runtime-orchestrator/);
+  assert.doesNotMatch(workflow, /CLOUDFLARE_WORKERS:.*sh-buddies-ingest/);
+  assert.doesNotMatch(workflow, /CLOUDFLARE_WORKERS:.*sh-minute-enrichment/);
   assert.match(workflow, /secrets\.CLOUDFLARE_BUILDS_API_TOKEN/);
   assert.match(workflow, /audit-cloudflare-daily-usage\.py/);
   assert.match(workflow, /query-cloudflare-observability\.py/);

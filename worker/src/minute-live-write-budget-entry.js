@@ -7,6 +7,10 @@ function integer(value) {
   return Number.isFinite(parsed) ? Math.trunc(parsed) : null;
 }
 
+function invalidMessage(message) {
+  return Object.assign(new Error(message), { code: 'MINUTE_DERIVE_INVALID_TRIGGER' });
+}
+
 function activeQueueEnvironment(env) {
   const liveQueue = env?.MINUTE_LIVE_DERIVE_QUEUE;
   if (!liveQueue || env?.MINUTE_DERIVE_QUEUE === liveQueue) return env;
@@ -20,19 +24,23 @@ function activeQueueEnvironment(env) {
 }
 
 function validStageBody(body, stage) {
+  const jobId = integer(body?.job?.id);
   return body?.message_type === 'minute-fact-derive-stage'
     && Number(body?.message_version) === 1
     && body?.stage === stage
+    && jobId != null
+    && jobId > 0
+    && String(body?.job?.job_kind || 'live') !== 'rebuild'
     && body?.payload?.rebuild !== true;
 }
 
 function validatePayload(payload, payloadVersion = null) {
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
-    throw new Error('invalid durable minute fact payload');
+    throw invalidMessage('invalid durable minute fact payload');
   }
   const version = Number(payload.payload_version ?? payloadVersion ?? 1);
   if (version !== 1) {
-    throw new Error(`unsupported minute fact payload version: ${version}`);
+    throw invalidMessage(`unsupported minute fact payload version: ${version}`);
   }
   return payload;
 }
@@ -44,7 +52,9 @@ export async function loadDurableLivePayload(env, body, dependencies = {}) {
   }
   const jobId = integer(body?.job?.id);
   const db = env?.MINUTE_DB;
-  if (jobId == null || !db?.prepare) throw new Error('durable minute fact job identity is missing');
+  if (jobId == null || jobId <= 0 || !db?.prepare) {
+    throw invalidMessage('durable minute fact job identity is missing');
+  }
   const row = await db.prepare(`SELECT payload_json,payload_version
     FROM sh_minute_fact_jobs WHERE id=? LIMIT 1`).bind(jobId).first();
   if (!row) throw new Error(`minute fact job ${jobId} source payload is missing`);
@@ -52,7 +62,7 @@ export async function loadDurableLivePayload(env, body, dependencies = {}) {
   try {
     payload = JSON.parse(String(row.payload_json || ''));
   } catch (error) {
-    throw new Error(`invalid minute fact job payload: ${error?.message || error}`);
+    throw invalidMessage(`invalid minute fact job payload: ${error?.message || error}`);
   }
   return validatePayload(payload, row.payload_version ?? body?.job?.payload_version);
 }
@@ -140,7 +150,7 @@ export async function processBudgetedLiveWriteMessage(env, body, dependencies = 
   if (validStageBody(body, BUDGET_LIVE_WRITE_STAGE)) {
     return commitLiveWrite(activeEnv, body, dependencies);
   }
-  throw new Error('unsupported budgeted live write message');
+  throw invalidMessage('unsupported budgeted live write message');
 }
 
 export async function processBudgetedLiveWriteBatch(batch, env, dependencies = {}) {
@@ -154,7 +164,8 @@ export async function processBudgetedLiveWriteBatch(batch, env, dependencies = {
         stage: String(message?.body?.stage || ''),
         error: String(error?.message || error).slice(0, 800),
       }));
-      message.retry(RETRY_60_SECONDS);
+      if (error?.code === 'MINUTE_DERIVE_INVALID_TRIGGER') message.ack();
+      else message.retry(RETRY_60_SECONDS);
     }
   }
 }

@@ -9,7 +9,7 @@ const ranking = readFileSync(new URL('../functions/lib/track-ranking.js', import
 const trackStage = readFileSync(new URL('../../worker/src/pages-track-history-stage.js', import.meta.url), 'utf8');
 const publication = readFileSync(new URL('../../worker/src/pages-track-history-publication-queue.js', import.meta.url), 'utf8');
 const dispatch = readFileSync(new URL('../../worker/src/pages-read-model-dispatch.js', import.meta.url), 'utf8');
-const entry = readFileSync(new URL('../../worker/src/minute-enrichment-optimized-entry.js', import.meta.url), 'utf8');
+const entry = readFileSync(new URL('../../worker/src/runtime-orchestrator-entry.js', import.meta.url), 'utf8');
 const workers = readFileSync(new URL('../../worker/scripts/cloudflare-workers.mjs', import.meta.url), 'utf8');
 
 test('dashboard composes completed daily summaries through a focused loader', () => {
@@ -27,17 +27,18 @@ test('Pages track history reads materialized rows and integrated ranking status'
   assert.match(tracks, /worker_materialized_read_model/);
 });
 
-test('track-history generation has one shard and publication pipeline inside minute enrichment', () => {
+test('track-history generation and publication remain routed inside the core Worker', () => {
   assert.match(ranking, /FROM sh_track_counter_current/);
   assert.match(trackStage, /loadTrackRanking/);
   assert.match(trackStage, /ranking_summary/);
   assert.match(trackStage, /sh_pages_track_history_read_model/);
   assert.match(publication, /processTrackHistoryPublicationTask/);
   assert.match(dispatch, /pages-track-history-split-cycle/);
-  assert.match(entry, /runPagesReadModelCron/);
+  assert.match(entry, /pages-read-model-scheduled-dispatch/);
+  assert.match(entry, /pages-read-model-entry/);
 });
 
-test('module splitting does not increase the deployed Worker count', () => {
+test('only the core and Sakurazaka Workers remain active', () => {
   const activeBlock = workers.slice(workers.indexOf('ACTIVE_WORKER_NAMES'), workers.indexOf('RETIRED_WORKER_NAMES'));
-  assert.equal((activeBlock.match(/'sh-/g) || []).length, 4);
+  assert.equal((activeBlock.match(/'sh-/g) || []).length, 2);
 });

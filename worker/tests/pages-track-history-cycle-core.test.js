@@ -5,12 +5,16 @@ import {
   createTrackHistoryCycleStage,
   runTrackHistoryCycleStep,
   splitTrackHistoryRange,
+  TRACK_HISTORY_ACTIVE_MINUTES,
   TRACK_HISTORY_STAGE_KEY,
 } from '../src/pages-track-history-cycle.js';
+import { mergeTrackHistoryExcludedDates } from '../src/pages-track-history-support.js';
 
 const DAY_MS = 86_400_000;
+const HOUR_MS = 60 * 60_000;
 const MINUTE_MS = 60_000;
 const EPOCH = Date.UTC(2024, 4, 1);
+const CYCLE_START = Date.UTC(2026, 0, 1, 0, 0, 0);
 const BASE = Date.UTC(2026, 0, 1, 12, 0, 0);
 const BACKFILL_KEY = 'track-history-backfill';
 const STATUS_KEY = 'track-history-status';
@@ -54,26 +58,40 @@ function shardResult(range) {
   };
 }
 
-test('track history ranges split into one-day shards', () => {
+test('track history ranges split into three-hour CPU shards', () => {
   const fromTs = Date.UTC(2026, 0, 1);
-  assert.deepEqual(splitTrackHistoryRange({ fromTs, toTs: fromTs + 3 * DAY_MS }), [
-    { fromTs, toTs: fromTs + DAY_MS },
-    { fromTs: fromTs + DAY_MS, toTs: fromTs + 2 * DAY_MS },
-    { fromTs: fromTs + 2 * DAY_MS, toTs: fromTs + 3 * DAY_MS },
+  assert.deepEqual(splitTrackHistoryRange({ fromTs, toTs: fromTs + DAY_MS }), [
+    { fromTs, toTs: fromTs + 3 * HOUR_MS },
+    { fromTs: fromTs + 3 * HOUR_MS, toTs: fromTs + 6 * HOUR_MS },
+    { fromTs: fromTs + 6 * HOUR_MS, toTs: fromTs + 9 * HOUR_MS },
+    { fromTs: fromTs + 9 * HOUR_MS, toTs: fromTs + 12 * HOUR_MS },
+    { fromTs: fromTs + 12 * HOUR_MS, toTs: fromTs + 15 * HOUR_MS },
+    { fromTs: fromTs + 15 * HOUR_MS, toTs: fromTs + 18 * HOUR_MS },
+    { fromTs: fromTs + 18 * HOUR_MS, toTs: fromTs + 21 * HOUR_MS },
+    { fromTs: fromTs + 21 * HOUR_MS, toTs: fromTs + DAY_MS },
   ]);
   assert.deepEqual(splitTrackHistoryRange(null), []);
 });
 
-test('monthly full reconciliation and bounded backfill fit inside the first cycle hour', () => {
-  const stage = createTrackHistoryCycleStage(BASE, null, {});
-  assert.equal(stage.generation, BASE);
-  assert.equal(stage.refresh_mode, 'full');
-  assert.equal(stage.tasks.filter(({ kind }) => kind === 'recent').length, 36);
-  assert.equal(stage.tasks.filter(({ kind }) => kind === 'backfill').length, 1);
-  assert.equal(stage.tasks.length + 1 <= 57, true, '37 shards plus publication dispatch must fit');
+test('sub-day exclusion refresh replaces only the active UTC day', () => {
+  const fromTs = Date.UTC(2026, 0, 1, 6);
+  assert.deepEqual(mergeTrackHistoryExcludedDates(
+    ['2025-12-31', '2026-01-01', '2026-01-02'],
+    [],
+    { fromTs, toTs: fromTs + 3 * HOUR_MS },
+  ), ['2025-12-31', '2026-01-02']);
 });
 
-test('same-month stage refreshes two recent days when backfill is complete', () => {
+test('monthly full reconciliation and bounded backfill fit comfortably inside the daily window', () => {
+  const stage = createTrackHistoryCycleStage(BASE, null, {});
+  assert.equal(stage.generation, CYCLE_START);
+  assert.equal(stage.refresh_mode, 'full');
+  assert.equal(stage.tasks.filter(({ kind }) => kind === 'recent').length, 288);
+  assert.equal(stage.tasks.filter(({ kind }) => kind === 'backfill').length, 8);
+  assert.equal(stage.tasks.length + 1 <= TRACK_HISTORY_ACTIVE_MINUTES - 17, true);
+});
+
+test('same-month stage refreshes sixteen recent shards when backfill is complete', () => {
   const initial = incrementalState();
   const stage = createTrackHistoryCycleStage(
     BASE,
@@ -81,32 +99,49 @@ test('same-month stage refreshes two recent days when backfill is complete', () 
     initial[STATUS_KEY],
   );
   assert.equal(stage.refresh_mode, 'incremental');
-  assert.equal(stage.tasks.length, 2);
+  assert.equal(stage.tasks.length, 16);
   assert.equal(stage.tasks.every(({ kind }) => kind === 'recent'), true);
+  assert.deepEqual(
+    stage.tasks.map(({ cleanup_day: cleanupDay }) => cleanupDay),
+    [
+      false, false, false, false, false, false, false, true,
+      false, false, false, false, false, false, false, true,
+    ],
+  );
 });
 
-test('cycle core processes shards and leaves publication to the publication pipeline', async () => {
+test('cycle core processes shards and cleans each day only after its final shard', async () => {
   const memory = memoryDependencies(incrementalState());
   const env = { BUDDIES_DB: {}, MINUTE_DB: {} };
   const refreshed = [];
   const dependencies = {
     ...memory,
-    refreshDay: async (_sourceDb, _targetDb, range) => {
-      refreshed.push(range);
+    refreshDay: async (_sourceDb, _targetDb, range, _timestamp, options) => {
+      refreshed.push({ range, options });
       return shardResult(range);
     },
   };
 
-  const first = await runTrackHistoryCycleStep(env, BASE + MINUTE_MS, dependencies);
-  assert.equal(first.completed, 1);
-  const second = await runTrackHistoryCycleStep(env, BASE + 2 * MINUTE_MS, dependencies);
-  assert.equal(second.completed, 2);
-  const ready = await runTrackHistoryCycleStep(env, BASE + 3 * MINUTE_MS, dependencies);
+  let result;
+  for (let minute = 1; minute <= 16; minute += 1) {
+    result = await runTrackHistoryCycleStep(env, BASE + minute * MINUTE_MS, dependencies);
+    assert.equal(result.completed, minute);
+  }
+  const ready = await runTrackHistoryCycleStep(env, BASE + 17 * MINUTE_MS, dependencies);
 
   assert.equal(ready.skipped, true);
   assert.equal(ready.reason, 'track-history-shards-complete');
   assert.equal(ready.task.kind, 'track-history-publish-ready');
-  assert.equal(refreshed.length, 2);
+  assert.equal(refreshed.length, 16);
+  assert.deepEqual(
+    refreshed.map(({ options }) => options.cleanupDay),
+    [
+      false, false, false, false, false, false, false, true,
+      false, false, false, false, false, false, false, true,
+    ],
+  );
+  assert.equal(refreshed.every(({ options }) => options.generation === CYCLE_START), true);
   assert.equal(memory.state.get(TRACK_HISTORY_STAGE_KEY).published, false);
   assert.equal(memory.state.has(STATUS_KEY), true);
+  assert.equal(result.completed, 16);
 });

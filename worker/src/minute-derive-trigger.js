@@ -57,9 +57,16 @@ export function parseMinuteDeriveTrigger(body) {
 }
 
 export async function enqueueMinuteDeriveTrigger(env, input) {
-  const queue = env?.MINUTE_LIVE_DERIVE_QUEUE || env?.MINUTE_DERIVE_QUEUE;
-  if (!queue?.send) throw new Error('minute live derive Queue binding is missing');
-  const trigger = minuteDeriveTrigger({ ...input, job_kind: input?.job_kind || 'live' });
+  const jobKind = deriveJobKind(input?.job_kind) || 'live';
+  const queue = jobKind === 'rebuild'
+    ? env?.MINUTE_DERIVE_QUEUE
+    : env?.MINUTE_LIVE_DERIVE_QUEUE || env?.MINUTE_DERIVE_QUEUE;
+  if (!queue?.send) {
+    throw new Error(jobKind === 'rebuild'
+      ? 'minute rebuild derive Queue binding is missing'
+      : 'minute live derive Queue binding is missing');
+  }
+  const trigger = minuteDeriveTrigger({ ...input, job_kind: jobKind });
   await queue.send(trigger, { contentType: 'json' });
   return trigger;
 }

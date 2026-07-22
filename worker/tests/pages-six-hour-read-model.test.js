@@ -30,7 +30,7 @@ class FakeDb {
   }
 }
 
-test('six-hour Pages work reserves only canonical history variants', () => {
+test('daily Pages work preserves six-hour variants and reserves the rest for track history', () => {
   const reserved = [];
   const trackSteps = [];
   const idle = [];
@@ -47,22 +47,36 @@ test('six-hour Pages work reserves only canonical history variants', () => {
     [70, 'variant', 'history:weekly'],
     [105, 'variant', 'history:monthly'],
     [140, 'variant', 'history:broadcasts'],
+    [395, 'variant', 'history:daily'],
+    [430, 'variant', 'history:weekly'],
+    [465, 'variant', 'history:monthly'],
+    [500, 'variant', 'history:broadcasts'],
+    [755, 'variant', 'history:daily'],
+    [790, 'variant', 'history:weekly'],
+    [825, 'variant', 'history:monthly'],
+    [860, 'variant', 'history:broadcasts'],
+    [1115, 'variant', 'history:daily'],
+    [1150, 'variant', 'history:weekly'],
+    [1185, 'variant', 'history:monthly'],
+    [1220, 'variant', 'history:broadcasts'],
   ]);
-  assert.equal(TRACK_HISTORY_WINDOW_MINUTES, 175);
-  assert.equal(TRACK_HISTORY_ACTIVE_MINUTES, 60);
-  assert.equal(trackSteps.length, 170);
-  assert.equal(idle.length, 185);
+  assert.equal(PAGES_READ_MODEL_CYCLE_MINUTES, 1_440);
+  assert.equal(TRACK_HISTORY_WINDOW_MINUTES, 1_435);
+  assert.equal(TRACK_HISTORY_ACTIVE_MINUTES, 1_435);
+  assert.equal(trackSteps.length, 1_418);
+  assert.equal(idle.length, 5);
   assert.equal(trackSteps.includes(0), true);
-  assert.equal(idle.includes(175), true);
-  assert.equal(idle.includes(359), true);
+  assert.equal(trackSteps.includes(410), true);
+  assert.equal(idle.includes(1_435), true);
+  assert.equal(idle.includes(1_439), true);
 
   assert.deepEqual(
     pagesSixHourTask(BASE + 6 * 60 * MINUTE_MS + 50 * MINUTE_MS),
     {
       kind: 'track-history-step',
       key: 'track-history-stage',
-      cycle_minute: 50,
-      cycle_start: BASE + 6 * 60 * MINUTE_MS,
+      cycle_minute: 410,
+      cycle_start: BASE,
     },
   );
 });
@@ -87,13 +101,13 @@ test('canonical history variant renders and persists one response', async () => 
   assert.deepEqual(calls, ['history:daily', 'save:history:daily']);
 });
 
-test('unreserved cycle minutes become track-history or idle work', () => {
+test('unreserved daily minutes become track-history or idle work', () => {
   const expectedKinds = new Map([
     [0, 'track-history-step'],
-    [175, 'idle'],
-    [210, 'idle'],
-    [245, 'idle'],
-    [246, 'idle'],
+    [410, 'track-history-step'],
+    [1_434, 'track-history-step'],
+    [1_435, 'idle'],
+    [1_439, 'idle'],
   ]);
   for (const [minute, expectedKind] of expectedKinds) {
     const task = pagesSixHourTask(BASE + minute * MINUTE_MS);
@@ -105,22 +119,22 @@ test('idle cycle minutes do not inspect bindings or touch D1', async () => {
   const env = new Proxy({}, {
     get() { assert.fail('idle task must not inspect the environment'); },
   });
-  const result = await runPagesSixHourTask(env, BASE + 300 * MINUTE_MS);
+  const result = await runPagesSixHourTask(env, BASE + 1_439 * MINUTE_MS);
   assert.equal(result.skipped, true);
-  assert.equal(result.reason, 'six-hour-cycle-idle');
+  assert.equal(result.reason, 'pages-read-model-cycle-idle');
   assert.equal(result.task.kind, 'idle');
 });
 
 test('active track-history minute delegates exactly one shard step', async () => {
   const env = { BUDDIES_DB: {}, MINUTE_DB: {}, OTHER_DB: {} };
   const calls = [];
-  const result = await runPagesSixHourTask(env, BASE + 45 * MINUTE_MS, {
+  const result = await runPagesSixHourTask(env, BASE + 410 * MINUTE_MS, {
     runTrackHistoryStep: async (_env, now) => {
       calls.push(now);
       return {
         skipped: false,
         generated_at: now,
-        task: { kind: 'track-history-shard', key: 'recent:0:2025-12-29' },
+        task: { kind: 'track-history-shard', key: 'recent:0:2025-12-29T00' },
         responses: [],
         failed: 0,
       };
@@ -128,15 +142,15 @@ test('active track-history minute delegates exactly one shard step', async () =>
   });
 
   assert.equal(result.task.kind, 'track-history-shard');
-  assert.deepEqual(calls, [BASE + 45 * MINUTE_MS]);
+  assert.deepEqual(calls, [BASE + 410 * MINUTE_MS]);
 });
 
-test('track-history shard core rejects work outside its first hour before reading env', async () => {
+test('track-history shard core rejects only the final idle minutes before reading env', async () => {
   const env = new Proxy({}, {
     get() { assert.fail('inactive track-history minute must not inspect the environment'); },
   });
-  const result = await runTrackHistoryCycleStep(env, BASE + 90 * MINUTE_MS);
+  const result = await runTrackHistoryCycleStep(env, BASE + 1_435 * MINUTE_MS);
   assert.equal(result.skipped, true);
   assert.equal(result.reason, 'track-history-cycle-idle');
-  assert.equal(result.task.cycle_minute, 90);
+  assert.equal(result.task.cycle_minute, 1_435);
 });

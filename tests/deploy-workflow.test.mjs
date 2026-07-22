@@ -47,6 +47,13 @@ const removedCloudflareGitFiles = [
   '../.github/scripts/cloudflare-build-diagnostics.mjs',
 ];
 
+const retiredCoreDeployFiles = [
+  '../worker/wrangler.ingest.jsonc',
+  '../worker/wrangler.minute-enrichment.jsonc',
+  '../worker/scripts/deploy-ingest.mjs',
+  '../worker/scripts/deploy-minute-enrichment.mjs',
+];
+
 test('one GitHub Actions workflow owns automatic and manual production deployments', () => {
   assert.match(deploymentWorkflow, /^name: Deploy production$/m);
   assert.match(deploymentWorkflow, /^  push:$/m);
@@ -54,23 +61,32 @@ test('one GitHub Actions workflow owns automatic and manual production deploymen
   assert.match(deploymentWorkflow, /^  workflow_dispatch:$/m);
   assert.doesNotMatch(deploymentWorkflow, /^  pull_request:$/m);
 
-  for (const target of ['pages', 'workers', 'ingest', 'minute-enrichment', 'sakurazaka46jp', 'runtime']) {
+  for (const target of ['pages', 'workers', 'sakurazaka46jp', 'runtime']) {
     assert.match(deploymentWorkflow, new RegExp(`- ${target}`));
   }
-  for (const command of [
-    'deploy:ingest',
-    'deploy:minute-enrichment',
-    'deploy:sakurazaka46jp',
-    'deploy:runtime',
-  ]) {
+  assert.doesNotMatch(deploymentWorkflow, /- ingest$/m);
+  assert.doesNotMatch(deploymentWorkflow, /- minute-enrichment$/m);
+  for (const command of ['deploy:sakurazaka46jp', 'deploy:runtime']) {
     assert.match(deploymentWorkflow, new RegExp(command));
   }
+  assert.doesNotMatch(deploymentWorkflow, /deploy:ingest/);
+  assert.doesNotMatch(deploymentWorkflow, /deploy:minute-enrichment/);
 
   assert.match(deploymentWorkflow, /name: Deploy affected Workers/);
   assert.match(deploymentWorkflow, /name: Build and deploy Pages/);
   assert.match(deploymentWorkflow, /wrangler pages deploy public --project-name skrzk --branch main/);
   assert.match(deploymentWorkflow, /needs: \[select, workers\]/);
   assert.match(deploymentWorkflow, /needs\.workers\.result == 'success' \|\| needs\.workers\.result == 'skipped'/);
+});
+
+test('Pages-bound legacy Worker is retired after every successful binding cutover', () => {
+  const pagesDeploy = deploymentWorkflow.indexOf('name: Deploy Pages from GitHub Actions');
+  const retirement = deploymentWorkflow.indexOf('name: Retire legacy Pages-bound Worker after binding cutover');
+  assert.ok(pagesDeploy >= 0);
+  assert.ok(retirement > pagesDeploy);
+  const retirementStep = deploymentWorkflow.slice(retirement);
+  assert.doesNotMatch(retirementStep.split('run: >-')[0], /^\s+if:/m);
+  assert.match(retirementStep, /pruneRetiredWorkers\(\['sh-minute-enrichment'\]\)/);
 });
 
 test('automatic production deploy selects affected Workers and Pages from changed files', () => {
@@ -99,20 +115,18 @@ test('the production Worker deployment provisions current Queue boundaries', () 
   }
 });
 
-test('Worker package scripts contain only active deployment and bundle operations', () => {
+test('Worker package scripts contain only the two active deployment and bundle operations', () => {
   assert.deepEqual(
     Object.fromEntries(Object.entries(workerPackage.scripts).filter(([name]) => name.startsWith('deploy'))),
     {
       deploy: 'node scripts/deploy-connected-worker.mjs',
-      'deploy:ingest': 'node scripts/deploy-ingest.mjs',
-      'deploy:minute-enrichment': 'node scripts/deploy-minute-enrichment.mjs',
       'deploy:sakurazaka46jp': 'node scripts/deploy-sakurazaka46jp.mjs',
       'deploy:runtime': 'node scripts/deploy-runtime.mjs',
     },
   );
   assert.equal(workerPackage.scripts.postinstall, undefined);
-  assert.equal(workerPackage.scripts['check:ingest-bundle'] !== undefined, true);
-  assert.equal(workerPackage.scripts['check:minute-enrichment-bundle'] !== undefined, true);
+  assert.equal(workerPackage.scripts['check:ingest-bundle'], undefined);
+  assert.equal(workerPackage.scripts['check:minute-enrichment-bundle'], undefined);
   assert.equal(workerPackage.scripts['check:sakurazaka46jp-bundle'] !== undefined, true);
   assert.equal(workerPackage.scripts['check:runtime-bundle'] !== undefined, true);
 
@@ -125,28 +139,27 @@ test('Worker package scripts contain only active deployment and bundle operation
     '../worker/wrangler.minute-derive.jsonc',
     '../worker/wrangler.minute-rebuild.jsonc',
     '../worker/wrangler.minute-ingest.jsonc',
+    ...retiredCoreDeployFiles,
   ]) {
     assert.equal(existsSync(new URL(path, import.meta.url)), false, `${path} must remain deleted`);
   }
 });
 
-test('observability covers active Workers through Cloudflare APIs without R2', () => {
-  for (const worker of [
-    'sh-buddies-ingest',
-    'sh-minute-enrichment',
-    'sh-sakurazaka46jp',
-    'sh-runtime-orchestrator',
-  ]) {
+test('observability covers the two active Workers through Cloudflare APIs without R2', () => {
+  for (const worker of ['sh-sakurazaka46jp', 'sh-runtime-orchestrator']) {
     assert.match(observabilityWorkflow, new RegExp(worker));
     assert.match(cpuPolicy, new RegExp(worker));
   }
   for (const retired of [
+    'sh-buddies-ingest',
+    'sh-minute-enrichment',
     'sh-monitor-other',
     'sh-pages-read-model',
     'sh-minute-derive',
     'sh-host-monitor',
   ]) {
     assert.doesNotMatch(observabilityWorkflow, new RegExp(retired));
+    assert.doesNotMatch(cpuPolicy, new RegExp(`"${retired}"`));
   }
   assert.match(observabilityQuery, /workersInvocationsAdaptive/);
   assert.match(observabilityQuery, /workers\/observability\/telemetry\/query/);

@@ -19,8 +19,6 @@ from typing import Any
 
 BUDGET_MS = 10.0
 ACTIVE_WORKERS = frozenset({
-    "sh-buddies-ingest",
-    "sh-minute-enrichment",
     "sh-sakurazaka46jp",
     "sh-runtime-orchestrator",
 })

@@ -14,7 +14,7 @@ import { pagesSixHourTask } from '../src/pages-six-hour-read-model.js';
 const DAY_MS = 86_400_000;
 const EPOCH = Date.UTC(2024, 4, 1);
 
-test('missing status performs a full 35-day refresh and one-day bounded backfill', () => {
+ test('missing status performs a full 35-day refresh and one-day bounded backfill', () => {
   const now = Date.UTC(2026, 6, 16, 12);
   const currentDay = Date.UTC(2026, 6, 16);
   const ranges = trackHistoryRefreshRanges(now);
@@ -111,25 +111,31 @@ test('canonical materialized variants keep the intended publication cadence', ()
     'track-history',
     'host-history:summary',
   ]);
+  assert.equal(materialized.get('track-history').cadence_minutes, 1440);
   assert.equal(materialized.get('host-history:summary').cadence_minutes, 1440);
   for (const [key, variant] of materialized) {
-    if (key !== 'host-history:summary') assert.equal(variant.cadence_minutes, 360, key);
+    if (key !== 'track-history' && key !== 'host-history:summary') {
+      assert.equal(variant.cadence_minutes, 360, key);
+    }
   }
 });
 
-test('track history maximum age covers six-hour source refresh plus edge grace', () => {
+test('track history maximum age covers daily source refresh plus edge grace', () => {
   assert.equal(
     materializedResponseMaximumAge('track-history', { PAGES_RESPONSE_MAX_AGE_MS: 15 * 60_000 }),
-    365 * 60_000,
+    1445 * 60_000,
   );
 });
 
-test('six-hour scheduler publishes canonical variants only in their assigned slots', () => {
+test('daily scheduler preserves six-hour variants while using the remaining day for track history', () => {
   const cycle = Date.UTC(2026, 6, 16, 0, 0);
   assert.equal(pagesSixHourTask(cycle).kind, 'track-history-step');
   assert.equal(pagesSixHourTask(cycle + 35 * 60_000).key, 'history:daily');
+  assert.equal(pagesSixHourTask(cycle + 395 * 60_000).key, 'history:daily');
   assert.equal(pagesSixHourTask(cycle + 70 * 60_000).key, 'history:weekly');
   assert.equal(pagesSixHourTask(cycle + 105 * 60_000).key, 'history:monthly');
   assert.equal(pagesSixHourTask(cycle + 140 * 60_000).key, 'history:broadcasts');
-  assert.equal(pagesSixHourTask(cycle + 176 * 60_000).kind, 'idle');
+  assert.equal(pagesSixHourTask(cycle + 410 * 60_000).kind, 'track-history-step');
+  assert.equal(pagesSixHourTask(cycle + 1434 * 60_000).kind, 'track-history-step');
+  assert.equal(pagesSixHourTask(cycle + 1435 * 60_000).kind, 'idle');
 });

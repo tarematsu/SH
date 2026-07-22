@@ -17,7 +17,7 @@ function message(body, events) {
   };
 }
 
-test('the consolidated enrichment Worker routes metadata by durable message type', async () => {
+test('the consolidated enrichment route handles metadata by durable message type', async () => {
   const events = [];
   const calls = [];
   await processMinuteEnrichmentBatch({
@@ -54,20 +54,21 @@ test('successful metadata logs are deterministically sampled instead of emitted 
   assert.equal(shouldLogTrackMetadataResult({ job_id: 'job-error', reason: 'degraded' }), true);
 });
 
-test('production config owns metadata and Pages queues while retired configs stay inactive', () => {
+test('core config owns metadata and Pages queues while retired configs stay inactive', () => {
   const config = JSON.parse(readFileSync(
-    new URL('../wrangler.minute-enrichment.jsonc', import.meta.url),
+    new URL('../wrangler.runtime.jsonc', import.meta.url),
     'utf8',
   ));
-  assert.deepEqual(
-    config.queues.consumers.map(({ queue }) => queue),
-    [
-      'stationhead-minute-enrichment',
-      'stationhead-track-metadata',
-      'stationhead-pages-read-model-publication',
-      'stationhead-read-model',
-    ],
-  );
+  const consumers = new Set(config.queues.consumers.map(({ queue }) => queue));
+  for (const queue of [
+    'stationhead-minute-enrichment',
+    'stationhead-track-metadata',
+    'stationhead-pages-read-model-publication',
+    'stationhead-read-model',
+  ]) {
+    assert.equal(consumers.has(queue), true, queue);
+  }
   assert.equal(config.queues.producers.some(({ binding }) => binding === 'TRACK_METADATA_QUEUE'), true);
   assert.equal(existsSync(new URL('../wrangler.track-metadata.jsonc', import.meta.url)), false);
+  assert.equal(existsSync(new URL('../wrangler.minute-enrichment.jsonc', import.meta.url)), false);
 });

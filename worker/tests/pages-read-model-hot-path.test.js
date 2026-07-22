@@ -18,7 +18,7 @@ const BASE = Date.UTC(2026, 6, 18, 0, 0, 0);
 const entrySource = readFileSync(new URL('../src/pages-read-model-entry.js', import.meta.url), 'utf8');
 const dispatchSource = readFileSync(new URL('../src/pages-read-model-dispatch.js', import.meta.url), 'utf8');
 
-test('production entry exposes internal fetch, scheduled, and queue handlers', () => {
+ test('production entry exposes internal fetch, scheduled, and queue handlers', () => {
   assert.deepEqual(Object.keys(worker).sort(), ['fetch', 'queue', 'scheduled']);
 });
 
@@ -60,6 +60,8 @@ test('production cron dispatches only heavy variant slots through the existing P
 
   assert.equal(pagesVariantDispatchDue(timestamp), true);
   assert.equal(pagesVariantDispatchDue(BASE + 36 * 60_000), false);
+  assert.equal(pagesVariantDispatchDue(BASE + 395 * 60_000), true);
+  assert.equal(pagesVariantDispatchDue(BASE + 410 * 60_000), false);
   assert.deepEqual(result, {
     dispatched: true,
     task: 'pages-read-model-variant',
@@ -119,33 +121,36 @@ test('cron retains coercion compatibility outside the primitive-string hot path'
   });
 });
 
-test('dispatch preserves canonical task selection and background behavior', async () => {
+test('dispatch preserves canonical task selection and daily background behavior', async () => {
   assert.equal(pagesReadModelTask(BASE).kind, 'track-history-step');
   assert.equal(pagesReadModelTask(BASE + 35 * 60_000).key, 'history:daily');
-  assert.equal(pagesReadModelTask(BASE + 60 * 60_000).kind, 'track-history-step');
-  assert.equal(pagesReadModelTask(BASE + 176 * 60_000).kind, 'idle');
-  const idle = await runDispatchedPagesReadModelTask({}, BASE + 176 * 60_000);
-  assert.equal(idle.reason, 'six-hour-cycle-idle');
+  assert.equal(pagesReadModelTask(BASE + 395 * 60_000).key, 'history:daily');
+  assert.equal(pagesReadModelTask(BASE + 410 * 60_000).kind, 'track-history-step');
+  assert.equal(pagesReadModelTask(BASE + 1_436 * 60_000).kind, 'idle');
+  const idle = await runDispatchedPagesReadModelTask({}, BASE + 1_436 * 60_000);
+  assert.equal(idle.reason, 'pages-read-model-cycle-idle');
 
   const sentinel = { ok: true };
   assert.equal(await runDispatchedPagesReadModelTask(
     { BUDDIES_DB: {}, MINUTE_DB: {} },
-    BASE + 60 * 60_000,
+    BASE + 600 * 60_000,
     { runTrackHistoryStep: async () => sentinel },
   ), sentinel);
 });
 
-test('hot paths cache publication modules and avoid eager fallback allocations', () => {
-  assert.match(entrySource, /publicationModulePromise \|\|=/);
-  assert.match(entrySource, /pagesVariantDispatchDue/);
-  assert.match(entrySource, /PAGES_READ_MODEL_DISPATCH_MESSAGE/);
+test('hot paths preload recurring stages and cache only variant modules', () => {
+  assert.match(entrySource, /from '\.\/pages-read-model-dispatch\.js'/);
+  assert.match(entrySource, /from '\.\/pages-track-history-publication-queue\.js'/);
+  assert.match(entrySource, /PAGES_CYCLE_MINUTES = 24 \* 60/);
+  assert.match(entrySource, /VARIANT_CADENCE_MINUTES = 6 \* 60/);
   assert.doesNotMatch(entrySource, /responses\.filter\(/);
   assert.doesNotMatch(entrySource, /failures\.map\(/);
   assert.doesNotMatch(entrySource, /fallback = Date\.now\(\)/);
   assert.match(entrySource, /if \(cron !== PAGES_READ_MODEL_CRON\)/);
-  assert.match(dispatchSource, /trackHistoryModulePromise \|\|=/);
-  assert.match(dispatchSource, /sixHourModulePromise \|\|=/);
-  assert.match(dispatchSource, /switch \(cycleMinute\)/);
+  assert.match(dispatchSource, /from '\.\/pages-track-history-split-cycle\.js'/);
+  assert.match(dispatchSource, /variantModulePromise \|\|=/);
+  assert.match(dispatchSource, /switch \(slotMinute\)/);
+  assert.match(dispatchSource, /PAGES_CYCLE_MINUTES = 24 \* 60/);
   assert.doesNotMatch(dispatchSource, /new Map\(/);
   assert.doesNotMatch(dispatchSource, /new Date\(cycleStart\)/);
   assert.doesNotMatch(dispatchSource, /fallback = Date\.now\(\)/);

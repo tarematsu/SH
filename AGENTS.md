@@ -11,10 +11,10 @@
 
 The active Worker configurations are:
 
-- `worker/wrangler.ingest.jsonc`
-- `worker/wrangler.minute-enrichment.jsonc`
 - `worker/wrangler.sakurazaka46jp.jsonc`
 - `worker/wrangler.runtime.jsonc`
+
+`sh-runtime-orchestrator` owns every non-Sakurazaka Queue, scheduled task, storage binding, and internal Pages read-model endpoint. `sh-sakurazaka46jp` remains isolated for Sakurazaka monitoring.
 
 Derive Worker names, D1 database names, Queue names, and bindings from those files at the current branch or commit. Treat any Worker or database name absent from the active configurations as foreign to this repository unless the user explicitly requests a cross-repository comparison.
 

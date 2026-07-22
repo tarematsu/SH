@@ -3,8 +3,7 @@ import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
 const CONFIG_PATHS = [
-  '../wrangler.ingest.jsonc',
-  '../wrangler.minute-enrichment.jsonc',
+  '../wrangler.sakurazaka46jp.jsonc',
   '../wrangler.runtime.jsonc',
 ];
 

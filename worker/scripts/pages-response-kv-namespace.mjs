@@ -117,9 +117,9 @@ export function pagesReadModelConfigWithNamespaceId(source, namespaceId) {
 
 export async function preparePagesReadModelDeployConfig(workerRoot, options = {}) {
   const namespace = await ensurePagesResponseNamespace(options);
-  const sourcePath = options.sourcePath || resolve(workerRoot, 'wrangler.minute-enrichment.jsonc');
+  const sourcePath = options.sourcePath || resolve(workerRoot, 'wrangler.runtime.jsonc');
   const temporaryPath = options.temporaryPath
-    || resolve(workerRoot, `.wrangler.minute-enrichment.deploy-${process.pid}.jsonc`);
+    || resolve(workerRoot, `.wrangler.runtime.deploy-${process.pid}.jsonc`);
   const read = options.readFileSync || readFileSync;
   const write = options.writeFileSync || writeFileSync;
   const unlink = options.unlinkSync || unlinkSync;

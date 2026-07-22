@@ -16,7 +16,7 @@ import {
 } from '../src/pages-track-history-response.js';
 import { runSplitTrackHistoryCycleStep } from '../src/pages-track-history-split-cycle.js';
 
-const CYCLE_START = Date.UTC(2026, 6, 18, 12, 0, 0);
+const CYCLE_START = Date.UTC(2026, 6, 18, 0, 0, 0);
 
 function row(index) {
   return {
@@ -216,18 +216,19 @@ test('page Queue stage checkpoints one page before sending its continuation', as
   assert.deepEqual(operations, ['save', 'send']);
 });
 
-test('cron keeps lightweight stalled-publication recovery active through minute 174', () => {
+test('cron keeps lightweight stalled-publication recovery active through the daily window', () => {
   assert.equal(pagesReadModelTask(CYCLE_START + 59 * 60_000).kind, 'track-history-step');
   assert.equal(pagesReadModelTask(CYCLE_START + 60 * 60_000).kind, 'track-history-step');
   assert.equal(pagesReadModelTask(CYCLE_START + 174 * 60_000).kind, 'track-history-step');
-  assert.equal(pagesReadModelTask(CYCLE_START + 175 * 60_000).key, 'six-hour-cycle-idle');
+  assert.equal(pagesReadModelTask(CYCLE_START + 1_434 * 60_000).kind, 'track-history-step');
+  assert.equal(pagesReadModelTask(CYCLE_START + 1_435 * 60_000).key, 'pages-read-model-cycle-idle');
 
-  const config = JSON.parse(readFileSync(new URL('../wrangler.minute-enrichment.jsonc', import.meta.url), 'utf8'));
-  assert.equal(config.vars.PAGES_TRACK_HISTORY_ROWS_PER_STEP, 40);
-  assert.equal(
-    config.queues.consumers.some(({ queue }) => queue === 'stationhead-pages-read-model-publication'),
-    true,
+  const config = JSON.parse(readFileSync(new URL('../wrangler.runtime.jsonc', import.meta.url), 'utf8'));
+  assert.equal(config.vars.PAGES_TRACK_HISTORY_ROWS_PER_STEP, 10);
+  const publication = config.queues.consumers.find(
+    ({ queue }) => queue === 'stationhead-pages-read-model-publication',
   );
-  assert.equal(config.queues.consumers[0].max_batch_size, 1);
+  assert.equal(publication.max_batch_size, 1);
+  assert.equal(publication.max_concurrency, 1);
   assert.equal(config.queues.producers.some(({ binding }) => binding === 'PAGES_READ_MODEL_QUEUE'), true);
 });

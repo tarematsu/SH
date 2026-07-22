@@ -3,8 +3,7 @@ import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 
 const ACTIVE_CONFIGS = [
-  'worker/wrangler.ingest.jsonc',
-  'worker/wrangler.minute-enrichment.jsonc',
+  'worker/wrangler.sakurazaka46jp.jsonc',
   'worker/wrangler.runtime.jsonc',
 ];
 
@@ -21,12 +20,13 @@ test('agent instructions pin repository and active Cloudflare topology', async (
   for (const path of ACTIVE_CONFIGS) {
     assert.match(instructions, new RegExp(path.replaceAll('.', '\\.')));
   }
+  assert.doesNotMatch(instructions, /worker\/wrangler\.ingest\.jsonc/);
+  assert.doesNotMatch(instructions, /worker\/wrangler\.minute-enrichment\.jsonc/);
 
   const configs = await Promise.all(ACTIVE_CONFIGS.map(source));
   const workerNames = configs.map((config) => JSON.parse(config).name);
   assert.deepEqual(workerNames, [
-    'sh-buddies-ingest',
-    'sh-minute-enrichment',
+    'sh-sakurazaka46jp',
     'sh-runtime-orchestrator',
   ]);
 

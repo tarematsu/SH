@@ -2,7 +2,7 @@
 
 All public HTTP APIs are owned by Cloudflare Pages under `/api`.
 
-The Workers have public URLs disabled. `sh-buddies-ingest` owns collection persistence, `sh-minute-enrichment` owns metadata and Pages read-model publication, `sh-sakurazaka46jp` owns official-news and solo-broadcast monitoring, and `sh-runtime-orchestrator` owns the remaining scheduled and Queue lanes.
+The Workers have public URLs disabled. `sh-runtime-orchestrator` owns collection, persistence, metadata, Pages read-model publication, and every other non-Sakurazaka scheduled or Queue lane. `sh-sakurazaka46jp` remains isolated for official-news and solo-broadcast monitoring.
 
 Use `GET /api` for the machine-readable endpoint catalog. The public API surface is:
 

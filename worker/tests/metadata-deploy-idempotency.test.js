@@ -5,7 +5,7 @@ import test from 'node:test';
 import { pruneRetiredWorkers } from '../scripts/cloudflare-workers.mjs';
 
 const source = readFileSync(
-  new URL('../scripts/deploy-minute-enrichment.mjs', import.meta.url),
+  new URL('../scripts/deploy-runtime.mjs', import.meta.url),
   'utf8',
 );
 const workerApi = readFileSync(
@@ -34,13 +34,15 @@ async function withWorkerApi(fetchImpl, run) {
   }
 }
 
-test('metadata redeploy rollback preserves a pre-existing consolidated consumer', () => {
-  assert.match(source, /consolidatedBefore: hasConsumer\(spec\.queue, consolidatedScript\)/);
-  assert.match(source, /if \(!migration\.consolidatedBefore && hasConsumer\(migration\.queue, consolidatedScript\)\)/);
+test('core redeploy rollback preserves pre-existing runtime consumers', () => {
+  assert.match(source, /runtimeConsumers = new Set/);
+  assert.match(source, /if \(!runtimeConsumers\.has\(migration\.queue\)/);
+  assert.match(source, /restoreConsumer\(migration\)/);
+  assert.match(source, /resumeQueue\(queue\)/);
   assert.doesNotMatch(source, /capture: true, allowFailure: true/);
 });
 
-test('metadata retirement API calls have a bounded timeout', () => {
+test('Worker retirement API calls have a bounded timeout', () => {
   assert.match(workerApi, /AbortSignal\.timeout\(20_000\)/);
 });
 
@@ -50,7 +52,7 @@ test('retired Workers are not deleted while an active replacement is missing', a
     const href = String(url);
     const method = options.method || 'GET';
     calls.push({ href, method });
-    const missing = href.includes('/sh-minute-enrichment');
+    const missing = href.includes('/sh-runtime-orchestrator');
     return {
       ok: !missing,
       status: missing ? 404 : 200,
@@ -59,13 +61,13 @@ test('retired Workers are not deleted while an active replacement is missing', a
   }, async () => {
     await assert.rejects(
       () => pruneRetiredWorkers(['sh-monitor-other']),
-      /active Workers are missing: sh-minute-enrichment/,
+      /active Workers are missing: sh-runtime-orchestrator/,
     );
   });
   assert.equal(calls.some(({ method }) => method === 'DELETE'), false);
 });
 
-test('retired Workers are deleted after every active replacement is reachable', async () => {
+test('retired Workers are deleted after both active Workers are reachable', async () => {
   const calls = [];
   await withWorkerApi(async (url, options = {}) => {
     const href = String(url);
@@ -79,11 +81,11 @@ test('retired Workers are deleted after every active replacement is reachable', 
     };
   }, () => pruneRetiredWorkers(['sh-monitor-other']));
   assert.deepEqual(calls.map(({ method }) => method), [
-    'GET', 'GET', 'GET', 'GET', 'DELETE', 'GET',
+    'GET', 'GET', 'DELETE', 'GET',
   ]);
 });
 
-test('metadata consolidation is validated against the strict 10 ms CPU contract', () => {
+test('core consolidation is validated against the strict 10 ms CPU contract', () => {
   const budget = readFileSync(
     new URL('../../.github/scripts/enforce-worker-cpu-budget.py', import.meta.url),
     'utf8',
@@ -93,11 +95,11 @@ test('metadata consolidation is validated against the strict 10 ms CPU contract'
   assert.match(budget, /"statistic": "max"/);
 });
 
-test('metadata consolidation composes with the merged paginated Pages KV deploy', () => {
+test('core consolidation composes with the paginated Pages KV deploy', () => {
   const pagesKv = readFileSync(
     new URL('../scripts/pages-response-kv-namespace.mjs', import.meta.url),
     'utf8',
   );
-  assert.match(pagesKv, /NextContinuationToken|page=\$\{page\}/);
+  assert.match(pagesKv, /page=\$\{page\}/);
   assert.match(pagesKv, /NAMESPACE_PAGE_SIZE = 1000/);
 });
