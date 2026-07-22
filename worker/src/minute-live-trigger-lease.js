@@ -35,17 +35,20 @@ export async function claimBudgetedLiveDeriveJob(env, trigger, options = {}) {
   return result.results?.[0] || null;
 }
 
-export async function releaseBudgetedLiveDeriveJob(env, jobId, options = {}) {
-  const id = integer(jobId);
-  if (id == null || id <= 0) return { released: 0 };
+export async function releaseBudgetedLiveDeriveJob(env, jobIds, options = {}) {
+  const ids = (Array.isArray(jobIds) ? jobIds : [jobIds])
+    .map((value) => integer(value))
+    .filter((value) => value != null && value > 0);
+  if (!ids.length) return { released: 0 };
   const db = env?.MINUTE_DB;
   if (!db?.prepare) throw new Error('minute live derive MINUTE_DB binding is missing');
   const now = integer(options.now) ?? Date.now();
+  const placeholders = ids.map(() => '?').join(',');
   const result = await db.prepare(`UPDATE sh_minute_fact_jobs SET
       status='pending',attempts=MAX(0,attempts-1),next_attempt_at=0,
       lease_until=NULL,updated_at=?
-    WHERE status='processing' AND id=?`)
-    .bind(now, id)
+    WHERE status='processing' AND id IN (${placeholders})`)
+    .bind(now, ...ids)
     .run();
   return { released: Number(result?.meta?.changes || 0) };
 }
