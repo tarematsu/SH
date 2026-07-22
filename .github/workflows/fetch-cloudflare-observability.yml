@@ -6,6 +6,7 @@ on:
     types: [completed]
   schedule:
     - cron: "37 * * * *"
+    - cron: "11 3 * * *"
   workflow_dispatch:
     inputs:
       lookback_minutes:
@@ -52,10 +53,13 @@ jobs:
           python3 .github/scripts/audit-cloudflare-telemetry.py --self-test
 
       - name: Enforce UTC daily request and D1 budgets
-        run: python3 .github/scripts/audit-cloudflare-daily-usage.py 2>&1 | tee daily-usage-audit.log
+        shell: bash
+        run: |
+          set -o pipefail
+          python3 .github/scripts/audit-cloudflare-daily-usage.py 2>&1 | tee daily-usage-audit.log
 
       - name: Collect metrics and live events in parallel
-        if: github.event_name != 'schedule'
+        if: github.event_name != 'schedule' || github.event.schedule == '11 3 * * *'
         env:
           LIVE_TAIL_WORKER: sh-runtime-orchestrator
           LIVE_TAIL_SECONDS: "90"
@@ -86,13 +90,16 @@ jobs:
           exit "$query_status"
 
       - name: Enforce current-version persisted and live CPU policy
-        if: github.event_name != 'schedule'
+        if: github.event_name != 'schedule' || github.event.schedule == '11 3 * * *'
         env:
           LIVE_TAIL_LOG: live-tail.log
-        run: python3 .github/scripts/audit-cloudflare-telemetry.py 2>&1 | tee telemetry-audit.log
+        shell: bash
+        run: |
+          set -o pipefail
+          python3 .github/scripts/audit-cloudflare-telemetry.py 2>&1 | tee telemetry-audit.log
 
       - name: Upload sanitized observability report
-        if: always()
+        if: ${{ failure() || github.event_name != 'schedule' || github.event.schedule == '11 3 * * *' }}
         uses: actions/upload-artifact@v4
         with:
           name: cloudflare-observability-report-sh-${{ github.run_id }}
