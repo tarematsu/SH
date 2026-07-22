@@ -1,17 +1,19 @@
 import { runSplitTrackHistoryCycleStep } from './pages-track-history-split-cycle.js';
 
 const MINUTE_MS = 60_000;
-const HOUR_MS = 60 * MINUTE_MS;
-const CYCLE_MS = 6 * HOUR_MS;
-const TRACK_HISTORY_WINDOW_MINUTES = 355;
+const PAGES_CYCLE_MINUTES = 24 * 60;
+const VARIANT_CADENCE_MINUTES = 6 * 60;
+const CYCLE_MS = PAGES_CYCLE_MINUTES * MINUTE_MS;
+const TRACK_HISTORY_WINDOW_MINUTES = PAGES_CYCLE_MINUTES - 5;
 const EMPTY_DEPENDENCIES = Object.freeze({});
 
-let sixHourModulePromise;
+let variantModulePromise;
 
 function cycleSlotKey(cycleMinute) {
-  switch (cycleMinute) {
+  const slotMinute = cycleMinute % VARIANT_CADENCE_MINUTES;
+  switch (slotMinute) {
     case 35: return 'history:daily';
-    case 50: return 'host-history:summary';
+    case 50: return cycleMinute === 50 ? 'host-history:summary' : null;
     case 70: return 'history:weekly';
     case 105: return 'history:monthly';
     case 140: return 'history:broadcasts';
@@ -27,10 +29,6 @@ function validTimestamp(value) {
   return Number.isFinite(timestamp) && timestamp >= 0 ? timestamp : Date.now();
 }
 
-function isBackgroundSlot(key, cycleStart) {
-  return !key || (key === 'host-history:summary' && Math.floor(cycleStart / HOUR_MS) % 24 !== 0);
-}
-
 function backgroundTask(cycleMinute, cycleStart) {
   if (cycleMinute < TRACK_HISTORY_WINDOW_MINUTES) {
     return {
@@ -42,7 +40,7 @@ function backgroundTask(cycleMinute, cycleStart) {
   }
   return {
     kind: 'idle',
-    key: 'six-hour-cycle-idle',
+    key: 'pages-read-model-cycle-idle',
     cycle_minute: cycleMinute,
     cycle_start: cycleStart,
   };
@@ -52,7 +50,7 @@ function pagesReadModelTaskAt(timestamp) {
   const cycleStart = Math.floor(timestamp / CYCLE_MS) * CYCLE_MS;
   const cycleMinute = Math.floor((timestamp - cycleStart) / MINUTE_MS);
   const key = cycleSlotKey(cycleMinute);
-  if (isBackgroundSlot(key, cycleStart)) return backgroundTask(cycleMinute, cycleStart);
+  if (!key) return backgroundTask(cycleMinute, cycleStart);
   return {
     kind: 'variant',
     key,
@@ -61,9 +59,9 @@ function pagesReadModelTaskAt(timestamp) {
   };
 }
 
-function loadSixHourModule() {
-  sixHourModulePromise ||= import('./pages-six-hour-read-model.js');
-  return sixHourModulePromise;
+function loadVariantModule() {
+  variantModulePromise ||= import('./pages-six-hour-read-model.js');
+  return variantModulePromise;
 }
 
 export function pagesReadModelTask(now = Date.now()) {
@@ -75,7 +73,7 @@ export async function runDispatchedPagesReadModelTask(env, now = Date.now(), dep
   const cycleStart = Math.floor(timestamp / CYCLE_MS) * CYCLE_MS;
   const cycleMinute = Math.floor((timestamp - cycleStart) / MINUTE_MS);
   const key = cycleSlotKey(cycleMinute);
-  if (isBackgroundSlot(key, cycleStart)) {
+  if (!key) {
     if (cycleMinute < TRACK_HISTORY_WINDOW_MINUTES) {
       if (!env?.BUDDIES_DB || !env?.MINUTE_DB) {
         throw new Error('Pages read-model task is missing D1 binding(s): BUDDIES_DB, MINUTE_DB');
@@ -86,13 +84,13 @@ export async function runDispatchedPagesReadModelTask(env, now = Date.now(), dep
     const task = backgroundTask(cycleMinute, cycleStart);
     return {
       skipped: true,
-      reason: 'six-hour-cycle-idle',
+      reason: 'pages-read-model-cycle-idle',
       generated_at: timestamp,
       task,
       responses: [],
       failed: 0,
     };
   }
-  const materializer = await loadSixHourModule();
+  const materializer = await loadVariantModule();
   return materializer.runPagesSixHourTask(env, timestamp, dependencies);
 }
