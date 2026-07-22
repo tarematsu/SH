@@ -3,7 +3,8 @@
 ## Repository identity
 
 - This repository is `tarematsu/SH`, the Stationhead data collection, processing, and site project.
-- For local Windows Codex work, the expected checkout is `C:\SH` and the expected `origin` is `https://github.com/tarematsu/SH.git`.
+- For local Windows Codex work, the expected checkout is `C:\SH`.
+- The checkout's `origin` must resolve to `tarematsu/SH`; valid forms include `https://github.com/tarematsu/SH.git` and `git@github.com:tarematsu/SH.git`.
 - Cloud, container, and temporary checkouts may use another filesystem path, but their GitHub target or `origin` must still resolve to `tarematsu/SH`.
 - Before any repository-scoped task, verify the active checkout or GitHub target resolves to `tarematsu/SH`.
 - Do not choose a repository from older chats, remembered project names, an existing browser tab, or another repository's recent activity.
