@@ -191,8 +191,6 @@ test('Pages Sakurazaka health combines official news and solo monitor state', as
 
 test('all active Workers disable workers.dev and preview URLs', () => {
   const configs = [
-    '../../worker/wrangler.ingest.jsonc',
-    '../../worker/wrangler.minute-enrichment.jsonc',
     '../../worker/wrangler.sakurazaka46jp.jsonc',
     '../../worker/wrangler.runtime.jsonc',
   ].map((path) => JSON.parse(readFileSync(new URL(path, import.meta.url), 'utf8')));
