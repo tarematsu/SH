@@ -102,7 +102,8 @@ test('Cloudflare observability separates hourly budgets from post-deploy deep ch
   assert.match(observability, /DAILY_D1_WRITE_BUDGET: "70000"/);
   assert.match(observability, /query-cloudflare-observability\.py/);
   assert.match(observability, /audit-cloudflare-telemetry\.py/);
-  assert.match(observability, /audit-cloudflare-live-tail\.py/);
+  assert.match(observability, /LIVE_TAIL_LOG: live-tail\.log/);
+  assert.doesNotMatch(observability, /audit-cloudflare-live-tail\.py/);
   assert.match(observability, /LIVE_TAIL_SECONDS: "90"/);
   assert.match(observability, /if: github\.event_name != 'schedule'/);
   assert.doesNotMatch(observability, /R2_BUCKET|AWS_ACCESS_KEY_ID|aws s3api/);
