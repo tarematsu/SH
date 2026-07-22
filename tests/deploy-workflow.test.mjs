@@ -2,20 +2,12 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, readFileSync } from 'node:fs';
 
-const deployWorkflow = readFileSync(
-  new URL('../.github/workflows/deploy.yml', import.meta.url),
-  'utf8',
-);
-const diagnosticsWorkflow = readFileSync(
-  new URL('../.github/workflows/cloudflare-build-diagnostics.yml', import.meta.url),
-  'utf8',
-);
-const prDiagnosticsWorkflow = readFileSync(
-  new URL('../.github/workflows/cloudflare-pr-diagnostics.yml', import.meta.url),
-  'utf8',
-);
-const splitDeployWorkflow = readFileSync(
+const deploymentWorkflow = readFileSync(
   new URL('../.github/workflows/deploy-split-pipeline.yml', import.meta.url),
+  'utf8',
+);
+const databaseWorkflow = readFileSync(
+  new URL('../.github/workflows/database.yml', import.meta.url),
   'utf8',
 );
 const observabilityAnalyzer = readFileSync(
@@ -39,12 +31,23 @@ const splitQueues = [
   'stationhead-read-model',
 ];
 
-test('manual deploy exposes Pages and the four active Workers only', () => {
-  assert.match(deployWorkflow, /^\s{2}workflow_dispatch:/m);
-  assert.doesNotMatch(deployWorkflow, /^\s{2}push:/m);
-  assert.match(deployWorkflow, /wrangler pages deploy/);
-  for (const target of ['ingest', 'minute-enrichment', 'sakurazaka46jp', 'runtime']) {
-    assert.match(deployWorkflow, new RegExp(`- ${target}`));
+const removedCloudflareGitFiles = [
+  '../.github/workflows/cloudflare-build-diagnostics.yml',
+  '../.github/workflows/cloudflare-pr-diagnostics.yml',
+  '../.github/workflows/deploy.yml',
+  '../.github/workflows/verify-production-facts.yml',
+  '../.github/scripts/cloudflare-build-diagnostics.mjs',
+];
+
+test('one GitHub Actions workflow owns automatic and manual production deployments', () => {
+  assert.match(deploymentWorkflow, /^name: Deploy production$/m);
+  assert.match(deploymentWorkflow, /^  push:$/m);
+  assert.match(deploymentWorkflow, /branches: \[main\]/);
+  assert.match(deploymentWorkflow, /^  workflow_dispatch:$/m);
+  assert.doesNotMatch(deploymentWorkflow, /^  pull_request:$/m);
+
+  for (const target of ['pages', 'workers', 'ingest', 'minute-enrichment', 'sakurazaka46jp', 'runtime']) {
+    assert.match(deploymentWorkflow, new RegExp(`- ${target}`));
   }
   for (const command of [
     'deploy:ingest',
@@ -52,34 +55,38 @@ test('manual deploy exposes Pages and the four active Workers only', () => {
     'deploy:sakurazaka46jp',
     'deploy:runtime',
   ]) {
-    assert.match(deployWorkflow, new RegExp(command));
-  }
-  assert.doesNotMatch(deployWorkflow, /deploy:split-other|deploy:minute(?!-enrichment)|deploy:other/);
-  assert.equal((deployWorkflow.match(/^  [a-z][a-z-]*:\n    name:/gm) || []).length, 2);
-});
-
-test('automatic deploys select affected Workers from one import graph', () => {
-  for (const workflow of [splitDeployWorkflow, prDiagnosticsWorkflow]) {
-    assert.match(workflow, /select-worker-deploys\.mjs/);
-    assert.match(workflow, /site\/functions\/\*\*/);
-    assert.match(workflow, /packages\/sh-shared\/\*\*/);
-    assert.match(workflow, /DEPLOY_COMMANDS/);
-    assert.match(workflow, /npm run "\$command"/);
-    assert.doesNotMatch(workflow, /sync-cloudflare-build-watch-paths/);
+    assert.match(deploymentWorkflow, new RegExp(command));
   }
 
-  assert.match(splitDeployWorkflow, /workflow_dispatch/);
-  assert.match(splitDeployWorkflow, /select-worker-deploys\.mjs --all/);
-  assert.match(prDiagnosticsWorkflow, /github\.event\.pull_request\.base\.sha/);
-  assert.match(prDiagnosticsWorkflow, /runtime_changes/);
-  assert.doesNotMatch(prDiagnosticsWorkflow, /Reinitialize track-history publication|Probe Pages Queue consumer/);
+  assert.match(deploymentWorkflow, /name: Deploy affected Workers/);
+  assert.match(deploymentWorkflow, /name: Build and deploy Pages/);
+  assert.match(deploymentWorkflow, /wrangler pages deploy public --project-name skrzk --branch main/);
+  assert.match(deploymentWorkflow, /needs: \[select, workers\]/);
+  assert.match(deploymentWorkflow, /needs\.workers\.result == 'success' \|\| needs\.workers\.result == 'skipped'/);
 });
 
-test('all deployment paths provision current Queue boundaries', () => {
+test('automatic production deploy selects affected Workers and Pages from changed files', () => {
+  assert.match(deploymentWorkflow, /select-worker-deploys\.mjs/);
+  assert.match(deploymentWorkflow, /site\/(functions\|public)/);
+  assert.match(deploymentWorkflow, /site\/wrangler\\\.jsonc/);
+  assert.match(deploymentWorkflow, /packages\/sh-shared/);
+  assert.match(deploymentWorkflow, /DEPLOY_COMMANDS/);
+  assert.match(deploymentWorkflow, /npm run "\$command"/);
+  assert.match(deploymentWorkflow, /select-worker-deploys\.mjs --all/);
+  assert.doesNotMatch(deploymentWorkflow, /sync-cloudflare-build-watch-paths/);
+});
+
+test('Cloudflare Git build and PR production deployment files remain deleted', () => {
+  for (const path of removedCloudflareGitFiles) {
+    assert.equal(existsSync(new URL(path, import.meta.url)), false, `${path} must remain deleted`);
+  }
+  assert.match(databaseWorkflow, /name: Verify live data/);
+  assert.match(databaseWorkflow, /node scripts\/verify-facts-live\.mjs/);
+});
+
+test('the production Worker deployment provisions current Queue boundaries', () => {
   for (const queue of splitQueues) {
-    for (const workflow of [deployWorkflow, splitDeployWorkflow, prDiagnosticsWorkflow]) {
-      assert.match(workflow, new RegExp(`${queue} ${queue}-dlq`));
-    }
+    assert.match(deploymentWorkflow, new RegExp(`${queue} ${queue}-dlq`));
   }
 });
 
@@ -112,15 +119,6 @@ test('Worker package scripts contain only active deployment and bundle operation
   ]) {
     assert.equal(existsSync(new URL(path, import.meta.url)), false, `${path} must remain deleted`);
   }
-});
-
-test('Cloudflare Git diagnostics target the runtime Worker', () => {
-  assert.match(diagnosticsWorkflow, /^\s{2}push:/m);
-  assert.match(diagnosticsWorkflow, /branches: \[main\]/);
-  assert.match(diagnosticsWorkflow, /sh-runtime-orchestrator/);
-  assert.match(diagnosticsWorkflow, /wrangler\\\.runtime\\\.jsonc|wrangler\.runtime\.jsonc/);
-  assert.doesNotMatch(diagnosticsWorkflow, /sh-monitor-other/);
-  assert.match(diagnosticsWorkflow, /cloudflare-build-diagnostics\.mjs/);
 });
 
 test('observability requires active Workers and tolerates retired names during cleanup', () => {
