@@ -187,6 +187,27 @@ async function dispatchRawCollectionWithFallback(env, body, options) {
   }
 }
 
+async function dispatchMinuteRecoveryWithFallback(env, body, ctx, options) {
+  const scheduledAt = Number(body?.scheduled_at) || Date.now();
+  try {
+    await dispatchMinuteRecovery(
+      { cron: RUNTIME_CRON, scheduledTime: scheduledAt },
+      env,
+      ctx,
+      options,
+    );
+    return { inline: true, fallback: false };
+  } catch (error) {
+    console.warn(JSON.stringify({
+      event: 'inline_minute_recovery_failed',
+      scheduled_at: scheduledAt,
+      error: String(error?.message || error).slice(0, 500),
+    }));
+    await sendRuntimeMessages(env?.HOST_MONITOR_QUEUE, [body]);
+    return { inline: false, fallback: true };
+  }
+}
+
 async function dispatchMinuteGateWithFallback(env, body, ctx, options) {
   const scheduledAt = Number(body?.scheduled_at) || Date.now();
   try {
@@ -293,10 +314,18 @@ export async function runRuntimeScheduled(controller, env, ctx, options = EMPTY_
   const scheduledAt = Number(controller?.scheduledTime) || Date.now();
   const messages = runtimeScheduledMessagesFor(scheduledAt);
   const rawMessage = messages.find((body) => body.message_type === RAW_COLLECTION_TASK_MESSAGE);
+  const recoveryMessage = messages.find(
+    (body) => body.message_type === RUNTIME_MINUTE_RECOVERY_MESSAGE,
+  );
   const gateMessage = messages.find((body) => body.message_type === RUNTIME_MINUTE_GATE_MESSAGE);
-  const queuedMessages = messages.filter((body) => body !== rawMessage && body !== gateMessage);
+  const queuedMessages = messages.filter(
+    (body) => body !== rawMessage && body !== recoveryMessage && body !== gateMessage,
+  );
   await Promise.all([
     rawMessage ? dispatchRawCollectionWithFallback(env, rawMessage, options) : null,
+    recoveryMessage
+      ? dispatchMinuteRecoveryWithFallback(env, recoveryMessage, ctx, options)
+      : null,
     gateMessage ? dispatchMinuteGateWithFallback(env, gateMessage, ctx, options) : null,
     sendRuntimeMessages(env?.HOST_MONITOR_QUEUE, queuedMessages),
   ]);
