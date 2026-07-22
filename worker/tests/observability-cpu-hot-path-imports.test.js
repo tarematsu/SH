@@ -14,6 +14,10 @@ const runtimeEntry = readFileSync(
   new URL('../src/runtime-orchestrator-entry.js', import.meta.url),
   'utf8',
 );
+const runtimeScheduled = readFileSync(
+  new URL('../src/runtime-scheduled.js', import.meta.url),
+  'utf8',
+);
 const liveCompleteMessage = readFileSync(
   new URL('../src/minute-live-complete-message.js', import.meta.url),
   'utf8',
@@ -106,6 +110,12 @@ test('core router keeps queue, fetch and scheduled graphs behind their event rou
   assert.doesNotMatch(runtimeEntry, /from '\.\/minute-enrichment-optimized-entry\.js'/);
 });
 
+test('Pipeline analytics stays outside Queue and fetch module graphs', () => {
+  assert.match(runtimeScheduled, /import\('\.\/runtime-pipeline-analytics\.js'\)/);
+  assert.doesNotMatch(runtimeScheduled, /from '\.\/runtime-pipeline-analytics\.js'/);
+  assert.doesNotMatch(runtimeEntry, /runtime-pipeline-analytics\.js/);
+});
+
 test('Pages recurring stages preload only inside the Pages route', () => {
   assert.match(pagesReadModelEntry, /from '\.\/pages-read-model-dispatch\.js'/);
   assert.match(pagesReadModelEntry, /from '\.\/pages-track-history-publication-queue\.js'/);
@@ -114,5 +124,5 @@ test('Pages recurring stages preload only inside the Pages route', () => {
   assert.match(pagesReadModelDispatch, /from '\.\/pages-track-history-split-cycle\.js'/);
   assert.match(minuteEnrichment, /pagesModulePromise \|\|= import\('\.\/pages-read-model-entry\.js'\)/);
   assert.doesNotMatch(minuteEnrichment, /from '\.\/pages-read-model-entry\.js'/);
-  assert.equal(JSON.parse(runtimeConfig).vars.PAGES_TRACK_HISTORY_ROWS_PER_STEP, 10);
+  assert.equal(JSON.parse(runtimeConfig).vars.PAGES_TRACK_HISTORY_ROWS_PER_STEP, 25);
 });
