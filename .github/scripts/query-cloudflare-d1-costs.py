@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any
 
 API = "https://api.cloudflare.com/client/v4/graphql"
+REST_API = "https://api.cloudflare.com/client/v4"
 TOKEN = os.environ.get("CLOUDFLARE_API_TOKEN", "").strip()
 ACCOUNT = os.environ.get("CLOUDFLARE_ACCOUNT_ID", "").strip()
 CONFIGS = tuple(x.strip() for x in os.environ.get("D1_CONFIG_GLOBS", "worker/wrangler*.jsonc").split(",") if x.strip())
@@ -77,6 +78,25 @@ def databases() -> dict[str, str]:
     if not result:
         raise RuntimeError("D1_CONFIG_GLOBS did not resolve any database bindings")
     return result
+
+
+def account_id() -> str:
+    if ACCOUNT:
+        return ACCOUNT
+    req = urllib.request.Request(
+        f"{REST_API}/accounts?per_page=50",
+        headers={"Authorization": f"Bearer {TOKEN}", "Accept": "application/json"},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=60) as response:
+            body = json.load(response)
+    except urllib.error.HTTPError as error:
+        detail = error.read().decode("utf-8", errors="replace")[:1200]
+        raise RuntimeError(f"Cloudflare account discovery HTTP {error.code}: {detail}") from error
+    rows = body.get("result") or []
+    if body.get("success") is False or len(rows) != 1:
+        raise RuntimeError(f"Expected one accessible Cloudflare account, got {len(rows)}")
+    return str(rows[0]["id"])
 
 
 def request(document: str, variables: dict[str, Any]) -> list[dict[str, Any]]:
@@ -174,12 +194,13 @@ def self_test() -> int:
 def main() -> int:
     if "--self-test" in sys.argv:
         return self_test()
-    if not TOKEN or not ACCOUNT:
-        raise RuntimeError("CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID are required")
+    if not TOKEN:
+        raise RuntimeError("CLOUDFLARE_API_TOKEN is required")
 
     now = dt.datetime.now(dt.timezone.utc)
     start = now - dt.timedelta(minutes=LOOKBACK_MINUTES)
     dbs = databases()
+    account = account_id()
     rows: dict[tuple[str, str], dict[str, Any]] = {}
     requests = 0
     for database_id, database_name in sorted(dbs.items(), key=lambda item: item[1]):
@@ -192,7 +213,7 @@ def main() -> int:
         }
         for order in ORDERS.values():
             requests += 1
-            for raw in request(graphql_document(order, LIMIT), {"account": ACCOUNT, "filter": filter_value}):
+            for raw in request(graphql_document(order, LIMIT), {"account": account, "filter": filter_value}):
                 row = normalized_row(database_name, raw)
                 if row:
                     rows[(database_name, row["fingerprint"])] = row
