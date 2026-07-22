@@ -23,8 +23,8 @@ export const MINUTE_FACT_RUNTIME_STATE_SCHEMA_SQL = `CREATE TABLE IF NOT EXISTS 
 
 // Derive and rebuild execute frequently enough that a successful heartbeat
 // does not need a D1 write for every invocation. Failures and backlog changes
-// still write immediately; unchanged success is checkpointed every five minutes.
-const RUNTIME_SUCCESS_CHECKPOINT_MS = 5 * 60_000;
+// still write immediately; unchanged success is checkpointed every twenty minutes.
+const RUNTIME_SUCCESS_CHECKPOINT_MS = 20 * 60_000;
 
 function finiteInteger(value, fallback = null) {
   const parsed = Number(value);
