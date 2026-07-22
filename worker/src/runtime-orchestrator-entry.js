@@ -49,22 +49,19 @@ function loadRuntimeQueueModule() {
 export async function runCoreQueue(batch, env, ctx, dependencies = EMPTY_DEPENDENCIES) {
   const queueName = String(batch?.queue || '');
   if (INGEST_QUEUE_NAMES.has(queueName)) {
-    const ingest = await loadIngestModule();
-    const run = dependencies.runIngestQueue || ingest.default.queue;
+    const run = dependencies.runIngestQueue || (await loadIngestModule()).default.queue;
     return run(batch, rawCollectorEnv(env), ctx, dependencies.ingest || EMPTY_DEPENDENCIES);
   }
   if (PAGES_QUEUE_NAMES.has(queueName)) {
-    const pages = await loadPagesModule();
-    const run = dependencies.runPagesQueue || pages.runPagesReadModelQueue;
+    const run = dependencies.runPagesQueue || (await loadPagesModule()).runPagesReadModelQueue;
     return run(batch, env, dependencies.pages || EMPTY_DEPENDENCIES);
   }
   if (ENRICHMENT_QUEUE_NAMES.has(queueName)) {
-    const enrichment = await loadEnrichmentModule();
-    const run = dependencies.runEnrichmentQueue || enrichment.processConsolidatedEnrichmentBatch;
+    const run = dependencies.runEnrichmentQueue
+      || (await loadEnrichmentModule()).processConsolidatedEnrichmentBatch;
     return run(batch, env, dependencies.enrichment || EMPTY_DEPENDENCIES);
   }
-  const runtime = await loadRuntimeQueueModule();
-  const run = dependencies.runRuntimeQueue || runtime.runRuntimeQueue;
+  const run = dependencies.runRuntimeQueue || (await loadRuntimeQueueModule()).runRuntimeQueue;
   return run(batch, env, ctx, dependencies.runtime || EMPTY_DEPENDENCIES);
 }
 
@@ -79,8 +76,7 @@ export async function runCoreScheduled(controller, env, ctx, dependencies = EMPT
 }
 
 export async function runCoreFetch(request, env, ctx, dependencies = EMPTY_DEPENDENCIES) {
-  const pages = await loadPagesModule();
-  const run = dependencies.runPagesFetch || pages.runPagesReadModelFetch;
+  const run = dependencies.runPagesFetch || (await loadPagesModule()).runPagesReadModelFetch;
   return run(request, env, ctx, dependencies.pages || EMPTY_DEPENDENCIES);
 }
 
