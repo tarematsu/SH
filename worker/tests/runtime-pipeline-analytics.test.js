@@ -160,3 +160,25 @@ test('provisioning creates stream, Data Catalog sink, and SQL pipeline when abse
     'pipelines create sh-runtime-analytics --sql-file pipelines/runtime-analytics.sql'
   )));
 });
+
+test('provisioning accepts Wrangler beta create output without an eventually consistent relist', () => {
+  const listCalls = new Map();
+  const runWrangler = (args, options = {}) => {
+    const key = ['list', 'create'].includes(args[1]) ? 'pipelines' : args[1];
+    if (args.includes('list') && options.capture) {
+      listCalls.set(key, (listCalls.get(key) || 0) + 1);
+      return { status: 0, stdout: '[]' };
+    }
+    if (args.includes('create') && options.capture) {
+      const name = args[args.indexOf('create') + 1];
+      return { status: 0, stdout: `Successfully created resource '${name}' with id '${key}-id'.` };
+    }
+    return { status: 0, stdout: '' };
+  };
+
+  const resources = ensureRuntimeAnalyticsResources({ runWrangler, catalogToken: 'catalog-token' });
+  assert.equal(resources.stream.id, 'streams-id');
+  assert.equal(resources.sink.id, 'sinks-id');
+  assert.equal(resources.pipeline.id, 'pipelines-id');
+  assert.deepEqual(Object.fromEntries(listCalls), { streams: 1, sinks: 1, pipelines: 1 });
+});
