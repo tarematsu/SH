@@ -114,7 +114,7 @@ test('stable checkpoint sends finalize directly and never invokes the likes comp
   assert.equal(result.stable_checkpoint_skipped, false);
 });
 
-test('completed structure change skips likes planning when the prepared likes hash is unchanged', async () => {
+test('completed structure change skips likes planning only when no queue items were rewritten', async () => {
   const sent = [];
   const body = {
     ...stableBody(21 * MINUTE_MS),
@@ -139,10 +139,37 @@ test('completed structure change skips likes planning when the prepared likes ha
   assert.equal(result.finalization_deferred, true);
 });
 
+test('structure item writes preserve the likes stage so bite counts are materialized', async () => {
+  const sent = [];
+  const body = {
+    ...stableBody(21 * MINUTE_MS),
+    stage: 'structure-write',
+    structure_cursor: 0,
+    structure_plan: {
+      structure_changed: true,
+      likes_hash: 'likes-stable',
+      structural_hash: 'structure-new',
+      write_positions: [0],
+    },
+  };
+  const result = await processBudgetedQueueStructureTask(fakeEnv(), body, {
+    async commitQueueStructurePersistence() {
+      return { structureChanged: true, itemsWritten: 1 };
+    },
+    async sendPersistenceContinuation(message) { sent.push(message); },
+  });
+  assert.equal(sent.length, 1);
+  assert.equal(sent[0].stage, 'likes');
+  assert.equal(result.likes_deferred, true);
+  assert.equal(result.finalization_deferred, true);
+});
+
 test('production stable-path model meets the requested D1 reduction targets', () => {
   const runtime = JSON.parse(readFileSync(new URL('../wrangler.runtime.jsonc', import.meta.url), 'utf8'));
+  const readModelStages = readFileSync(new URL('../src/read-model-stages.js', import.meta.url), 'utf8');
   assert.equal(runtime.vars.SNAPSHOT_PERSIST_INTERVAL_MS, CHECKPOINT_MINUTES * MINUTE_MS);
   assert.equal(runtime.vars.QUEUE_STABLE_CHECKPOINT_MINUTES, CHECKPOINT_MINUTES);
+  assert.match(readModelStages, /READ_MODEL_CHECKPOINT_MS = 20 \* 60_000/);
 
   // Previous stable queue flow per 20 minutes:
   // structure plan read + likes plan read every minute, then one materialization write every minute.
