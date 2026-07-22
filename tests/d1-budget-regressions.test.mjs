@@ -120,7 +120,8 @@ test('daily budget workflow enforces measured 50 percent targets only on schedul
 });
 
 test('D1 query insights still run after a measured budget violation', () => {
-  const workflow = readFileSync(new URL('../.github/workflows/fetch-cloudflare-d1-usage.yml', import.meta.url), 'utf8');
-  assert.match(workflow, /name: Install Wrangler for query insights\n\s+if: \$\{\{ !cancelled\(\) \}\}/);
+  const workflow = source('../.github/workflows/fetch-cloudflare-d1-usage.yml');
+  assert.match(workflow, /name: Restore Wrangler dependencies\n\s+if: \$\{\{ !cancelled\(\) \}\}/);
+  assert.match(workflow, /name: Install Wrangler for query insights\n\s+if: \$\{\{ !cancelled\(\) && steps\.worker-modules\.outputs\.cache-hit != 'true' \}\}/);
   assert.match(workflow, /name: Fetch top D1 queries for one-hour and one-day windows\n\s+if: \$\{\{ !cancelled\(\) \}\}/);
 });
