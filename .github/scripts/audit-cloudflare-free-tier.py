@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run the free-tier audit with API-compatible, namespace-scoped queries."""
+"""Run the free-tier audit with API-compatible, resource-scoped queries."""
 
 from __future__ import annotations
 
@@ -52,12 +52,12 @@ def _namespace_literal(identifier: str) -> str:
 
 
 def graphql_document() -> str:
-    """Query each configured DO/KV namespace without selecting invalid dimensions.
+    """Query resource usage without requesting unsupported GraphQL fields.
 
-    Cloudflare accepts ``namespaceId`` as a dataset filter, but current KV and
-    Durable Object group dimension types do not expose a ``namespaceId`` field.
-    Aliasing one filtered dataset per configured namespace preserves repository
-    scoping while avoiding the unsupported dimension selection.
+    Current KV and Durable Object invocation/periodic datasets accept
+    ``namespaceId`` as a filter but do not expose it as a dimensions field.
+    Durable Object storage accepts neither the namespace filter nor namespace
+    dimensions, so that account-level included-usage meter is queried once.
     """
     do_fields: list[str] = []
     for index, identifier in enumerate(_ACTIVE_DO_IDS):
@@ -65,7 +65,6 @@ def graphql_document() -> str:
         do_fields.extend([
             f"doInvocations{index}: durableObjectsInvocationsAdaptiveGroups(limit: 10000, filter: {{date_geq: $day, date_leq: $day, namespaceId: {namespace}}}) {{ sum {{ requests }} }}",
             f"doPeriodic{index}: durableObjectsPeriodicGroups(limit: 10000, filter: {{date_geq: $day, date_leq: $day, namespaceId: {namespace}}}) {{ sum {{ activeTime rowsRead rowsWritten }} }}",
-            f"doStorage{index}: durableObjectsStorageGroups(limit: 10000, filter: {{date_geq: $day, date_leq: $day, namespaceId: {namespace}}}) {{ max {{ storedBytes }} }}",
         ])
 
     kv_fields: list[str] = []
@@ -87,6 +86,9 @@ def graphql_document() -> str:
         }}
         r2storage: r2StorageAdaptiveGroups(limit: 10000, filter: {{datetime_geq: $monthStart, datetime_leq: $now}}, orderBy: [datetime_DESC]) {{
           max {{ payloadSize metadataSize }} dimensions {{ bucketName datetime }}
+        }}
+        doStorage: durableObjectsStorageGroups(limit: 10000, filter: {{date_geq: $day, date_leq: $day}}) {{
+          max {{ storedBytes }}
         }}
         {scoped}
         pipelineOperators: pipelinesOperatorAdaptiveGroups(limit: 10000, filter: {{datetime_geq: $monthStart, datetime_leq: $now, streamId_neq: ""}}) {{
@@ -118,9 +120,15 @@ def aggregate(
     kv_ids: set[str],
     pipeline_ids: set[str],
 ) -> dict[str, Any]:
-    # Keep compatibility with the core module's executable self-test and any
-    # older fixtures that already provide the former combined keys.
-    if any(key in row for key in ("doInvocations", "doPeriodic", "doStorage", "kvOperations", "kvStorage")):
+    alias_prefixes = ("doInvocations", "doPeriodic", "kvOperations", "kvStorage")
+    has_scoped_aliases = any(
+        key.startswith(prefix) and key != prefix
+        for key in row
+        for prefix in alias_prefixes
+    )
+    # Keep compatibility with the core module's executable self-test and older
+    # fixtures that provide only the former combined keys.
+    if not has_scoped_aliases:
         return _ORIGINAL_AGGREGATE(
             row, queue_ids, namespace_ids, buckets, kv_ids, pipeline_ids
         )
@@ -132,15 +140,21 @@ def aggregate(
     normalized["kvOperations"] = []
     normalized["kvStorage"] = []
 
-    for index, identifier in enumerate(sorted(namespace_ids)):
+    ordered_do_ids = sorted(namespace_ids)
+    for index, identifier in enumerate(ordered_do_ids):
         normalized["doInvocations"].extend(
             _tag_namespace(row.get(f"doInvocations{index}"), identifier)
         )
         normalized["doPeriodic"].extend(
             _tag_namespace(row.get(f"doPeriodic{index}"), identifier)
         )
+
+    # durableObjectsStorageGroups exposes the account-level included-usage
+    # meter without a namespace selector. Tag it once so the core aggregation
+    # can retain its existing validation and maximum logic without double count.
+    if ordered_do_ids:
         normalized["doStorage"].extend(
-            _tag_namespace(row.get(f"doStorage{index}"), identifier)
+            _tag_namespace(row.get("doStorage"), ordered_do_ids[0])
         )
 
     for index, identifier in enumerate(sorted(kv_ids)):
@@ -184,6 +198,9 @@ def self_test() -> int:
     assert 'namespaceId: "do-own"' in document
     assert 'namespaceId: "kv-own"' in document
     assert "dimensions { namespaceId" not in document
+    assert "doStorage: durableObjectsStorageGroups" in document
+    storage_fragment = document.split("doStorage:", 1)[1].split("doInvocations0:", 1)[0]
+    assert "namespaceId" not in storage_fragment
     assert "dimensions { actionType }" in document
     assert "dimensions { date }" in document
 
@@ -193,7 +210,7 @@ def self_test() -> int:
         "r2storage": [],
         "doInvocations0": [{"sum": {"requests": 10}}],
         "doPeriodic0": [{"sum": {"activeTime": 1000, "rowsRead": 2, "rowsWritten": 1}}],
-        "doStorage0": [{"max": {"storedBytes": 50}}],
+        "doStorage": [{"max": {"storedBytes": 50}}],
         "kvOperations0": [
             {"dimensions": {"actionType": "read"}, "sum": {"requests": 7}},
             {"dimensions": {"actionType": "write"}, "sum": {"requests": 1}},
