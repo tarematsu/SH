@@ -1,5 +1,6 @@
 name: Cloudflare Observability
 
+# PR #567's diagnostics intent is preserved by this measured post-deploy audit.
 on:
   workflow_run:
     workflows: ["Deploy production"]
