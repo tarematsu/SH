@@ -10,6 +10,14 @@ const queryScript = readFileSync(
   new URL('../.github/scripts/query-cloudflare-observability.py', import.meta.url),
   'utf8',
 );
+const auditScript = readFileSync(
+  new URL('../.github/scripts/audit-cloudflare-telemetry.py', import.meta.url),
+  'utf8',
+);
+const liveTailScript = readFileSync(
+  new URL('../.github/scripts/capture-cloudflare-live-tail.mjs', import.meta.url),
+  'utf8',
+);
 const wranglerFiles = [
   'wrangler.ingest.jsonc',
   'wrangler.minute-enrichment.jsonc',
@@ -27,15 +35,32 @@ test('observability workflow uses Cloudflare APIs on PRs and main pushes', () =>
   assert.match(workflow, /CLOUDFLARE_WORKERS: sh-buddies-ingest,sh-minute-enrichment,sh-sakurazaka46jp,sh-runtime-orchestrator/);
   assert.match(workflow, /secrets\.CLOUDFLARE_BUILDS_API_TOKEN/);
   assert.match(workflow, /query-cloudflare-observability\.py/);
-  assert.doesNotMatch(workflow, /R2_BUCKET|AWS_|aws s3api|upload-artifact/);
+  assert.match(workflow, /audit-cloudflare-telemetry\.py/);
+  assert.match(workflow, /CPU_BUDGET_MS: "10"/);
+  assert.doesNotMatch(workflow, /R2_BUCKET|AWS_|aws s3api/);
+  assert.match(workflow, /Upload sanitized observability report/);
+  assert.match(workflow, /retention-days: 1/);
+  assert.doesNotMatch(workflow, /observability-logs\/|raw\/|\.ndjson/);
 });
 
-test('query script reads metrics and sanitized error samples without R2', () => {
+test('query and audit scripts use Cloudflare APIs without R2', () => {
   assert.match(queryScript, /workersInvocationsAdaptive/);
   assert.match(queryScript, /workers\/observability\/telemetry\/query/);
   assert.match(queryScript, /GITHUB_STEP_SUMMARY/);
   assert.match(queryScript, /urlunsplit/);
-  assert.doesNotMatch(queryScript, /r2\.cloudflarestorage|aws s3|R2_BUCKET/);
+  assert.match(auditScript, /\$workers\.cpuTimeMs/);
+  assert.match(auditScript, /CPU_BUDGET_MS/);
+  assert.match(auditScript, /coverage_ok/);
+  assert.match(auditScript, /No persisted invocation CPU samples were returned/);
+  assert.doesNotMatch(`${queryScript}\n${auditScript}`, /r2\.cloudflarestorage|aws s3|R2_BUCKET/);
+});
+
+test('live-tail diagnostics redact sensitive request fields', () => {
+  assert.match(liveTailScript, /telemetry\/live-tail/);
+  assert.match(liveTailScript, /scriptId: worker/);
+  assert.match(liveTailScript, /\[redacted\]/);
+  assert.match(liveTailScript, /parsed\.protocol.*parsed\.host.*parsed\.pathname/s);
+  assert.doesNotMatch(liveTailScript, /console\.log\(.*token/);
 });
 
 test('all deployed Workers persist invocation logs and disable Logpush export', () => {
