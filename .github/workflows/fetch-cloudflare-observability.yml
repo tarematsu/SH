@@ -40,17 +40,22 @@ jobs:
 
       - name: Query Cloudflare metrics and persisted errors
         shell: bash
-        run: python3 .github/scripts/query-cloudflare-observability.py
+        run: |
+          actual_summary="$GITHUB_STEP_SUMMARY"
+          GITHUB_STEP_SUMMARY=observability-summary.md python3 .github/scripts/query-cloudflare-observability.py
+          cat observability-summary.md >> "$actual_summary"
 
       - name: Enforce per-invocation 10 ms CPU policy
         shell: bash
         run: python3 .github/scripts/audit-cloudflare-telemetry.py 2>&1 | tee telemetry-audit.log
 
-      - name: Upload sanitized telemetry audit
+      - name: Upload sanitized observability report
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: cloudflare-telemetry-audit-sh-${{ github.run_id }}
-          path: telemetry-audit.log
+          name: cloudflare-observability-report-sh-${{ github.run_id }}
+          path: |
+            observability-summary.md
+            telemetry-audit.log
           if-no-files-found: warn
           retention-days: 1
