@@ -27,8 +27,6 @@ on:
           - all
           - pages
           - workers
-          - ingest
-          - minute-enrichment
           - sakurazaka46jp
           - runtime
 
@@ -78,12 +76,6 @@ jobs:
                 ;;
               workers)
                 selection="$(node worker/scripts/select-worker-deploys.mjs --all)"
-                ;;
-              ingest)
-                selection='{"workers":["sh-buddies-ingest"],"commands":["deploy:ingest"]}'
-                ;;
-              minute-enrichment)
-                selection='{"workers":["sh-minute-enrichment"],"commands":["deploy:minute-enrichment"]}'
                 ;;
               sakurazaka46jp)
                 selection='{"workers":["sh-sakurazaka46jp"],"commands":["deploy:sakurazaka46jp"]}'
