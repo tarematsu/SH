@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
+import { COMPLETE_MINUTE_FACT_JOB_SQL } from '../src/minute-facts-inbox.js';
 import {
   budgetedLiveCompleteMessage,
+  COMPLETE_LIVE_MINUTE_FACT_JOB_SQL,
   completeBudgetedLiveJob,
   processBudgetedLiveCompleteBatch,
 } from '../src/minute-live-complete-budget-entry.js';
@@ -34,7 +36,12 @@ test('live completion validator rejects rebuild and malformed messages', () => {
   assert.equal(budgetedLiveCompleteMessage({ ...body(), job: { id: 42 } }), true);
   assert.equal(budgetedLiveCompleteMessage(body('rebuild')), false);
   assert.equal(budgetedLiveCompleteMessage({ ...body(), job: {} }), false);
+  assert.equal(budgetedLiveCompleteMessage({ ...body(), job: { id: 0 } }), false);
   assert.equal(budgetedLiveCompleteMessage({ ...body(), stage: 'write' }), false);
+});
+
+test('lightweight completion SQL stays identical to the canonical completion contract', () => {
+  assert.equal(COMPLETE_LIVE_MINUTE_FACT_JOB_SQL, COMPLETE_MINUTE_FACT_JOB_SQL);
 });
 
 test('live completion performs only the bounded job completion update', async () => {
