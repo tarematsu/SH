@@ -44,11 +44,17 @@ test('observability workflow uses Cloudflare APIs on PRs and main pushes', () =>
 });
 
 test('PR telemetry is diagnostic while main telemetry remains enforcing', () => {
+  const start = workflow.indexOf('name: Enforce per-invocation 10 ms CPU policy');
+  const end = workflow.indexOf('name: Upload sanitized observability report');
+  assert.ok(start >= 0);
+  assert.ok(end > start);
+  const enforcementStep = workflow.slice(start, end);
   assert.match(
-    workflow,
-    /name: Enforce per-invocation 10 ms CPU policy[\s\S]*continue-on-error: \$\{\{ github\.event_name == 'pull_request' \}\}/,
+    enforcementStep,
+    /continue-on-error: \$\{\{ github\.event_name == 'pull_request' \}\}/,
   );
-  assert.doesNotMatch(workflow, /continue-on-error: true[\s\S]*audit-cloudflare-telemetry\.py/);
+  assert.match(enforcementStep, /audit-cloudflare-telemetry\.py/);
+  assert.doesNotMatch(enforcementStep, /continue-on-error: true/);
 });
 
 test('query and audit scripts use Cloudflare APIs without R2', () => {
