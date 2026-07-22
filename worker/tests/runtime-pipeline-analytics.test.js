@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
 import {
@@ -12,6 +13,7 @@ import {
   ensureRuntimeAnalyticsResources,
   RUNTIME_ANALYTICS_BINDING,
   runtimeConfigWithAnalyticsStream,
+  sanitizedProvisionError,
 } from '../scripts/provision-runtime-analytics-pipeline.mjs';
 
 const MINUTE_MS = 60_000;
@@ -79,14 +81,37 @@ test('scheduled dispatch does not fail production work when analytics delivery f
       { cron: '* * * * *', scheduledTime: 10 * MINUTE_MS },
       { HOST_MONITOR_QUEUE: { async sendBatch(messages) { sentBatches.push(messages); } } },
       null,
-      { publishRuntimeAnalytics: async () => { throw new Error('pipeline unavailable'); } },
+      {
+        dispatchRawCollection: async () => {},
+        publishRuntimeAnalytics: async () => { throw new Error('pipeline unavailable'); },
+      },
     );
     assert.equal(result[0].task, 'raw-collection');
     assert.equal(sentBatches.length, 1);
+    assert.deepEqual(sentBatches[0].map(({ body }) => body.message_type), [
+      'runtime-stream-prediction-dispatch',
+    ]);
     assert.match(warnings.join('\n'), /runtime_pipeline_analytics_failed/);
   } finally {
     console.warn = originalWarn;
   }
+});
+
+test('runtime deployment keeps optional Pipeline provisioning outside Queue migration', () => {
+  const deployment = readFileSync(new URL('../scripts/deploy-runtime.mjs', import.meta.url), 'utf8');
+  const provision = deployment.indexOf('analyticsResources = ensureRuntimeAnalyticsResources()');
+  const consumerDiscovery = deployment.indexOf('\n  previousConsumers = new Set(');
+  assert.ok(provision >= 0 && provision < consumerDiscovery);
+  assert.match(deployment, /runtime_analytics_pipeline_unavailable/);
+  assert.match(deployment, /try \{[\s\S]*ensureRuntimeAnalyticsResources\(\)[\s\S]*\} catch \(error\)/);
+});
+
+test('Pipeline provisioning errors redact Cloudflare account identifiers', () => {
+  const message = sanitizedProvisionError(
+    new Error('request to /accounts/account-identifier/pipelines/v1/streams failed'),
+  );
+  assert.equal(message, 'request to /accounts/[redacted]/pipelines/v1/streams failed');
+  assert.doesNotMatch(message, /account-identifier/);
 });
 
 test('deployment injects the created stream ID into the Worker binding', () => {
@@ -140,4 +165,26 @@ test('provisioning creates stream, Data Catalog sink, and SQL pipeline when abse
   assert.ok(commands.some((args) => args.join(' ') === (
     'pipelines create sh-runtime-analytics --sql-file pipelines/runtime-analytics.sql'
   )));
+});
+
+test('provisioning accepts Wrangler beta create output without an eventually consistent relist', () => {
+  const listCalls = new Map();
+  const runWrangler = (args, options = {}) => {
+    const key = ['list', 'create'].includes(args[1]) ? 'pipelines' : args[1];
+    if (args.includes('list') && options.capture) {
+      listCalls.set(key, (listCalls.get(key) || 0) + 1);
+      return { status: 0, stdout: '[]' };
+    }
+    if (args.includes('create') && options.capture) {
+      const name = args[args.indexOf('create') + 1];
+      return { status: 0, stdout: `Successfully created resource '${name}' with id '${key}-id'.` };
+    }
+    return { status: 0, stdout: '' };
+  };
+
+  const resources = ensureRuntimeAnalyticsResources({ runWrangler, catalogToken: 'catalog-token' });
+  assert.equal(resources.stream.id, 'streams-id');
+  assert.equal(resources.sink.id, 'sinks-id');
+  assert.equal(resources.pipeline.id, 'pipelines-id');
+  assert.deepEqual(Object.fromEntries(listCalls), { streams: 1, sinks: 1, pipelines: 1 });
 });

@@ -12,6 +12,12 @@ const SNAPSHOT_COLUMNS = `id,observed_at,channel_id,channel_alias,channel_name,s
   is_launched,is_broadcasting,chat_status,listener_count,online_member_count,total_member_count,
   guest_count,total_listens,stream_goal,current_stream_count,host_account_id,host_handle,broadcast_start_time`;
 
+export const PREVIOUS_GAP_SNAPSHOT_SQL = `SELECT ${SNAPSHOT_COLUMNS}
+  FROM sh_channel_snapshots
+  WHERE channel_id=? AND observed_at<?
+  ORDER BY observed_at DESC,id DESC
+  LIMIT 1`;
+
 export const GAP_SCAN_STATE_KEY = 'minute-facts-gap-scan-v1';
 export const GAP_SCAN_STATE_SQL = `CREATE TABLE IF NOT EXISTS sh_minute_fact_gap_scan_state (
   scan_key TEXT PRIMARY KEY,
@@ -170,18 +176,10 @@ export async function loadGapScanSnapshots(env, from, to) {
   const previousRows = [];
   for (let offset = 0; offset < channelIds.length; offset += PREVIOUS_CHANNEL_CHUNK_SIZE) {
     const part = channelIds.slice(offset, offset + PREVIOUS_CHANNEL_CHUNK_SIZE);
-    const previous = await env.DB.prepare(`SELECT ${SNAPSHOT_COLUMNS}
-      FROM (
-        SELECT ${SNAPSHOT_COLUMNS},
-          ROW_NUMBER() OVER (
-            PARTITION BY channel_id ORDER BY observed_at DESC,id DESC
-          ) AS row_rank
-        FROM sh_channel_snapshots
-        WHERE observed_at<? AND channel_id IN (${part.map(() => '?').join(',')})
-      )
-      WHERE row_rank=1
-      ORDER BY observed_at ASC,id ASC`).bind(from, ...part).all();
-    previousRows.push(...(previous.results || []));
+    const previous = await env.DB.batch(part.map((channelId) => (
+      env.DB.prepare(PREVIOUS_GAP_SNAPSHOT_SQL).bind(channelId, from)
+    )));
+    for (const result of previous) previousRows.push(...(result.results || []));
   }
 
   return [...previousRows, ...rows].sort((left, right) => (

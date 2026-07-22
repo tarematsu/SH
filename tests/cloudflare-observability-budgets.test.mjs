@@ -36,6 +36,10 @@ test('observability uses post-deploy deep checks and lightweight hourly budgets'
   assert.match(workflow, /audit-cloudflare-telemetry\.py --self-test/);
   assert.doesNotMatch(workflow, /audit-cloudflare-live-tail\.py/);
   assert.match(workflow, /github\.event\.schedule == '11 3 \* \* \*'/);
+  assert.match(workflow, /id: daily-budget/);
+  assert.match(workflow, /continue-on-error: true/);
+  assert.match(workflow, /steps\.daily-budget\.outcome == 'failure'/);
+  assert.match(workflow, /Fail after collecting diagnostics when daily budget exceeded/);
 });
 
 test('D1 query insights are manual-only and duplicate budget paths are gone', async () => {

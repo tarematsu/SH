@@ -16,7 +16,10 @@ jobs:
     timeout-minutes: 20
     env:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_BUILDS_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
       D1_USAGE_OUTPUT_DIR: d1-usage
+      D1_CONFIG_GLOBS: worker/wrangler*.jsonc,site/wrangler.jsonc
+      D1_QUERY_OUTPUT_DIR: d1-usage/query-costs
 
     steps:
       - uses: actions/checkout@v4
@@ -37,40 +40,8 @@ jobs:
           node scripts/cloudflare-d1-hourly-usage.mjs
           cat d1-usage/hourly-summary.md >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Restore Wrangler dependencies
-        id: worker-modules
-        uses: actions/cache@v4
-        with:
-          path: worker/node_modules
-          key: ${{ runner.os }}-node22-worker-insights-${{ hashFiles('worker/package-lock.json', 'packages/sh-shared/**') }}
-
-      - name: Install Wrangler for query insights
-        if: steps.worker-modules.outputs.cache-hit != 'true'
-        working-directory: worker
-        run: npm ci --prefer-offline --no-audit --no-fund
-
-      - name: Fetch top D1 queries for one-hour and one-day windows
-        shell: bash
-        run: |
-          set -euo pipefail
-          mkdir -p d1-usage/insights
-          while IFS=$'\t' read -r account_id database_name; do
-            [[ -n "$account_id" && -n "$database_name" ]] || continue
-            safe_name="$(printf '%s' "$database_name" | tr -cs 'A-Za-z0-9._-' '_')"
-            for period in 1h 1d; do
-              for metric in reads writes; do
-                output="d1-usage/insights/${safe_name}-${metric}-${period}.json"
-                error_output="d1-usage/insights/${safe_name}-${metric}-${period}.stderr.txt"
-                if ! (cd worker && CLOUDFLARE_ACCOUNT_ID="$account_id" npx wrangler d1 insights "$database_name" \
-                      --sort-type=sum --sort-by="$metric" --limit=30 --timePeriod="$period" --json) \
-                      > "$output" 2> "$error_output"; then
-                  jq -n --arg database "$database_name" --arg metric "$metric" --arg period "$period" \
-                    --rawfile error "$error_output" \
-                    '{database:$database,metric:$metric,period:$period,available:false,error:$error}' > "$output"
-                fi
-              done
-            done
-          done < <(jq -r '.[] | select(.accountId != null) | [.accountId,.name] | @tsv' d1-usage/databases.json)
+      - name: Fetch top D1 queries with GraphQL
+        run: python3 .github/scripts/query-cloudflare-d1-costs.py
 
       - name: Upload D1 usage and query insights
         if: always()

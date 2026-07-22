@@ -66,17 +66,20 @@ test('runtime Worker config owns every non-Sakurazaka Queue boundary', () => {
 
 test('runtime Cron queues rollup and prediction only in their assigned slots', async () => {
   const batches = [];
+  const inline = [];
   const atThirty = BASE + 30 * 60_000;
   const rollup = await runRuntimeScheduled(
     { cron: RUNTIME_CRON, scheduledTime: atThirty },
     { HOST_MONITOR_QUEUE: { async sendBatch(messages) { batches.push(messages); } } },
+    null,
+    { async dispatchRawCollection(_env, body) { inline.push(body); } },
   );
 
   assert.deepEqual(batches[0].map(({ body }) => body.message_type), [
-    RAW_COLLECTION_TASK_MESSAGE,
     MONITOR_MAINTENANCE_MESSAGE,
   ]);
-  assert.equal(batches[0][1].body.cron, ROLLUP_MAINTENANCE_CRON);
+  assert.equal(batches[0][0].body.cron, ROLLUP_MAINTENANCE_CRON);
+  assert.deepEqual(inline.map(({ message_type }) => message_type), [RAW_COLLECTION_TASK_MESSAGE]);
   assert.deepEqual(rollup.map(({ task }) => task), ['raw-collection', 'maintenance']);
 
   const atForty = BASE + 40 * 60_000;
@@ -85,6 +88,25 @@ test('runtime Cron queues rollup and prediction only in their assigned slots', a
     RAW_COLLECTION_TASK_MESSAGE,
     RUNTIME_STREAM_PREDICTION_MESSAGE,
   ]);
+});
+
+test('runtime Cron falls back to the raw collection Queue when inline preparation fails', async () => {
+  const batches = [];
+  const warnings = [];
+  const originalWarn = console.warn;
+  console.warn = (value) => warnings.push(String(value));
+  try {
+    await runRuntimeScheduled(
+      { cron: RUNTIME_CRON, scheduledTime: BASE },
+      { HOST_MONITOR_QUEUE: { async sendBatch(messages) { batches.push(messages); } } },
+      null,
+      { async dispatchRawCollection() { throw new Error('temporary source failure'); } },
+    );
+  } finally {
+    console.warn = originalWarn;
+  }
+  assert.deepEqual(batches.flat().map(({ body }) => body.message_type), [RAW_COLLECTION_TASK_MESSAGE]);
+  assert.match(warnings.join('\n'), /inline_raw_collection_failed/);
 });
 
 test('runtime Cron creates bounded messages for recovery and maintenance gates', () => {

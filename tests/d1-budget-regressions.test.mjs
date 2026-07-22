@@ -131,8 +131,7 @@ test('D1 query insights remain an independent manual diagnostic', () => {
   assert.match(workflow, /^  workflow_dispatch:\n/m);
   assert.doesNotMatch(workflow, /^  schedule:\n/m);
   assert.doesNotMatch(workflow, /^  pull_request:\n/m);
-  assert.match(workflow, /name: Restore Wrangler dependencies/);
-  assert.match(workflow, /name: Install Wrangler for query insights/);
-  assert.match(workflow, /name: Fetch top D1 queries for one-hour and one-day windows/);
-  assert.match(workflow, /wrangler d1 insights/);
+  assert.match(workflow, /name: Fetch top D1 queries with GraphQL/);
+  assert.match(workflow, /query-cloudflare-d1-costs\.py/);
+  assert.doesNotMatch(workflow, /Restore Wrangler dependencies|wrangler d1 insights|npm ci/);
 });

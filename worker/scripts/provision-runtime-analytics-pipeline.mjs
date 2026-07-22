@@ -14,6 +14,12 @@ export const RUNTIME_ANALYTICS_BINDING = 'RUNTIME_ANALYTICS_STREAM';
 const STREAM_SCHEMA = 'pipelines/runtime-analytics.schema.json';
 const PIPELINE_SQL = 'pipelines/runtime-analytics.sql';
 
+export function sanitizedProvisionError(error) {
+  return String(error?.message || error)
+    .replaceAll(/\/accounts\/[^/\s]+/g, '/accounts/[redacted]')
+    .slice(0, 500);
+}
+
 function required(value, label) {
   const normalized = String(value || '').trim();
   if (!normalized) throw new Error(`${label} is required`);
@@ -51,6 +57,12 @@ function resourceId(row) {
   return String(row?.id || row?.stream_id || row?.sink_id || row?.pipeline_id || '').trim();
 }
 
+function createdResource(result, name) {
+  const match = outputText(result).match(/with id ['"]([^'"]+)['"]/i);
+  if (!match) return null;
+  return { id: required(match[1], `${name} id`), name };
+}
+
 function commandFor(kind, action, ...rest) {
   if (kind === 'pipelines') return ['pipelines', action, ...rest];
   return ['pipelines', kind, action, ...rest];
@@ -69,7 +81,11 @@ function findNamed(rows, name) {
 function ensureNamed(kind, name, createArgs, run) {
   let row = findNamed(listResources(kind, run), name);
   if (!row) {
-    run(commandFor(kind, 'create', name, ...createArgs));
+    const created = createdResource(
+      run(commandFor(kind, 'create', name, ...createArgs), { capture: true }),
+      name,
+    );
+    if (created) return created;
     row = findNamed(listResources(kind, run), name);
   }
   if (!row) throw new Error(`Cloudflare Pipelines ${kind} resource ${name} was not found after create`);

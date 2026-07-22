@@ -25,6 +25,11 @@ const dailyBudgetScript = readFileSync(
   new URL('../.github/scripts/audit-cloudflare-daily-usage.py', import.meta.url),
   'utf8',
 );
+const d1QueryCostUrl = new URL(
+  '../.github/scripts/query-cloudflare-d1-costs.py',
+  import.meta.url,
+);
+const d1QueryCostScript = readFileSync(d1QueryCostUrl, 'utf8');
 const liveTailScript = readFileSync(
   new URL('../.github/scripts/capture-cloudflare-live-tail.mjs', import.meta.url),
   'utf8',
@@ -109,6 +114,16 @@ test('deployment-backed telemetry selector passes its executable self-test', () 
   );
   assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
   assert.match(result.stdout, /deployed telemetry audit self-test passed/);
+});
+
+test('D1 query cost collector uses GraphQL and passes its privacy self-test', () => {
+  assert.match(d1QueryCostScript, /d1QueriesAdaptiveGroups/);
+  assert.match(d1QueryCostScript, /sum_rowsRead_DESC/);
+  assert.match(d1QueryCostScript, /sum_rowsWritten_DESC/);
+  assert.match(d1QueryCostScript, /count_DESC/);
+  assert.doesNotMatch(d1QueryCostScript, /wrangler d1 insights/);
+  const result = spawnSync('python3', [fileURLToPath(d1QueryCostUrl), '--self-test'], { encoding: 'utf8' });
+  assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
 });
 
 test('live-tail diagnostics redact sensitive request fields', () => {

@@ -8,7 +8,7 @@ export const FACTS_FRESH_MS = 10 * 60 * 1000;
 function commentVelocitySql(alias = 'f') {
   return `COALESCE((
     SELECT SUM(recent.comment_count)
-    FROM sh_minute_facts AS recent INDEXED BY idx_sh_minute_facts_source_minute_desc
+    FROM sh_minute_facts AS recent INDEXED BY idx_sh_minute_facts_source_channel_minute_desc
     WHERE recent.source_code=1
       AND recent.channel_id=${alias}.channel_id
       AND recent.minute_at>=${alias}.minute_at-60000
@@ -21,18 +21,23 @@ export const FACTS_LATEST_SQL = `SELECT
   f.is_broadcasting,f.listener_count,f.online_member_count,
   COALESCE((SELECT d.last_total_member_count FROM sh_total_member_daily d
     WHERE d.channel_id=f.channel_id AND d.day_at=(f.observed_at/86400000)*86400000
-      AND d.host_key IN (0,COALESCE(c.host_id,0))
+      AND d.host_key IN (0,COALESCE(v.host_id_override,s.host_id,0))
     ORDER BY d.host_key DESC,d.last_observed_at DESC LIMIT 1),f.total_member_count)
     AS total_member_count,f.guest_count,
   f.reported_total_listens AS total_listens,
   f.reported_current_stream_count AS current_stream_count,
   f.is_paused,${commentVelocitySql('f')} AS comment_velocity,
-  c.station_id,c.host_id,c.broadcast_start_time,c.queue_revision_id,
-  c.queue_id,c.queue_start_time,c.queue_track_count,c.queue_available,
+  COALESCE(v.station_id_override,s.station_id) AS station_id,
+  COALESCE(v.host_id_override,s.host_id) AS host_id,
+  COALESCE(v.broadcast_start_time_override,s.broadcast_start_time) AS broadcast_start_time,
+  v.queue_revision_id,r.queue_id,r.queue_start_time,r.item_count AS queue_track_count,
+  v.queue_available,
   h.stationhead_account_id AS host_account_id,h.current_handle AS host_handle
 FROM sh_minute_facts AS f INDEXED BY idx_sh_minute_facts_live_minute
-LEFT JOIN sh_minute_fact_context AS c ON c.fact_id=f.id
-LEFT JOIN sh_hosts AS h ON h.id=c.host_id
+LEFT JOIN sh_minute_fact_context_v2 AS v ON v.fact_id=f.id
+LEFT JOIN sh_broadcast_sessions AS s ON s.id=f.broadcast_session_id
+LEFT JOIN sh_queue_revisions AS r ON r.id=v.queue_revision_id
+LEFT JOIN sh_hosts AS h ON h.id=COALESCE(v.host_id_override,s.host_id)
 WHERE f.source_code=1
 ORDER BY f.minute_at DESC,f.id DESC
 LIMIT 1`;
@@ -207,14 +212,17 @@ export function mergeFactsLatest(snapshot, fact) {
   return merged;
 }
 
-export async function loadFactsDashboard(db, { since = 0, includeHistory = true } = {}) {
+export async function loadFactsDashboard(
+  db,
+  { since = 0, includeHistory = true, includePrediction = true } = {},
+) {
   const initial = since <= 0;
   const historyStatement = !includeHistory
     ? null
     : initial
       ? db.prepare(FACTS_HISTORY_24H_SQL)
       : db.prepare(FACTS_HISTORY_SINCE_SQL).bind(since);
-  const predictionStatement = initial && includeHistory
+  const predictionStatement = !includePrediction || (initial && includeHistory)
     ? null
     : db.prepare(FACTS_PREDICTION_24H_SQL);
   const [latest, historyResult, predictionResult] = await Promise.all([

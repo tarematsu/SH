@@ -126,19 +126,27 @@ test('snapshot loading includes one pre-window boundary row for every active cha
       return {
         bind(...bindings) {
           call.bindings = bindings;
+          this.bindings = bindings;
           return this;
         },
         async all() {
-          return { results: sql.includes('ROW_NUMBER()') ? previous : inWindow };
+          return { results: inWindow };
         },
       };
+    },
+    async batch(statements) {
+      return statements.map((statement) => ({
+        results: previous.filter((row) => row.channel_id === statement.bindings[0]),
+      }));
     },
   };
 
   const rows = await loadGapScanSnapshots({ DB: db }, 3 * MINUTE_MS, 6 * MINUTE_MS);
   assert.deepEqual(rows.map((row) => row.id), [10, 20, 40, 50]);
-  assert.match(calls[1].sql, /PARTITION BY channel_id/);
-  assert.deepEqual(calls[1].bindings, [3 * MINUTE_MS, 1, 2]);
+  assert.match(calls[1].sql, /WHERE channel_id=\? AND observed_at<\?/);
+  assert.match(calls[1].sql, /ORDER BY observed_at DESC,id DESC\s+LIMIT 1/);
+  assert.deepEqual(calls[1].bindings, [1, 3 * MINUTE_MS]);
+  assert.deepEqual(calls[2].bindings, [2, 3 * MINUTE_MS]);
 
   const result = buildExpectedMinuteCandidates(rows, {
     from: 3 * MINUTE_MS,

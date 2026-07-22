@@ -19,6 +19,10 @@ const MINUTE_FACT_MAINTENANCE_CRON = '5,7,9,15,17,19,25,27,29,35,37,39,45,47,49,
 let minuteMaintenanceModulePromise;
 let minuteGateModulePromise;
 let pipelineAnalyticsModulePromise;
+let rawCollectionSessionModulePromise;
+let rawCollectionFetchModulePromise;
+let rawCollectionTextTransportModulePromise;
+let runtimeEnvModulePromise;
 
 function loadMinuteMaintenanceModule() {
   minuteMaintenanceModulePromise ||= import('./minute-maintenance-entry.js');
@@ -33,6 +37,26 @@ function loadMinuteGateModule() {
 function loadPipelineAnalyticsModule() {
   pipelineAnalyticsModulePromise ||= import('./runtime-pipeline-analytics.js');
   return pipelineAnalyticsModulePromise;
+}
+
+function loadRawCollectionSessionModule() {
+  rawCollectionSessionModulePromise ||= import('./raw-collection-session-entry.js');
+  return rawCollectionSessionModulePromise;
+}
+
+function loadRawCollectionFetchModule() {
+  rawCollectionFetchModulePromise ||= import('./raw-collection-fetch-entry.js');
+  return rawCollectionFetchModulePromise;
+}
+
+function loadRawCollectionTextTransportModule() {
+  rawCollectionTextTransportModulePromise ||= import('./raw-collection-text-transport.js');
+  return rawCollectionTextTransportModulePromise;
+}
+
+function loadRuntimeEnvModule() {
+  runtimeEnvModulePromise ||= import('./runtime-env.js');
+  return runtimeEnvModulePromise;
 }
 
 function utcMinute(timestamp) {
@@ -107,12 +131,48 @@ export function runtimeScheduledMessagesFor(scheduledAt) {
 }
 
 async function sendRuntimeMessages(queue, messages) {
+  if (!messages.length) return;
   if (queue?.sendBatch) {
     await queue.sendBatch(messages.map((body) => ({ body, contentType: 'json' })));
     return;
   }
   if (!queue?.send) throw new Error('HOST_MONITOR_QUEUE binding is missing for runtime dispatch');
   await Promise.all(messages.map((body) => queue.send(body, JSON_QUEUE_SEND_OPTIONS)));
+}
+
+async function dispatchRawCollectionInline(env, body, options) {
+  if (options.dispatchRawCollection) return options.dispatchRawCollection(env, body);
+  const [session, fetchStage, transport, runtimeEnv] = await Promise.all([
+    loadRawCollectionSessionModule(),
+    loadRawCollectionFetchModule(),
+    loadRawCollectionTextTransportModule(),
+    loadRuntimeEnvModule(),
+  ]);
+  const active = runtimeEnv.rawCollectorEnv(env);
+  const rawQueue = transport.textTransportQueue(active?.RAW_COLLECTION_QUEUE);
+  const fetchEnv = Object.create(active || null);
+  Object.defineProperty(fetchEnv, 'RAW_COLLECTION_QUEUE', {
+    value: rawQueue,
+    enumerable: false,
+    configurable: true,
+  });
+  return session.prepareRawCollectionFetch(active, body, {
+    send: (message) => fetchStage.fetchPreparedRawCollection(fetchEnv, message),
+  });
+}
+
+async function dispatchRawCollectionWithFallback(env, body, options) {
+  try {
+    await dispatchRawCollectionInline(env, body, options);
+    return { inline: true, fallback: false };
+  } catch (error) {
+    console.warn(JSON.stringify({
+      event: 'inline_raw_collection_failed',
+      error: String(error?.message || error).slice(0, 500),
+    }));
+    await sendRuntimeMessages(env?.HOST_MONITOR_QUEUE, [body]);
+    return { inline: false, fallback: true };
+  }
 }
 
 async function scheduleRuntimeAnalytics(env, messages, scheduledAt, ctx, options) {
@@ -197,7 +257,12 @@ export async function runRuntimeScheduled(controller, env, ctx, options = EMPTY_
   }
   const scheduledAt = Number(controller?.scheduledTime) || Date.now();
   const messages = runtimeScheduledMessagesFor(scheduledAt);
-  await sendRuntimeMessages(env?.HOST_MONITOR_QUEUE, messages);
+  const rawMessage = messages.find((body) => body.message_type === RAW_COLLECTION_TASK_MESSAGE);
+  const queuedMessages = messages.filter((body) => body !== rawMessage);
+  await Promise.all([
+    rawMessage ? dispatchRawCollectionWithFallback(env, rawMessage, options) : null,
+    sendRuntimeMessages(env?.HOST_MONITOR_QUEUE, queuedMessages),
+  ]);
   await scheduleRuntimeAnalytics(env, messages, scheduledAt, ctx, options);
   return messages.map((body) => ({
     ...runtimeDispatchResult(body),

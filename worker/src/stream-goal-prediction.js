@@ -25,7 +25,7 @@ export const STREAM_GOAL_PREDICTION_AGGREGATE_SQL = `WITH ranked AS (
       PARTITION BY CAST(f.observed_at/300000 AS INTEGER)
       ORDER BY f.observed_at DESC,f.id DESC
     ) AS bucket_rank
-  FROM sh_minute_facts AS f
+  FROM sh_minute_facts AS f INDEXED BY idx_sh_minute_facts_stream_observed
   WHERE f.observed_at>=?
     AND f.reported_current_stream_count IS NOT NULL
 ), points AS (
@@ -42,8 +42,9 @@ export const STREAM_GOAL_PREDICTION_AGGREGATE_SQL = `WITH ranked AS (
       json_extract(p.presentation_json,'$.current_station.streaming_party.stream_goal')
     ) AS stream_goal,
     f.reported_current_stream_count AS stream_value
-  FROM sh_minute_facts AS f
+  FROM sh_minute_facts AS f INDEXED BY idx_sh_minute_facts_live_minute
   LEFT JOIN sh_channel_read_model AS p ON p.channel_id=f.channel_id
+  WHERE f.source_code=1
   ORDER BY f.minute_at DESC,f.id DESC
   LIMIT 1
 )

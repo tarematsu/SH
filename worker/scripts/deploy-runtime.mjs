@@ -17,6 +17,7 @@ import { preparePagesReadModelDeployConfig } from './pages-response-kv-namespace
 import {
   ensureRuntimeAnalyticsResources,
   runtimeConfigWithAnalyticsStream,
+  sanitizedProvisionError,
 } from './provision-runtime-analytics-pipeline.mjs';
 
 const workerRoot = fileURLToPath(new URL('..', import.meta.url));
@@ -53,18 +54,28 @@ let runtimeConsumers = new Set();
 let analyticsResources = null;
 
 try {
-  // Provision the Pipelines stream, R2 Parquet sink, and SQL pipeline before any
-  // Queue consumer is paused. A missing Pipelines permission therefore fails
-  // closed without disrupting the production ingestion topology.
-  analyticsResources = ensureRuntimeAnalyticsResources();
-  writeFileSync(
-    deploy.configPath,
-    runtimeConfigWithAnalyticsStream(
-      readFileSync(deploy.configPath, 'utf8'),
-      analyticsResources.stream.id,
-    ),
-    'utf8',
-  );
+  // Analytics is an optional, best-effort optimization. Keep it ahead of Queue
+  // migration so a permission error cannot disturb consumers, but do not block
+  // delivery of application and D1-budget fixes when the deploy token does not
+  // include the newer Pipelines scopes. The runtime already treats a missing
+  // stream binding as a skipped analytics publish.
+  try {
+    analyticsResources = ensureRuntimeAnalyticsResources();
+    writeFileSync(
+      deploy.configPath,
+      runtimeConfigWithAnalyticsStream(
+        readFileSync(deploy.configPath, 'utf8'),
+        analyticsResources.stream.id,
+      ),
+      'utf8',
+    );
+  } catch (error) {
+    console.warn(JSON.stringify({
+      event: 'runtime_analytics_pipeline_unavailable',
+      reason: 'optional-resource-provisioning-failed',
+      error: sanitizedProvisionError(error),
+    }));
+  }
 
   previousConsumers = new Set(
     migrations
