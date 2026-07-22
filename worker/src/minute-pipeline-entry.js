@@ -33,14 +33,22 @@ function liveRevisionMaterializationEnabled(env = {}) {
   return !['0', 'false', 'no', 'off'].includes(String(value).trim().toLowerCase());
 }
 
-function budgetedLiveTriggerBatch(batch, env) {
-  if (liveRevisionMaterializationEnabled(env)) return false;
+function triggerBatchKind(batch, jobKind) {
   const messages = batch?.messages || [];
   return messages.length > 0 && messages.every((message) => {
     const body = message?.body;
     return body?.message_type === 'minute-fact-derive'
-      && Number(body?.message_version) === 1;
+      && Number(body?.message_version) === 1
+      && String(body?.job_kind || 'live') === jobKind;
   });
+}
+
+function budgetedLiveTriggerBatch(batch, env) {
+  return !liveRevisionMaterializationEnabled(env) && triggerBatchKind(batch, 'live');
+}
+
+function rebuildTriggerBatch(batch) {
+  return triggerBatchKind(batch, 'rebuild');
 }
 
 function budgetedLiveRevisionBatch(batch, env) {
@@ -111,6 +119,13 @@ export async function processMinutePipelineBatch(batch, env, ctx, dependencies =
   if (queueName === REBUILD_DERIVE_QUEUE_NAME && !historicalRebuildEnabled(env)) {
     return acknowledgeDisabledHistoricalDerive(batch);
   }
+  if (queueName === LIVE_DERIVE_QUEUE_NAME && rebuildTriggerBatch(batch)) {
+    if (!historicalRebuildEnabled(env)) return acknowledgeDisabledHistoricalDerive(batch);
+    const rebuildBatch = { ...batch, queue: REBUILD_DERIVE_QUEUE_NAME };
+    const run = dependencies.processMinuteDeriveBatch;
+    if (run) return run(rebuildBatch, env, dependencies.derive);
+    return processDeriveBatch(rebuildBatch, env, dependencies.derive);
+  }
   if (queueName === LIVE_DERIVE_QUEUE_NAME && budgetedLiveTriggerBatch(batch, env)) {
     const run = dependencies.processBudgetedLiveTriggerBatch || processBudgetedLiveTriggerBatch;
     return run(batch, env, dependencies.liveTrigger);
@@ -144,6 +159,7 @@ export {
   budgetedLiveTriggerBatch,
   budgetedLiveRevisionBatch,
   budgetedLiveWriteBatch,
+  rebuildTriggerBatch,
 };
 
 export default {
