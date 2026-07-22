@@ -86,5 +86,8 @@ test('runtime config contains all core bindings while only two Workers stay acti
     workers.indexOf('ACTIVE_WORKER_NAMES'),
     workers.indexOf('RETIRED_WORKER_NAMES'),
   );
-  assert.equal((activeBlock.match(/'sh-/g) || []).length, 2);
+  assert.deepEqual(
+    [...activeBlock.matchAll(/'([^']+)'/g)].map((match) => match[1]),
+    ['sh-sakurazaka46jp', 'sh-runtime-orchestrator'],
+  );
 });
