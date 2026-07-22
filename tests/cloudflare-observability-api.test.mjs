@@ -32,7 +32,7 @@ const wranglerFiles = [
   source: readFileSync(new URL(`../worker/${name}`, import.meta.url), 'utf8'),
 }));
 
-test('observability uses hourly budgets and post-deploy Cloudflare API diagnostics', () => {
+test('observability uses measured hourly budgets and post-deploy Cloudflare API diagnostics', () => {
   assert.match(workflow, /^  workflow_run:\n/m);
   assert.match(workflow, /workflows: \["Deploy production"\]/);
   assert.match(workflow, /^  schedule:\n/m);
@@ -48,6 +48,7 @@ test('observability uses hourly budgets and post-deploy Cloudflare API diagnosti
   assert.match(workflow, /CPU_BUDGET_MS: "10"/);
   assert.match(workflow, /DURABLE_OBJECT_CPU_BUDGET_MS: "30000"/);
   assert.match(workflow, /DAILY_REQUEST_BUDGET: "70000"/);
+  assert.match(workflow, /DAILY_REQUEST_RESERVE: "0"/);
   assert.match(workflow, /DAILY_D1_READ_BUDGET: "3000000"/);
   assert.match(workflow, /DAILY_D1_WRITE_BUDGET: "70000"/);
   assert.match(workflow, /LIVE_TAIL_SECONDS: "90"/);
@@ -78,7 +79,8 @@ test('query and audit scripts use Cloudflare APIs without R2', () => {
   assert.match(dailyBudgetScript, /workersInvocationsAdaptive/);
   assert.match(dailyBudgetScript, /d1AnalyticsAdaptiveGroups/);
   assert.match(dailyBudgetScript, /rowsRead rowsWritten/);
-  assert.match(dailyBudgetScript, /one Cloudflare GraphQL request/);
+  assert.match(dailyBudgetScript, /measuredRequests/);
+  assert.match(dailyBudgetScript, /requestReserve/);
   assert.doesNotMatch(
     `${queryScript}\n${auditScript}\n${dailyBudgetScript}`,
     /r2\.cloudflarestorage|aws s3|R2_BUCKET/,
