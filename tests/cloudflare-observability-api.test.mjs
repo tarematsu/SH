@@ -43,6 +43,14 @@ test('observability workflow uses Cloudflare APIs on PRs and main pushes', () =>
   assert.doesNotMatch(workflow, /observability-logs\/|raw\/|\.ndjson/);
 });
 
+test('PR telemetry is diagnostic while main telemetry remains enforcing', () => {
+  assert.match(
+    workflow,
+    /name: Enforce per-invocation 10 ms CPU policy[\s\S]*continue-on-error: \$\{\{ github\.event_name == 'pull_request' \}\}/,
+  );
+  assert.doesNotMatch(workflow, /continue-on-error: true[\s\S]*audit-cloudflare-telemetry\.py/);
+});
+
 test('query and audit scripts use Cloudflare APIs without R2', () => {
   assert.match(queryScript, /workersInvocationsAdaptive/);
   assert.match(queryScript, /workers\/observability\/telemetry\/query/);
