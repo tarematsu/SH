@@ -67,8 +67,9 @@ test('one GitHub Actions workflow owns automatic and manual production deploymen
 
 test('automatic production deploy selects affected Workers and Pages from changed files', () => {
   assert.match(deploymentWorkflow, /select-worker-deploys\.mjs/);
-  assert.match(deploymentWorkflow, /site\/(functions\|public)/);
-  assert.match(deploymentWorkflow, /site\/wrangler\\\.jsonc/);
+  assert.match(deploymentWorkflow, /site\/functions\/\*\*/);
+  assert.match(deploymentWorkflow, /site\/public\/\*\*/);
+  assert.match(deploymentWorkflow, /site\/wrangler\.jsonc/);
   assert.match(deploymentWorkflow, /packages\/sh-shared/);
   assert.match(deploymentWorkflow, /DEPLOY_COMMANDS/);
   assert.match(deploymentWorkflow, /npm run "\$command"/);
