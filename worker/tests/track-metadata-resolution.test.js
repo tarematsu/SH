@@ -149,6 +149,10 @@ test('track metadata migration creates Spotify, ISRC and dictionary repair paths
     new URL('../../database/facts-migrations/022_total_listens_baseline_index.sql', import.meta.url),
     'utf8',
   );
+  const publicationIndex = readFileSync(
+    new URL('../../database/facts-migrations/029_track_history_publication_cursor_index.sql', import.meta.url),
+    'utf8',
+  );
   const provision = readFileSync(new URL('../scripts/provision-facts-db.mjs', import.meta.url), 'utf8');
   const metadata = JSON.parse(readFileSync(
     new URL('../../database/facts-db.json', import.meta.url),
@@ -166,6 +170,7 @@ test('track metadata migration creates Spotify, ISRC and dictionary repair paths
   assert.match(dispatchIndexes, /idx_sh_minute_fact_jobs_pending_dispatch/);
   assert.match(dispatchIndexes, /idx_sh_minute_fact_jobs_processing_lease/);
   assert.match(baselineIndex, /idx_sh_minute_facts_total_listens_baseline/);
+  assert.match(publicationIndex, /idx_sh_pages_track_history_publication_cursor/);
   assert.match(provision, /014_backfill_track_metadata\.sql/);
   assert.match(provision, /019_d1_budget_indexes\.sql/);
   assert.match(provision, /020_isrc_track_dictionary\.sql/);
@@ -173,5 +178,5 @@ test('track metadata migration creates Spotify, ISRC and dictionary repair paths
   assert.match(provision, /coverage_complete/);
   assert.match(provision, /source_job_id/);
   assert.match(provision, /source_visible_count/);
-  assert.equal(metadata.schema, 'database/facts-migrations/028_purge_completed_minute_fact_payloads.sql');
+  assert.equal(metadata.schema, 'database/facts-migrations/029_track_history_publication_cursor_index.sql');
 });
