@@ -175,15 +175,14 @@ export async function runPagesReadModelFetch(
       || (await loadResponseR2Module()).loadMaterializedR2Response;
     const loadKv = dependencies.loadResponse
       || (await loadResponseStoreModule()).loadMaterializedResponse;
-    const r2Response = modelKey === TRACK_HISTORY_MODEL_KEY
-      ? await loadR2(env?.PAGES_RESPONSE_R2, modelKey, now, maximumAge)
-      : null;
-    const response = r2Response || await loadKv(
-      env?.PAGES_RESPONSE_KV,
-      modelKey,
-      now,
-      maximumAge,
-    );
+    let response;
+    if (modelKey === TRACK_HISTORY_MODEL_KEY) {
+      response = await loadR2(env?.PAGES_RESPONSE_R2, modelKey, now, maximumAge)
+        || await loadKv(env?.PAGES_RESPONSE_KV, modelKey, now, maximumAge);
+    } else {
+      response = await loadKv(env?.PAGES_RESPONSE_KV, modelKey, now, maximumAge)
+        || await loadR2(env?.PAGES_RESPONSE_R2, modelKey, now, maximumAge);
+    }
     if (response) await cacheResponse(cache, cacheKey, response, context);
     return response || new Response(null, {
       status: 404,

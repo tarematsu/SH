@@ -67,6 +67,22 @@ test('materialized responses publish once to KV and are served as streams', asyn
   assert.deepEqual(await response.json(), { ok: true, rows: [1, 2, 3] });
 });
 
+test('R2 absorbs a KV publication failure before the D1 fallback is considered', async () => {
+  const puts = [];
+  const now = Date.UTC(2026, 6, 20, 0, 35);
+  const saved = await saveMaterializedResponse(
+    new NoD1Db(),
+    { async put() { throw new Error('KV temporarily unavailable'); } },
+    'history:daily',
+    Response.json({ ok: true }),
+    now,
+    21_600,
+    { r2: { async put(...args) { puts.push(args); } } },
+  );
+  assert.equal(saved.storage, 'r2');
+  assert.equal(puts.length, 1);
+});
+
 test('the internal Worker endpoint returns a KV response or a closed fallback signal', async () => {
   const now = Date.UTC(2026, 6, 20, 0, 35);
   const hit = await runPagesReadModelFetch(
@@ -86,6 +102,20 @@ test('the internal Worker endpoint returns a KV response or a closed fallback si
     { loadResponse: async () => null },
   );
   assert.equal(miss.status, 404);
+});
+
+test('the internal Worker endpoint uses R2 when a normal KV model is absent', async () => {
+  const calls = [];
+  const response = await runPagesReadModelFetch(
+    new Request('https://internal.test/_internal/pages-response?key=history%3Adaily'),
+    {},
+    {
+      loadResponse: async () => { calls.push('kv'); return null; },
+      loadR2Response: async () => { calls.push('r2'); return Response.json({ source: 'r2' }); },
+    },
+  );
+  assert.deepEqual(calls, ['kv', 'r2']);
+  assert.deepEqual(await response.json(), { source: 'r2' });
 });
 
 test('the internal Worker endpoint uses Cache API as a same-colo L1 before KV', async () => {
@@ -149,6 +179,7 @@ test('six-hour variants use KV without provisioning D1 response tables', async (
     MINUTE_DB: { prepare: () => ({ run: async () => {} }) },
     OTHER_DB: {},
     PAGES_RESPONSE_KV: { put() {} },
+    PAGES_RESPONSE_R2: { put() {} },
   }, now, {
     ensureSchema: async () => {},
     render: async () => Response.json({ ok: true }),
@@ -161,6 +192,7 @@ test('six-hour variants use KV without provisioning D1 response tables', async (
   assert.equal(result.responses[0].storage, 'kv');
   assert.equal(calls[0][2], 'history:daily');
   assert.equal(calls[0][5], 21_600);
+  assert.equal(calls[0][6].r2.put instanceof Function, true);
 });
 
 test('deployment resolves the exact namespace and replaces the placeholder id', () => {

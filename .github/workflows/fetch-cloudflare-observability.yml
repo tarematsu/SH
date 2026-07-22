@@ -42,6 +42,12 @@ jobs:
       DAILY_D1_READ_BUDGET: "3000000"
       DAILY_D1_WRITE_BUDGET: "70000"
       DAILY_USAGE_OUTPUT_DIR: daily-usage
+      CLOUDFLARE_RUNTIME_WORKER: sh-runtime-orchestrator
+      CLOUDFLARE_CONFIG_GLOBS: worker/wrangler.runtime.jsonc
+      CLOUDFLARE_STORAGE_BUCKETS: sh-runtime-analytics
+      CLOUDFLARE_KV_BINDINGS: PAGES_RESPONSE_KV
+      CLOUDFLARE_PIPELINE_NAMES: sh-runtime-analytics
+      FREE_TIER_USAGE_OUTPUT_DIR: free-tier-usage
 
     steps:
       - uses: actions/checkout@v4
@@ -52,6 +58,7 @@ jobs:
       - name: Validate observability policy code
         run: |
           python3 .github/scripts/audit-cloudflare-daily-usage.py --self-test
+          python3 .github/scripts/audit-cloudflare-free-tier.py --self-test
           python3 .github/scripts/audit-cloudflare-telemetry.py --self-test
           python3 .github/scripts/audit-deployed-cloudflare-telemetry.py --self-test
 
@@ -62,6 +69,14 @@ jobs:
         run: |
           set -o pipefail
           python3 .github/scripts/audit-cloudflare-daily-usage.py 2>&1 | tee daily-usage-audit.log
+
+      - name: Enforce DO, Queues, R2, KV, and Pipelines included-usage budgets
+        id: free-tier-budget
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -o pipefail
+          python3 .github/scripts/audit-cloudflare-free-tier.py 2>&1 | tee free-tier-usage-audit.log
 
       - name: Collect metrics and live events in parallel
         if: github.event_name != 'schedule' || github.event.schedule == '11 3 * * *'
@@ -111,6 +126,8 @@ jobs:
           path: |
             daily-usage/
             daily-usage-audit.log
+            free-tier-usage/
+            free-tier-usage-audit.log
             observability-summary.md
             observability-query.log
             telemetry-audit.log
@@ -119,5 +136,5 @@ jobs:
           retention-days: 1
 
       - name: Fail after collecting diagnostics when daily budget exceeded
-        if: steps.daily-budget.outcome == 'failure'
+        if: steps.daily-budget.outcome == 'failure' || steps.free-tier-budget.outcome == 'failure'
         run: exit 1

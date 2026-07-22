@@ -17,6 +17,7 @@ function runSelfTest(path) {
 
 test('observability policy scripts pass offline self-tests', () => {
   runSelfTest('.github/scripts/audit-cloudflare-daily-usage.py');
+  runSelfTest('.github/scripts/audit-cloudflare-free-tier.py');
   runSelfTest('.github/scripts/audit-cloudflare-telemetry.py');
 });
 
@@ -31,6 +32,11 @@ test('observability uses post-deploy deep checks and lightweight hourly budgets'
   assert.match(workflow, /DAILY_REQUEST_RESERVE: "0"/);
   assert.match(workflow, /DAILY_D1_READ_BUDGET: "3000000"/);
   assert.match(workflow, /DAILY_D1_WRITE_BUDGET: "70000"/);
+  assert.match(workflow, /CLOUDFLARE_RUNTIME_WORKER: sh-runtime-orchestrator/);
+  assert.match(workflow, /CLOUDFLARE_KV_BINDINGS: PAGES_RESPONSE_KV/);
+  assert.match(workflow, /audit-cloudflare-free-tier\.py --self-test/);
+  assert.match(workflow, /id: free-tier-budget/);
+  assert.match(workflow, /steps\.free-tier-budget\.outcome == 'failure'/);
   assert.match(workflow, /LIVE_TAIL_SECONDS: "90"/);
   assert.match(workflow, /LIVE_TAIL_LOG: live-tail\.log/);
   assert.match(workflow, /audit-cloudflare-telemetry\.py --self-test/);

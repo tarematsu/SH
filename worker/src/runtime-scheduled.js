@@ -3,6 +3,7 @@ const JSON_QUEUE_SEND_OPTIONS = Object.freeze({ contentType: 'json' });
 const MINUTE_MS = 60_000;
 const MINUTE_RECOVERY_POLL_INTERVAL_MINUTES = 5;
 const MINUTE_RECOVERY_POLL_OFFSET_MINUTE = 1;
+const DEFAULT_RAW_COLLECTION_FALLBACK_INTERVAL_MINUTES = 5;
 
 export const RUNTIME_CRON = '* * * * *';
 export const CONSOLIDATED_MONITOR_CRON = RUNTIME_CRON;
@@ -89,6 +90,14 @@ export function streamPredictionDue(timestamp) {
   return minute === 10 || minute === 40;
 }
 
+export function rawCollectionFallbackDue(timestamp, env = {}) {
+  const configured = Number(env?.RAW_COLLECTION_FALLBACK_INTERVAL_MINUTES);
+  const interval = Number.isFinite(configured) && configured > 0
+    ? Math.max(1, Math.trunc(configured))
+    : DEFAULT_RAW_COLLECTION_FALLBACK_INTERVAL_MINUTES;
+  return Math.floor((Number(timestamp) || 0) / MINUTE_MS) % interval === 0;
+}
+
 export function runtimeScheduledMessagesFor(scheduledAt) {
   const messages = [{
     message_type: RAW_COLLECTION_TASK_MESSAGE,
@@ -170,6 +179,9 @@ async function dispatchRawCollectionWithFallback(env, body, options) {
       event: 'inline_raw_collection_failed',
       error: String(error?.message || error).slice(0, 500),
     }));
+    if (!rawCollectionFallbackDue(body?.scheduled_at, env)) {
+      return { inline: false, fallback: false, reason: 'queue-fallback-cadence' };
+    }
     await sendRuntimeMessages(env?.HOST_MONITOR_QUEUE, [body]);
     return { inline: false, fallback: true };
   }

@@ -5,6 +5,7 @@ import { rawCollectorEnv } from './runtime-env.js';
 
 const EMPTY_DEPENDENCIES = Object.freeze({});
 const LIVE_DERIVE_QUEUE_NAME = 'stationhead-minute-live-derive';
+const RUNTIME_COORDINATOR_NAME = 'scheduled-v1';
 
 const INGEST_QUEUE_NAMES = new Set([
   'stationhead-raw-collection',
@@ -188,6 +189,69 @@ export async function runCoreScheduled(controller, env, ctx, dependencies = EMPT
   return { runtime: runtimeResult, pages: pagesResult };
 }
 
+function coordinatorStub(namespace) {
+  if (typeof namespace?.getByName === 'function') {
+    return namespace.getByName(RUNTIME_COORDINATOR_NAME);
+  }
+  if (typeof namespace?.idFromName === 'function' && typeof namespace?.get === 'function') {
+    return namespace.get(namespace.idFromName(RUNTIME_COORDINATOR_NAME));
+  }
+  return null;
+}
+
+export async function runCoordinatedScheduled(
+  controller,
+  env,
+  ctx,
+  dependencies = EMPTY_DEPENDENCIES,
+) {
+  const direct = dependencies.runDirect || runCoreScheduled;
+  const stub = dependencies.stub || coordinatorStub(env?.RUNTIME_COORDINATOR);
+  if (typeof stub?.run !== 'function') return direct(controller, env, ctx, dependencies.direct);
+  try {
+    return await stub.run({
+      cron: String(controller?.cron || ''),
+      scheduledTime: Number(controller?.scheduledTime) || Date.now(),
+    });
+  } catch (error) {
+    console.error(JSON.stringify({
+      event: 'runtime_coordinator_failed',
+      error: String(error?.message || error).slice(0, 500),
+    }));
+    return { skipped: true, reason: 'runtime-coordinator-error' };
+  }
+}
+
+// One object serializes the once-per-minute scheduler. The D1 lease remains a
+// fallback for deployments where the binding is unavailable; inside
+// the object it is disabled so a healthy tick no longer writes the D1 lock row
+// twice. No object storage is used, keeping DO row and storage usage at zero.
+export class RuntimeCoordinator {
+  constructor(state, env) {
+    this.state = state;
+    this.env = env;
+    this.running = false;
+  }
+
+  async run(controller = {}) {
+    if (this.running) return { skipped: true, reason: 'runtime-coordinator-busy' };
+    this.running = true;
+    const coordinatedEnv = Object.create(this.env || null);
+    Object.defineProperty(coordinatedEnv, 'PRIMARY_RUN_LOCK_ENABLED', {
+      value: false,
+      enumerable: false,
+    });
+    const ctx = {
+      waitUntil: (promise) => this.state?.waitUntil?.(promise),
+    };
+    try {
+      return await runCoreScheduled(controller, coordinatedEnv, ctx);
+    } finally {
+      this.running = false;
+    }
+  }
+}
+
 export async function runCoreFetch(request, env, ctx, dependencies = EMPTY_DEPENDENCIES) {
   const run = dependencies.runPagesFetch || (await loadPagesModule()).runPagesReadModelFetch;
   return run(request, env, ctx, dependencies.pages || EMPTY_DEPENDENCIES);
@@ -201,6 +265,6 @@ export {
 
 export default {
   fetch: runCoreFetch,
-  scheduled: runCoreScheduled,
+  scheduled: runCoordinatedScheduled,
   queue: runCoreQueue,
 };

@@ -1,3 +1,5 @@
+import { saveMaterializedR2Response } from './pages-response-r2.js';
+
 const RESPONSE_KEY_PREFIX = 'pages-response:v1:';
 const KV_CACHE_TTL_SECONDS = 300;
 const RESPONSE_CHUNK_SIZE = 192_000;
@@ -92,6 +94,7 @@ export async function saveMaterializedResponse(
   response,
   now,
   cadenceSeconds,
+  options = {},
 ) {
   const key = pagesResponseKey(modelKey);
   if (!key) throw new Error('materialized response key is invalid');
@@ -106,6 +109,7 @@ export async function saveMaterializedResponse(
   if (payload?.setup_required) throw new Error(`${modelKey} read model is not ready`);
 
   const headers = persistedHeaders(response);
+  let kvSaved = null;
   if (typeof kv?.put === 'function') {
     try {
       await kv.put(key, body, {
@@ -117,7 +121,7 @@ export async function saveMaterializedResponse(
           cadence_seconds: cadenceSeconds,
         },
       });
-      return { bytes: body.length, chunks: 1, storage: 'kv' };
+      kvSaved = { bytes: body.length, chunks: 1, storage: 'kv' };
     } catch (error) {
       console.error(JSON.stringify({
         event: 'pages_response_kv_publish_failed',
@@ -126,6 +130,31 @@ export async function saveMaterializedResponse(
       }));
     }
   }
+
+  let r2Saved = null;
+  const saveR2 = options.saveR2Response || saveMaterializedR2Response;
+  if (typeof options.r2?.put === 'function') {
+    try {
+      r2Saved = await saveR2(
+        options.r2,
+        modelKey,
+        body,
+        response.status,
+        headers,
+        now,
+        cadenceSeconds,
+      );
+    } catch (error) {
+      console.error(JSON.stringify({
+        event: 'pages_response_r2_mirror_failed',
+        model_key: modelKey,
+        error: String(error?.message || error).slice(0, 500),
+      }));
+    }
+  }
+
+  if (kvSaved) return { ...kvSaved, mirror_storage: r2Saved?.storage || null };
+  if (r2Saved) return r2Saved;
 
   return saveD1Response(db, modelKey, body, response, headers, now);
 }

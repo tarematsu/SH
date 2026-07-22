@@ -3,11 +3,13 @@ import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
 import coreWorker, {
+  RuntimeCoordinator,
   lightweightLiveBudgetKind,
   lightweightLiveCompleteBatch,
   runCoreFetch,
   runCoreQueue,
   runCoreScheduled,
+  runCoordinatedScheduled,
 } from '../src/runtime-orchestrator-entry.js';
 
 function batch(queue, body = {}) {
@@ -111,6 +113,46 @@ test('one cron dispatches runtime and Pages work to separate Queue invocations',
   });
   assert.deepEqual(calls.sort(), ['pages', 'runtime']);
   assert.deepEqual(result, { runtime: ['runtime'], pages: { dispatched: true } });
+});
+
+test('scheduled work uses one Durable Object without replaying a failed tick', async () => {
+  const calls = [];
+  const controller = { cron: '* * * * *', scheduledTime: 123 };
+  const coordinated = await runCoordinatedScheduled(controller, {}, {}, {
+    stub: { async run(value) { calls.push(['do', value]); return 'coordinated'; } },
+    runDirect: async () => { calls.push(['direct']); return 'direct'; },
+  });
+  assert.equal(coordinated, 'coordinated');
+  assert.deepEqual(calls, [['do', controller]]);
+
+  const fallback = await runCoordinatedScheduled(controller, {}, {}, {
+    stub: { async run() { throw new Error('temporary DO failure'); } },
+    runDirect: async () => 'direct',
+  });
+  assert.deepEqual(fallback, { skipped: true, reason: 'runtime-coordinator-error' });
+});
+
+test('RuntimeCoordinator serializes ticks and disables the redundant D1 lease', async () => {
+  const waits = [];
+  const state = { waitUntil: (promise) => waits.push(promise) };
+  const coordinator = new RuntimeCoordinator(state, { marker: true });
+  coordinator.running = true;
+  assert.deepEqual(await coordinator.run({}), {
+    skipped: true,
+    reason: 'runtime-coordinator-busy',
+  });
+  coordinator.running = false;
+
+  const config = JSON.parse(readFileSync(new URL('../wrangler.runtime.jsonc', import.meta.url), 'utf8'));
+  assert.deepEqual(config.durable_objects.bindings, [{
+    name: 'RUNTIME_COORDINATOR',
+    class_name: 'RuntimeCoordinator',
+  }]);
+  assert.deepEqual(config.migrations.at(-1), {
+    tag: 'runtime-coordinator-v1',
+    new_sqlite_classes: ['RuntimeCoordinator'],
+  });
+  assert.equal(waits.length, 0);
 });
 
 test('internal Pages fetch is delegated without exposing another Worker', async () => {
