@@ -9,13 +9,13 @@
     "MINUTE_DERIVE_STALE_MS": 360000,
     "MINUTE_MAINTENANCE_STALE_MS": 1200000,
     "OTHER_CRON_STALE_MS": 720000,
-    "PAGES_RESPONSE_MAX_AGE_MS": 21900000,
+    "PAGES_RESPONSE_MAX_AGE_MS": 86700000,
     "SOLO_BROADCAST_HANDLE": "sakurazaka46jp",
     "OFFICIAL_NEWS_STALE_MS": 7200000,
     "CLOUD_HOST_STALE_MS": 7200000
   },
   "services": [
-    { "binding": "PAGES_READ_MODEL_SERVICE", "service": "sh-minute-enrichment" }
+    { "binding": "PAGES_READ_MODEL_SERVICE", "service": "sh-runtime-orchestrator" }
   ],
   "d1_databases": [
     {
