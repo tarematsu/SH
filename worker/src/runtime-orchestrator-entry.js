@@ -6,6 +6,7 @@ import { rawCollectorEnv } from './runtime-env.js';
 const EMPTY_DEPENDENCIES = Object.freeze({});
 const LIVE_DERIVE_QUEUE_NAME = 'stationhead-minute-live-derive';
 const RUNTIME_COORDINATOR_NAME = 'scheduled-v1';
+const RUNTIME_COORDINATOR_TICKET_KEY = 'runtime:last-scheduled-ticket';
 
 const INGEST_QUEUE_NAMES = new Set([
   'stationhead-raw-collection',
@@ -203,12 +204,21 @@ export async function runCoordinatedScheduled(
 ) {
   const direct = dependencies.runDirect || runCoreScheduled;
   const stub = dependencies.stub || coordinatorStub(env?.RUNTIME_COORDINATOR);
-  if (typeof stub?.run !== 'function') return direct(controller, env, ctx, dependencies.direct);
+  if (typeof stub?.claim !== 'function') return direct(controller, env, ctx, dependencies.direct);
   try {
-    return await stub.run({
+    const claim = await stub.claim({
       cron: String(controller?.cron || ''),
       scheduledTime: Number(controller?.scheduledTime) || Date.now(),
     });
+    if (!claim?.claimed) {
+      return { skipped: true, reason: claim?.reason || 'runtime-coordinator-duplicate' };
+    }
+    const coordinatedEnv = Object.create(env || null);
+    Object.defineProperty(coordinatedEnv, 'PRIMARY_RUN_LOCK_ENABLED', {
+      value: false,
+      enumerable: false,
+    });
+    return await direct(controller, coordinatedEnv, ctx, dependencies.direct);
   } catch (error) {
     console.error(JSON.stringify({
       event: 'runtime_coordinator_failed',
@@ -218,33 +228,32 @@ export async function runCoordinatedScheduled(
   }
 }
 
-// One object serializes the once-per-minute scheduler. The D1 lease remains a
-// fallback for deployments where the binding is unavailable; inside
-// the object it is disabled so a healthy tick no longer writes the D1 lock row
-// twice. No object storage is used, keeping DO row and storage usage at zero.
+// One object grants at most one ticket for each scheduled tick. The potentially
+// slow network and D1 work runs in the calling Worker after the short RPC, so DO
+// active time stays bounded. One overwritten storage row replaces the D1 lease;
+// the D1 path remains available when the DO binding is unavailable.
 export class RuntimeCoordinator {
-  constructor(state, env) {
+  constructor(state) {
     this.state = state;
-    this.env = env;
-    this.running = false;
+    this.lastTicket = null;
   }
 
-  async run(controller = {}) {
-    if (this.running) return { skipped: true, reason: 'runtime-coordinator-busy' };
-    this.running = true;
-    const coordinatedEnv = Object.create(this.env || null);
-    Object.defineProperty(coordinatedEnv, 'PRIMARY_RUN_LOCK_ENABLED', {
-      value: false,
-      enumerable: false,
-    });
-    const ctx = {
-      waitUntil: (promise) => this.state?.waitUntil?.(promise),
-    };
-    try {
-      return await runCoreScheduled(controller, coordinatedEnv, ctx);
-    } finally {
-      this.running = false;
+  async claim(controller = {}) {
+    const cron = String(controller?.cron || '');
+    const scheduledAt = Number(controller?.scheduledTime) || Date.now();
+    const ticket = `${cron}:${scheduledAt}`;
+    const storage = this.state?.storage;
+    const previous = typeof storage?.get === 'function'
+      ? await storage.get(RUNTIME_COORDINATOR_TICKET_KEY)
+      : this.lastTicket;
+    if (previous === ticket) {
+      return { claimed: false, reason: 'runtime-coordinator-duplicate' };
     }
+    if (typeof storage?.put === 'function') {
+      await storage.put(RUNTIME_COORDINATOR_TICKET_KEY, ticket);
+    }
+    this.lastTicket = ticket;
+    return { claimed: true };
   }
 }
 

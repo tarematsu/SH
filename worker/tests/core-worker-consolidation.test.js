@@ -115,33 +115,50 @@ test('one Durable Object tick runs routine Pages work without a per-minute Queue
   assert.deepEqual(result, { runtime: ['runtime'], pages: { inline: true } });
 });
 
-test('scheduled work uses one Durable Object without replaying a failed tick', async () => {
+test('scheduled work claims one short Durable Object ticket before running outside it', async () => {
   const calls = [];
   const controller = { cron: '* * * * *', scheduledTime: 123 };
   const coordinated = await runCoordinatedScheduled(controller, {}, {}, {
-    stub: { async run(value) { calls.push(['do', value]); return 'coordinated'; } },
-    runDirect: async () => { calls.push(['direct']); return 'direct'; },
+    stub: { async claim(value) { calls.push(['do', value]); return { claimed: true }; } },
+    runDirect: async (_controller, env) => {
+      calls.push(['direct', env.PRIMARY_RUN_LOCK_ENABLED]);
+      return 'direct';
+    },
   });
-  assert.equal(coordinated, 'coordinated');
-  assert.deepEqual(calls, [['do', controller]]);
+  assert.equal(coordinated, 'direct');
+  assert.deepEqual(calls, [['do', controller], ['direct', false]]);
+
+  const duplicate = await runCoordinatedScheduled(controller, {}, {}, {
+    stub: { async claim() { return { claimed: false }; } },
+    runDirect: async () => assert.fail('duplicate tick must not run'),
+  });
+  assert.deepEqual(duplicate, { skipped: true, reason: 'runtime-coordinator-duplicate' });
 
   const fallback = await runCoordinatedScheduled(controller, {}, {}, {
-    stub: { async run() { throw new Error('temporary DO failure'); } },
+    stub: { async claim() { throw new Error('temporary DO failure'); } },
     runDirect: async () => 'direct',
   });
   assert.deepEqual(fallback, { skipped: true, reason: 'runtime-coordinator-error' });
 });
 
-test('RuntimeCoordinator serializes ticks and disables the redundant D1 lease', async () => {
-  const waits = [];
-  const state = { waitUntil: (promise) => waits.push(promise) };
-  const coordinator = new RuntimeCoordinator(state, { marker: true });
-  coordinator.running = true;
-  assert.deepEqual(await coordinator.run({}), {
-    skipped: true,
-    reason: 'runtime-coordinator-busy',
+test('RuntimeCoordinator persists one overwritten ticket and rejects a duplicate tick', async () => {
+  const rows = new Map();
+  const state = {
+    storage: {
+      async get(key) { return rows.get(key); },
+      async put(key, value) { rows.set(key, value); },
+    },
+  };
+  const coordinator = new RuntimeCoordinator(state);
+  const controller = { cron: '* * * * *', scheduledTime: 123 };
+  assert.deepEqual(await coordinator.claim(controller), { claimed: true });
+  assert.deepEqual(await coordinator.claim(controller), {
+    claimed: false,
+    reason: 'runtime-coordinator-duplicate',
   });
-  coordinator.running = false;
+  assert.equal(rows.size, 1);
+  assert.deepEqual(await coordinator.claim({ ...controller, scheduledTime: 124 }), { claimed: true });
+  assert.equal(rows.size, 1);
 
   const config = JSON.parse(readFileSync(new URL('../wrangler.runtime.jsonc', import.meta.url), 'utf8'));
   assert.deepEqual(config.durable_objects.bindings, [{
@@ -152,7 +169,6 @@ test('RuntimeCoordinator serializes ticks and disables the redundant D1 lease', 
     tag: 'runtime-coordinator-v1',
     new_sqlite_classes: ['RuntimeCoordinator'],
   });
-  assert.equal(waits.length, 0);
 });
 
 test('internal Pages fetch is delegated without exposing another Worker', async () => {

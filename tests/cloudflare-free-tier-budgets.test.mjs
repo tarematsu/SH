@@ -42,7 +42,11 @@ test('Cloudflare resource budgets are fixed at 80 percent of included usage', ()
 
 test('the coordinator and remaining scheduled Queues fit safely below daily budgets', () => {
   const maximumCoordinatorRequests = 24 * 60;
-  const maximumCoordinatorDuration = maximumCoordinatorRequests * 55 * 0.128;
+  // The DO only reads and overwrites one ticket. Slow scheduled work runs in
+  // the caller, so allow a conservative full second of DO active time per RPC.
+  const maximumCoordinatorDuration = maximumCoordinatorRequests * 1 * 0.128;
+  const maximumCoordinatorRowsRead = maximumCoordinatorRequests;
+  const maximumCoordinatorRowsWritten = maximumCoordinatorRequests;
   // Recovery: 288/day; maintenance gate: 432/day; prediction: 48/day;
   // hourly tasks: 48/day; Pages heavy variants: 17/day. Routine Pages work is
   // executed inside the coordinator. A sustained inline collection failure
@@ -50,10 +54,14 @@ test('the coordinator and remaining scheduled Queues fit safely below daily budg
   const maximumQueueOperations = (288 + 432 + 48 + 48 + 17 + 288 * 2) * 3;
   assert.ok(maximumCoordinatorRequests < 80_000);
   assert.ok(maximumCoordinatorDuration < 10_400);
+  assert.ok(maximumCoordinatorRowsRead < 4_000_000);
+  assert.ok(maximumCoordinatorRowsWritten < 80_000);
   assert.ok(maximumQueueOperations < 8_000);
   assert.equal(runtime.vars.PIPELINE_ANALYTICS_INTERVAL_MINUTES, 5);
   assert.equal(runtime.vars.RAW_COLLECTION_FALLBACK_INTERVAL_MINUTES, 5);
   assert.equal(runtime.durable_objects.bindings[0].class_name, 'RuntimeCoordinator');
+  assert.match(coreEntry, /await stub\.claim/);
+  assert.match(coreEntry, /runtime:last-scheduled-ticket/);
   assert.match(coreEntry, /runPagesReadModelCron/);
   assert.doesNotMatch(coreEntry, /pages-read-model-scheduled-dispatch/);
 });
