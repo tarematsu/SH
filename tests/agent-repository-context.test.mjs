@@ -14,6 +14,8 @@ async function source(path) {
 test('agent instructions pin repository and active Cloudflare topology', async () => {
   const instructions = await source('AGENTS.md');
   assert.match(instructions, /`tarematsu\/SH`/);
+  assert.match(instructions, /`C:\\SH`/);
+  assert.match(instructions, /https:\/\/github\.com\/tarematsu\/SH\.git/);
   assert.match(instructions, /older chats/);
   assert.match(instructions, /existing browser tab/);
 
