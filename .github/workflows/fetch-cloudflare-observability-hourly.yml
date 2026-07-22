@@ -4,7 +4,13 @@ on:
   pull_request:
     branches: [main]
     paths:
-      - "worker/**"
+      - "worker/src/**"
+      - "worker/scripts/**"
+      - "worker/wrangler*.jsonc"
+      - "worker/package.json"
+      - "worker/package-lock.json"
+      - "site/functions/**"
+      - "packages/sh-shared/**"
       - ".github/workflows/fetch-cloudflare-observability-hourly.yml"
       - ".github/scripts/analyze-worker-observability.py"
       - ".github/scripts/enforce-worker-cpu-budget.py"
@@ -51,7 +57,7 @@ jobs:
           set -euo pipefail
           runtime_changed_at="$(git log --no-merges -1 --format=%cI "origin/${BASE_BRANCH}..HEAD" -- \
             worker/src worker/scripts 'worker/wrangler*.jsonc' \
-            worker/package.json worker/package-lock.json)"
+            worker/package.json worker/package-lock.json site/functions packages/sh-shared)"
           if [[ -z "$runtime_changed_at" ]]; then
             audit_since="$(date -u -d '10 minutes ago' +%Y-%m-%dT%H:%M:%SZ)"
             echo "No runtime changes in this PR; auditing the current deployment since $audit_since."
