@@ -27,7 +27,6 @@ let enrichmentModulePromise;
 let pagesModulePromise;
 let runtimeQueueModulePromise;
 let runtimeScheduledModulePromise;
-let pagesScheduledModulePromise;
 let liveTriggerModulePromise;
 let liveRevisionModulePromise;
 let liveWriteModulePromise;
@@ -108,11 +107,6 @@ function loadRuntimeScheduledModule() {
   return runtimeScheduledModulePromise;
 }
 
-function loadPagesScheduledModule() {
-  pagesScheduledModulePromise ||= import('./pages-read-model-scheduled-dispatch.js');
-  return pagesScheduledModulePromise;
-}
-
 function loadLiveTriggerModule() {
   liveTriggerModulePromise ||= import('./minute-live-trigger-budget-entry.js');
   return liveTriggerModulePromise;
@@ -178,10 +172,12 @@ export async function runCoreQueue(batch, env, ctx, dependencies = EMPTY_DEPENDE
 export async function runCoreScheduled(controller, env, ctx, dependencies = EMPTY_DEPENDENCIES) {
   const [runtimeModule, pagesModule] = await Promise.all([
     dependencies.runRuntimeScheduled ? null : loadRuntimeScheduledModule(),
-    dependencies.dispatchPagesScheduled ? null : loadPagesScheduledModule(),
+    dependencies.runPagesScheduled || dependencies.dispatchPagesScheduled ? null : loadPagesModule(),
   ]);
   const runtime = dependencies.runRuntimeScheduled || runtimeModule.runRuntimeScheduled;
-  const pages = dependencies.dispatchPagesScheduled || pagesModule.dispatchPagesReadModelScheduled;
+  const pages = dependencies.runPagesScheduled
+    || dependencies.dispatchPagesScheduled
+    || pagesModule.runPagesReadModelCron;
   const [runtimeResult, pagesResult] = await Promise.all([
     runtime(controller, env, ctx, dependencies.runtime || EMPTY_DEPENDENCIES),
     pages(controller, env, dependencies.pages || EMPTY_DEPENDENCIES),

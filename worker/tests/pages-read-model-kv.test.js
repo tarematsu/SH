@@ -1,7 +1,11 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { runPagesReadModelFetch } from '../src/pages-read-model-entry.js';
+import {
+  dashboardMaterializationDue,
+  runPagesDashboardMaterialization,
+  runPagesReadModelFetch,
+} from '../src/pages-read-model-entry.js';
 import {
   loadMaterializedResponse,
   pagesResponseKey,
@@ -81,6 +85,29 @@ test('R2 absorbs a KV publication failure before the D1 fallback is considered',
   );
   assert.equal(saved.storage, 'r2');
   assert.equal(puts.length, 1);
+});
+
+test('dashboard materialization uses KV and R2 every five minutes without another Queue message', async () => {
+  const atEvenMinute = Date.UTC(2026, 6, 20, 0, 35);
+  assert.equal(dashboardMaterializationDue(atEvenMinute), true);
+  assert.equal(dashboardMaterializationDue(atEvenMinute + 60_000), false);
+  assert.equal(dashboardMaterializationDue(atEvenMinute + 5 * 60_000), true);
+  const saves = [];
+  const result = await runPagesDashboardMaterialization({
+    MINUTE_DB: {},
+    PAGES_RESPONSE_KV: {},
+    PAGES_RESPONSE_R2: {},
+  }, atEvenMinute, {
+    renderDashboard: async () => Response.json({ ok: true }),
+    saveDashboardResponse: async (...args) => {
+      saves.push(args);
+      return { storage: 'kv', mirror_storage: 'r2', bytes: 11 };
+    },
+  });
+  assert.equal(result.storage, 'kv');
+  assert.equal(result.mirror_storage, 'r2');
+  assert.equal(saves[0][2], 'dashboard');
+  assert.equal(saves[0][5], 300);
 });
 
 test('the internal Worker endpoint returns a KV response or a closed fallback signal', async () => {

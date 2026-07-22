@@ -34,7 +34,7 @@ test('track-history generation and publication remain routed inside the core Wor
   assert.match(trackStage, /sh_pages_track_history_read_model/);
   assert.match(publication, /processTrackHistoryPublicationTask/);
   assert.match(dispatch, /pages-track-history-split-cycle/);
-  assert.match(entry, /pages-read-model-scheduled-dispatch/);
+  assert.match(entry, /runPagesReadModelCron/);
   assert.match(entry, /pages-read-model-entry/);
 });
 

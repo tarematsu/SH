@@ -104,15 +104,15 @@ test('all budgeted live stages bypass the common runtime and derive graphs', asy
   assert.deepEqual(calls, ['trigger', 'revision', 'write', 'complete']);
 });
 
-test('one cron dispatches runtime and Pages work to separate Queue invocations', async () => {
+test('one Durable Object tick runs routine Pages work without a per-minute Queue hop', async () => {
   const calls = [];
   const controller = { cron: '* * * * *', scheduledTime: 123 };
   const result = await runCoreScheduled(controller, {}, {}, {
     runRuntimeScheduled: async () => { calls.push('runtime'); return ['runtime']; },
-    dispatchPagesScheduled: async () => { calls.push('pages'); return { dispatched: true }; },
+    runPagesScheduled: async () => { calls.push('pages'); return { inline: true }; },
   });
   assert.deepEqual(calls.sort(), ['pages', 'runtime']);
-  assert.deepEqual(result, { runtime: ['runtime'], pages: { dispatched: true } });
+  assert.deepEqual(result, { runtime: ['runtime'], pages: { inline: true } });
 });
 
 test('scheduled work uses one Durable Object without replaying a failed tick', async () => {

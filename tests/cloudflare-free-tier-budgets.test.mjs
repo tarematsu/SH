@@ -10,6 +10,7 @@ const script = readFileSync(scriptUrl, 'utf8');
 const runtime = JSON.parse(readFileSync(new URL('worker/wrangler.runtime.jsonc', root), 'utf8'));
 const responseStore = readFileSync(new URL('worker/src/pages-response-store.js', root), 'utf8');
 const responseEntry = readFileSync(new URL('worker/src/pages-read-model-entry.js', root), 'utf8');
+const coreEntry = readFileSync(new URL('worker/src/runtime-orchestrator-entry.js', root), 'utf8');
 
 test('Cloudflare resource budgets are fixed at 80 percent of included usage', () => {
   assert.match(script, /"queueOperations": 8_000/);
@@ -43,7 +44,8 @@ test('the coordinator and remaining scheduled Queues fit safely below daily budg
   const maximumCoordinatorRequests = 24 * 60;
   const maximumCoordinatorDuration = maximumCoordinatorRequests * 55 * 0.128;
   // Recovery: 288/day; maintenance gate: 432/day; prediction: 48/day;
-  // hourly tasks: 48/day; Pages variants: 17/day. A sustained inline failure
+  // hourly tasks: 48/day; Pages heavy variants: 17/day. Routine Pages work is
+  // executed inside the coordinator. A sustained inline collection failure
   // adds at most two messages every five minutes. Each message is 3 operations.
   const maximumQueueOperations = (288 + 432 + 48 + 48 + 17 + 288 * 2) * 3;
   assert.ok(maximumCoordinatorRequests < 80_000);
@@ -52,6 +54,8 @@ test('the coordinator and remaining scheduled Queues fit safely below daily budg
   assert.equal(runtime.vars.PIPELINE_ANALYTICS_INTERVAL_MINUTES, 5);
   assert.equal(runtime.vars.RAW_COLLECTION_FALLBACK_INTERVAL_MINUTES, 5);
   assert.equal(runtime.durable_objects.bindings[0].class_name, 'RuntimeCoordinator');
+  assert.match(coreEntry, /runPagesReadModelCron/);
+  assert.doesNotMatch(coreEntry, /pages-read-model-scheduled-dispatch/);
 });
 
 test('surplus KV and R2 capacity replaces materialized-response D1 writes and reads', () => {
@@ -61,9 +65,11 @@ test('surplus KV and R2 capacity replaces materialized-response D1 writes and re
   assert.match(responseEntry, /await loadKv[\s\S]*\|\| await loadR2/);
 
   const maximumDailyVariantWrites = 17;
-  const maximumMonthlyR2Mirrors = maximumDailyVariantWrites * 31;
+  const maximumDailyDashboardWrites = 24 * 60 / 5;
+  const maximumDailyKvWrites = maximumDailyDashboardWrites + maximumDailyVariantWrites;
+  const maximumMonthlyR2Mirrors = maximumDailyKvWrites * 31;
   const maximumMonthlyPipelineBytes = Math.ceil(31 * 24 * 60 / 5) * 4_096;
-  assert.ok(maximumDailyVariantWrites < 800);
+  assert.ok(maximumDailyKvWrites < 800);
   assert.ok(maximumMonthlyR2Mirrors < 800_000);
   assert.ok(maximumMonthlyPipelineBytes < 800_000_000);
 });
