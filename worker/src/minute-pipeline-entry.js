@@ -1,4 +1,8 @@
 import { historicalRebuildEnabled } from './historical-rebuild-policy.js';
+import { processMinuteDeriveBatch } from './minute-derive-entry.js';
+import { processBudgetedLiveRevisionBatch } from './minute-live-revision-budget-entry.js';
+import { processBudgetedLiveTriggerBatch } from './minute-live-trigger-budget-entry.js';
+import { processBudgetedLiveWriteBatch } from './minute-live-write-budget-entry.js';
 import { consumeMinuteQueue } from './minute-production-entry.js';
 
 export const LIVE_DERIVE_QUEUE_NAME = 'stationhead-minute-live-derive';
@@ -7,31 +11,7 @@ export const MINUTE_FACTS_QUEUE_NAME = 'stationhead-buddies-facts';
 export const MINUTE_REBUILD_QUEUE_NAME = 'stationhead-minute-rebuild';
 
 const EMPTY_DEPENDENCIES = Object.freeze({});
-let deriveModulePromise = null;
-let liveTriggerBudgetModulePromise = null;
-let liveRevisionBudgetModulePromise = null;
-let liveWriteBudgetModulePromise = null;
 let rebuildModulePromise = null;
-
-async function processDeriveBatch(batch, env, dependencies) {
-  const derive = await (deriveModulePromise ||= import('./minute-derive-entry.js'));
-  return derive.processMinuteDeriveBatch(batch, env, dependencies);
-}
-
-async function processBudgetedLiveTriggerBatch(batch, env, dependencies) {
-  const budget = await (liveTriggerBudgetModulePromise ||= import('./minute-live-trigger-budget-entry.js'));
-  return budget.processBudgetedLiveTriggerBatch(batch, env, dependencies);
-}
-
-async function processBudgetedLiveRevisionBatch(batch, env) {
-  const budget = await (liveRevisionBudgetModulePromise ||= import('./minute-live-revision-budget-entry.js'));
-  return budget.processBudgetedLiveRevisionBatch(batch, env);
-}
-
-async function processBudgetedLiveWriteBatch(batch, env, dependencies) {
-  const budget = await (liveWriteBudgetModulePromise ||= import('./minute-live-write-budget-entry.js'));
-  return budget.processBudgetedLiveWriteBatch(batch, env, dependencies);
-}
 
 function liveRevisionMaterializationEnabled(env = {}) {
   const value = env?.LIVE_REVISION_MATERIALIZATION_ENABLED;
@@ -106,7 +86,8 @@ function acknowledgeDisabledHistoricalDerive(batch) {
 
 /**
  * Keep the minute Queue boundaries independent while sharing one deployment.
- * Each delegated handler remains the owner of ack/retry behavior for its queue.
+ * Hot live paths are statically loaded so the first queue invocation does not
+ * absorb module evaluation CPU; the historical rebuild graph remains lazy.
  */
 export async function processMinutePipelineBatch(batch, env, ctx, dependencies = EMPTY_DEPENDENCIES) {
   const queueName = String(batch?.queue || '');
@@ -118,16 +99,20 @@ export async function processMinutePipelineBatch(batch, env, ctx, dependencies =
     return acknowledgeDisabledHistoricalDerive(batch);
   }
   if (queueName === LIVE_DERIVE_QUEUE_NAME && budgetedLiveTriggerBatch(batch, env)) {
-    return processBudgetedLiveTriggerBatch(batch, env, dependencies.liveTrigger);
+    const run = dependencies.processBudgetedLiveTriggerBatch || processBudgetedLiveTriggerBatch;
+    return run(batch, env, dependencies.liveTrigger);
   }
   if (queueName === LIVE_DERIVE_QUEUE_NAME && budgetedLiveRevisionBatch(batch, env)) {
-    return processBudgetedLiveRevisionBatch(batch, env);
+    const run = dependencies.processBudgetedLiveRevisionBatch || processBudgetedLiveRevisionBatch;
+    return run(batch, env);
   }
   if (queueName === LIVE_DERIVE_QUEUE_NAME && budgetedLiveWriteBatch(batch, env)) {
-    return processBudgetedLiveWriteBatch(batch, env, dependencies.liveWrite);
+    const run = dependencies.processBudgetedLiveWriteBatch || processBudgetedLiveWriteBatch;
+    return run(batch, env, dependencies.liveWrite);
   }
   if (queueName === REBUILD_DERIVE_QUEUE_NAME || queueName === LIVE_DERIVE_QUEUE_NAME) {
-    return processDeriveBatch(batch, env, dependencies.derive);
+    const run = dependencies.processMinuteDeriveBatch || processMinuteDeriveBatch;
+    return run(batch, env, dependencies.derive);
   }
   if (queueName === MINUTE_REBUILD_QUEUE_NAME) {
     return processRebuildBatch(batch, env, ctx, dependencies.rebuild);
