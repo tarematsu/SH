@@ -1,10 +1,11 @@
+import { runSplitTrackHistoryCycleStep } from './pages-track-history-split-cycle.js';
+
 const MINUTE_MS = 60_000;
 const HOUR_MS = 60 * MINUTE_MS;
 const CYCLE_MS = 6 * HOUR_MS;
 const TRACK_HISTORY_WINDOW_MINUTES = 175;
 const EMPTY_DEPENDENCIES = Object.freeze({});
 
-let trackHistoryModulePromise;
 let sixHourModulePromise;
 
 function cycleSlotKey(cycleMinute) {
@@ -60,11 +61,6 @@ function pagesReadModelTaskAt(timestamp) {
   };
 }
 
-function loadTrackHistoryModule() {
-  trackHistoryModulePromise ||= import('./pages-track-history-split-cycle.js');
-  return trackHistoryModulePromise;
-}
-
 function loadSixHourModule() {
   sixHourModulePromise ||= import('./pages-six-hour-read-model.js');
   return sixHourModulePromise;
@@ -84,8 +80,7 @@ export async function runDispatchedPagesReadModelTask(env, now = Date.now(), dep
       if (!env?.BUDDIES_DB || !env?.MINUTE_DB) {
         throw new Error('Pages read-model task is missing D1 binding(s): BUDDIES_DB, MINUTE_DB');
       }
-      const run = dependencies.runTrackHistoryStep
-        || (await loadTrackHistoryModule()).runSplitTrackHistoryCycleStep;
+      const run = dependencies.runTrackHistoryStep || runSplitTrackHistoryCycleStep;
       return run(env, timestamp, dependencies);
     }
     const task = backgroundTask(cycleMinute, cycleStart);
