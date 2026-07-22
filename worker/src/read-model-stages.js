@@ -5,7 +5,7 @@ import {
 } from './minute-facts-read-model.js';
 import { queueNeedsPreservation } from './read-model-metadata-plan.js';
 
-const READ_MODEL_CHECKPOINT_MS = 5 * 60_000;
+const READ_MODEL_CHECKPOINT_MS = 20 * 60_000;
 
 function integer(value) {
   const parsed = Number(value);
