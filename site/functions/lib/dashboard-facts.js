@@ -212,14 +212,17 @@ export function mergeFactsLatest(snapshot, fact) {
   return merged;
 }
 
-export async function loadFactsDashboard(db, { since = 0, includeHistory = true } = {}) {
+export async function loadFactsDashboard(
+  db,
+  { since = 0, includeHistory = true, includePrediction = true } = {},
+) {
   const initial = since <= 0;
   const historyStatement = !includeHistory
     ? null
     : initial
       ? db.prepare(FACTS_HISTORY_24H_SQL)
       : db.prepare(FACTS_HISTORY_SINCE_SQL).bind(since);
-  const predictionStatement = initial && includeHistory
+  const predictionStatement = !includePrediction || (initial && includeHistory)
     ? null
     : db.prepare(FACTS_PREDICTION_24H_SQL);
   const [latest, historyResult, predictionResult] = await Promise.all([
