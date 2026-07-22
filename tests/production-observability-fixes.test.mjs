@@ -95,16 +95,20 @@ test('Cloudflare audit compatibility wrappers pass offline self-tests', () => {
   );
   assert.match(freeTier, /per_page=50/);
   assert.doesNotMatch(freeTier, /per_page=100/);
-  assert.match(freeTier, /namespaceId: \{namespace\}/);
-  assert.match(freeTier, /doInvocations\{index\}/);
-  assert.match(freeTier, /kvOperations\{index\}/);
-  assert.match(freeTier, /doStorage: durableObjectsStorageGroups/);
-  assert.match(freeTier, /storage_fragment/);
-  assert.match(freeTier, /assert "namespaceId" not in storage_fragment/);
+  assert.match(freeTier, /account-wide included-usage meters/);
+  assert.match(freeTier, /_ACCOUNT_SCOPE = "account"/);
+  assert.match(freeTier, /queueMessageOperationsAdaptiveGroups/);
+  assert.match(freeTier, /durableObjectsInvocationsAdaptiveGroups/);
+  assert.match(freeTier, /kvOperationsAdaptiveGroups/);
+  assert.match(freeTier, /pipelinesOperatorAdaptiveGroups/);
   assert.match(freeTier, /dimensions \{ actionType \}/);
+  assert.match(freeTier, /dimensions \{ datetime \}/);
   assert.match(freeTier, /dimensions \{ date \}/);
-  assert.match(freeTier, /dimensions \{ namespaceId/);
-  assert.match(freeTier, /not in document/);
+  assert.match(freeTier, /resource_identifier not in document/);
+  assert.match(freeTier, /"namespaceId"/);
+  assert.match(freeTier, /"queueId"/);
+  assert.match(freeTier, /"bucketName"/);
+  assert.match(freeTier, /"pipelineId"/);
 
   const telemetry = readFileSync(
     new URL('../.github/scripts/audit-cloudflare-telemetry.py', import.meta.url),
