@@ -37,7 +37,7 @@ jobs:
       DURABLE_OBJECT_CPU_BUDGET_MS: "30000"
       CPU_BUDGET_EXEMPT_MARKERS: stationhead-minute-rebuild,stationhead-minute-derive,minute-rebuild-stage,minute_rebuild_,minute_fact_rebuild
       DAILY_REQUEST_BUDGET: "70000"
-      DAILY_REQUEST_RESERVE: "25000"
+      DAILY_REQUEST_RESERVE: "0"
       DAILY_D1_READ_BUDGET: "3000000"
       DAILY_D1_WRITE_BUDGET: "70000"
       DAILY_USAGE_OUTPUT_DIR: daily-usage
