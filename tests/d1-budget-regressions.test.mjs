@@ -116,7 +116,7 @@ test('measured daily budgets target the required reductions from the current est
   assert.equal(1 - budget.reads / currentEstimate.reads, 0.625);
   assert.equal(1 - budget.writes / currentEstimate.writes, 0.72);
   assert.doesNotMatch(workflow, /cron: "37 \* \* \* \*"/);
-  assert.match(workflow, /cron: "11 3 \* \* \*"/);
+  assert.match(workflow, /cron: "0 1 \* \* \*"/);
   assert.equal((workflow.match(/- cron:/g) || []).length, 1);
   assert.match(workflow, /DAILY_REQUEST_BUDGET: "70000"/);
   assert.match(workflow, /DAILY_D1_READ_BUDGET: "3000000"/);
