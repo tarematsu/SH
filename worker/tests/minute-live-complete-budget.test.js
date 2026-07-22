@@ -66,7 +66,7 @@ test('live completion performs only the bounded job completion update', async ()
   assert.deepEqual(calls[2], ['run']);
 });
 
-test('live completion batch acknowledges success and retries failures', async () => {
+test('live completion batch acknowledges success and retries transient failures', async () => {
   const successful = [];
   await processBudgetedLiveCompleteBatch({ messages: [message(body(), successful)] }, {}, {
     async complete(_env, jobId, now) {
@@ -88,6 +88,20 @@ test('live completion batch acknowledges success and retries failures', async ()
     console.error = originalError;
   }
   assert.deepEqual(failed, [['retry', { delaySeconds: 60 }]]);
+});
+
+test('malformed live completion messages are acknowledged without a retry loop', async () => {
+  const events = [];
+  const originalError = console.error;
+  console.error = () => {};
+  try {
+    await processBudgetedLiveCompleteBatch({
+      messages: [message({ ...body(), job: {} }, events)],
+    }, {});
+  } finally {
+    console.error = originalError;
+  }
+  assert.deepEqual(events, ['ack']);
 });
 
 test('live completion stays on the lightweight pipeline while rebuild uses the full derive path', async () => {
