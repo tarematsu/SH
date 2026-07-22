@@ -2,9 +2,9 @@ import { trackHistoryRefreshRanges } from './pages-track-history-support.js';
 
 const DAY_MS = 86_400_000;
 const MINUTE_MS = 60_000;
-export const TRACK_HISTORY_CYCLE_MS = 6 * 60 * MINUTE_MS;
+export const TRACK_HISTORY_CYCLE_MS = DAY_MS;
 export const TRACK_HISTORY_SHARD_MS = 3 * 60 * MINUTE_MS;
-export const TRACK_HISTORY_ACTIVE_MINUTES = 60;
+export const TRACK_HISTORY_ACTIVE_MINUTES = 24 * 60 - 5;
 export const TRACK_HISTORY_STAGE_KEY = 'track-history-cycle-stage';
 const BACKFILL_KEY = 'track-history-backfill';
 const STATUS_KEY = 'track-history-status';
