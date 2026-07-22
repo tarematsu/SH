@@ -107,21 +107,27 @@ test('D1 budget indexes stay selective and refresh planner statistics', () => {
   assert.match(facts, /WHERE status='complete' AND source='live_collector'/);
 });
 
-test('daily budget workflow enforces measured 50 percent targets only on schedule', () => {
-  const workflow = source('../.github/workflows/fetch-cloudflare-d1-usage.yml');
-  const reporter = source('../scripts/cloudflare-d1-usage.mjs');
-  assert.match(workflow, /cron: "30 1 \* \* \*"/);
-  assert.match(workflow, /if: github\.event_name == 'schedule'/);
-  assert.match(workflow, /actual\.rowsRead >= target\.rowsRead/);
-  assert.match(workflow, /actual\.rowsWritten >= target\.rowsWritten/);
-  assert.match(reporter, /const TARGET_RATIO = 0\.5/);
-  assert.match(reporter, /d1AnalyticsAdaptiveGroups/);
-  assert.doesNotMatch(reporter, /rowsReadLow|rowsReadHigh|rowsWrittenLow|rowsWrittenHigh/);
+test('measured daily budgets are enforced by the unified observability workflow', () => {
+  const workflow = source('../.github/workflows/fetch-cloudflare-observability.yml');
+  const auditor = source('../.github/scripts/audit-cloudflare-daily-usage.py');
+  assert.match(workflow, /cron: "37 \* \* \* \*"/);
+  assert.match(workflow, /DAILY_REQUEST_BUDGET: "70000"/);
+  assert.match(workflow, /DAILY_D1_READ_BUDGET: "3000000"/);
+  assert.match(workflow, /DAILY_D1_WRITE_BUDGET: "70000"/);
+  assert.match(workflow, /audit-cloudflare-daily-usage\.py/);
+  assert.match(auditor, /d1AnalyticsAdaptiveGroups/);
+  assert.match(auditor, /workersInvocationsAdaptive/);
+  assert.match(auditor, /usage\[key\] >= limits\[key\]/);
+  assert.match(auditor, /databaseId/);
 });
 
-test('D1 query insights still run after a measured budget violation', () => {
+test('D1 query insights remain an independent manual diagnostic', () => {
   const workflow = source('../.github/workflows/fetch-cloudflare-d1-usage.yml');
-  assert.match(workflow, /name: Restore Wrangler dependencies\n\s+if: \$\{\{ !cancelled\(\) \}\}/);
-  assert.match(workflow, /name: Install Wrangler for query insights\n\s+if: \$\{\{ !cancelled\(\) && steps\.worker-modules\.outputs\.cache-hit != 'true' \}\}/);
-  assert.match(workflow, /name: Fetch top D1 queries for one-hour and one-day windows\n\s+if: \$\{\{ !cancelled\(\) \}\}/);
+  assert.match(workflow, /^  workflow_dispatch:\n/m);
+  assert.doesNotMatch(workflow, /^  schedule:\n/m);
+  assert.doesNotMatch(workflow, /^  pull_request:\n/m);
+  assert.match(workflow, /name: Restore Wrangler dependencies/);
+  assert.match(workflow, /name: Install Wrangler for query insights/);
+  assert.match(workflow, /name: Fetch top D1 queries for one-hour and one-day windows/);
+  assert.match(workflow, /wrangler d1 insights/);
 });
