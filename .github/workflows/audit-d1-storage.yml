@@ -1,0 +1,55 @@
+name: Audit stationhead-minute D1 storage
+
+on:
+  workflow_dispatch:
+    inputs:
+      deep:
+        description: Include the potentially expensive dbstat page walk
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: audit-minute-d1-storage-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_BUILDS_API_TOKEN }}
+      D1_STORAGE_AUDIT_OUTPUT_DIR: d1-storage-audit
+      D1_STORAGE_DEEP_AUDIT: ${{ inputs.deep }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: worker/package-lock.json
+
+      - name: Install Wrangler
+        working-directory: worker
+        run: npm ci --no-audit --no-fund
+
+      - name: Audit stationhead-minute storage read-only
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$CLOUDFLARE_API_TOKEN"
+          node scripts/cloudflare-d1-storage-audit.mjs
+          cat d1-storage-audit/storage-audit.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload storage audit
+        uses: actions/upload-artifact@v4
+        with:
+          name: minute-d1-storage-audit-${{ github.run_id }}
+          path: d1-storage-audit/
+          if-no-files-found: error
+          retention-days: 14
