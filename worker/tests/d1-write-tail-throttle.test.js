@@ -14,7 +14,7 @@ const TRACK_UPDATE = `UPDATE sh_tracks SET
   isrc=COALESCE(isrc,?),spotify_id=COALESCE(spotify_id,?),
   stationhead_track_id=COALESCE(stationhead_track_id,?),
   title=COALESCE(title,?),artist=COALESCE(artist,?),last_seen_at=MAX(last_seen_at,?)
- WHERE id=?`;
+WHERE id=?`;
 
 const TRACK_ALIAS = `INSERT INTO sh_track_aliases(
   alias_type,alias_value,track_id,first_seen_at,last_seen_at
@@ -36,6 +36,20 @@ test('track identity updates fill missing values immediately and checkpoint last
   assert.match(sql, /\?6-COALESCE\(last_seen_at,0\)>=1200000/);
   assert.match(sql, /\(\?4 IS NOT NULL AND title IS NULL\)/);
   assert.equal((sql.match(/\?7/g) || []).length, 1);
+
+  const db = new DatabaseSync(':memory:');
+  db.exec(`CREATE TABLE sh_tracks(
+      id INTEGER PRIMARY KEY,isrc TEXT,spotify_id TEXT,stationhead_track_id INTEGER,
+      title TEXT,artist TEXT,last_seen_at INTEGER NOT NULL
+    );
+    INSERT INTO sh_tracks VALUES
+      (1,NULL,NULL,NULL,'Song','Artist',0),
+      (2,NULL,NULL,NULL,NULL,'Artist',1200000);`);
+  const update = db.prepare(sql);
+  assert.equal(update.run(null, null, null, null, null, 1199999, 1).changes, 0);
+  assert.equal(update.run(null, null, null, null, null, 1200000, 1).changes, 1);
+  assert.equal(update.run(null, null, null, 'Recovered title', null, 1200001, 2).changes, 1);
+  assert.equal(db.prepare('SELECT title FROM sh_tracks WHERE id=2').get().title, 'Recovered title');
 });
 
 test('track and host aliases checkpoint timestamp-only conflict updates every twenty minutes', () => {
@@ -44,6 +58,21 @@ test('track and host aliases checkpoint timestamp-only conflict updates every tw
   assert.match(track, /excluded\.last_seen_at-COALESCE\(sh_track_aliases\.last_seen_at,0\)>=1200000/);
   assert.match(host, /excluded\.last_seen_at-COALESCE\(sh_host_aliases\.last_seen_at,0\)>=1200000/);
   assert.equal(rewriteMinuteD1WriteSql(track), track);
+
+  const db = new DatabaseSync(':memory:');
+  db.exec(`CREATE TABLE sh_track_aliases(
+      alias_type TEXT NOT NULL,alias_value TEXT NOT NULL,track_id INTEGER NOT NULL,
+      first_seen_at INTEGER NOT NULL,last_seen_at INTEGER NOT NULL,
+      PRIMARY KEY(alias_type,alias_value)
+    );
+    INSERT INTO sh_track_aliases VALUES('isrc','A',1,0,0);`);
+  const upsert = db.prepare(track);
+  assert.equal(upsert.run('isrc', 'A', 1, 0, 1199999).changes, 0);
+  assert.equal(upsert.run('isrc', 'A', 1, 0, 1200000).changes, 1);
+  assert.equal(
+    db.prepare("SELECT last_seen_at FROM sh_track_aliases WHERE alias_type='isrc' AND alias_value='A'").get().last_seen_at,
+    1200000,
+  );
 });
 
 test('historical session lookup probes one row on each side of the observation', () => {
