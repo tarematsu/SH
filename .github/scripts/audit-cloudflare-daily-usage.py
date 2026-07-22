@@ -19,6 +19,7 @@ TOKEN = os.environ.get("CLOUDFLARE_API_TOKEN", "").strip()
 ACCOUNT = os.environ.get("CLOUDFLARE_ACCOUNT_ID", "").strip()
 WORKERS = tuple(x.strip() for x in os.environ.get("CLOUDFLARE_WORKERS", "").split(",") if x.strip())
 CONFIGS = tuple(x.strip() for x in os.environ.get("D1_CONFIG_GLOBS", "").split(",") if x.strip())
+REQUEST_RESERVE = max(0, int(os.environ.get("DAILY_REQUEST_RESERVE", "0")))
 LIMITS = {
     "requests": int(os.environ.get("DAILY_REQUEST_BUDGET", "0")),
     "rowsRead": int(os.environ.get("DAILY_D1_READ_BUDGET", "0")),
@@ -121,14 +122,24 @@ def aggregate(row: dict[str, Any], workers: tuple[str, ...], dbs: set[str]) -> d
         sums = group.get("sum") or {}
         reads += number(sums.get("rowsRead"))
         writes += number(sums.get("rowsWritten"))
+    measured = sum(per_worker.values())
     return {
-        "requests": sum(per_worker.values()),
+        "requests": measured,
+        "measuredRequests": measured,
+        "requestReserve": 0,
         "rowsRead": reads,
         "rowsWritten": writes,
         "perWorkerRequests": per_worker,
         "perWorkerErrors": errors,
         "databaseCount": len(dbs),
     }
+
+
+def apply_request_reserve(usage: dict[str, Any], reserve: int) -> dict[str, Any]:
+    result = dict(usage)
+    result["requestReserve"] = max(0, reserve)
+    result["requests"] = number(result.get("measuredRequests")) + result["requestReserve"]
+    return result
 
 
 def evaluate(usage: dict[str, Any], limits: dict[str, int]) -> list[str]:
@@ -151,9 +162,11 @@ def self_test() -> int:
         ("a", "b"),
         {"x"},
     )
-    assert usage["requests"] == 30 and usage["rowsRead"] == 50 and usage["rowsWritten"] == 2
-    assert evaluate(usage, {"requests": 31, "rowsRead": 51, "rowsWritten": 3}) == []
-    assert evaluate(usage, {"requests": 30, "rowsRead": 50, "rowsWritten": 2}) == [
+    usage = apply_request_reserve(usage, 5)
+    assert usage["measuredRequests"] == 30 and usage["requests"] == 35
+    assert usage["rowsRead"] == 50 and usage["rowsWritten"] == 2
+    assert evaluate(usage, {"requests": 36, "rowsRead": 51, "rowsWritten": 3}) == []
+    assert evaluate(usage, {"requests": 35, "rowsRead": 50, "rowsWritten": 2}) == [
         "requests", "rowsRead", "rowsWritten"
     ]
     print("daily budget self-test passed")
@@ -188,7 +201,7 @@ def main() -> int:
     accounts = (((body.get("data") or {}).get("viewer") or {}).get("accounts") or [])
     if len(accounts) != 1:
         raise RuntimeError(f"Expected one GraphQL account row, got {len(accounts)}")
-    usage = aggregate(accounts[0], WORKERS, dbs)
+    usage = apply_request_reserve(aggregate(accounts[0], WORKERS, dbs), REQUEST_RESERVE)
     violations = evaluate(usage, LIMITS)
     report = {
         "date": date,
@@ -196,15 +209,17 @@ def main() -> int:
         "usage": usage,
         "limits": LIMITS,
         "violations": violations,
-        "source": "one Cloudflare GraphQL request",
+        "source": "one Cloudflare GraphQL request plus configured request reserve",
     }
     OUT.mkdir(parents=True, exist_ok=True)
     (OUT / "daily-usage.json").write_text(json.dumps(report, indent=2) + "\n")
 
-    labels = {"requests": "Worker requests", "rowsRead": "D1 rows read", "rowsWritten": "D1 rows written"}
+    labels = {"requests": "Worker and Pages requests", "rowsRead": "D1 rows read", "rowsWritten": "D1 rows written"}
     lines = [
         "## Cloudflare UTC daily budgets", "",
-        f"- Date: `{date}`", f"- D1 databases: `{len(dbs)}`", "- Collection: one GraphQL request", "",
+        f"- Date: `{date}`", f"- D1 databases: `{len(dbs)}`", "- Collection: one GraphQL request",
+        f"- Measured Worker requests: `{usage['measuredRequests']:,}`",
+        f"- Additional request reserve: `{usage['requestReserve']:,}`", "",
         "| Metric | Usage | Limit | Headroom | Status |", "|---|---:|---:|---:|---|",
     ]
     for key in ("requests", "rowsRead", "rowsWritten"):
