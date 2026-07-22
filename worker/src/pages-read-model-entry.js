@@ -1,5 +1,7 @@
 import './fetch-guard.js';
 import { materializedResponseMaximumAge } from '../../site/functions/lib/api-contract.js';
+import { runDispatchedPagesReadModelTask } from './pages-read-model-dispatch.js';
+import { processTrackHistoryPublicationTask } from './pages-track-history-publication-queue.js';
 
 export const PAGES_READ_MODEL_CRON = '* * * * *';
 export const MINUTE_READ_MODEL_QUEUE = 'stationhead-read-model';
@@ -12,16 +14,9 @@ const INTERNAL_RESPONSE_PATH = '/_internal/pages-response';
 const MINUTE_MS = 60_000;
 const PAGES_CYCLE_MINUTES = 6 * 60;
 
-let publicationModulePromise;
-let cronModulePromise;
 let readModelQueueModulePromise;
 let responseR2ModulePromise;
 let responseStoreModulePromise;
-
-function loadCronModule() {
-  cronModulePromise ||= import('./pages-read-model-dispatch.js');
-  return cronModulePromise;
-}
 
 function loadReadModelQueueModule() {
   readModelQueueModulePromise ||= import('./read-model-entry.js');
@@ -36,11 +31,6 @@ function loadResponseR2Module() {
 function loadResponseStoreModule() {
   responseStoreModulePromise ||= import('./pages-response-store.js');
   return responseStoreModulePromise;
-}
-
-function loadPublicationModule() {
-  publicationModulePromise ||= import('./pages-track-history-publication-queue.js');
-  return publicationModulePromise;
 }
 
 function scheduledTimestamp(controller) {
@@ -239,8 +229,7 @@ export async function runPagesReadModelCron(controller, env, dependencies = EMPT
   if (!dependencies.runTask && pagesVariantDispatchDue(now)) {
     return dispatchPagesVariant(env, now, dependencies);
   }
-  const runTask = dependencies.runTask
-    || (await loadCronModule()).runDispatchedPagesReadModelTask;
+  const runTask = dependencies.runTask || runDispatchedPagesReadModelTask;
   return assertRefreshSucceeded(await runTask(env, now, dependencies));
 }
 
@@ -252,8 +241,7 @@ function dispatchedPagesTask(body) {
 
 async function processDispatchedPagesTask(message, env, dependencies) {
   try {
-    const runTask = dependencies.runTask
-      || (await loadCronModule()).runDispatchedPagesReadModelTask;
+    const runTask = dependencies.runTask || runDispatchedPagesReadModelTask;
     const result = assertRefreshSucceeded(await runTask(
       env,
       scheduledTimestamp({ scheduledTime: message.body.scheduled_at }),
@@ -285,7 +273,7 @@ export async function runPagesReadModelQueue(batch, env, dependencies = EMPTY_DE
     return runMinuteReadModel(batch, env);
   }
   const processPublication = dependencies.processTrackHistoryPublicationTask
-    || (await loadPublicationModule()).processTrackHistoryPublicationTask;
+    || processTrackHistoryPublicationTask;
   try {
     const result = await processPublication(env, message.body, dependencies);
     console.log(JSON.stringify(result));
