@@ -21,10 +21,9 @@ ACCOUNT_ID_OVERRIDE = os.environ.get("CLOUDFLARE_ACCOUNT_ID", "").strip()
 
 
 def request_json(url: str, *, method: str = "GET", payload: dict[str, Any] | None = None) -> dict[str, Any]:
-    body = None if payload is None else json.dumps(payload, separators=(",", ":")).encode()
     request = urllib.request.Request(
         url,
-        data=body,
+        data=None if payload is None else json.dumps(payload, separators=(",", ":")).encode(),
         method=method,
         headers={
             "Authorization": f"Bearer {TOKEN}",
@@ -41,10 +40,8 @@ def request_json(url: str, *, method: str = "GET", payload: dict[str, Any] | Non
         raise RuntimeError(f"Cloudflare API HTTP {error.code}: {detail}") from error
     except urllib.error.URLError as error:
         raise RuntimeError(f"Cloudflare API request failed: {error.reason}") from error
-
-    errors = data.get("errors")
-    if data.get("success") is False or errors:
-        raise RuntimeError(f"Cloudflare API error: {json.dumps(errors, ensure_ascii=False)[:2000]}")
+    if data.get("success") is False or data.get("errors"):
+        raise RuntimeError(f"Cloudflare API error: {json.dumps(data.get('errors'), ensure_ascii=False)[:2000]}")
     return data
 
 
@@ -52,7 +49,19 @@ def iso(value: dt.datetime) -> str:
     return value.astimezone(dt.timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
 
 
-def worker_metrics(account_id: str, worker: str, start: dt.datetime, end: dt.datetime) -> dict[str, Any]:
+def account_id() -> str:
+    if ACCOUNT_ID_OVERRIDE:
+        return ACCOUNT_ID_OVERRIDE
+    accounts = request_json(f"{API_BASE}/accounts?per_page=50").get("result") or []
+    if len(accounts) != 1:
+        raise RuntimeError(
+            f"Expected one visible Cloudflare account, got {len(accounts)}; "
+            "set repository variable CLOUDFLARE_ACCOUNT_ID"
+        )
+    return str(accounts[0]["id"])
+
+
+def worker_metrics(account: str, worker: str, start: dt.datetime, end: dt.datetime) -> dict[str, Any]:
     query = """
       query WorkerMetrics($accountTag: string, $datetimeStart: string, $datetimeEnd: string, $scriptName: string) {
         viewer {
@@ -75,7 +84,7 @@ def worker_metrics(account_id: str, worker: str, start: dt.datetime, end: dt.dat
         payload={
             "query": query,
             "variables": {
-                "accountTag": account_id,
+                "accountTag": account,
                 "datetimeStart": iso(start),
                 "datetimeEnd": iso(end),
                 "scriptName": worker,
@@ -92,95 +101,37 @@ def worker_metrics(account_id: str, worker: str, start: dt.datetime, end: dt.dat
         "requests": int(sums.get("requests") or 0),
         "errors": int(sums.get("errors") or 0),
         "subrequests": int(sums.get("subrequests") or 0),
-        "cpu_p50": quantiles.get("cpuTimeP50"),
-        "cpu_p99": quantiles.get("cpuTimeP99"),
+        "cpu_p50_ms": (float(quantiles["cpuTimeP50"]) / 1000) if quantiles.get("cpuTimeP50") is not None else None,
+        "cpu_p99_ms": (float(quantiles["cpuTimeP99"]) / 1000) if quantiles.get("cpuTimeP99") is not None else None,
     }
 
 
-def discover_account_id(start: dt.datetime, end: dt.datetime) -> str:
-    if ACCOUNT_ID_OVERRIDE:
-        return ACCOUNT_ID_OVERRIDE
-    accounts = request_json(f"{API_BASE}/accounts?per_page=50").get("result") or []
-    ids = [str(item["id"]) for item in accounts if item.get("id")]
-    if len(ids) == 1:
-        return ids[0]
-    if not ids:
-        raise RuntimeError("No Cloudflare account is visible to CLOUDFLARE_BUILDS_API_TOKEN")
-
-    discovery_start = start - dt.timedelta(hours=23)
-    matches: list[str] = []
-    for account_id in ids:
-        try:
-            if any(worker_metrics(account_id, worker, discovery_start, end)["requests"] > 0 for worker in WORKERS):
-                matches.append(account_id)
-        except RuntimeError:
-            continue
-    if len(matches) == 1:
-        return matches[0]
-    raise RuntimeError(
-        "Cloudflare account could not be selected uniquely; set repository variable CLOUDFLARE_ACCOUNT_ID"
-    )
-
-
-def telemetry_errors(account_id: str, start: dt.datetime, end: dt.datetime) -> list[dict[str, Any]]:
+def error_events(account: str, start: dt.datetime, end: dt.datetime) -> list[dict[str, Any]]:
     services = [
-        {
-            "kind": "filter",
-            "key": "$metadata.service",
-            "operation": "eq",
-            "type": "string",
-            "value": worker,
-        }
+        {"kind": "filter", "key": "$metadata.service", "operation": "eq", "type": "string", "value": worker}
         for worker in WORKERS
-    ]
-    filters: list[dict[str, Any]] = [
-        {"kind": "group", "filterCombination": "or", "filters": services},
-        {
-            "kind": "filter",
-            "key": "$metadata.error",
-            "operation": "exists",
-            "type": "string",
-        },
     ]
     payload = {
         "queryId": "github-actions-worker-errors",
         "dry": True,
-        "timeframe": {
-            "from": int(start.timestamp() * 1000),
-            "to": int(end.timestamp() * 1000),
-        },
+        "timeframe": {"from": int(start.timestamp() * 1000), "to": int(end.timestamp() * 1000)},
+        "view": "events",
+        "limit": 50,
         "parameters": {
-            "view": "events",
-            "limit": 50,
             "datasets": [],
             "filterCombination": "and",
-            "filters": filters,
+            "filters": [
+                {"kind": "group", "filterCombination": "or", "filters": services},
+                {"kind": "filter", "key": "$metadata.error", "operation": "exists", "type": "string"},
+            ],
         },
     }
-    try:
-        data = request_json(
-            f"{API_BASE}/accounts/{account_id}/workers/observability/telemetry/query",
-            method="POST",
-            payload=payload,
-        )
-    except RuntimeError as error:
-        print(f"::warning title=Telemetry filter fallback::{str(error).replace(chr(10), ' ')[:500]}")
-        payload["parameters"]["filters"] = [filters[1]]
-        data = request_json(
-            f"{API_BASE}/accounts/{account_id}/workers/observability/telemetry/query",
-            method="POST",
-            payload=payload,
-        )
-
-    events = (((data.get("result") or {}).get("events") or {}).get("events") or [])
-    selected: list[dict[str, Any]] = []
-    for event in events:
-        metadata = event.get("$metadata") if isinstance(event.get("$metadata"), dict) else {}
-        workers = event.get("$workers") if isinstance(event.get("$workers"), dict) else {}
-        service = str(metadata.get("service") or workers.get("scriptName") or "")
-        if service in WORKERS:
-            selected.append(event)
-    return selected
+    data = request_json(
+        f"{API_BASE}/accounts/{account}/workers/observability/telemetry/query",
+        method="POST",
+        payload=payload,
+    )
+    return (((data.get("result") or {}).get("events") or {}).get("events") or [])
 
 
 def clean_text(value: Any, limit: int = 180) -> str:
@@ -200,11 +151,12 @@ def event_row(event: dict[str, Any]) -> tuple[str, str, str, str]:
     workers = event.get("$workers") if isinstance(event.get("$workers"), dict) else {}
     worker_event = workers.get("event") if isinstance(workers.get("event"), dict) else {}
     request = worker_event.get("request") if isinstance(worker_event.get("request"), dict) else {}
-    service = metadata.get("service") or workers.get("scriptName") or "unknown"
-    timestamp = event.get("timestamp") or metadata.get("timestamp") or "-"
-    message = metadata.get("error") or metadata.get("message") or event.get("source") or "error event"
-    url = metadata.get("url") or request.get("url") or worker_event.get("url")
-    return clean_text(timestamp, 40), clean_text(service, 80), clean_text(message), clean_url(url)
+    return (
+        clean_text(event.get("timestamp") or metadata.get("timestamp") or "-", 40),
+        clean_text(metadata.get("service") or workers.get("scriptName") or "unknown", 80),
+        clean_text(metadata.get("error") or metadata.get("message") or event.get("source") or "error event"),
+        clean_url(metadata.get("url") or request.get("url") or worker_event.get("url")),
+    )
 
 
 def number(value: Any) -> str:
@@ -214,43 +166,35 @@ def number(value: Any) -> str:
 
 
 def main() -> int:
-    if not TOKEN:
-        raise RuntimeError("CLOUDFLARE_BUILDS_API_TOKEN is empty")
-    if not WORKERS:
-        raise RuntimeError("CLOUDFLARE_WORKERS is empty")
-
+    if not TOKEN or not WORKERS:
+        raise RuntimeError("Cloudflare token and Worker list are required")
     request_json(f"{API_BASE}/user/tokens/verify")
     end = dt.datetime.now(dt.timezone.utc)
     start = end - dt.timedelta(minutes=LOOKBACK_MINUTES)
-    account_id = discover_account_id(start, end)
-    metrics = [worker_metrics(account_id, worker, start, end) for worker in WORKERS]
-    errors = telemetry_errors(account_id, start, end)
-    total_errors = sum(item["errors"] for item in metrics)
+    account = account_id()
+    metrics = [worker_metrics(account, worker, start, end) for worker in WORKERS]
+    errors = error_events(account, start, end)
 
     lines = [
         "## Cloudflare Observability",
         "",
         f"- Window: `{iso(start)}` to `{iso(end)}`",
-        f"- Account: `{account_id[:8]}…`",
+        f"- Account: `{account[:8]}…`",
         "- Sources: GraphQL Analytics API and Workers Observability Telemetry API",
         "",
         "| Worker | Requests | Errors | Error rate | Subrequests | CPU p50 ms | CPU p99 ms |",
         "|---|---:|---:|---:|---:|---:|---:|",
     ]
     for item in metrics:
-        requests = item["requests"]
-        rate = (item["errors"] / requests * 100) if requests else 0
+        rate = (item["errors"] / item["requests"] * 100) if item["requests"] else 0
         lines.append(
-            f"| `{item['worker']}` | {requests} | {item['errors']} | {rate:.2f}% | "
-            f"{item['subrequests']} | {number(item['cpu_p50'])} | {number(item['cpu_p99'])} |"
+            f"| `{item['worker']}` | {item['requests']} | {item['errors']} | {rate:.2f}% | "
+            f"{item['subrequests']} | {number(item['cpu_p50_ms'])} | {number(item['cpu_p99_ms'])} |"
         )
 
-    lines.extend(["", f"### Recent error events ({len(errors)} samples)", ""])
+    lines.extend(["", f"### Recent persisted error events ({len(errors)} samples)", ""])
     if errors:
-        lines.extend([
-            "| Time | Worker | Error | URL |",
-            "|---|---|---|---|",
-        ])
+        lines.extend(["| Time | Worker | Error | URL |", "|---|---|---|---|"])
         for event in errors[:10]:
             timestamp, service, message, url = event_row(event)
             lines.append(f"| {timestamp} | `{service}` | {message} | {url} |")
@@ -263,9 +207,8 @@ def main() -> int:
             summary.write("\n".join(lines) + "\n")
     else:
         print("\n".join(lines))
-
-    if total_errors:
-        print(f"::warning title=Cloudflare Worker errors::{total_errors} errors in the last {LOOKBACK_MINUTES} minutes")
+    if sum(item["errors"] for item in metrics):
+        print("::warning title=Cloudflare Worker errors::GraphQL reported Worker invocation errors")
     return 0
 
 
