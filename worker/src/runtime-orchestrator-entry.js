@@ -7,6 +7,9 @@ const EMPTY_DEPENDENCIES = Object.freeze({});
 const LIVE_DERIVE_QUEUE_NAME = 'stationhead-minute-live-derive';
 const RUNTIME_COORDINATOR_NAME = 'scheduled-v1';
 const RUNTIME_COORDINATOR_TICKET_KEY = 'runtime:last-scheduled-ticket';
+const DEFAULT_COORDINATOR_LEASE_MS = 70_000;
+const MIN_COORDINATOR_LEASE_MS = 30_000;
+const MAX_COORDINATOR_LEASE_MS = 180_000;
 
 const INGEST_QUEUE_NAMES = new Set([
   'stationhead-raw-collection',
@@ -41,6 +44,15 @@ function enabled(value, fallback = true) {
 function positiveInteger(value) {
   const parsed = Number(value);
   return Number.isFinite(parsed) && Math.trunc(parsed) > 0 ? Math.trunc(parsed) : null;
+}
+
+function coordinatorLeaseMs(value) {
+  const parsed = Number(value ?? DEFAULT_COORDINATOR_LEASE_MS);
+  if (!Number.isFinite(parsed) || parsed <= 0) return DEFAULT_COORDINATOR_LEASE_MS;
+  return Math.max(
+    MIN_COORDINATOR_LEASE_MS,
+    Math.min(MAX_COORDINATOR_LEASE_MS, Math.trunc(parsed)),
+  );
 }
 
 function liveRevisionMaterializationEnabled(env = {}) {
@@ -196,6 +208,13 @@ function coordinatorStub(namespace) {
   return null;
 }
 
+function coordinatorFailure(event, error) {
+  console.error(JSON.stringify({
+    event,
+    error: String(error?.message || error).slice(0, 500),
+  }));
+}
+
 export async function runCoordinatedScheduled(
   controller,
   env,
@@ -205,55 +224,127 @@ export async function runCoordinatedScheduled(
   const direct = dependencies.runDirect || runCoreScheduled;
   const stub = dependencies.stub || coordinatorStub(env?.RUNTIME_COORDINATOR);
   if (typeof stub?.claim !== 'function') return direct(controller, env, ctx, dependencies.direct);
+
+  let claim;
   try {
-    const claim = await stub.claim({
+    claim = await stub.claim({
       cron: String(controller?.cron || ''),
       scheduledTime: Number(controller?.scheduledTime) || Date.now(),
+      leaseMs: coordinatorLeaseMs(env?.PRIMARY_RUN_LOCK_TTL_MS),
     });
-    if (!claim?.claimed) {
-      return { skipped: true, reason: claim?.reason || 'runtime-coordinator-duplicate' };
-    }
-    const coordinatedEnv = Object.create(env || null);
-    Object.defineProperty(coordinatedEnv, 'PRIMARY_RUN_LOCK_ENABLED', {
-      value: false,
-      enumerable: false,
-    });
-    return await direct(controller, coordinatedEnv, ctx, dependencies.direct);
   } catch (error) {
-    console.error(JSON.stringify({
-      event: 'runtime_coordinator_failed',
-      error: String(error?.message || error).slice(0, 500),
-    }));
-    return { skipped: true, reason: 'runtime-coordinator-error' };
+    coordinatorFailure('runtime_coordinator_claim_failed', error);
+    // Preserve availability and overlap protection by falling back to the
+    // existing D1 lease. The direct path receives the original environment,
+    // so PRIMARY_RUN_LOCK_ENABLED remains unchanged.
+    return direct(controller, env, ctx, dependencies.direct);
   }
+
+  if (!claim?.claimed) {
+    return { skipped: true, reason: claim?.reason || 'runtime-coordinator-duplicate' };
+  }
+
+  const coordinatedEnv = Object.create(env || null);
+  Object.defineProperty(coordinatedEnv, 'PRIMARY_RUN_LOCK_ENABLED', {
+    value: false,
+    enumerable: false,
+  });
+
+  // Do not release on an error or timeout. The underlying collection may still
+  // be winding down after its await is aborted, so the lease must expire by TTL
+  // just like the previous D1 lock.
+  const result = await direct(controller, coordinatedEnv, ctx, dependencies.direct);
+  if (typeof stub.release === 'function' && claim.holder_id) {
+    try {
+      await stub.release(claim.holder_id);
+    } catch (error) {
+      coordinatorFailure('runtime_coordinator_release_failed', error);
+    }
+  }
+  return result;
 }
 
-// One object grants at most one ticket for each scheduled tick. The potentially
-// slow network and D1 work runs in the calling Worker after the short RPC, so DO
-// active time stays bounded. One overwritten storage row replaces the D1 lease;
-// the D1 path remains available when the DO binding is unavailable.
+function storedLease(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const ticket = typeof value.ticket === 'string' ? value.ticket : '';
+  const holderId = typeof value.holder_id === 'string' ? value.holder_id : '';
+  const leaseUntil = Number(value.lease_until);
+  if (!ticket || !holderId || !Number.isFinite(leaseUntil)) return null;
+  return { ...value, ticket, holder_id: holderId, lease_until: leaseUntil };
+}
+
+// One object serializes scheduled ticks and owns the short overlap lease. Slow
+// network and D1 work remains in the calling Worker, so the DO only reads and
+// overwrites one small row for claim/release. The D1 lease remains the fail-open
+// fallback when the binding or claim RPC is unavailable.
 export class RuntimeCoordinator {
   constructor(state) {
     this.state = state;
-    this.lastTicket = null;
+    this.lastLease = null;
   }
 
   async claim(controller = {}) {
     const cron = String(controller?.cron || '');
     const scheduledAt = Number(controller?.scheduledTime) || Date.now();
+    const now = Number(controller?.now) || Date.now();
     const ticket = `${cron}:${scheduledAt}`;
     const storage = this.state?.storage;
-    const previous = typeof storage?.get === 'function'
+    const stored = typeof storage?.get === 'function'
       ? await storage.get(RUNTIME_COORDINATOR_TICKET_KEY)
-      : this.lastTicket;
-    if (previous === ticket) {
+      : this.lastLease;
+    const previous = storedLease(stored);
+
+    // Accept the previous string format long enough to preserve duplicate-tick
+    // suppression across a rolling deployment, then overwrite it as v2 below.
+    if (stored === ticket || previous?.ticket === ticket) {
       return { claimed: false, reason: 'runtime-coordinator-duplicate' };
     }
-    if (typeof storage?.put === 'function') {
-      await storage.put(RUNTIME_COORDINATOR_TICKET_KEY, ticket);
+    if (previous && previous.lease_until > now) {
+      return {
+        claimed: false,
+        reason: 'primary-run-in-progress',
+        lease_until: previous.lease_until,
+      };
     }
-    this.lastTicket = ticket;
-    return { claimed: true };
+
+    const lease = {
+      version: 2,
+      ticket,
+      holder_id: ticket,
+      claimed_at: now,
+      lease_until: now + coordinatorLeaseMs(controller?.leaseMs),
+    };
+    if (typeof storage?.put === 'function') {
+      await storage.put(RUNTIME_COORDINATOR_TICKET_KEY, lease);
+    }
+    this.lastLease = lease;
+    return {
+      claimed: true,
+      holder_id: lease.holder_id,
+      lease_until: lease.lease_until,
+    };
+  }
+
+  async release(holderId, releasedAt = Date.now()) {
+    const storage = this.state?.storage;
+    const stored = typeof storage?.get === 'function'
+      ? await storage.get(RUNTIME_COORDINATOR_TICKET_KEY)
+      : this.lastLease;
+    const current = storedLease(stored);
+    if (!current || current.holder_id !== String(holderId || '')) {
+      return { released: false, reason: 'runtime-coordinator-owner-mismatch' };
+    }
+    const now = Number(releasedAt) || Date.now();
+    const released = {
+      ...current,
+      lease_until: Math.min(current.lease_until, now),
+      released_at: now,
+    };
+    if (typeof storage?.put === 'function') {
+      await storage.put(RUNTIME_COORDINATOR_TICKET_KEY, released);
+    }
+    this.lastLease = released;
+    return { released: true };
   }
 }
 
