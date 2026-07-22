@@ -95,6 +95,13 @@ test('Cloudflare audit compatibility wrappers pass offline self-tests', () => {
   );
   assert.match(freeTier, /per_page=50/);
   assert.doesNotMatch(freeTier, /per_page=100/);
+  assert.match(freeTier, /namespaceId: \{namespace\}/);
+  assert.match(freeTier, /doInvocations\{index\}/);
+  assert.match(freeTier, /kvOperations\{index\}/);
+  assert.match(freeTier, /dimensions \{ actionType \}/);
+  assert.match(freeTier, /dimensions \{ date \}/);
+  assert.match(freeTier, /dimensions \{ namespaceId/);
+  assert.match(freeTier, /not in document/);
 
   const telemetry = readFileSync(
     new URL('../.github/scripts/audit-cloudflare-telemetry.py', import.meta.url),
