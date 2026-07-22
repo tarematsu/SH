@@ -6,11 +6,15 @@ import test from 'node:test';
 
 const root = new URL('../', import.meta.url);
 const scriptUrl = new URL('.github/scripts/audit-cloudflare-free-tier.py', root);
-const script = readFileSync(scriptUrl, 'utf8');
+const script = [
+  readFileSync(scriptUrl, 'utf8'),
+  readFileSync(new URL('.github/scripts/audit-cloudflare-free-tier-core.py', root), 'utf8'),
+].join('\n');
 const runtime = JSON.parse(readFileSync(new URL('worker/wrangler.runtime.jsonc', root), 'utf8'));
 const responseStore = readFileSync(new URL('worker/src/pages-response-store.js', root), 'utf8');
 const responseEntry = readFileSync(new URL('worker/src/pages-read-model-entry.js', root), 'utf8');
 const coreEntry = readFileSync(new URL('worker/src/runtime-orchestrator-entry.js', root), 'utf8');
+const deployedEntry = readFileSync(new URL('worker/src/runtime-orchestrator-deployed-entry.js', root), 'utf8');
 const queuePlanR2 = readFileSync(new URL('worker/src/queue-plan-r2.js', root), 'utf8');
 const pagesMiddleware = readFileSync(new URL('site/functions/_middleware.js', root), 'utf8');
 
@@ -38,13 +42,14 @@ test('Cloudflare resource budgets are fixed at 80 percent of included usage', ()
   assert.match(script, /kvStorageAdaptiveGroups/);
   assert.match(script, /pipelinesOperatorAdaptiveGroups/);
   assert.match(script, /pipelinesSinkAdaptiveGroups/);
+  assert.match(script, /per_page=50/);
   const result = spawnSync('python3', [fileURLToPath(scriptUrl), '--self-test'], { encoding: 'utf8' });
   assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
 });
 
 test('the coordinator and remaining scheduled Queues fit safely below daily budgets', () => {
-  // Normal ticks use one short claim RPC and one short release RPC. Each RPC
-  // reads and overwrites the same SQLite row; slow work stays in the caller.
+  // Normal ticks use one short fetch claim and one short fetch release. Each
+  // request reads and overwrites the same SQLite row; slow work stays in the caller.
   const maximumCoordinatorRequests = 24 * 60 * 2;
   const maximumCoordinatorDuration = maximumCoordinatorRequests * 1 * 0.128;
   const maximumCoordinatorRowsRead = maximumCoordinatorRequests;
@@ -63,11 +68,13 @@ test('the coordinator and remaining scheduled Queues fit safely below daily budg
   assert.equal(runtime.vars.PIPELINE_ANALYTICS_INTERVAL_MINUTES, 5);
   assert.equal(runtime.vars.RAW_COLLECTION_FALLBACK_INTERVAL_MINUTES, 5);
   assert.equal(runtime.durable_objects.bindings[0].class_name, 'RuntimeCoordinator');
-  assert.match(coreEntry, /await stub\.claim/);
-  assert.match(coreEntry, /await stub\.release/);
-  assert.match(coreEntry, /primary-run-in-progress/);
+  assert.equal(runtime.main, 'src/runtime-orchestrator-deployed-entry.js');
+  assert.match(deployedEntry, /stub\.fetch/);
+  assert.match(deployedEntry, /action: 'claim'/);
+  assert.match(deployedEntry, /action: 'release'/);
+  assert.match(deployedEntry, /primary-run-in-progress|runtime-coordinator-duplicate/);
   assert.match(coreEntry, /runtime:last-scheduled-ticket/);
-  assert.match(coreEntry, /return direct\(controller, env, ctx, dependencies\.direct\)/);
+  assert.match(deployedEntry, /return direct\(controller, env, ctx, dependencies\.direct\)/);
   assert.match(coreEntry, /runPagesReadModelCron/);
   assert.doesNotMatch(coreEntry, /pages-read-model-scheduled-dispatch/);
 });
