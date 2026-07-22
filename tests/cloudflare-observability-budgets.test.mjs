@@ -18,7 +18,9 @@ function runSelfTest(path) {
 test('observability policy scripts pass offline self-tests', () => {
   runSelfTest('.github/scripts/audit-cloudflare-daily-usage.py');
   runSelfTest('.github/scripts/audit-cloudflare-free-tier.py');
+  runSelfTest('.github/scripts/audit-observability-budget-gates.py');
   runSelfTest('.github/scripts/audit-cloudflare-telemetry.py');
+  runSelfTest('.github/scripts/audit-deployed-cloudflare-telemetry.py');
 });
 
 test('observability uses post-deploy deep checks and lightweight hourly budgets', async () => {
@@ -35,17 +37,27 @@ test('observability uses post-deploy deep checks and lightweight hourly budgets'
   assert.match(workflow, /CLOUDFLARE_RUNTIME_WORKER: sh-runtime-orchestrator/);
   assert.match(workflow, /CLOUDFLARE_KV_BINDINGS: PAGES_RESPONSE_KV/);
   assert.match(workflow, /audit-cloudflare-free-tier\.py --self-test/);
+  assert.match(workflow, /audit-observability-budget-gates\.py --self-test/);
+  assert.match(workflow, /audit-deployed-cloudflare-telemetry\.py --self-test/);
   assert.match(workflow, /id: free-tier-budget/);
+  assert.match(workflow, /id: budget-contract/);
+  assert.match(workflow, /id: observability-query/);
+  assert.match(workflow, /id: telemetry-policy/);
   assert.match(workflow, /steps\.free-tier-budget\.outcome == 'failure'/);
+  assert.match(workflow, /steps\.budget-contract\.outcome == 'failure'/);
+  assert.match(workflow, /steps\.observability-query\.outcome == 'failure'/);
+  assert.match(workflow, /steps\.telemetry-policy\.outcome == 'failure'/);
   assert.match(workflow, /LIVE_TAIL_SECONDS: "90"/);
   assert.match(workflow, /LIVE_TAIL_LOG: live-tail\.log/);
   assert.match(workflow, /audit-cloudflare-telemetry\.py --self-test/);
   assert.doesNotMatch(workflow, /audit-cloudflare-live-tail\.py/);
   assert.match(workflow, /github\.event\.schedule == '11 3 \* \* \*'/);
   assert.match(workflow, /id: daily-budget/);
-  assert.match(workflow, /continue-on-error: true/);
+  assert.equal((workflow.match(/continue-on-error: true/g) || []).length, 5);
   assert.match(workflow, /steps\.daily-budget\.outcome == 'failure'/);
-  assert.match(workflow, /Fail after collecting diagnostics when daily budget exceeded/);
+  assert.match(workflow, /Fail after collecting diagnostics when any observability gate fails/);
+  assert.match(workflow, /observability-gate\//);
+  assert.match(workflow, /observability-budget-gate\.log/);
 });
 
 test('D1 query insights are manual-only and duplicate budget paths are gone', async () => {
