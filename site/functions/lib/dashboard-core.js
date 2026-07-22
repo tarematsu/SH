@@ -329,10 +329,12 @@ export async function onRequestGet(context) {
   const since = Math.max(0, Number(url.searchParams.get('since')) || 0);
   const includeHistory = url.searchParams.get('history') !== '0';
   try {
-    const [facts, predictionState] = await Promise.all([
-      loadFactsDashboard(context.env.MINUTE_DB, { since, includeHistory }),
-      predictionPromise,
-    ]);
+    const predictionState = await predictionPromise;
+    const facts = await loadFactsDashboard(context.env.MINUTE_DB, {
+      since,
+      includeHistory,
+      includePrediction: !predictionState,
+    });
     if (!factsAreFresh(facts.latest)) {
       // The buddies Worker is the real-time source.  A delayed minute read
       // model must not blank the dashboard while the collector is healthy.
