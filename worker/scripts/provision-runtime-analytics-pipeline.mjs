@@ -7,9 +7,16 @@ export const RUNTIME_ANALYTICS_STREAM_NAME = 'sh_runtime_analytics_stream';
 export const RUNTIME_ANALYTICS_SINK_NAME = 'sh_runtime_analytics_sink';
 export const RUNTIME_ANALYTICS_PIPELINE_NAME = 'sh-runtime-analytics';
 export const RUNTIME_ANALYTICS_BUCKET_NAME = 'sh-runtime-analytics';
+export const RUNTIME_ANALYTICS_BINDING = 'RUNTIME_ANALYTICS_STREAM';
 
 const STREAM_SCHEMA = 'pipelines/runtime-analytics.schema.json';
 const PIPELINE_SQL = 'pipelines/runtime-analytics.sql';
+
+function required(value, label) {
+  const normalized = String(value || '').trim();
+  if (!normalized) throw new Error(`${label} is required`);
+  return normalized;
+}
 
 function outputText(result) {
   return `${result?.stdout || ''}\n${result?.stderr || ''}`.trim();
@@ -64,18 +71,20 @@ function ensureNamed(kind, name, createArgs, run) {
     row = findNamed(listResources(kind, run), name);
   }
   if (!row) throw new Error(`Cloudflare Pipelines ${kind} resource ${name} was not found after create`);
-  return { id: resourceId(row), name: resourceName(row) || name };
-}
-
-function secret(value) {
-  return String(value || '').trim();
-}
-
-export function pipelineSinkCredentials(options = {}) {
   return {
-    accessKeyId: secret(options.accessKeyId ?? process.env.R2_PIPELINE_ACCESS_KEY_ID),
-    secretAccessKey: secret(options.secretAccessKey ?? process.env.R2_PIPELINE_SECRET_ACCESS_KEY),
+    id: required(resourceId(row), `${kind} ${name} id`),
+    name: resourceName(row) || name,
   };
+}
+
+export function runtimeConfigWithAnalyticsStream(source, streamId) {
+  const config = JSON.parse(String(source));
+  const pipelines = Array.isArray(config.pipelines) ? config.pipelines : [];
+  const binding = pipelines.find((item) => item?.binding === RUNTIME_ANALYTICS_BINDING);
+  if (binding) binding.stream = required(streamId, 'runtime analytics stream id');
+  else pipelines.push({ binding: RUNTIME_ANALYTICS_BINDING, stream: required(streamId, 'runtime analytics stream id') });
+  config.pipelines = pipelines;
+  return `${JSON.stringify(config, null, 2)}\n`;
 }
 
 export function ensureRuntimeAnalyticsResources(options = {}) {
@@ -85,16 +94,6 @@ export function ensureRuntimeAnalyticsResources(options = {}) {
     '--http-enabled', 'false',
   ], run);
 
-  const credentials = pipelineSinkCredentials(options);
-  const requireSink = options.requireSink === true
-    || ['1', 'true', 'yes', 'on'].includes(String(process.env.RUNTIME_ANALYTICS_REQUIRE_SINK || '').toLowerCase());
-  if (!credentials.accessKeyId || !credentials.secretAccessKey) {
-    if (requireSink) {
-      throw new Error('R2_PIPELINE_ACCESS_KEY_ID and R2_PIPELINE_SECRET_ACCESS_KEY are required');
-    }
-    return { stream, sink: null, pipeline: null, sinkSkipped: true };
-  }
-
   run(['r2', 'bucket', 'create', RUNTIME_ANALYTICS_BUCKET_NAME], { allowFailure: true });
   const sink = ensureNamed('sinks', RUNTIME_ANALYTICS_SINK_NAME, [
     '--type', 'r2',
@@ -103,13 +102,11 @@ export function ensureRuntimeAnalyticsResources(options = {}) {
     '--compression', 'zstd',
     '--roll-interval', '300',
     '--roll-size', '100',
-    '--access-key-id', credentials.accessKeyId,
-    '--secret-access-key', credentials.secretAccessKey,
   ], run);
   const pipeline = ensureNamed('pipelines', RUNTIME_ANALYTICS_PIPELINE_NAME, [
     '--sql-file', PIPELINE_SQL,
   ], run);
-  return { stream, sink, pipeline, sinkSkipped: false };
+  return { stream, sink, pipeline };
 }
 
 function directExecution() {
@@ -119,7 +116,6 @@ function directExecution() {
 
 if (directExecution()) {
   const resources = ensureRuntimeAnalyticsResources();
-  if (!resources.stream.id) throw new Error('runtime analytics stream ID is missing');
   console.log(`RUNTIME_ANALYTICS_STREAM_ID=${resources.stream.id}`);
   if (process.env.GITHUB_OUTPUT) {
     const { appendFileSync } = await import('node:fs');
