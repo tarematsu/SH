@@ -29,6 +29,7 @@ on:
         type: choice
         options:
           - facts-db
+          - payload-purge
           - other-db
           - buddies-db
           - metadata-consolidation
@@ -78,6 +79,31 @@ jobs:
         run: node scripts/repair-july-stream-facts.mjs
       - name: Verify live data
         run: node scripts/verify-facts-live.mjs
+
+  payload-purge:
+    name: Drain existing stationhead-minute payload backlog
+    if: github.event_name == 'workflow_dispatch' && inputs.operation == 'payload-purge'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: worker
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN || secrets.CLOUDFLARE_BUILDS_API_TOKEN || secrets.CF_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID || secrets.CF_ACCOUNT_ID }}
+      FACTS_DATABASE_NAME: stationhead-minute
+      MINUTE_FACT_PAYLOAD_PURGE_BATCH_SIZE: '1000'
+      MINUTE_FACT_PAYLOAD_PURGE_MAX_BATCHES: '10000'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: worker/package-lock.json
+      - run: npm ci --no-audit --no-fund
+      - name: Drain all eligible payload backlog
+        run: node scripts/purge-completed-minute-fact-payloads.mjs
 
   other-db:
     name: Provision or update stationhead-other
