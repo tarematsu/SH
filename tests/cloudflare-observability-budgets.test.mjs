@@ -25,6 +25,7 @@ test('observability policy scripts pass offline self-tests', () => {
 
 test('observability uses post-deploy and daily complete budget checks', async () => {
   const workflow = await readFile(new URL('.github/workflows/fetch-cloudflare-observability.yml', root), 'utf8');
+  const freeTierAudit = await readFile(new URL('.github/scripts/audit-cloudflare-free-tier.py', root), 'utf8');
   assert.match(workflow, /workflows: \["Deploy production"\]/);
   assert.doesNotMatch(workflow, /cron: "37 \* \* \* \*"/);
   assert.match(workflow, /cron: "0 1 \* \* \*"/);
@@ -37,9 +38,13 @@ test('observability uses post-deploy and daily complete budget checks', async ()
   assert.match(workflow, /DAILY_D1_WRITE_BUDGET: "70000"/);
   assert.match(workflow, /CLOUDFLARE_RUNTIME_WORKER: sh-runtime-orchestrator/);
   assert.match(workflow, /CLOUDFLARE_KV_BINDINGS: PAGES_RESPONSE_KV/);
+  assert.match(workflow, /CLOUDFLARE_DO_BINDINGS: RUNTIME_COORDINATOR/);
   assert.match(workflow, /audit-cloudflare-free-tier\.py --self-test/);
   assert.match(workflow, /audit-observability-budget-gates\.py --self-test/);
   assert.match(workflow, /audit-deployed-cloudflare-telemetry\.py --self-test/);
+  assert.match(freeTierAudit, /def durable_object_namespace_ids\(/);
+  assert.match(freeTierAudit, /if script != worker:/);
+  assert.doesNotMatch(freeTierAudit, /script == WORKER or class_name == "RuntimeCoordinator"/);
   assert.match(workflow, /id: free-tier-budget/);
   assert.match(workflow, /id: budget-contract/);
   assert.match(workflow, /id: observability-query/);
