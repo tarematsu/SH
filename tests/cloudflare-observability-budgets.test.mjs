@@ -27,7 +27,7 @@ test('observability uses post-deploy and daily complete budget checks', async ()
   const workflow = await readFile(new URL('.github/workflows/fetch-cloudflare-observability.yml', root), 'utf8');
   assert.match(workflow, /workflows: \["Deploy production"\]/);
   assert.doesNotMatch(workflow, /cron: "37 \* \* \* \*"/);
-  assert.match(workflow, /cron: "11 3 \* \* \*"/);
+  assert.match(workflow, /cron: "0 1 \* \* \*"/);
   assert.equal((workflow.match(/- cron:/g) || []).length, 1);
   assert.doesNotMatch(workflow, /^\s+pull_request:/m);
   assert.doesNotMatch(workflow, /^\s+push:/m);
