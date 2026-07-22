@@ -61,6 +61,7 @@ test('internal Pages fetch is delegated without exposing another Worker', async 
 test('runtime config contains all core bindings while retired configs are not deploy scripts', () => {
   const config = JSON.parse(readFileSync(new URL('../wrangler.runtime.jsonc', import.meta.url), 'utf8'));
   const packageJson = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
+  const pagesConfig = JSON.parse(readFileSync(new URL('../../site/wrangler.jsonc', import.meta.url), 'utf8'));
   const consumers = new Set(config.queues.consumers.map(({ queue }) => queue));
   for (const queue of [
     'stationhead-raw-collection',
@@ -76,4 +77,8 @@ test('runtime config contains all core bindings while retired configs are not de
   assert.equal('deploy:ingest' in packageJson.scripts, false);
   assert.equal('deploy:minute-enrichment' in packageJson.scripts, false);
   assert.equal(packageJson.scripts['deploy:runtime'], 'node scripts/deploy-runtime.mjs');
+  assert.deepEqual(pagesConfig.services, [{
+    binding: 'PAGES_READ_MODEL_SERVICE',
+    service: 'sh-runtime-orchestrator',
+  }]);
 });
