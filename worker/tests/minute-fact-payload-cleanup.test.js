@@ -53,6 +53,10 @@ test('database workflow purges every eligible existing payload in one job using 
   assert.doesNotMatch(purgeScript, /SUM\(LENGTH\(payload_json\)\)/);
   assert.match(databaseWorkflow, /name: Purge completed minute fact payloads/);
   assert.match(databaseWorkflow, /node scripts\/purge-completed-minute-fact-payloads\.mjs/);
+  assert.match(databaseWorkflow, /- payload-purge/);
+  assert.match(databaseWorkflow, /inputs\.operation == 'payload-purge'/);
+  assert.match(databaseWorkflow, /name: Drain existing stationhead-minute payload backlog/);
+  assert.match(databaseWorkflow, /name: Drain all eligible payload backlog/);
 });
 
 test('bounded purge clears completed payloads and waits for incomplete revisions', () => {
