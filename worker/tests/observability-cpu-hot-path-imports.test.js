@@ -31,16 +31,18 @@ const pagesReadModelDispatch = readFileSync(
   'utf8',
 );
 
-test('live derive uses preloaded budget stages and keeps the full graph lazy', () => {
+ test('live derive uses preloaded budget stages and keeps the full graph lazy', () => {
   for (const moduleName of [
     'minute-live-trigger-budget-entry.js',
     'minute-live-revision-budget-entry.js',
     'minute-live-write-budget-entry.js',
+    'minute-live-complete-budget-entry.js',
   ]) {
     assert.match(minutePipeline, new RegExp(`from './${moduleName.replaceAll('.', '\\.')}'`));
     assert.doesNotMatch(minutePipeline, new RegExp(`import\\('./${moduleName.replaceAll('.', '\\.')}'\\)`));
   }
 
+  assert.match(minutePipeline, /budgetedLiveCompleteBatch/);
   assert.match(minutePipeline, /import\('\.\/minute-derive-entry\.js'\)/);
   assert.match(minutePipeline, /import\('\.\/minute-rebuild-batched-entry\.js'\)/);
   assert.match(runtimeConfig, /"LIVE_REVISION_MATERIALIZATION_ENABLED"\s*:\s*false/);
