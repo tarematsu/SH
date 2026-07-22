@@ -14,6 +14,10 @@ const runtimeEntry = readFileSync(
   new URL('../src/runtime-orchestrator-entry.js', import.meta.url),
   'utf8',
 );
+const liveTriggerEntry = readFileSync(
+  new URL('../src/minute-live-trigger-budget-entry.js', import.meta.url),
+  'utf8',
+);
 const minuteEnrichment = readFileSync(
   new URL('../src/minute-enrichment-optimized-entry.js', import.meta.url),
   'utf8',
@@ -60,6 +64,12 @@ test('core queue routes recurring live stages before loading the shared runtime 
   assert.match(runtimeEntry, /from '\.\/minute-live-complete-budget-entry\.js'/);
   assert.match(runtimeEntry, /lightweightLiveBudgetKind/);
   assert.match(runtimeEntry, /if \(liveKind\) return runLightweightLiveQueue/);
+});
+
+test('live trigger uses the narrow lease boundary instead of loading derive and inbox graphs', () => {
+  assert.match(liveTriggerEntry, /from '\.\/minute-live-trigger-lease\.js'/);
+  assert.doesNotMatch(liveTriggerEntry, /from '\.\/minute-derive-queue\.js'/);
+  assert.doesNotMatch(liveTriggerEntry, /from '\.\/minute-facts-inbox\.js'/);
 });
 
 test('track metadata modules are loaded before metadata queue work', () => {
