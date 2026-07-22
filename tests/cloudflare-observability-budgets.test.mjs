@@ -25,7 +25,10 @@ test('observability policy scripts pass offline self-tests', () => {
 
 test('observability uses post-deploy, diagnostic-change, and daily complete budget checks', async () => {
   const workflow = await readFile(new URL('.github/workflows/fetch-cloudflare-observability.yml', root), 'utf8');
-  const freeTierAudit = await readFile(new URL('.github/scripts/audit-cloudflare-free-tier.py', root), 'utf8');
+  const freeTierAudit = [
+    await readFile(new URL('.github/scripts/audit-cloudflare-free-tier.py', root), 'utf8'),
+    await readFile(new URL('.github/scripts/audit-cloudflare-free-tier-core.py', root), 'utf8'),
+  ].join('\n');
   assert.match(workflow, /workflows: \["Deploy production"\]/);
   assert.match(workflow, /^\s+push:/m);
   assert.match(workflow, /branches: \[main\]/);
@@ -48,6 +51,7 @@ test('observability uses post-deploy, diagnostic-change, and daily complete budg
   assert.match(workflow, /publish-cloudflare-observability-status\.mjs --self-test/);
   assert.match(freeTierAudit, /def durable_object_namespace_ids\(/);
   assert.match(freeTierAudit, /if script != worker:/);
+  assert.match(freeTierAudit, /per_page=50/);
   assert.doesNotMatch(freeTierAudit, /script == WORKER or class_name == "RuntimeCoordinator"/);
   assert.match(workflow, /id: free-tier-budget/);
   assert.match(workflow, /id: budget-contract/);
