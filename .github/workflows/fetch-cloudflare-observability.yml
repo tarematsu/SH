@@ -6,7 +6,7 @@ on:
     workflows: ["Deploy production"]
     types: [completed]
   schedule:
-    - cron: "11 3 * * *"
+    - cron: "0 1 * * *"
   workflow_dispatch:
     inputs:
       lookback_minutes:
