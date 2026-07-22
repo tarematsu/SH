@@ -45,6 +45,7 @@ jobs:
       CLOUDFLARE_CONFIG_GLOBS: worker/wrangler.runtime.jsonc
       CLOUDFLARE_STORAGE_BUCKETS: sh-runtime-analytics
       CLOUDFLARE_KV_BINDINGS: PAGES_RESPONSE_KV
+      CLOUDFLARE_DO_BINDINGS: RUNTIME_COORDINATOR
       CLOUDFLARE_PIPELINE_NAMES: sh-runtime-analytics
       FREE_TIER_USAGE_OUTPUT_DIR: free-tier-usage
       OBSERVABILITY_GATE_OUTPUT_DIR: observability-gate
