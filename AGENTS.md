@@ -13,9 +13,18 @@ The active Worker configurations are:
 
 - `worker/wrangler.ingest.jsonc`
 - `worker/wrangler.minute-enrichment.jsonc`
+- `worker/wrangler.sakurazaka46jp.jsonc`
 - `worker/wrangler.runtime.jsonc`
 
 Derive Worker names, D1 database names, Queue names, and bindings from those files at the current branch or commit. Treat any Worker or database name absent from the active configurations as foreign to this repository unless the user explicitly requests a cross-repository comparison.
+
+## Deployment ownership
+
+- GitHub Actions is the only supported build and deployment path for production Workers and Pages.
+- Automatic and manual production deployments are owned by `.github/workflows/deploy-split-pipeline.yml`.
+- Pull requests may run local checks and dry-run bundles, but must not deploy to production Cloudflare resources.
+- Do not add Cloudflare Git build polling, Cloudflare-managed automatic deployments, or repository-connected build workflows.
+- Keep Cloudflare Pages automatic production and preview deployments disabled when using Wrangler from GitHub Actions.
 
 ## Metrics and production diagnostics
 
