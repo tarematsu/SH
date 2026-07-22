@@ -27,14 +27,18 @@ const workerDependencyGuard = readFileSync(
   'utf8',
 );
 
-test('CI selects affected scopes and keeps repository checks dependency-free', () => {
+test('CI selects affected scopes and keeps repository checks free of Pages dependencies', () => {
   assert.match(ci, /^  changes:\n/m);
   assert.match(ci, /needs\.changes\.outputs\.pages == 'true'/);
   assert.match(ci, /needs\.changes\.outputs\.worker == 'true'/);
   assert.match(ci, /needs\.changes\.outputs\.sql == 'true'/);
 
   const repository = jobSection(ci, 'repository', 'pages');
-  assert.doesNotMatch(repository, /npm ci/);
+  assert.match(repository, /uses: actions\/cache@v4/);
+  assert.match(repository, /worker\/node_modules/);
+  assert.match(repository, /npm ci --prefer-offline/);
+  assert.doesNotMatch(repository, /site\/node_modules/);
+  assert.doesNotMatch(repository, /working-directory: site/);
   assert.match(repository, /check-js-syntax\.mjs scripts tests/);
 });
 
