@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
 import coreWorker, {
+  lightweightLiveBudgetKind,
   lightweightLiveCompleteBatch,
   runCoreFetch,
   runCoreQueue,
@@ -21,6 +22,11 @@ function liveCompleteBody(jobKind = 'live') {
     job: { id: 42, job_kind: jobKind },
   };
 }
+
+const LIVE_ENV = Object.freeze({
+  LIVE_REVISION_MATERIALIZATION_ENABLED: false,
+  HISTORICAL_REBUILD_ENABLED: true,
+});
 
 test('core Worker exposes fetch, scheduled, and queue surfaces', () => {
   assert.deepEqual(Object.keys(coreWorker).sort(), ['fetch', 'queue', 'scheduled']);
@@ -50,29 +56,50 @@ test('core queue keeps domain routes in separate invocations', async () => {
   ]);
 });
 
-test('live completion bypasses the runtime and derive module graphs', async () => {
-  const env = {
-    LIVE_REVISION_MATERIALIZATION_ENABLED: false,
-    HISTORICAL_REBUILD_ENABLED: true,
-  };
-  const completeBatch = batch('stationhead-minute-live-derive', liveCompleteBody());
-  assert.equal(lightweightLiveCompleteBatch(completeBatch, env), true);
+test('all budgeted live stages bypass the common runtime and derive graphs', async () => {
+  const cases = [
+    ['trigger', { message_type: 'minute-fact-derive', message_version: 1 }],
+    ['revision', {
+      message_type: 'minute-fact-derive-stage',
+      message_version: 1,
+      stage: 'revision-materialize',
+      revision: { sparse: true, rebuild: false },
+    }],
+    ['write', {
+      message_type: 'minute-fact-derive-stage',
+      message_version: 1,
+      stage: 'budget-live-write',
+      job: { id: 42, job_kind: 'live' },
+    }],
+    ['complete', liveCompleteBody()],
+  ];
+  for (const [kind, body] of cases) {
+    assert.equal(
+      lightweightLiveBudgetKind(batch('stationhead-minute-live-derive', body), LIVE_ENV),
+      kind,
+    );
+  }
   assert.equal(lightweightLiveCompleteBatch(
+    batch('stationhead-minute-live-derive', liveCompleteBody()),
+    LIVE_ENV,
+  ), true);
+  assert.equal(lightweightLiveBudgetKind(
     batch('stationhead-minute-live-derive', liveCompleteBody('rebuild')),
-    env,
-  ), false);
+    LIVE_ENV,
+  ), null);
 
   const calls = [];
-  await runCoreQueue(completeBatch, env, {}, {
-    async runLiveCompleteQueue(_batch, _env, dependencies) {
-      calls.push(['live-complete', dependencies]);
-    },
-    liveComplete: { marker: true },
-    async runRuntimeQueue() {
-      calls.push(['runtime']);
-    },
-  });
-  assert.deepEqual(calls, [['live-complete', { marker: true }]]);
+  const handlers = {
+    async runLiveTriggerQueue() { calls.push('trigger'); },
+    async runLiveRevisionQueue() { calls.push('revision'); },
+    async runLiveWriteQueue() { calls.push('write'); },
+    async runLiveCompleteQueue() { calls.push('complete'); },
+    async runRuntimeQueue() { calls.push('runtime'); },
+  };
+  for (const [_kind, body] of cases) {
+    await runCoreQueue(batch('stationhead-minute-live-derive', body), LIVE_ENV, {}, handlers);
+  }
+  assert.deepEqual(calls, ['trigger', 'revision', 'write', 'complete']);
 });
 
 test('one cron dispatches runtime and Pages work to separate Queue invocations', async () => {
