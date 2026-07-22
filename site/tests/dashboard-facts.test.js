@@ -81,7 +81,7 @@ test('unified dashboard includes facts, history and completed daily summaries', 
     })
     .route('all', 'WITH latest_station AS', { results: [] });
   const facts = new FakeD1Database()
-    .route('first', 'FROM sh_minute_facts AS f', {
+    .route('first', 'FROM sh_minute_facts AS f INDEXED BY idx_sh_minute_facts_live_minute', {
       id: 10,
       observed_at: now - 2_000,
       channel_id: 318,
