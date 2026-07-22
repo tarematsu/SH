@@ -202,7 +202,6 @@ jobs:
         run: npx wrangler pages deploy public --project-name skrzk --branch main
         working-directory: site
       - name: Retire legacy Pages-bound Worker after binding cutover
-        if: ${{ contains(fromJSON(needs.select.outputs.workers), 'sh-runtime-orchestrator') }}
         run: >-
           node --input-type=module -e
           "const { pruneRetiredWorkers } = await import('./worker/scripts/cloudflare-workers.mjs');
