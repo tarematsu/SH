@@ -4,8 +4,10 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import math
 import sys
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -148,6 +150,28 @@ def aggregate(
     return usage
 
 
+def annotate_account_scope(output_dir: Path | None = None) -> None:
+    """Make the account-wide budget scope explicit in machine and human reports."""
+    directory = output_dir or core.OUT
+    report_path = directory / "free-tier-usage.json"
+    if report_path.exists():
+        report = json.loads(report_path.read_text(encoding="utf-8"))
+        report["scope"] = _ACCOUNT_SCOPE
+        report["policy"] = (
+            "Account-wide usage capped at 80% of Cloudflare free/no-charge allowances"
+        )
+        report_path.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
+
+    summary_path = directory / "summary.md"
+    if summary_path.exists():
+        summary = summary_path.read_text(encoding="utf-8")
+        heading = "## Cloudflare free-tier 80% budgets"
+        replacement = "## Account-wide Cloudflare free-tier 80% budgets"
+        if heading in summary:
+            summary = summary.replace(heading, replacement, 1)
+        summary_path.write_text(summary, encoding="utf-8")
+
+
 core.paginated = paginated
 core.graphql_document = graphql_document
 core.aggregate = aggregate
@@ -221,6 +245,24 @@ def self_test() -> int:
         {"sum": {"activeTime": 1_000_000}},
     ]) == 0.128
 
+    with tempfile.TemporaryDirectory() as temporary:
+        directory = Path(temporary)
+        (directory / "free-tier-usage.json").write_text(
+            json.dumps({"policy": "legacy"}) + "\n",
+            encoding="utf-8",
+        )
+        (directory / "summary.md").write_text(
+            "## Cloudflare free-tier 80% budgets\n",
+            encoding="utf-8",
+        )
+        annotate_account_scope(directory)
+        report = json.loads((directory / "free-tier-usage.json").read_text(encoding="utf-8"))
+        assert report["scope"] == "account"
+        assert report["policy"].startswith("Account-wide usage")
+        assert (directory / "summary.md").read_text(encoding="utf-8").startswith(
+            "## Account-wide Cloudflare free-tier 80% budgets"
+        )
+
     # The retained core self-test covers its legacy fixture independently.
     current_aggregate = core.aggregate
     try:
@@ -235,7 +277,9 @@ def self_test() -> int:
 def main() -> int:
     if "--self-test" in sys.argv:
         return self_test()
-    return core.main()
+    result = core.main()
+    annotate_account_scope()
+    return result
 
 
 if __name__ == "__main__":
