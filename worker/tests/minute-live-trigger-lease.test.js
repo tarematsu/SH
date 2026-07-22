@@ -66,7 +66,7 @@ test('budget trigger rejects rebuild input before claiming', async () => {
   assert.equal(claims, 0);
 });
 
-test('failed stage enqueue releases the claimed job through the lightweight boundary', async () => {
+test('failed stage enqueue releases the claimed job through the compatible batch boundary', async () => {
   const releases = [];
   await assert.rejects(
     processBudgetedLiveTriggerMessage({}, trigger(), {
@@ -82,9 +82,9 @@ test('failed stage enqueue releases the claimed job through the lightweight boun
         };
       },
       async sendStage() { throw new Error('Queue unavailable'); },
-      async release(_env, jobId, options) { releases.push([jobId, options]); },
+      async release(_env, jobIds, options) { releases.push([jobIds, options]); },
     }),
     /Queue unavailable/,
   );
-  assert.deepEqual(releases, [[9, { now: 900 }]]);
+  assert.deepEqual(releases, [[[9], { now: 900 }]]);
 });
