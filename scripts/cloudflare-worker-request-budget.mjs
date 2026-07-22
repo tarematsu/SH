@@ -18,8 +18,6 @@ export const REQUEST_BUDGET_EXCLUDED_QUEUES = Object.freeze([
 // These are the only production Worker configs selected by
 // worker/scripts/select-worker-deploys.mjs.
 export const ACTIVE_CONFIGS = Object.freeze([
-  'worker/wrangler.minute-enrichment.jsonc',
-  'worker/wrangler.ingest.jsonc',
   'worker/wrangler.sakurazaka46jp.jsonc',
   'worker/wrangler.runtime.jsonc',
 ]);
@@ -38,7 +36,7 @@ export const QUEUE_MESSAGES_PER_DAY = Object.freeze({
   'stationhead-minute-enrichment': 7_200,
   'stationhead-track-metadata': 1_440,
   'stationhead-buddies-facts': 1_440,
-  'stationhead-pages-read-model-publication': 1_440,
+  'stationhead-pages-read-model-publication': 2_880,
   'stationhead-read-model': 1_440,
 });
 
