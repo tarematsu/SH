@@ -23,7 +23,7 @@
     "COLLECTOR_ID": "cloudflare-worker",
     "METADATA_LIMIT": 1,
     "REQUEST_TIMEOUT_MS": 8000,
-    "PAGES_TRACK_HISTORY_ROWS_PER_STEP": 40
+    "PAGES_TRACK_HISTORY_ROWS_PER_STEP": 10
   },
   "triggers": { "crons": ["* * * * *"] },
   "kv_namespaces": [
