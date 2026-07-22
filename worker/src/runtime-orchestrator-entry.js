@@ -52,7 +52,8 @@ function liveRevisionMaterializationEnabled(env = {}) {
 
 function lightweightLiveMessageKind(body) {
   if (body?.message_type === 'minute-fact-derive'
-      && Number(body?.message_version) === 1) return 'trigger';
+      && Number(body?.message_version) === 1
+      && String(body?.job_kind || 'live') !== 'rebuild') return 'trigger';
   if (body?.message_type !== 'minute-fact-derive-stage'
       || Number(body?.message_version) !== 1) return null;
   if (body?.stage === 'revision-materialize'
