@@ -3,10 +3,14 @@ import { materializedResponseMaximumAge } from '../../site/functions/lib/api-con
 
 export const PAGES_READ_MODEL_CRON = '* * * * *';
 export const MINUTE_READ_MODEL_QUEUE = 'stationhead-read-model';
+export const PAGES_READ_MODEL_DISPATCH_MESSAGE = 'stationhead-pages-read-model-dispatch';
 const MINUTE_READ_MODEL_MESSAGE = 'stationhead-read-model';
 const TRACK_HISTORY_MODEL_KEY = 'track-history';
 const EMPTY_DEPENDENCIES = Object.freeze({});
+const JSON_QUEUE_SEND_OPTIONS = Object.freeze({ contentType: 'json' });
 const INTERNAL_RESPONSE_PATH = '/_internal/pages-response';
+const MINUTE_MS = 60_000;
+const PAGES_CYCLE_MINUTES = 6 * 60;
 
 let publicationModulePromise;
 let cronModulePromise;
@@ -46,6 +50,24 @@ function scheduledTimestamp(controller) {
   }
   const timestamp = Number(value);
   return Number.isFinite(timestamp) && timestamp >= 0 ? timestamp : Date.now();
+}
+
+function cycleMinute(timestamp) {
+  const absoluteMinute = Math.floor(timestamp / MINUTE_MS);
+  return ((absoluteMinute % PAGES_CYCLE_MINUTES) + PAGES_CYCLE_MINUTES) % PAGES_CYCLE_MINUTES;
+}
+
+export function pagesVariantDispatchDue(timestamp) {
+  switch (cycleMinute(timestamp)) {
+    case 35:
+    case 50:
+    case 70:
+    case 105:
+    case 140:
+      return true;
+    default:
+      return false;
+  }
 }
 
 function assertRefreshSucceeded(result) {
@@ -186,6 +208,24 @@ export async function runPagesReadModelFetch(
   }
 }
 
+async function dispatchPagesVariant(env, timestamp, dependencies) {
+  const send = dependencies.sendScheduledTask
+    || ((body) => env?.PAGES_READ_MODEL_QUEUE?.send(body, JSON_QUEUE_SEND_OPTIONS));
+  if (!dependencies.sendScheduledTask && !env?.PAGES_READ_MODEL_QUEUE?.send) {
+    throw new Error('PAGES_READ_MODEL_QUEUE binding is missing');
+  }
+  await send({
+    message_type: PAGES_READ_MODEL_DISPATCH_MESSAGE,
+    message_version: 1,
+    scheduled_at: timestamp,
+  });
+  return {
+    dispatched: true,
+    task: 'pages-read-model-variant',
+    scheduled_at: timestamp,
+  };
+}
+
 export async function runPagesReadModelCron(controller, env, dependencies = EMPTY_DEPENDENCIES) {
   const rawCron = controller?.cron;
   let cron = rawCron;
@@ -196,32 +236,68 @@ export async function runPagesReadModelCron(controller, env, dependencies = EMPT
     }
   }
   const now = scheduledTimestamp(controller);
+  if (!dependencies.runTask && pagesVariantDispatchDue(now)) {
+    return dispatchPagesVariant(env, now, dependencies);
+  }
   const runTask = dependencies.runTask
     || (await loadCronModule()).runDispatchedPagesReadModelTask;
   return assertRefreshSucceeded(await runTask(env, now, dependencies));
 }
 
+function dispatchedPagesTask(body) {
+  return body?.message_type === PAGES_READ_MODEL_DISPATCH_MESSAGE
+    && Number(body?.message_version) === 1
+    && Number.isFinite(Number(body?.scheduled_at));
+}
+
+async function processDispatchedPagesTask(message, env, dependencies) {
+  try {
+    const runTask = dependencies.runTask
+      || (await loadCronModule()).runDispatchedPagesReadModelTask;
+    const result = assertRefreshSucceeded(await runTask(
+      env,
+      scheduledTimestamp({ scheduledTime: message.body.scheduled_at }),
+      dependencies,
+    ));
+    console.log(JSON.stringify({ event: 'pages_read_model_variant_completed', ...result }));
+    message.ack();
+    return result;
+  } catch (error) {
+    console.error(JSON.stringify({
+      event: 'pages_read_model_variant_failed',
+      error: String(error?.message || error).slice(0, 800),
+    }));
+    message.retry();
+    return null;
+  }
+}
+
 export async function runPagesReadModelQueue(batch, env, dependencies = EMPTY_DEPENDENCIES) {
+  const messages = batch?.messages;
+  if (!messages?.length) return;
+  const message = messages[0];
+  if (dispatchedPagesTask(message.body)) {
+    return processDispatchedPagesTask(message, env, dependencies);
+  }
   if (minuteReadModelBatch(batch)) {
     const runMinuteReadModel = dependencies.processReadModelBatch
       || (await loadReadModelQueueModule()).processReadModelBatch;
     return runMinuteReadModel(batch, env);
   }
-  const messages = batch.messages;
-  if (!messages?.length) return;
-  const message = messages[0];
   const processPublication = dependencies.processTrackHistoryPublicationTask
     || (await loadPublicationModule()).processTrackHistoryPublicationTask;
   try {
     const result = await processPublication(env, message.body, dependencies);
     console.log(JSON.stringify(result));
     message.ack();
+    return result;
   } catch (error) {
     console.error(JSON.stringify({
       event: 'track_history_publication_step_failed',
       error: String(error?.message || error).slice(0, 800),
     }));
     message.retry();
+    return null;
   }
 }
 
