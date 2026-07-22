@@ -224,7 +224,7 @@ test('cron keeps lightweight stalled-publication recovery active through the dai
   assert.equal(pagesReadModelTask(CYCLE_START + 1_435 * 60_000).key, 'pages-read-model-cycle-idle');
 
   const config = JSON.parse(readFileSync(new URL('../wrangler.runtime.jsonc', import.meta.url), 'utf8'));
-  assert.equal(config.vars.PAGES_TRACK_HISTORY_ROWS_PER_STEP, 10);
+  assert.equal(config.vars.PAGES_TRACK_HISTORY_ROWS_PER_STEP, 25);
   const publication = config.queues.consumers.find(
     ({ queue }) => queue === 'stationhead-pages-read-model-publication',
   );
