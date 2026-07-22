@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
 import {
@@ -12,6 +13,7 @@ import {
   ensureRuntimeAnalyticsResources,
   RUNTIME_ANALYTICS_BINDING,
   runtimeConfigWithAnalyticsStream,
+  sanitizedProvisionError,
 } from '../scripts/provision-runtime-analytics-pipeline.mjs';
 
 const MINUTE_MS = 60_000;
@@ -87,6 +89,23 @@ test('scheduled dispatch does not fail production work when analytics delivery f
   } finally {
     console.warn = originalWarn;
   }
+});
+
+test('runtime deployment keeps optional Pipeline provisioning outside Queue migration', () => {
+  const deployment = readFileSync(new URL('../scripts/deploy-runtime.mjs', import.meta.url), 'utf8');
+  const provision = deployment.indexOf('analyticsResources = ensureRuntimeAnalyticsResources()');
+  const consumerDiscovery = deployment.indexOf('\n  previousConsumers = new Set(');
+  assert.ok(provision >= 0 && provision < consumerDiscovery);
+  assert.match(deployment, /runtime_analytics_pipeline_unavailable/);
+  assert.match(deployment, /try \{[\s\S]*ensureRuntimeAnalyticsResources\(\)[\s\S]*\} catch \(error\)/);
+});
+
+test('Pipeline provisioning errors redact Cloudflare account identifiers', () => {
+  const message = sanitizedProvisionError(
+    new Error('request to /accounts/account-identifier/pipelines/v1/streams failed'),
+  );
+  assert.equal(message, 'request to /accounts/[redacted]/pipelines/v1/streams failed');
+  assert.doesNotMatch(message, /account-identifier/);
 });
 
 test('deployment injects the created stream ID into the Worker binding', () => {
