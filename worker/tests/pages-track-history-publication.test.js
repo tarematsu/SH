@@ -223,12 +223,12 @@ test('cron keeps lightweight stalled-publication recovery active through the dai
   assert.equal(pagesReadModelTask(CYCLE_START + 1_434 * 60_000).kind, 'track-history-step');
   assert.equal(pagesReadModelTask(CYCLE_START + 1_435 * 60_000).key, 'pages-read-model-cycle-idle');
 
-  const config = JSON.parse(readFileSync(new URL('../wrangler.minute-enrichment.jsonc', import.meta.url), 'utf8'));
+  const config = JSON.parse(readFileSync(new URL('../wrangler.runtime.jsonc', import.meta.url), 'utf8'));
   assert.equal(config.vars.PAGES_TRACK_HISTORY_ROWS_PER_STEP, 10);
-  assert.equal(
-    config.queues.consumers.some(({ queue }) => queue === 'stationhead-pages-read-model-publication'),
-    true,
+  const publication = config.queues.consumers.find(
+    ({ queue }) => queue === 'stationhead-pages-read-model-publication',
   );
-  assert.equal(config.queues.consumers[0].max_batch_size, 1);
+  assert.equal(publication.max_batch_size, 1);
+  assert.equal(publication.max_concurrency, 1);
   assert.equal(config.queues.producers.some(({ binding }) => binding === 'PAGES_READ_MODEL_QUEUE'), true);
 });
