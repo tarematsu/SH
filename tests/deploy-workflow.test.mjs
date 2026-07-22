@@ -10,8 +10,16 @@ const databaseWorkflow = readFileSync(
   new URL('../.github/workflows/database.yml', import.meta.url),
   'utf8',
 );
-const observabilityAnalyzer = readFileSync(
-  new URL('../.github/scripts/analyze-worker-observability.py', import.meta.url),
+const observabilityWorkflow = readFileSync(
+  new URL('../.github/workflows/fetch-cloudflare-observability.yml', import.meta.url),
+  'utf8',
+);
+const observabilityQuery = readFileSync(
+  new URL('../.github/scripts/query-cloudflare-observability.py', import.meta.url),
+  'utf8',
+);
+const cpuPolicy = readFileSync(
+  new URL('../.github/scripts/enforce-worker-cpu-budget.py', import.meta.url),
   'utf8',
 );
 const workerPackage = JSON.parse(readFileSync(
@@ -122,14 +130,15 @@ test('Worker package scripts contain only active deployment and bundle operation
   }
 });
 
-test('observability requires active Workers and tolerates retired names during cleanup', () => {
+test('observability covers active Workers through Cloudflare APIs without R2', () => {
   for (const worker of [
     'sh-buddies-ingest',
     'sh-minute-enrichment',
     'sh-sakurazaka46jp',
     'sh-runtime-orchestrator',
   ]) {
-    assert.match(observabilityAnalyzer, new RegExp(worker));
+    assert.match(observabilityWorkflow, new RegExp(worker));
+    assert.match(cpuPolicy, new RegExp(worker));
   }
   for (const retired of [
     'sh-monitor-other',
@@ -137,10 +146,11 @@ test('observability requires active Workers and tolerates retired names during c
     'sh-minute-derive',
     'sh-host-monitor',
   ]) {
-    assert.match(observabilityAnalyzer, new RegExp(retired));
+    assert.doesNotMatch(observabilityWorkflow, new RegExp(retired));
   }
-  assert.match(observabilityAnalyzer, /CPUTimeMs/);
-  assert.match(observabilityAnalyzer, /unexpected_scripts/);
-  assert.match(observabilityAnalyzer, /missing_required_scripts/);
-  assert.match(observabilityAnalyzer, /return 0 if ok else 1/);
+  assert.match(observabilityQuery, /workersInvocationsAdaptive/);
+  assert.match(observabilityQuery, /workers\/observability\/telemetry\/query/);
+  assert.match(observabilityQuery, /cpuTimeP99/);
+  assert.match(cpuPolicy, /BUDGET_MS = 10\.0/);
+  assert.doesNotMatch(`${observabilityWorkflow}\n${observabilityQuery}\n${cpuPolicy}`, /R2_BUCKET|r2\.cloudflarestorage|aws s3api/);
 });

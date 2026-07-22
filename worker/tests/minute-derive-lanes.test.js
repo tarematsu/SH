@@ -90,13 +90,10 @@ test('maintenance recovery scans pending and expired leases through separate ind
   assert.deepEqual(triggers.map(({ job_kind }) => job_kind), ['live', 'live']);
 });
 
-test('all deploy paths provision the live derive queue and DLQ', () => {
-  for (const path of [
-    '../../.github/workflows/deploy.yml',
-    '../../.github/workflows/deploy-split-pipeline.yml',
-    '../../.github/workflows/cloudflare-pr-diagnostics.yml',
-  ]) {
-    const workflow = readFileSync(new URL(path, import.meta.url), 'utf8');
-    assert.match(workflow, /stationhead-minute-live-derive stationhead-minute-live-derive-dlq/);
-  }
+test('the active production deploy provisions the live derive queue and DLQ', () => {
+  const workflow = readFileSync(
+    new URL('../../.github/workflows/deploy-split-pipeline.yml', import.meta.url),
+    'utf8',
+  );
+  assert.match(workflow, /stationhead-minute-live-derive stationhead-minute-live-derive-dlq/);
 });
