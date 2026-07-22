@@ -223,7 +223,7 @@ test('cron keeps lightweight stalled-publication recovery active through minute 
   assert.equal(pagesReadModelTask(CYCLE_START + 175 * 60_000).key, 'six-hour-cycle-idle');
 
   const config = JSON.parse(readFileSync(new URL('../wrangler.minute-enrichment.jsonc', import.meta.url), 'utf8'));
-  assert.equal(config.vars.PAGES_TRACK_HISTORY_ROWS_PER_STEP, 40);
+  assert.equal(config.vars.PAGES_TRACK_HISTORY_ROWS_PER_STEP, 10);
   assert.equal(
     config.queues.consumers.some(({ queue }) => queue === 'stationhead-pages-read-model-publication'),
     true,
