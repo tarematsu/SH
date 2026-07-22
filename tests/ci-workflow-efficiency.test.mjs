@@ -94,7 +94,13 @@ test('Cloudflare observability runs for every PR and main push without R2 pollin
   assert.match(observability, /branches: \[main\]/);
   assert.match(observability, /secrets\.CLOUDFLARE_BUILDS_API_TOKEN/);
   assert.match(observability, /query-cloudflare-observability\.py/);
+  assert.match(observability, /audit-cloudflare-telemetry\.py/);
+  assert.match(observability, /CPU_BUDGET_MS: "10"/);
   assert.doesNotMatch(observability, /R2_BUCKET|AWS_ACCESS_KEY_ID|aws s3api/);
   assert.doesNotMatch(observability, /^  schedule:\n/m);
-  assert.doesNotMatch(observability, /actions\/upload-artifact/);
+  assert.match(observability, /Upload sanitized observability report/);
+  assert.match(observability, /observability-summary\.md/);
+  assert.match(observability, /telemetry-audit\.log/);
+  assert.match(observability, /retention-days: 1/);
+  assert.doesNotMatch(observability, /observability-logs\/|raw\/|\.ndjson/);
 });
