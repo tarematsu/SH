@@ -37,7 +37,15 @@ jobs:
           node-version: '22'
           cache: npm
           cache-dependency-path: site/package-lock.json
-      - run: npm ci --no-audit --no-fund
+      - name: Restore Pages deployment dependencies
+        id: pages-modules
+        uses: actions/cache@v4
+        with:
+          path: site/node_modules
+          key: ${{ runner.os }}-node22-pages-deploy-${{ hashFiles('site/package-lock.json') }}
+      - name: Install Pages dependencies
+        if: steps.pages-modules.outputs.cache-hit != 'true'
+        run: npm ci --prefer-offline --no-audit --no-fund
         working-directory: site
       - run: npx wrangler pages deploy public --project-name skrzk --branch main
         working-directory: site
@@ -61,7 +69,15 @@ jobs:
           node-version: '22'
           cache: npm
           cache-dependency-path: worker/package-lock.json
-      - run: npm ci --no-audit --no-fund
+      - name: Restore Worker deployment dependencies
+        id: worker-modules
+        uses: actions/cache@v4
+        with:
+          path: worker/node_modules
+          key: ${{ runner.os }}-node22-worker-deploy-${{ hashFiles('worker/package-lock.json', 'packages/sh-shared/**') }}
+      - name: Install Worker dependencies
+        if: steps.worker-modules.outputs.cache-hit != 'true'
+        run: npm ci --prefer-offline --no-audit --no-fund
         working-directory: worker
       - name: Ensure queues
         working-directory: worker
