@@ -1,4 +1,8 @@
+import { budgetedLiveCompleteMessage } from './minute-live-complete-message.js';
+
 const RETRY_60_SECONDS = Object.freeze({ delaySeconds: 60 });
+
+export { budgetedLiveCompleteMessage };
 
 export const COMPLETE_LIVE_MINUTE_FACT_JOB_SQL = `UPDATE sh_minute_fact_jobs SET
     status='done',lease_until=NULL,processed_at=?,last_error=NULL,
@@ -19,16 +23,6 @@ function integer(value) {
 
 function invalidMessage(message) {
   return Object.assign(new Error(message), { code: 'MINUTE_DERIVE_INVALID_TRIGGER' });
-}
-
-export function budgetedLiveCompleteMessage(body) {
-  const jobId = integer(body?.job?.id);
-  return body?.message_type === 'minute-fact-derive-stage'
-    && Number(body?.message_version) === 1
-    && body?.stage === 'complete'
-    && jobId != null
-    && jobId > 0
-    && String(body?.job?.job_kind || 'live') !== 'rebuild';
 }
 
 export async function completeBudgetedLiveJob(env, body, dependencies = {}) {
