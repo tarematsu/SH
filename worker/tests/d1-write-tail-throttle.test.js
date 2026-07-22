@@ -14,7 +14,7 @@ const TRACK_UPDATE = `UPDATE sh_tracks SET
   isrc=COALESCE(isrc,?),spotify_id=COALESCE(spotify_id,?),
   stationhead_track_id=COALESCE(stationhead_track_id,?),
   title=COALESCE(title,?),artist=COALESCE(artist,?),last_seen_at=MAX(last_seen_at,?)
-WHERE id=?`;
+ WHERE id=?`;
 
 const TRACK_ALIAS = `INSERT INTO sh_track_aliases(
   alias_type,alias_value,track_id,first_seen_at,last_seen_at
@@ -29,20 +29,20 @@ const HISTORICAL_SESSION = `SELECT id FROM sh_broadcast_sessions
   WHERE channel_id=? AND broadcast_start_time=?
   ORDER BY ABS(first_observed_at-?) ASC,id ASC LIMIT 1`;
 
-test('track identity updates fill missing values immediately and checkpoint last_seen', () => {
+test('track identity updates fill missing values immediately and checkpoint last_seen every twenty minutes', () => {
   resetMinuteD1WriteRewriteCacheForTests();
   const sql = rewriteMinuteD1WriteSql(TRACK_UPDATE);
   assert.match(sql, /isrc=COALESCE\(isrc,\?1\)/);
-  assert.match(sql, /\?6-COALESCE\(last_seen_at,0\)>=300000/);
+  assert.match(sql, /\?6-COALESCE\(last_seen_at,0\)>=1200000/);
   assert.match(sql, /\(\?4 IS NOT NULL AND title IS NULL\)/);
   assert.equal((sql.match(/\?7/g) || []).length, 1);
 });
 
-test('track and host aliases checkpoint timestamp-only conflict updates', () => {
+test('track and host aliases checkpoint timestamp-only conflict updates every twenty minutes', () => {
   const track = rewriteMinuteD1WriteSql(TRACK_ALIAS);
   const host = rewriteMinuteD1WriteSql(HOST_ALIAS);
-  assert.match(track, /excluded\.last_seen_at-COALESCE\(sh_track_aliases\.last_seen_at,0\)>=300000/);
-  assert.match(host, /excluded\.last_seen_at-COALESCE\(sh_host_aliases\.last_seen_at,0\)>=300000/);
+  assert.match(track, /excluded\.last_seen_at-COALESCE\(sh_track_aliases\.last_seen_at,0\)>=1200000/);
+  assert.match(host, /excluded\.last_seen_at-COALESCE\(sh_host_aliases\.last_seen_at,0\)>=1200000/);
   assert.equal(rewriteMinuteD1WriteSql(track), track);
 });
 
