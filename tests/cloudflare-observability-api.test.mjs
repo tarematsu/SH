@@ -42,12 +42,16 @@ const wranglerFiles = [
   source: readFileSync(new URL(`../worker/${name}`, import.meta.url), 'utf8'),
 }));
 
-test('observability uses measured hourly budgets and post-deploy Cloudflare API diagnostics', () => {
+test('observability uses measured budgets and post-deploy Cloudflare API diagnostics', () => {
   assert.match(workflow, /^  workflow_run:\n/m);
   assert.match(workflow, /workflows: \["Deploy production"\]/);
+  assert.match(workflow, /^  push:\n/m);
+  assert.match(workflow, /branches: \[main\]/);
+  assert.match(workflow, /\.github\/workflows\/fetch-cloudflare-observability\.yml/);
+  assert.match(workflow, /\.github\/scripts\/publish-cloudflare-observability-status\.mjs/);
+  assert.doesNotMatch(workflow, /^      - '(?:worker|site|packages)\//m);
   assert.match(workflow, /^  schedule:\n/m);
   assert.doesNotMatch(workflow, /^  pull_request:\n/m);
-  assert.doesNotMatch(workflow, /^  push:\n/m);
   assert.match(workflow, /CLOUDFLARE_WORKERS: sh-sakurazaka46jp,sh-runtime-orchestrator/);
   assert.doesNotMatch(workflow, /CLOUDFLARE_WORKERS:.*sh-buddies-ingest/);
   assert.doesNotMatch(workflow, /CLOUDFLARE_WORKERS:.*sh-minute-enrichment/);
