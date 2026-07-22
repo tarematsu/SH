@@ -51,9 +51,11 @@ test('query and audit scripts use Cloudflare APIs without R2', () => {
   assert.match(queryScript, /urlunsplit/);
   assert.match(auditScript, /workers\.get\("cpuTimeMs"\)/);
   assert.match(auditScript, /"view": "events"/);
+  assert.match(auditScript, /scriptVersion/);
+  assert.match(auditScript, /old_version_invocations_excluded/);
   assert.match(auditScript, /CPU_BUDGET_MS/);
   assert.match(auditScript, /coverage_ok/);
-  assert.match(auditScript, /No complete invocation CPU sample set was returned/);
+  assert.match(auditScript, /incomplete coverage/);
   assert.doesNotMatch(`${queryScript}\n${auditScript}`, /r2\.cloudflarestorage|aws s3|R2_BUCKET/);
 });
 
