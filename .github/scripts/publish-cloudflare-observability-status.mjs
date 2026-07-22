@@ -2,6 +2,7 @@
 
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
+import { pathToFileURL } from 'node:url';
 
 export const STATUS_ISSUE_TITLE = 'Cloudflare Observability Status';
 export const STATUS_MARKER = '<!-- cloudflare-observability-status -->';
@@ -100,7 +101,14 @@ async function githubRequest(method, path, payload) {
     body: payload == null ? undefined : JSON.stringify(payload),
   });
   const text = await response.text();
-  const body = text ? JSON.parse(text) : null;
+  let body = null;
+  if (text) {
+    try {
+      body = JSON.parse(text);
+    } catch {
+      body = { message: text.slice(0, 500) };
+    }
+  }
   if (!response.ok) {
     throw new Error(`GitHub ${method} ${path} failed: ${response.status} ${text.slice(0, 500)}`);
   }
@@ -206,7 +214,7 @@ function selfTest() {
 
 if (process.argv.includes('--self-test')) {
   selfTest();
-} else if (import.meta.url === `file://${process.argv[1]}`) {
+} else if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   publishFromEnvironment().catch((error) => {
     console.error(`::error title=Publish observability status::${String(error?.message || error).replaceAll('\n', ' ').slice(0, 1000)}`);
     process.exitCode = 1;
