@@ -81,10 +81,16 @@ test('scheduled dispatch does not fail production work when analytics delivery f
       { cron: '* * * * *', scheduledTime: 10 * MINUTE_MS },
       { HOST_MONITOR_QUEUE: { async sendBatch(messages) { sentBatches.push(messages); } } },
       null,
-      { publishRuntimeAnalytics: async () => { throw new Error('pipeline unavailable'); } },
+      {
+        dispatchRawCollection: async () => {},
+        publishRuntimeAnalytics: async () => { throw new Error('pipeline unavailable'); },
+      },
     );
     assert.equal(result[0].task, 'raw-collection');
     assert.equal(sentBatches.length, 1);
+    assert.deepEqual(sentBatches[0].map(({ body }) => body.message_type), [
+      'runtime-stream-prediction-dispatch',
+    ]);
     assert.match(warnings.join('\n'), /runtime_pipeline_analytics_failed/);
   } finally {
     console.warn = originalWarn;
