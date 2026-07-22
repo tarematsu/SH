@@ -24,16 +24,18 @@ test('observability uses post-deploy deep checks and lightweight hourly budgets'
   const workflow = await readFile(new URL('.github/workflows/fetch-cloudflare-observability.yml', root), 'utf8');
   assert.match(workflow, /workflows: \["Deploy production"\]/);
   assert.match(workflow, /cron: "37 \* \* \* \*"/);
+  assert.match(workflow, /cron: "11 3 \* \* \*"/);
   assert.doesNotMatch(workflow, /^\s+pull_request:/m);
   assert.doesNotMatch(workflow, /^\s+push:/m);
   assert.match(workflow, /DAILY_REQUEST_BUDGET: "70000"/);
+  assert.match(workflow, /DAILY_REQUEST_RESERVE: "0"/);
   assert.match(workflow, /DAILY_D1_READ_BUDGET: "3000000"/);
   assert.match(workflow, /DAILY_D1_WRITE_BUDGET: "70000"/);
   assert.match(workflow, /LIVE_TAIL_SECONDS: "90"/);
   assert.match(workflow, /LIVE_TAIL_LOG: live-tail\.log/);
   assert.match(workflow, /audit-cloudflare-telemetry\.py --self-test/);
   assert.doesNotMatch(workflow, /audit-cloudflare-live-tail\.py/);
-  assert.match(workflow, /if: github\.event_name != 'schedule'/);
+  assert.match(workflow, /github\.event\.schedule == '11 3 \* \* \*'/);
 });
 
 test('D1 query insights are manual-only and duplicate budget paths are gone', async () => {
