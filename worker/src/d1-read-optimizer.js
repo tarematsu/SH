@@ -3,10 +3,10 @@ import { rewriteThrottledSql } from './main-d1-throttle.js';
 const VELOCITY_SUM = `SELECT COALESCE(SUM(comment_count),0) FROM sh_comment_minute_counts
       WHERE station_id=? AND bucket_start>=? AND bucket_start<=?`;
 const ZERO_VELOCITY = `SELECT 0 FROM (SELECT ? AS station_id, ? AS from_at, ? AS to_at)`;
-const HEARTBEAT_INTERVAL_MS = 10 * 60_000;
+const HEARTBEAT_INTERVAL_MS = 30 * 60_000;
 const FAILURE_CLEAR_TTL_MS = 10 * 60_000;
-const COLLECTOR_STATE_TTL_MS = 5 * 60_000;
-const COLLECTOR_STATE_WRITE_INTERVAL_MS = 5 * 60_000;
+const COLLECTOR_STATE_TTL_MS = 20 * 60_000;
+const COLLECTOR_STATE_WRITE_INTERVAL_MS = 20 * 60_000;
 const STATEMENT_KIND_CACHE_LIMIT = 16;
 const RAW_STATEMENT = Symbol('raw-d1-statement');
 const STATEMENT_META = Symbol('d1-statement-meta');

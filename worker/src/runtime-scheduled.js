@@ -18,6 +18,7 @@ const MINUTE_FACT_MAINTENANCE_CRON = '5,7,9,15,17,19,25,27,29,35,37,39,45,47,49,
 
 let minuteMaintenanceModulePromise;
 let minuteGateModulePromise;
+let pipelineAnalyticsModulePromise;
 
 function loadMinuteMaintenanceModule() {
   minuteMaintenanceModulePromise ||= import('./minute-maintenance-entry.js');
@@ -27,6 +28,11 @@ function loadMinuteMaintenanceModule() {
 function loadMinuteGateModule() {
   minuteGateModulePromise ||= import('./minute-maintenance-optimized-entry.js');
   return minuteGateModulePromise;
+}
+
+function loadPipelineAnalyticsModule() {
+  pipelineAnalyticsModulePromise ||= import('./runtime-pipeline-analytics.js');
+  return pipelineAnalyticsModulePromise;
 }
 
 function utcMinute(timestamp) {
@@ -109,6 +115,27 @@ async function sendRuntimeMessages(queue, messages) {
   await Promise.all(messages.map((body) => queue.send(body, JSON_QUEUE_SEND_OPTIONS)));
 }
 
+async function scheduleRuntimeAnalytics(env, messages, scheduledAt, ctx, options) {
+  if (!options.publishRuntimeAnalytics && typeof env?.RUNTIME_ANALYTICS_STREAM?.send !== 'function') {
+    return;
+  }
+  const publish = options.publishRuntimeAnalytics
+    || (await loadPipelineAnalyticsModule()).publishRuntimeScheduleAnalytics;
+  const task = Promise.resolve(publish(
+    env,
+    messages,
+    scheduledAt,
+    options.pipelineAnalyticsDependencies || EMPTY_OPTIONS,
+  )).catch((error) => {
+    console.warn(JSON.stringify({
+      event: 'runtime_pipeline_analytics_failed',
+      error: String(error?.message || error).slice(0, 500),
+    }));
+  });
+  if (typeof ctx?.waitUntil === 'function') ctx.waitUntil(task);
+  else await task;
+}
+
 export async function dispatchMinuteRecovery(controller, env, ctx, options = EMPTY_OPTIONS) {
   const scheduledAt = Number(controller?.scheduledTime) || Date.now();
   if (!minuteRecoveryPollDue(scheduledAt)) return null;
@@ -163,7 +190,7 @@ function runtimeDispatchResult(body) {
   return { dispatched: true, task: 'maintenance', cron: body.cron };
 }
 
-export async function runRuntimeScheduled(controller, env) {
+export async function runRuntimeScheduled(controller, env, ctx, options = EMPTY_OPTIONS) {
   const cron = String(controller?.cron || '');
   if (cron !== RUNTIME_CRON) {
     return { skipped: true, reason: 'unsupported-runtime-cron', cron };
@@ -171,6 +198,7 @@ export async function runRuntimeScheduled(controller, env) {
   const scheduledAt = Number(controller?.scheduledTime) || Date.now();
   const messages = runtimeScheduledMessagesFor(scheduledAt);
   await sendRuntimeMessages(env?.HOST_MONITOR_QUEUE, messages);
+  await scheduleRuntimeAnalytics(env, messages, scheduledAt, ctx, options);
   return messages.map((body) => ({
     ...runtimeDispatchResult(body),
     scheduled_at: scheduledAt,

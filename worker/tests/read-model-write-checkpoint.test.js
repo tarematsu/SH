@@ -73,11 +73,11 @@ function model(at, overrides = {}) {
   };
 }
 
-test('unchanged read models skip minute-only timestamp writes until the five-minute checkpoint', async () => {
+test('unchanged read models skip minute-only timestamp writes until the twenty-minute checkpoint', async () => {
   const db = new D1Adapter();
   await writePreparedReadModel({ MINUTE_DB: db }, model(1_000));
   await writePreparedReadModel({ MINUTE_DB: db }, model(61_000));
-  await writePreparedReadModel({ MINUTE_DB: db }, model(301_000));
+  await writePreparedReadModel({ MINUTE_DB: db }, model(1_201_000));
 
   assert.deepEqual(db.changeSets[0], [1, 1, 1]);
   assert.deepEqual(db.changeSets[1], [0, 0, 0]);
@@ -104,7 +104,7 @@ test('payload, queue, pause, and collector error changes persist immediately', a
 
 test('older read model payloads cannot replace current state', async () => {
   const db = new D1Adapter();
-  await writePreparedReadModel({ MINUTE_DB: db }, model(301_000));
+  await writePreparedReadModel({ MINUTE_DB: db }, model(1_201_000));
   await writePreparedReadModel({ MINUTE_DB: db }, model(1_000, {
     channel: { presentation: { title: 'Old' } },
     queue: { is_paused: true },

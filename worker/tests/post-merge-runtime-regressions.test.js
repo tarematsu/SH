@@ -60,15 +60,15 @@ test('optional comments are bounded inside the core Worker ingest route', () => 
   assert.match(entry, /CHAT_LIMIT: \{ value: 25/);
 });
 
-test('ingest persists operational snapshots once per five-minute slot', () => {
-  const env = { SNAPSHOT_PERSIST_INTERVAL_MS: 5 * MINUTE };
-  const boundary = Date.UTC(2026, 0, 1, 0, 5, 0);
+test('ingest persists operational snapshots once per twenty-minute slot', () => {
+  const env = { SNAPSHOT_PERSIST_INTERVAL_MS: 20 * MINUTE };
+  const boundary = Date.UTC(2026, 0, 1, 0, 20, 0);
   assert.equal(snapshotPersistenceDue(env, boundary), true);
   assert.equal(snapshotPersistenceDue(env, boundary + MINUTE), false);
   assert.equal(snapshotPersistenceDue({}, boundary + MINUTE), true);
 
   const runtime = config('wrangler.runtime.jsonc');
-  assert.equal(runtime.vars.SNAPSHOT_PERSIST_INTERVAL_MS, 5 * MINUTE);
+  assert.equal(runtime.vars.SNAPSHOT_PERSIST_INTERVAL_MS, 20 * MINUTE);
 });
 
 test('ingest drops duplicate collected metadata when the dedicated pipeline owns hydration', () => {

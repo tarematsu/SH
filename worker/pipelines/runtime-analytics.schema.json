@@ -1,0 +1,15 @@
+{
+  "fields": [
+    { "name": "schema_version", "type": "int32", "required": true },
+    { "name": "event_type", "type": "string", "required": true },
+    { "name": "worker", "type": "string", "required": true },
+    { "name": "observed_at", "type": "timestamp", "required": true },
+    { "name": "scheduled_at", "type": "int64", "required": true },
+    { "name": "task_count", "type": "int32", "required": true },
+    { "name": "raw_collection", "type": "bool", "required": true },
+    { "name": "minute_recovery", "type": "bool", "required": true },
+    { "name": "minute_gate", "type": "string", "required": true },
+    { "name": "stream_prediction", "type": "bool", "required": true },
+    { "name": "maintenance_cron", "type": "string", "required": true }
+  ]
+}
