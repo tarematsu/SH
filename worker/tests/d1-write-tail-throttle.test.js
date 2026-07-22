@@ -143,7 +143,7 @@ test('wrapped session lookup retains its original three binds', async () => {
 
 test('rebuild runtime diagnostics checkpoint only unchanged successful state', () => {
   const source = readFileSync(new URL('../src/minute-facts-runtime-state.js', import.meta.url), 'utf8');
-  assert.match(source, /RUNTIME_SUCCESS_CHECKPOINT_MS = 5 \* 60_000/);
+  assert.match(source, /RUNTIME_SUCCESS_CHECKPOINT_MS = 20 \* 60_000/);
   assert.match(source, /WHERE excluded\.task_name NOT IN \('rebuild','derive'\)/);
   assert.match(source, /OR excluded\.failed_total>0/);
   assert.match(source, /pending_count IS NOT excluded\.pending_count/);
