@@ -143,7 +143,7 @@ test('snapshot loading includes one pre-window boundary row for every active cha
 
   const rows = await loadGapScanSnapshots({ DB: db }, 3 * MINUTE_MS, 6 * MINUTE_MS);
   assert.deepEqual(rows.map((row) => row.id), [10, 20, 40, 50]);
-  assert.match(calls[1].sql, /INDEXED BY idx_sh_channel_snapshots_channel_time_id/);
+  assert.match(calls[1].sql, /WHERE channel_id=\? AND observed_at<\?/);
   assert.match(calls[1].sql, /ORDER BY observed_at DESC,id DESC\s+LIMIT 1/);
   assert.deepEqual(calls[1].bindings, [1, 3 * MINUTE_MS]);
   assert.deepEqual(calls[2].bindings, [2, 3 * MINUTE_MS]);
