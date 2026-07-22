@@ -13,15 +13,17 @@ export const MINUTE_DERIVE_DISPATCH_CRON = '* * * * *';
 
 const EMPTY_DEPENDENCIES = Object.freeze({});
 const JSON_QUEUE_SEND_OPTIONS = Object.freeze({ contentType: 'json' });
+const DERIVE_STATE_CHECKPOINT_MS = 20 * 60_000;
+const DERIVE_POLL_INTERVAL_MS = 5 * 60_000;
 let deriveDispatchStateDependenciesPromise = null;
 let cronStaggerModulePromise = null;
 
 function defaultDeriveDispatchStateDependencies() {
   deriveDispatchStateDependenciesPromise ||= Promise.all([
-    import('./minute-facts-inbox.js'),
+    import('./minute-facts-inbox-health.js'),
     import('./minute-facts-runtime-state.js'),
   ]).then(([inboxModule, runtimeModule]) => ({
-    stats: inboxModule.minuteFactInboxStats,
+    stats: inboxModule.minuteFactInboxHealth,
     record: runtimeModule.recordMinuteFactRuntimeState,
   }));
   return deriveDispatchStateDependenciesPromise;
@@ -53,8 +55,19 @@ function isDeriveDispatchCron(controller) {
     || String(value || '') === MINUTE_DERIVE_DISPATCH_CRON;
 }
 
+export function deriveDispatchStateCheckpointDue(now = Date.now()) {
+  const currentWindow = Math.floor(Number(now) / DERIVE_STATE_CHECKPOINT_MS);
+  const previousPollWindow = Math.floor((Number(now) - DERIVE_POLL_INTERVAL_MS) / DERIVE_STATE_CHECKPOINT_MS);
+  return currentWindow !== previousPollWindow;
+}
+
 async function recordDeriveDispatchState(env, summary, startedAt, dependencies = EMPTY_DEPENDENCIES) {
-  if (!env?.MINUTE_DB) return;
+  if (!env?.MINUTE_DB) return false;
+  const dispatched = Number(summary?.dispatched || 0) + Number(summary?.revision_recoveries || 0);
+  if (dispatched <= 0 && !deriveDispatchStateCheckpointDue(startedAt)) {
+    summary.state_checkpoint_skipped = true;
+    return false;
+  }
   let stats = dependencies.stats;
   let record = dependencies.record;
   if (!stats || !record) {
@@ -70,6 +83,7 @@ async function recordDeriveDispatchState(env, summary, startedAt, dependencies =
     failed: 0,
     ...snapshot,
   }, { startedAt });
+  return true;
 }
 
 function rebuildDeriveMessage(message) {
@@ -152,7 +166,7 @@ export async function dispatchPendingMinuteFacts(env, dependencies = EMPTY_DEPEN
       && typeof env?.MINUTE_DERIVE_QUEUE?.sendBatch !== 'function') {
     throw new Error('minute derive Queue binding is missing');
   }
-  const startedAt = Date.now();
+  const startedAt = Number(dependencies.now) || Date.now();
   const loadFacts = dependencies.load || pendingMinuteDeriveTriggers;
   const loadRevisions = dependencies.loadRevisionRecovery || pendingSparseRevisionTasks;
   const factLimit = positiveInteger(env.DERIVE_DISPATCH_LIMIT, 5, 20);
