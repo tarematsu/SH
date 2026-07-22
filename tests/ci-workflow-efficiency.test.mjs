@@ -98,8 +98,8 @@ test('Cloudflare observability separates hourly budgets from post-deploy deep ch
   assert.match(observability, /secrets\.CLOUDFLARE_BUILDS_API_TOKEN/);
   assert.match(observability, /audit-cloudflare-daily-usage\.py/);
   assert.match(observability, /DAILY_REQUEST_BUDGET: "70000"/);
-  assert.match(observability, /DAILY_D1_READ_BUDGET: "3000000"/);
-  assert.match(observability, /DAILY_D1_WRITE_BUDGET: "70000"/);
+  assert.match(observability, /DAILY_D1_READ_BUDGET: "1500000"/);
+  assert.match(observability, /DAILY_D1_WRITE_BUDGET: "21000"/);
   assert.match(observability, /query-cloudflare-observability\.py/);
   assert.match(observability, /audit-cloudflare-telemetry\.py/);
   assert.match(observability, /LIVE_TAIL_LOG: live-tail\.log/);
