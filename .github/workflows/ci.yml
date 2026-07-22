@@ -252,6 +252,117 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
+  production-stop-diagnostic:
+    name: Production stop diagnostic
+    if: github.event_name == 'pull_request' && github.event.pull_request.number == 572
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets['CLOUDFLARE_BUILDS_API_TOKEN'] || secrets['CLOUDFLARE_API_TOKEN'] || secrets['CF_API_TOKEN'] }}
+    steps:
+      - name: Read public health timestamps and five-minute Worker activity
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import datetime as dt
+          import json
+          import os
+          import re
+          import urllib.request
+
+          token = os.environ['CLOUDFLARE_API_TOKEN'].strip()
+          headers = {
+              'Accept': 'application/json',
+              'User-Agent': 'github-actions-production-stop-diagnostic',
+          }
+
+          def request(url, payload=None, authenticated=False):
+              request_headers = dict(headers)
+              if authenticated:
+                  request_headers['Authorization'] = f'Bearer {token}'
+                  request_headers['Content-Type'] = 'application/json'
+              req = urllib.request.Request(
+                  url,
+                  data=None if payload is None else json.dumps(payload, separators=(',', ':')).encode(),
+                  headers=request_headers,
+                  method='GET' if payload is None else 'POST',
+              )
+              with urllib.request.urlopen(req, timeout=30) as response:
+                  return json.load(response)
+
+          interesting = re.compile(r'(?:^|_)(?:at|time|timestamp|age|status|state|ok|error|count|minute|source|task|fresh|stale)(?:$|_)', re.I)
+
+          def timestamps(value, prefix=''):
+              output = {}
+              if isinstance(value, dict):
+                  for key, child in value.items():
+                      path = f'{prefix}.{key}' if prefix else str(key)
+                      if isinstance(child, (dict, list)):
+                          output.update(timestamps(child, path))
+                      elif interesting.search(str(key)):
+                          output[path] = child
+              elif isinstance(value, list):
+                  for index, child in enumerate(value[:10]):
+                      output.update(timestamps(child, f'{prefix}[{index}]'))
+              return output
+
+          print('PUBLIC_HEALTH')
+          for path in ('health', 'health/minute', 'health/other', 'health/sakurazaka46jp', 'dashboard'):
+              data = request(f'https://skrzk.pages.dev/api/{path}')
+              print(path, json.dumps(timestamps(data), ensure_ascii=False, sort_keys=True)[:12000])
+
+          accounts = request(
+              'https://api.cloudflare.com/client/v4/accounts?per_page=50',
+              authenticated=True,
+          ).get('result') or []
+          if len(accounts) != 1:
+              raise RuntimeError(f'Expected one visible account, got {len(accounts)}')
+          account = str(accounts[0]['id'])
+          end = dt.datetime.now(dt.timezone.utc).replace(microsecond=0)
+          start = end - dt.timedelta(hours=3)
+          query = '''
+          query WorkerActivity($accountTag: string, $start: string, $end: string) {
+            viewer {
+              accounts(filter: {accountTag: $accountTag}) {
+                workersInvocationsAdaptiveGroups(
+                  limit: 1000
+                  orderBy: [datetimeFiveMinutes_ASC]
+                  filter: {datetime_geq: $start, datetime_leq: $end}
+                ) {
+                  dimensions { datetimeFiveMinutes scriptName }
+                  sum { requests errors }
+                }
+              }
+            }
+          }
+          '''
+          payload = {
+              'query': query,
+              'variables': {
+                  'accountTag': account,
+                  'start': start.isoformat().replace('+00:00', 'Z'),
+                  'end': end.isoformat().replace('+00:00', 'Z'),
+              },
+          }
+          result = request('https://api.cloudflare.com/client/v4/graphql', payload, authenticated=True)
+          if result.get('errors'):
+              raise RuntimeError(json.dumps(result['errors'], ensure_ascii=False)[:2000])
+          rows = (((result.get('data') or {}).get('viewer') or {}).get('accounts') or [{}])[0].get('workersInvocationsAdaptiveGroups') or []
+          workers = {'sh-runtime-orchestrator', 'sh-sakurazaka46jp'}
+          print('WORKER_ACTIVITY_5M')
+          for row in rows:
+              dimensions = row.get('dimensions') or {}
+              if dimensions.get('scriptName') not in workers:
+                  continue
+              sums = row.get('sum') or {}
+              print(json.dumps({
+                  'time': dimensions.get('datetimeFiveMinutes'),
+                  'worker': dimensions.get('scriptName'),
+                  'requests': int(sums.get('requests') or 0),
+                  'errors': int(sums.get('errors') or 0),
+              }, separators=(',', ':')))
+          PY
+
   audit:
     name: Dependency audit
     if: github.event_name == 'workflow_dispatch'
