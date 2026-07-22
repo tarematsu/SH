@@ -92,6 +92,18 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
+          cache: npm
+          cache-dependency-path: worker/package-lock.json
+      - name: Restore root-test Worker dependencies
+        id: repository-worker-modules
+        uses: actions/cache@v4
+        with:
+          path: worker/node_modules
+          key: ${{ runner.os }}-node22-worker-${{ hashFiles('worker/package-lock.json', 'packages/sh-shared/**') }}
+      - name: Install root-test Worker dependencies
+        if: steps.repository-worker-modules.outputs.cache-hit != 'true'
+        run: npm ci --prefer-offline --no-audit --no-fund
+        working-directory: worker
       - uses: actions/setup-python@v5
         if: needs.changes.outputs.sql == 'true'
         with:
