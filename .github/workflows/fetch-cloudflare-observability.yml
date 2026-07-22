@@ -61,7 +61,9 @@ jobs:
             worker/src worker/scripts 'worker/wrangler*.jsonc' \
             worker/package.json worker/package-lock.json)"
           if [[ -z "$runtime_changed_at" ]]; then
-            echo "No runtime changes in this PR; using the configured lookback."
+            audit_since="$(date -u -d '10 minutes ago' +%Y-%m-%dT%H:%M:%SZ)"
+            echo "No runtime changes in this PR; auditing the current deployment since $audit_since."
+            echo "LOG_SINCE=$audit_since" >> "$GITHUB_ENV"
             exit 0
           fi
           runtime_changed_at="$(date -u -d "$runtime_changed_at" +%Y-%m-%dT%H:%M:%SZ)"

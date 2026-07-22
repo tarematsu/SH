@@ -32,26 +32,54 @@ function effectiveWindow(input) {
   const minutes = Math.max(1 / 60, (end.getTime() - start.getTime()) / 60_000);
   const free = input?.limits?.freePerDay || {};
   const ratio = numeric(input?.limits?.targetRatio) || 0.5;
-  const target = {
+  const proportionalTarget = {
     rowsRead: numeric(free.rowsRead) * ratio * minutes / (24 * 60),
     rowsWritten: numeric(free.rowsWritten) * ratio * minutes / (24 * 60),
   };
-  if (!target.rowsRead || !target.rowsWritten) return null;
+  const hourlyTarget = {
+    rowsRead: numeric(free.rowsRead) * ratio / 24,
+    rowsWritten: numeric(free.rowsWritten) * ratio / 24,
+  };
+  if (!proportionalTarget.rowsRead || !hourlyTarget.rowsWritten) return null;
   return {
     start: start.toISOString(),
     end: end.toISOString(),
     minutes,
     observed,
-    target,
+    target: {
+      // Read amplification is request-driven, so keep it proportional to the
+      // measured window. Writes are deliberately batched by scheduled read-model
+      // publication and retention tasks, so enforce their hourly allowance.
+      rowsRead: proportionalTarget.rowsRead,
+      rowsWritten: hourlyTarget.rowsWritten,
+    },
+    targetBasis: {
+      rowsRead: 'measured-window',
+      rowsWritten: 'hourly-burst-allowance',
+    },
+  };
+}
+
+function reportedTarget(input) {
+  const perWindow = input?.limits?.targetPerWindow || {};
+  const perHour = input?.limits?.targetPerHour || {};
+  return {
+    target: {
+      rowsRead: numeric(perWindow.rowsRead) || numeric(perHour.rowsRead),
+      rowsWritten: numeric(perHour.rowsWritten) || numeric(perWindow.rowsWritten),
+    },
+    targetBasis: {
+      rowsRead: numeric(perWindow.rowsRead) ? 'reported-window' : 'reported-hour',
+      rowsWritten: numeric(perHour.rowsWritten) ? 'reported-hour' : 'reported-window',
+    },
   };
 }
 
 const effective = effectiveWindow(report);
 const observed = effective?.observed || report.observed || {};
-const target = effective?.target
-  || report.limits?.targetPerWindow
-  || report.limits?.targetPerHour
-  || {};
+const reported = reportedTarget(report);
+const target = effective?.target || reported.target;
+const targetBasis = effective?.targetBasis || reported.targetBasis;
 const violations = [];
 
 if (numeric(observed.rowsRead) >= numeric(target.rowsRead)) {
@@ -72,6 +100,7 @@ const gate = {
   } : report.window,
   observed,
   target,
+  targetBasis,
   violations,
 };
 report.budgetGate = gate;
@@ -83,8 +112,8 @@ const summary = [
   '',
   `- Scope: \`${gate.scope}\``,
   `- Window: \`${gate.window?.start}\` to \`${gate.window?.end}\``,
-  `- Rows read: \`${numeric(observed.rowsRead)}\` / \`< ${Math.floor(numeric(target.rowsRead))}\``,
-  `- Rows written: \`${numeric(observed.rowsWritten)}\` / \`< ${Math.floor(numeric(target.rowsWritten))}\``,
+  `- Rows read: \`${numeric(observed.rowsRead)}\` / \`< ${Math.floor(numeric(target.rowsRead))}\` (${targetBasis.rowsRead})`,
+  `- Rows written: \`${numeric(observed.rowsWritten)}\` / \`< ${Math.floor(numeric(target.rowsWritten))}\` (${targetBasis.rowsWritten})`,
   `- Result: **${gate.ok ? 'PASS' : 'FAIL'}**`,
   '',
 ].join('\n');

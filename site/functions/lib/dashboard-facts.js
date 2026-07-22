@@ -8,7 +8,7 @@ export const FACTS_FRESH_MS = 10 * 60 * 1000;
 function commentVelocitySql(alias = 'f') {
   return `COALESCE((
     SELECT SUM(recent.comment_count)
-    FROM sh_minute_facts AS recent
+    FROM sh_minute_facts AS recent INDEXED BY idx_sh_minute_facts_source_minute_desc
     WHERE recent.source_code=1
       AND recent.channel_id=${alias}.channel_id
       AND recent.minute_at>=${alias}.minute_at-60000
