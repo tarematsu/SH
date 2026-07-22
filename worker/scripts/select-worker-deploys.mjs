@@ -14,6 +14,7 @@ const gitConnectedWorkers = new Set(['sh-runtime-orchestrator']);
 const deployScriptWorkers = new Map([
   ['worker/scripts/deploy-runtime.mjs', 'sh-runtime-orchestrator'],
   ['worker/scripts/pages-response-kv-namespace.mjs', 'sh-runtime-orchestrator'],
+  ['worker/scripts/provision-runtime-analytics-pipeline.mjs', 'sh-runtime-orchestrator'],
   ['worker/scripts/deploy-sakurazaka46jp.mjs', 'sh-sakurazaka46jp'],
 ]);
 
@@ -98,6 +99,9 @@ function readChangedPaths() {
 
 function affectedByPath(definition, changedPath) {
   if (changedPath === definition.config) return true;
+  if (definition.name === 'sh-runtime-orchestrator' && changedPath.startsWith('worker/pipelines/')) {
+    return true;
+  }
   if (changedPath.startsWith('packages/sh-shared/')) {
     return [...definition.dependencies].some((dependency) => dependency.startsWith('packages/sh-shared/'));
   }
