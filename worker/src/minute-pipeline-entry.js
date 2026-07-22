@@ -3,7 +3,10 @@ import {
   budgetedLiveCompleteMessage,
   processBudgetedLiveCompleteBatch,
 } from './minute-live-complete-budget-entry.js';
-import { processBudgetedLiveRevisionBatch } from './minute-live-revision-budget-entry.js';
+import {
+  budgetedLiveRevisionMessage,
+  processBudgetedLiveRevisionBatch,
+} from './minute-live-revision-budget-entry.js';
 import { processBudgetedLiveTriggerBatch } from './minute-live-trigger-budget-entry.js';
 import { processBudgetedLiveWriteBatch } from './minute-live-write-budget-entry.js';
 import { consumeMinuteQueue } from './minute-production-entry.js';
@@ -54,14 +57,8 @@ function rebuildTriggerBatch(batch) {
 function budgetedLiveRevisionBatch(batch, env) {
   if (liveRevisionMaterializationEnabled(env)) return false;
   const messages = batch?.messages || [];
-  return messages.length > 0 && messages.every((message) => {
-    const body = message?.body;
-    return body?.message_type === 'minute-fact-derive-stage'
-      && Number(body?.message_version) === 1
-      && body?.stage === 'revision-materialize'
-      && body?.revision?.sparse === true
-      && body?.revision?.rebuild !== true;
-  });
+  return messages.length > 0
+    && messages.every((message) => budgetedLiveRevisionMessage(message?.body));
 }
 
 function budgetedLiveWriteBatch(batch, env) {
