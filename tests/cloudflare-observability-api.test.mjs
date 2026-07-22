@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
 import test from 'node:test';
+import { fileURLToPath } from 'node:url';
 
 const workflow = readFileSync(
   new URL('../.github/workflows/fetch-cloudflare-observability.yml', import.meta.url),
@@ -14,10 +16,11 @@ const auditScript = readFileSync(
   new URL('../.github/scripts/audit-cloudflare-telemetry.py', import.meta.url),
   'utf8',
 );
-const deployedAuditScript = readFileSync(
-  new URL('../.github/scripts/audit-deployed-cloudflare-telemetry.py', import.meta.url),
-  'utf8',
+const deployedAuditUrl = new URL(
+  '../.github/scripts/audit-deployed-cloudflare-telemetry.py',
+  import.meta.url,
 );
+const deployedAuditScript = readFileSync(deployedAuditUrl, 'utf8');
 const dailyBudgetScript = readFileSync(
   new URL('../.github/scripts/audit-cloudflare-daily-usage.py', import.meta.url),
   'utf8',
@@ -96,6 +99,16 @@ test('query and audit scripts use Cloudflare APIs without R2', () => {
     `${queryScript}\n${auditScript}\n${deployedAuditScript}\n${dailyBudgetScript}`,
     /r2\.cloudflarestorage|aws s3|R2_BUCKET/,
   );
+});
+
+test('deployment-backed telemetry selector passes its executable self-test', () => {
+  const result = spawnSync(
+    'python3',
+    [fileURLToPath(deployedAuditUrl), '--self-test'],
+    { encoding: 'utf8' },
+  );
+  assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+  assert.match(result.stdout, /deployed telemetry audit self-test passed/);
 });
 
 test('live-tail diagnostics redact sensitive request fields', () => {
