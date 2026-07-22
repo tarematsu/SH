@@ -40,7 +40,7 @@ test('core queue keeps domain routes in separate invocations', async () => {
   ]);
 });
 
-test('one cron dispatches runtime and Pages work to separate Queues', async () => {
+test('one cron dispatches runtime and Pages work to separate Queue invocations', async () => {
   const calls = [];
   const controller = { cron: '* * * * *', scheduledTime: 123 };
   const result = await runCoreScheduled(controller, {}, {}, {
