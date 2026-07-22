@@ -17,7 +17,7 @@ function runSelfTest(path) {
 
 test('observability policy scripts pass offline self-tests', () => {
   runSelfTest('.github/scripts/audit-cloudflare-daily-usage.py');
-  runSelfTest('.github/scripts/audit-cloudflare-live-tail.py');
+  runSelfTest('.github/scripts/audit-cloudflare-telemetry.py');
 });
 
 test('observability uses post-deploy deep checks and lightweight hourly budgets', async () => {
@@ -30,14 +30,18 @@ test('observability uses post-deploy deep checks and lightweight hourly budgets'
   assert.match(workflow, /DAILY_D1_READ_BUDGET: "3000000"/);
   assert.match(workflow, /DAILY_D1_WRITE_BUDGET: "70000"/);
   assert.match(workflow, /LIVE_TAIL_SECONDS: "90"/);
+  assert.match(workflow, /LIVE_TAIL_LOG: live-tail\.log/);
+  assert.match(workflow, /audit-cloudflare-telemetry\.py --self-test/);
+  assert.doesNotMatch(workflow, /audit-cloudflare-live-tail\.py/);
   assert.match(workflow, /if: github\.event_name != 'schedule'/);
 });
 
-test('D1 query insights are manual-only and the duplicate request workflow is gone', async () => {
+test('D1 query insights are manual-only and duplicate budget paths are gone', async () => {
   const workflow = await readFile(new URL('.github/workflows/fetch-cloudflare-d1-usage.yml', root), 'utf8');
   assert.match(workflow, /^\s+workflow_dispatch:/m);
   assert.doesNotMatch(workflow, /^\s+pull_request:/m);
   assert.doesNotMatch(workflow, /^\s+schedule:/m);
   await assert.rejects(access(new URL('.github/workflows/cloudflare-worker-request-budget.yml', root)));
   await assert.rejects(access(new URL('scripts/cloudflare-worker-request-budget.mjs', root)));
+  await assert.rejects(access(new URL('.github/scripts/audit-cloudflare-live-tail.py', root)));
 });
