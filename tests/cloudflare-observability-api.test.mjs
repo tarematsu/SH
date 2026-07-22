@@ -56,8 +56,8 @@ test('observability uses measured hourly budgets and post-deploy Cloudflare API 
   assert.match(workflow, /DURABLE_OBJECT_CPU_BUDGET_MS: "30000"/);
   assert.match(workflow, /DAILY_REQUEST_BUDGET: "70000"/);
   assert.match(workflow, /DAILY_REQUEST_RESERVE: "0"/);
-  assert.match(workflow, /DAILY_D1_READ_BUDGET: "1500000"/);
-  assert.match(workflow, /DAILY_D1_WRITE_BUDGET: "21000"/);
+  assert.match(workflow, /DAILY_D1_READ_BUDGET: "3000000"/);
+  assert.match(workflow, /DAILY_D1_WRITE_BUDGET: "70000"/);
   assert.match(workflow, /LIVE_TAIL_SECONDS: "90"/);
   assert.doesNotMatch(workflow, /R2_BUCKET|AWS_|aws s3api/);
   assert.match(workflow, /Upload sanitized observability report/);
