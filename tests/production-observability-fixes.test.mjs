@@ -99,6 +99,9 @@ test('Cloudflare audit compatibility wrappers pass offline self-tests', () => {
   assert.match(freeTier, /_ACCOUNT_SCOPE = "account"/);
   assert.match(freeTier, /queueMessageOperationsAdaptiveGroups/);
   assert.match(freeTier, /durableObjectsInvocationsAdaptiveGroups/);
+  assert.match(freeTier, /sum \{ duration rowsRead rowsWritten \}/);
+  assert.match(freeTier, /active_microseconds \/ 1_000_000 \* 0\.128/);
+  assert.match(freeTier, /usage\["doActiveGbSeconds"\] = _durable_object_duration_gb_seconds/);
   assert.match(freeTier, /kvOperationsAdaptiveGroups/);
   assert.match(freeTier, /pipelinesOperatorAdaptiveGroups/);
   assert.match(freeTier, /dimensions \{ actionType \}/);

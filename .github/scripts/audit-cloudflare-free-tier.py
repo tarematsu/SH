@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import importlib.util
+import math
 import sys
 from pathlib import Path
 from typing import Any
@@ -53,7 +54,7 @@ def graphql_document() -> str:
           sum { requests }
         }
         doPeriodic: durableObjectsPeriodicGroups(limit: 10000, filter: {date_geq: $day, date_leq: $day}) {
-          sum { activeTime rowsRead rowsWritten }
+          sum { duration rowsRead rowsWritten }
         }
         doStorage: durableObjectsStorageGroups(limit: 10000, filter: {date_geq: $day, date_leq: $day}) {
           max { storedBytes }
@@ -85,6 +86,31 @@ def _tag(groups: Any, dimension: str) -> list[dict[str, Any]]:
     return tagged
 
 
+def _metric(value: Any) -> float:
+    try:
+        parsed = float(value or 0)
+    except (TypeError, ValueError):
+        return 0.0
+    return max(0.0, parsed) if math.isfinite(parsed) else 0.0
+
+
+def _durable_object_duration_gb_seconds(groups: Any) -> float:
+    duration = 0.0
+    active_microseconds = 0.0
+    has_duration = False
+    for group in groups or []:
+        sums = group.get("sum") or {}
+        if "duration" in sums:
+            has_duration = True
+            duration += _metric(sums.get("duration"))
+        else:
+            active_microseconds += _metric(sums.get("activeTime"))
+    if has_duration:
+        return round(duration, 3)
+    # Backward-compatible fallback for fixtures and older API responses.
+    return round(active_microseconds / 1_000_000 * 0.128, 3)
+
+
 def aggregate(
     row: dict[str, Any],
     _queue_ids: set[str],
@@ -106,7 +132,7 @@ def aggregate(
     normalized["pipelineOperators"] = _tag(row.get("pipelineOperators"), "pipelineId")
     normalized["pipelineSinks"] = _tag(row.get("pipelineSinks"), "pipelineId")
     account = {_ACCOUNT_SCOPE}
-    return _ORIGINAL_AGGREGATE(
+    usage = _ORIGINAL_AGGREGATE(
         normalized,
         account,
         account,
@@ -114,6 +140,12 @@ def aggregate(
         account,
         account,
     )
+    # The GraphQL duration field is already GB-s. The legacy core's activeTime
+    # path treats microseconds as milliseconds, so replace that derived value.
+    usage["doActiveGbSeconds"] = _durable_object_duration_gb_seconds(
+        row.get("doPeriodic")
+    )
+    return usage
 
 
 core.paginated = paginated
@@ -144,6 +176,8 @@ def self_test() -> int:
         "pipelineId",
     ):
         assert resource_identifier not in document
+    assert "sum { duration rowsRead rowsWritten }" in document
+    assert "activeTime" not in document
     assert "dimensions { actionType }" in document
     assert "dimensions { datetime }" in document
     assert "dimensions { date }" in document
@@ -159,7 +193,7 @@ def self_test() -> int:
             "max": {"payloadSize": 100, "metadataSize": 5},
         }],
         "doInvocations": [{"sum": {"requests": 10}}],
-        "doPeriodic": [{"sum": {"activeTime": 1000, "rowsRead": 2, "rowsWritten": 1}}],
+        "doPeriodic": [{"sum": {"duration": 206.651, "rowsRead": 2, "rowsWritten": 1}}],
         "doStorage": [{"max": {"storedBytes": 50}}],
         "kvOperations": [
             {"dimensions": {"actionType": "read"}, "sum": {"requests": 7}},
@@ -177,14 +211,23 @@ def self_test() -> int:
     assert usage["r2StoredBytes"] == 105
     assert usage["doRequests"] == 10
     assert usage["doRowsRead"] == 2 and usage["doRowsWritten"] == 1
-    assert usage["doStoredBytes"] == 50 and usage["doActiveGbSeconds"] == 0.128
+    assert usage["doStoredBytes"] == 50 and usage["doActiveGbSeconds"] == 206.651
     assert usage["kvReads"] == 7 and usage["kvWrites"] == 1
     assert usage["kvStoredBytes"] == 200
     assert usage["pipelineTransformBytes"] == 300
     assert usage["pipelineSinkBytes"] == 250
     assert usage["pipelineDecodeErrors"] == 2
+    assert _durable_object_duration_gb_seconds([
+        {"sum": {"activeTime": 1_000_000}},
+    ]) == 0.128
 
-    assert core.self_test() == 0
+    # The retained core self-test covers its legacy fixture independently.
+    current_aggregate = core.aggregate
+    try:
+        core.aggregate = _ORIGINAL_AGGREGATE
+        assert core.self_test() == 0
+    finally:
+        core.aggregate = current_aggregate
     print("account-wide free-tier audit self-test passed")
     return 0
 
