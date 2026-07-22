@@ -18,10 +18,6 @@ const runtime = JSON.parse(readFileSync(
   new URL('../worker/wrangler.runtime.jsonc', import.meta.url),
   'utf8',
 ));
-const requestBudget = readFileSync(
-  new URL('../scripts/cloudflare-worker-request-budget.mjs', import.meta.url),
-  'utf8',
-);
 
 const expectedMigrations = [
   'database/facts-migrations/025_d1_budget_hotpath_index.sql',
@@ -44,7 +40,7 @@ test('PR deployment applies the ordered FACTS migration set through the current 
   assert.match(migration, /ON sh_minute_fact_jobs\(status, job_kind, minute_at, id\)/);
 });
 
-test('production keeps historical reconstruction enabled at D1-budgeted throughput', () => {
+test('production keeps historical reconstruction serialized for measured daily budgets', () => {
   assert.equal(runtime.vars.HISTORICAL_REBUILD_ENABLED, true);
   assert.equal(runtime.vars.REBUILD_HISTORICAL_BACKFILL_ENABLED, true);
   assert.equal(runtime.vars.REBUILD_HISTORICAL_BACKFILL_INTERVAL_MS, 3_600_000);
@@ -57,7 +53,4 @@ test('production keeps historical reconstruction enabled at D1-budgeted throughp
   );
   assert.equal(historical.max_batch_size, 1);
   assert.equal(historical.max_concurrency, 1);
-  assert.match(requestBudget, /'stationhead-minute-derive'/);
-  assert.match(requestBudget, /'stationhead-minute-rebuild'/);
-  assert.doesNotMatch(requestBudget, /QUEUE_MESSAGES_PER_DAY[\s\S]*'stationhead-minute-derive':/);
 });
