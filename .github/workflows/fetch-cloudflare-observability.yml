@@ -54,6 +54,10 @@ jobs:
         run: node .github/scripts/capture-cloudflare-live-tail.mjs 2>&1 | tee live-tail.log
 
       - name: Enforce per-invocation 10 ms CPU policy
+        # Pull requests have not been deployed, so these samples describe the
+        # current production version rather than the code under review. Keep
+        # the evidence and annotations, but enforce only after main deploys.
+        continue-on-error: ${{ github.event_name == 'pull_request' }}
         shell: bash
         run: python3 .github/scripts/audit-cloudflare-telemetry.py 2>&1 | tee telemetry-audit.log
 
