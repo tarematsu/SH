@@ -1,10 +1,11 @@
 name: Cloudflare Observability
 
 on:
-  pull_request:
-    branches: [main]
-  push:
-    branches: [main]
+  workflow_run:
+    workflows: ["Deploy production"]
+    types: [completed]
+  schedule:
+    - cron: "37 * * * *"
   workflow_dispatch:
     inputs:
       lookback_minutes:
@@ -17,45 +18,82 @@ permissions:
   contents: read
 
 concurrency:
-  group: cloudflare-observability-sh-${{ github.event.pull_request.number || github.ref }}
+  group: cloudflare-observability-sh-${{ github.event.workflow_run.id || github.ref }}
   cancel-in-progress: true
 
 jobs:
   observability:
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 6
     env:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_BUILDS_API_TOKEN }}
       CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
       CLOUDFLARE_WORKERS: sh-buddies-ingest,sh-minute-enrichment,sh-sakurazaka46jp,sh-runtime-orchestrator
+      D1_CONFIG_GLOBS: worker/wrangler*.jsonc,site/wrangler.jsonc
       LOOKBACK_MINUTES: ${{ inputs.lookback_minutes || '60' }}
       CPU_BUDGET_MS: "10"
+      DURABLE_OBJECT_CPU_BUDGET_MS: "30000"
       CPU_BUDGET_EXEMPT_MARKERS: stationhead-minute-rebuild,stationhead-minute-derive,minute-rebuild-stage,minute_rebuild_,minute_fact_rebuild
+      DAILY_REQUEST_BUDGET: "70000"
+      DAILY_D1_READ_BUDGET: "3000000"
+      DAILY_D1_WRITE_BUDGET: "70000"
+      DAILY_USAGE_OUTPUT_DIR: daily-usage
 
     steps:
       - uses: actions/checkout@v4
         with:
           show-progress: false
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
 
-      - name: Query Cloudflare metrics and persisted errors
-        shell: bash
+      - name: Validate observability policy code
         run: |
-          actual_summary="$GITHUB_STEP_SUMMARY"
-          GITHUB_STEP_SUMMARY=observability-summary.md python3 .github/scripts/query-cloudflare-observability.py
-          cat observability-summary.md >> "$actual_summary"
+          python3 .github/scripts/audit-cloudflare-daily-usage.py --self-test
+          python3 .github/scripts/audit-cloudflare-live-tail.py --self-test
 
-      - name: Capture live runtime events
-        continue-on-error: true
+      - name: Enforce UTC daily request and D1 budgets
+        run: python3 .github/scripts/audit-cloudflare-daily-usage.py 2>&1 | tee daily-usage-audit.log
+
+      - name: Collect metrics and live events in parallel
+        if: github.event_name != 'schedule'
         env:
           LIVE_TAIL_WORKER: sh-runtime-orchestrator
-          LIVE_TAIL_SECONDS: "150"
+          LIVE_TAIL_SECONDS: "90"
         shell: bash
-        run: node .github/scripts/capture-cloudflare-live-tail.mjs 2>&1 | tee live-tail.log
+        run: |
+          set -uo pipefail
+          actual_summary="$GITHUB_STEP_SUMMARY"
+          (
+            GITHUB_STEP_SUMMARY=observability-summary.md \
+              python3 .github/scripts/query-cloudflare-observability.py \
+              > observability-query.log 2>&1
+          ) &
+          query_pid=$!
+          (
+            set +e
+            node .github/scripts/capture-cloudflare-live-tail.mjs 2>&1 | tee live-tail.log
+            exit 0
+          ) &
+          tail_pid=$!
 
-      - name: Enforce per-invocation 10 ms CPU policy
-        shell: bash
+          query_status=0
+          wait "$query_pid" || query_status=$?
+          wait "$tail_pid" || true
+          cat observability-query.log
+          if [[ -f observability-summary.md ]]; then
+            cat observability-summary.md >> "$actual_summary"
+          fi
+          exit "$query_status"
+
+      - name: Enforce current-version persisted CPU policy
+        if: github.event_name != 'schedule'
         run: python3 .github/scripts/audit-cloudflare-telemetry.py 2>&1 | tee telemetry-audit.log
+
+      - name: Enforce live-tail CPU and error policy
+        if: github.event_name != 'schedule'
+        env:
+          LIVE_TAIL_LOG: live-tail.log
+        run: python3 .github/scripts/audit-cloudflare-live-tail.py 2>&1 | tee live-tail-audit.log
 
       - name: Upload sanitized observability report
         if: always()
@@ -63,8 +101,12 @@ jobs:
         with:
           name: cloudflare-observability-report-sh-${{ github.run_id }}
           path: |
+            daily-usage/
+            daily-usage-audit.log
             observability-summary.md
+            observability-query.log
             telemetry-audit.log
             live-tail.log
+            live-tail-audit.log
           if-no-files-found: warn
           retention-days: 1
