@@ -9,13 +9,17 @@ import {
   resumeQueue,
   runWrangler,
 } from './cloudflare-queues.mjs';
-import { pruneRetiredWorkers } from './cloudflare-workers.mjs';
+import {
+  RETIRED_WORKER_NAMES,
+  pruneRetiredWorkers,
+} from './cloudflare-workers.mjs';
 import { preparePagesReadModelDeployConfig } from './pages-response-kv-namespace.mjs';
 
 const workerRoot = fileURLToPath(new URL('..', import.meta.url));
 const configName = 'wrangler.runtime.jsonc';
 const config = JSON.parse(readFileSync(new URL(`../${configName}`, import.meta.url), 'utf8'));
 const runtimeScript = config.name;
+const DEFERRED_RETIREMENT_WORKERS = new Set(['sh-minute-enrichment']);
 const previousScriptByQueue = new Map([
   ['stationhead-raw-collection', 'sh-buddies-ingest'],
   ['stationhead-ingest-finalize', 'sh-buddies-ingest'],
@@ -97,12 +101,19 @@ try {
   deploy.cleanup();
 }
 
-await pruneRetiredWorkers();
+// `sh-minute-enrichment` remains alive until Pages successfully switches its
+// Service Binding to the runtime Worker. Deleting it here would make a later
+// Pages deployment failure turn into a public API outage.
+const immediatelyRetiredWorkers = RETIRED_WORKER_NAMES.filter(
+  (name) => !DEFERRED_RETIREMENT_WORKERS.has(name),
+);
+await pruneRetiredWorkers(immediatelyRetiredWorkers);
 
 console.log(JSON.stringify({
   event: 'core_runtime_worker_deployed',
   script: runtimeScript,
-  retired_scripts: [...new Set(previousScriptByQueue.values())],
+  retired_scripts: immediatelyRetiredWorkers,
+  deferred_retired_scripts: [...DEFERRED_RETIREMENT_WORKERS],
   queues: migrations.map(({ queue }) => queue),
   pages_response_kv_namespace: deploy.namespace.id,
 }));
