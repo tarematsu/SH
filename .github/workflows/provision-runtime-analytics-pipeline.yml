@@ -1,0 +1,41 @@
+name: Provision runtime analytics Pipeline
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: provision-runtime-analytics-pipeline
+  cancel-in-progress: false
+
+jobs:
+  provision:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets['CLOUDFLARE_BUILDS_API_TOKEN'] || secrets['CLOUDFLARE_API_TOKEN'] || secrets['CF_API_TOKEN'] }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets['CLOUDFLARE_ACCOUNT_ID'] || secrets['CF_ACCOUNT_ID'] || '0500f25c2f74e7e76c94a8bcb6c7008b' }}
+      R2_PIPELINE_ACCESS_KEY_ID: ${{ secrets.R2_PIPELINE_ACCESS_KEY_ID }}
+      R2_PIPELINE_SECRET_ACCESS_KEY: ${{ secrets.R2_PIPELINE_SECRET_ACCESS_KEY }}
+      RUNTIME_ANALYTICS_REQUIRE_SINK: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: worker/package-lock.json
+      - name: Install Worker dependencies
+        run: npm ci --prefer-offline --no-audit --no-fund
+        working-directory: worker
+      - name: Provision stream, Parquet sink, and SQL pipeline
+        id: pipeline
+        run: node scripts/provision-runtime-analytics-pipeline.mjs
+        working-directory: worker
+      - name: Deploy runtime Worker with Pipeline binding
+        env:
+          RUNTIME_ANALYTICS_STREAM_ID: ${{ steps.pipeline.outputs.stream_id }}
+        run: npm run deploy:runtime
+        working-directory: worker
