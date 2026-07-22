@@ -19,8 +19,6 @@ const liveTailScript = readFileSync(
   'utf8',
 );
 const wranglerFiles = [
-  'wrangler.ingest.jsonc',
-  'wrangler.minute-enrichment.jsonc',
   'wrangler.sakurazaka46jp.jsonc',
   'wrangler.runtime.jsonc',
 ].map((name) => ({
@@ -32,7 +30,9 @@ test('observability workflow uses Cloudflare APIs on PRs and main pushes', () =>
   assert.match(workflow, /^  pull_request:\n/m);
   assert.match(workflow, /^  push:\n/m);
   assert.match(workflow, /branches: \[main\]/);
-  assert.match(workflow, /CLOUDFLARE_WORKERS: sh-buddies-ingest,sh-minute-enrichment,sh-sakurazaka46jp,sh-runtime-orchestrator/);
+  assert.match(workflow, /CLOUDFLARE_WORKERS: sh-sakurazaka46jp,sh-runtime-orchestrator/);
+  assert.doesNotMatch(workflow, /CLOUDFLARE_WORKERS:.*sh-buddies-ingest/);
+  assert.doesNotMatch(workflow, /CLOUDFLARE_WORKERS:.*sh-minute-enrichment/);
   assert.match(workflow, /secrets\.CLOUDFLARE_BUILDS_API_TOKEN/);
   assert.match(workflow, /query-cloudflare-observability\.py/);
   assert.match(workflow, /audit-cloudflare-telemetry\.py/);
