@@ -1,50 +1,65 @@
 import assert from 'node:assert/strict';
-import { existsSync } from 'node:fs';
+import { existsSync, readdirSync } from 'node:fs';
+import path from 'node:path';
 import test from 'node:test';
+import { fileURLToPath } from 'node:url';
 
 import { apiCatalog } from '../functions/api/index.js';
 
-function routeCandidates(path) {
-  const relative = path.replace(/^\/api\/?/, '');
+const apiRoot = fileURLToPath(new URL('../functions/api/', import.meta.url));
+
+function routeCandidates(routePath) {
+  const relative = routePath.replace(/^\/api\/?/, '');
   if (!relative) return [new URL('../functions/api/index.js', import.meta.url)];
   return [
     new URL(`../functions/api/${relative}.js`, import.meta.url),
+    new URL(`../functions/api/${relative}.mjs`, import.meta.url),
     new URL(`../functions/api/${relative}/index.js`, import.meta.url),
+    new URL(`../functions/api/${relative}/index.mjs`, import.meta.url),
   ];
 }
 
-function routeExists(path) {
-  return routeCandidates(path).some((candidate) => existsSync(candidate));
+function routeExists(routePath) {
+  return routeCandidates(routePath).some((candidate) => existsSync(candidate));
 }
 
-test('documented canonical Pages APIs have Function files', () => {
-  const routes = Object.values(apiCatalog(0).groups).flat();
-  for (const route of routes) {
-    assert.equal(routeExists(route.path), true, `${route.path} must have a Function file`);
-  }
-});
+function sourceFiles(directory = apiRoot) {
+  return readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
+    const absolute = path.join(directory, entry.name);
+    if (entry.isDirectory()) return sourceFiles(absolute);
+    return /\.(?:m?js)$/.test(entry.name) ? [absolute] : [];
+  });
+}
 
-test('retired APIs are not advertised as active groups', () => {
+function routeForFile(absolute) {
+  const relative = path.relative(apiRoot, absolute).replaceAll(path.sep, '/');
+  const withoutExtension = relative.replace(/\.(?:m?js)$/, '');
+  const route = withoutExtension === 'index'
+    ? ''
+    : withoutExtension.endsWith('/index')
+      ? withoutExtension.slice(0, -'/index'.length)
+      : withoutExtension;
+  return `/api${route ? `/${route}` : ''}`;
+}
+
+test('every documented canonical Pages API has exactly one Function route', () => {
   const catalog = apiCatalog(0);
-  const active = new Set(Object.values(catalog.groups).flat().map(({ path }) => path));
-  assert.equal(catalog.public_write_api, false);
-  for (const route of catalog.retired) {
-    assert.equal(active.has(route.path), false, `${route.path} must not be active`);
-    assert.equal(route.status, 404);
+  const routes = Object.values(catalog.groups).flat();
+  assert.equal(catalog.contract_version, 3);
+  assert.equal('retired' in catalog, false);
+  for (const route of routes) {
+    const matches = routeCandidates(route.path).filter((candidate) => existsSync(candidate));
+    assert.equal(matches.length, 1, `${route.path} must have exactly one Function file`);
+    assert.equal(routeExists(route.path), true, `${route.path} must be routable`);
   }
 });
 
-test('standalone exact aliases are physically removed', () => {
-  for (const path of [
-    '/api/health/collector',
-    '/api/history-current',
-    '/api/history-migrated',
-  ]) {
-    assert.equal(routeExists(path), false, `${path} route file must be removed`);
-  }
-});
+test('Pages API directory contains only declared JavaScript routes', () => {
+  const catalog = apiCatalog(0);
+  const canonical = Object.values(catalog.groups).flat().map(({ path: routePath }) => routePath);
+  const expected = new Set(['/api', ...canonical]);
+  const actual = sourceFiles().map(routeForFile).sort();
 
-test('blocked history implementation modules remain available to canonical history modes', () => {
-  assert.equal(routeExists('/api/history-raw'), true);
-  assert.equal(routeExists('/api/official-history'), true);
+  assert.equal(new Set(actual).size, actual.length, 'Pages API routes must not have duplicate files');
+  assert.deepEqual(actual, [...expected].sort());
 });

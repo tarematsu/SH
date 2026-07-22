@@ -1,13 +1,55 @@
-import { withAppleMusicFreeRuntime } from '../../site/functions/lib/apple-music-d1-pruner.js';
-import { processPersistenceTask } from './persist-channel-entry.js';
-import {
-  processOptimizedQueueLikesTask,
-  QUEUE_STAGE_LIKES_WRITE,
-} from './persist-likes-stages.js';
 import { logSampledSuccess } from './sampled-success-log.js';
 
 const RETRY_30_SECONDS = Object.freeze({ delaySeconds: 30 });
 const EMPTY_DEPENDENCIES = Object.freeze({});
+
+let fallbackModulePromise;
+let likesPlanModulePromise;
+let likesWriteModulePromise;
+let structureModulePromise;
+
+function likesBudgetEnvironment(env) {
+  if (env?.QUEUE_LIKES_REPAIR_ENABLED != null) return env;
+  const active = Object.create(env);
+  Object.defineProperty(active, 'QUEUE_LIKES_REPAIR_ENABLED', {
+    value: false,
+    enumerable: false,
+    configurable: true,
+  });
+  return active;
+}
+
+async function processStructureTask(env, body, dependencies) {
+  const module = await (structureModulePromise ||= import('./persist-structure-budget-entry.js'));
+  return module.processBudgetedQueueStructureTask(env, body, dependencies);
+}
+
+async function processLikesPlanTask(env, body, dependencies) {
+  const module = await (likesPlanModulePromise ||= import('./persist-likes-plan-entry.js'));
+  const activeDependencies = dependencies?.prepareQueueLikesPersistence
+    ? {
+        ...dependencies,
+        prepareQueueLikesPersistence: (_activeEnv, value, observedAt) => (
+          dependencies.prepareQueueLikesPersistence(env.DB, value, observedAt)
+        ),
+      }
+    : dependencies;
+  return module.processOptimizedQueueLikesPlanTask(
+    likesBudgetEnvironment(env),
+    body,
+    activeDependencies,
+  );
+}
+
+async function processLikesWriteTask(env, body, dependencies) {
+  const module = await (likesWriteModulePromise ||= import('./persist-likes-stages.js'));
+  return module.processOptimizedQueueLikesTask(env, body, dependencies);
+}
+
+async function processFallbackTask(env, body, dependencies) {
+  const module = await (fallbackModulePromise ||= import('./persist-channel-entry.js'));
+  return module.processPersistenceTask(env, body, dependencies);
+}
 
 function logPersistenceResult(result) {
   logSampledSuccess({
@@ -29,21 +71,24 @@ function logPersistenceResult(result) {
   }, result?.observed_at, 60, 30);
 }
 
-function isOptimizedLikesTask(body) {
-  return body?.message_type === 'stationhead-persistence-task'
-    && body?.task === 'queue'
-    && (body?.stage === 'likes' || body?.stage === QUEUE_STAGE_LIKES_WRITE);
+function optimizedQueueStage(body) {
+  if (body?.message_type !== 'stationhead-persistence-task' || body?.task !== 'queue') return null;
+  return body.stage == null ? 'persist' : String(body.stage);
 }
 
 async function processPersistenceBatch(batch, env, dependencies = EMPTY_DEPENDENCIES) {
   const messages = batch.messages;
   if (!messages?.length) return;
   const message = messages[0];
-  const activeEnv = withAppleMusicFreeRuntime(env);
   try {
-    const result = isOptimizedLikesTask(message.body)
-      ? await processOptimizedQueueLikesTask(activeEnv, message.body, dependencies)
-      : await processPersistenceTask(activeEnv, message.body, dependencies);
+    const stage = optimizedQueueStage(message.body);
+    const result = stage === 'persist' || stage === 'structure-write'
+      ? await processStructureTask(env, message.body, dependencies)
+      : stage === 'likes'
+        ? await processLikesPlanTask(env, message.body, dependencies)
+        : stage === 'likes-write'
+          ? await processLikesWriteTask(env, message.body, dependencies)
+          : await processFallbackTask(env, message.body, dependencies);
     logPersistenceResult(result);
     message.ack();
   } catch (error) {

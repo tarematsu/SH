@@ -30,7 +30,7 @@ export const FACTS_LATEST_SQL = `SELECT
   c.station_id,c.host_id,c.broadcast_start_time,c.queue_revision_id,
   c.queue_id,c.queue_start_time,c.queue_track_count,c.queue_available,
   h.stationhead_account_id AS host_account_id,h.current_handle AS host_handle
-FROM sh_minute_facts AS f
+FROM sh_minute_facts AS f INDEXED BY idx_sh_minute_facts_live_minute
 LEFT JOIN sh_minute_fact_context AS c ON c.fact_id=f.id
 LEFT JOIN sh_hosts AS h ON h.id=c.host_id
 WHERE f.source_code=1

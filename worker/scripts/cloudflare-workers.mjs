@@ -1,6 +1,7 @@
 export const ACTIVE_WORKER_NAMES = Object.freeze([
   'sh-buddies-ingest',
   'sh-minute-enrichment',
+  'sh-sakurazaka46jp',
   'sh-runtime-orchestrator',
 ]);
 

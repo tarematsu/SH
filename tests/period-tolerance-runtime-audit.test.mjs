@@ -107,19 +107,17 @@ test('complete weekly and monthly summaries skip redundant boundary scans', () =
   assert.equal(summaryRowNeedsBoundaryEvidence(monthlyRow, 'monthly'), false);
 });
 
-test('history runtime uses server completeness and single-pass summary updates', () => {
-  const filter = readFileSync(
-    new URL('../site/public/history/history-period-completeness.js', import.meta.url),
-    'utf8',
-  );
-  assert.match(filter, /track-history:v13:/);
-  assert.match(filter, /history:v11:/);
-  assert.doesNotMatch(filter, /mondayJstKey|expectedStart|expectedEnd/);
-
+test('history runtime is one consolidated client and leaves completeness to the server', () => {
   const runtime = readFileSync(
-    new URL('../site/public/history/history-track-likes.js', import.meta.url),
+    new URL('../site/public/history/history-lite.js', import.meta.url),
     'utf8',
   );
-  assert.match(runtime, /updateSummaryRuntimeSinglePass/);
-  assert.doesNotMatch(runtime, /rows\.filter\(\(row\).*host_name/s);
+  const html = readFileSync(new URL('../site/public/history/index.html', import.meta.url), 'utf8');
+
+  assert.match(runtime, /CACHE_PREFIX = 'sh\.history\.v3:'/);
+  assert.match(runtime, /function updateSummary\(\)/);
+  assert.match(runtime, /state\.rows = Array\.isArray\(data\.rows\) \? data\.rows : \[\]/);
+  assert.doesNotMatch(runtime, /mondayJstKey|expectedStart|expectedEnd/);
+  assert.match(html, /src="\/history\/history-lite\.js"/);
+  assert.doesNotMatch(html, /history-period-completeness\.js|history-track-likes\.js/);
 });

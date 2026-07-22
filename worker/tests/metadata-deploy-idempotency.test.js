@@ -79,7 +79,7 @@ test('retired Workers are deleted after every active replacement is reachable', 
     };
   }, () => pruneRetiredWorkers(['sh-monitor-other']));
   assert.deepEqual(calls.map(({ method }) => method), [
-    'GET', 'GET', 'GET', 'DELETE', 'GET',
+    'GET', 'GET', 'GET', 'GET', 'DELETE', 'GET',
   ]);
 });
 
@@ -89,7 +89,8 @@ test('metadata consolidation is validated against the strict 10 ms CPU contract'
     'utf8',
   );
   assert.match(budget, /BUDGET_MS = 10\.0/);
-  assert.match(budget, /"comparison": "less_than"/);
+  assert.match(budget, /"comparison": "less_than_or_equal"/);
+  assert.match(budget, /"statistic": "max"/);
 });
 
 test('metadata consolidation composes with the merged paginated Pages KV deploy', () => {

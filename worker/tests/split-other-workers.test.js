@@ -8,8 +8,13 @@ import {
 } from '../src/monitor-maintenance-entry.js';
 import {
   MONITOR_MAINTENANCE_MESSAGE,
-  OTHER_MONITOR_CRON,
+  RAW_COLLECTION_TASK_MESSAGE,
+  RUNTIME_CRON,
+  RUNTIME_MINUTE_GATE_MESSAGE,
+  RUNTIME_MINUTE_RECOVERY_MESSAGE,
+  RUNTIME_STREAM_PREDICTION_MESSAGE,
   runRuntimeScheduled,
+  runtimeScheduledMessagesFor,
 } from '../src/runtime-scheduled.js';
 import { runRuntimeQueue } from '../src/runtime-queue.js';
 
@@ -19,74 +24,132 @@ function config(name) {
   return JSON.parse(readFileSync(new URL(`../${name}`, import.meta.url), 'utf8'));
 }
 
-test('runtime Worker config owns orchestration boundaries', () => {
+function queueMessage(body, events, prefix = '') {
+  return {
+    body,
+    ack() { events.push(`${prefix}ack`); },
+    retry() { events.push(`${prefix}retry`); },
+  };
+}
+
+test('runtime Worker config owns only current orchestration boundaries', () => {
   const worker = config('wrangler.runtime.jsonc');
   assert.equal(worker.name, 'sh-runtime-orchestrator');
   assert.equal(worker.main, 'src/runtime-orchestrator-entry.js');
-  assert.deepEqual(worker.triggers.crons, ['* * * * *']);
+  assert.deepEqual(worker.triggers.crons, [RUNTIME_CRON]);
   assert.deepEqual(worker.d1_databases.map(({ binding }) => binding), [
     'BUDDIES_DB',
     'MINUTE_DB',
     'OTHER_DB',
   ]);
   assert.deepEqual(worker.queues.consumers.map(({ queue }) => queue), [
-    'stationhead-buddy-playback',
     'stationhead-host-monitor',
     'stationhead-minute-derive',
     'stationhead-minute-live-derive',
     'stationhead-buddies-facts',
     'stationhead-minute-rebuild',
   ]);
+  assert.equal(worker.queues.consumers.some(({ queue }) => queue === 'stationhead-buddy-playback'), false);
+  assert.equal(worker.queues.producers.some(({ binding }) => binding === 'BUDDY_PLAYBACK_QUEUE'), false);
   assert.equal(worker.queues.producers.some(({ binding }) => binding === 'MINUTE_ENRICHMENT_QUEUE'), true);
-  assert.equal(worker.vars.CRON_STAGGER_OTHER_MS, 25_000);
-  assert.equal(worker.vars.COLLECTOR_PRIORITY_WAIT_MS, 15_000);
   assert.equal(worker.vars.SNAPSHOT_RETENTION_ENABLED, true);
 });
 
-test('runtime scheduled handler dispatches maintenance without adding a Cron', async () => {
-  const sent = [];
-  const scheduledTime = BASE + 30 * 60_000;
-  const result = await runRuntimeScheduled(
-    { cron: OTHER_MONITOR_CRON, scheduledTime },
-    {
-      HOST_MONITOR_QUEUE: {
-        async send(body, options) { sent.push({ body, options }); },
-      },
-    },
-    {},
-    {
-      collectRawChannel: async () => ({ collected: true }),
-      otherOptions: {
-        dependencies: { buddy: async () => 'buddy' },
-        recordSuccess: async () => {},
-        healthApp: { invalidateHealthCache() {} },
-      },
-    },
+test('runtime Cron queues rollup and prediction only in their assigned slots', async () => {
+  const batches = [];
+  const atThirty = BASE + 30 * 60_000;
+  const rollup = await runRuntimeScheduled(
+    { cron: RUNTIME_CRON, scheduledTime: atThirty },
+    { HOST_MONITOR_QUEUE: { async sendBatch(messages) { batches.push(messages); } } },
   );
 
-  assert.deepEqual(sent, [{
-    body: {
-      message_type: MONITOR_MAINTENANCE_MESSAGE,
-      message_version: 1,
-      cron: ROLLUP_MAINTENANCE_CRON,
-      scheduled_at: scheduledTime,
+  assert.deepEqual(batches[0].map(({ body }) => body.message_type), [
+    RAW_COLLECTION_TASK_MESSAGE,
+    MONITOR_MAINTENANCE_MESSAGE,
+  ]);
+  assert.equal(batches[0][1].body.cron, ROLLUP_MAINTENANCE_CRON);
+  assert.deepEqual(rollup.map(({ task }) => task), ['raw-collection', 'maintenance']);
+
+  const atForty = BASE + 40 * 60_000;
+  const predictionMessages = runtimeScheduledMessagesFor(atForty);
+  assert.deepEqual(predictionMessages.map(({ message_type }) => message_type), [
+    RAW_COLLECTION_TASK_MESSAGE,
+    RUNTIME_STREAM_PREDICTION_MESSAGE,
+  ]);
+});
+
+test('runtime Cron creates bounded messages for recovery and maintenance gates', () => {
+  assert.deepEqual(runtimeScheduledMessagesFor(BASE + 36 * 60_000).map(({ message_type }) => message_type), [
+    RAW_COLLECTION_TASK_MESSAGE,
+    RUNTIME_MINUTE_RECOVERY_MESSAGE,
+  ]);
+  assert.deepEqual(runtimeScheduledMessagesFor(BASE + 37 * 60_000).map(({ message_type, task }) => [message_type, task]), [
+    [RAW_COLLECTION_TASK_MESSAGE, undefined],
+    [RUNTIME_MINUTE_GATE_MESSAGE, 'rebuild'],
+  ]);
+});
+
+test('runtime Queue handler executes raw collection in an isolated invocation', async () => {
+  const events = [];
+  const message = queueMessage({
+    message_type: RAW_COLLECTION_TASK_MESSAGE,
+    message_version: 1,
+    scheduled_at: BASE,
+  }, events);
+  await runRuntimeQueue({ messages: [message] }, {
+    RAW_COLLECTION_QUEUE: { send() {} },
+  }, {}, {
+    async collectRawChannel(activeEnv) {
+      assert.equal(typeof activeEnv.RAW_COLLECTION_QUEUE?.send, 'function');
+      events.push('collect');
     },
-    options: { contentType: 'json' },
-  }]);
-  assert.equal(result.at(-1).task, 'maintenance');
+  });
+  assert.deepEqual(events, ['collect', 'ack']);
+});
+
+test('runtime Queue handler isolates recovery, gate, and prediction dispatches', async () => {
+  const events = [];
+  const messages = [
+    queueMessage({
+      message_type: RUNTIME_MINUTE_RECOVERY_MESSAGE,
+      message_version: 1,
+      scheduled_at: BASE + 36 * 60_000,
+    }, events, 'recovery-'),
+    queueMessage({
+      message_type: RUNTIME_MINUTE_GATE_MESSAGE,
+      message_version: 1,
+      task: 'rebuild',
+      scheduled_at: BASE + 37 * 60_000,
+    }, events, 'gate-'),
+    queueMessage({
+      message_type: RUNTIME_STREAM_PREDICTION_MESSAGE,
+      message_version: 1,
+      scheduled_at: BASE + 40 * 60_000,
+    }, events, 'prediction-'),
+  ];
+
+  await runRuntimeQueue({ messages }, {}, {}, {
+    async dispatchPendingMinuteFacts() { events.push('recovery-run'); },
+    async dispatchMinuteMaintenanceGate(_controller, _env, task) {
+      events.push(`gate-run-${task}`);
+    },
+    async runStreamPrediction() { events.push('prediction-run'); },
+  });
+
+  assert.deepEqual(events, [
+    'recovery-run', 'recovery-ack',
+    'gate-run-rebuild', 'gate-ack',
+    'prediction-run', 'prediction-ack',
+  ]);
 });
 
 test('runtime Queue handler executes maintenance and preserves ack ownership', async () => {
   const events = [];
-  const message = {
-    body: {
-      message_type: MONITOR_MAINTENANCE_MESSAGE,
-      cron: ROLLUP_MAINTENANCE_CRON,
-      scheduled_at: BASE + 30 * 60_000,
-    },
-    ack() { events.push('ack'); },
-    retry() { events.push('retry'); },
-  };
+  const message = queueMessage({
+    message_type: MONITOR_MAINTENANCE_MESSAGE,
+    cron: ROLLUP_MAINTENANCE_CRON,
+    scheduled_at: BASE + 30 * 60_000,
+  }, events);
 
   await runRuntimeQueue(
     { messages: [message] },
@@ -103,38 +166,12 @@ test('runtime Queue handler executes maintenance and preserves ack ownership', a
   assert.deepEqual(events, ['stagger', 'rollup', 'ack']);
 });
 
-test('runtime Queue router processes every message in a mixed batch', async () => {
+test('runtime Queue router discards unknown messages without legacy delegation', async () => {
   const events = [];
-  await runRuntimeQueue(
-    {
-      messages: [
-        {
-          body: {
-            message_type: MONITOR_MAINTENANCE_MESSAGE,
-            cron: ROLLUP_MAINTENANCE_CRON,
-            scheduled_at: BASE + 30 * 60_000,
-          },
-          ack() { events.push('maintenance-ack'); },
-          retry() { events.push('maintenance-retry'); },
-        },
-        {
-          body: { message_type: 'unsupported-monitor-message' },
-          ack() { events.push('other-ack'); },
-          retry() { events.push('other-retry'); },
-        },
-      ],
-    },
-    { BUDDIES_DB: {}, OTHER_DB: {} },
-    {},
-    {
-      maintenanceDependencies: {
-        applyStagger: async () => {},
-        waitForCollector: async () => ({ ready: true }),
-        runRollup: async () => 'rollup',
-      },
-    },
-  );
-  assert.deepEqual(events, ['maintenance-ack', 'other-retry']);
+  await runRuntimeQueue({
+    messages: [queueMessage({ message_type: 'unsupported-monitor-message' }, events)],
+  }, {}, {});
+  assert.deepEqual(events, ['ack']);
 });
 
 test('runtime Queue router delegates minute pipeline batches unchanged', async () => {
@@ -142,11 +179,7 @@ test('runtime Queue router delegates minute pipeline batches unchanged', async (
   await runRuntimeQueue(
     {
       queue: 'stationhead-minute-live-derive',
-      messages: [{
-        body: { message_type: 'minute-fact-derive' },
-        ack() { events.push('ack'); },
-        retry() { events.push('retry'); },
-      }],
+      messages: [queueMessage({ message_type: 'minute-fact-derive' }, events)],
     },
     { BUDDIES_DB: {}, MINUTE_DB: {} },
     {},
@@ -166,15 +199,11 @@ test('maintenance failures remain Queue retries', async () => {
   try {
     await runRuntimeQueue(
       {
-        messages: [{
-          body: {
-            message_type: MONITOR_MAINTENANCE_MESSAGE,
-            cron: SNAPSHOT_RETENTION_CRON,
-            scheduled_at: BASE + 50 * 60_000,
-          },
-          ack() { events.push('ack'); },
-          retry() { events.push('retry'); },
-        }],
+        messages: [queueMessage({
+          message_type: MONITOR_MAINTENANCE_MESSAGE,
+          cron: SNAPSHOT_RETENTION_CRON,
+          scheduled_at: BASE + 50 * 60_000,
+        }, events)],
       },
       { BUDDIES_DB: {}, OTHER_DB: {} },
       {},
@@ -198,7 +227,7 @@ test('maintenance failures remain Queue retries', async () => {
 
 test('runtime scheduled handler rejects unknown schedules', async () => {
   assert.deepEqual(
-    await runRuntimeScheduled({ cron: '1 2 3 4 5' }, {}, {}),
-    { skipped: true, reason: 'unsupported-runtime-cron', cron: '1 2 3 4 5' },
+    await runRuntimeScheduled({ cron: '*/5 * * * *' }, {}, {}),
+    { skipped: true, reason: 'unsupported-runtime-cron', cron: '*/5 * * * *' },
   );
 });

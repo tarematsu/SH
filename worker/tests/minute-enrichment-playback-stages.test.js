@@ -77,7 +77,6 @@ test('playback resolve updates state and sends a compact playback-patch message'
     queue_track_id: 127,
     stationhead_track_id: 227,
     spotify_id: 'sp27',
-    apple_music_id: 'am27',
     isrc: 'ISRC27',
     bite_count: 327,
   }]);
@@ -168,7 +167,7 @@ test('optimized router keeps identity on the existing core path', async () => {
   };
   let coreCalls = 0;
   const result = await processOptimizedMinuteEnrichment({}, body, {
-    processMinuteEnrichment: async (_env, value) => {
+    processMinuteIdentitySession: async (_env, value) => {
       coreCalls += 1;
       assert.equal(value, body);
       return { stage: 'identity', pending: false };

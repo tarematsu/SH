@@ -19,21 +19,21 @@ test('production entry exposes internal fetch, scheduled, and queue handlers', (
   assert.deepEqual(Object.keys(worker).sort(), ['fetch', 'queue', 'scheduled']);
 });
 
-test('cron success and failure behavior is preserved', async () => {
-  const success = { task: { key: 'dashboard-history' }, responses: [{ ok: true }], failed: 0 };
+test('cron success and failure behavior is preserved for canonical tasks', async () => {
+  const success = { task: { key: 'history:daily' }, responses: [{ ok: true }], failed: 0 };
   assert.equal(await runPagesReadModelCron(
-    { cron: PAGES_READ_MODEL_CRON, scheduledTime: BASE },
+    { cron: PAGES_READ_MODEL_CRON, scheduledTime: BASE + 35 * 60_000 },
     {},
     { runTask: async () => success },
   ), success);
 
   await assert.rejects(
     runPagesReadModelCron(
-      { cron: PAGES_READ_MODEL_CRON, scheduledTime: BASE },
+      { cron: PAGES_READ_MODEL_CRON, scheduledTime: BASE + 70 * 60_000 },
       {},
       { runTask: async () => ({
-        task: { key: 'minute-facts-current' },
-        responses: [{ key: 'minute-facts-current', ok: false, error: 'render failed' }],
+        task: { key: 'history:weekly' },
+        responses: [{ key: 'history:weekly', ok: false, error: 'render failed' }],
         failed: 1,
       }) },
     ),
@@ -58,8 +58,9 @@ test('cron retains coercion compatibility outside the primitive-string hot path'
   });
 });
 
-test('dispatch preserves task selection and background behavior', async () => {
-  assert.equal(pagesReadModelTask(BASE).key, 'dashboard-history');
+test('dispatch preserves canonical task selection and background behavior', async () => {
+  assert.equal(pagesReadModelTask(BASE).kind, 'track-history-step');
+  assert.equal(pagesReadModelTask(BASE + 35 * 60_000).key, 'history:daily');
   assert.equal(pagesReadModelTask(BASE + 60 * 60_000).kind, 'track-history-step');
   assert.equal(pagesReadModelTask(BASE + 176 * 60_000).kind, 'idle');
   const idle = await runDispatchedPagesReadModelTask({}, BASE + 176 * 60_000);

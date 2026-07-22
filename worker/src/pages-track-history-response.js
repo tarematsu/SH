@@ -38,6 +38,10 @@ export function createTrackHistoryPublication(stage, status, now = Date.now(), e
     excluded_play_count_dates: Array.isArray(status?.excluded_play_count_dates)
       ? status.excluded_play_count_dates.map(String)
       : [],
+    ranking: Array.isArray(status?.ranking) ? status.ranking : [],
+    ranking_summary: status?.ranking_summary && typeof status.ranking_summary === 'object'
+      ? status.ranking_summary
+      : {},
     generated_at: generatedAt,
     updated_at: generatedAt,
   };
@@ -60,7 +64,12 @@ export function trackHistoryResponseSuffix(publication) {
     : [];
   const tail = {
     truncated: publication.truncated === true,
-    likes_included: false,
+    likes_included: true,
+    ranking: Array.isArray(publication.ranking) ? publication.ranking : [],
+    ranking_summary: publication.ranking_summary && typeof publication.ranking_summary === 'object'
+      ? publication.ranking_summary
+      : {},
+    ranking_scope: 'all-time-latest-counter',
     source_row_count: Math.max(0, Number(publication.source_row_count || 0)),
     excluded_play_count_dates: excludedDates,
     excluded_play_count_date_count: excludedDates.length,

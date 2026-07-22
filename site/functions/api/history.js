@@ -1,5 +1,4 @@
-import { onRequestGet as rawHistory } from './history-raw.js';
-import { loadRanking } from './history-ranking.js';
+import { loadRanking } from '../lib/history-ranking.js';
 import {
   SUMMARY_TABLES,
   combineSummaryRows,
@@ -55,9 +54,7 @@ export async function cachedHistoryLoad(key, ttlMs, loader, now = Date.now()) {
     throw error;
   }).finally(() => { entry.pending = null; });
   promoteCacheEntry(key, entry);
-  while (historyLoadCache.size > HISTORY_CACHE_MAX) {
-    historyLoadCache.delete(historyLoadCache.keys().next().value);
-  }
+  while (historyLoadCache.size > HISTORY_CACHE_MAX) historyLoadCache.delete(historyLoadCache.keys().next().value);
   return entry.pending;
 }
 
@@ -139,7 +136,6 @@ async function loadBroadcastPayload(env, from, to) {
   const fromTs = parseDateStart(from, '2024-06-01');
   const toTs = parseDateStart(to, todayUtcString()) + 86400000;
   let result;
-  const storageSource = 'other.official_broadcast_summary';
   try {
     result = await env.OTHER_DB.prepare(BROADCAST_SUMMARY_SQL)
       .bind(fromTs, toTs, fromTs, toTs).all();
@@ -164,7 +160,7 @@ async function loadBroadcastPayload(env, from, to) {
     to,
     rows: parsed.rows,
     setup_required: parsed.setupRequired,
-    storage_source: storageSource,
+    storage_source: 'other.official_broadcast_summary',
     diagnostic: {
       imported_rows: null,
       imported_events: null,
@@ -185,8 +181,7 @@ async function loadBroadcasts(env, from, to) {
   });
 }
 
-export async function onRequestGet(context) {
-  const { request, env } = context;
+export async function onRequestGet({ request, env }) {
   if (!env.DB) return json({ ok: false, error: 'DB binding missing' }, 500, { 'cache-control': 'no-store' });
   const url = new URL(request.url);
   const mode = url.searchParams.get('mode') || 'weekly';
@@ -195,13 +190,12 @@ export async function onRequestGet(context) {
   const from = fromParam || '2024-06-01';
   const to = toParam || todayUtcString();
   try {
-    if (mode !== 'raw' && ((fromParam && !isRealIsoDate(fromParam))
-      || (toParam && !isRealIsoDate(toParam)))) {
+    if ((fromParam && !isRealIsoDate(fromParam)) || (toParam && !isRealIsoDate(toParam))) {
       return json({ ok: false, error: 'from and to must be valid YYYY-MM-DD dates' }, 400, {
         'cache-control': 'no-store',
       });
     }
-    if (mode !== 'raw' && from > to) {
+    if (from > to) {
       return json({ ok: false, error: 'from must not be after to' }, 400, {
         'cache-control': 'no-store',
       });
@@ -225,7 +219,6 @@ export async function onRequestGet(context) {
       );
     }
     if (mode === 'broadcasts') return loadBroadcasts(env, from, to);
-    if (mode === 'raw') return rawHistory(context);
     return json({ ok: false, error: `unsupported history mode: ${mode}` }, 400, { 'cache-control': 'no-store' });
   } catch (error) {
     return json({ ok: false, error: error?.message || 'history error' }, 500, { 'cache-control': 'no-store' });

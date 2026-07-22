@@ -3,10 +3,8 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
 
-import {
-  COMMENT_VELOCITY_UPDATE_SQL,
-  loadQueueComparisonState,
-} from '../site/functions/api/ingest.js';
+import { loadQueueComparisonState } from '../site/functions/lib/ingest.js';
+import { COMMENT_VELOCITY_UPDATE_SQL } from '../site/functions/lib/comment-counts.js';
 import {
   BROADCAST_SUMMARY_SQL,
   parseBroadcastSummaryRows,
@@ -51,15 +49,14 @@ test('queue items and latest likes share one D1 read batch', async () => {
   assert.equal(state.latestRows[0].like_count, 4);
 });
 
-test('comment velocity is counted and written by one SQL statement', () => {
+test('comment velocity is derived from compact minute counters', () => {
   const db = new DatabaseSync(':memory:');
   db.exec(`
-    CREATE TABLE sh_comments (
-      id INTEGER PRIMARY KEY,
-      station_id INTEGER,
-      observed_at INTEGER,
-      chat_time INTEGER,
-      chat_time_ms INTEGER
+    CREATE TABLE sh_comment_minute_counts (
+      station_id INTEGER NOT NULL,
+      bucket_start INTEGER NOT NULL,
+      comment_count INTEGER NOT NULL,
+      PRIMARY KEY(station_id,bucket_start)
     );
     CREATE TABLE sh_channel_snapshots (
       id INTEGER PRIMARY KEY,
@@ -69,14 +66,19 @@ test('comment velocity is counted and written by one SQL statement', () => {
     );
     INSERT INTO sh_channel_snapshots VALUES (1,7,100000,NULL);
     INSERT INTO sh_channel_snapshots VALUES (2,7,200000,NULL);
-    INSERT INTO sh_comments VALUES (1,7,190000,NULL,NULL);
-    INSERT INTO sh_comments VALUES (2,7,199000,NULL,NULL);
-    INSERT INTO sh_comments VALUES (3,7,70000,NULL,NULL);
-    INSERT INTO sh_comments VALUES (4,8,199500,NULL,NULL);
+    INSERT INTO sh_comment_minute_counts VALUES (7,80000,1);
+    INSERT INTO sh_comment_minute_counts VALUES (7,190000,2);
+    INSERT INTO sh_comment_minute_counts VALUES (7,200000,3);
+    INSERT INTO sh_comment_minute_counts VALUES (7,79999,99);
+    INSERT INTO sh_comment_minute_counts VALUES (8,200000,99);
   `);
 
-  db.prepare(COMMENT_VELOCITY_UPDATE_SQL).run(7, 80000, 200000, 7, 200000);
-  assert.equal(db.prepare('SELECT comment_velocity FROM sh_channel_snapshots WHERE id=2').get().comment_velocity, 2);
+  db.prepare(COMMENT_VELOCITY_UPDATE_SQL).run(
+    7, 80000, 200000,
+    7, 200000,
+    7, 80000, 200000,
+  );
+  assert.equal(db.prepare('SELECT comment_velocity FROM sh_channel_snapshots WHERE id=2').get().comment_velocity, 6);
   assert.equal(db.prepare('SELECT comment_velocity FROM sh_channel_snapshots WHERE id=1').get().comment_velocity, null);
 });
 
@@ -109,16 +111,13 @@ test('broadcast summary reports empty range and setup state in one query', () =>
   assert.equal(Object.hasOwn(inside.rows[0], 'has_data'), false);
 });
 
-test('history display layer avoids repeated canvas resets and temporary date arrays', () => {
+test('history display layer uses current canonical modules only', () => {
   const source = readFileSync(
-    new URL('../site/public/history/history-track-performance.js', import.meta.url),
+    new URL('../site/public/history/history-lite.js', import.meta.url),
     'utf8',
   );
-  assert.match(source, /prepareCanvasDifferential/);
-  assert.match(source, /if \(canvas\.width !== pixelWidth\)/);
-  assert.match(source, /setChartRangeSinglePass/);
-  assert.match(source, /makeXPositionsSinglePass/);
-  assert.match(source, /url\.searchParams\.set\('v', '14'\)/);
-  assert.doesNotMatch(source, /dates\.filter\(Boolean\)/);
-  assert.doesNotMatch(source, /dates\.map\(dateTimestamp\)/);
+  assert.match(source, /CACHE_PREFIX = 'sh\.history\.v3:'/);
+  assert.match(source, /tracks: \{ title: '再生曲', table: '再生曲一覧'/);
+  assert.match(source, /broadcasts: \{ title: '公式ストリーム比較', table: '公式ストリーム一覧'/);
+  assert.doesNotMatch(source, /history-copy-fixes|history-track-likes/);
 });

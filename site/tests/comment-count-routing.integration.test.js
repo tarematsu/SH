@@ -1,13 +1,13 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { hostIngestInternal as hostIngestPost } from '../functions/api/host-ingest.js';
-import { ingestInternal as ingestPost } from '../functions/api/ingest.js';
+import { hostIngestInternal as hostIngestPost } from '../functions/lib/host-ingest.js';
+import { ingestInternal as ingestPost } from '../functions/lib/ingest.js';
 import { D1_SOLO_ACTIVITY_BATCH_VARIABLE_LIMIT } from '../functions/lib/solo-activity-counts.js';
 import { FakeD1Database, responseJson } from './helpers/fake-d1.js';
 
 function post(body) {
-  return new Request('https://skrzk.test/api/ingest', {
+  return new Request('https://worker.internal/ingest', {
     method: 'POST',
     headers: {
       authorization: 'Bearer test-key',

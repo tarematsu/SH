@@ -1,6 +1,6 @@
 import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { basename, resolve } from 'node:path';
 
 const workerRoot = resolve(import.meta.dirname, '..');
 const repositoryRoot = resolve(workerRoot, '..');
@@ -8,27 +8,81 @@ const wranglerScript = resolve(workerRoot, 'node_modules/wrangler/bin/wrangler.j
 const descriptorPath = resolve(repositoryRoot, 'database/facts-db.json');
 const descriptor = JSON.parse(readFileSync(descriptorPath, 'utf8'));
 const databaseName = process.env.FACTS_DATABASE_NAME || descriptor.database_name;
-const schemaPath = resolve(repositoryRoot, descriptor.schema || '');
+const configuredMigrations = Array.isArray(descriptor.migrations)
+  ? descriptor.migrations.filter((value) => typeof value === 'string' && value.trim())
+  : [];
+const migrationPaths = [...new Set([
+  ...configuredMigrations,
+  descriptor.schema,
+].filter(Boolean))];
 
 if (!process.env.CLOUDFLARE_API_TOKEN) throw new Error('CLOUDFLARE_API_TOKEN is required');
 if (!databaseName) throw new Error('facts database name is missing');
 if (!descriptor.schema) throw new Error('facts schema descriptor is missing');
+if (!migrationPaths.length) throw new Error('facts migration set is empty');
 
-execFileSync(process.execPath, [
-  wranglerScript,
-  'd1', 'execute', databaseName,
-  '--remote', '--yes',
-  '--file', schemaPath,
-], {
-  cwd: workerRoot,
-  env: process.env,
-  encoding: 'utf8',
-  stdio: 'inherit',
-});
+function wrangler(args, stdio = 'inherit') {
+  return execFileSync(process.execPath, [wranglerScript, ...args], {
+    cwd: workerRoot,
+    env: process.env,
+    encoding: 'utf8',
+    stdio,
+  });
+}
+
+function parseJsonOutput(output) {
+  const text = String(output || '').trim();
+  const starts = [text.indexOf('['), text.indexOf('{')].filter((index) => index >= 0);
+  if (!starts.length) throw new Error(`Wrangler did not return JSON: ${text.slice(0, 300)}`);
+  return JSON.parse(text.slice(Math.min(...starts)));
+}
+
+function resultRows(payload) {
+  const containers = Array.isArray(payload) ? payload : [payload];
+  return containers.flatMap((container) => container?.results || container?.result?.results || []);
+}
+
+function tableColumns(table) {
+  const output = wrangler([
+    'd1', 'execute', databaseName,
+    '--remote', '--yes', '--json',
+    '--command', `SELECT name FROM pragma_table_info('${table}')`,
+  ], ['ignore', 'pipe', 'inherit']);
+  return new Set(resultRows(parseJsonOutput(output)).map((row) => String(row.name)));
+}
+
+function appleMusicCompatibilityPresent() {
+  const changes = tableColumns('sh_track_counter_changes').has('apple_music_id');
+  const current = tableColumns('sh_track_counter_current').has('apple_music_id');
+  if (changes !== current) {
+    throw new Error('FACTS Apple Music compatibility migration is partially applied');
+  }
+  return changes;
+}
+
+const applied = [];
+const skipped = [];
+for (const migration of migrationPaths) {
+  const migrationName = basename(migration);
+  if (migrationName === '026_remove_apple_music_compatibility.sql'
+      && !appleMusicCompatibilityPresent()) {
+    skipped.push(migration);
+    continue;
+  }
+  const migrationPath = resolve(repositoryRoot, migration);
+  wrangler([
+    'd1', 'execute', databaseName,
+    '--remote', '--yes',
+    '--file', migrationPath,
+  ]);
+  applied.push(migration);
+}
 
 console.log(JSON.stringify({
   ok: true,
   database_name: databaseName,
   schema: descriptor.schema,
-  mode: 'current-schema-only',
+  migrations_applied: applied,
+  migrations_skipped: skipped,
+  mode: 'ordered-migration-set',
 }));

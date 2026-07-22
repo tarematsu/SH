@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Download R2 Worker logs only when the selected window contains real events."""
+"""Download R2 Worker logs only when all active Workers have real events."""
 
 from __future__ import annotations
 
@@ -24,6 +24,14 @@ ANALYZER_PATH = ROOT / ".github/scripts/analyze-worker-observability.py"
 POLL_ATTEMPTS = max(1, int(os.environ.get("R2_LOG_POLL_ATTEMPTS", "10")))
 POLL_SECONDS = max(1, int(os.environ.get("R2_LOG_POLL_SECONDS", "30")))
 DOWNLOAD_WORKERS = 8
+ACTIVE_WORKERS = tuple(
+    name.strip()
+    for name in os.environ.get(
+        "REQUIRED_ACTIVE_WORKERS",
+        "sh-buddies-ingest,sh-minute-enrichment,sh-sakurazaka46jp,sh-runtime-orchestrator",
+    ).split(",")
+    if name.strip()
+)
 
 
 def required(name: str) -> str:
@@ -148,7 +156,7 @@ def download_selected(endpoint: str, bucket: str, selected: list[tuple[dt.dateti
         raise RuntimeError(f"Downloaded {downloaded} of {len(selected)} selected R2 objects")
 
 
-def observed_events() -> int:
+def observation_status() -> tuple[int, list[str]]:
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     try:
         SUMMARY_PATH.unlink()
@@ -156,31 +164,42 @@ def observed_events() -> int:
         pass
     subprocess.run(["python3", str(ANALYZER_PATH)], check=False)
     if not SUMMARY_PATH.exists():
-        return 0
+        return 0, list(ACTIVE_WORKERS)
     summary = json.loads(SUMMARY_PATH.read_text(encoding="utf-8"))
-    return int(summary.get("events") or 0)
+    scripts = summary.get("scripts") or {}
+    missing = [
+        name
+        for name in ACTIVE_WORKERS
+        if int((scripts.get(name) or {}).get("events") or 0) <= 0
+        or int(((scripts.get(name) or {}).get("cpu_ms") or {}).get("samples") or 0) <= 0
+    ]
+    return int(summary.get("events") or 0), missing
 
 
 def main() -> None:
     endpoint = required("R2_ENDPOINT")
     bucket = required("R2_BUCKET")
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    last_missing = list(ACTIVE_WORKERS)
     for attempt in range(1, POLL_ATTEMPTS + 1):
         selected = list_objects(endpoint, bucket)
         if selected:
             download_selected(endpoint, bucket, selected)
-            events = observed_events()
+            events, missing = observation_status()
+            last_missing = missing
             print(
                 f"Attempt {attempt}/{POLL_ATTEMPTS}: "
-                f"selected {len(selected)} R2 objects with {events} Worker events"
+                f"selected {len(selected)} R2 objects with {events} Worker events; "
+                f"missing active Workers: {','.join(missing) if missing else 'none'}"
             )
-            if events > 0:
+            if events > 0 and not missing:
                 return
         else:
             print(f"Attempt {attempt}/{POLL_ATTEMPTS}: no R2 objects in the audit window")
         if attempt < POLL_ATTEMPTS:
             time.sleep(POLL_SECONDS)
-    raise SystemExit("No post-deployment Worker events arrived in R2 during the polling window")
+    detail = ",".join(last_missing) if last_missing else "unknown"
+    raise SystemExit(f"No complete active Worker CPU sample arrived; missing: {detail}")
 
 
 if __name__ == "__main__":

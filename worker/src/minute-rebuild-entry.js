@@ -2,9 +2,22 @@ import { minuteDeriveTrigger } from './minute-derive-trigger.js';
 
 const EMPTY_DEPENDENCIES = Object.freeze({});
 const JSON_QUEUE_SEND_OPTIONS = Object.freeze({ contentType: 'json' });
+const DEFAULT_REBUILD_MAX_JOBS = 4;
+const DEFAULT_REBUILD_STAGE_INTERVAL_SECONDS = 15 * 60;
 let runtimeStateModulePromise;
 let gapScanModulePromise;
 let backfillModulePromise;
+
+function integer(value) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? Math.trunc(parsed) : null;
+}
+
+function positiveInteger(value, fallback, maximum = Number.MAX_SAFE_INTEGER) {
+  const parsed = integer(value);
+  if (parsed == null || parsed <= 0) return fallback;
+  return Math.min(parsed, maximum);
+}
 
 function validStage(stage) {
   switch (stage) {
@@ -34,6 +47,7 @@ function validateTask(body) {
     scheduledAt: Number(body.scheduled_at) || Date.now(),
     prepared: body.prepared || null,
     allowBackfill: body.allow_backfill !== false,
+    processedJobs: Math.max(0, integer(body.processed_jobs) ?? 0),
   };
 }
 
@@ -79,6 +93,7 @@ async function enqueueStage(env, task, stage, delaySeconds = 0, details = null) 
     stage,
     scheduled_at: task.scheduledAt,
     allow_backfill: task.allowBackfill,
+    processed_jobs: task.processedJobs,
     ...(details || {}),
   };
   const options = delaySeconds > 0
@@ -131,6 +146,17 @@ async function finishGapStage(env, task, result, startedAt, record, enqueue) {
   await record(env, { ...task, stage: 'gap-scan' }, result, startedAt);
   if (task.allowBackfill) await enqueue(env, task, 'backfill');
   return task.allowBackfill;
+}
+
+function rebuildBudget(env) {
+  return {
+    maxJobs: positiveInteger(env?.REBUILD_MAX_JOBS, DEFAULT_REBUILD_MAX_JOBS, 20),
+    intervalSeconds: positiveInteger(
+      env?.REBUILD_CANDIDATE_INTERVAL_SECONDS,
+      DEFAULT_REBUILD_STAGE_INTERVAL_SECONDS,
+      60 * 60,
+    ),
+  };
 }
 
 export async function processMinuteRebuildStage(env, body, dependencies = EMPTY_DEPENDENCIES) {
@@ -230,9 +256,30 @@ export async function processMinuteRebuildStage(env, body, dependencies = EMPTY_
     };
     await record(env, { ...task, stage: 'backfill' }, reported, startedAt);
     const remaining = Number(result?.pending_candidates || 0);
-    if (remaining > 0) await enqueue(env, task, 'backfill-prepare', 1);
-    else await enqueue(env, task, 'backfill', 1);
-    return { stage: task.stage, run_id: task.runId, pending: true, result: reported };
+    const consumed = Math.min(
+      1,
+      Math.max(0, Number(result?.enqueued || 0))
+        + Math.max(0, Number(result?.skipped_existing || 0)),
+    );
+    const processedJobs = task.processedJobs + consumed;
+    const budget = rebuildBudget(env);
+    const canContinue = remaining > 0 && processedJobs < budget.maxJobs;
+    if (canContinue) {
+      await enqueue(env, task, 'backfill-prepare', budget.intervalSeconds, {
+        processed_jobs: processedJobs,
+      });
+    }
+    return {
+      stage: task.stage,
+      run_id: task.runId,
+      pending: remaining > 0,
+      result: {
+        ...reported,
+        processed_jobs: processedJobs,
+        max_jobs: budget.maxJobs,
+        paused_for_budget: remaining > 0 && !canContinue,
+      },
+    };
   } catch (error) {
     await record(env, { ...task, stage: task.stage.startsWith('backfill') ? 'backfill' : task.stage === 'gap-commit' ? 'gap-scan' : task.stage }, {
       error: String(error?.message || error).slice(0, 800),

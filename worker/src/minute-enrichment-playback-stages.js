@@ -94,7 +94,6 @@ function compactCurrentBiteQueue(queue, position) {
       queue_track_id: sourceTrack.queue_track_id ?? null,
       stationhead_track_id: sourceTrack.stationhead_track_id ?? null,
       spotify_id: sourceTrack.spotify_id ?? null,
-      apple_music_id: sourceTrack.apple_music_id ?? null,
       isrc: sourceTrack.isrc ?? null,
       bite_count: sourceTrack.bite_count ?? null,
     }] : EMPTY_TRACKS,

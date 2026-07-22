@@ -40,19 +40,25 @@ export async function onRequestGet({ request, env }) {
       ? Math.min(Math.max(Math.trunc(requestedLimit), 100), 20_000)
       : 10_000;
 
-    const result = await env.MINUTE_DB.prepare(`SELECT row_json
-      FROM sh_pages_track_history_read_model
-      WHERE play_date>=? AND play_date<=?
-      ORDER BY play_date ASC,first_played_at ASC,row_key ASC
-      LIMIT ?`).bind(from, to, limit + 1).all();
+    const [result, status] = await Promise.all([
+      env.MINUTE_DB.prepare(`SELECT row_json
+        FROM sh_pages_track_history_read_model
+        WHERE play_date>=? AND play_date<=?
+        ORDER BY play_date ASC,first_played_at ASC,row_key ASC
+        LIMIT ?`).bind(from, to, limit + 1).all(),
+      env.MINUTE_DB.prepare(`SELECT payload_json
+        FROM sh_pages_payload_read_model
+        WHERE model_key='track-history-status'
+        LIMIT 1`).first(),
+    ]);
     const rawRows = result.results || [];
     const truncated = rawRows.length > limit;
     const rows = rawRows.slice(0, limit).map((row) => JSON.parse(row.row_json));
-    const status = await env.MINUTE_DB.prepare(`SELECT payload_json
-      FROM sh_pages_payload_read_model
-      WHERE model_key='track-history-status'
-      LIMIT 1`).first();
     const metadata = status?.payload_json ? JSON.parse(status.payload_json) : {};
+    const ranking = Array.isArray(metadata.ranking) ? metadata.ranking : [];
+    const rankingSummary = metadata.ranking_summary && typeof metadata.ranking_summary === 'object'
+      ? metadata.ranking_summary
+      : {};
 
     return json({
       ok: true,
@@ -62,7 +68,10 @@ export async function onRequestGet({ request, env }) {
       timezone: 'UTC',
       rows,
       truncated,
-      likes_included: url.searchParams.get('likes') === '1',
+      likes_included: true,
+      ranking,
+      ranking_summary: rankingSummary,
+      ranking_scope: 'all-time-latest-counter',
       source_row_count: metadata.source_row_count || 0,
       excluded_play_count_dates: metadata.excluded_play_count_dates || [],
       excluded_play_count_date_count: (metadata.excluded_play_count_dates || []).length,
@@ -72,7 +81,15 @@ export async function onRequestGet({ request, env }) {
     });
   } catch (error) {
     if (/no such table/i.test(String(error?.message || ''))) {
-      return json({ ok: true, mode: 'tracks', rows: [], setup_required: true, timezone: 'UTC' });
+      return json({
+        ok: true,
+        mode: 'tracks',
+        rows: [],
+        ranking: [],
+        ranking_summary: {},
+        setup_required: true,
+        timezone: 'UTC',
+      });
     }
     return json({ ok: false, error: error?.message || 'track history error' }, 500);
   }

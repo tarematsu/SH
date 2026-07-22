@@ -1,12 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { requestWithParsedJson } from '../site/functions/api/ingest.js';
+import { requestWithParsedJson } from '../site/functions/lib/parsed-request.js';
 import { AUTH_STATE_SQL, parseAuthState, readAuthState } from '../worker/src/auth-state.js';
 import { runCollection } from '../worker/src/index.js';
 
-test('parsed ingest requests reuse one JSON body for the legacy handler', async () => {
-  const request = new Request('https://example.test/api/ingest', {
+test('parsed internal ingest requests reuse one JSON body for fallback handling', async () => {
+  const request = new Request('https://worker.internal/ingest', {
     method: 'POST',
     headers: { authorization: 'Bearer secret', 'content-type': 'application/json' },
     body: JSON.stringify({ type: 'snapshot', data: { listener_count: 10 } }),

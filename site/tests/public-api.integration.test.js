@@ -13,196 +13,8 @@ import {
   onRequestGet as historyGet,
   resetHistoryLoadCache,
 } from '../functions/api/history.js';
-import { onRequestGet as playbackGet } from '../functions/api/playback.js';
-import { onRequestGet as broadcastSeriesGet } from '../functions/api/broadcast-series.js';
-import { onRequestGet as officialHistoryGet } from '../functions/api/official-history.js';
-import { onRequestGet as trackLikesGet } from '../functions/api/track-likes.js';
+import { onRequestGet as sakurazakaGet } from '../functions/api/sakurazaka46jp.js';
 import { FakeD1Database, responseJson } from './helpers/fake-d1.js';
-
-function primaryPlaybackDb(queue = [], now = Date.now()) {
-  return new FakeD1Database().route('first', 'WITH latest_fact AS', {
-    channel_id: 318,
-    latest_observed_at: now - 1_000,
-    is_broadcasting: 1,
-    fact_station_id: 3328626,
-    host_account_id: 46,
-    host_handle: 'sakurazaka46jp',
-    revision_id: 7,
-    queue_start_time: now - 30_000,
-    is_paused: 0,
-    paused_total_ms: 0,
-    pause_started_at: null,
-    last_observed_at: now - 500,
-    current_position: 0,
-    queue_station_id: 3328626,
-    queue_id: 99,
-    structural_hash: 'structural-hash',
-    read_model_channel_id: 318,
-    read_model_observed_at: now - 500,
-    read_model_station_id: 3328626,
-    read_model_queue_id: 99,
-    read_model_start_time: now - 30_000,
-    read_model_is_paused: 0,
-    read_model_queue_json: JSON.stringify(queue),
-  });
-}
-
-const PLAYBACK_CORE_FIELDS = [
-  'ok',
-  'channel_alias',
-  'generated_at',
-  'latest_observed_at',
-  'queue_observed_at',
-  'changed_at',
-  'station_id',
-  'is_broadcasting',
-  'host_account_id',
-  'host_handle',
-  'playing',
-  'stale',
-  'setup_required',
-  'queue_revision',
-  'queue_status',
-  'queue',
-];
-
-function assertPlaybackCoreEnvelope(payload) {
-  for (const field of PLAYBACK_CORE_FIELDS) assert.ok(field in payload, `missing playback field: ${field}`);
-}
-
-test('playback endpoint rejects a missing primary read-model binding without cacheable output', async () => {
-  const response = await playbackGet({ env: {} });
-  assert.equal(response.status, 500);
-  assert.equal(response.headers.get('cache-control'), 'no-store');
-  assert.deepEqual(await responseJson(response), { ok: false, error: 'MINUTE_DB binding missing' });
-});
-
-test('playback endpoint maps the Pages read model into current-track state and cache headers', async () => {
-  const now = Date.now();
-  const queue = [{
-    position: 0,
-    queue_track_id: 1001,
-    stationhead_track_id: 2001,
-    spotify_id: 'spotify-track-1',
-    deezer_id: null,
-    isrc: 'JPTEST000001',
-    duration_ms: 180_000,
-    preview_url: null,
-    bite_count: 12,
-    title: 'Integration Song',
-    artist: 'Integration Artist',
-    thumbnail_url: 'https://example.invalid/cover.jpg',
-  }];
-  const response = await playbackGet({ env: { MINUTE_DB: primaryPlaybackDb(queue, now) } });
-  const body = await responseJson(response);
-
-  assert.equal(response.status, 200);
-  assert.equal(response.headers.get('cache-control'), 'public, max-age=5, s-maxage=10, stale-while-revalidate=30');
-  assert.equal(body.ok, true);
-  assert.equal(body.station_id, 3328626);
-  assert.equal(body.playing, true);
-  assert.equal(body.queue_status.total_items, 1);
-  assert.equal(body.queue_status.current_index, 0);
-  assert.equal(body.queue[0].is_current, true);
-  assert.equal(body.queue[0].title, 'Integration Song');
-  assert.equal(body.queue[0].artist, 'Integration Artist');
-  assert.equal('apple_music_id' in body.queue[0], false);
-  assert.match(body.queue_revision, /^[a-z0-9_-]+/i);
-});
-
-test('buddies and buddy46 use isolated primary and secondary read models', async () => {
-  const now = Date.now();
-  const queue = [{
-    position: 0,
-    duration_ms: 180_000,
-    title: 'Shared Song',
-    artist: 'Shared Artist',
-    thumbnail_url: 'https://example.invalid/shared.jpg',
-  }];
-  const buddiesResponse = await playbackGet({
-    request: new Request('https://skrzk.test/api/playback?channel=buddies'),
-    env: { MINUTE_DB: primaryPlaybackDb(queue, now) },
-  });
-  const secondaryRow = {
-    channel_alias: 'buddy46',
-    station_id: 46,
-    queue_id: 460,
-    start_time: now - 30_000,
-    is_paused: 0,
-    is_broadcasting: 1,
-    host_account_id: 4600,
-    host_handle: 'buddy46-host',
-    state_hash: 'buddy46-hash',
-    checked_at: now - 500,
-    changed_at: now - 500,
-    paused_total_ms: 0,
-    pause_started_at: null,
-    queue_json: JSON.stringify([{
-      position: 0,
-      duration_ms: 180_000,
-      title: 'Dedicated Song',
-      artist: 'Dedicated Artist',
-      thumbnail_url: 'https://example.invalid/dedicated.jpg',
-    }]),
-  };
-  const otherDb = {
-    prepare(sql) {
-      return {
-        bind() { return this; },
-        async first() {
-          if (sql.includes('sh_collector_status')) {
-            return { status: 'ok', last_attempt_at: now - 500, last_success_at: now - 500, tracks: 1 };
-          }
-          if (sql.includes('sh_playback_channel_current')) return secondaryRow;
-          throw new Error(`unexpected secondary SQL: ${sql}`);
-        },
-      };
-    },
-  };
-  const buddy46Response = await playbackGet({
-    request: new Request('https://skrzk.test/api/playback?channel=buddy46'),
-    env: { MINUTE_DB: primaryPlaybackDb(queue, now), OTHER_DB: otherDb },
-  });
-  const buddies = await responseJson(buddiesResponse);
-  const buddy46 = await responseJson(buddy46Response);
-
-  assert.equal(buddiesResponse.status, 200);
-  assert.equal(buddy46Response.status, 200);
-  assertPlaybackCoreEnvelope(buddies);
-  assertPlaybackCoreEnvelope(buddy46);
-  assert.equal(buddies.queue[0].title, 'Shared Song');
-  assert.equal(buddy46.queue[0].title, 'Dedicated Song');
-  assert.equal(buddy46.queue[0].artist, 'Dedicated Artist');
-  assert.equal(buddy46.queue[0].thumbnail_url, 'https://example.invalid/dedicated.jpg');
-  assert.equal(buddy46.station_id, 46);
-  assert.equal(buddies.channel_alias, 'buddies');
-  assert.equal(buddy46.channel_alias, 'buddy46');
-  assert.equal('canonical_channel_alias' in buddy46, false);
-  assert.equal(buddy46Response.headers.get('cache-control'), 'public, max-age=5, s-maxage=10, stale-while-revalidate=30');
-});
-
-test('buddy46 playback requires its dedicated OTHER_DB binding', async () => {
-  const response = await playbackGet({
-    request: new Request('https://skrzk.test/api/playback?channel=buddy46'),
-    env: { MINUTE_DB: primaryPlaybackDb() },
-  });
-  assert.equal(response.status, 500);
-  assert.equal(response.headers.get('cache-control'), 'no-store');
-  assert.deepEqual(await responseJson(response), { ok: false, error: 'OTHER_DB binding missing' });
-});
-
-test('playback endpoint rejects unsupported channels and raw payload access', async () => {
-  const db = { prepare() { throw new Error('D1 must not be queried'); } };
-  for (const url of [
-    'https://skrzk.test/api/playback?channel=unknown',
-    'https://skrzk.test/api/playback?channel=buddies&raw=1',
-  ]) {
-    const response = await playbackGet({ request: new Request(url), env: { MINUTE_DB: db } });
-    assert.equal(response.status, 400);
-    assert.equal(response.headers.get('cache-control'), 'no-store');
-    assert.equal((await responseJson(response)).ok, false);
-  }
-});
 
 test('history endpoint rejects unknown modes and never caches errors', async () => {
   const response = await historyGet({
@@ -255,10 +67,7 @@ test('history endpoint restores the ranking leaderboard from OTHER_DB', async ()
     });
   const response = await historyGet({
     request: new Request('https://skrzk.test/api/history?mode=ranking&from=2026-07-01&to=2026-07-31'),
-    env: {
-      DB: new FakeD1Database(),
-      OTHER_DB: otherDb,
-    },
+    env: { DB: new FakeD1Database(), OTHER_DB: otherDb },
   });
   const body = await responseJson(response);
   assert.equal(response.status, 200);
@@ -274,12 +83,8 @@ test('history endpoint restores the ranking leaderboard from OTHER_DB', async ()
 
 test('history rejects impossible dates before querying D1', async () => {
   const env = {
-      DB: {
-        prepare() { throw new Error('D1 should not be queried'); },
-      },
-      OTHER_DB: {
-        prepare() { throw new Error('D1 should not be queried'); },
-      },
+    DB: { prepare() { throw new Error('D1 should not be queried'); } },
+    OTHER_DB: { prepare() { throw new Error('D1 should not be queried'); } },
   };
   const response = await historyGet({
     request: new Request('https://skrzk.test/api/history?mode=broadcasts&from=2026-02-30&to=2026-03-01'),
@@ -292,56 +97,16 @@ test('history rejects impossible dates before querying D1', async () => {
   });
 });
 
-test('broadcast series rejects impossible dates before querying D1', async () => {
+test('Sakurazaka series rejects impossible dates before querying D1', async () => {
   const env = {
-      OTHER_DB: {
-        prepare() { throw new Error('D1 should not be queried'); },
-      },
-      MINUTE_DB: {
-        prepare() { throw new Error('D1 should not be queried'); },
-      },
+    OTHER_DB: { prepare() { throw new Error('D1 should not be queried'); } },
+    MINUTE_DB: { prepare() { throw new Error('D1 should not be queried'); } },
   };
-  const response = await broadcastSeriesGet({
-    request: new Request('https://skrzk.test/api/broadcast-series?from=2026-02-30&to=2026-03-01'),
+  const response = await sakurazakaGet({
+    request: new Request('https://skrzk.test/api/sakurazaka46jp?from=2026-02-30&to=2026-03-01'),
     env,
   });
   assert.equal(response.status, 400);
-  assert.deepEqual(await responseJson(response), {
-    ok: false,
-    error: 'from and to must be valid YYYY-MM-DD dates',
-  });
-});
-
-test('official history rejects impossible dates before querying D1', async () => {
-  const env = {
-      OTHER_DB: {
-        prepare() { throw new Error('D1 should not be queried'); },
-      },
-  };
-  const response = await officialHistoryGet({
-    request: new Request('https://skrzk.test/api/official-history?from=2026-02-30&to=2026-03-01'),
-    env,
-  });
-  assert.equal(response.status, 400);
-  assert.equal(response.headers.get('cache-control'), 'no-store');
-  assert.deepEqual(await responseJson(response), {
-    ok: false,
-    error: 'from and to must be valid YYYY-MM-DD dates',
-  });
-});
-
-test('track likes rejects impossible dates before querying D1', async () => {
-  const env = {
-    DB: {
-      prepare() { throw new Error('D1 should not be queried'); },
-    },
-  };
-  const response = await trackLikesGet({
-    request: new Request('https://skrzk.test/api/track-likes?from=2026-02-30&to=2026-03-01'),
-    env,
-  });
-  assert.equal(response.status, 400);
-  assert.equal(response.headers.get('cache-control'), 'no-store');
   assert.deepEqual(await responseJson(response), {
     ok: false,
     error: 'from and to must be valid YYYY-MM-DD dates',

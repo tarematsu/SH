@@ -4,6 +4,7 @@ import test from 'node:test';
 import {
   pruneOldSnapshots,
   pruneOldSnapshotsSafely,
+  REBUILD_SOURCE_RETENTION_MS,
   shouldRunSnapshotRetention,
   snapshotRetentionEnabled,
 } from '../src/snapshot-retention.js';
@@ -48,21 +49,24 @@ test('shouldRunSnapshotRetention preserves the interval calculation', () => {
   assert.equal(shouldRunSnapshotRetention(3_500_000, 3_600_000, {}), false);
 });
 
-test('retention deletes old raw snapshots in one normal-path D1 batch', async () => {
+test('retention keeps every minute rebuild source for at least thirty days', async () => {
+  const now = 4_000_000_000;
   const db = new FakeDb();
   const result = await pruneOldSnapshots({
     BUDDIES_DB: db,
     DB: new Proxy({}, { get() { throw new Error('primary fallback must not be touched'); } }),
     SNAPSHOT_RETENTION_MS: 86_400_000,
     SNAPSHOT_RETENTION_BATCH_SIZE: 1000,
-  }, 100_000_000);
+  }, now);
 
+  assert.equal(REBUILD_SOURCE_RETENTION_MS, 30 * 24 * 60 * 60_000);
   assert.deepEqual(result, {
     skipped: false,
-    cutoff: 13_600_000,
+    cutoff: now - REBUILD_SOURCE_RETENTION_MS,
     deleted: {
       sh_channel_snapshots: 3,
       sh_queue_snapshots: 2,
+      sh_comment_minute_counts: 0,
       sh_queue_items: 0,
       sh_track_like_observations: 0,
       sh_track_metadata: 0,
@@ -70,21 +74,23 @@ test('retention deletes old raw snapshots in one normal-path D1 batch', async ()
       sh_ingest_conflicts: 0,
     },
   });
-  assert.deepEqual(db.batchCalls, [7]);
-  assert.equal(db.calls.filter((sql) => sql.startsWith('DELETE FROM')).length, 7);
+  assert.deepEqual(db.batchCalls, [8]);
+  assert.equal(db.calls.some((sql) => sql.startsWith('DELETE FROM sh_comment_minute_counts')
+    && sql.includes('bucket_start<?')), true);
+  assert.equal(db.calls.filter((sql) => sql.startsWith('DELETE FROM')).length, 8);
   assert.equal(db.calls.filter((sql) => sql.includes('INSERT INTO sh_data_maintenance_state')).length, 1);
 });
 
 test('retention continues only tables that fill the previous batch', async () => {
-  const db = new FakeDb(0, [100, 0, 0, 0, 0, 0, 0, 100, 50]);
+  const db = new FakeDb(0, [100, 0, 0, 0, 0, 0, 0, 0, 100, 50]);
   const result = await pruneOldSnapshots({
     BUDDIES_DB: db,
     SNAPSHOT_RETENTION_BATCH_SIZE: 100,
     SNAPSHOT_RETENTION_MAX_BATCHES: 5,
-  }, 100_000_000);
+  }, 4_000_000_000);
 
   assert.equal(result.deleted.sh_channel_snapshots, 250);
-  assert.deepEqual(db.batchCalls, [7, 1, 1]);
+  assert.deepEqual(db.batchCalls, [8, 1, 1]);
 });
 
 test('retention observes the cleanup interval', async () => {

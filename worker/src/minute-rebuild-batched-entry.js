@@ -1,4 +1,5 @@
 import { withBackfillCursorSeek } from './backfill-cursor-seek.js';
+import { historicalRebuildEnabled } from './historical-rebuild-policy.js';
 import { processMinuteRebuildStage } from './minute-rebuild-entry.js';
 import {
   processMinuteMaintenanceGate,
@@ -17,13 +18,30 @@ function maintenanceStage(body) {
   return null;
 }
 
+function historicalStage(body) {
+  return body?.message_type === 'minute-rebuild-stage'
+    && ['gap-scan', 'gap-commit', 'backfill', 'backfill-prepare', 'backfill-commit']
+      .includes(String(body?.stage || ''));
+}
+
+function syncMaintenance(body, stage) {
+  return stage === 'maintenance-sync'
+    || (stage === 'maintenance-run' && body?.maintenance_task === 'sync');
+}
+
 async function processOneMinuteRebuildMessage(message, env, dependencies = EMPTY_DEPENDENCIES) {
   const stage = maintenanceStage(message?.body);
   try {
-    if (stage) {
+    if (!historicalRebuildEnabled(env) && historicalStage(message?.body)) {
+      console.log(JSON.stringify({
+        event: 'minute_rebuild_stage_skipped',
+        stage: message.body.stage,
+        reason: 'historical-rebuild-disabled-for-d1-budget',
+      }));
+    } else if (stage) {
       const run = stage === 'maintenance-gate'
         ? dependencies.processMinuteMaintenanceGate || processMinuteMaintenanceGate
-        : stage === 'maintenance-sync'
+        : syncMaintenance(message.body, stage)
           ? dependencies.processMinuteMaintenanceSync || processMinuteMaintenanceSync
           : dependencies.processMinuteMaintenanceRun || processMinuteMaintenanceRun;
       const result = await run(env, message.body, dependencies.maintenance || EMPTY_DEPENDENCIES);
@@ -39,6 +57,7 @@ async function processOneMinuteRebuildMessage(message, env, dependencies = EMPTY
         attempt: result?.attempt,
         dispatched_stage: result?.dispatched_stage,
         historical_backfill_due: result?.historical_backfill_due,
+        payloads_cleared: result?.payload_cleanup?.cleared,
       }));
     } else {
       const run = dependencies.processMinuteRebuildStage || processMinuteRebuildStage;
@@ -68,8 +87,10 @@ export async function processMinuteRebuildBatch(batch, env, _ctx, dependencies =
 }
 
 export {
+  historicalStage,
   maintenanceStage,
   processOneMinuteRebuildMessage,
+  syncMaintenance,
 };
 
 export default {

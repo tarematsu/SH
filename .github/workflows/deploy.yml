@@ -14,6 +14,7 @@ on:
           - workers
           - ingest
           - minute-enrichment
+          - sakurazaka46jp
           - runtime
 
 permissions:
@@ -78,8 +79,8 @@ jobs:
             stationhead-minute-live-derive stationhead-minute-live-derive-dlq \
             stationhead-minute-enrichment stationhead-minute-enrichment-dlq \
             stationhead-minute-rebuild stationhead-minute-rebuild-dlq \
-            stationhead-buddy-playback stationhead-buddy-playback-dlq \
             stationhead-host-monitor stationhead-host-monitor-dlq \
+            stationhead-sakurazaka46jp stationhead-sakurazaka46jp-dlq \
             stationhead-pages-read-model-publication stationhead-pages-read-model-publication-dlq
           do
             npx wrangler queues create "$queue" >/dev/null 2>&1 || true
@@ -91,13 +92,16 @@ jobs:
           set -euo pipefail
           case "$DEPLOY_TARGET" in
             all|workers)
-              commands=(deploy:minute-enrichment deploy:ingest deploy:runtime)
+              commands=(deploy:minute-enrichment deploy:ingest deploy:sakurazaka46jp deploy:runtime)
               ;;
             ingest)
               commands=(deploy:ingest)
               ;;
             minute-enrichment)
               commands=(deploy:minute-enrichment)
+              ;;
+            sakurazaka46jp)
+              commands=(deploy:sakurazaka46jp)
               ;;
             runtime)
               commands=(deploy:runtime)

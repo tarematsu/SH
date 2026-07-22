@@ -2,35 +2,42 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
-const daily = readFileSync(new URL('../functions/api/dashboard-daily-changes.js', import.meta.url), 'utf8');
-const likes = readFileSync(new URL('../functions/api/like-ranking.js', import.meta.url), 'utf8');
+const dashboard = readFileSync(new URL('../functions/api/dashboard.js', import.meta.url), 'utf8');
+const dailySummaries = readFileSync(new URL('../functions/lib/dashboard-daily-summaries.js', import.meta.url), 'utf8');
 const tracks = readFileSync(new URL('../functions/api/track-history.js', import.meta.url), 'utf8');
-const refresh = readFileSync(new URL('../../worker/src/pages-read-model-refresh.js', import.meta.url), 'utf8');
-const maintenance = readFileSync(new URL('../../worker/src/scheduled-maintenance.js', import.meta.url), 'utf8');
+const ranking = readFileSync(new URL('../functions/lib/track-ranking.js', import.meta.url), 'utf8');
+const trackStage = readFileSync(new URL('../../worker/src/pages-track-history-stage.js', import.meta.url), 'utf8');
+const publication = readFileSync(new URL('../../worker/src/pages-track-history-publication-queue.js', import.meta.url), 'utf8');
+const dispatch = readFileSync(new URL('../../worker/src/pages-read-model-dispatch.js', import.meta.url), 'utf8');
+const entry = readFileSync(new URL('../../worker/src/minute-enrichment-optimized-entry.js', import.meta.url), 'utf8');
+const workers = readFileSync(new URL('../../worker/scripts/cloudflare-workers.mjs', import.meta.url), 'utf8');
 
-test('Pages daily changes reads completed daily summaries without aggregating minute facts', () => {
-  const handler = daily.slice(daily.indexOf('export async function onRequestGet'));
-  assert.match(daily, /FROM sh_daily_summary/);
-  assert.match(handler, /OTHER_DB/);
-  assert.doesNotMatch(handler, /FROM sh_minute_facts|sh_total_member_daily|difference\(/);
+test('dashboard composes completed daily summaries through a focused loader', () => {
+  assert.match(dashboard, /loadDashboardDailySummaries/);
+  assert.match(dashboard, /daily_summaries/);
+  assert.match(dailySummaries, /FROM sh_daily_summary/);
+  assert.doesNotMatch(dashboard, /FROM sh_daily_summary/);
 });
 
-test('Pages like ranking reads a completed payload instead of ranking counters', () => {
-  const handler = likes.slice(likes.indexOf('export async function onRequestGet'));
-  assert.match(handler, /FROM sh_pages_payload_read_model/);
-  assert.doesNotMatch(handler, /sh_track_counter_current|ROW_NUMBER\(\) OVER|loadLikeRanking/);
-});
-
-test('Pages track history reads materialized rows without source snapshot reconstruction', () => {
+test('Pages track history reads materialized rows and integrated ranking status', () => {
   assert.match(tracks, /FROM sh_pages_track_history_read_model/);
-  assert.doesNotMatch(tracks, /sh_queue_items|sh_queue_snapshots|sh_channel_snapshots|mergeTrackRows|refreshMissingMetadata/);
+  assert.match(tracks, /model_key='track-history-status'/);
+  assert.match(tracks, /ranking_summary/);
+  assert.match(tracks, /ranking_scope/);
+  assert.match(tracks, /worker_materialized_read_model/);
 });
 
-test('Worker owns refresh of all migrated Pages read models', () => {
-  assert.match(refresh, /refreshDailyChanges/);
-  assert.match(refresh, /refreshLikeRanking/);
-  assert.match(refresh, /refreshTrackHistory/);
-  assert.match(refresh, /sh_pages_payload_read_model/);
-  assert.match(refresh, /sh_pages_track_history_read_model/);
-  assert.match(maintenance, /refreshPagesReadModels/);
+test('track-history generation has one shard and publication pipeline inside minute enrichment', () => {
+  assert.match(ranking, /FROM sh_track_counter_current/);
+  assert.match(trackStage, /loadTrackRanking/);
+  assert.match(trackStage, /ranking_summary/);
+  assert.match(trackStage, /sh_pages_track_history_read_model/);
+  assert.match(publication, /processTrackHistoryPublicationTask/);
+  assert.match(dispatch, /pages-track-history-split-cycle/);
+  assert.match(entry, /runPagesReadModelCron/);
+});
+
+test('module splitting does not increase the deployed Worker count', () => {
+  const activeBlock = workers.slice(workers.indexOf('ACTIVE_WORKER_NAMES'), workers.indexOf('RETIRED_WORKER_NAMES'));
+  assert.equal((activeBlock.match(/'sh-/g) || []).length, 4);
 });

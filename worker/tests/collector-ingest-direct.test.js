@@ -4,7 +4,7 @@ import test from 'node:test';
 import {
   ingestOptimizedBody,
   supportsOptimizedIngestType,
-} from '../../site/functions/api/ingest.js';
+} from '../../site/functions/lib/ingest.js';
 import { ingest } from '../src/collector-ingest.js';
 
 test('all collector write types use the optimized direct ingest path', () => {

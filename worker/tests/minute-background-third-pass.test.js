@@ -59,11 +59,15 @@ test('maintenance gate performs one collector check and requeues without an in-I
   assert.equal(sent[0].delaySeconds, 4);
 });
 
-test('historical backfill is due once per configured day and can be disabled', () => {
-  const env = { REBUILD_HISTORICAL_BACKFILL_INTERVAL_MS: 86_400_000 };
-  assert.equal(historicalBackfillDue(env, BASE), true);
-  assert.equal(historicalBackfillDue(env, BASE + 17 * 60_000), false);
-  assert.equal(historicalBackfillDue({ ...env, REBUILD_HISTORICAL_BACKFILL_ENABLED: false }, BASE), false);
+test('historical backfill follows the configured interval and can be disabled', () => {
+  const daily = { REBUILD_HISTORICAL_BACKFILL_INTERVAL_MS: 86_400_000 };
+  assert.equal(historicalBackfillDue(daily, BASE), true);
+  assert.equal(historicalBackfillDue(daily, BASE + 17 * 60_000), false);
+  assert.equal(historicalBackfillDue({ ...daily, REBUILD_HISTORICAL_BACKFILL_ENABLED: false }, BASE), false);
+
+  const resumed = { REBUILD_HISTORICAL_BACKFILL_INTERVAL_MS: 600_000 };
+  assert.equal(historicalBackfillDue(resumed, BASE + 9 * 60_000), false);
+  assert.equal(historicalBackfillDue(resumed, BASE + 10 * 60_000), true);
 });
 
 test('ready maintenance gate always dispatches gap repair but marks historical backfill only when due', async () => {
@@ -123,19 +127,30 @@ test('ready maintenance gate dispatches the consolidated run invocation', async 
   assert.equal(sent[0].delaySeconds, 0);
 });
 
-test('maintenance run executes only after the collector gate invocation', async () => {
+test('sync maintenance drains completed payloads before the scheduled sync work', async () => {
   let scheduled = null;
-  const result = await processMinuteMaintenanceSync({}, {
+  const events = [];
+  const result = await processMinuteMaintenanceSync({
+    MINUTE_FACT_PAYLOAD_CLEANUP_LIMIT: 2500,
+  }, {
     ...gateBody('sync'),
     stage: 'maintenance-run',
   }, {
+    clearCompletedPayloads: async (_env, options) => {
+      events.push('cleanup');
+      assert.deepEqual(options, { now: BASE, limit: 2500 });
+      return { cleared: 2500 };
+    },
     runScheduled: async (controller, _env, dependencies) => {
+      events.push('sync');
       scheduled = { controller, dependencies };
       return { event: 'sync-complete' };
     },
   });
+  assert.deepEqual(events, ['cleanup', 'sync']);
   assert.equal(result.pending, false);
   assert.equal(result.stage, 'maintenance-run');
+  assert.deepEqual(result.payload_cleanup, { cleared: 2500 });
   assert.equal(scheduled.controller.scheduledTime, BASE);
   assert.equal(scheduled.dependencies.collectorReady, true);
 });

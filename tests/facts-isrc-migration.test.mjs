@@ -55,6 +55,11 @@ test('live facts verification requires the ISRC dictionary and latest stats view
   assert.match(verifier, /pragma_table_info\('sh_track_metadata'\)/);
   assert.match(verifier, /pragma_table_info\('sh_track_dictionary'\)/);
   assert.match(verifier, /pragma_table_info\('sh_track_stats_by_isrc'\)/);
+  assert.match(verifier, /WITH latest_live AS/);
+  assert.match(
+    verifier,
+    /FROM sh_minute_facts INDEXED BY idx_sh_minute_facts_live_minute[\s\S]*WHERE source_code=1[\s\S]*ORDER BY minute_at DESC,id DESC/,
+  );
   for (const field of [
     'sh_tracks_isrc_present',
     'sh_track_metadata_isrc_present',

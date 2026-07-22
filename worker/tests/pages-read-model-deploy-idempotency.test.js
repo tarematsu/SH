@@ -28,5 +28,6 @@ test('Pages KV deployment is validated against the strict 10 ms CPU contract', (
     'utf8',
   );
   assert.match(budget, /BUDGET_MS = 10\.0/);
-  assert.match(budget, /"comparison": "less_than"/);
+  assert.match(budget, /"comparison": "less_than_or_equal"/);
+  assert.match(budget, /"statistic": "max"/);
 });

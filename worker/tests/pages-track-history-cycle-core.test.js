@@ -5,7 +5,6 @@ import {
   createTrackHistoryCycleStage,
   runTrackHistoryCycleStep,
   splitTrackHistoryRange,
-  TRACK_HISTORY_CYCLE_MS,
   TRACK_HISTORY_STAGE_KEY,
 } from '../src/pages-track-history-cycle.js';
 
@@ -71,7 +70,7 @@ test('monthly full reconciliation and bounded backfill fit inside the first cycl
   assert.equal(stage.refresh_mode, 'full');
   assert.equal(stage.tasks.filter(({ kind }) => kind === 'recent').length, 36);
   assert.equal(stage.tasks.filter(({ kind }) => kind === 'backfill').length, 1);
-  assert.equal(stage.tasks.length + 1 <= 57, true, '37 shards plus one publication must fit');
+  assert.equal(stage.tasks.length + 1 <= 57, true, '37 shards plus publication dispatch must fit');
 });
 
 test('same-month stage refreshes two recent days when backfill is complete', () => {
@@ -86,85 +85,28 @@ test('same-month stage refreshes two recent days when backfill is complete', () 
   assert.equal(stage.tasks.every(({ kind }) => kind === 'recent'), true);
 });
 
-test('unfinished stage is adopted by the next cycle and publishes once', async () => {
+test('cycle core processes shards and leaves publication to the publication pipeline', async () => {
   const memory = memoryDependencies(incrementalState());
   const env = { BUDDIES_DB: {}, MINUTE_DB: {} };
   const refreshed = [];
-  const published = [];
   const dependencies = {
     ...memory,
     refreshDay: async (_sourceDb, _targetDb, range) => {
       refreshed.push(range);
       return shardResult(range);
     },
-    coverage: async () => ({
-      earliest_date: '2025-11-27',
-      latest_date: '2026-01-01',
-      recent_row_count: 99,
-    }),
-    publish: async (_env, now) => {
-      published.push(now);
-      return {
-        responses: [{ key: 'track-history', ok: true }],
-        succeeded: 1,
-        failed: 0,
-      };
-    },
   };
 
   const first = await runTrackHistoryCycleStep(env, BASE + MINUTE_MS, dependencies);
-  assert.equal(first.task.generation, BASE);
   assert.equal(first.completed, 1);
   const second = await runTrackHistoryCycleStep(env, BASE + 2 * MINUTE_MS, dependencies);
   assert.equal(second.completed, 2);
+  const ready = await runTrackHistoryCycleStep(env, BASE + 3 * MINUTE_MS, dependencies);
 
-  const nextCycle = BASE + TRACK_HISTORY_CYCLE_MS;
-  const publication = await runTrackHistoryCycleStep(env, nextCycle + MINUTE_MS, dependencies);
-  assert.equal(publication.task.kind, 'track-history-publish');
-  assert.equal(publication.task.generation, nextCycle);
-  assert.equal(publication.failed, 0);
-  assert.equal(published.length, 1);
+  assert.equal(ready.skipped, true);
+  assert.equal(ready.reason, 'track-history-shards-complete');
+  assert.equal(ready.task.kind, 'track-history-publish-ready');
   assert.equal(refreshed.length, 2);
-  assert.equal(memory.state.get(TRACK_HISTORY_STAGE_KEY).published, true);
-  assert.equal(memory.state.get(TRACK_HISTORY_STAGE_KEY).generation, nextCycle);
-  assert.equal(memory.state.get(STATUS_KEY).row_count, 99);
-  assert.equal(memory.state.get(BACKFILL_KEY).completed, true);
-
-  const sameCycle = await runTrackHistoryCycleStep(env, nextCycle + 2 * MINUTE_MS, dependencies);
-  assert.equal(sameCycle.skipped, true);
-  assert.equal(sameCycle.reason, 'track-history-cycle-already-published');
-});
-
-test('failed publication retries without repeating completed shards', async () => {
-  const memory = memoryDependencies(incrementalState());
-  const env = { BUDDIES_DB: {}, MINUTE_DB: {} };
-  let refreshCalls = 0;
-  let publishCalls = 0;
-  const dependencies = {
-    ...memory,
-    refreshDay: async (_sourceDb, _targetDb, range) => {
-      refreshCalls += 1;
-      return shardResult(range);
-    },
-    coverage: async () => ({ recent_row_count: 2 }),
-    publish: async () => {
-      publishCalls += 1;
-      return publishCalls === 1
-        ? { responses: [{ key: 'track-history', ok: false, error: 'render failed' }], succeeded: 0, failed: 1 }
-        : { responses: [{ key: 'track-history', ok: true }], succeeded: 1, failed: 0 };
-    },
-  };
-
-  for (let minute = 1; minute <= 2; minute += 1) {
-    await runTrackHistoryCycleStep(env, BASE + minute * MINUTE_MS, dependencies);
-  }
-  const failed = await runTrackHistoryCycleStep(env, BASE + 3 * MINUTE_MS, dependencies);
-  assert.equal(failed.failed, 1);
   assert.equal(memory.state.get(TRACK_HISTORY_STAGE_KEY).published, false);
-
-  const retried = await runTrackHistoryCycleStep(env, BASE + 4 * MINUTE_MS, dependencies);
-  assert.equal(retried.failed, 0);
-  assert.equal(memory.state.get(TRACK_HISTORY_STAGE_KEY).published, true);
-  assert.equal(refreshCalls, 2);
-  assert.equal(publishCalls, 2);
+  assert.equal(memory.state.has(STATUS_KEY), true);
 });

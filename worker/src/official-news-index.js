@@ -43,8 +43,8 @@ export {
   timedFetch,
 } from './official-news-utils.js';
 
-// Official news monitoring + reconciliation now runs on the "other" worker's
-// own cron (see other-entry.js); the buddies worker must not duplicate it.
+// Official news monitoring and reconciliation belong to sh-sakurazaka46jp.
+// The buddies collector and runtime orchestrator must not duplicate this work.
 export default {
   async scheduled(controller, env, ctx) {
     await app.scheduled(controller, env, ctx);

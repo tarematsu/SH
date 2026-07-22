@@ -1,38 +1,32 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import test from 'node:test';
 
 function source(path) {
   return readFileSync(new URL(path, import.meta.url), 'utf8');
 }
 
-test('monitor maintenance caches lazy modules and exposes scheduled work only', () => {
+test('monitor maintenance caches only current rollup and retention modules', () => {
   const entry = source('../src/monitor-maintenance-entry.js');
   assert.match(entry, /cronStaggerModulePromise \|\|=/);
   assert.match(entry, /rollupModulePromise \|\|=/);
   assert.match(entry, /retentionModulePromise \|\|=/);
   assert.match(entry, /const EMPTY_DEPENDENCIES = Object\.freeze/);
   assert.match(entry, /export default \{\s*scheduled:/s);
-  assert.doesNotMatch(entry, /fetch\s*\(/);
+  assert.doesNotMatch(entry, /buddy|hostMonitor|fetch\s*\(/i);
 });
 
-test('other monitor avoids Date allocation and caches task modules', () => {
-  const config = source('../wrangler.runtime.jsonc');
-  const entry = source('../src/other-monitor-entry.js');
-  assert.match(config, /"max_batch_size"\s*:\s*1\b/g);
-  assert.match(entry, /Math\.floor\(now \/ MINUTE_MS\) % 60/);
-  assert.doesNotMatch(entry, /new Date\(now\)/);
-  assert.match(entry, /buddyPipelineModulePromise \|\|=/);
-  assert.match(entry, /hostMonitorModulePromise \|\|=/);
-  assert.match(entry, /buddyQueueModulePromise \|\|=/);
-  assert.match(entry, /hostQueueModulePromise \|\|=/);
-  assert.match(entry, /predictionModulePromise \|\|=/);
-  assert.match(entry, /const JSON_QUEUE_SEND_OPTIONS = Object\.freeze/);
-  assert.match(entry, /const message = messages\[0\]/);
-  assert.doesNotMatch(entry, /for \(const message of batch/);
+test('runtime stream prediction is a single lazy scheduled dependency', () => {
+  const dispatch = source('../src/runtime-stream-prediction-dispatch.js');
+  assert.match(dispatch, /predictionModulePromise \|\|=/);
+  assert.match(dispatch, /runStreamGoalPrediction/);
+  assert.match(dispatch, /streamPredictionDue/);
+  assert.doesNotMatch(dispatch, /buddy|host|officialNews|Queue/i);
+  assert.equal(existsSync(new URL('../src/other-monitor-entry.js', import.meta.url)), false);
+  assert.equal(existsSync(new URL('../src/runtime-other-monitor-dispatch.js', import.meta.url)), false);
 });
 
-test('runtime orchestration is split by scheduled, Queue, and env responsibilities', () => {
+test('runtime orchestration is split by scheduled, Queue, and environment responsibilities', () => {
   const config = source('../wrangler.runtime.jsonc');
   assert.match(config, /"main"\s*:\s*"src\/runtime-orchestrator-entry\.js"/);
 
@@ -42,14 +36,21 @@ test('runtime orchestration is split by scheduled, Queue, and env responsibiliti
   assert.doesNotMatch(entry, /for \(const message of messages\)/);
 
   const scheduled = source('../src/runtime-scheduled.js');
-  assert.match(scheduled, /rawCollectorModulePromise \|\|=/);
-  assert.match(scheduled, /minuteMaintenanceModulePromise \|\|=/);
-  assert.match(scheduled, /otherMonitorModulePromise \|\|=/);
+  assert.match(scheduled, /runtimeScheduledMessagesFor/);
+  assert.match(scheduled, /HOST_MONITOR_QUEUE/);
+  assert.match(scheduled, /sendBatch/);
+  assert.match(scheduled, /RUNTIME_MINUTE_RECOVERY_MESSAGE/);
+  assert.match(scheduled, /RUNTIME_MINUTE_GATE_MESSAGE/);
+  assert.match(scheduled, /RUNTIME_STREAM_PREDICTION_MESSAGE/);
+  assert.doesNotMatch(scheduled, /buddy|host-monitor-task|other-monitor-select/i);
 
   const queue = source('../src/runtime-queue.js');
   assert.match(queue, /for \(const message of messages\)/);
-  assert.match(queue, /monitorMaintenanceModulePromise \|\|=/);
-  assert.match(queue, /minutePipelineModulePromise \|\|=/);
+  assert.match(queue, /rawCollectionSessionModulePromise \|\|=/);
+  assert.match(queue, /rawCollectionFetchModulePromise \|\|=/);
+  assert.match(queue, /processRuntimeDispatchMessage/);
+  assert.match(queue, /unsupported_runtime_message_discarded/);
+  assert.doesNotMatch(queue, /otherMonitorModulePromise|runOtherMonitorQueue|runtime-other-monitor/);
 
   const env = source('../src/runtime-env.js');
   assert.match(env, /function withDatabaseAlias/);

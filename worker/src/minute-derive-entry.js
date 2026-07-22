@@ -1,4 +1,3 @@
-import { withAppleMusicFreeRuntime } from '../../site/functions/lib/apple-music-d1-pruner.js';
 import { withMinuteD1WriteThrottling } from './minute-d1-write-throttle.js';
 import {
   processMinuteDeriveMessage,
@@ -64,7 +63,7 @@ function scopedDeriveEnv(base, continuation, chunkTracks = null) {
 function deriveEnvironmentSet(env) {
   const cached = activeDeriveEnvs.get(env);
   if (cached) return cached;
-  const base = withMinuteD1WriteThrottling(withAppleMusicFreeRuntime(env));
+  const base = withMinuteD1WriteThrottling(env);
   const rebuildQueue = env?.MINUTE_DERIVE_QUEUE;
   const liveQueue = env?.MINUTE_LIVE_DERIVE_QUEUE || rebuildQueue;
   const configuredChunkTracks = Math.max(

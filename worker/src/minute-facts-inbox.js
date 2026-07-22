@@ -39,6 +39,34 @@ export const REQUEUE_DEAD_MINUTE_FACT_JOBS_SQL = `UPDATE sh_minute_fact_jobs SET
   ) AND status='dead'
   RETURNING id`;
 
+export const COMPLETE_MINUTE_FACT_JOB_SQL = `UPDATE sh_minute_fact_jobs SET
+    status='done',lease_until=NULL,processed_at=?,last_error=NULL,
+    payload_json=CASE WHEN EXISTS (
+      SELECT 1 FROM sh_queue_revisions revisions
+      WHERE revisions.source_job_id=sh_minute_fact_jobs.id
+        AND (revisions.status<>'complete'
+          OR COALESCE(revisions.materialized_item_count,0)
+            <COALESCE(revisions.source_visible_count,revisions.item_count,0))
+    ) THEN payload_json ELSE '{}' END,
+    updated_at=?
+  WHERE id=? AND status='processing'`;
+
+export const CLEAR_COMPLETED_MINUTE_FACT_PAYLOADS_SQL = `UPDATE sh_minute_fact_jobs SET
+    payload_json='{}',updated_at=?
+  WHERE id IN (
+    SELECT jobs.id FROM sh_minute_fact_jobs jobs
+    WHERE jobs.status='done' AND LENGTH(jobs.payload_json)>2
+      AND NOT EXISTS (
+        SELECT 1 FROM sh_queue_revisions revisions
+        WHERE revisions.source_job_id=jobs.id
+          AND (revisions.status<>'complete'
+            OR COALESCE(revisions.materialized_item_count,0)
+              <COALESCE(revisions.source_visible_count,revisions.item_count,0))
+      )
+    ORDER BY COALESCE(jobs.processed_at,jobs.updated_at) ASC,jobs.id ASC LIMIT ?
+  )
+  RETURNING id`;
+
 function integer(value) {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? Math.trunc(parsed) : null;
@@ -68,7 +96,7 @@ export function minuteFactJobPayload(input = {}) {
 
 export async function ensureMinuteFactInboxSchema(env) {
   if (!env?.MINUTE_DB) throw new Error('minute fact inbox DB binding is missing');
-  // Owned by database/facts-migrations/012_minute_runtime_tables.sql.
+  // Owned by database/facts-migrations/013_minute_runtime_tables.sql.
   return false;
 }
 
@@ -165,11 +193,19 @@ export async function releaseMinuteFactJobs(env, jobIds, options = {}) {
 }
 
 export async function completeMinuteFactJob(env, jobId, now = Date.now()) {
-  await env.MINUTE_DB.prepare(`UPDATE sh_minute_fact_jobs SET
-      status='done',lease_until=NULL,processed_at=?,last_error=NULL,updated_at=?
-    WHERE id=? AND status='processing'`)
+  return env.MINUTE_DB.prepare(COMPLETE_MINUTE_FACT_JOB_SQL)
     .bind(now, now, jobId)
     .run();
+}
+
+export async function clearCompletedMinuteFactPayloads(env, options = {}) {
+  await ensureMinuteFactInboxSchema(env);
+  const now = integer(options.now) ?? Date.now();
+  const limit = positiveInteger(options.limit, 1000, 10_000);
+  const result = await env.MINUTE_DB.prepare(CLEAR_COMPLETED_MINUTE_FACT_PAYLOADS_SQL)
+    .bind(now, limit)
+    .all();
+  return { cleared: result.results?.length || 0 };
 }
 
 export async function failMinuteFactJob(env, job, error, options = {}) {

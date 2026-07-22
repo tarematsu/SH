@@ -2,8 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import { onRequest as rootMiddleware } from '../functions/_middleware.js';
-import { onRequest as apiMiddleware } from '../functions/api/_middleware.js';
-import { serveCached as legacyMiddleware } from '../functions/lib/cache-middleware.js';
+import { serveCached as routeCache } from '../functions/lib/cache-middleware.js';
 
 function uncachedEdge() {
   return {
@@ -47,25 +46,16 @@ async function assertConcurrentMissesStayRequestLocal(handler, url) {
   }
 }
 
-test('root Pages cache does not share Response promises across requests', async () => {
+test('root Pages cache keeps Sakurazaka response misses request-local', async () => {
   await assertConcurrentMissesStayRequestLocal(
     rootMiddleware,
-    'https://skrzk.test/api/broadcast-series?id=7',
+    'https://skrzk.test/api/sakurazaka46jp?from=2026-01-01&to=2026-01-02',
   );
 });
 
-test('API middleware leaves cache ownership to the Pages root middleware', async () => {
-  const response = await apiMiddleware({
-    request: new Request('https://skrzk.test/api/broadcast-series?id=7'),
-    env: {},
-    next: async () => Response.json({ ok: true }),
-  });
-  assert.equal(response.headers.get('x-edge-cache'), null);
-});
-
-test('legacy cache helper does not share Response promises across requests', async () => {
+test('route cache helper keeps Sakurazaka misses request-local', async () => {
   await assertConcurrentMissesStayRequestLocal(
-    legacyMiddleware,
-    'https://skrzk.test/api/broadcast-series?id=7',
+    routeCache,
+    'https://skrzk.test/api/sakurazaka46jp?from=2026-01-01&to=2026-01-02',
   );
 });

@@ -149,23 +149,18 @@ function sleep(milliseconds) {
 let last = null;
 for (let attempt = 1; attempt <= attempts; attempt += 1) {
   try {
-    const payload = runQuery(`WITH latest AS (
-        SELECT observed_at,minute_at,source_code
-        FROM sh_minute_facts
-        ORDER BY observed_at DESC,id DESC
-        LIMIT 1
-      ), live AS (
-        SELECT 1 AS present
-        FROM sh_minute_facts
+    const payload = runQuery(`WITH latest_live AS (
+        SELECT observed_at,minute_at
+        FROM sh_minute_facts INDEXED BY idx_sh_minute_facts_live_minute
         WHERE source_code=1
-        ORDER BY id DESC
+        ORDER BY minute_at DESC,id DESC
         LIMIT 1
       )
       SELECT
         COALESCE((SELECT id FROM sh_minute_facts ORDER BY id DESC LIMIT 1),0) AS fact_count,
-        (SELECT observed_at FROM latest) AS last_observed_at,
-        (SELECT minute_at FROM latest) AS last_minute_at,
-        COALESCE((SELECT present FROM live),0) AS live_fact_count,
+        (SELECT observed_at FROM latest_live) AS last_observed_at,
+        (SELECT minute_at FROM latest_live) AS last_minute_at,
+        COALESCE((SELECT 1 FROM latest_live),0) AS live_fact_count,
         (SELECT COUNT(*) FROM pragma_table_info('sh_tracks') WHERE name='isrc') AS sh_tracks_isrc_column_count,
         (SELECT COUNT(*) FROM pragma_table_info('sh_track_metadata') WHERE name='isrc') AS sh_track_metadata_isrc_column_count,
         (SELECT COUNT(*) FROM pragma_table_info('sh_track_dictionary') WHERE name='isrc') AS track_dictionary_isrc_column_count,

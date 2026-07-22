@@ -1,13 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
-import vm from 'node:vm';
 
 import { requestWithParsedJson } from '../site/functions/lib/parsed-request.js';
-import { saveStationSnapshot } from '../site/functions/api/host-ingest.js';
+import { saveStationSnapshot } from '../site/functions/lib/host-ingest.js';
 import {
   OFFICIAL_HEALTH_SQL,
-  OFFICIAL_PROBE_CONTEXT_SQL,
   loadOfficialHealthState,
   loadOfficialProbeContext,
   officialCommentWriteCounts,
@@ -15,10 +12,10 @@ import {
 } from '../worker/src/official-news-index.js';
 
 test('parsed request wrapper reuses one consumed JSON body', async () => {
-  const request = new Request('https://example.test/host-ingest', {
+  const request = new Request('https://worker.internal/host-ingest', {
     method: 'POST',
     headers: { authorization: 'Bearer secret', 'content-type': 'application/json' },
-    body: JSON.stringify({ type: 'legacy', data: { value: 1 } }),
+    body: JSON.stringify({ type: 'fallback', data: { value: 1 } }),
   });
   const body = await request.json();
   const wrapped = requestWithParsedJson(request, body);
@@ -84,8 +81,11 @@ test('official probe context loads worker session and Buddies station from their
         prepares += 1;
         assert.match(sql, /sh_worker_collector_state/);
         return {
+          values: [],
+          bind(...values) { this.values = values; return this; },
           async first() {
             firstCalls += 1;
+            assert.deepEqual(this.values, ['sakurazaka46jp']);
             return { auth_token: 'token', device_uid: 'device' };
           },
         };
@@ -151,47 +151,4 @@ test('official comments serialize each comment once instead of once per announce
   } finally {
     JSON.stringify = originalStringify;
   }
-});
-
-test('history performance layer keeps summary values while using shared formatters', () => {
-  const source = readFileSync(new URL('../site/public/history/history-track-performance.js', import.meta.url), 'utf8');
-  const nodes = new Map();
-  const node = (selector) => {
-    if (!nodes.has(selector)) nodes.set(selector, { textContent: '' });
-    return nodes.get(selector);
-  };
-  const context = {
-    window: {
-      fetch: async () => new Response('{}'),
-      location: { href: 'https://example.test/history/' },
-    },
-    URL,
-    Intl,
-    Date,
-    Number,
-    Math,
-    Set,
-    Map,
-    Response,
-    finiteNumber(value) {
-      if (value == null || value === '') return null;
-      const number = Number(value);
-      return Number.isFinite(number) ? number : null;
-    },
-    $: node,
-    formatDate() {},
-    displayCell() {},
-    updateSummary() {},
-  };
-  vm.runInNewContext(source, context);
-
-  context.updateSummary([
-    { listener_avg: 10, stream_growth: 20, member_growth: 2 },
-    { listener_avg: 20, stream_growth: 40, member_growth: 4 },
-  ], 'daily');
-  assert.equal(node('#periods').textContent, '2');
-  assert.equal(node('#maxListener').textContent, '15');
-  assert.equal(node('#streamGrowth').textContent, '30');
-  assert.equal(node('#memberGrowth').textContent, '3');
-  assert.equal(context.formatDate('2026-07-02'), '2026/07/02');
 });

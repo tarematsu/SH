@@ -11,6 +11,9 @@ on:
       - "database/facts-db.json"
       - ".github/workflows/cloudflare-pr-diagnostics.yml"
       - ".github/scripts/cloudflare-build-diagnostics.mjs"
+      - ".github/scripts/analyze-worker-observability.py"
+      - ".github/scripts/enforce-worker-cpu-budget.py"
+      - ".github/scripts/fetch-r2-worker-logs.py"
 
 permissions:
   contents: read
@@ -61,7 +64,7 @@ jobs:
           fi
           echo "topology_rename=$topology_rename" >> "$GITHUB_OUTPUT"
           facts_schema=false
-          if grep -Eq '^(database/facts-migrations/|database/facts-db\.json$|worker/scripts/provision-facts-db\.mjs$)' changed-files.txt; then
+          if grep -Eq '^(database/facts-migrations/|database/facts-db\.json$|worker/scripts/provision-facts-db\.mjs$|worker/scripts/purge-completed-minute-fact-payloads\.mjs$)' changed-files.txt; then
             facts_schema=true
           fi
           echo "facts_schema=$facts_schema" >> "$GITHUB_OUTPUT"
@@ -85,6 +88,9 @@ jobs:
       CLOUDFLARE_ACCOUNT_ID: "0500f25c2f74e7e76c94a8bcb6c7008b"
       CLOUDFLARE_API_TOKEN: ${{ secrets['CLOUDFLARE_BUILDS_API_TOKEN'] || secrets['CLOUDFLARE_API_TOKEN'] || secrets['CF_API_TOKEN'] }}
       DEPLOY_COMMANDS: ${{ needs.select-workers.outputs.commands }}
+      FACTS_DATABASE_NAME: stationhead-minute
+      MINUTE_FACT_PAYLOAD_PURGE_BATCH_SIZE: '1000'
+      MINUTE_FACT_PAYLOAD_PURGE_MAX_BATCHES: '10000'
     steps:
       - uses: actions/checkout@v4
         with:
@@ -100,6 +106,10 @@ jobs:
         if: needs.select-workers.outputs.facts_schema == 'true'
         working-directory: worker
         run: node scripts/apply-facts-pr-schema.mjs
+      - name: Purge completed minute fact payloads now
+        if: needs.select-workers.outputs.facts_schema == 'true'
+        working-directory: worker
+        run: node scripts/purge-completed-minute-fact-payloads.mjs
       - name: Ensure split pipeline queues exist
         shell: bash
         working-directory: worker
@@ -116,8 +126,8 @@ jobs:
             stationhead-minute-live-derive stationhead-minute-live-derive-dlq \
             stationhead-minute-enrichment stationhead-minute-enrichment-dlq \
             stationhead-minute-rebuild stationhead-minute-rebuild-dlq \
-            stationhead-buddy-playback stationhead-buddy-playback-dlq \
             stationhead-host-monitor stationhead-host-monitor-dlq \
+            stationhead-sakurazaka46jp stationhead-sakurazaka46jp-dlq \
             stationhead-pages-read-model-publication stationhead-pages-read-model-publication-dlq
           do
             npx wrangler queues create "$queue" >/dev/null 2>&1 || true
@@ -127,10 +137,21 @@ jobs:
         working-directory: worker
         run: |
           set -euo pipefail
-          while IFS= read -r command; do
-            echo "Deploying $command"
-            npm run "$command"
-          done < <(jq -r '.[]' <<<"$DEPLOY_COMMANDS")
+          mkdir -p .cloudflare-pr-deploy
+          {
+            while IFS= read -r command; do
+              echo "Deploying $command"
+              npm run "$command"
+            done < <(jq -r '.[]' <<<"$DEPLOY_COMMANDS")
+          } 2>&1 | tee .cloudflare-pr-deploy/deploy.log
+      - name: Upload direct deploy log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cloudflare-pr-deploy-${{ github.event.pull_request.head.sha }}
+          path: worker/.cloudflare-pr-deploy/
+          if-no-files-found: warn
+          retention-days: 14
 
   diagnose:
     name: Diagnose ${{ matrix.worker }}

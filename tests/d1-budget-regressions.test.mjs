@@ -86,7 +86,7 @@ test('live verification uses primary-key probes and keeps revision analytics opt
   assert.doesNotMatch(text, /COUNT\(\*\) AS fact_count,\s+MAX\(observed_at\)/);
 });
 
-test('D1 budget indexes stay selective', () => {
+test('D1 budget indexes stay selective and refresh planner statistics', () => {
   const buddies = source('../database/buddies-migrations/007_d1_budget_indexes.sql');
   const facts = source('../database/facts-migrations/019_d1_budget_indexes.sql');
   assert.match(buddies, /sh_channel_snapshots\(observed_at, id\)/);
@@ -94,6 +94,11 @@ test('D1 budget indexes stay selective', () => {
   assert.match(buddies, /sh_queue_snapshots\(station_id, observed_at DESC, id DESC\)/);
   assert.match(facts, /WHERE reported_current_stream_count IS NOT NULL/);
   assert.match(facts, /WHERE source_code=1/);
+  assert.match(facts, /sh_minute_facts\(source_code, channel_id, minute_at DESC, id DESC\)/);
+  assert.match(facts, /COALESCE\(processed_at,updated_at\), id/);
+  assert.match(facts, /WHERE status='done' AND LENGTH\(payload_json\)>2/);
+  assert.match(facts, /ANALYZE sh_minute_facts/);
+  assert.match(facts, /ANALYZE sh_minute_fact_jobs/);
   assert.match(facts, /sh_broadcast_sessions\(channel_id, broadcast_start_time/);
   assert.match(facts, /sh_tracks\(stationhead_track_id\)/);
   assert.match(facts, /WHERE stationhead_track_id IS NOT NULL/);

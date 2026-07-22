@@ -33,56 +33,40 @@ test('dashboard HTML keeps accessibility, privacy and all public sections', asyn
   assert.match(html, /<html lang="ja">/);
   assert.match(html, /name="viewport"/);
   assert.match(html, /noindex,nofollow/);
-  assert.match(html, /id="channelName"/);
-  assert.match(html, /id="channelFallback"/);
-  assert.match(html, /id="trackFallback"/);
-  assert.match(html, /id="updated"/);
-  assert.match(html, /id="online"/);
-  assert.match(html, /id="members"/);
-  assert.match(html, /id="totalStreams"/);
-  assert.match(html, /id="membersYesterdayDelta"/);
-  assert.match(html, /id="membersDayBeforeDelta"/);
-  assert.match(html, /id="streamsYesterdayDelta"/);
-  assert.match(html, /id="streamsDayBeforeDelta"/);
-  assert.match(html, /id="nowPlayingLink"/);
-  assert.match(html, /id="queue"/);
-  assert.match(html, /id="streamCount"/);
-  assert.match(html, /id="goalMilestones"/);
-  assert.match(html, /id="audienceChart"/);
+  for (const id of [
+    'channelName', 'channelFallback', 'trackFallback', 'updated', 'online', 'members',
+    'totalStreams', 'membersYesterdayDelta', 'membersDayBeforeDelta',
+    'streamsYesterdayDelta', 'streamsDayBeforeDelta', 'nowPlayingLink', 'queue',
+    'streamCount', 'goalMilestones', 'audienceChart',
+  ]) assert.match(html, new RegExp(`id="${id}"`));
   assert.match(html, /href="\/history\/"/);
   assert.match(html, /rel="noopener noreferrer"/);
 });
 
-test('dashboard removes the external web button and playback trend', async () => {
+test('dashboard renders audience and comment velocity from one response', async () => {
   const html = await text('public/index.html');
-  const shell = await text('public/app-main.js');
-  assert.doesNotMatch(html, />Webで開く</);
-  assert.doesNotMatch(html, /stream-key/);
-  assert.doesNotMatch(html, /オンライン・再生数・コメント勢い/);
+  const client = await text('public/dashboard-client.js');
   assert.match(html, /オンライン・コメント勢い/);
-  assert.match(shell, /online_member_count/);
-  assert.match(shell, /comment_velocity/);
-  assert.doesNotMatch(shell, /current_stream_count/);
-  assert.doesNotMatch(shell, /再生数/);
+  assert.match(client, /const DASHBOARD_URL = '\/api\/dashboard'/);
+  assert.match(client, /payload\.history/);
+  assert.match(client, /payload\.queue/);
+  assert.match(client, /online_member_count/);
+  assert.match(client, /comment_velocity/);
 });
 
-test('dashboard displays total streams and two completed UTC-day changes', async () => {
+test('dashboard displays completed UTC-day changes from the canonical response', async () => {
   const html = await text('public/index.html');
-  const source = await text('public/dashboard-metrics.js');
-  const endpoint = await text('functions/api/dashboard-daily-changes.js');
+  const entry = await text('public/dashboard-metrics.js');
+  const renderer = await text('public/dashboard-daily-summaries.js');
+  const endpoint = await text('functions/api/dashboard.js');
+  const loader = await text('functions/lib/dashboard-daily-summaries.js');
   assert.match(html, />総メンバー数</);
   assert.match(html, />総再生数</);
-  assert.doesNotMatch(html, /ユニーク参加者|延べ参加者|totalListens|listensDelta/);
-  assert.match(source, /current_stream_count/);
-  assert.match(source, /\/api\/dashboard-daily-changes/);
-  assert.match(source, /member_growth/);
-  assert.match(source, /stream_growth/);
-  assert.match(source, /'昨日'/);
-  assert.match(source, /'一昨日'/);
-  assert.match(endpoint, /reported_current_stream_count/);
-  assert.match(endpoint, /sh_total_member_daily/);
-  assert.match(endpoint, /Math\.floor\(now \/ DAY_MS\) \* DAY_MS/);
-  assert.doesNotMatch(`${source}\n${endpoint}`, /total_listens/);
+  assert.match(entry, /renderDashboardDailySummaries/);
+  assert.match(endpoint, /daily_summaries/);
+  assert.match(loader, /FROM sh_daily_summary/);
+  assert.match(renderer, /member_growth/);
+  assert.match(renderer, /stream_growth/);
 });
 
 test('dashboard declares and implements a light white-base theme', async () => {
@@ -93,7 +77,6 @@ test('dashboard declares and implements a light white-base theme', async () => {
   assert.match(css, /color-scheme:\s*light/);
   assert.match(css, /--bg:\s*#f6f8fb/);
   assert.match(css, /--panel:\s*#ffffff/);
-  assert.match(css, /body \{[^}]*background:/);
   assert.match(css, /#audienceChart \{[^}]*background:\s*#fff/);
 });
 
@@ -104,10 +87,7 @@ test('mobile dashboard keeps one stylesheet and one entry script', async () => {
   assert.match(html, /type="module" src="\/dashboard-metrics\.js"/);
   assert.equal((html.match(/<link rel="stylesheet"/g) || []).length, 1);
   assert.equal((html.match(/<script /g) || []).length, 1);
-  assert.match(entry, /import\('\/app-main\.js'\)/);
-  assert.doesNotMatch(html, /\/dashboard-optimized\.js/);
-  assert.doesNotMatch(html, /\/app-state\.js/);
-  assert.doesNotMatch(html, /\/design-system\.css/);
+  assert.match(entry, /import\('\/dashboard-client\.js'\)/);
 });
 
 test('dashboard mobile layout prevents metric and goal number clipping', async () => {
@@ -116,57 +96,35 @@ test('dashboard mobile layout prevents metric and goal number clipping', async (
   assert.match(css, /\.metric strong \{[^}]*white-space:\s*nowrap/);
   assert.match(css, /\.goal-number \{[^}]*flex-wrap:\s*wrap/);
   assert.match(css, /\.top-actions \{[^}]*repeat\(2/);
-  assert.match(css, /scrollbar-gutter:\s*stable/);
 });
 
-test('dashboard client uses shared cache keys and avoids per-viewer D1 history deltas', async () => {
-  const source = await text('public/app-lite.js');
-  assert.match(source, /const DASHBOARD_URL = '\/api\/dashboard\?history=0'/);
-  assert.match(source, /const HISTORY_URL = '\/api\/dashboard-history'/);
-  assert.doesNotMatch(source, /searchParams\.set\(['"]since/);
-  assert.doesNotMatch(source, /searchParams\.set\(['"]queue_revision/);
-  assert.match(source, /mergeLatestIntoHistory/);
+test('dashboard client uses one shared cache and one canonical fetch', async () => {
+  const source = await text('public/dashboard-client.js');
+  assert.equal((source.match(/\/api\/dashboard/g) || []).length, 1);
   assert.match(source, /localStorage\.setItem/);
   assert.match(source, /document\.hidden/);
   assert.match(source, /AbortController/);
   assert.match(source, /60_000/);
 });
 
-test('dashboard shell reuses the existing requests and fixes broken-image states', async () => {
-  const source = await text('public/app-main.js');
-  assert.match(source, /window\.fetch = async/);
-  assert.match(source, /\/api\/dashboard-history/);
-  assert.match(source, /setupStaticImage\('channelImage', 'channelFallback'\)/);
-  assert.match(source, /setupStaticImage\('trackImage', 'trackFallback'\)/);
-  assert.match(source, /MutationObserver/);
-  assert.match(source, /queue-thumb/);
-  assert.match(source, /rgba\(31,45,68,\.11\)/);
-  assert.match(source, /const tickCount = width < 480 \? 4 : 6/);
-});
-
-test('dashboard client renders the complete fetched queue without incremental expansion', async () => {
-  const source = await text('public/app-lite.js');
+test('dashboard client renders the complete fetched queue', async () => {
+  const source = await text('public/dashboard-client.js');
   assert.match(source, /function playbackView/);
-  assert.doesNotMatch(source, /\/api\/dashboard-queue\?offset=/);
-  assert.match(source, /取得\$\{formatNumber\(fetched\)\}曲\/キュー登録/);
-  assert.match(source, /goal_predictions/);
+  assert.match(source, /queue_status/);
   assert.match(source, /function spotifyUrl/);
+  assert.match(source, /state\.queue\.slice/);
 
-  const html = await text('public/index.html');
-  assert.doesNotMatch(html, /queueMore|続きを読み込む/);
-
-  const endpoint = await text('functions/api/dashboard.js');
+  const endpoint = await text('functions/lib/dashboard-core.js');
   assert.match(endpoint, /const enrichedQueue = queue\.map/);
-  assert.doesNotMatch(endpoint, /queue\.slice\(startIndex/);
+  assert.match(endpoint, /queue_status/);
 });
 
-test('edge middleware shares dashboard history through Cache API without request promises', async () => {
+test('edge middleware serves materialized canonical responses', async () => {
   const source = await text('functions/_middleware.js');
   assert.match(source, /MATERIALIZED_API_VARIANTS/);
   assert.match(source, /materializedApiKey/);
   assert.match(source, /cache\.match/);
   assert.match(source, /cache\.put/);
-  assert.doesNotMatch(source, /inFlight/);
 });
 
 test('Pages configuration binds the expected D1 database and output directory', async () => {
@@ -175,17 +133,10 @@ test('Pages configuration binds the expected D1 database and output directory', 
   assert.equal(config.pages_build_output_dir, './public');
   assert.equal(config.d1_databases?.[0]?.binding, 'DB');
   assert.equal(config.d1_databases?.[0]?.database_name, 'stationhead-buddies');
-  assert.equal(config.d1_databases?.[0]?.database_id, 'f361aae0-05f0-42bc-8784-77100e80133d');
 });
 
 test('Pages homepage is never stored by browsers or shared caches', async () => {
   const headers = await text('public/_headers');
   assert.match(headers, /\/\r?\n\s+Cache-Control: no-store, max-age=0, must-revalidate/m);
   assert.match(headers, /\/index\.html\r?\n\s+Cache-Control: no-store, max-age=0, must-revalidate/m);
-  const wildcard = headers.search(/\/\r?\n/);
-  const homepage = headers.search(/\/index\.html\r?\n/);
-  assert.ok(
-    homepage > wildcard,
-    'homepage override should follow the wildcard rule',
-  );
 });

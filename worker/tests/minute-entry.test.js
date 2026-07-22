@@ -131,7 +131,9 @@ test('runtime owns minute dispatch and maintenance without comment work', async 
   assert.match(runtimeSource, /dispatchMinuteMaintenanceGate/);
   assert.deepEqual(config.d1_databases.map(({ binding }) => binding), ['BUDDIES_DB', 'MINUTE_DB', 'OTHER_DB']);
   assert.equal(config.vars.MINUTE_FACT_AUTO_REQUEUE_DEAD, true);
-  assert.equal(config.vars.DERIVE_DISPATCH_LIMIT, 10);
+  assert.equal(config.vars.DERIVE_DISPATCH_LIMIT, 2);
+  assert.equal(config.vars.DERIVE_REVISION_RECOVERY_LIMIT, 1);
+  assert.equal(config.vars.REBUILD_HISTORICAL_BACKFILL_INTERVAL_MS, 3_600_000);
   assert.equal(config.vars.REBUILD_RECENT_GUARD_MS, 300_000);
 
   assert.deepEqual(await runMinuteScheduled({ cron: '* * * * *' }, {}, {}), {

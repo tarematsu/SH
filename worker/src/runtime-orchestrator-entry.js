@@ -10,7 +10,4 @@ export * from './runtime-scheduled.js';
 export default {
   scheduled: runRuntimeScheduled,
   queue: runRuntimeQueue,
-  async fetch(request, env, ctx) {
-    return (await import('./other-monitor-entry.js')).default.fetch(request, env, ctx);
-  },
 };

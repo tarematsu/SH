@@ -1,110 +1,25 @@
-const DASHBOARD_CACHE_KEY = 'sh.dashboard-lite.v1';
-const DAILY_REFRESH_MS = 5 * 60_000;
-const integer = new Intl.NumberFormat('ja-JP');
+import { renderDashboardDailySummaries } from './dashboard-daily-summaries.js';
+
+const DASHBOARD_CACHE_KEY = 'sh.dashboard.v3';
 const nativeFetch = window.fetch.bind(window);
-let loadedUtcDay = '';
 
-const byId = (id) => document.getElementById(id);
-const finite = (value) => {
-  if (value === null || value === undefined || value === '') return null;
-  const number = Number(value);
-  return Number.isFinite(number) ? number : null;
-};
-
-function setText(id, value) {
-  const node = byId(id);
-  if (node && node.textContent !== String(value)) node.textContent = String(value);
+function requestUrl(input) {
+  if (typeof input === 'string' || input instanceof URL) return String(input);
+  return input?.url || '';
 }
 
-function formatNumber(value) {
-  const number = finite(value);
-  return number == null ? '—' : integer.format(number);
-}
-
-function formatPeriodLabel(periodKey, fallback) {
-  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(periodKey || ''));
-  if (!match) return fallback;
-  return `${Number(match[2])}月${Number(match[3])}日`;
-}
-
-function renderBites(payload) {
-  const node = byId('trackBites');
-  if (!node) return;
-  const queue = Array.isArray(payload?.queue) ? payload.queue : [];
-  const statusIndex = Number(payload?.queue_status?.current_index);
-  const current = queue.find((track) => track?.is_current)
-    || (Number.isInteger(statusIndex) && statusIndex >= 0 ? queue[statusIndex] : null);
-  const count = finite(current?.bite_count);
-  if (count == null) {
-    node.hidden = true;
-    node.textContent = '';
-    return;
-  }
-  node.textContent = `♡ ${integer.format(count)}`;
-  node.hidden = false;
-}
-
-function renderLatest(payload) {
-  const latest = payload?.latest || {};
-  setText('totalStreams', formatNumber(latest.current_stream_count ?? latest.total_stream_count));
-  renderBites(payload);
-}
-
-function renderDelta(id, label, value) {
-  const node = byId(id);
-  if (!node) return;
-  const number = finite(value);
-  node.className = 'delta';
-  if (number == null) {
-    node.textContent = `${label} —`;
-  } else {
-    const sign = number < 0 ? '−' : '+';
-    node.textContent = `${label} ${sign}${integer.format(Math.abs(number))}`;
-    if (number > 0) node.classList.add('positive');
-    if (number < 0) node.classList.add('negative');
-  }
-  node.hidden = false;
-}
-
-function renderDailyChanges(data) {
-  const yesterdayLabel = formatPeriodLabel(data?.yesterday?.period_key, '昨日');
-  const dayBeforeLabel = formatPeriodLabel(data?.day_before_yesterday?.period_key, '一昨日');
-  renderDelta('membersYesterdayDelta', yesterdayLabel, data?.yesterday?.member_growth);
-  renderDelta('membersDayBeforeDelta', dayBeforeLabel, data?.day_before_yesterday?.member_growth);
-  renderDelta('streamsYesterdayDelta', yesterdayLabel, data?.yesterday?.stream_growth);
-  renderDelta('streamsDayBeforeDelta', dayBeforeLabel, data?.day_before_yesterday?.stream_growth);
-}
-
-async function loadDailyChanges() {
-  const utcDay = new Date().toISOString().slice(0, 10);
-  if (utcDay === loadedUtcDay) return;
-  try {
-    const response = await nativeFetch(`/api/dashboard-daily-changes?day=${encodeURIComponent(utcDay)}`, {
-      headers: { accept: 'application/json' },
-    });
-    const data = await response.json();
-    if (!response.ok || !data?.ok) throw new Error(data?.error || `daily changes API ${response.status}`);
-    renderDailyChanges(data);
-    loadedUtcDay = utcDay;
-  } catch (error) {
-    console.error('dashboard UTC daily metrics failed to load', error);
-    renderDailyChanges(null);
-  }
+function renderPayload(payload) {
+  if (payload?.ok) renderDashboardDailySummaries(payload.daily_summaries);
 }
 
 function restoreDashboardCache() {
   try {
     const cached = JSON.parse(localStorage.getItem(DASHBOARD_CACHE_KEY) || 'null');
-    if (!cached || Date.now() - Number(cached.savedAt || 0) > 6 * 60 * 60 * 1000) return;
-    if (cached.payload?.ok) renderLatest(cached.payload);
+    if (!cached || Date.now() - Number(cached.savedAt || 0) > 6 * 60 * 60_000) return;
+    renderPayload(cached.payload);
   } catch {
-    // The live dashboard request will populate the metric when storage is unavailable.
+    localStorage.removeItem(DASHBOARD_CACHE_KEY);
   }
-}
-
-function requestUrl(input) {
-  if (typeof input === 'string' || input instanceof URL) return String(input);
-  return input?.url || '';
 }
 
 async function captureDashboard(input, response) {
@@ -112,10 +27,9 @@ async function captureDashboard(input, response) {
   const url = requestUrl(input);
   if (!url || new URL(url, location.href).pathname !== '/api/dashboard') return;
   try {
-    const payload = await response.clone().json();
-    if (payload?.ok) renderLatest(payload);
+    renderPayload(await response.clone().json());
   } catch {
-    // The primary dashboard client owns request error reporting.
+    // The dashboard client owns request error reporting.
   }
 }
 
@@ -126,16 +40,9 @@ window.fetch = async (input, init) => {
 };
 
 restoreDashboardCache();
-void loadDailyChanges();
-setInterval(() => {
-  if (!document.hidden) void loadDailyChanges();
-}, DAILY_REFRESH_MS);
-document.addEventListener('visibilitychange', () => {
-  if (!document.hidden) void loadDailyChanges();
-});
-void import('/app-main.js').catch((error) => {
+void import('/dashboard-client.js').catch((error) => {
   console.error('dashboard client failed to start', error);
-  const status = byId('statusMessage');
+  const status = document.getElementById('statusMessage');
   if (status) {
     status.textContent = '画面の初期化に失敗しました。再読み込みしてください。';
     status.hidden = false;

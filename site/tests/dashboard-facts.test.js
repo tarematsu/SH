@@ -2,8 +2,6 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import { onRequestGet as dashboardGet } from '../functions/api/dashboard.js';
-import { onRequestGet as dashboardHistoryGet } from '../functions/api/dashboard-history.js';
-import { onRequestGet as dashboardRecoveryGet } from '../functions/api/dashboard-recovery.js';
 import {
   FACTS_HISTORY_24H_SQL,
   FACTS_HISTORY_SINCE_SQL,
@@ -12,10 +10,14 @@ import {
   factsAreFresh,
   mergeFactsLatest,
 } from '../functions/lib/dashboard-facts.js';
+import { resetDashboardDailySummariesCache } from '../functions/lib/dashboard-daily-summaries.js';
 import { FakeD1Database, responseJson } from './helpers/fake-d1.js';
 
-test('facts dashboard SQL preserves the main-page response contract', () => {
+const dayText = (value) => new Date(value).toISOString().slice(0, 10);
+
+test('facts dashboard SQL preserves the unified dashboard response contract', () => {
   assert.match(FACTS_LATEST_SQL, /FROM sh_minute_facts AS f/);
+  assert.match(FACTS_LATEST_SQL, /INDEXED BY idx_sh_minute_facts_live_minute/);
   assert.match(FACTS_LATEST_SQL, /reported_total_listens AS total_listens/);
   assert.match(FACTS_LATEST_SQL, /reported_current_stream_count AS current_stream_count/);
   assert.match(FACTS_LATEST_SQL, /LEFT JOIN sh_minute_fact_context/);
@@ -39,7 +41,7 @@ test('facts freshness rejects missing and delayed telemetry', () => {
   assert.equal(factsAreFresh(null, 1_000_000), false);
 });
 
-test('facts telemetry overrides DB metrics while retaining presentation fields', () => {
+test('facts telemetry overrides collector metrics while retaining presentation fields', () => {
   const merged = mergeFactsLatest({
     observed_at: 10,
     channel_name: 'Buddies',
@@ -58,8 +60,10 @@ test('facts telemetry overrides DB metrics while retaining presentation fields',
   assert.equal(merged.online_member_count, 167);
 });
 
-test('main dashboard prefers fresh MINUTE_DB metrics and history over conflicting DB values', async () => {
+test('unified dashboard includes facts, history and completed daily summaries', async () => {
+  resetDashboardDailySummariesCache();
   const now = Date.now();
+  const currentDay = Math.floor(now / 86_400_000) * 86_400_000;
   const db = new FakeD1Database()
     .route('first', 'FROM sh_channel_snapshots AS snapshots ORDER BY', {
       id: 1,
@@ -77,7 +81,7 @@ test('main dashboard prefers fresh MINUTE_DB metrics and history over conflictin
     })
     .route('all', 'WITH latest_station AS', { results: [] });
   const facts = new FakeD1Database()
-    .route('first', 'FROM sh_minute_facts AS f\nLEFT JOIN sh_minute_fact_context', {
+    .route('first', 'FROM sh_minute_facts AS f INDEXED BY idx_sh_minute_facts_live_minute', {
       id: 10,
       observed_at: now - 2_000,
       channel_id: 318,
@@ -110,10 +114,16 @@ test('main dashboard prefers fresh MINUTE_DB metrics and history over conflictin
       observed_at: now - 86_400_000,
       total_listens: 790_000,
     });
+  const other = new FakeD1Database().route('all', 'FROM sh_daily_summary', {
+    results: [
+      { period_key: dayText(currentDay - 2 * 86_400_000), member_growth: 7, stream_growth: 40 },
+      { period_key: dayText(currentDay - 86_400_000), member_growth: 11, stream_growth: 55 },
+    ],
+  });
 
   const response = await dashboardGet({
     request: new Request('https://skrzk.test/api/dashboard'),
-    env: { DB: db, MINUTE_DB: facts },
+    env: { DB: db, MINUTE_DB: facts, OTHER_DB: other },
   });
   const payload = await responseJson(response);
   assert.equal(response.status, 200);
@@ -125,41 +135,9 @@ test('main dashboard prefers fresh MINUTE_DB metrics and history over conflictin
   assert.equal(payload.history[0].online_member_count, 167);
   assert.equal(payload.daily_change.total_member_count, 99);
   assert.equal(payload.daily_change.total_listens, 366);
-  assert.equal(db.callsMatching(/HISTORY_24H_SQL|snapshots\.observed_at >=/).length, 0);
-});
-
-test('dashboard history and recovery select MINUTE_DB when it is bound', async () => {
-  const now = Date.now();
-  const facts = new FakeD1Database()
-    .route('first', 'FROM sh_minute_facts AS f\nLEFT JOIN sh_minute_fact_context', { observed_at: now - 1_000 })
-    .route('all', 'WITH latest_channel AS', { results: [{ observed_at: now - 1_000, online_member_count: 12 }] })
-    .route('all', 'SELECT channel_id,MAX(minute_at)', { results: [{ observed_at: now - 1_000, online_member_count: 12 }] });
-  const forbiddenDb = {
-    prepare() { throw new Error('legacy DB must not be queried'); },
-  };
-  const collectorDb = new FakeD1Database().route('first', 'FROM sh_channel_snapshots', {
-    observed_at: now - 1_000,
-  });
-  const history = await responseJson(await dashboardHistoryGet({ env: { DB: forbiddenDb, MINUTE_DB: facts } }));
-  const recovery = await responseJson(await dashboardRecoveryGet({ env: { DB: collectorDb, MINUTE_DB: facts } }));
-  assert.equal(history.ok, true);
-  assert.equal(history.storage_source, 'facts-db');
-  assert.equal(history.history[0].online_member_count, 12);
-  assert.equal(recovery.ok, true);
-  assert.equal(recovery.storage_source, 'facts-db');
-  assert.equal(recovery.rows[0].online_member_count, 12);
-});
-
-test('dashboard history does not fall back to the private buddies DB', async () => {
-  const facts = new FakeD1Database().route(
-    'all',
-    'WITH latest_channel AS',
-    () => { throw new Error('no such table: sh_minute_facts'); },
-  );
-  const db = new FakeD1Database().route('all', 'FROM sh_channel_snapshots', {
-    results: [{ observed_at: 200, online_member_count: 9 }],
-  });
-  const payload = await responseJson(await dashboardHistoryGet({ env: { DB: db, MINUTE_DB: facts } }));
-  assert.equal(payload.ok, false);
-  assert.equal(db.calls.length, 0);
+  assert.equal(payload.daily_summaries.yesterday.member_growth, 11);
+  assert.equal(payload.daily_summaries.yesterday.stream_growth, 55);
+  assert.equal(payload.daily_summaries.day_before_yesterday.member_growth, 7);
+  assert.equal(other.calls.length, 1);
+  assert.equal(db.callsMatching(/snapshots\.observed_at >=/).length, 0);
 });

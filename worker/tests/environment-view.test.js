@@ -2,7 +2,6 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import { environmentView } from '../../packages/sh-shared/environment-view.mjs';
-import { withAppleMusicFreeD1 } from '../../site/functions/lib/apple-music-d1-pruner.js';
 import { withMinuteD1WriteThrottling } from '../src/minute-d1-write-throttle.js';
 import { sampledSuccessDue } from '../src/sampled-success-log.js';
 
@@ -30,21 +29,6 @@ test('environment views safely shadow non-configurable Cloudflare bindings', () 
   assert.equal(view.marker, 1);
   assert.equal(Object.getPrototypeOf(view), env);
   assert.equal(Object.getOwnPropertyDescriptor(view, 'DB').configurable, true);
-});
-
-test('Apple Music D1 pruning does not violate binding Proxy invariants', () => {
-  const original = database();
-  const env = {};
-  Object.defineProperty(env, 'DB', {
-    value: original,
-    enumerable: true,
-    configurable: false,
-    writable: false,
-  });
-
-  const active = withAppleMusicFreeD1(env);
-  assert.doesNotThrow(() => active.DB.prepare('SELECT apple_music_id'));
-  assert.notEqual(active.DB, original);
 });
 
 test('minute D1 throttling does not Proxy the environment object', () => {

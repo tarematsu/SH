@@ -18,7 +18,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: cloudflare-observability-hourly-${{ github.event.pull_request.number || github.ref }}
+  group: cloudflare-observability-hourly-${{ github.event.pull_request.number || github.ref }}-${{ github.event.pull_request.head.sha || github.sha }}
   cancel-in-progress: true
 
 jobs:
@@ -45,6 +45,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           HEAD_BRANCH: ${{ github.event.pull_request.head.ref }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           BASE_BRANCH: ${{ github.event.pull_request.base.ref }}
         run: |
           set -euo pipefail
@@ -66,14 +67,14 @@ jobs:
               --data-urlencode 'event=pull_request' \
               --data-urlencode 'status=completed' \
               --data-urlencode 'per_page=100')"
-            deployed_at="$(jq -r --arg changed "$runtime_changed_at" \
-              '[.workflow_runs[] | select(.conclusion == "success" and .created_at >= $changed)] | max_by(.updated_at) | .updated_at // empty' \
+            deployed_at="$(jq -r --arg changed "$runtime_changed_at" --arg head "$HEAD_SHA" \
+              '[.workflow_runs[] | select(.conclusion == "success" and .head_sha == $head and .created_at >= $changed)] | max_by(.updated_at) | .updated_at // empty' \
               <<<"$runs")"
             if [[ -n "$deployed_at" ]]; then break; fi
             echo "Waiting for Cloudflare deployment attempt $attempt/20"
             sleep 15
           done
-          test -n "$deployed_at" || { echo 'No successful PR deployment found after runtime changes' >&2; exit 1; }
+          test -n "$deployed_at" || { echo 'No successful PR deployment found for this head SHA' >&2; exit 1; }
           audit_since="$(date -u -d "$deployed_at + 90 seconds" +%Y-%m-%dT%H:%M:%SZ)"
           echo "Runtime changed at $runtime_changed_at"
           echo "Deployment completed at $deployed_at; auditing after propagation grace at $audit_since"

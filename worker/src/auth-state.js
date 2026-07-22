@@ -1,7 +1,6 @@
 import { normalizeBearer, jwtExpiryMs } from './shared.js';
 
 export const DEFAULT_AUTH_STATE_ID = 'stationhead';
-export const BUDDY_AUTH_STATE_ID = 'buddy46';
 
 export const AUTH_CONTROL_SCHEMA_SQL = `CREATE TABLE IF NOT EXISTS sh_worker_auth_control (
   id TEXT PRIMARY KEY,
@@ -36,13 +35,7 @@ function normalizedStateId(stateId = DEFAULT_AUTH_STATE_ID) {
   return String(stateId || DEFAULT_AUTH_STATE_ID).trim().toLowerCase() || DEFAULT_AUTH_STATE_ID;
 }
 
-function fallbackCredentials(env = {}, stateId = DEFAULT_AUTH_STATE_ID) {
-  if (normalizedStateId(stateId) === BUDDY_AUTH_STATE_ID) {
-    return {
-      authToken: env.BUDDY_PLAYBACK_AUTH_TOKEN || env.BUDDY46_AUTH_TOKEN,
-      deviceUid: env.BUDDY_PLAYBACK_DEVICE_UID || env.BUDDY46_DEVICE_UID,
-    };
-  }
+function fallbackCredentials(env = {}) {
   return {
     authToken: env.STATIONHEAD_AUTH_TOKEN || env.SH_AUTH_TOKEN,
     deviceUid: env.STATIONHEAD_DEVICE_UID || env.SH_DEVICE_UID,
@@ -50,10 +43,11 @@ function fallbackCredentials(env = {}, stateId = DEFAULT_AUTH_STATE_ID) {
 }
 
 export function parseAuthState(row, env = {}, stateId = DEFAULT_AUTH_STATE_ID) {
-  const fallback = fallbackCredentials(env, stateId);
+  const fallback = fallbackCredentials(env);
   const authToken = normalizeBearer(row?.auth_token || fallback.authToken);
   const deviceUid = String(row?.device_uid || fallback.deviceUid || '').trim();
   return {
+    id: normalizedStateId(stateId),
     authToken,
     deviceUid,
     tokenExpiresAt: Number(row?.token_expires_at || 0) || jwtExpiryMs(authToken),

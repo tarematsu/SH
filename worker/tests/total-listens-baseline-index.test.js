@@ -37,10 +37,10 @@ function recordingDb() {
   };
 }
 
-test('facts descriptor advances to the total-listens baseline index', () => {
+test('facts descriptor advances beyond the total-listens baseline index', () => {
   assert.equal(
     descriptor.schema,
-    'database/facts-migrations/024_minute_fact_repairs.sql',
+    'database/facts-migrations/028_purge_completed_minute_fact_payloads.sql',
   );
 });
 

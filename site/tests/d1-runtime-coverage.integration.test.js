@@ -13,20 +13,27 @@ import {
 const siteRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const repositoryRoot = path.resolve(siteRoot, '..');
 
-test('known runtime-bootstrapped migration is accepted', () => {
+test('retired Buddy playback migrations do not require deleted runtime bootstraps', () => {
   assert.deepEqual(
-    uncoveredRuntimeMigrations(['127_add_secondary_playback_current.sql']),
+    uncoveredRuntimeMigrations([
+      '127_add_secondary_playback_current.sql',
+      '128_add_collector_status.sql',
+    ]),
     [],
   );
   assert.equal(
-    assertRuntimeMigrationCoverage(repositoryRoot, ['127_add_secondary_playback_current.sql']),
+    assertRuntimeMigrationCoverage(repositoryRoot, [
+      '127_add_secondary_playback_current.sql',
+      '128_add_collector_status.sql',
+    ]),
     true,
   );
 });
 
-test('runtime coverage tracks newly added bootstrap migrations without flagging old edits', () => {
+test('runtime coverage tracks active, retired and data-only migrations without flagging old edits', () => {
   const names = changedMigrationNames(repositoryRoot);
   assert.ok(names.includes('008_buddy_auth_control.sql'));
+  assert.ok(names.includes('127_add_secondary_playback_current.sql'));
   assert.ok(names.includes('128_add_collector_status.sql'));
   assert.ok(names.includes('129_add_queue_reachability_index.sql'));
   assert.ok(!names.includes('003_email_stream_snapshots.sql'));

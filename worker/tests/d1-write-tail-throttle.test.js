@@ -121,9 +121,11 @@ test('rebuild runtime diagnostics checkpoint only unchanged successful state', (
   assert.match(source, /excluded\.updated_at-COALESCE\(sh_minute_fact_runtime_state\.updated_at,0\)>=\$\{RUNTIME_SUCCESS_CHECKPOINT_MS\}/);
 });
 
-test('production derive and enrichment entrypoints install the write throttle', () => {
+test('production derive and enrichment entrypoints install only the D1 write throttle', () => {
   const derive = readFileSync(new URL('../src/minute-derive-entry.js', import.meta.url), 'utf8');
   const enrichment = readFileSync(new URL('../src/minute-enrichment-optimized-entry.js', import.meta.url), 'utf8');
-  assert.match(derive, /withMinuteD1WriteThrottling\(withAppleMusicFreeRuntime\(env\)\)/);
-  assert.match(enrichment, /withMinuteD1WriteThrottling\(withAppleMusicFreeRuntime\(env\)\)/);
+  assert.match(derive, /withMinuteD1WriteThrottling\(env\)/);
+  assert.match(enrichment, /withMinuteD1WriteThrottling\(env\)/);
+  assert.doesNotMatch(derive, /AppleMusic|apple-music|withAppleMusic/i);
+  assert.doesNotMatch(enrichment, /AppleMusic|apple-music|withAppleMusic/i);
 });

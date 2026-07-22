@@ -54,7 +54,6 @@ test('runtime Wrangler configuration owns collection and orchestration only', ()
   assert.equal(config.d1_databases[0].database_name, 'stationhead-buddies');
   assert.deepEqual(config.queues?.producers.map(({ binding }) => binding), [
     'RAW_COLLECTION_QUEUE',
-    'BUDDY_PLAYBACK_QUEUE',
     'HOST_MONITOR_QUEUE',
     'MINUTE_DERIVE_QUEUE',
     'MINUTE_LIVE_DERIVE_QUEUE',
@@ -67,7 +66,10 @@ test('runtime Wrangler configuration owns collection and orchestration only', ()
   assert.doesNotMatch(source, /response\.json|readModelPresentation|handoffMinuteFactJob/);
 
   const names = Object.keys(config.vars || {});
-  for (const prefix of ['BUDDY_PLAYBACK_', 'HOST_', 'SOLO_', 'OFFICIAL_NEWS_', 'DERIVE_', 'HEALTH_ALERT_']) {
+  for (const prefix of ['BUDDY_PLAYBACK_', 'HOST_', 'SOLO_', 'OFFICIAL_NEWS_']) {
+    assert.equal(names.some((name) => name.startsWith(prefix)), false, prefix);
+  }
+  for (const prefix of ['DERIVE_', 'REBUILD_', 'HEALTH_ALERT_']) {
     assert.equal(names.some((name) => name.startsWith(prefix)), true, prefix);
   }
 });
