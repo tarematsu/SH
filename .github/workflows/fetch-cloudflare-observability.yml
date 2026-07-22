@@ -30,6 +30,8 @@ jobs:
       CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
       CLOUDFLARE_WORKERS: sh-buddies-ingest,sh-minute-enrichment,sh-sakurazaka46jp,sh-runtime-orchestrator
       LOOKBACK_MINUTES: ${{ inputs.lookback_minutes || '60' }}
+      CPU_BUDGET_MS: "10"
+      CPU_BUDGET_EXEMPT_MARKERS: stationhead-minute-rebuild,stationhead-minute-derive,minute-rebuild-stage,minute_rebuild_,minute_fact_rebuild
 
     steps:
       - uses: actions/checkout@v4
@@ -39,3 +41,7 @@ jobs:
       - name: Query Cloudflare metrics and persisted errors
         shell: bash
         run: python3 .github/scripts/query-cloudflare-observability.py
+
+      - name: Enforce per-invocation 10 ms CPU policy
+        shell: bash
+        run: python3 .github/scripts/audit-cloudflare-telemetry.py
