@@ -28,12 +28,15 @@ test('runtime stream prediction is a single lazy scheduled dependency', () => {
 
 test('runtime orchestration is split by scheduled, Queue, and environment responsibilities', () => {
   const config = source('../wrangler.runtime.jsonc');
-  assert.match(config, /"main"\s*:\s*"src\/runtime-orchestrator-entry\.js"/);
+  assert.match(config, /"main"\s*:\s*"src\/runtime-orchestrator-deployed-entry\.js"/);
 
   const entry = source('../src/runtime-orchestrator-entry.js');
+  const deployedEntry = source('../src/runtime-orchestrator-deployed-entry.js');
   assert.match(entry, /runRuntimeScheduled/);
   assert.match(entry, /runRuntimeQueue/);
   assert.doesNotMatch(entry, /for \(const message of messages\)/);
+  assert.match(deployedEntry, /runFetchCoordinatedScheduled/);
+  assert.match(deployedEntry, /stub\.fetch/);
 
   const scheduled = source('../src/runtime-scheduled.js');
   assert.match(scheduled, /runtimeScheduledMessagesFor/);
