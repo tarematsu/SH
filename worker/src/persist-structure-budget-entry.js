@@ -246,7 +246,7 @@ export async function processBudgetedQueueStructureTask(env, body, dependencies 
     };
   }
 
-  const needsLikes = queueLikesStageRequired(body, plan, env);
+  const needsLikes = positions.length > 0 || queueLikesStageRequired(body, plan, env);
   const continuation = needsLikes
     ? likesMessage(body, observedAt, result)
     : finalizationMessage(body, observedAt, true);
