@@ -15,8 +15,9 @@ test('minute enrichment owns four isolated one-message Queue boundaries', () => 
   assert.match(enrichment, /TRACK_METADATA_MESSAGE_TYPE/);
   assert.match(enrichment, /processTrackMetadataTask/);
   assert.match(enrichment, /const message = messages\[0\]/);
-  assert.match(metadata, /committedEnrichmentModulePromise \|\|=/);
-  assert.match(metadata, /readModelStagesModulePromise \|\|=/);
+  assert.match(metadata, /from '\.\/committed-metadata-enrichment\.js'/);
+  assert.match(metadata, /from '\.\/read-model-stages\.js'/);
+  assert.doesNotMatch(metadata, /committedEnrichmentModulePromise|readModelStagesModulePromise/);
   assert.match(metadata, /const JSON_QUEUE_SEND_OPTIONS = Object\.freeze/);
   assert.doesNotMatch(enrichment, /for\s*\(const message of/);
 });
