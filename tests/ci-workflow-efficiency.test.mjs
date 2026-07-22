@@ -21,6 +21,11 @@ const prDiagnostics = workflow('cloudflare-pr-diagnostics.yml');
 const d1Usage = workflow('fetch-cloudflare-d1-usage.yml');
 const observability = workflow('fetch-cloudflare-observability.yml');
 const hourlyCpu = workflow('fetch-cloudflare-observability-hourly.yml');
+const sitePackage = JSON.parse(readFileSync(new URL('../site/package.json', import.meta.url), 'utf8'));
+const workerDependencyGuard = readFileSync(
+  new URL('../site/scripts/ensure-worker-test-deps.mjs', import.meta.url),
+  'utf8',
+);
 
 test('CI selects affected scopes and keeps repository checks dependency-free', () => {
   assert.match(ci, /^  changes:\n/m);
@@ -47,6 +52,18 @@ test('CI restores workspace dependencies and avoids the Pages pretest reinstall'
   assert.match(worker, /uses: actions\/cache@v4/);
   assert.match(worker, /worker\/node_modules/);
   assert.match(worker, /cache-hit != 'true'/);
+});
+
+test('Pages builds reuse Worker integration dependencies when inputs are unchanged', () => {
+  assert.equal(
+    sitePackage.scripts['pretest:integration'],
+    'node scripts/ensure-worker-test-deps.mjs',
+  );
+  assert.match(workerDependencyGuard, /\.sh-worker-deps\.sha256/);
+  assert.match(workerDependencyGuard, /package-lock\.json/);
+  assert.match(workerDependencyGuard, /packages\/sh-shared/);
+  assert.match(workerDependencyGuard, /Reusing cached Worker integration dependencies/);
+  assert.match(workerDependencyGuard, /'ci', '--prefer-offline'/);
 });
 
 test('manual, automatic, and PR Worker deploys reuse cached dependencies', () => {
