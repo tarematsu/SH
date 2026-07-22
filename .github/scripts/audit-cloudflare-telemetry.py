@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Audit current Cloudflare Worker versions and enforce a per-invocation CPU budget."""
+"""Audit current Cloudflare Worker versions with persisted and live telemetry."""
 
 from __future__ import annotations
 
@@ -7,17 +7,21 @@ import datetime as dt
 import json
 import math
 import os
+import sys
 import urllib.error
 import urllib.parse
 import urllib.request
-from typing import Any
+from pathlib import Path
+from typing import Any, Iterable
 
 API_BASE = "https://api.cloudflare.com/client/v4"
-TOKEN = os.environ["CLOUDFLARE_API_TOKEN"].strip()
-WORKERS = tuple(value.strip() for value in os.environ["CLOUDFLARE_WORKERS"].split(",") if value.strip())
+TOKEN = os.environ.get("CLOUDFLARE_API_TOKEN", "").strip()
+WORKERS = tuple(value.strip() for value in os.environ.get("CLOUDFLARE_WORKERS", "").split(",") if value.strip())
 LOOKBACK_MINUTES = max(1, int(os.environ.get("LOOKBACK_MINUTES", "60")))
-CPU_BUDGET_MS = float(os.environ.get("CPU_BUDGET_MS", "10"))
+STATELESS_CPU_BUDGET_MS = float(os.environ.get("CPU_BUDGET_MS", "10"))
+DURABLE_OBJECT_CPU_BUDGET_MS = float(os.environ.get("DURABLE_OBJECT_CPU_BUDGET_MS", "30000"))
 ACCOUNT_ID = os.environ.get("CLOUDFLARE_ACCOUNT_ID", "").strip()
+LIVE_TAIL_LOG = Path(os.environ.get("LIVE_TAIL_LOG", "live-tail.log"))
 EXEMPT_MARKERS = tuple(
     value.strip().lower()
     for value in os.environ.get("CPU_BUDGET_EXEMPT_MARKERS", "").split(",")
@@ -25,7 +29,7 @@ EXEMPT_MARKERS = tuple(
 )
 PAGE_SIZE = 2000
 MAX_PAGES = 10
-NON_FAILURE_OUTCOMES = {"", "ok", "canceled", "cancelled", "success"}
+OK_OUTCOMES = {"", "ok", "canceled", "cancelled", "success"}
 
 
 def request_json(url: str, *, method: str = "GET", payload: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -84,16 +88,26 @@ def service_filter() -> dict[str, Any]:
 
 def query_events(account: str, start_ms: int, end_ms: int) -> tuple[list[dict[str, Any]], int | None, bool]:
     payload: dict[str, Any] = {
-        "queryId": "github-actions-worker-invocations",
+        "queryId": "github-actions-current-worker-audit",
         "dry": True,
         "timeframe": {"from": start_ms, "to": end_ms},
         "view": "events",
         "limit": PAGE_SIZE,
         "offsetDirection": "next",
         "parameters": {
+            "view": "events",
+            "limit": PAGE_SIZE,
             "datasets": [],
             "filterCombination": "and",
-            "filters": [service_filter()],
+            "filters": [
+                service_filter(),
+                {
+                    "kind": "filter",
+                    "key": "$workers.cpuTimeMs",
+                    "operation": "exists",
+                    "type": "number",
+                },
+            ],
         },
     }
     endpoint = f"{API_BASE}/accounts/{account}/workers/observability/telemetry/query"
@@ -101,7 +115,6 @@ def query_events(account: str, start_ms: int, end_ms: int) -> tuple[list[dict[st
     seen: set[str] = set()
     total: int | None = None
     exhausted = False
-
     for _ in range(MAX_PAGES):
         result = request_json(endpoint, method="POST", payload=payload).get("result") or {}
         block = result.get("events") or {}
@@ -111,12 +124,10 @@ def query_events(account: str, start_ms: int, end_ms: int) -> tuple[list[dict[st
         for event in page:
             if not isinstance(event, dict):
                 continue
-            metadata = event.get("$metadata") if isinstance(event.get("$metadata"), dict) else {}
-            event_id = str(metadata.get("id") or "")
-            if event_id and event_id in seen:
+            key = event_key(event)
+            if key in seen:
                 continue
-            if event_id:
-                seen.add(event_id)
+            seen.add(key)
             events.append(event)
         if len(page) < PAGE_SIZE:
             exhausted = True
@@ -126,8 +137,20 @@ def query_events(account: str, start_ms: int, end_ms: int) -> tuple[list[dict[st
         if not cursor or cursor == payload.get("offset"):
             break
         payload["offset"] = cursor
-
     return events, total, not exhausted and total is not None and len(events) < total
+
+
+def parse_start(end: dt.datetime) -> dt.datetime:
+    raw = os.environ.get("AUDIT_FROM", "").strip()
+    if not raw:
+        return end - dt.timedelta(minutes=LOOKBACK_MINUTES)
+    try:
+        value = dt.datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError as error:
+        raise RuntimeError(f"AUDIT_FROM is invalid: {raw}") from error
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=dt.timezone.utc)
+    return value.astimezone(dt.timezone.utc)
 
 
 def finite(value: Any) -> float | None:
@@ -149,15 +172,70 @@ def fields(event: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
     )
 
 
+def event_key(event: dict[str, Any]) -> str:
+    metadata, workers = fields(event)
+    identifier = metadata.get("id") or metadata.get("requestId") or workers.get("requestId")
+    if identifier:
+        return str(identifier)
+    return json.dumps(
+        [event.get("timestamp"), metadata.get("service"), workers.get("eventType"), workers.get("cpuTimeMs")],
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+
+
 def timestamp_ms(event: dict[str, Any]) -> float:
     metadata, _ = fields(event)
-    return finite(event.get("timestamp") or metadata.get("timestamp")) or 0
+    raw = event.get("timestamp") or metadata.get("timestamp")
+    numeric = finite(raw)
+    if numeric is not None:
+        return numeric
+    if isinstance(raw, str):
+        try:
+            parsed = dt.datetime.fromisoformat(raw.replace("Z", "+00:00"))
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=dt.timezone.utc)
+            return parsed.timestamp() * 1000
+        except ValueError:
+            return 0
+    return 0
 
 
 def version_id(event: dict[str, Any]) -> str:
     _, workers = fields(event)
     version = workers.get("scriptVersion")
     return str(version.get("id") or "") if isinstance(version, dict) else ""
+
+
+def worker_name(event: dict[str, Any]) -> str:
+    metadata, workers = fields(event)
+    return str(metadata.get("service") or workers.get("scriptName") or "unknown")
+
+
+def live_tail_events() -> list[dict[str, Any]]:
+    if not LIVE_TAIL_LOG.exists():
+        return []
+    events: list[dict[str, Any]] = []
+    for line in LIVE_TAIL_LOG.read_text(encoding="utf-8", errors="replace").splitlines():
+        if not line.startswith("LIVE_TAIL_EVENT="):
+            continue
+        try:
+            value = json.loads(line.removeprefix("LIVE_TAIL_EVENT="))
+        except json.JSONDecodeError:
+            continue
+        if isinstance(value, dict) and worker_name(value) in WORKERS:
+            event = dict(value)
+            event["_diagnostic_source"] = "live_tail"
+            events.append(event)
+    return events
+
+
+def merge_events(*groups: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
+    merged: dict[str, dict[str, Any]] = {}
+    for group in groups:
+        for event in group:
+            merged[event_key(event)] = event
+    return list(merged.values())
 
 
 def clean_url(value: Any) -> str:
@@ -171,12 +249,18 @@ def detail(event: dict[str, Any]) -> dict[str, Any]:
     metadata, workers = fields(event)
     worker_event = workers.get("event") if isinstance(workers.get("event"), dict) else {}
     request = worker_event.get("request") if isinstance(worker_event.get("request"), dict) else {}
-    message = metadata.get("error") or metadata.get("message") or event.get("source") or "-"
+    source = event.get("source") if isinstance(event.get("source"), dict) else {}
+    model = str(workers.get("executionModel") or "stateless")
+    budget = DURABLE_OBJECT_CPU_BUDGET_MS if model == "durableObject" else STATELESS_CPU_BUDGET_MS
+    message = metadata.get("error") or metadata.get("message") or source.get("message") or "-"
     return {
         "time": str(event.get("timestamp") or metadata.get("timestamp") or "-")[:48],
-        "worker": str(metadata.get("service") or workers.get("scriptName") or "unknown")[:80],
+        "worker": worker_name(event)[:80],
         "version": version_id(event)[:80],
+        "source": str(event.get("_diagnostic_source") or "persisted"),
         "cpu_ms": finite(workers.get("cpuTimeMs")),
+        "budget_ms": budget,
+        "model": model[:40],
         "outcome": str(workers.get("outcome") or "")[:40],
         "event_type": str(workers.get("eventType") or "-")[:40],
         "message": " ".join(str(message).split())[:220],
@@ -191,62 +275,123 @@ def exempt(event: dict[str, Any]) -> bool:
     return any(marker in compact for marker in EXEMPT_MARKERS)
 
 
-def is_error(item: dict[str, Any], event: dict[str, Any]) -> bool:
-    metadata, _ = fields(event)
-    return bool(metadata.get("error")) or str(item["outcome"]).lower() not in NON_FAILURE_OUTCOMES
+def error_event(event: dict[str, Any]) -> bool:
+    metadata, workers = fields(event)
+    source = event.get("source") if isinstance(event.get("source"), dict) else {}
+    level = str(metadata.get("level") or source.get("level") or "").lower()
+    outcome = str(workers.get("outcome") or "").lower()
+    return bool(metadata.get("error")) or level in {"error", "fatal"} or outcome not in OK_OUTCOMES
 
 
-def current_invocations(events: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], dict[str, str], int]:
-    invocations = [event for event in events if detail(event)["cpu_ms"] is not None]
+def current_events(
+    persisted: list[dict[str, Any]],
+    live: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], dict[str, str], int]:
     latest: dict[str, tuple[float, str]] = {}
-    for event in invocations:
-        item = detail(event)
-        worker = item["worker"]
-        candidate = (timestamp_ms(event), item["version"])
-        if worker in WORKERS and (worker not in latest or candidate[0] > latest[worker][0]):
+    persisted_invocations = [event for event in persisted if detail(event)["cpu_ms"] is not None]
+    for event in persisted_invocations:
+        worker = worker_name(event)
+        version = version_id(event)
+        if worker not in WORKERS or not version:
+            continue
+        candidate = (timestamp_ms(event), version)
+        if worker not in latest or candidate[0] >= latest[worker][0]:
             latest[worker] = candidate
     versions = {worker: value[1] for worker, value in latest.items()}
-    selected = [
-        event for event in invocations
-        if detail(event)["worker"] in versions
-        and detail(event)["version"] == versions[detail(event)["worker"]]
-    ]
-    return selected, versions, len(invocations) - len(selected)
+
+    selected_persisted = []
+    for event in persisted:
+        worker = worker_name(event)
+        if worker not in WORKERS:
+            continue
+        expected = versions.get(worker)
+        if not expected or version_id(event) == expected:
+            selected_persisted.append(event)
+    selected_invocations = sum(1 for event in selected_persisted if detail(event)["cpu_ms"] is not None)
+    old_versions = len(persisted_invocations) - selected_invocations
+    return merge_events(selected_persisted, live), versions, old_versions
 
 
-def main() -> int:
-    if not TOKEN or not WORKERS:
-        raise RuntimeError("Cloudflare token and Worker list are required")
-    request_json(f"{API_BASE}/user/tokens/verify")
-    account = account_id()
-    end = dt.datetime.now(dt.timezone.utc)
-    start = end - dt.timedelta(minutes=LOOKBACK_MINUTES)
-    events, matching, truncated = query_events(
-        account,
-        int(start.timestamp() * 1000),
-        int(end.timestamp() * 1000),
-    )
-    invocations, versions, old_version_events = current_invocations(events)
-
-    samples_by_worker: dict[str, list[float]] = {worker: [] for worker in WORKERS}
+def evaluate(
+    events: list[dict[str, Any]],
+    truncated: bool,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]], dict[str, list[float]], list[str], bool]:
     violations: list[dict[str, Any]] = []
     exempted: list[dict[str, Any]] = []
     errors: list[dict[str, Any]] = []
-    for event in invocations:
+    samples: dict[str, list[float]] = {worker: [] for worker in WORKERS}
+    for event in events:
         item = detail(event)
         cpu_ms = item["cpu_ms"]
-        worker = item["worker"]
-        if worker in samples_by_worker and cpu_ms is not None:
-            samples_by_worker[worker].append(cpu_ms)
-        if is_error(item, event):
+        if item["worker"] in samples and cpu_ms is not None:
+            samples[item["worker"]].append(cpu_ms)
+        if error_event(event):
             errors.append(item)
-        if cpu_ms is None or cpu_ms <= CPU_BUDGET_MS:
+        if cpu_ms is None or cpu_ms <= item["budget_ms"]:
             continue
         if exempt(event):
             exempted.append(item)
         else:
             violations.append(item)
+    missing = [worker for worker, values in samples.items() if not values]
+    return violations, exempted, errors, samples, missing, not truncated and not missing
 
+
+def self_test() -> int:
+    old = {
+        "timestamp": "2026-07-22T00:00:00Z",
+        "$metadata": {"id": "old", "service": "a"},
+        "$workers": {"scriptVersion": {"id": "v1"}, "cpuTimeMs": 99, "outcome": "ok"},
+    }
+    current = {
+        "timestamp": "2026-07-22T01:00:00Z",
+        "$metadata": {"id": "current", "service": "a"},
+        "$workers": {"scriptVersion": {"id": "v2"}, "cpuTimeMs": 4, "outcome": "ok"},
+    }
+    live = {
+        "timestamp": "2026-07-22T01:01:00Z",
+        "$metadata": {"id": "live", "service": "a"},
+        "$workers": {"cpuTimeMs": 5, "outcome": "ok"},
+        "_diagnostic_source": "live_tail",
+    }
+    original = globals()["WORKERS"]
+    globals()["WORKERS"] = ("a",)
+    try:
+        selected, versions, excluded = current_events([old, current], [live])
+        assert versions == {"a": "v2"}
+        assert excluded == 1
+        assert {event_key(event) for event in selected} == {"current", "live"}
+        violations, _, errors, samples, missing, coverage = evaluate(selected, False)
+        assert not violations and not errors and samples["a"] == [4.0, 5.0]
+        assert not missing and coverage
+        assert timestamp_ms(current) > timestamp_ms(old)
+    finally:
+        globals()["WORKERS"] = original
+    print("telemetry audit self-test passed")
+    return 0
+
+
+def main() -> int:
+    if "--self-test" in sys.argv:
+        return self_test()
+    if not TOKEN or not WORKERS:
+        raise RuntimeError("Cloudflare token and Worker list are required")
+    account = account_id()
+    end = dt.datetime.now(dt.timezone.utc)
+    start = parse_start(end)
+    persisted, matching, truncated = query_events(
+        account,
+        int(start.timestamp() * 1000),
+        int(end.timestamp() * 1000),
+    )
+    live = live_tail_events()
+    events, versions, old_versions = current_events(persisted, live)
+    violations, exempted, errors, samples, missing, coverage_ok = evaluate(events, truncated)
+    model_counts: dict[str, int] = {}
+    for event in events:
+        if detail(event)["cpu_ms"] is not None:
+            model = detail(event)["model"]
+            model_counts[model] = model_counts.get(model, 0) + 1
     worker_stats = {
         worker: {
             "version": versions.get(worker),
@@ -254,26 +399,27 @@ def main() -> int:
             "avg_ms": (sum(values) / len(values)) if values else None,
             "max_ms": max(values) if values else None,
         }
-        for worker, values in samples_by_worker.items()
+        for worker, values in samples.items()
     }
-    missing_workers = [worker for worker, stats in worker_stats.items() if stats["samples"] == 0]
-    coverage_ok = not truncated and not missing_workers
     report = {
         "window": {
             "from": start.isoformat().replace("+00:00", "Z"),
             "to": end.isoformat().replace("+00:00", "Z"),
         },
         "events": {
-            "matching": matching,
-            "fetched": len(events),
-            "current_version_invocations": len(invocations),
-            "old_version_invocations_excluded": old_version_events,
+            "persisted_matching": matching,
+            "persisted_fetched": len(persisted),
+            "live_fetched": len(live),
+            "current_version_events": len(events),
+            "old_version_invocations_excluded": old_versions,
             "truncated": truncated,
         },
         "cpu_policy": {
-            "budget_ms": CPU_BUDGET_MS,
+            "stateless_budget_ms": STATELESS_CPU_BUDGET_MS,
+            "durable_object_budget_ms": DURABLE_OBJECT_CPU_BUDGET_MS,
             "coverage_ok": coverage_ok,
-            "missing_workers": missing_workers,
+            "missing_workers": missing,
+            "models": model_counts,
             "workers": worker_stats,
             "violations": len(violations),
             "exempted": len(exempted),
@@ -283,8 +429,10 @@ def main() -> int:
     }
     print("TELEMETRY_AUDIT=" + json.dumps(report, ensure_ascii=False, separators=(",", ":")))
     print(
-        f"CPU_POLICY budget_ms={CPU_BUDGET_MS:g} invocations={len(invocations)} "
-        f"violations={len(violations)} exempted={len(exempted)} old_versions={old_version_events} "
+        f"CPU_POLICY stateless_budget_ms={STATELESS_CPU_BUDGET_MS:g} "
+        f"durable_object_budget_ms={DURABLE_OBJECT_CPU_BUDGET_MS:g} "
+        f"samples={sum(len(values) for values in samples.values())} "
+        f"violations={len(violations)} exempted={len(exempted)} old_versions={old_versions} "
         f"truncated={truncated} coverage_ok={coverage_ok}"
     )
     for worker, stats in worker_stats.items():
@@ -296,30 +444,32 @@ def main() -> int:
         print(
             "::error title=Worker CPU policy violation::"
             f"worker={item['worker']} version={item['version']} cpu_ms={item['cpu_ms']} "
+            f"budget_ms={item['budget_ms']} model={item['model']} source={item['source']} "
             f"outcome={item['outcome']} event={item['event_type']} url={item['url']}"
         )
     for item in errors[:20]:
         print(
-            "::warning title=Cloudflare Worker error::"
-            f"worker={item['worker']} version={item['version']} outcome={item['outcome']} "
-            f"message={item['message']} url={item['url']}"
+            "::error title=Cloudflare Worker error::"
+            f"worker={item['worker']} version={item['version']} source={item['source']} "
+            f"outcome={item['outcome']} message={item['message']} url={item['url']}"
         )
     if not coverage_ok:
         print(
             "::error title=Worker CPU policy has incomplete coverage::"
-            f"missing_workers={','.join(missing_workers)} truncated={truncated}"
+            f"missing_workers={','.join(missing)} truncated={truncated}"
         )
 
     summary = [
         "## Cloudflare Telemetry audit",
         "",
         f"- Window: `{report['window']['from']}` to `{report['window']['to']}`",
-        f"- CPU policy: `<= {CPU_BUDGET_MS:g} ms` per invocation",
-        f"- Current-version CPU samples: `{len(invocations)}`",
-        f"- Old-version samples excluded: `{old_version_events}`",
+        f"- Stateless CPU policy: `<= {STATELESS_CPU_BUDGET_MS:g} ms` per invocation",
+        f"- Durable Object CPU policy: `<= {DURABLE_OBJECT_CPU_BUDGET_MS:g} ms` per invocation",
+        f"- Current-version CPU samples: `{sum(len(values) for values in samples.values())}`",
+        f"- Live-tail samples received: `{len(live)}`",
+        f"- Old-version invocations excluded: `{old_versions}`",
         f"- CPU coverage: `{'OK' if coverage_ok else 'MISSING'}`",
         f"- CPU violations: `{len(violations)}`",
-        f"- CPU exemptions: `{len(exempted)}`",
         f"- Error invocations: `{len(errors)}`",
         "",
         "| Worker | Version | Samples | Average ms | Maximum ms |",
@@ -330,18 +480,11 @@ def main() -> int:
         summary.append(
             f"| `{worker}` | `{version}` | {stats['samples']} | {stats['avg_ms']} | {stats['max_ms']} |"
         )
-    if violations:
-        summary.extend(["", "| Worker | CPU ms | Outcome | Event |", "|---|---:|---|---|"])
-        for item in violations[:10]:
-            summary.append(
-                f"| `{item['worker']}` | {item['cpu_ms']} | {item['outcome']} | {item['event_type']} |"
-            )
     summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
     if summary_path:
         with open(summary_path, "a", encoding="utf-8") as output:
             output.write("\n".join(summary) + "\n")
-
-    return 1 if violations or not coverage_ok else 0
+    return 1 if violations or errors or not coverage_ok else 0
 
 
 if __name__ == "__main__":
