@@ -6,14 +6,17 @@ const minutePipeline = readFileSync(
   new URL('../src/minute-pipeline-entry.js', import.meta.url),
   'utf8',
 );
+const runtimeConfig = readFileSync(
+  new URL('../wrangler.runtime.jsonc', import.meta.url),
+  'utf8',
+);
 const trackMetadata = readFileSync(
   new URL('../src/track-metadata-entry.js', import.meta.url),
   'utf8',
 );
 
-test('live derive modules are loaded before queue invocations', () => {
+test('live derive uses preloaded budget stages and keeps the full graph lazy', () => {
   for (const moduleName of [
-    'minute-derive-entry.js',
     'minute-live-trigger-budget-entry.js',
     'minute-live-revision-budget-entry.js',
     'minute-live-write-budget-entry.js',
@@ -22,7 +25,9 @@ test('live derive modules are loaded before queue invocations', () => {
     assert.doesNotMatch(minutePipeline, new RegExp(`import\\('./${moduleName.replaceAll('.', '\\.')}'\\)`));
   }
 
+  assert.match(minutePipeline, /import\('\.\/minute-derive-entry\.js'\)/);
   assert.match(minutePipeline, /import\('\.\/minute-rebuild-batched-entry\.js'\)/);
+  assert.match(runtimeConfig, /"LIVE_REVISION_MATERIALIZATION_ENABLED"\s*:\s*false/);
 });
 
 test('track metadata modules are loaded before queue invocations', () => {

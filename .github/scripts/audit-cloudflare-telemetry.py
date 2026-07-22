@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Audit persisted Cloudflare Worker invocation events and enforce a CPU budget."""
+"""Audit current Cloudflare Worker versions and enforce a per-invocation CPU budget."""
 
 from __future__ import annotations
 
@@ -14,11 +14,7 @@ from typing import Any
 
 API_BASE = "https://api.cloudflare.com/client/v4"
 TOKEN = os.environ["CLOUDFLARE_API_TOKEN"].strip()
-WORKERS = tuple(
-    value.strip()
-    for value in os.environ["CLOUDFLARE_WORKERS"].split(",")
-    if value.strip()
-)
+WORKERS = tuple(value.strip() for value in os.environ["CLOUDFLARE_WORKERS"].split(",") if value.strip())
 LOOKBACK_MINUTES = max(1, int(os.environ.get("LOOKBACK_MINUTES", "60")))
 CPU_BUDGET_MS = float(os.environ.get("CPU_BUDGET_MS", "10"))
 ACCOUNT_ID = os.environ.get("CLOUDFLARE_ACCOUNT_ID", "").strip()
@@ -32,12 +28,7 @@ MAX_PAGES = 10
 NON_FAILURE_OUTCOMES = {"", "ok", "canceled", "cancelled", "success"}
 
 
-def request_json(
-    url: str,
-    *,
-    method: str = "GET",
-    payload: dict[str, Any] | None = None,
-) -> dict[str, Any]:
+def request_json(url: str, *, method: str = "GET", payload: dict[str, Any] | None = None) -> dict[str, Any]:
     request = urllib.request.Request(
         url,
         data=None if payload is None else json.dumps(payload, separators=(",", ":")).encode(),
@@ -57,10 +48,8 @@ def request_json(
         raise RuntimeError(f"Cloudflare API HTTP {error.code}: {detail}") from error
     except urllib.error.URLError as error:
         raise RuntimeError(f"Cloudflare API request failed: {error.reason}") from error
-
-    errors = data.get("errors")
-    if data.get("success") is False or errors:
-        raise RuntimeError(f"Cloudflare API error: {json.dumps(errors, ensure_ascii=False)[:2000]}")
+    if data.get("success") is False or data.get("errors"):
+        raise RuntimeError(f"Cloudflare API error: {json.dumps(data.get('errors'), ensure_ascii=False)[:2000]}")
     return data
 
 
@@ -122,8 +111,8 @@ def query_events(account: str, start_ms: int, end_ms: int) -> tuple[list[dict[st
         for event in page:
             if not isinstance(event, dict):
                 continue
-            metadata = event.get("$metadata")
-            event_id = str(metadata.get("id")) if isinstance(metadata, dict) and metadata.get("id") else ""
+            metadata = event.get("$metadata") if isinstance(event.get("$metadata"), dict) else {}
+            event_id = str(metadata.get("id") or "")
             if event_id and event_id in seen:
                 continue
             if event_id:
@@ -133,13 +122,12 @@ def query_events(account: str, start_ms: int, end_ms: int) -> tuple[list[dict[st
             exhausted = True
             break
         metadata = page[-1].get("$metadata") if isinstance(page[-1], dict) else {}
-        cursor = str(metadata.get("id")) if isinstance(metadata, dict) and metadata.get("id") else ""
+        cursor = str(metadata.get("id") or "") if isinstance(metadata, dict) else ""
         if not cursor or cursor == payload.get("offset"):
             break
         payload["offset"] = cursor
 
-    truncated = not exhausted and total is not None and len(events) < total
-    return events, total, truncated
+    return events, total, not exhausted and total is not None and len(events) < total
 
 
 def finite(value: Any) -> float | None:
@@ -152,13 +140,24 @@ def finite(value: Any) -> float | None:
     return number if math.isfinite(number) else None
 
 
-def event_fields(event: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
+def fields(event: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
     metadata = event.get("$metadata")
     workers = event.get("$workers")
     return (
         metadata if isinstance(metadata, dict) else {},
         workers if isinstance(workers, dict) else {},
     )
+
+
+def timestamp_ms(event: dict[str, Any]) -> float:
+    metadata, _ = fields(event)
+    return finite(event.get("timestamp") or metadata.get("timestamp")) or 0
+
+
+def version_id(event: dict[str, Any]) -> str:
+    _, workers = fields(event)
+    version = workers.get("scriptVersion")
+    return str(version.get("id") or "") if isinstance(version, dict) else ""
 
 
 def clean_url(value: Any) -> str:
@@ -169,13 +168,14 @@ def clean_url(value: Any) -> str:
 
 
 def detail(event: dict[str, Any]) -> dict[str, Any]:
-    metadata, workers = event_fields(event)
+    metadata, workers = fields(event)
     worker_event = workers.get("event") if isinstance(workers.get("event"), dict) else {}
     request = worker_event.get("request") if isinstance(worker_event.get("request"), dict) else {}
     message = metadata.get("error") or metadata.get("message") or event.get("source") or "-"
     return {
         "time": str(event.get("timestamp") or metadata.get("timestamp") or "-")[:48],
         "worker": str(metadata.get("service") or workers.get("scriptName") or "unknown")[:80],
+        "version": version_id(event)[:80],
         "cpu_ms": finite(workers.get("cpuTimeMs")),
         "outcome": str(workers.get("outcome") or "")[:40],
         "event_type": str(workers.get("eventType") or "-")[:40],
@@ -192,8 +192,26 @@ def exempt(event: dict[str, Any]) -> bool:
 
 
 def is_error(item: dict[str, Any], event: dict[str, Any]) -> bool:
-    metadata, _ = event_fields(event)
+    metadata, _ = fields(event)
     return bool(metadata.get("error")) or str(item["outcome"]).lower() not in NON_FAILURE_OUTCOMES
+
+
+def current_invocations(events: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], dict[str, str], int]:
+    invocations = [event for event in events if detail(event)["cpu_ms"] is not None]
+    latest: dict[str, tuple[float, str]] = {}
+    for event in invocations:
+        item = detail(event)
+        worker = item["worker"]
+        candidate = (timestamp_ms(event), item["version"])
+        if worker in WORKERS and (worker not in latest or candidate[0] > latest[worker][0]):
+            latest[worker] = candidate
+    versions = {worker: value[1] for worker, value in latest.items()}
+    selected = [
+        event for event in invocations
+        if detail(event)["worker"] in versions
+        and detail(event)["version"] == versions[detail(event)["worker"]]
+    ]
+    return selected, versions, len(invocations) - len(selected)
 
 
 def main() -> int:
@@ -208,52 +226,55 @@ def main() -> int:
         int(start.timestamp() * 1000),
         int(end.timestamp() * 1000),
     )
+    invocations, versions, old_version_events = current_invocations(events)
 
     samples_by_worker: dict[str, list[float]] = {worker: [] for worker in WORKERS}
     violations: list[dict[str, Any]] = []
     exempted: list[dict[str, Any]] = []
     errors: list[dict[str, Any]] = []
-    invocation_events = 0
-
-    for event in events:
+    for event in invocations:
         item = detail(event)
         cpu_ms = item["cpu_ms"]
-        if cpu_ms is None:
-            continue
-        invocation_events += 1
         worker = item["worker"]
-        if worker in samples_by_worker:
+        if worker in samples_by_worker and cpu_ms is not None:
             samples_by_worker[worker].append(cpu_ms)
         if is_error(item, event):
             errors.append(item)
-        if cpu_ms <= CPU_BUDGET_MS:
+        if cpu_ms is None or cpu_ms <= CPU_BUDGET_MS:
             continue
         if exempt(event):
             exempted.append(item)
         else:
             violations.append(item)
 
-    workers = {
+    worker_stats = {
         worker: {
+            "version": versions.get(worker),
             "samples": len(values),
             "avg_ms": (sum(values) / len(values)) if values else None,
             "max_ms": max(values) if values else None,
         }
         for worker, values in samples_by_worker.items()
     }
-    coverage_ok = invocation_events > 0 and not truncated
+    missing_workers = [worker for worker, stats in worker_stats.items() if stats["samples"] == 0]
+    coverage_ok = not truncated and not missing_workers
     report = {
         "window": {
             "from": start.isoformat().replace("+00:00", "Z"),
             "to": end.isoformat().replace("+00:00", "Z"),
         },
-        "workers": list(WORKERS),
-        "events": {"matching": matching, "fetched": len(events), "truncated": truncated},
+        "events": {
+            "matching": matching,
+            "fetched": len(events),
+            "current_version_invocations": len(invocations),
+            "old_version_invocations_excluded": old_version_events,
+            "truncated": truncated,
+        },
         "cpu_policy": {
             "budget_ms": CPU_BUDGET_MS,
-            "invocations": invocation_events,
             "coverage_ok": coverage_ok,
-            "workers": workers,
+            "missing_workers": missing_workers,
+            "workers": worker_stats,
             "violations": len(violations),
             "exempted": len(exempted),
             "samples": violations[:20],
@@ -262,56 +283,58 @@ def main() -> int:
     }
     print("TELEMETRY_AUDIT=" + json.dumps(report, ensure_ascii=False, separators=(",", ":")))
     print(
-        f"CPU_POLICY budget_ms={CPU_BUDGET_MS:g} invocations={invocation_events} "
-        f"violations={len(violations)} exempted={len(exempted)} "
-        f"fetched={len(events)} matching={matching} truncated={truncated} coverage_ok={coverage_ok}"
+        f"CPU_POLICY budget_ms={CPU_BUDGET_MS:g} invocations={len(invocations)} "
+        f"violations={len(violations)} exempted={len(exempted)} old_versions={old_version_events} "
+        f"truncated={truncated} coverage_ok={coverage_ok}"
     )
-    for worker, stats in workers.items():
+    for worker, stats in worker_stats.items():
         print(
-            f"CPU_WORKER worker={worker} samples={stats['samples']} "
+            f"CPU_WORKER worker={worker} version={stats['version']} samples={stats['samples']} "
             f"avg_ms={stats['avg_ms']} max_ms={stats['max_ms']}"
         )
     for item in violations[:20]:
         print(
             "::error title=Worker CPU policy violation::"
-            f"worker={item['worker']} cpu_ms={item['cpu_ms']} outcome={item['outcome']} "
-            f"event={item['event_type']} url={item['url']}"
+            f"worker={item['worker']} version={item['version']} cpu_ms={item['cpu_ms']} "
+            f"outcome={item['outcome']} event={item['event_type']} url={item['url']}"
         )
     for item in errors[:20]:
         print(
             "::warning title=Cloudflare Worker error::"
-            f"worker={item['worker']} outcome={item['outcome']} "
+            f"worker={item['worker']} version={item['version']} outcome={item['outcome']} "
             f"message={item['message']} url={item['url']}"
         )
-    if truncated:
-        print("::error title=Worker CPU policy incomplete::Telemetry events were truncated")
     if not coverage_ok:
-        print("::error title=Worker CPU policy has no coverage::No complete invocation CPU sample set was returned")
+        print(
+            "::error title=Worker CPU policy has incomplete coverage::"
+            f"missing_workers={','.join(missing_workers)} truncated={truncated}"
+        )
 
     summary = [
         "## Cloudflare Telemetry audit",
         "",
         f"- Window: `{report['window']['from']}` to `{report['window']['to']}`",
         f"- CPU policy: `<= {CPU_BUDGET_MS:g} ms` per invocation",
-        f"- Invocation CPU samples: `{invocation_events}`",
+        f"- Current-version CPU samples: `{len(invocations)}`",
+        f"- Old-version samples excluded: `{old_version_events}`",
         f"- CPU coverage: `{'OK' if coverage_ok else 'MISSING'}`",
         f"- CPU violations: `{len(violations)}`",
         f"- CPU exemptions: `{len(exempted)}`",
         f"- Error invocations: `{len(errors)}`",
         "",
-        "| Worker | Samples | Average ms | Maximum ms |",
-        "|---|---:|---:|---:|",
+        "| Worker | Version | Samples | Average ms | Maximum ms |",
+        "|---|---|---:|---:|---:|",
     ]
-    for worker, stats in workers.items():
+    for worker, stats in worker_stats.items():
+        version = (stats["version"] or "-")[:12]
         summary.append(
-            f"| `{worker}` | {stats['samples']} | {stats['avg_ms']} | {stats['max_ms']} |"
+            f"| `{worker}` | `{version}` | {stats['samples']} | {stats['avg_ms']} | {stats['max_ms']} |"
         )
     if violations:
-        summary.extend(["", "| Worker | CPU ms | Outcome | Event | URL |", "|---|---:|---|---|---|"])
+        summary.extend(["", "| Worker | CPU ms | Outcome | Event |", "|---|---:|---|---|"])
         for item in violations[:10]:
             summary.append(
-                f"| `{item['worker']}` | {item['cpu_ms']} | {item['outcome']} | "
-                f"{item['event_type']} | {item['url']} |"
+                f"| `{item['worker']}` | {item['cpu_ms']} | {item['outcome']} | {item['event_type']} |"
             )
     summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
     if summary_path:
