@@ -23,11 +23,12 @@ test('observability policy scripts pass offline self-tests', () => {
   runSelfTest('.github/scripts/audit-deployed-cloudflare-telemetry.py');
 });
 
-test('observability uses post-deploy deep checks and lightweight hourly budgets', async () => {
+test('observability uses post-deploy and daily complete budget checks', async () => {
   const workflow = await readFile(new URL('.github/workflows/fetch-cloudflare-observability.yml', root), 'utf8');
   assert.match(workflow, /workflows: \["Deploy production"\]/);
-  assert.match(workflow, /cron: "37 \* \* \* \*"/);
+  assert.doesNotMatch(workflow, /cron: "37 \* \* \* \*"/);
   assert.match(workflow, /cron: "11 3 \* \* \*"/);
+  assert.equal((workflow.match(/- cron:/g) || []).length, 1);
   assert.doesNotMatch(workflow, /^\s+pull_request:/m);
   assert.doesNotMatch(workflow, /^\s+push:/m);
   assert.match(workflow, /DAILY_REQUEST_BUDGET: "70000"/);
@@ -51,11 +52,11 @@ test('observability uses post-deploy deep checks and lightweight hourly budgets'
   assert.match(workflow, /LIVE_TAIL_LOG: live-tail\.log/);
   assert.match(workflow, /audit-cloudflare-telemetry\.py --self-test/);
   assert.doesNotMatch(workflow, /audit-cloudflare-live-tail\.py/);
-  assert.match(workflow, /github\.event\.schedule == '11 3 \* \* \*'/);
   assert.match(workflow, /id: daily-budget/);
   assert.equal((workflow.match(/continue-on-error: true/g) || []).length, 5);
   assert.match(workflow, /steps\.daily-budget\.outcome == 'failure'/);
   assert.match(workflow, /Fail after collecting diagnostics when any observability gate fails/);
+  assert.match(workflow, /if: always\(\)/);
   assert.match(workflow, /observability-gate\//);
   assert.match(workflow, /observability-budget-gate\.log/);
 });
