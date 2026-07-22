@@ -22,10 +22,6 @@ const liveTailScript = readFileSync(
   new URL('../.github/scripts/capture-cloudflare-live-tail.mjs', import.meta.url),
   'utf8',
 );
-const liveTailAudit = readFileSync(
-  new URL('../.github/scripts/audit-cloudflare-live-tail.py', import.meta.url),
-  'utf8',
-);
 const wranglerFiles = [
   'wrangler.ingest.jsonc',
   'wrangler.minute-enrichment.jsonc',
@@ -47,7 +43,8 @@ test('observability uses hourly budgets and post-deploy Cloudflare API diagnosti
   assert.match(workflow, /audit-cloudflare-daily-usage\.py/);
   assert.match(workflow, /query-cloudflare-observability\.py/);
   assert.match(workflow, /audit-cloudflare-telemetry\.py/);
-  assert.match(workflow, /audit-cloudflare-live-tail\.py/);
+  assert.match(workflow, /LIVE_TAIL_LOG: live-tail\.log/);
+  assert.doesNotMatch(workflow, /audit-cloudflare-live-tail\.py/);
   assert.match(workflow, /CPU_BUDGET_MS: "10"/);
   assert.match(workflow, /DURABLE_OBJECT_CPU_BUDGET_MS: "30000"/);
   assert.match(workflow, /DAILY_REQUEST_BUDGET: "70000"/);
@@ -68,19 +65,22 @@ test('query and audit scripts use Cloudflare APIs without R2', () => {
   assert.match(queryScript, /urlunsplit/);
   assert.match(auditScript, /workers\.get\("cpuTimeMs"\)/);
   assert.match(auditScript, /"view": "events"/);
+  assert.match(auditScript, /\$workers\.cpuTimeMs/);
   assert.match(auditScript, /scriptVersion/);
+  assert.match(auditScript, /fromisoformat/);
   assert.match(auditScript, /old_version_invocations_excluded/);
-  assert.match(auditScript, /CPU_BUDGET_MS/);
+  assert.match(auditScript, /LIVE_TAIL_EVENT=/);
+  assert.match(auditScript, /_diagnostic_source/);
+  assert.match(auditScript, /DURABLE_OBJECT_CPU_BUDGET_MS/);
   assert.match(auditScript, /coverage_ok/);
+  assert.match(auditScript, /missing_workers/);
   assert.match(auditScript, /incomplete coverage/);
   assert.match(dailyBudgetScript, /workersInvocationsAdaptive/);
   assert.match(dailyBudgetScript, /d1AnalyticsAdaptiveGroups/);
   assert.match(dailyBudgetScript, /rowsRead rowsWritten/);
   assert.match(dailyBudgetScript, /one Cloudflare GraphQL request/);
-  assert.match(liveTailAudit, /LIVE_TAIL_EVENT=/);
-  assert.match(liveTailAudit, /DURABLE_OBJECT_CPU_BUDGET_MS/);
   assert.doesNotMatch(
-    `${queryScript}\n${auditScript}\n${dailyBudgetScript}\n${liveTailAudit}`,
+    `${queryScript}\n${auditScript}\n${dailyBudgetScript}`,
     /r2\.cloudflarestorage|aws s3|R2_BUCKET/,
   );
 });
