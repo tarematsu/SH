@@ -18,3 +18,11 @@ test('core deployment verifies every migrated consumer and rolls back safely', (
   assert.match(source, /sh-minute-enrichment/);
   assert.match(source, /core_runtime_worker_deployed/);
 });
+
+test('Pages-bound legacy Worker retirement is deferred until Pages cutover', () => {
+  assert.match(source, /DEFERRED_RETIREMENT_WORKERS = new Set\(\['sh-minute-enrichment'\]\)/);
+  assert.match(source, /RETIRED_WORKER_NAMES\.filter/);
+  assert.match(source, /!DEFERRED_RETIREMENT_WORKERS\.has\(name\)/);
+  assert.match(source, /deferred_retired_scripts/);
+  assert.doesNotMatch(source, /await pruneRetiredWorkers\(\);/);
+});
