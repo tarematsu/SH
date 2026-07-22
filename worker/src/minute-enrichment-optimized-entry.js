@@ -12,21 +12,22 @@ import {
   processMinutePlaybackResolve,
 } from './minute-enrichment-playback-stages.js';
 import { processTrackMetadataTask } from './track-metadata-entry.js';
-import {
-  MINUTE_READ_MODEL_QUEUE,
-  runPagesReadModelCron,
-  runPagesReadModelFetch,
-  runPagesReadModelQueue,
-} from './pages-read-model-entry.js';
 
 export const TRACK_METADATA_QUEUE_NAME = 'stationhead-track-metadata';
 export const PAGES_PUBLICATION_QUEUE_NAME = 'stationhead-pages-read-model-publication';
+export const MINUTE_READ_MODEL_QUEUE = 'stationhead-read-model';
 const TRACK_METADATA_MESSAGE_TYPE = 'stationhead-track-metadata';
 const RETRY_30_SECONDS = Object.freeze({ delaySeconds: 30 });
 const EMPTY_DEPENDENCIES = Object.freeze({});
 const SUCCESS_LOG_SAMPLE_MODULUS = 32;
 const TRACK_METADATA_LOG_SAMPLE_MODULUS = 32;
 const activeEnrichmentEnvs = new WeakMap();
+let pagesModulePromise;
+
+function loadPagesModule() {
+  pagesModulePromise ||= import('./pages-read-model-entry.js');
+  return pagesModulePromise;
+}
 
 function shouldLogMinuteEnrichmentResult(result) {
   if (result?.skipped === true || result?.reason) return true;
@@ -155,9 +156,19 @@ function isPagesReadModelDelivery(batch, body) {
 async function processConsolidatedEnrichmentBatch(batch, env, dependencies = EMPTY_DEPENDENCIES) {
   const body = batch?.messages?.[0]?.body;
   if (isPagesReadModelDelivery(batch, body)) {
-    return runPagesReadModelQueue(batch, env, dependencies.pages || EMPTY_DEPENDENCIES);
+    const run = dependencies.runPagesReadModelQueue
+      || (await loadPagesModule()).runPagesReadModelQueue;
+    return run(batch, env, dependencies.pages || EMPTY_DEPENDENCIES);
   }
   return processMinuteEnrichmentBatch(batch, env, dependencies);
+}
+
+async function runPagesReadModelFetch(...args) {
+  return (await loadPagesModule()).runPagesReadModelFetch(...args);
+}
+
+async function runPagesReadModelCron(...args) {
+  return (await loadPagesModule()).runPagesReadModelCron(...args);
 }
 
 export {
@@ -167,6 +178,8 @@ export {
   processMinuteEnrichmentBatch,
   processOptimizedMinuteEnrichment,
   productionEnrichmentEnv,
+  runPagesReadModelCron,
+  runPagesReadModelFetch,
   shouldLogMinuteEnrichmentResult,
   shouldLogTrackMetadataResult,
 };
