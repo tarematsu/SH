@@ -79,13 +79,12 @@ test('the single production deployment workflow caches Pages and Worker dependen
   assert.match(productionDeploy, /npm ci --prefer-offline/);
 });
 
-test('D1 query insights are manual-only and reuse cached Wrangler dependencies', () => {
+test('D1 query insights are manual-only and avoid installing Wrangler', () => {
   assert.match(d1Usage, /^  workflow_dispatch:\n/m);
   assert.doesNotMatch(d1Usage, /^  pull_request:\n/m);
   assert.doesNotMatch(d1Usage, /^  schedule:\n/m);
-  assert.match(d1Usage, /worker-insights-/);
-  assert.match(d1Usage, /uses: actions\/cache@v4/);
-  assert.match(d1Usage, /wrangler d1 insights/);
+  assert.match(d1Usage, /query-cloudflare-d1-costs\.py/);
+  assert.doesNotMatch(d1Usage, /worker-insights-|wrangler d1 insights|npm ci/);
   assert.doesNotMatch(d1Usage, /sleep ["']?\$|Waiting for the current PR deployment/);
 });
 
