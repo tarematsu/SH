@@ -81,9 +81,10 @@ test('manual, automatic, and PR Worker deploys reuse cached dependencies', () =>
   assert.match(deploy, /pages-deploy-/);
 });
 
-test('production telemetry does not run for arbitrary Worker test changes', () => {
-  for (const source of [d1Usage, observability, hourlyCpu]) {
+test('production checks run only for runtime or schema changes', () => {
+  for (const source of [prDiagnostics, d1Usage, observability, hourlyCpu]) {
     assert.doesNotMatch(source, /^\s*- ["']worker\/\*\*["']\s*$/m);
+    assert.doesNotMatch(source, /^\s*- ["']\.github\/(?:workflows|scripts)\//m);
     assert.match(source, /worker\/src\/\*\*/);
     assert.match(source, /worker\/wrangler\*\.jsonc/);
   }
