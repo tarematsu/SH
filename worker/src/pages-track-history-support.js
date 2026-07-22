@@ -51,7 +51,7 @@ export function trackHistoryRefreshRanges(now, backfillState = null, statusState
 
 export function mergeTrackHistoryExcludedDates(previousDates, refreshedDates, range) {
   const fromDay = dayText(range.fromTs);
-  const toDay = dayText(range.toTs - DAY_MS);
+  const toDay = dayText(range.toTs - 1);
   const retained = Array.isArray(previousDates)
     ? previousDates.filter((date) => String(date) < fromDay || String(date) > toDay)
     : [];
