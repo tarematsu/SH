@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 
 import deployedWorker, {
@@ -12,10 +13,11 @@ import {
 } from '../worker/src/pages-track-history-response.js';
 
 const root = new URL('../', import.meta.url);
+const rootPath = fileURLToPath(root);
 
 function pythonSelfTest(path) {
   const result = spawnSync('python3', [path, '--self-test'], {
-    cwd: root,
+    cwd: rootPath,
     encoding: 'utf8',
   });
   assert.equal(result.status, 0, `${path}\n${result.stdout}\n${result.stderr}`);
@@ -70,7 +72,10 @@ test('deployed runtime uses fetch-based Durable Object coordination', async () =
   assert.equal(claimed.status, 200);
   assert.equal((await claimed.json()).claimed, true);
 
-  const config = JSON.parse(readFileSync(new URL('../worker/wrangler.runtime.jsonc', import.meta.url)));
+  const config = JSON.parse(readFileSync(
+    new URL('../worker/wrangler.runtime.jsonc', import.meta.url),
+    'utf8',
+  ));
   assert.equal(config.main, 'src/runtime-orchestrator-deployed-entry.js');
 });
 
