@@ -39,6 +39,11 @@ function enabled(value, fallback = true) {
   return !['0', 'false', 'no', 'off'].includes(String(value).trim().toLowerCase());
 }
 
+function positiveInteger(value) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && Math.trunc(parsed) > 0 ? Math.trunc(parsed) : null;
+}
+
 function liveRevisionMaterializationEnabled(env = {}) {
   const value = env?.LIVE_REVISION_MATERIALIZATION_ENABLED;
   if (value == null || value === '') return enabled(env?.HISTORICAL_REBUILD_ENABLED, true);
@@ -54,6 +59,7 @@ function lightweightLiveMessageKind(body) {
       && body?.revision?.sparse === true
       && body?.revision?.rebuild !== true) return 'revision';
   if ((body?.stage === 'write' || body?.stage === 'budget-live-write')
+      && positiveInteger(body?.job?.id) != null
       && body?.payload?.rebuild !== true
       && String(body?.job?.job_kind || 'live') !== 'rebuild') return 'write';
   if (budgetedLiveCompleteMessage(body)) return 'complete';
