@@ -18,10 +18,11 @@ const dayText = (value) => new Date(value).toISOString().slice(0, 10);
 test('facts dashboard SQL preserves the unified dashboard response contract', () => {
   assert.match(FACTS_LATEST_SQL, /FROM sh_minute_facts AS f/);
   assert.match(FACTS_LATEST_SQL, /INDEXED BY idx_sh_minute_facts_live_minute/);
-  assert.match(FACTS_LATEST_SQL, /recent INDEXED BY idx_sh_minute_facts_source_minute_desc/);
+  assert.match(FACTS_LATEST_SQL, /recent INDEXED BY idx_sh_minute_facts_source_channel_minute_desc/);
   assert.match(FACTS_LATEST_SQL, /reported_total_listens AS total_listens/);
   assert.match(FACTS_LATEST_SQL, /reported_current_stream_count AS current_stream_count/);
-  assert.match(FACTS_LATEST_SQL, /LEFT JOIN sh_minute_fact_context/);
+  assert.match(FACTS_LATEST_SQL, /LEFT JOIN sh_minute_fact_context_v2/);
+  assert.doesNotMatch(FACTS_LATEST_SQL, /LEFT JOIN sh_minute_fact_context AS/);
   assert.match(FACTS_LATEST_SQL, /WHERE f\.source_code=1/);
   assert.match(FACTS_HISTORY_24H_SQL, /PARTITION BY CAST\(minute_at\/300000 AS INTEGER\)/);
   assert.match(FACTS_HISTORY_24H_SQL, /RANGE BETWEEN 60000 PRECEDING AND CURRENT ROW/);
