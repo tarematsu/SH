@@ -1,4 +1,4 @@
-name: Deploy split Stationhead pipeline
+name: Deploy production
 
 on:
   push:
@@ -10,22 +10,41 @@ on:
       - 'worker/package.json'
       - 'worker/package-lock.json'
       - 'site/functions/**'
+      - 'site/public/**'
+      - 'site/wrangler.jsonc'
+      - 'site/package.json'
+      - 'site/package-lock.json'
       - 'packages/sh-shared/**'
       - '.github/workflows/deploy-split-pipeline.yml'
   workflow_dispatch:
+    inputs:
+      target:
+        description: Deployment target
+        required: true
+        type: choice
+        default: all
+        options:
+          - all
+          - pages
+          - workers
+          - ingest
+          - minute-enrichment
+          - sakurazaka46jp
+          - runtime
 
 permissions:
   contents: read
 
 concurrency:
-  group: deploy-split-stationhead-pipeline
+  group: deploy-production
   cancel-in-progress: false
 
 jobs:
-  select-workers:
-    name: Select affected Workers
+  select:
+    name: Select deployment targets
     runs-on: ubuntu-latest
     outputs:
+      pages: ${{ steps.targets.outputs.pages }}
       workers: ${{ steps.targets.outputs.workers }}
       commands: ${{ steps.targets.outputs.commands }}
     steps:
@@ -35,36 +54,76 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - name: Select deploy targets from the import graph
+      - name: Select Pages and Worker deployments
         id: targets
         shell: bash
         env:
+          EVENT_NAME: ${{ github.event_name }}
+          TARGET: ${{ inputs.target || 'all' }}
           BEFORE_SHA: ${{ github.event.before || '' }}
           HEAD_SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
-          if [[ '${{ github.event_name }}' == 'workflow_dispatch' || -z "$BEFORE_SHA" || "$BEFORE_SHA" =~ ^0+$ ]]; then
-            selection="$(node worker/scripts/select-worker-deploys.mjs --all)"
+          pages=false
+
+          if [[ "$EVENT_NAME" == 'workflow_dispatch' ]]; then
+            case "$TARGET" in
+              all)
+                pages=true
+                selection="$(node worker/scripts/select-worker-deploys.mjs --all)"
+                ;;
+              pages)
+                pages=true
+                selection='{"workers":[],"commands":[]}'
+                ;;
+              workers)
+                selection="$(node worker/scripts/select-worker-deploys.mjs --all)"
+                ;;
+              ingest)
+                selection='{"workers":["sh-buddies-ingest"],"commands":["deploy:ingest"]}'
+                ;;
+              minute-enrichment)
+                selection='{"workers":["sh-minute-enrichment"],"commands":["deploy:minute-enrichment"]}'
+                ;;
+              sakurazaka46jp)
+                selection='{"workers":["sh-sakurazaka46jp"],"commands":["deploy:sakurazaka46jp"]}'
+                ;;
+              runtime)
+                selection='{"workers":["sh-runtime-orchestrator"],"commands":["deploy:runtime"]}'
+                ;;
+              *)
+                echo "Unsupported deployment target: $TARGET" >&2
+                exit 1
+                ;;
+            esac
           else
-            git diff --name-only "$BEFORE_SHA" "$HEAD_SHA" | tee changed-files.txt
+            if [[ -z "$BEFORE_SHA" || "$BEFORE_SHA" =~ ^0+$ ]]; then
+              changed_files="$(git ls-files)"
+            else
+              changed_files="$(git diff --name-only "$BEFORE_SHA" "$HEAD_SHA")"
+            fi
+            printf '%s\n' "$changed_files" | tee changed-files.txt
+            if grep -Eq '^(site/(functions|public)/|site/wrangler\.jsonc$|site/package(-lock)?\.json$|packages/sh-shared/)' changed-files.txt; then
+              pages=true
+            fi
             selection="$(node worker/scripts/select-worker-deploys.mjs < changed-files.txt)"
           fi
+
           echo "$selection" | jq .
+          echo "pages=$pages" >> "$GITHUB_OUTPUT"
           echo "workers=$(jq -c '.workers' <<<"$selection")" >> "$GITHUB_OUTPUT"
           echo "commands=$(jq -c '.commands' <<<"$selection")" >> "$GITHUB_OUTPUT"
 
-  deploy:
+  workers:
     name: Deploy affected Workers
-    needs: select-workers
-    if: needs.select-workers.outputs.workers != '[]'
+    needs: select
+    if: needs.select.outputs.workers != '[]'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
       CLOUDFLARE_API_TOKEN: ${{ secrets['CLOUDFLARE_BUILDS_API_TOKEN'] || secrets['CLOUDFLARE_API_TOKEN'] || secrets['CF_API_TOKEN'] }}
-      # Account IDs are public identifiers. Keep the deployment usable when the
-      # optional account-id secrets have not been configured.
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets['CLOUDFLARE_ACCOUNT_ID'] || secrets['CF_ACCOUNT_ID'] || '0500f25c2f74e7e76c94a8bcb6c7008b' }}
-      DEPLOY_COMMANDS: ${{ needs.select-workers.outputs.commands }}
+      DEPLOY_COMMANDS: ${{ needs.select.outputs.commands }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -113,3 +172,40 @@ jobs:
             echo "Deploying $command"
             npm run "$command"
           done < <(jq -r '.[]' <<<"$DEPLOY_COMMANDS")
+
+  pages:
+    name: Build and deploy Pages
+    needs: [select, workers]
+    if: >-
+      always()
+      && needs.select.result == 'success'
+      && needs.select.outputs.pages == 'true'
+      && (needs.workers.result == 'success' || needs.workers.result == 'skipped')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets['CLOUDFLARE_BUILDS_API_TOKEN'] || secrets['CLOUDFLARE_API_TOKEN'] || secrets['CF_API_TOKEN'] }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets['CLOUDFLARE_ACCOUNT_ID'] || secrets['CF_ACCOUNT_ID'] || '0500f25c2f74e7e76c94a8bcb6c7008b' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: site/package-lock.json
+      - name: Restore Pages deployment dependencies
+        id: pages-modules
+        uses: actions/cache@v4
+        with:
+          path: site/node_modules
+          key: ${{ runner.os }}-node22-pages-deploy-${{ hashFiles('site/package-lock.json') }}
+      - name: Install Pages dependencies
+        if: steps.pages-modules.outputs.cache-hit != 'true'
+        run: npm ci --prefer-offline --no-audit --no-fund
+        working-directory: site
+      - name: Check Pages source
+        run: npm run check
+        working-directory: site
+      - name: Deploy Pages from GitHub Actions
+        run: npx wrangler pages deploy public --project-name skrzk --branch main
+        working-directory: site
