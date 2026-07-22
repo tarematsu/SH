@@ -58,10 +58,11 @@ test('internal Pages fetch is delegated without exposing another Worker', async 
   assert.equal(await response.text(), 'ok');
 });
 
-test('runtime config contains all core bindings while retired configs are not deploy scripts', () => {
+test('runtime config contains all core bindings while only two Workers stay active', () => {
   const config = JSON.parse(readFileSync(new URL('../wrangler.runtime.jsonc', import.meta.url), 'utf8'));
   const packageJson = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
   const pagesConfig = JSON.parse(readFileSync(new URL('../../site/wrangler.jsonc', import.meta.url), 'utf8'));
+  const workers = readFileSync(new URL('../scripts/cloudflare-workers.mjs', import.meta.url), 'utf8');
   const consumers = new Set(config.queues.consumers.map(({ queue }) => queue));
   for (const queue of [
     'stationhead-raw-collection',
@@ -81,4 +82,9 @@ test('runtime config contains all core bindings while retired configs are not de
     binding: 'PAGES_READ_MODEL_SERVICE',
     service: 'sh-runtime-orchestrator',
   }]);
+  const activeBlock = workers.slice(
+    workers.indexOf('ACTIVE_WORKER_NAMES'),
+    workers.indexOf('RETIRED_WORKER_NAMES'),
+  );
+  assert.equal((activeBlock.match(/'sh-/g) || []).length, 2);
 });
