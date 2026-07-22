@@ -23,15 +23,18 @@ test('observability policy scripts pass offline self-tests', () => {
   runSelfTest('.github/scripts/audit-deployed-cloudflare-telemetry.py');
 });
 
-test('observability uses post-deploy and daily complete budget checks', async () => {
+test('observability uses post-deploy, diagnostic-change, and daily complete budget checks', async () => {
   const workflow = await readFile(new URL('.github/workflows/fetch-cloudflare-observability.yml', root), 'utf8');
   const freeTierAudit = await readFile(new URL('.github/scripts/audit-cloudflare-free-tier.py', root), 'utf8');
   assert.match(workflow, /workflows: \["Deploy production"\]/);
+  assert.match(workflow, /^\s+push:/m);
+  assert.match(workflow, /branches: \[main\]/);
+  assert.match(workflow, /\.github\/scripts\/publish-cloudflare-observability-status\.mjs/);
+  assert.doesNotMatch(workflow, /^\s{6}- '(?:worker|site|packages)\//m);
   assert.doesNotMatch(workflow, /cron: "37 \* \* \* \*"/);
   assert.match(workflow, /cron: "0 1 \* \* \*"/);
   assert.equal((workflow.match(/- cron:/g) || []).length, 1);
   assert.doesNotMatch(workflow, /^\s+pull_request:/m);
-  assert.doesNotMatch(workflow, /^\s+push:/m);
   assert.match(workflow, /DAILY_REQUEST_BUDGET: "70000"/);
   assert.match(workflow, /DAILY_REQUEST_RESERVE: "0"/);
   assert.match(workflow, /DAILY_D1_READ_BUDGET: "3000000"/);
@@ -42,6 +45,7 @@ test('observability uses post-deploy and daily complete budget checks', async ()
   assert.match(workflow, /audit-cloudflare-free-tier\.py --self-test/);
   assert.match(workflow, /audit-observability-budget-gates\.py --self-test/);
   assert.match(workflow, /audit-deployed-cloudflare-telemetry\.py --self-test/);
+  assert.match(workflow, /publish-cloudflare-observability-status\.mjs --self-test/);
   assert.match(freeTierAudit, /def durable_object_namespace_ids\(/);
   assert.match(freeTierAudit, /if script != worker:/);
   assert.doesNotMatch(freeTierAudit, /script == WORKER or class_name == "RuntimeCoordinator"/);
@@ -49,16 +53,18 @@ test('observability uses post-deploy and daily complete budget checks', async ()
   assert.match(workflow, /id: budget-contract/);
   assert.match(workflow, /id: observability-query/);
   assert.match(workflow, /id: telemetry-policy/);
+  assert.match(workflow, /id: publish-status/);
   assert.match(workflow, /steps\.free-tier-budget\.outcome == 'failure'/);
   assert.match(workflow, /steps\.budget-contract\.outcome == 'failure'/);
   assert.match(workflow, /steps\.observability-query\.outcome == 'failure'/);
   assert.match(workflow, /steps\.telemetry-policy\.outcome == 'failure'/);
+  assert.match(workflow, /steps\.publish-status\.outcome == 'failure'/);
   assert.match(workflow, /LIVE_TAIL_SECONDS: "90"/);
   assert.match(workflow, /LIVE_TAIL_LOG: live-tail\.log/);
   assert.match(workflow, /audit-cloudflare-telemetry\.py --self-test/);
   assert.doesNotMatch(workflow, /audit-cloudflare-live-tail\.py/);
   assert.match(workflow, /id: daily-budget/);
-  assert.equal((workflow.match(/continue-on-error: true/g) || []).length, 5);
+  assert.equal((workflow.match(/continue-on-error: true/g) || []).length, 6);
   assert.match(workflow, /steps\.daily-budget\.outcome == 'failure'/);
   assert.match(workflow, /Fail after collecting diagnostics when any observability gate fails/);
   assert.match(workflow, /if: always\(\)/);
