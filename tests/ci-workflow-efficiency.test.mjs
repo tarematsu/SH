@@ -88,15 +88,19 @@ test('D1 query insights are manual-only and avoid installing Wrangler', () => {
   assert.doesNotMatch(d1Usage, /sleep ["']?\$|Waiting for the current PR deployment/);
 });
 
-test('Cloudflare observability runs complete checks after deploy and daily at 01:00 UTC', () => {
+test('Cloudflare observability runs after deploy, diagnostic changes, and daily at 01:00 UTC', () => {
   assert.match(observability, /^  workflow_run:\n/m);
   assert.match(observability, /workflows: \["Deploy production"\]/);
+  assert.match(observability, /^  push:\n/m);
+  assert.match(observability, /branches: \[main\]/);
+  assert.match(observability, /\.github\/workflows\/fetch-cloudflare-observability\.yml/);
+  assert.match(observability, /\.github\/scripts\/publish-cloudflare-observability-status\.mjs/);
+  assert.doesNotMatch(observability, /^      - '(?:worker|site|packages)\//m);
   assert.match(observability, /^  schedule:\n/m);
   assert.match(observability, /cron: "0 1 \* \* \*"/);
   assert.equal((observability.match(/- cron:/g) || []).length, 1);
   assert.doesNotMatch(observability, /cron: "37 \* \* \* \*"/);
   assert.doesNotMatch(observability, /^  pull_request:\n/m);
-  assert.doesNotMatch(observability, /^  push:\n/m);
   assert.match(observability, /secrets\.CLOUDFLARE_BUILDS_API_TOKEN/);
   assert.match(observability, /audit-cloudflare-daily-usage\.py/);
   assert.match(observability, /audit-cloudflare-free-tier\.py/);
