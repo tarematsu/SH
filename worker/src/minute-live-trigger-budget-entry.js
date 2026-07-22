@@ -61,7 +61,7 @@ export async function processBudgetedLiveTriggerMessage(env, body, dependencies 
     }, dependencies);
   } catch (error) {
     const release = dependencies.release || releaseBudgetedLiveDeriveJob;
-    await release(env, job.id, { now }).catch(() => {});
+    await release(env, [job.id], { now }).catch(() => {});
     throw error;
   }
   return {
