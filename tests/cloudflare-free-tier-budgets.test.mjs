@@ -43,9 +43,9 @@ test('Cloudflare resource budgets are fixed at 80 percent of included usage', ()
 });
 
 test('the coordinator and remaining scheduled Queues fit safely below daily budgets', () => {
-  const maximumCoordinatorRequests = 24 * 60;
-  // The DO only reads and overwrites one ticket. Slow scheduled work runs in
-  // the caller, so allow a conservative full second of DO active time per RPC.
+  // Normal ticks use one short claim RPC and one short release RPC. Each RPC
+  // reads and overwrites the same SQLite row; slow work stays in the caller.
+  const maximumCoordinatorRequests = 24 * 60 * 2;
   const maximumCoordinatorDuration = maximumCoordinatorRequests * 1 * 0.128;
   const maximumCoordinatorRowsRead = maximumCoordinatorRequests;
   const maximumCoordinatorRowsWritten = maximumCoordinatorRequests;
@@ -63,7 +63,10 @@ test('the coordinator and remaining scheduled Queues fit safely below daily budg
   assert.equal(runtime.vars.RAW_COLLECTION_FALLBACK_INTERVAL_MINUTES, 5);
   assert.equal(runtime.durable_objects.bindings[0].class_name, 'RuntimeCoordinator');
   assert.match(coreEntry, /await stub\.claim/);
+  assert.match(coreEntry, /await stub\.release/);
+  assert.match(coreEntry, /primary-run-in-progress/);
   assert.match(coreEntry, /runtime:last-scheduled-ticket/);
+  assert.match(coreEntry, /return direct\(controller, env, ctx, dependencies\.direct\)/);
   assert.match(coreEntry, /runPagesReadModelCron/);
   assert.doesNotMatch(coreEntry, /pages-read-model-scheduled-dispatch/);
 });
