@@ -15,9 +15,7 @@ function jobSection(source, name, nextName) {
 }
 
 const ci = workflow('ci.yml');
-const deploy = workflow('deploy.yml');
-const splitDeploy = workflow('deploy-split-pipeline.yml');
-const prDiagnostics = workflow('cloudflare-pr-diagnostics.yml');
+const productionDeploy = workflow('deploy-split-pipeline.yml');
 const d1Usage = workflow('fetch-cloudflare-d1-usage.yml');
 const observability = workflow('fetch-cloudflare-observability.yml');
 const hourlyCpu = workflow('fetch-cloudflare-observability-hourly.yml');
@@ -70,19 +68,20 @@ test('Pages builds reuse Worker integration dependencies when inputs are unchang
   assert.match(workerDependencyGuard, /'ci', '--prefer-offline'/);
 });
 
-test('manual, automatic, and PR Worker deploys reuse cached dependencies', () => {
-  for (const source of [deploy, splitDeploy, prDiagnostics]) {
-    assert.match(source, /uses: actions\/cache@v4/);
-    assert.match(source, /worker\/node_modules/);
-    assert.match(source, /worker-deploy-/);
-    assert.match(source, /npm ci --prefer-offline/);
-  }
-  assert.match(deploy, /site\/node_modules/);
-  assert.match(deploy, /pages-deploy-/);
+test('the single production deployment workflow caches Pages and Worker dependencies', () => {
+  assert.match(productionDeploy, /^  push:\n/m);
+  assert.match(productionDeploy, /^  workflow_dispatch:\n/m);
+  assert.doesNotMatch(productionDeploy, /^  pull_request:\n/m);
+  assert.match(productionDeploy, /uses: actions\/cache@v4/);
+  assert.match(productionDeploy, /worker\/node_modules/);
+  assert.match(productionDeploy, /worker-deploy-/);
+  assert.match(productionDeploy, /site\/node_modules/);
+  assert.match(productionDeploy, /pages-deploy-/);
+  assert.match(productionDeploy, /npm ci --prefer-offline/);
 });
 
 test('production checks run only for runtime or schema changes', () => {
-  for (const source of [prDiagnostics, d1Usage, observability, hourlyCpu]) {
+  for (const source of [d1Usage, observability, hourlyCpu]) {
     assert.doesNotMatch(source, /^\s*- ["']worker\/\*\*["']\s*$/m);
     assert.doesNotMatch(source, /^\s*- ["']\.github\/(?:workflows|scripts)\//m);
     assert.match(source, /worker\/src\/\*\*/);
