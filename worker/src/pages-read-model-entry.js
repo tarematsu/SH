@@ -12,7 +12,8 @@ const EMPTY_DEPENDENCIES = Object.freeze({});
 const JSON_QUEUE_SEND_OPTIONS = Object.freeze({ contentType: 'json' });
 const INTERNAL_RESPONSE_PATH = '/_internal/pages-response';
 const MINUTE_MS = 60_000;
-const PAGES_CYCLE_MINUTES = 6 * 60;
+const PAGES_CYCLE_MINUTES = 24 * 60;
+const VARIANT_CADENCE_MINUTES = 6 * 60;
 
 let readModelQueueModulePromise;
 let responseR2ModulePromise;
@@ -48,13 +49,16 @@ function cycleMinute(timestamp) {
 }
 
 export function pagesVariantDispatchDue(timestamp) {
-  switch (cycleMinute(timestamp)) {
+  const minute = cycleMinute(timestamp);
+  const slotMinute = minute % VARIANT_CADENCE_MINUTES;
+  switch (slotMinute) {
     case 35:
-    case 50:
     case 70:
     case 105:
     case 140:
       return true;
+    case 50:
+      return minute === 50;
     default:
       return false;
   }
