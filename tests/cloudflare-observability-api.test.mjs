@@ -14,6 +14,10 @@ const auditScript = readFileSync(
   new URL('../.github/scripts/audit-cloudflare-telemetry.py', import.meta.url),
   'utf8',
 );
+const dailyBudgetScript = readFileSync(
+  new URL('../.github/scripts/audit-cloudflare-daily-usage.py', import.meta.url),
+  'utf8',
+);
 const liveTailScript = readFileSync(
   new URL('../.github/scripts/capture-cloudflare-live-tail.mjs', import.meta.url),
   'utf8',
@@ -28,15 +32,26 @@ const wranglerFiles = [
   source: readFileSync(new URL(`../worker/${name}`, import.meta.url), 'utf8'),
 }));
 
-test('observability workflow uses Cloudflare APIs on PRs and main pushes', () => {
-  assert.match(workflow, /^  pull_request:\n/m);
-  assert.match(workflow, /^  push:\n/m);
-  assert.match(workflow, /branches: \[main\]/);
+test('observability uses measured hourly budgets and post-deploy Cloudflare API diagnostics', () => {
+  assert.match(workflow, /^  workflow_run:\n/m);
+  assert.match(workflow, /workflows: \["Deploy production"\]/);
+  assert.match(workflow, /^  schedule:\n/m);
+  assert.doesNotMatch(workflow, /^  pull_request:\n/m);
+  assert.doesNotMatch(workflow, /^  push:\n/m);
   assert.match(workflow, /CLOUDFLARE_WORKERS: sh-buddies-ingest,sh-minute-enrichment,sh-sakurazaka46jp,sh-runtime-orchestrator/);
   assert.match(workflow, /secrets\.CLOUDFLARE_BUILDS_API_TOKEN/);
+  assert.match(workflow, /audit-cloudflare-daily-usage\.py/);
   assert.match(workflow, /query-cloudflare-observability\.py/);
   assert.match(workflow, /audit-cloudflare-telemetry\.py/);
+  assert.match(workflow, /LIVE_TAIL_LOG: live-tail\.log/);
+  assert.doesNotMatch(workflow, /audit-cloudflare-live-tail\.py/);
   assert.match(workflow, /CPU_BUDGET_MS: "10"/);
+  assert.match(workflow, /DURABLE_OBJECT_CPU_BUDGET_MS: "30000"/);
+  assert.match(workflow, /DAILY_REQUEST_BUDGET: "70000"/);
+  assert.match(workflow, /DAILY_REQUEST_RESERVE: "0"/);
+  assert.match(workflow, /DAILY_D1_READ_BUDGET: "3000000"/);
+  assert.match(workflow, /DAILY_D1_WRITE_BUDGET: "70000"/);
+  assert.match(workflow, /LIVE_TAIL_SECONDS: "90"/);
   assert.doesNotMatch(workflow, /R2_BUCKET|AWS_|aws s3api/);
   assert.match(workflow, /Upload sanitized observability report/);
   assert.match(workflow, /retention-days: 1/);
@@ -51,12 +66,25 @@ test('query and audit scripts use Cloudflare APIs without R2', () => {
   assert.match(queryScript, /urlunsplit/);
   assert.match(auditScript, /workers\.get\("cpuTimeMs"\)/);
   assert.match(auditScript, /"view": "events"/);
+  assert.match(auditScript, /\$workers\.cpuTimeMs/);
   assert.match(auditScript, /scriptVersion/);
+  assert.match(auditScript, /fromisoformat/);
   assert.match(auditScript, /old_version_invocations_excluded/);
-  assert.match(auditScript, /CPU_BUDGET_MS/);
+  assert.match(auditScript, /LIVE_TAIL_EVENT=/);
+  assert.match(auditScript, /_diagnostic_source/);
+  assert.match(auditScript, /DURABLE_OBJECT_CPU_BUDGET_MS/);
   assert.match(auditScript, /coverage_ok/);
+  assert.match(auditScript, /missing_workers/);
   assert.match(auditScript, /incomplete coverage/);
-  assert.doesNotMatch(`${queryScript}\n${auditScript}`, /r2\.cloudflarestorage|aws s3|R2_BUCKET/);
+  assert.match(dailyBudgetScript, /workersInvocationsAdaptive/);
+  assert.match(dailyBudgetScript, /d1AnalyticsAdaptiveGroups/);
+  assert.match(dailyBudgetScript, /rowsRead rowsWritten/);
+  assert.match(dailyBudgetScript, /measuredRequests/);
+  assert.match(dailyBudgetScript, /requestReserve/);
+  assert.doesNotMatch(
+    `${queryScript}\n${auditScript}\n${dailyBudgetScript}`,
+    /r2\.cloudflarestorage|aws s3|R2_BUCKET/,
+  );
 });
 
 test('live-tail diagnostics redact sensitive request fields', () => {
