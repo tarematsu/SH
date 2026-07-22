@@ -6,10 +6,12 @@ on:
       - 'site/**'
       - 'database/**'
       - 'worker/**'
+      - 'packages/**'
       - 'scripts/**'
       - 'tests/**'
       - 'package.json'
       - '.github/workflows/**'
+      - '.github/actions/**'
   workflow_dispatch:
 
 permissions:
@@ -20,23 +22,81 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  changes:
+    name: Select checks
+    runs-on: ubuntu-latest
+    outputs:
+      pages: ${{ steps.scope.outputs.pages }}
+      worker: ${{ steps.scope.outputs.worker }}
+      sql: ${{ steps.scope.outputs.sql }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Select affected checks
+        id: scope
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha || '' }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          pages=false
+          worker=false
+          sql=false
+
+          if [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then
+            pages=true
+            worker=true
+            sql=true
+          else
+            git diff --name-only "$BASE_SHA" "$HEAD_SHA" > changed-files.txt
+            while IFS= read -r file; do
+              case "$file" in
+                site/*|packages/sh-shared/*|database/*)
+                  pages=true
+                  ;;
+              esac
+              case "$file" in
+                worker/*|packages/sh-shared/*|database/facts-*|database/facts-migrations/*)
+                  worker=true
+                  ;;
+              esac
+              case "$file" in
+                database/*|tests/sql_migrations_test.py)
+                  sql=true
+                  ;;
+              esac
+              case "$file" in
+                .github/workflows/ci.yml|.github/actions/*)
+                  pages=true
+                  worker=true
+                  sql=true
+                  ;;
+              esac
+            done < changed-files.txt
+          fi
+
+          echo "pages=$pages" >> "$GITHUB_OUTPUT"
+          echo "worker=$worker" >> "$GITHUB_OUTPUT"
+          echo "sql=$sql" >> "$GITHUB_OUTPUT"
+
   repository:
     name: Full repository checks
+    needs: changes
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
       - uses: actions/setup-python@v5
+        if: needs.changes.outputs.sql == 'true'
         with:
           python-version: '3.12'
-      - run: npm ci --no-audit --no-fund
-        working-directory: worker
-      - run: npm ci --no-audit --no-fund
-        working-directory: site
-      - run: npm run check:js
+      - run: node scripts/check-js-syntax.mjs scripts tests
       - name: Run JavaScript tests
         shell: bash
         run: |
@@ -55,10 +115,14 @@ jobs:
           path: github-js-tests.log
           if-no-files-found: ignore
           retention-days: 7
-      - run: npm run test:sql
+      - name: Run SQL migration tests
+        if: needs.changes.outputs.sql == 'true'
+        run: npm run test:sql
 
   pages:
     name: Pages checks
+    needs: changes
+    if: needs.changes.outputs.pages == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -70,8 +134,22 @@ jobs:
           cache-dependency-path: |
             site/package-lock.json
             worker/package-lock.json
-      - run: npm ci --no-audit --no-fund
+      - name: Restore Pages test dependencies
+        id: pages-modules
+        uses: actions/cache@v4
+        with:
+          path: |
+            site/node_modules
+            worker/node_modules
+          key: ${{ runner.os }}-node22-pages-${{ hashFiles('site/package-lock.json', 'worker/package-lock.json', 'packages/sh-shared/**') }}
+      - name: Install Pages dependencies
+        if: steps.pages-modules.outputs.cache-hit != 'true'
+        run: npm ci --prefer-offline --no-audit --no-fund
         working-directory: site
+      - name: Install Worker integration dependencies
+        if: steps.pages-modules.outputs.cache-hit != 'true'
+        run: npm ci --prefer-offline --no-audit --no-fund
+        working-directory: worker
       - run: npm run check
         working-directory: site
       - name: Run Pages integration tests
@@ -79,7 +157,7 @@ jobs:
         working-directory: site
         run: |
           set +e
-          npm run test:integration > pages-integration-tests.log 2>&1
+          node --test tests/*.test.js > pages-integration-tests.log 2>&1
           status=$?
           if [ "$status" -ne 0 ]; then
             tail -n 200 pages-integration-tests.log
@@ -102,6 +180,8 @@ jobs:
 
   worker:
     name: Worker checks
+    needs: changes
+    if: needs.changes.outputs.worker == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 25
     defaults:
@@ -114,7 +194,15 @@ jobs:
           node-version: '22'
           cache: npm
           cache-dependency-path: worker/package-lock.json
-      - run: npm ci --no-audit --no-fund
+      - name: Restore Worker dependencies
+        id: worker-modules
+        uses: actions/cache@v4
+        with:
+          path: worker/node_modules
+          key: ${{ runner.os }}-node22-worker-${{ hashFiles('worker/package-lock.json', 'packages/sh-shared/**') }}
+      - name: Install Worker dependencies
+        if: steps.worker-modules.outputs.cache-hit != 'true'
+        run: npm ci --prefer-offline --no-audit --no-fund
       - name: Check active Worker bundles
         shell: bash
         run: |
@@ -162,11 +250,15 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - run: npm ci --no-audit --no-fund
+          cache: npm
+          cache-dependency-path: |
+            site/package-lock.json
+            worker/package-lock.json
+      - run: npm ci --prefer-offline --no-audit --no-fund
         working-directory: site
       - run: npm audit --audit-level=high
         working-directory: site
-      - run: npm ci --no-audit --no-fund
+      - run: npm ci --prefer-offline --no-audit --no-fund
         working-directory: worker
       - run: npm audit --audit-level=high
         working-directory: worker
