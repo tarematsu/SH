@@ -104,6 +104,7 @@ test('incremental excluded-date updates replace only dates inside the refreshed 
 test('canonical materialized variants keep the intended publication cadence', () => {
   const materialized = new Map(MATERIALIZED_API_VARIANTS.map((variant) => [variant.key, variant]));
   assert.deepEqual([...materialized.keys()], [
+    'dashboard',
     'history:daily',
     'history:weekly',
     'history:monthly',
@@ -113,8 +114,9 @@ test('canonical materialized variants keep the intended publication cadence', ()
   ]);
   assert.equal(materialized.get('track-history').cadence_minutes, 1440);
   assert.equal(materialized.get('host-history:summary').cadence_minutes, 1440);
+  assert.equal(materialized.get('dashboard').cadence_minutes, 5);
   for (const [key, variant] of materialized) {
-    if (key !== 'track-history' && key !== 'host-history:summary') {
+    if (key !== 'dashboard' && key !== 'track-history' && key !== 'host-history:summary') {
       assert.equal(variant.cadence_minutes, 360, key);
     }
   }
