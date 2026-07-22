@@ -4,7 +4,10 @@ import test from 'node:test';
 
 import worker, {
   PAGES_READ_MODEL_CRON,
+  PAGES_READ_MODEL_DISPATCH_MESSAGE,
+  pagesVariantDispatchDue,
   runPagesReadModelCron,
+  runPagesReadModelQueue,
 } from '../src/pages-read-model-entry.js';
 import {
   pagesReadModelTask,
@@ -19,7 +22,7 @@ test('production entry exposes internal fetch, scheduled, and queue handlers', (
   assert.deepEqual(Object.keys(worker).sort(), ['fetch', 'queue', 'scheduled']);
 });
 
-test('cron success and failure behavior is preserved for canonical tasks', async () => {
+test('cron success and failure behavior is preserved for injected canonical tasks', async () => {
   const success = { task: { key: 'history:daily' }, responses: [{ ok: true }], failed: 0 };
   assert.equal(await runPagesReadModelCron(
     { cron: PAGES_READ_MODEL_CRON, scheduledTime: BASE + 35 * 60_000 },
@@ -41,6 +44,64 @@ test('cron success and failure behavior is preserved for canonical tasks', async
       && error.errors.length === 1
       && /render failed/.test(error.errors[0].message),
   );
+});
+
+test('production cron dispatches only heavy variant slots through the existing Pages Queue', async () => {
+  const sent = [];
+  const timestamp = BASE + 35 * 60_000;
+  const result = await runPagesReadModelCron(
+    { cron: PAGES_READ_MODEL_CRON, scheduledTime: timestamp },
+    {
+      PAGES_READ_MODEL_QUEUE: {
+        async send(body, options) { sent.push({ body, options }); },
+      },
+    },
+  );
+
+  assert.equal(pagesVariantDispatchDue(timestamp), true);
+  assert.equal(pagesVariantDispatchDue(BASE + 36 * 60_000), false);
+  assert.deepEqual(result, {
+    dispatched: true,
+    task: 'pages-read-model-variant',
+    scheduled_at: timestamp,
+  });
+  assert.deepEqual(sent, [{
+    body: {
+      message_type: PAGES_READ_MODEL_DISPATCH_MESSAGE,
+      message_version: 1,
+      scheduled_at: timestamp,
+    },
+    options: { contentType: 'json' },
+  }]);
+});
+
+test('Pages Queue executes a dispatched variant and acknowledges it', async () => {
+  const timestamp = BASE + 35 * 60_000;
+  let acknowledged = false;
+  let retried = false;
+  const result = await runPagesReadModelQueue({
+    queue: 'stationhead-pages-read-model-publication',
+    messages: [{
+      body: {
+        message_type: PAGES_READ_MODEL_DISPATCH_MESSAGE,
+        message_version: 1,
+        scheduled_at: timestamp,
+      },
+      ack() { acknowledged = true; },
+      retry() { retried = true; },
+    }],
+  }, {}, {
+    runTask: async (_env, now) => ({
+      generated_at: now,
+      task: { key: 'history:daily' },
+      responses: [{ ok: true }],
+      failed: 0,
+    }),
+  });
+
+  assert.equal(result.generated_at, timestamp);
+  assert.equal(acknowledged, true);
+  assert.equal(retried, false);
 });
 
 test('cron retains coercion compatibility outside the primitive-string hot path', async () => {
@@ -76,6 +137,8 @@ test('dispatch preserves canonical task selection and background behavior', asyn
 
 test('hot paths cache publication modules and avoid eager fallback allocations', () => {
   assert.match(entrySource, /publicationModulePromise \|\|=/);
+  assert.match(entrySource, /pagesVariantDispatchDue/);
+  assert.match(entrySource, /PAGES_READ_MODEL_DISPATCH_MESSAGE/);
   assert.doesNotMatch(entrySource, /responses\.filter\(/);
   assert.doesNotMatch(entrySource, /failures\.map\(/);
   assert.doesNotMatch(entrySource, /fallback = Date\.now\(\)/);
