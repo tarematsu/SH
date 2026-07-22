@@ -3,13 +3,23 @@ import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
 import coreWorker, {
+  lightweightLiveCompleteBatch,
   runCoreFetch,
   runCoreQueue,
   runCoreScheduled,
 } from '../src/runtime-orchestrator-entry.js';
 
-function batch(queue) {
-  return { queue, messages: [{ body: {} }] };
+function batch(queue, body = {}) {
+  return { queue, messages: [{ body }] };
+}
+
+function liveCompleteBody(jobKind = 'live') {
+  return {
+    message_type: 'minute-fact-derive-stage',
+    message_version: 1,
+    stage: 'complete',
+    job: { id: 42, job_kind: jobKind },
+  };
 }
 
 test('core Worker exposes fetch, scheduled, and queue surfaces', () => {
@@ -38,6 +48,31 @@ test('core queue keeps domain routes in separate invocations', async () => {
     ['pages'],
     ['runtime'],
   ]);
+});
+
+test('live completion bypasses the runtime and derive module graphs', async () => {
+  const env = {
+    LIVE_REVISION_MATERIALIZATION_ENABLED: false,
+    HISTORICAL_REBUILD_ENABLED: true,
+  };
+  const completeBatch = batch('stationhead-minute-live-derive', liveCompleteBody());
+  assert.equal(lightweightLiveCompleteBatch(completeBatch, env), true);
+  assert.equal(lightweightLiveCompleteBatch(
+    batch('stationhead-minute-live-derive', liveCompleteBody('rebuild')),
+    env,
+  ), false);
+
+  const calls = [];
+  await runCoreQueue(completeBatch, env, {}, {
+    async runLiveCompleteQueue(_batch, _env, dependencies) {
+      calls.push(['live-complete', dependencies]);
+    },
+    liveComplete: { marker: true },
+    async runRuntimeQueue() {
+      calls.push(['runtime']);
+    },
+  });
+  assert.deepEqual(calls, [['live-complete', { marker: true }]]);
 });
 
 test('one cron dispatches runtime and Pages work to separate Queue invocations', async () => {
