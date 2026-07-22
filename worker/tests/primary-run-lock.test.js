@@ -132,8 +132,14 @@ test('releasePrimaryRunLock is a no-op for a holder that no longer owns the lock
   assert.equal(db.row.holder_id, 'run-2', 'run-2 must still hold the lock');
 });
 
-test('releasePrimaryRunLock returns false with no DB binding', async () => {
+test('releasePrimaryRunLock returns false without touching D1 when absent or disabled', async () => {
   assert.equal(await releasePrimaryRunLock({}, 'run-1'), false);
+  const db = fakeDb();
+  assert.equal(await releasePrimaryRunLock({
+    DB: db,
+    PRIMARY_RUN_LOCK_ENABLED: 'false',
+  }, 'run-1'), false);
+  assert.equal(db.calls.length, 0);
 });
 
 test('isPrimaryRunLockActive is false with no DB binding, no row, or a missing table', async () => {

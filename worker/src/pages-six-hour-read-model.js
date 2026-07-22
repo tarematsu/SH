@@ -115,6 +115,7 @@ async function materializeVariant(
       response,
       now,
       materializedResponseCadenceSeconds(variant.key),
+      { r2: activeEnv.PAGES_RESPONSE_R2 },
     );
     return { key: variant.key, ok: true, ...saved };
   } catch (error) {

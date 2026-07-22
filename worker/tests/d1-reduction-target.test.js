@@ -7,6 +7,7 @@ import {
   queueLikesStageRequired,
   queuePersistenceCheckpointDue,
 } from '../src/persist-structure-budget-entry.js';
+import { QUEUE_PLAN_PREFIX } from '../src/queue-plan-r2.js';
 
 const MINUTE_MS = 60_000;
 const CHECKPOINT_MINUTES = 20;
@@ -41,6 +42,43 @@ function fakeEnv(overrides = {}) {
     QUEUE_STABLE_CHECKPOINT_MINUTES: CHECKPOINT_MINUTES,
     ...overrides,
   };
+}
+
+class FakeR2 {
+  constructor() {
+    this.values = new Map();
+    this.reads = 0;
+    this.puts = 0;
+    this.deletes = 0;
+  }
+
+  async get(key) {
+    this.reads += 1;
+    const value = this.values.get(key);
+    return value == null ? null : { async json() { return JSON.parse(value); } };
+  }
+
+  async put(key, value) {
+    this.puts += 1;
+    this.values.set(key, value);
+  }
+
+  async delete(key) {
+    this.deletes += 1;
+    this.values.delete(key);
+  }
+}
+
+function seedStablePlan(r2, observedAt = 20 * MINUTE_MS) {
+  r2.values.set(`${QUEUE_PLAN_PREFIX}1.json`, JSON.stringify({
+    version: 1,
+    station_id: 1,
+    queue_id: 2,
+    start_time: 3,
+    structural_hash: 'structure-stable',
+    likes_hash: 'likes-stable',
+    observed_at: observedAt,
+  }));
 }
 
 test('stable queue hashes bypass the second likes read stage unless repair is explicitly enabled', () => {
@@ -89,6 +127,48 @@ test('stable non-checkpoint queue invocation performs one planning read and no c
   assert.equal(result.likes_deferred, false);
   assert.equal(result.finalization_deferred, false);
   assert.equal(result.stable_checkpoint_skipped, true);
+});
+
+test('stable non-checkpoint queue invocation uses R2 without reading D1', async () => {
+  const r2 = new FakeR2();
+  seedStablePlan(r2);
+  const result = await processBudgetedQueueStructureTask(
+    fakeEnv({ PAGES_RESPONSE_R2: r2 }),
+    stableBody(21 * MINUTE_MS),
+  );
+  assert.equal(result.stable_checkpoint_skipped, true);
+  assert.equal(r2.reads, 1);
+  assert.equal(r2.puts, 0);
+  assert.equal(r2.deletes, 0);
+});
+
+test('twenty-minute checkpoint invalidates R2 and refreshes it from one D1 plan', async () => {
+  const r2 = new FakeR2();
+  seedStablePlan(r2);
+  let planningReads = 0;
+  const result = await processBudgetedQueueStructureTask(
+    fakeEnv({ PAGES_RESPONSE_R2: r2 }),
+    stableBody(40 * MINUTE_MS),
+    {
+      async prepareQueueStructurePersistence() {
+        planningReads += 1;
+        return {
+          structure_changed: false,
+          stale_current: false,
+          station_id: 1,
+          queue_id: 2,
+          start_time: 3,
+          structural_hash: 'structure-stable',
+          likes_hash: 'likes-stable',
+        };
+      },
+      async sendPersistenceContinuation() {},
+    },
+  );
+  assert.equal(result.stable_checkpoint_skipped, false);
+  assert.equal(planningReads, 1);
+  assert.equal(r2.deletes, 1);
+  assert.equal(r2.puts, 1);
 });
 
 test('stable checkpoint sends finalize directly and never invokes the likes comparison stage', async () => {
@@ -174,11 +254,11 @@ test('production stable-path model meets the requested D1 reduction targets', ()
   // Previous stable queue flow per 20 minutes:
   // structure plan read + likes plan read every minute, then one materialization write every minute.
   const previous = { reads: 2 * CHECKPOINT_MINUTES, writes: CHECKPOINT_MINUTES };
-  // New flow: one structure plan read every minute and one checkpoint write per 20-minute window.
-  const optimized = { reads: CHECKPOINT_MINUTES, writes: 1 };
+  // R2 validates nineteen stable minutes; D1 is checked once at the checkpoint.
+  const optimized = { reads: 1, writes: 1 };
   assert.ok(optimized.reads / previous.reads <= 0.50);
   assert.ok(optimized.writes / previous.writes <= 0.30);
-  assert.equal(1 - optimized.reads / previous.reads, 0.50);
+  assert.equal(1 - optimized.reads / previous.reads, 0.975);
   assert.equal(1 - optimized.writes / previous.writes, 0.95);
 });
 

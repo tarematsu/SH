@@ -1,5 +1,8 @@
 import './fetch-guard.js';
-import { materializedResponseMaximumAge } from '../../site/functions/lib/api-contract.js';
+import {
+  materializedResponseCadenceSeconds,
+  materializedResponseMaximumAge,
+} from '../../site/functions/lib/api-contract.js';
 import { runDispatchedPagesReadModelTask } from './pages-read-model-dispatch.js';
 import { processTrackHistoryPublicationTask } from './pages-track-history-publication-queue.js';
 
@@ -8,6 +11,8 @@ export const MINUTE_READ_MODEL_QUEUE = 'stationhead-read-model';
 export const PAGES_READ_MODEL_DISPATCH_MESSAGE = 'stationhead-pages-read-model-dispatch';
 const MINUTE_READ_MODEL_MESSAGE = 'stationhead-read-model';
 const TRACK_HISTORY_MODEL_KEY = 'track-history';
+const DASHBOARD_MODEL_KEY = 'dashboard';
+const DASHBOARD_MATERIALIZATION_INTERVAL_MINUTES = 5;
 const EMPTY_DEPENDENCIES = Object.freeze({});
 const JSON_QUEUE_SEND_OPTIONS = Object.freeze({ contentType: 'json' });
 const INTERNAL_RESPONSE_PATH = '/_internal/pages-response';
@@ -18,6 +23,7 @@ const VARIANT_CADENCE_MINUTES = 6 * 60;
 let readModelQueueModulePromise;
 let responseR2ModulePromise;
 let responseStoreModulePromise;
+let dashboardModulePromise;
 
 function loadReadModelQueueModule() {
   readModelQueueModulePromise ||= import('./read-model-entry.js');
@@ -32,6 +38,11 @@ function loadResponseR2Module() {
 function loadResponseStoreModule() {
   responseStoreModulePromise ||= import('./pages-response-store.js');
   return responseStoreModulePromise;
+}
+
+function loadDashboardModule() {
+  dashboardModulePromise ||= import('../../site/functions/api/dashboard.js');
+  return dashboardModulePromise;
 }
 
 function scheduledTimestamp(controller) {
@@ -61,6 +72,53 @@ export function pagesVariantDispatchDue(timestamp) {
       return minute === 50;
     default:
       return false;
+  }
+}
+
+export function dashboardMaterializationDue(timestamp) {
+  const value = Number(timestamp);
+  if (!Number.isFinite(value) || value < 0) return false;
+  return Math.floor(value / MINUTE_MS) % DASHBOARD_MATERIALIZATION_INTERVAL_MINUTES === 0;
+}
+
+export async function runPagesDashboardMaterialization(
+  env,
+  timestamp = Date.now(),
+  dependencies = EMPTY_DEPENDENCIES,
+) {
+  const now = Number(timestamp);
+  if (!dashboardMaterializationDue(now)) return { skipped: true, reason: 'interval' };
+  if (!env?.PAGES_RESPONSE_KV && !env?.PAGES_RESPONSE_R2) {
+    return { skipped: true, reason: 'storage-binding-missing' };
+  }
+  try {
+    const render = dependencies.renderDashboard
+      || (await loadDashboardModule()).onRequestGet;
+    const response = await render({
+      request: new Request('https://pages-materializer.invalid/api/dashboard', {
+        method: 'GET',
+        headers: { accept: 'application/json' },
+      }),
+      env,
+    });
+    const save = dependencies.saveDashboardResponse
+      || (await loadResponseStoreModule()).saveMaterializedResponse;
+    const saved = await save(
+      env.MINUTE_DB,
+      env.PAGES_RESPONSE_KV,
+      DASHBOARD_MODEL_KEY,
+      response,
+      now,
+      materializedResponseCadenceSeconds(DASHBOARD_MODEL_KEY),
+      { r2: env.PAGES_RESPONSE_R2 },
+    );
+    return { skipped: false, key: DASHBOARD_MODEL_KEY, ...saved };
+  } catch (error) {
+    console.error(JSON.stringify({
+      event: 'pages_dashboard_materialization_failed',
+      error: String(error?.message || error).slice(0, 500),
+    }));
+    return { skipped: true, reason: 'materialization-failed' };
   }
 }
 
@@ -175,15 +233,14 @@ export async function runPagesReadModelFetch(
       || (await loadResponseR2Module()).loadMaterializedR2Response;
     const loadKv = dependencies.loadResponse
       || (await loadResponseStoreModule()).loadMaterializedResponse;
-    const r2Response = modelKey === TRACK_HISTORY_MODEL_KEY
-      ? await loadR2(env?.PAGES_RESPONSE_R2, modelKey, now, maximumAge)
-      : null;
-    const response = r2Response || await loadKv(
-      env?.PAGES_RESPONSE_KV,
-      modelKey,
-      now,
-      maximumAge,
-    );
+    let response;
+    if (modelKey === TRACK_HISTORY_MODEL_KEY) {
+      response = await loadR2(env?.PAGES_RESPONSE_R2, modelKey, now, maximumAge)
+        || await loadKv(env?.PAGES_RESPONSE_KV, modelKey, now, maximumAge);
+    } else {
+      response = await loadKv(env?.PAGES_RESPONSE_KV, modelKey, now, maximumAge)
+        || await loadR2(env?.PAGES_RESPONSE_R2, modelKey, now, maximumAge);
+    }
     if (response) await cacheResponse(cache, cacheKey, response, context);
     return response || new Response(null, {
       status: 404,
@@ -230,11 +287,22 @@ export async function runPagesReadModelCron(controller, env, dependencies = EMPT
     }
   }
   const now = scheduledTimestamp(controller);
+  const dashboard = dependencies.runDashboardMaterialization
+    || runPagesDashboardMaterialization;
+  const dashboardPromise = dashboard(env, now, dependencies.dashboard || EMPTY_DEPENDENCIES);
   if (!dependencies.runTask && pagesVariantDispatchDue(now)) {
-    return dispatchPagesVariant(env, now, dependencies);
+    const [result] = await Promise.all([
+      dispatchPagesVariant(env, now, dependencies),
+      dashboardPromise,
+    ]);
+    return result;
   }
   const runTask = dependencies.runTask || runDispatchedPagesReadModelTask;
-  return assertRefreshSucceeded(await runTask(env, now, dependencies));
+  const [result] = await Promise.all([
+    runTask(env, now, dependencies),
+    dashboardPromise,
+  ]);
+  return assertRefreshSucceeded(result);
 }
 
 function dispatchedPagesTask(body) {

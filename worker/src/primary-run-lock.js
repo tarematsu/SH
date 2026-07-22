@@ -98,6 +98,7 @@ export async function isPrimaryRunLockActive(env, now = Date.now()) {
 
 export async function releasePrimaryRunLock(env, holderId, now = Date.now()) {
   if (!env?.DB) return false;
+  if (!primaryRunLockEnabled(env)) return false;
   try {
     const result = await env.DB.prepare(RELEASE_SQL).bind(now, SCOPE, holderId).run();
     return Number(result?.meta?.changes || 0) > 0;

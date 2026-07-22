@@ -5,8 +5,6 @@ import {
   canonicalApiCacheRequest,
   edgeCacheableApiRequest,
   materializedApiKey,
-  materializedResponseCadenceSeconds,
-  materializedResponseMaximumAge,
 } from './lib/api-contract.js';
 
 const MATERIALIZED_RETRY_TTL_SECONDS = 30;
@@ -29,17 +27,6 @@ function tagged(response, cacheState) {
   });
 }
 
-function safeHeaders(value) {
-  try {
-    const parsed = JSON.parse(value || '{}');
-    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
-      ? parsed
-      : {};
-  } catch {
-    return {};
-  }
-}
-
 async function serviceMaterializedResponse(context, modelKey) {
   const service = context.env?.PAGES_READ_MODEL_SERVICE;
   if (!SERVICE_MATERIALIZED_MODEL_KEYS.has(modelKey) || typeof service?.fetch !== 'function') return null;
@@ -52,41 +39,6 @@ async function serviceMaterializedResponse(context, modelKey) {
     }));
     return response?.ok ? response : null;
   } catch (error) {
-    console.error(error);
-    return null;
-  }
-}
-
-async function d1MaterializedResponse(context, modelKey, now = Date.now()) {
-  if (!SERVICE_MATERIALIZED_MODEL_KEYS.has(modelKey) || !context.env?.MINUTE_DB) return null;
-  const db = context.env.MINUTE_DB;
-  try {
-    const manifest = await db.prepare(`SELECT generation,status,headers_json,chunk_count,updated_at
-      FROM sh_pages_response_manifest
-      WHERE model_key=?
-      LIMIT 1`).bind(modelKey).first();
-    if (!manifest?.generation || Number(manifest.chunk_count) <= 0) return null;
-    if (now - Number(manifest.updated_at || 0) > materializedResponseMaximumAge(modelKey, context.env)) {
-      return null;
-    }
-
-    const result = await db.prepare(`SELECT payload_chunk
-      FROM sh_pages_response_chunks
-      WHERE model_key=? AND generation=?
-      ORDER BY chunk_index ASC`).bind(modelKey, manifest.generation).all();
-    const rows = result.results || [];
-    if (rows.length !== Number(manifest.chunk_count)) return null;
-
-    const headers = new Headers(safeHeaders(manifest.headers_json));
-    headers.set('x-api-source', 'worker-materialized');
-    headers.set('x-materialized-at', String(manifest.updated_at));
-    headers.set('x-materialized-cadence-seconds', String(materializedResponseCadenceSeconds(modelKey)));
-    return new Response(rows.map((row) => String(row.payload_chunk || '')).join(''), {
-      status: Number(manifest.status) || 200,
-      headers,
-    });
-  } catch (error) {
-    if (/no such table/i.test(String(error?.message || error))) return null;
     console.error(error);
     return null;
   }
@@ -149,8 +101,7 @@ export async function onRequest(context) {
   const modelKey = materializedApiKey(new URL(request.url));
   let prebuilt = null;
   if (SERVICE_MATERIALIZED_MODEL_KEYS.has(modelKey)) {
-    const serviceResponse = await serviceMaterializedResponse(context, modelKey);
-    prebuilt = serviceResponse || await d1MaterializedResponse(context, modelKey, now);
+    prebuilt = await serviceMaterializedResponse(context, modelKey);
   }
   const origin = prebuilt || await context.next();
   const ttlSeconds = responseCacheTtl(

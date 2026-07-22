@@ -13,6 +13,7 @@ import {
 } from '../../site/functions/lib/d1-lean-ingest.js';
 import { payloadHash } from '../../site/functions/lib/ingest-claim.js';
 import { restoreQueueAnalysis } from './queue-analysis-transfer.js';
+import { saveQueuePlanR2 } from './queue-plan-r2.js';
 
 const QUERY_CHUNK = 80;
 const EMPTY_TRACKS = Object.freeze([]);
@@ -159,7 +160,8 @@ export async function prepareQueueLikesPersistenceWithinBudget(env, body, observ
   );
   const staleCurrent = currentWatermark > 0 && observedAt < currentWatermark;
   const likesChanged = completeLikes && current?.likes_hash !== likesHash;
-  const includeRepair = enabled(env?.QUEUE_LIKES_REPAIR_ENABLED, true);
+  const includeRepair = body?.metadata_requested === true
+    || enabled(env?.QUEUE_LIKES_REPAIR_ENABLED, true);
   if (!likesChanged && !includeRepair) {
     return {
       likes_changed: false,
@@ -254,6 +256,9 @@ export async function processOptimizedQueueLikesPlanTask(env, body, dependencies
       data: compactMaterializationData(body?.data, body?.analysis),
       metadata_requested: body?.metadata_requested === true,
     }, dependencies);
+    if (!deferred) throw new Error('PERSIST_QUEUE binding is missing for finalization');
+    const savePlanCache = dependencies.saveQueuePlanCache || saveQueuePlanR2;
+    await savePlanCache(env.PAGES_RESPONSE_R2, body, observedAt, plan);
     return {
       task: 'queue',
       stage: 'likes',
@@ -262,7 +267,7 @@ export async function processOptimizedQueueLikesPlanTask(env, body, dependencies
       materialized_track_count: Number(body.data?.materialized_track_count || plan.track_count || 0),
       likes_changed: plan.likes_changed === true,
       likes_write_deferred: false,
-      finalization_deferred: deferred,
+      finalization_deferred: true,
     };
   }
   const deferred = await sendContinuation(env, {

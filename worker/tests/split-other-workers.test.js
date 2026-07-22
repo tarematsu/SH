@@ -13,6 +13,7 @@ import {
   RUNTIME_MINUTE_GATE_MESSAGE,
   RUNTIME_MINUTE_RECOVERY_MESSAGE,
   RUNTIME_STREAM_PREDICTION_MESSAGE,
+  rawCollectionFallbackDue,
   runRuntimeScheduled,
   runtimeScheduledMessagesFor,
 } from '../src/runtime-scheduled.js';
@@ -107,6 +108,23 @@ test('runtime Cron falls back to the raw collection Queue when inline preparatio
   }
   assert.deepEqual(batches.flat().map(({ body }) => body.message_type), [RAW_COLLECTION_TASK_MESSAGE]);
   assert.match(warnings.join('\n'), /inline_raw_collection_failed/);
+});
+
+test('raw collection Queue fallback is capped at five-minute cadence', async () => {
+  assert.equal(rawCollectionFallbackDue(BASE), true);
+  assert.equal(rawCollectionFallbackDue(BASE + 60_000), false);
+  assert.equal(rawCollectionFallbackDue(BASE + 5 * 60_000), true);
+
+  const batches = [];
+  await runRuntimeScheduled(
+    { cron: RUNTIME_CRON, scheduledTime: BASE + 60_000 },
+    { HOST_MONITOR_QUEUE: { async sendBatch(messages) { batches.push(messages); } } },
+    null,
+    { async dispatchRawCollection() { throw new Error('temporary source failure'); } },
+  );
+  assert.deepEqual(batches.flat().map(({ body }) => body.message_type), [
+    RUNTIME_MINUTE_RECOVERY_MESSAGE,
+  ]);
 });
 
 test('runtime Cron creates bounded messages for recovery and maintenance gates', () => {

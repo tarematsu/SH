@@ -1,7 +1,11 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { runPagesReadModelFetch } from '../src/pages-read-model-entry.js';
+import {
+  dashboardMaterializationDue,
+  runPagesDashboardMaterialization,
+  runPagesReadModelFetch,
+} from '../src/pages-read-model-entry.js';
 import {
   loadMaterializedResponse,
   pagesResponseKey,
@@ -67,6 +71,60 @@ test('materialized responses publish once to KV and are served as streams', asyn
   assert.deepEqual(await response.json(), { ok: true, rows: [1, 2, 3] });
 });
 
+test('R2 absorbs a KV publication failure without touching D1', async () => {
+  const puts = [];
+  const now = Date.UTC(2026, 6, 20, 0, 35);
+  const saved = await saveMaterializedResponse(
+    new NoD1Db(),
+    { async put() { throw new Error('KV temporarily unavailable'); } },
+    'history:daily',
+    Response.json({ ok: true }),
+    now,
+    21_600,
+    { r2: { async put(...args) { puts.push(args); } } },
+  );
+  assert.equal(saved.storage, 'r2');
+  assert.equal(puts.length, 1);
+});
+
+test('dual storage failure never falls back to D1 response tables', async () => {
+  await assert.rejects(saveMaterializedResponse(
+    new NoD1Db(),
+    { async put() { throw new Error('KV unavailable'); } },
+    'history:daily',
+    Response.json({ ok: true }),
+    Date.UTC(2026, 6, 20, 0, 35),
+    21_600,
+    {
+      r2: { async put() { throw new Error('R2 unavailable'); } },
+      async saveR2Response(r2) { return r2.put(); },
+    },
+  ), /could not be persisted to KV or R2/);
+});
+
+test('dashboard materialization uses KV and R2 every five minutes without another Queue message', async () => {
+  const atEvenMinute = Date.UTC(2026, 6, 20, 0, 35);
+  assert.equal(dashboardMaterializationDue(atEvenMinute), true);
+  assert.equal(dashboardMaterializationDue(atEvenMinute + 60_000), false);
+  assert.equal(dashboardMaterializationDue(atEvenMinute + 5 * 60_000), true);
+  const saves = [];
+  const result = await runPagesDashboardMaterialization({
+    MINUTE_DB: {},
+    PAGES_RESPONSE_KV: {},
+    PAGES_RESPONSE_R2: {},
+  }, atEvenMinute, {
+    renderDashboard: async () => Response.json({ ok: true }),
+    saveDashboardResponse: async (...args) => {
+      saves.push(args);
+      return { storage: 'kv', mirror_storage: 'r2', bytes: 11 };
+    },
+  });
+  assert.equal(result.storage, 'kv');
+  assert.equal(result.mirror_storage, 'r2');
+  assert.equal(saves[0][2], 'dashboard');
+  assert.equal(saves[0][5], 300);
+});
+
 test('the internal Worker endpoint returns a KV response or a closed fallback signal', async () => {
   const now = Date.UTC(2026, 6, 20, 0, 35);
   const hit = await runPagesReadModelFetch(
@@ -86,6 +144,20 @@ test('the internal Worker endpoint returns a KV response or a closed fallback si
     { loadResponse: async () => null },
   );
   assert.equal(miss.status, 404);
+});
+
+test('the internal Worker endpoint uses R2 when a normal KV model is absent', async () => {
+  const calls = [];
+  const response = await runPagesReadModelFetch(
+    new Request('https://internal.test/_internal/pages-response?key=history%3Adaily'),
+    {},
+    {
+      loadResponse: async () => { calls.push('kv'); return null; },
+      loadR2Response: async () => { calls.push('r2'); return Response.json({ source: 'r2' }); },
+    },
+  );
+  assert.deepEqual(calls, ['kv', 'r2']);
+  assert.deepEqual(await response.json(), { source: 'r2' });
 });
 
 test('the internal Worker endpoint uses Cache API as a same-colo L1 before KV', async () => {
@@ -149,6 +221,7 @@ test('six-hour variants use KV without provisioning D1 response tables', async (
     MINUTE_DB: { prepare: () => ({ run: async () => {} }) },
     OTHER_DB: {},
     PAGES_RESPONSE_KV: { put() {} },
+    PAGES_RESPONSE_R2: { put() {} },
   }, now, {
     ensureSchema: async () => {},
     render: async () => Response.json({ ok: true }),
@@ -161,6 +234,7 @@ test('six-hour variants use KV without provisioning D1 response tables', async (
   assert.equal(result.responses[0].storage, 'kv');
   assert.equal(calls[0][2], 'history:daily');
   assert.equal(calls[0][5], 21_600);
+  assert.equal(calls[0][6].r2.put instanceof Function, true);
 });
 
 test('deployment resolves the exact namespace and replaces the placeholder id', () => {

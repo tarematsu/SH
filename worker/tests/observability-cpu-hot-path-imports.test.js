@@ -101,7 +101,6 @@ test('core router keeps queue, fetch and scheduled graphs behind their event rou
     'pages-read-model-entry.js',
     'runtime-queue.js',
     'runtime-scheduled.js',
-    'pages-read-model-scheduled-dispatch.js',
   ]) {
     assert.match(runtimeEntry, new RegExp(`import\\('./${moduleName.replaceAll('.', '\\.')}'\\)`));
     assert.doesNotMatch(runtimeEntry, new RegExp(`from './${moduleName.replaceAll('.', '\\.')}'`));

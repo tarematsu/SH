@@ -2,6 +2,11 @@ import {
   commitQueueStructurePersistence,
   prepareQueueStructurePersistence,
 } from './persist-structure-stages.js';
+import {
+  invalidateQueuePlanR2,
+  loadQueuePlanR2,
+  saveQueuePlanR2,
+} from './queue-plan-r2.js';
 
 const EMPTY_TRACKS = Object.freeze([]);
 const JSON_QUEUE_SEND_OPTIONS = Object.freeze({ contentType: 'json' });
@@ -145,12 +150,27 @@ export async function processBudgetedQueueStructureTask(env, body, dependencies 
   if (stage === 'persist') {
     const prepare = dependencies.prepareQueueStructurePersistence
       || prepareQueueStructurePersistence;
-    const plan = await prepare(env.DB, body, observedAt);
+    const checkpointDue = body.metadata_requested === true
+      || queuePersistenceCheckpointDue(observedAt, env);
+    const loadPlanCache = dependencies.loadQueuePlanCache || loadQueuePlanR2;
+    const cachedPlan = await loadPlanCache(
+      env.PAGES_RESPONSE_R2,
+      body,
+      observedAt,
+      checkpointDue,
+    );
+    const plan = cachedPlan || await prepare(env.DB, body, observedAt);
+    const savePlanCache = dependencies.saveQueuePlanCache || saveQueuePlanR2;
+    const invalidatePlanCache = dependencies.invalidateQueuePlanCache || invalidateQueuePlanR2;
+    if (plan?.structure_changed === true) {
+      await invalidatePlanCache(env.PAGES_RESPONSE_R2, body);
+    }
     if (plan?.structure_changed !== true) {
       const needsLikes = queueLikesStageRequired(body, plan, env);
       if (!needsLikes) {
-        const checkpointDue = body.metadata_requested === true
-          || queuePersistenceCheckpointDue(observedAt, env);
+        if (!cachedPlan) {
+          await savePlanCache(env.PAGES_RESPONSE_R2, body, observedAt, plan);
+        }
         let finalizationDeferred = false;
         if (checkpointDue) {
           finalizationDeferred = await sendContinuation(
@@ -172,6 +192,7 @@ export async function processBudgetedQueueStructureTask(env, body, dependencies 
           finalization_deferred: finalizationDeferred,
         };
       }
+      await invalidatePlanCache(env.PAGES_RESPONSE_R2, body);
       const likesDeferred = await sendContinuation(
         env,
         likesMessage(body, observedAt, plan),
@@ -253,6 +274,10 @@ export async function processBudgetedQueueStructureTask(env, body, dependencies 
   const deferred = await sendContinuation(env, continuation, dependencies);
   if (!deferred) {
     throw new Error(`PERSIST_QUEUE binding is missing for ${needsLikes ? 'likes' : 'finalization'}`);
+  }
+  if (!needsLikes) {
+    const savePlanCache = dependencies.saveQueuePlanCache || saveQueuePlanR2;
+    await savePlanCache(env.PAGES_RESPONSE_R2, body, observedAt, plan);
   }
   return {
     task: 'queue',
