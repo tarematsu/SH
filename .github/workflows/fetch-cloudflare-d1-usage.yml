@@ -12,11 +12,6 @@ on:
       - "site/functions/**"
       - "packages/sh-shared/**"
       - "database/**"
-      - "scripts/cloudflare-d1-usage.mjs"
-      - "scripts/cloudflare-d1-hourly-usage.mjs"
-      - "scripts/enforce-d1-half-budget.mjs"
-      - "scripts/enforce-d1-hourly-half-budget.mjs"
-      - ".github/workflows/fetch-cloudflare-d1-usage.yml"
   schedule:
     - cron: "17 * * * *"
     - cron: "30 1 * * *"
