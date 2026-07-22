@@ -11,10 +11,6 @@ on:
       - "worker/package-lock.json"
       - "site/functions/**"
       - "packages/sh-shared/**"
-      - ".github/workflows/fetch-cloudflare-observability.yml"
-      - ".github/scripts/analyze-worker-observability.py"
-      - ".github/scripts/enforce-worker-cpu-budget.py"
-      - ".github/scripts/fetch-r2-worker-logs.py"
   workflow_dispatch:
     inputs:
       since:
