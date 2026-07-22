@@ -107,13 +107,13 @@ test('D1 budget indexes stay selective and refresh planner statistics', () => {
   assert.match(facts, /WHERE status='complete' AND source='live_collector'/);
 });
 
-test('measured daily budgets are enforced by the unified observability workflow', () => {
+test('measured daily budgets enforce the requested D1 reductions', () => {
   const workflow = source('../.github/workflows/fetch-cloudflare-observability.yml');
   const auditor = source('../.github/scripts/audit-cloudflare-daily-usage.py');
   assert.match(workflow, /cron: "37 \* \* \* \*"/);
   assert.match(workflow, /DAILY_REQUEST_BUDGET: "70000"/);
-  assert.match(workflow, /DAILY_D1_READ_BUDGET: "3000000"/);
-  assert.match(workflow, /DAILY_D1_WRITE_BUDGET: "70000"/);
+  assert.match(workflow, /DAILY_D1_READ_BUDGET: "1500000"/);
+  assert.match(workflow, /DAILY_D1_WRITE_BUDGET: "21000"/);
   assert.match(workflow, /audit-cloudflare-daily-usage\.py/);
   assert.match(auditor, /d1AnalyticsAdaptiveGroups/);
   assert.match(auditor, /workersInvocationsAdaptive/);
