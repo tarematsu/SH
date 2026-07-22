@@ -327,46 +327,56 @@ jobs:
           end = dt.datetime.now(dt.timezone.utc).replace(microsecond=0)
           start = end - dt.timedelta(hours=3)
           query = '''
-          query WorkerActivity($accountTag: string, $start: string, $end: string) {
+          query WorkerActivity($accountTag: string, $start: string, $end: string, $scriptName: string) {
             viewer {
               accounts(filter: {accountTag: $accountTag}) {
-                workersInvocationsAdaptiveGroups(
-                  limit: 1000
-                  orderBy: [datetimeFiveMinutes_ASC]
-                  filter: {datetime_geq: $start, datetime_leq: $end}
-                ) {
-                  dimensions { datetimeFiveMinutes scriptName }
-                  sum { requests errors }
-                }
+                workersInvocationsAdaptive(limit: 1, filter: {
+                  scriptName: $scriptName,
+                  datetime_geq: $start,
+                  datetime_leq: $end
+                }) { sum { requests errors } }
               }
             }
           }
           '''
-          payload = {
-              'query': query,
-              'variables': {
-                  'accountTag': account,
-                  'start': start.isoformat().replace('+00:00', 'Z'),
-                  'end': end.isoformat().replace('+00:00', 'Z'),
-              },
-          }
-          result = request('https://api.cloudflare.com/client/v4/graphql', payload, authenticated=True)
-          if result.get('errors'):
-              raise RuntimeError(json.dumps(result['errors'], ensure_ascii=False)[:2000])
-          rows = (((result.get('data') or {}).get('viewer') or {}).get('accounts') or [{}])[0].get('workersInvocationsAdaptiveGroups') or []
-          workers = {'sh-runtime-orchestrator', 'sh-sakurazaka46jp'}
+
+          def activity(worker, window_start, window_end):
+              payload = {
+                  'query': query,
+                  'variables': {
+                      'accountTag': account,
+                      'start': window_start.isoformat().replace('+00:00', 'Z'),
+                      'end': window_end.isoformat().replace('+00:00', 'Z'),
+                      'scriptName': worker,
+                  },
+              }
+              result = request('https://api.cloudflare.com/client/v4/graphql', payload, authenticated=True)
+              if result.get('errors'):
+                  raise RuntimeError(json.dumps(result['errors'], ensure_ascii=False)[:2000])
+              rows = (((result.get('data') or {}).get('viewer') or {}).get('accounts') or [{}])[0].get('workersInvocationsAdaptive') or []
+              sums = (rows[0].get('sum') or {}) if rows else {}
+              return int(sums.get('requests') or 0), int(sums.get('errors') or 0)
+
+          workers = ('sh-runtime-orchestrator', 'sh-sakurazaka46jp')
+          day_start = end.replace(hour=0, minute=0, second=0)
+          print('WORKER_ACTIVITY_UTC_DAY')
+          for worker in workers:
+              requests, errors = activity(worker, day_start, end)
+              print(json.dumps({'worker': worker, 'requests': requests, 'errors': errors}, separators=(',', ':')))
+
           print('WORKER_ACTIVITY_5M')
-          for row in rows:
-              dimensions = row.get('dimensions') or {}
-              if dimensions.get('scriptName') not in workers:
-                  continue
-              sums = row.get('sum') or {}
-              print(json.dumps({
-                  'time': dimensions.get('datetimeFiveMinutes'),
-                  'worker': dimensions.get('scriptName'),
-                  'requests': int(sums.get('requests') or 0),
-                  'errors': int(sums.get('errors') or 0),
-              }, separators=(',', ':')))
+          cursor = end.replace(minute=(end.minute // 5) * 5, second=0) - dt.timedelta(hours=2)
+          while cursor < end:
+              window_end = cursor + dt.timedelta(minutes=5)
+              for worker in workers:
+                  requests, errors = activity(worker, cursor, window_end)
+                  print(json.dumps({
+                      'time': cursor.isoformat().replace('+00:00', 'Z'),
+                      'worker': worker,
+                      'requests': requests,
+                      'errors': errors,
+                  }, separators=(',', ':')))
+              cursor = window_end
           PY
 
   audit:
