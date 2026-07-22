@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Run the free-tier audit with API-compatible pagination."""
+"""Run the free-tier audit with API-compatible, namespace-scoped queries."""
 
 from __future__ import annotations
 
 import importlib.util
+import json
 import sys
 from pathlib import Path
 from typing import Any
@@ -14,6 +15,11 @@ if SPEC is None or SPEC.loader is None:
     raise RuntimeError(f"Could not load free-tier audit from {CORE_PATH}")
 core = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(core)
+
+_ORIGINAL_RESOURCE_IDS = core.resource_ids
+_ORIGINAL_AGGREGATE = core.aggregate
+_ACTIVE_DO_IDS: tuple[str, ...] = ()
+_ACTIVE_KV_IDS: tuple[str, ...] = ()
 
 
 def paginated(account: str, path: str) -> list[dict[str, Any]]:
@@ -33,10 +39,131 @@ def paginated(account: str, path: str) -> list[dict[str, Any]]:
         page += 1
 
 
+def resource_ids(account: str, queue_names: set[str]):
+    global _ACTIVE_DO_IDS, _ACTIVE_KV_IDS
+    result = _ORIGINAL_RESOURCE_IDS(account, queue_names)
+    _ACTIVE_DO_IDS = tuple(sorted(result[1]))
+    _ACTIVE_KV_IDS = tuple(sorted(result[2]))
+    return result
+
+
+def _namespace_literal(identifier: str) -> str:
+    return json.dumps(str(identifier), ensure_ascii=True)
+
+
+def graphql_document() -> str:
+    """Query each configured DO/KV namespace without selecting invalid dimensions.
+
+    Cloudflare accepts ``namespaceId`` as a dataset filter, but current KV and
+    Durable Object group dimension types do not expose a ``namespaceId`` field.
+    Aliasing one filtered dataset per configured namespace preserves repository
+    scoping while avoiding the unsupported dimension selection.
+    """
+    do_fields: list[str] = []
+    for index, identifier in enumerate(_ACTIVE_DO_IDS):
+        namespace = _namespace_literal(identifier)
+        do_fields.extend([
+            f"doInvocations{index}: durableObjectsInvocationsAdaptiveGroups(limit: 10000, filter: {{date_geq: $day, date_leq: $day, namespaceId: {namespace}}}) {{ sum {{ requests }} }}",
+            f"doPeriodic{index}: durableObjectsPeriodicGroups(limit: 10000, filter: {{date_geq: $day, date_leq: $day, namespaceId: {namespace}}}) {{ sum {{ activeTime rowsRead rowsWritten }} }}",
+            f"doStorage{index}: durableObjectsStorageGroups(limit: 10000, filter: {{date_geq: $day, date_leq: $day, namespaceId: {namespace}}}) {{ max {{ storedBytes }} }}",
+        ])
+
+    kv_fields: list[str] = []
+    for index, identifier in enumerate(_ACTIVE_KV_IDS):
+        namespace = _namespace_literal(identifier)
+        kv_fields.extend([
+            f"kvOperations{index}: kvOperationsAdaptiveGroups(limit: 10000, filter: {{date_geq: $day, date_leq: $day, namespaceId: {namespace}}}) {{ sum {{ requests }} dimensions {{ actionType }} }}",
+            f"kvStorage{index}: kvStorageAdaptiveGroups(limit: 10000, filter: {{date_geq: $day, date_leq: $day, namespaceId: {namespace}}}, orderBy: [date_DESC]) {{ max {{ keyCount byteCount }} dimensions {{ date }} }}",
+        ])
+
+    scoped = "\n        ".join(do_fields + kv_fields)
+    return f"""query FreeTierBudget($account: string, $day: Date!, $now: Time!, $monthStart: Time!) {{
+      viewer {{ accounts(filter: {{accountTag: $account}}) {{
+        queues: queueMessageOperationsAdaptiveGroups(limit: 10000, filter: {{date_geq: $day, date_leq: $day}}) {{
+          sum {{ billableOperations }} dimensions {{ queueId }}
+        }}
+        r2ops: r2OperationsAdaptiveGroups(limit: 10000, filter: {{datetime_geq: $monthStart, datetime_leq: $now}}) {{
+          sum {{ requests }} dimensions {{ actionType bucketName }}
+        }}
+        r2storage: r2StorageAdaptiveGroups(limit: 10000, filter: {{datetime_geq: $monthStart, datetime_leq: $now}}, orderBy: [datetime_DESC]) {{
+          max {{ payloadSize metadataSize }} dimensions {{ bucketName datetime }}
+        }}
+        {scoped}
+        pipelineOperators: pipelinesOperatorAdaptiveGroups(limit: 10000, filter: {{datetime_geq: $monthStart, datetime_leq: $now, streamId_neq: ""}}) {{
+          sum {{ bytesIn recordsIn decodeErrors }} dimensions {{ pipelineId streamId }}
+        }}
+        pipelineSinks: pipelinesSinkAdaptiveGroups(limit: 10000, filter: {{datetime_geq: $monthStart, datetime_leq: $now}}) {{
+          sum {{ bytesWritten uncompressedBytesWritten recordsWritten filesWritten }} dimensions {{ pipelineId sinkId }}
+        }}
+      }}}}
+    }}"""
+
+
+def _tag_namespace(groups: Any, identifier: str) -> list[dict[str, Any]]:
+    tagged: list[dict[str, Any]] = []
+    for group in groups or []:
+        item = dict(group)
+        dimensions = dict(item.get("dimensions") or {})
+        dimensions["namespaceId"] = identifier
+        item["dimensions"] = dimensions
+        tagged.append(item)
+    return tagged
+
+
+def aggregate(
+    row: dict[str, Any],
+    queue_ids: set[str],
+    namespace_ids: set[str],
+    buckets: set[str],
+    kv_ids: set[str],
+    pipeline_ids: set[str],
+) -> dict[str, Any]:
+    # Keep compatibility with the core module's executable self-test and any
+    # older fixtures that already provide the former combined keys.
+    if any(key in row for key in ("doInvocations", "doPeriodic", "doStorage", "kvOperations", "kvStorage")):
+        return _ORIGINAL_AGGREGATE(
+            row, queue_ids, namespace_ids, buckets, kv_ids, pipeline_ids
+        )
+
+    normalized = dict(row)
+    normalized["doInvocations"] = []
+    normalized["doPeriodic"] = []
+    normalized["doStorage"] = []
+    normalized["kvOperations"] = []
+    normalized["kvStorage"] = []
+
+    for index, identifier in enumerate(sorted(namespace_ids)):
+        normalized["doInvocations"].extend(
+            _tag_namespace(row.get(f"doInvocations{index}"), identifier)
+        )
+        normalized["doPeriodic"].extend(
+            _tag_namespace(row.get(f"doPeriodic{index}"), identifier)
+        )
+        normalized["doStorage"].extend(
+            _tag_namespace(row.get(f"doStorage{index}"), identifier)
+        )
+
+    for index, identifier in enumerate(sorted(kv_ids)):
+        normalized["kvOperations"].extend(
+            _tag_namespace(row.get(f"kvOperations{index}"), identifier)
+        )
+        normalized["kvStorage"].extend(
+            _tag_namespace(row.get(f"kvStorage{index}"), identifier)
+        )
+
+    return _ORIGINAL_AGGREGATE(
+        normalized, queue_ids, namespace_ids, buckets, kv_ids, pipeline_ids
+    )
+
+
 core.paginated = paginated
+core.resource_ids = resource_ids
+core.graphql_document = graphql_document
+core.aggregate = aggregate
 
 
 def self_test() -> int:
+    global _ACTIVE_DO_IDS, _ACTIVE_KV_IDS
     calls: list[str] = []
     original_api = core.api
     try:
@@ -50,6 +177,37 @@ def self_test() -> int:
         ]
     finally:
         core.api = original_api
+
+    _ACTIVE_DO_IDS = ("do-own",)
+    _ACTIVE_KV_IDS = ("kv-own",)
+    document = graphql_document()
+    assert 'namespaceId: "do-own"' in document
+    assert 'namespaceId: "kv-own"' in document
+    assert "dimensions { namespaceId" not in document
+    assert "dimensions { actionType }" in document
+    assert "dimensions { date }" in document
+
+    usage = aggregate({
+        "queues": [],
+        "r2ops": [],
+        "r2storage": [],
+        "doInvocations0": [{"sum": {"requests": 10}}],
+        "doPeriodic0": [{"sum": {"activeTime": 1000, "rowsRead": 2, "rowsWritten": 1}}],
+        "doStorage0": [{"max": {"storedBytes": 50}}],
+        "kvOperations0": [
+            {"dimensions": {"actionType": "read"}, "sum": {"requests": 7}},
+            {"dimensions": {"actionType": "write"}, "sum": {"requests": 1}},
+        ],
+        "kvStorage0": [{"dimensions": {"date": "2026-07-22"}, "max": {"byteCount": 200}}],
+        "pipelineOperators": [],
+        "pipelineSinks": [],
+    }, set(), {"do-own"}, set(), {"kv-own"}, set())
+    assert usage["doRequests"] == 10
+    assert usage["doRowsRead"] == 2 and usage["doRowsWritten"] == 1
+    assert usage["doStoredBytes"] == 50 and usage["doActiveGbSeconds"] == 0.128
+    assert usage["kvReads"] == 7 and usage["kvWrites"] == 1
+    assert usage["kvStoredBytes"] == 200
+
     assert core.self_test() == 0
     print("free-tier compatibility wrapper self-test passed")
     return 0
