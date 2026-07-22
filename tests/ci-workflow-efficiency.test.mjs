@@ -79,28 +79,34 @@ test('the single production deployment workflow caches Pages and Worker dependen
   assert.match(productionDeploy, /npm ci --prefer-offline/);
 });
 
-test('D1 production checks run only for runtime or schema changes', () => {
-  assert.doesNotMatch(d1Usage, /^\s*- ["']worker\/\*\*["']\s*$/m);
-  assert.doesNotMatch(d1Usage, /^\s*- ["']\.github\/(?:workflows|scripts)\//m);
-  assert.match(d1Usage, /worker\/src\/\*\*/);
-  assert.match(d1Usage, /worker\/wrangler\*\.jsonc/);
+test('D1 query insights are manual-only and reuse cached Wrangler dependencies', () => {
+  assert.match(d1Usage, /^  workflow_dispatch:\n/m);
+  assert.doesNotMatch(d1Usage, /^  pull_request:\n/m);
+  assert.doesNotMatch(d1Usage, /^  schedule:\n/m);
   assert.match(d1Usage, /worker-insights-/);
   assert.match(d1Usage, /uses: actions\/cache@v4/);
+  assert.match(d1Usage, /wrangler d1 insights/);
+  assert.doesNotMatch(d1Usage, /sleep ["']?\$|Waiting for the current PR deployment/);
 });
 
-test('Cloudflare observability runs for every PR and main push without R2 polling', () => {
-  assert.match(observability, /^  pull_request:\n/m);
-  assert.match(observability, /^  push:\n/m);
-  assert.match(observability, /branches: \[main\]/);
+test('Cloudflare observability separates hourly budgets from post-deploy deep checks', () => {
+  assert.match(observability, /^  workflow_run:\n/m);
+  assert.match(observability, /workflows: \["Deploy production"\]/);
+  assert.match(observability, /^  schedule:\n/m);
+  assert.doesNotMatch(observability, /^  pull_request:\n/m);
+  assert.doesNotMatch(observability, /^  push:\n/m);
   assert.match(observability, /secrets\.CLOUDFLARE_BUILDS_API_TOKEN/);
+  assert.match(observability, /audit-cloudflare-daily-usage\.py/);
+  assert.match(observability, /DAILY_REQUEST_BUDGET: "70000"/);
+  assert.match(observability, /DAILY_D1_READ_BUDGET: "3000000"/);
+  assert.match(observability, /DAILY_D1_WRITE_BUDGET: "70000"/);
   assert.match(observability, /query-cloudflare-observability\.py/);
   assert.match(observability, /audit-cloudflare-telemetry\.py/);
-  assert.match(observability, /CPU_BUDGET_MS: "10"/);
+  assert.match(observability, /audit-cloudflare-live-tail\.py/);
+  assert.match(observability, /LIVE_TAIL_SECONDS: "90"/);
+  assert.match(observability, /if: github\.event_name != 'schedule'/);
   assert.doesNotMatch(observability, /R2_BUCKET|AWS_ACCESS_KEY_ID|aws s3api/);
-  assert.doesNotMatch(observability, /^  schedule:\n/m);
   assert.match(observability, /Upload sanitized observability report/);
-  assert.match(observability, /observability-summary\.md/);
-  assert.match(observability, /telemetry-audit\.log/);
   assert.match(observability, /retention-days: 1/);
   assert.doesNotMatch(observability, /observability-logs\/|raw\/|\.ndjson/);
 });
