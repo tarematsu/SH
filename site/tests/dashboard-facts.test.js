@@ -8,6 +8,7 @@ import {
   FACTS_LATEST_SQL,
   FACTS_PREDICTION_24H_SQL,
   factsAreFresh,
+  loadFactsDashboard,
   mergeFactsLatest,
 } from '../functions/lib/dashboard-facts.js';
 import { resetDashboardDailySummariesCache } from '../functions/lib/dashboard-daily-summaries.js';
@@ -60,6 +61,24 @@ test('facts telemetry overrides collector metrics while retaining presentation f
   assert.equal(merged.stream_goal, 50_000_000);
   assert.equal(merged.observed_at, 20);
   assert.equal(merged.online_member_count, 167);
+});
+
+test('persisted prediction state suppresses the per-request aggregate scan', async () => {
+  const db = new FakeD1Database()
+    .route('first', 'FROM sh_minute_facts AS f INDEXED BY idx_sh_minute_facts_live_minute', {
+      id: 1,
+      observed_at: Date.now(),
+      channel_id: 318,
+    });
+
+  await loadFactsDashboard(db, {
+    since: 1,
+    includeHistory: false,
+    includePrediction: false,
+  });
+
+  assert.equal(db.callsMatching(/PARTITION BY CAST\(minute_at\/300000/).length, 0);
+  assert.equal(db.callsMatching(/reported_current_stream_count AS current_stream_count/).length, 1);
 });
 
 test('unified dashboard includes facts, history and completed daily summaries', async () => {
