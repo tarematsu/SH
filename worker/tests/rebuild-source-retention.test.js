@@ -24,7 +24,7 @@ test('all durable reconstruction sources share a thirty-day retention floor', ()
 });
 
 test('current buddies migration removes the obsolete two-day comment cleanup trigger', () => {
-  assert.equal(manifest.schema, 'database/buddies-migrations/009_rebuild_source_retention_30d.sql');
+  assert.equal(manifest.schema, 'database/buddies-migrations/010_gap_scan_channel_seek.sql');
   assert.match(migration, /DROP TRIGGER IF EXISTS trg_sh_claim_retention/);
   assert.doesNotMatch(migration, /172800000/);
   assert.doesNotMatch(migration, /DELETE FROM sh_comment_minute_counts/);
