@@ -7,6 +7,8 @@ export const RUNTIME_ANALYTICS_STREAM_NAME = 'sh_runtime_analytics_stream';
 export const RUNTIME_ANALYTICS_SINK_NAME = 'sh_runtime_analytics_sink';
 export const RUNTIME_ANALYTICS_PIPELINE_NAME = 'sh-runtime-analytics';
 export const RUNTIME_ANALYTICS_BUCKET_NAME = 'sh-runtime-analytics';
+export const RUNTIME_ANALYTICS_CATALOG_NAMESPACE = 'sh_analytics';
+export const RUNTIME_ANALYTICS_CATALOG_TABLE = 'runtime_schedule';
 export const RUNTIME_ANALYTICS_BINDING = 'RUNTIME_ANALYTICS_STREAM';
 
 const STREAM_SCHEMA = 'pipelines/runtime-analytics.schema.json';
@@ -95,10 +97,20 @@ export function ensureRuntimeAnalyticsResources(options = {}) {
   ], run);
 
   run(['r2', 'bucket', 'create', RUNTIME_ANALYTICS_BUCKET_NAME], { allowFailure: true });
+  run(['r2', 'bucket', 'catalog', 'enable', RUNTIME_ANALYTICS_BUCKET_NAME], { allowFailure: true });
+  const catalogToken = required(
+    options.catalogToken
+      ?? process.env.CLOUDFLARE_API_TOKEN
+      ?? process.env.CLOUDFLARE_BUILDS_API_TOKEN
+      ?? process.env.CF_API_TOKEN,
+    'Cloudflare R2 Data Catalog token',
+  );
   const sink = ensureNamed('sinks', RUNTIME_ANALYTICS_SINK_NAME, [
-    '--type', 'r2',
+    '--type', 'r2-data-catalog',
     '--bucket', RUNTIME_ANALYTICS_BUCKET_NAME,
-    '--format', 'parquet',
+    '--namespace', RUNTIME_ANALYTICS_CATALOG_NAMESPACE,
+    '--table', RUNTIME_ANALYTICS_CATALOG_TABLE,
+    '--catalog-token', catalogToken,
     '--compression', 'zstd',
     '--roll-interval', '300',
     '--roll-size', '100',
