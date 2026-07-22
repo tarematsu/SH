@@ -181,3 +181,17 @@ test('production stable-path model meets the requested D1 reduction targets', ()
   assert.equal(1 - optimized.reads / previous.reads, 0.50);
   assert.equal(1 - optimized.writes / previous.writes, 0.95);
 });
+
+test('collector progress and metadata timestamps share the twenty-minute checkpoint policy', () => {
+  const preparedCollector = readFileSync(new URL('../src/prepared-collector-runner.js', import.meta.url), 'utf8');
+  const finalize = readFileSync(new URL('../src/ingest-finalize-entry.js', import.meta.url), 'utf8');
+  const minuteWrites = readFileSync(new URL('../src/minute-d1-write-throttle.js', import.meta.url), 'utf8');
+
+  assert.match(preparedCollector, /COLLECTOR_STATE_CHECKPOINT_MS = 20 \* 60_000/);
+  assert.match(finalize, /COLLECTOR_STATE_CHECKPOINT_MS = 20 \* 60_000/);
+  assert.match(minuteWrites, /CHECKPOINT_MS = 20 \* 60_000/);
+
+  const previousWritesPerWindow = CHECKPOINT_MINUTES / 5;
+  const optimizedWritesPerWindow = 1;
+  assert.equal(1 - optimizedWritesPerWindow / previousWritesPerWindow, 0.75);
+});

@@ -269,7 +269,7 @@ test('ingest finalization preserves collector state before read-model handoff', 
   assert.equal(result.state_accepted, true);
 });
 
-test('ingest finalization skips D1 between five-minute collector checkpoints', async () => {
+test('ingest finalization skips D1 between twenty-minute collector checkpoints', async () => {
   let readModels = 0;
   const result = await processIngestFinalizeTask({
     DB: new Proxy({}, { get() { assert.fail('checkpoint skip must not access D1'); } }),

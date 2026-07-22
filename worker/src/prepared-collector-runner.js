@@ -18,7 +18,7 @@ import { jwtExpiryMs } from './shared.js';
 const RAW_D1_STATEMENT = Symbol('prepared-collector-raw-d1-statement');
 const PREPARED_COLLECTOR_FINALIZE = Symbol('prepared-collector-finalize');
 const PREPARED_COLLECTOR_FACT = Symbol('prepared-collector-fact');
-const COLLECTOR_STATE_CHECKPOINT_MS = 5 * 60_000;
+const COLLECTOR_STATE_CHECKPOINT_MS = 20 * 60_000;
 const NO_COMMENTS_RESULT = Object.freeze({
   commentsSaved: 0,
   degraded: false,

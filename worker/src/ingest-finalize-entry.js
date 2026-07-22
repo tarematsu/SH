@@ -1,4 +1,4 @@
-const COLLECTOR_STATE_CHECKPOINT_MS = 5 * 60_000;
+const COLLECTOR_STATE_CHECKPOINT_MS = 20 * 60_000;
 
 function validateFinalizeTask(body) {
   if (body?.message_type !== 'stationhead-ingest-finalize'
