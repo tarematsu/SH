@@ -49,11 +49,12 @@ test('the coordinator and remaining scheduled Queues fit safely below daily budg
   const maximumCoordinatorDuration = maximumCoordinatorRequests * 1 * 0.128;
   const maximumCoordinatorRowsRead = maximumCoordinatorRequests;
   const maximumCoordinatorRowsWritten = maximumCoordinatorRequests;
-  // Recovery: 288/day; maintenance gate: 432/day; prediction: 48/day;
-  // hourly tasks: 48/day; Pages heavy variants: 17/day. Routine Pages work is
-  // executed inside the coordinator. A sustained inline collection failure
-  // adds at most two messages every five minutes. Each message is 3 operations.
-  const maximumQueueOperations = (288 + 432 + 48 + 48 + 17 + 288 * 2) * 3;
+  // Prediction: 48/day; hourly tasks: 48/day; Pages heavy variants: 17/day.
+  // Recovery polls and maintenance gates execute directly. A sustained inline
+  // collection failure adds at most two messages every five minutes.
+  // Each remaining Queue message is three billable operations.
+  const maximumQueueOperations = (48 + 48 + 17 + 288 * 2) * 3;
+  assert.equal(maximumQueueOperations, 2_067);
   assert.ok(maximumCoordinatorRequests < 80_000);
   assert.ok(maximumCoordinatorDuration < 10_400);
   assert.ok(maximumCoordinatorRowsRead < 4_000_000);
