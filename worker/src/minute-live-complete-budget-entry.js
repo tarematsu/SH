@@ -17,6 +17,10 @@ function integer(value) {
   return Number.isFinite(parsed) ? Math.trunc(parsed) : null;
 }
 
+function invalidMessage(message) {
+  return Object.assign(new Error(message), { code: 'MINUTE_DERIVE_INVALID_TRIGGER' });
+}
+
 export function budgetedLiveCompleteMessage(body) {
   const jobId = integer(body?.job?.id);
   return body?.message_type === 'minute-fact-derive-stage'
@@ -29,7 +33,7 @@ export function budgetedLiveCompleteMessage(body) {
 
 export async function completeBudgetedLiveJob(env, body, dependencies = {}) {
   if (!budgetedLiveCompleteMessage(body)) {
-    throw new Error('unsupported budgeted live completion message');
+    throw invalidMessage('unsupported budgeted live completion message');
   }
   const jobId = integer(body.job.id);
   const now = (dependencies.now || Date.now)();
@@ -51,7 +55,8 @@ export async function processBudgetedLiveCompleteBatch(batch, env, dependencies 
         event: 'minute_live_complete_budget_failed',
         error: String(error?.message || error).slice(0, 800),
       }));
-      message.retry(RETRY_60_SECONDS);
+      if (error?.code === 'MINUTE_DERIVE_INVALID_TRIGGER') message.ack();
+      else message.retry(RETRY_60_SECONDS);
     }
   }
 }
