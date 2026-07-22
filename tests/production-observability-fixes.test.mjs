@@ -98,6 +98,9 @@ test('Cloudflare audit compatibility wrappers pass offline self-tests', () => {
   assert.match(freeTier, /namespaceId: \{namespace\}/);
   assert.match(freeTier, /doInvocations\{index\}/);
   assert.match(freeTier, /kvOperations\{index\}/);
+  assert.match(freeTier, /doStorage: durableObjectsStorageGroups/);
+  assert.match(freeTier, /storage_fragment/);
+  assert.match(freeTier, /assert "namespaceId" not in storage_fragment/);
   assert.match(freeTier, /dimensions \{ actionType \}/);
   assert.match(freeTier, /dimensions \{ date \}/);
   assert.match(freeTier, /dimensions \{ namespaceId/);
