@@ -6,18 +6,16 @@ import {
   cloudflareBuildConfig,
 } from '../scripts/cloudflare-build-config.mjs';
 
-test('only active Worker names map to static Wrangler configs', () => {
+test('only the connected consolidated Worker maps to a static Wrangler config', () => {
   assert.deepEqual(ACTIVE_WORKER_BUILDS, {
-    'sh-buddies-ingest': 'wrangler.ingest.jsonc',
-    'sh-minute-enrichment': 'wrangler.minute-enrichment.jsonc',
     'sh-runtime-orchestrator': 'wrangler.runtime.jsonc',
   });
 
-  assert.equal(cloudflareBuildConfig('sh-buddies-ingest'), 'wrangler.ingest.jsonc');
-  assert.equal(cloudflareBuildConfig('sh-minute-enrichment'), 'wrangler.minute-enrichment.jsonc');
   assert.equal(cloudflareBuildConfig('sh-runtime-orchestrator'), 'wrangler.runtime.jsonc');
 
   for (const retired of [
+    'sh-buddies-ingest',
+    'sh-minute-enrichment',
     'sh-monitor-other',
     'sh-buddies-persist',
     'sh-buddies-comments',
