@@ -7,7 +7,6 @@ import datetime as dt
 import html
 import json
 import os
-import sys
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -38,14 +37,14 @@ def request_json(url: str, *, method: str = "GET", payload: dict[str, Any] | Non
         with urllib.request.urlopen(request, timeout=45) as response:
             data = json.load(response)
     except urllib.error.HTTPError as error:
-        detail = error.read().decode("utf-8", errors="replace")[:1000]
+        detail = error.read().decode("utf-8", errors="replace")[:2000]
         raise RuntimeError(f"Cloudflare API HTTP {error.code}: {detail}") from error
     except urllib.error.URLError as error:
         raise RuntimeError(f"Cloudflare API request failed: {error.reason}") from error
 
     errors = data.get("errors")
     if data.get("success") is False or errors:
-        raise RuntimeError(f"Cloudflare API error: {json.dumps(errors, ensure_ascii=False)[:1000]}")
+        raise RuntimeError(f"Cloudflare API error: {json.dumps(errors, ensure_ascii=False)[:2000]}")
     return data
 
 
@@ -83,9 +82,8 @@ def worker_metrics(account_id: str, worker: str, start: dt.datetime, end: dt.dat
             },
         },
     )
-    rows = (((data.get("data") or {}).get("viewer") or {}).get("accounts") or [{}])[0].get(
-        "workersInvocationsAdaptive"
-    ) or []
+    accounts = (((data.get("data") or {}).get("viewer") or {}).get("accounts") or [])
+    rows = (accounts[0].get("workersInvocationsAdaptive") or []) if accounts else []
     row = rows[0] if rows else {}
     sums = row.get("sum") or {}
     quantiles = row.get("quantiles") or {}
@@ -135,25 +133,29 @@ def telemetry_errors(account_id: str, start: dt.datetime, end: dt.datetime) -> l
         }
         for worker in WORKERS
     ]
+    filters: list[dict[str, Any]] = [
+        {"kind": "group", "filterCombination": "or", "filters": services},
+        {
+            "kind": "filter",
+            "key": "$metadata.error",
+            "operation": "exists",
+            "type": "string",
+        },
+    ]
     payload = {
         "queryId": "github-actions-worker-errors",
+        "dry": True,
         "timeframe": {
             "from": int(start.timestamp() * 1000),
             "to": int(end.timestamp() * 1000),
         },
-        "view": "events",
-        "limit": 50,
-        "datasets": [],
-        "filterCombination": "and",
-        "filters": [
-            {"kind": "group", "filterCombination": "or", "filters": services},
-            {
-                "kind": "filter",
-                "key": "$metadata.error",
-                "operation": "exists",
-                "type": "string",
-            },
-        ],
+        "parameters": {
+            "view": "events",
+            "limit": 50,
+            "datasets": [],
+            "filterCombination": "and",
+            "filters": filters,
+        },
     }
     try:
         data = request_json(
@@ -163,7 +165,7 @@ def telemetry_errors(account_id: str, start: dt.datetime, end: dt.datetime) -> l
         )
     except RuntimeError as error:
         print(f"::warning title=Telemetry filter fallback::{str(error).replace(chr(10), ' ')[:500]}")
-        payload["filters"] = [payload["filters"][1]]
+        payload["parameters"]["filters"] = [filters[1]]
         data = request_json(
             f"{API_BASE}/accounts/{account_id}/workers/observability/telemetry/query",
             method="POST",
@@ -173,11 +175,11 @@ def telemetry_errors(account_id: str, start: dt.datetime, end: dt.datetime) -> l
     events = (((data.get("result") or {}).get("events") or {}).get("events") or [])
     selected: list[dict[str, Any]] = []
     for event in events:
-        metadata = event.get("$metadata") or {}
-        service = str(metadata.get("service") or metadata.get("scriptName") or "")
-        if service not in WORKERS:
-            continue
-        selected.append(event)
+        metadata = event.get("$metadata") if isinstance(event.get("$metadata"), dict) else {}
+        workers = event.get("$workers") if isinstance(event.get("$workers"), dict) else {}
+        service = str(metadata.get("service") or workers.get("scriptName") or "")
+        if service in WORKERS:
+            selected.append(event)
     return selected
 
 
@@ -194,11 +196,14 @@ def clean_url(value: Any) -> str:
 
 
 def event_row(event: dict[str, Any]) -> tuple[str, str, str, str]:
-    metadata = event.get("$metadata") or {}
-    service = metadata.get("service") or metadata.get("scriptName") or "unknown"
+    metadata = event.get("$metadata") if isinstance(event.get("$metadata"), dict) else {}
+    workers = event.get("$workers") if isinstance(event.get("$workers"), dict) else {}
+    worker_event = workers.get("event") if isinstance(workers.get("event"), dict) else {}
+    request = worker_event.get("request") if isinstance(worker_event.get("request"), dict) else {}
+    service = metadata.get("service") or workers.get("scriptName") or "unknown"
     timestamp = event.get("timestamp") or metadata.get("timestamp") or "-"
     message = metadata.get("error") or metadata.get("message") or event.get("source") or "error event"
-    url = metadata.get("url") or ((event.get("workers") or {}).get("url") if isinstance(event.get("workers"), dict) else None)
+    url = metadata.get("url") or request.get("url") or worker_event.get("url")
     return clean_text(timestamp, 40), clean_text(service, 80), clean_text(message), clean_url(url)
 
 
