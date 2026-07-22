@@ -1,5 +1,8 @@
 import { historicalRebuildEnabled } from './historical-rebuild-policy.js';
-import { processBudgetedLiveCompleteBatch } from './minute-live-complete-budget-entry.js';
+import {
+  budgetedLiveCompleteMessage,
+  processBudgetedLiveCompleteBatch,
+} from './minute-live-complete-budget-entry.js';
 import { processBudgetedLiveRevisionBatch } from './minute-live-revision-budget-entry.js';
 import { processBudgetedLiveTriggerBatch } from './minute-live-trigger-budget-entry.js';
 import { processBudgetedLiveWriteBatch } from './minute-live-write-budget-entry.js';
@@ -17,6 +20,11 @@ let rebuildModulePromise = null;
 async function processDeriveBatch(batch, env, dependencies) {
   const derive = await (deriveModulePromise ||= import('./minute-derive-entry.js'));
   return derive.processMinuteDeriveBatch(batch, env, dependencies);
+}
+
+function positiveInteger(value) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && Math.trunc(parsed) > 0 ? Math.trunc(parsed) : null;
 }
 
 function liveRevisionMaterializationEnabled(env = {}) {
@@ -56,6 +64,8 @@ function budgetedLiveWriteBatch(batch, env) {
     return body?.message_type === 'minute-fact-derive-stage'
       && Number(body?.message_version) === 1
       && (body?.stage === 'write' || body?.stage === 'budget-live-write')
+      && positiveInteger(body?.job?.id) != null
+      && String(body?.job?.job_kind || 'live') !== 'rebuild'
       && body?.payload?.rebuild !== true;
   });
 }
@@ -63,13 +73,8 @@ function budgetedLiveWriteBatch(batch, env) {
 function budgetedLiveCompleteBatch(batch, env) {
   if (liveRevisionMaterializationEnabled(env)) return false;
   const messages = batch?.messages || [];
-  return messages.length > 0 && messages.every((message) => {
-    const body = message?.body;
-    return body?.message_type === 'minute-fact-derive-stage'
-      && Number(body?.message_version) === 1
-      && body?.stage === 'complete'
-      && String(body?.job?.job_kind || 'live') !== 'rebuild';
-  });
+  return messages.length > 0
+    && messages.every((message) => budgetedLiveCompleteMessage(message?.body));
 }
 
 function rebuildEnvironment(env) {
