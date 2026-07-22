@@ -13,11 +13,6 @@ on:
       - "packages/sh-shared/**"
       - "database/facts-migrations/**"
       - "database/facts-db.json"
-      - ".github/workflows/cloudflare-pr-diagnostics.yml"
-      - ".github/scripts/cloudflare-build-diagnostics.mjs"
-      - ".github/scripts/analyze-worker-observability.py"
-      - ".github/scripts/enforce-worker-cpu-budget.py"
-      - ".github/scripts/fetch-r2-worker-logs.py"
 
 permissions:
   contents: read
