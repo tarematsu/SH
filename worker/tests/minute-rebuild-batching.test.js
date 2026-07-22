@@ -98,7 +98,7 @@ test('runtime rebuild delivery is capped at one message', () => {
     'utf8',
   ));
   const rebuild = config.queues.consumers.find(({ queue }) => queue === 'stationhead-minute-rebuild');
-  assert.equal(config.main, 'src/runtime-orchestrator-entry.js');
+  assert.equal(config.main, 'src/runtime-orchestrator-deployed-entry.js');
   assert.equal(rebuild.max_batch_size, 1);
   assert.equal(rebuild.max_concurrency, 1);
 });
