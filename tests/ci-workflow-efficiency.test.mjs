@@ -88,28 +88,41 @@ test('D1 query insights are manual-only and avoid installing Wrangler', () => {
   assert.doesNotMatch(d1Usage, /sleep ["']?\$|Waiting for the current PR deployment/);
 });
 
-test('Cloudflare observability separates hourly budgets from post-deploy deep checks', () => {
+test('Cloudflare observability runs complete checks after deploy and daily at 01:00 UTC', () => {
   assert.match(observability, /^  workflow_run:\n/m);
   assert.match(observability, /workflows: \["Deploy production"\]/);
   assert.match(observability, /^  schedule:\n/m);
+  assert.match(observability, /cron: "0 1 \* \* \*"/);
+  assert.equal((observability.match(/- cron:/g) || []).length, 1);
+  assert.doesNotMatch(observability, /cron: "37 \* \* \* \*"/);
   assert.doesNotMatch(observability, /^  pull_request:\n/m);
   assert.doesNotMatch(observability, /^  push:\n/m);
   assert.match(observability, /secrets\.CLOUDFLARE_BUILDS_API_TOKEN/);
   assert.match(observability, /audit-cloudflare-daily-usage\.py/);
+  assert.match(observability, /audit-cloudflare-free-tier\.py/);
+  assert.match(observability, /audit-observability-budget-gates\.py/);
   assert.match(observability, /DAILY_REQUEST_BUDGET: "70000"/);
   assert.match(observability, /DAILY_D1_READ_BUDGET: "3000000"/);
   assert.match(observability, /DAILY_D1_WRITE_BUDGET: "70000"/);
   assert.match(observability, /query-cloudflare-observability\.py/);
-  assert.match(observability, /audit-cloudflare-telemetry\.py/);
+  assert.match(observability, /audit-deployed-cloudflare-telemetry\.py/);
   assert.match(observability, /LIVE_TAIL_LOG: live-tail\.log/);
   assert.doesNotMatch(observability, /audit-cloudflare-live-tail\.py/);
   assert.match(observability, /LIVE_TAIL_SECONDS: "90"/);
-  assert.match(observability, /if: github\.event_name != 'schedule'/);
   assert.match(observability, /id: daily-budget/);
+  assert.match(observability, /id: free-tier-budget/);
+  assert.match(observability, /id: budget-contract/);
+  assert.match(observability, /id: observability-query/);
+  assert.match(observability, /id: telemetry-policy/);
   assert.match(observability, /continue-on-error: true/);
   assert.match(observability, /steps\.daily-budget\.outcome == 'failure'/);
+  assert.match(observability, /steps\.free-tier-budget\.outcome == 'failure'/);
+  assert.match(observability, /steps\.budget-contract\.outcome == 'failure'/);
+  assert.match(observability, /steps\.observability-query\.outcome == 'failure'/);
+  assert.match(observability, /steps\.telemetry-policy\.outcome == 'failure'/);
   assert.doesNotMatch(observability, /R2_BUCKET|AWS_ACCESS_KEY_ID|aws s3api/);
   assert.match(observability, /Upload sanitized observability report/);
+  assert.match(observability, /if: always\(\)/);
   assert.match(observability, /retention-days: 1/);
   assert.doesNotMatch(observability, /observability-logs\/|raw\/|\.ndjson/);
 });
