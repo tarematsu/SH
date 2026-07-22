@@ -71,7 +71,7 @@ test('materialized responses publish once to KV and are served as streams', asyn
   assert.deepEqual(await response.json(), { ok: true, rows: [1, 2, 3] });
 });
 
-test('R2 absorbs a KV publication failure before the D1 fallback is considered', async () => {
+test('R2 absorbs a KV publication failure without touching D1', async () => {
   const puts = [];
   const now = Date.UTC(2026, 6, 20, 0, 35);
   const saved = await saveMaterializedResponse(
@@ -85,6 +85,21 @@ test('R2 absorbs a KV publication failure before the D1 fallback is considered',
   );
   assert.equal(saved.storage, 'r2');
   assert.equal(puts.length, 1);
+});
+
+test('dual storage failure never falls back to D1 response tables', async () => {
+  await assert.rejects(saveMaterializedResponse(
+    new NoD1Db(),
+    { async put() { throw new Error('KV unavailable'); } },
+    'history:daily',
+    Response.json({ ok: true }),
+    Date.UTC(2026, 6, 20, 0, 35),
+    21_600,
+    {
+      r2: { async put() { throw new Error('R2 unavailable'); } },
+      async saveR2Response(r2) { return r2.put(); },
+    },
+  ), /could not be persisted to KV or R2/);
 });
 
 test('dashboard materialization uses KV and R2 every five minutes without another Queue message', async () => {

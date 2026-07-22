@@ -2,6 +2,11 @@ import {
   commitQueueStructurePersistence,
   prepareQueueStructurePersistence,
 } from './persist-structure-stages.js';
+import {
+  invalidateQueuePlanR2,
+  loadQueuePlanR2,
+  saveQueuePlanR2,
+} from './queue-plan-r2.js';
 
 const EMPTY_TRACKS = Object.freeze([]);
 const JSON_QUEUE_SEND_OPTIONS = Object.freeze({ contentType: 'json' });
@@ -145,12 +150,28 @@ export async function processBudgetedQueueStructureTask(env, body, dependencies 
   if (stage === 'persist') {
     const prepare = dependencies.prepareQueueStructurePersistence
       || prepareQueueStructurePersistence;
-    const plan = await prepare(env.DB, body, observedAt);
+    const checkpointDue = body.metadata_requested === true
+      || queuePersistenceCheckpointDue(observedAt, env);
+    const loadPlanCache = dependencies.loadQueuePlanCache || loadQueuePlanR2;
+    const cachedPlan = await loadPlanCache(
+      env.PAGES_RESPONSE_R2,
+      body,
+      observedAt,
+      checkpointDue,
+    );
+    const plan = cachedPlan || await prepare(env.DB, body, observedAt);
+    const savePlanCache = dependencies.saveQueuePlanCache || saveQueuePlanR2;
+    const invalidatePlanCache = dependencies.invalidateQueuePlanCache || invalidateQueuePlanR2;
+    if (!cachedPlan) {
+      if (plan?.structure_changed === true) {
+        await invalidatePlanCache(env.PAGES_RESPONSE_R2, body);
+      } else {
+        await savePlanCache(env.PAGES_RESPONSE_R2, body, observedAt, plan);
+      }
+    }
     if (plan?.structure_changed !== true) {
       const needsLikes = queueLikesStageRequired(body, plan, env);
       if (!needsLikes) {
-        const checkpointDue = body.metadata_requested === true
-          || queuePersistenceCheckpointDue(observedAt, env);
         let finalizationDeferred = false;
         if (checkpointDue) {
           finalizationDeferred = await sendContinuation(
@@ -245,6 +266,9 @@ export async function processBudgetedQueueStructureTask(env, body, dependencies 
       finalization_deferred: true,
     };
   }
+
+  const savePlanCache = dependencies.saveQueuePlanCache || saveQueuePlanR2;
+  await savePlanCache(env.PAGES_RESPONSE_R2, body, observedAt, plan);
 
   const needsLikes = positions.length > 0 || queueLikesStageRequired(body, plan, env);
   const continuation = needsLikes

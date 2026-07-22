@@ -11,6 +11,8 @@ const runtime = JSON.parse(readFileSync(new URL('worker/wrangler.runtime.jsonc',
 const responseStore = readFileSync(new URL('worker/src/pages-response-store.js', root), 'utf8');
 const responseEntry = readFileSync(new URL('worker/src/pages-read-model-entry.js', root), 'utf8');
 const coreEntry = readFileSync(new URL('worker/src/runtime-orchestrator-entry.js', root), 'utf8');
+const queuePlanR2 = readFileSync(new URL('worker/src/queue-plan-r2.js', root), 'utf8');
+const pagesMiddleware = readFileSync(new URL('site/functions/_middleware.js', root), 'utf8');
 
 test('Cloudflare resource budgets are fixed at 80 percent of included usage', () => {
   assert.match(script, /"queueOperations": 8_000/);
@@ -69,15 +71,22 @@ test('the coordinator and remaining scheduled Queues fit safely below daily budg
 test('surplus KV and R2 capacity replaces materialized-response D1 writes and reads', () => {
   assert.match(responseStore, /if \(kvSaved\)/);
   assert.match(responseStore, /if \(r2Saved\) return r2Saved/);
-  assert.ok(responseStore.indexOf('if (r2Saved) return r2Saved') < responseStore.indexOf('return saveD1Response'));
+  assert.doesNotMatch(responseStore, /saveD1Response|sh_pages_response_manifest|sh_pages_response_chunks/);
+  assert.doesNotMatch(pagesMiddleware, /sh_pages_response_manifest|sh_pages_response_chunks/);
   assert.match(responseEntry, /await loadKv[\s\S]*\|\| await loadR2/);
+  assert.match(queuePlanR2, /operational\/queue-plan\/v1/);
+  assert.match(queuePlanR2, /await r2\.delete/);
 
   const maximumDailyVariantWrites = 17;
   const maximumDailyDashboardWrites = 24 * 60 / 5;
   const maximumDailyKvWrites = maximumDailyDashboardWrites + maximumDailyVariantWrites;
   const maximumMonthlyR2Mirrors = maximumDailyKvWrites * 31;
+  const maximumMonthlyQueuePlanReads = 24 * 60 * 31;
+  // Pathological structure churn: get + two invalidations + one put per minute.
+  const maximumMonthlyQueuePlanClassA = 3 * 24 * 60 * 31;
   const maximumMonthlyPipelineBytes = Math.ceil(31 * 24 * 60 / 5) * 4_096;
   assert.ok(maximumDailyKvWrites < 800);
-  assert.ok(maximumMonthlyR2Mirrors < 800_000);
+  assert.ok(maximumMonthlyR2Mirrors + maximumMonthlyQueuePlanClassA < 800_000);
+  assert.ok(maximumMonthlyQueuePlanReads < 8_000_000);
   assert.ok(maximumMonthlyPipelineBytes < 800_000_000);
 });
