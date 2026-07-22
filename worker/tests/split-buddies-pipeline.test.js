@@ -33,7 +33,7 @@ function commentsTask() {
 
 test('the core Worker has one owner per non-Sakurazaka Queue boundary', () => {
   const runtime = config('wrangler.runtime.jsonc');
-  assert.equal(runtime.main, 'src/runtime-orchestrator-entry.js');
+  assert.equal(runtime.main, 'src/runtime-orchestrator-deployed-entry.js');
   assert.equal(runtime.queues.producers.find(({ binding }) => binding === 'RAW_COLLECTION_QUEUE').queue, 'stationhead-raw-collection');
 
   const consumers = new Map(runtime.queues.consumers.map((consumer) => [consumer.queue, consumer]));
