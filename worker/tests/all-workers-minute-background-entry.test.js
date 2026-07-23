@@ -42,12 +42,14 @@ test('runtime Worker owns single-message rebuild delivery while preserving cache
   assert.doesNotMatch(wrapper, /fetch\s*\(/);
 });
 
-test('runtime scheduled orchestration delegates maintenance to the delayed gate', () => {
+test('runtime scheduled orchestration checks maintenance readiness before Queue dispatch', () => {
   const scheduled = source('../src/runtime-scheduled.js');
   const wrapper = source('../src/minute-maintenance-optimized-entry.js');
   assert.match(scheduled, /dispatchMinuteMaintenanceGate/);
-  assert.match(wrapper, /const JSON_QUEUE_SEND_OPTIONS = Object\.freeze/);
-  assert.match(wrapper, /stage: 'maintenance-gate'/);
+  assert.match(wrapper, /loadRebuildMaintenanceEntry/);
+  assert.match(wrapper, /processMinuteMaintenanceGate\(env, message\)/);
+  assert.match(wrapper, /minute_maintenance_gate_inlined/);
   assert.match(wrapper, /scheduled: runMinuteMaintenanceScheduled/);
+  assert.doesNotMatch(wrapper, /JSON_QUEUE_SEND_OPTIONS|maintenanceDelaySeconds/);
   assert.doesNotMatch(wrapper, /setTimeout|waitForCollectorCompletion|fetch\s*:/);
 });
