@@ -2,6 +2,9 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
+import buddiesCollector, {
+  runBuddiesCollectorScheduled,
+} from '../src/buddies-collector-entry.js';
 import buddiesMonitor, { collectRawChannel } from '../src/raw-collector-entry.js';
 
 function session() {
@@ -13,18 +16,44 @@ function session() {
   };
 }
 
-test('the runtime orchestrator owns scheduled raw collection', () => {
-  const config = JSON.parse(readFileSync(
+test('the dedicated buddies Worker owns scheduled raw collection', () => {
+  const collector = JSON.parse(readFileSync(
+    new URL('../wrangler.buddies-collector.jsonc', import.meta.url),
+    'utf8',
+  ));
+  const runtime = JSON.parse(readFileSync(
     new URL('../wrangler.runtime.jsonc', import.meta.url),
     'utf8',
   ));
 
-  assert.equal(config.name, 'sh-runtime-orchestrator');
-  assert.equal(config.main, 'src/runtime-orchestrator-deployed-entry.js');
-  assert.equal(config.queues.producers.find(({ binding }) => binding === 'RAW_COLLECTION_QUEUE').queue, 'stationhead-raw-collection');
+  assert.equal(collector.name, 'sh-buddies-collector');
+  assert.equal(collector.main, 'src/buddies-collector-entry.js');
+  assert.equal(
+    collector.queues.producers.find(({ binding }) => binding === 'RAW_COLLECTION_QUEUE').queue,
+    'stationhead-raw-collection',
+  );
+  assert.equal(runtime.queues.producers.some(({ binding }) => binding === 'RAW_COLLECTION_QUEUE'), false);
 });
 
-test('scheduled-only production surface registers the collection promise directly', async () => {
+test('dedicated scheduled surface invokes collection with the BUDDIES_DB alias', async () => {
+  const database = { name: 'buddies' };
+  const calls = [];
+  const result = await runBuddiesCollectorScheduled({
+    cron: '* * * * *',
+    scheduledTime: 123,
+  }, {
+    BUDDIES_DB: database,
+  }, {}, {
+    async collectRawChannel(activeEnv) {
+      calls.push(activeEnv.DB);
+    },
+  });
+  assert.deepEqual(calls, [database]);
+  assert.deepEqual(result, { collected: true, scheduled_at: 123 });
+  assert.deepEqual(Object.keys(buddiesCollector).sort(), ['queue', 'scheduled']);
+});
+
+test('scheduled-only raw collector surface registers the collection promise directly', async () => {
   const waited = [];
   const result = buddiesMonitor.scheduled(null, {}, {
     waitUntil(promise) {
