@@ -26,6 +26,10 @@ const materializedCleanupRankingMigration = readFileSync(
   new URL('../database/facts-migrations/032_materialized_cleanup_ranking.sql', import.meta.url),
   'utf8',
 );
+const payloadTransitionMigration = readFileSync(
+  new URL('../database/facts-migrations/033_fix_payload_clearable_transitions.sql', import.meta.url),
+  'utf8',
+);
 const prSchema = readFileSync(
   new URL('../worker/scripts/apply-facts-pr-schema.mjs', import.meta.url),
   'utf8',
@@ -44,6 +48,7 @@ const expectedMigrations = [
   'database/facts-migrations/030_compact_track_history_source.sql',
   'database/facts-migrations/031_observability_hotpaths.sql',
   'database/facts-migrations/032_materialized_cleanup_ranking.sql',
+  'database/facts-migrations/033_fix_payload_clearable_transitions.sql',
 ];
 
 test('PR deployment applies the ordered FACTS migration set through the current schema tip', () => {
@@ -70,6 +75,9 @@ test('PR deployment applies the ordered FACTS migration set through the current 
   assert.match(materializedCleanupRankingMigration, /idx_sh_minute_fact_jobs_payload_clearable/);
   assert.match(materializedCleanupRankingMigration, /sh_track_ranking_current/);
   assert.match(materializedCleanupRankingMigration, /trg_sh_track_ranking_current_after_counter_update/);
+  assert.match(payloadTransitionMigration, /AFTER UPDATE OF source_job_id,status/);
+  assert.match(payloadTransitionMigration, /AFTER DELETE ON sh_queue_revisions/);
+  assert.match(payloadTransitionMigration, /id=OLD\.source_job_id OR id=NEW\.source_job_id/);
 });
 
 test('production keeps historical reconstruction serialized for measured daily budgets', () => {
