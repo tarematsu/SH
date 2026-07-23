@@ -10,6 +10,10 @@ const databaseWorkflow = readFileSync(
   new URL('../.github/workflows/database.yml', import.meta.url),
   'utf8',
 );
+const factsVerification = readFileSync(
+  new URL('../worker/scripts/verify-facts-live.mjs', import.meta.url),
+  'utf8',
+);
 const observabilityWorkflow = readFileSync(
   new URL('../.github/workflows/fetch-cloudflare-observability.yml', import.meta.url),
   'utf8',
@@ -68,6 +72,7 @@ test('one GitHub Actions workflow owns automatic and manual production deploymen
   assert.match(deploymentWorkflow, /branches: \[main\]/);
   assert.match(deploymentWorkflow, /^  workflow_dispatch:$/m);
   assert.doesNotMatch(deploymentWorkflow, /^  pull_request:$/m);
+  assert.match(deploymentWorkflow, /group: deploy-production-minute-db-v2/);
 
   for (const target of ['pages', 'workers', 'sakurazaka46jp', 'runtime']) {
     assert.match(deploymentWorkflow, new RegExp(`- ${target}`));
@@ -124,6 +129,8 @@ test('MINUTE_DB migrations are a blocking reusable stage before Worker and Pages
   const minuteDb = jobSection(deploymentWorkflow, 'minute_db', 'workers');
   assert.match(minuteDb, /uses: \.\/\.github\/workflows\/database\.yml/);
   assert.match(minuteDb, /operation: minute-db/);
+  assert.match(minuteDb, /base_sha: \$\{\{ github\.event\.before \|\| '' \}\}/);
+  assert.match(minuteDb, /head_sha: \$\{\{ github\.sha \}\}/);
   assert.match(minuteDb, /secrets: inherit/);
 
   const workers = jobSection(deploymentWorkflow, 'workers', 'pages');
@@ -137,25 +144,39 @@ test('MINUTE_DB migrations are a blocking reusable stage before Worker and Pages
   assert.match(pages, /needs\.minute_db\.result == 'skipped'/);
 
   assert.match(databaseWorkflow, /^  workflow_call:$/m);
+  assert.match(databaseWorkflow, /^      base_sha:$/m);
+  assert.match(databaseWorkflow, /^      head_sha:$/m);
+  assert.match(databaseWorkflow, /group: sh-database-operations-v2-/);
   assert.doesNotMatch(databaseWorkflow, /database\/facts-migrations\/\*\*/);
   assert.doesNotMatch(databaseWorkflow, /- '\.github\/workflows\/database\.yml'/);
   const databaseMinute = jobSection(databaseWorkflow, 'minute-db', 'payload-purge');
   assert.match(databaseMinute, /if: inputs\.operation == 'minute-db'/);
   assert.doesNotMatch(databaseMinute, /github\.event_name == 'push'/);
   assert.match(databaseMinute, /name: Apply MINUTE_DB schema/);
-  assert.match(databaseMinute, /name: Apply ordered MINUTE_DB migrations/);
+  assert.match(databaseMinute, /FACTS_DEPLOY_CHANGED_ONLY: 'true'/);
+  assert.match(databaseMinute, /DEPLOY_BASE_SHA:/);
+  assert.match(databaseMinute, /DEPLOY_HEAD_SHA:/);
+  assert.match(databaseMinute, /fetch-depth: 0/);
+  assert.match(databaseMinute, /name: Apply changed MINUTE_DB migrations/);
   assert.match(databaseMinute, /node scripts\/apply-facts-pr-schema\.mjs/);
+  assert.match(databaseMinute, /name: Verify live data and deployment-critical schema/);
   assert.match(databaseMinute, /node scripts\/verify-facts-live\.mjs/);
   assert.doesNotMatch(databaseMinute, /provision-current-facts-db/);
   assert.doesNotMatch(databaseMinute, /purge-completed-minute-fact-payloads/);
   assert.doesNotMatch(databaseMinute, /repair-july-stream-facts/);
+
+  assert.match(factsVerification, /dashboard_history_5m_present/);
+  assert.match(factsVerification, /minute_fact_inbox_stats_present/);
+  assert.match(factsVerification, /minute_fact_inbox_stats_triggers_present/);
+  assert.match(factsVerification, /sh_dashboard_history_5m/);
+  assert.match(factsVerification, /sh_minute_fact_inbox_stats/);
 });
 
 test('Cloudflare Git build and PR production deployment files remain deleted', () => {
   for (const path of removedCloudflareGitFiles) {
     assert.equal(existsSync(new URL(path, import.meta.url)), false, `${path} must remain deleted`);
   }
-  assert.match(databaseWorkflow, /name: Verify live data/);
+  assert.match(databaseWorkflow, /name: Verify live data and deployment-critical schema/);
   assert.match(databaseWorkflow, /node scripts\/verify-facts-live\.mjs/);
 });
 

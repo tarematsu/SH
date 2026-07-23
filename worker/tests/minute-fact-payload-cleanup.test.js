@@ -72,7 +72,7 @@ function response(result, options = {}) {
   };
 }
 
-test('database workflow drains every eligible payload through batched D1 API requests', () => {
+test('database workflow keeps payload draining outside the MINUTE_DB deploy gate', () => {
   assert.match(migration, /idx_sh_minute_fact_jobs_payload_clearable/);
   assert.match(migration, /payload_clearable=CASE/);
   assert.match(purgeScript, /api\.cloudflare\.com\/client\/v4\/accounts/);
@@ -83,7 +83,16 @@ test('database workflow drains every eligible payload through batched D1 API req
   assert.doesNotMatch(purgeScript, /execFileSync|wranglerScript/);
   assert.doesNotMatch(purgeScript, /RETURNING id/);
   assert.doesNotMatch(purgeScript, /SUM\(LENGTH\(payload_json\)\)/);
-  assert.match(databaseWorkflow, /name: Purge completed minute fact payloads/);
+
+  const minuteStart = databaseWorkflow.indexOf('  minute-db:\n');
+  const payloadStart = databaseWorkflow.indexOf('  payload-purge:\n');
+  assert.ok(minuteStart >= 0);
+  assert.ok(payloadStart > minuteStart);
+  assert.doesNotMatch(
+    databaseWorkflow.slice(minuteStart, payloadStart),
+    /purge-completed-minute-fact-payloads/,
+  );
+
   assert.match(databaseWorkflow, /node scripts\/purge-completed-minute-fact-payloads\.mjs/);
   assert.match(databaseWorkflow, /- payload-purge/);
   assert.match(databaseWorkflow, /inputs\.operation == 'payload-purge'/);

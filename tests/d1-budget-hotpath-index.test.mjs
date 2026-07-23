@@ -34,6 +34,10 @@ const dashboardRollupMigration = readFileSync(
   new URL('../database/facts-migrations/034_dashboard_rollup_inbox_stats.sql', import.meta.url),
   'utf8',
 );
+const dashboardRecoveryMigration = readFileSync(
+  new URL('../database/facts-migrations/035_recover_dashboard_rollup_schema.sql', import.meta.url),
+  'utf8',
+);
 const prSchema = readFileSync(
   new URL('../worker/scripts/apply-facts-pr-schema.mjs', import.meta.url),
   'utf8',
@@ -54,13 +58,19 @@ const expectedMigrations = [
   'database/facts-migrations/032_materialized_cleanup_ranking.sql',
   'database/facts-migrations/033_fix_payload_clearable_transitions.sql',
   'database/facts-migrations/034_dashboard_rollup_inbox_stats.sql',
+  'database/facts-migrations/035_recover_dashboard_rollup_schema.sql',
 ];
 
-test('PR deployment applies the ordered FACTS migration set through the current schema tip', () => {
+test('MINUTE_DB deployment selects changed migrations through the current schema tip', () => {
+  assert.equal(descriptor.binding, 'MINUTE_DB');
   assert.equal(descriptor.schema, expectedMigrations.at(-1));
   assert.deepEqual(descriptor.migrations, expectedMigrations);
   assert.match(prSchema, /descriptor\.migrations/);
   assert.match(prSchema, /ordered-migration-set/);
+  assert.match(prSchema, /changed-migration-set/);
+  assert.match(prSchema, /schema-tip-fallback/);
+  assert.match(prSchema, /FACTS_DEPLOY_CHANGED_ONLY/);
+  assert.match(prSchema, /git[\s\S]*diff[\s\S]*database\/facts-migrations/);
   assert.match(prSchema, /026_remove_apple_music_compatibility\.sql/);
   assert.match(prSchema, /appleMusicCompatibilityPresent/);
   assert.match(
@@ -86,6 +96,11 @@ test('PR deployment applies the ordered FACTS migration set through the current 
   assert.match(dashboardRollupMigration, /CREATE TABLE IF NOT EXISTS sh_dashboard_history_5m/);
   assert.match(dashboardRollupMigration, /CREATE TABLE IF NOT EXISTS sh_minute_fact_inbox_stats/);
   assert.match(dashboardRollupMigration, /trg_sh_minute_fact_inbox_stats_update/);
+  assert.match(dashboardRecoveryMigration, /CREATE TABLE IF NOT EXISTS sh_dashboard_history_5m/);
+  assert.match(dashboardRecoveryMigration, /CREATE TABLE IF NOT EXISTS sh_minute_fact_inbox_stats/);
+  assert.match(dashboardRecoveryMigration, /CREATE TRIGGER IF NOT EXISTS trg_sh_minute_fact_inbox_stats_update/);
+  assert.doesNotMatch(dashboardRecoveryMigration, /FROM sh_minute_facts/);
+  assert.doesNotMatch(dashboardRecoveryMigration, /ANALYZE|PRAGMA optimize/);
 });
 
 test('production keeps historical reconstruction serialized for measured daily budgets', () => {
