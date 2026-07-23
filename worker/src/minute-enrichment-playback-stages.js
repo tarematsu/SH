@@ -199,24 +199,34 @@ async function patchPlaybackResult(db, current, identity, playback) {
     ? TRACK_DETECTION_METHOD_CODES.unknown
     : TRACK_DETECTION_METHOD_CODES.queue_inferred;
   const qualityCode = Math.round(qualityScore(flags) * 100);
-  await db.batch([
-    db.prepare(`UPDATE sh_minute_facts SET
-        track_detection_code=?,track_confidence_code=?,schedule_valid=?,
-        quality_score_code=?,quality_flags=?
-      WHERE id=? AND observed_at=? AND source_code=?`)
-      .bind(
-        detectionCode,
-        confidenceCode,
-        Number(playback?.current_schedule_valid || 0),
-        qualityCode,
-        flags,
-        factId,
-        identity.observedAt,
-        MINUTE_FACT_SOURCE_CODES.live_collector,
-      ),
-    db.prepare(`UPDATE sh_minute_fact_context_v2 SET queue_position=?
-      WHERE fact_id=?`).bind(position, factId),
-  ]);
+  await db.prepare(`UPDATE sh_minute_facts SET
+      track_detection_code=?,track_confidence_code=?,schedule_valid=?,
+      quality_score_code=?,quality_flags=?,queue_position_patch=?
+    WHERE id=? AND observed_at=? AND source_code=?
+      AND (track_detection_code IS NOT ?
+        OR track_confidence_code IS NOT ?
+        OR schedule_valid IS NOT ?
+        OR quality_score_code IS NOT ?
+        OR quality_flags IS NOT ?
+        OR queue_position_patch IS NOT ?)`)
+    .bind(
+      detectionCode,
+      confidenceCode,
+      Number(playback?.current_schedule_valid || 0),
+      qualityCode,
+      flags,
+      position,
+      factId,
+      identity.observedAt,
+      MINUTE_FACT_SOURCE_CODES.live_collector,
+      detectionCode,
+      confidenceCode,
+      Number(playback?.current_schedule_valid || 0),
+      qualityCode,
+      flags,
+      position,
+    )
+    .run();
   return { trackId, position };
 }
 
