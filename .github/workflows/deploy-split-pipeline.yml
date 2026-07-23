@@ -38,7 +38,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: deploy-production
+  group: deploy-production-minute-db-v2
   cancel-in-progress: false
 
 jobs:
@@ -126,6 +126,8 @@ jobs:
     uses: ./.github/workflows/database.yml
     with:
       operation: minute-db
+      base_sha: ${{ github.event.before || '' }}
+      head_sha: ${{ github.sha }}
     secrets: inherit
 
   workers:
