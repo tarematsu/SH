@@ -6,17 +6,13 @@ import {
   cloudflareBuildConfig,
 } from '../scripts/cloudflare-build-config.mjs';
 
-test('connected Workers map to their static Wrangler configs', () => {
+test('only the runtime compatibility build maps to a static Wrangler config', () => {
   assert.deepEqual(ACTIVE_WORKER_BUILDS, {
-    'sh-buddies-collector': 'wrangler.buddies-collector.jsonc',
     'sh-runtime-orchestrator': 'wrangler.runtime.jsonc',
   });
 
-  assert.equal(
-    cloudflareBuildConfig('sh-buddies-collector'),
-    'wrangler.buddies-collector.jsonc',
-  );
   assert.equal(cloudflareBuildConfig('sh-runtime-orchestrator'), 'wrangler.runtime.jsonc');
+  assert.equal(cloudflareBuildConfig('sh-buddies-collector'), null);
 
   for (const retired of [
     'sh-buddies-ingest',
