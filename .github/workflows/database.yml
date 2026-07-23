@@ -19,6 +19,16 @@ on:
         description: Database operation
         required: true
         type: string
+      base_sha:
+        description: Base commit used to select deployment migrations
+        required: false
+        default: ''
+        type: string
+      head_sha:
+        description: Head commit used to select deployment migrations
+        required: false
+        default: ''
+        type: string
       drop_source_metadata:
         description: Delete the legacy OTHER_DB metadata table after verification
         required: false
@@ -46,7 +56,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: sh-database-operations
+  group: sh-database-operations-v2-${{ inputs.operation || github.event_name }}
   cancel-in-progress: false
 
 jobs:
@@ -62,19 +72,24 @@ jobs:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN || secrets.CLOUDFLARE_BUILDS_API_TOKEN || secrets.CF_API_TOKEN }}
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID || secrets.CF_ACCOUNT_ID }}
       FACTS_DATABASE_NAME: stationhead-minute
+      FACTS_DEPLOY_CHANGED_ONLY: 'true'
+      DEPLOY_BASE_SHA: ${{ inputs.base_sha || '' }}
+      DEPLOY_HEAD_SHA: ${{ inputs.head_sha || github.sha }}
       FACTS_VERIFY_ATTEMPTS: '5'
       FACTS_VERIFY_DELAY_MS: '20000'
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
           cache: npm
           cache-dependency-path: worker/package-lock.json
       - run: npm ci --no-audit --no-fund
-      - name: Apply ordered MINUTE_DB migrations
+      - name: Apply changed MINUTE_DB migrations
         run: node scripts/apply-facts-pr-schema.mjs
-      - name: Verify live data
+      - name: Verify live data and deployment-critical schema
         run: node scripts/verify-facts-live.mjs
 
   payload-purge:
