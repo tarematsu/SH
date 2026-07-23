@@ -170,7 +170,14 @@ for (let attempt = 1; attempt <= attempts; attempt += 1) {
         (SELECT COUNT(*) FROM pragma_table_info('sh_queue_revisions') WHERE name='coverage_complete') AS revision_coverage_column_count,
         (SELECT COUNT(*) FROM pragma_table_info('sh_queue_revisions') WHERE name='source_job_id') AS revision_source_job_column_count,
         (SELECT COUNT(*) FROM pragma_table_info('sh_queue_revisions') WHERE name='source_visible_count') AS revision_source_visible_column_count,
-        (SELECT COUNT(*) FROM pragma_table_info('sh_queue_revisions') WHERE name='last_materialized_at') AS revision_checkpoint_column_count`);
+        (SELECT COUNT(*) FROM pragma_table_info('sh_queue_revisions') WHERE name='last_materialized_at') AS revision_checkpoint_column_count,
+        (SELECT COUNT(*) FROM pragma_table_info('sh_dashboard_history_5m') WHERE name='bucket_at') AS dashboard_rollup_bucket_column_count,
+        (SELECT COUNT(*) FROM pragma_table_info('sh_minute_fact_inbox_stats') WHERE name='pending_count') AS inbox_stats_pending_column_count,
+        (SELECT COUNT(*) FROM sqlite_master WHERE type='trigger' AND name IN (
+          'trg_sh_minute_fact_inbox_stats_insert',
+          'trg_sh_minute_fact_inbox_stats_delete',
+          'trg_sh_minute_fact_inbox_stats_update'
+        )) AS inbox_stats_trigger_count`);
     const row = firstResult(payload) || {};
     const now = Date.now();
     let revisionReach = null;
@@ -200,6 +207,9 @@ for (let attempt = 1; attempt <= attempts; attempt += 1) {
       revision_source_job_present: Number(row.revision_source_job_column_count || 0) > 0,
       revision_source_visible_present: Number(row.revision_source_visible_column_count || 0) > 0,
       revision_checkpoint_present: Number(row.revision_checkpoint_column_count || 0) > 0,
+      dashboard_history_5m_present: Number(row.dashboard_rollup_bucket_column_count || 0) > 0,
+      minute_fact_inbox_stats_present: Number(row.inbox_stats_pending_column_count || 0) > 0,
+      minute_fact_inbox_stats_triggers_present: Number(row.inbox_stats_trigger_count || 0) === 3,
       revision_reach_enabled: includeRevisionReach,
       revision_reach: revisionReach,
       revision_reach_error: revisionReachError,
@@ -215,7 +225,10 @@ for (let attempt = 1; attempt <= attempts; attempt += 1) {
       && last.revision_coverage_present
       && last.revision_source_job_present
       && last.revision_source_visible_present
-      && last.revision_checkpoint_present;
+      && last.revision_checkpoint_present
+      && last.dashboard_history_5m_present
+      && last.minute_fact_inbox_stats_present
+      && last.minute_fact_inbox_stats_triggers_present;
     if (last.live_fact_count > 0 && recent && requiredSchemaPresent) {
       last.result = 'success';
       writeStatus(last);
