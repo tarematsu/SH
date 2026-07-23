@@ -9,11 +9,16 @@ import {
 
 const D1_SAFE_BOUND_PARAMETERS = 80;
 const IDENTITY_BINDINGS_PER_DESCRIPTOR = 4;
+const TRACK_INSERT_BINDINGS = 8;
+const TRACK_UPDATE_BINDINGS = 13;
+const ALIAS_UPSERT_BINDINGS = 6;
 const ALIAS_VALUE_CHUNK_SIZE = D1_SAFE_BOUND_PARAMETERS - 1;
 const IDENTITY_DESCRIPTOR_CHUNK_SIZE = Math.floor(
   D1_SAFE_BOUND_PARAMETERS / IDENTITY_BINDINGS_PER_DESCRIPTOR,
 );
-const BATCH_STATEMENT_LIMIT = 40;
+const TRACK_INSERT_BATCH_LIMIT = Math.floor(D1_SAFE_BOUND_PARAMETERS / TRACK_INSERT_BINDINGS);
+const TRACK_UPDATE_BATCH_LIMIT = Math.floor(D1_SAFE_BOUND_PARAMETERS / TRACK_UPDATE_BINDINGS);
+const ALIAS_UPSERT_BATCH_LIMIT = Math.floor(D1_SAFE_BOUND_PARAMETERS / ALIAS_UPSERT_BINDINGS);
 const TRACK_SEEN_CHECKPOINT_MS = 24 * 60 * 60_000;
 
 function normalizedIsrc(value) {
@@ -187,8 +192,8 @@ function assignTrackRows(descriptors, identities) {
   }
 }
 
-async function runStatementBatches(db, statements) {
-  for (const part of chunks(statements, BATCH_STATEMENT_LIMIT)) {
+async function runStatementBatches(db, statements, statementLimit) {
+  for (const part of chunks(statements, statementLimit)) {
     if (part.length) await db.batch(part);
   }
 }
@@ -209,7 +214,7 @@ async function insertTracks(db, descriptors, observedAt) {
         observedAt,
         observedAt,
       ));
-  await runStatementBatches(db, statements);
+  await runStatementBatches(db, statements, TRACK_INSERT_BATCH_LIMIT);
 }
 
 async function persistTrackAliases(db, descriptors, observedAt) {
@@ -219,9 +224,10 @@ async function persistTrackAliases(db, descriptors, observedAt) {
       uniqueTracks.set(descriptor.trackId, descriptor);
     }
   }
-  const statements = [];
+  const trackStatements = [];
+  const aliasStatements = [];
   for (const descriptor of uniqueTracks.values()) {
-    statements.push(db.prepare(`UPDATE sh_tracks SET
+    trackStatements.push(db.prepare(`UPDATE sh_tracks SET
         isrc=COALESCE(isrc,?),spotify_id=COALESCE(spotify_id,?),
         stationhead_track_id=COALESCE(stationhead_track_id,?),
         title=COALESCE(title,?),artist=COALESCE(artist,?),last_seen_at=MAX(last_seen_at,?)
@@ -249,7 +255,7 @@ async function persistTrackAliases(db, descriptors, observedAt) {
         observedAt - TRACK_SEEN_CHECKPOINT_MS,
       ));
     for (const alias of descriptor.aliases || []) {
-      statements.push(db.prepare(`INSERT INTO sh_track_aliases(
+      aliasStatements.push(db.prepare(`INSERT INTO sh_track_aliases(
           alias_type,alias_value,track_id,first_seen_at,last_seen_at
         ) VALUES(?,?,?,?,?) ON CONFLICT(alias_type,alias_value) DO UPDATE SET
           last_seen_at=excluded.last_seen_at
@@ -265,7 +271,14 @@ async function persistTrackAliases(db, descriptors, observedAt) {
         ));
     }
   }
-  await runStatementBatches(db, statements);
+  await runSubstage(
+    'persist_track_rows',
+    () => runStatementBatches(db, trackStatements, TRACK_UPDATE_BATCH_LIMIT),
+  );
+  await runSubstage(
+    'persist_alias_rows',
+    () => runStatementBatches(db, aliasStatements, ALIAS_UPSERT_BATCH_LIMIT),
+  );
 }
 
 async function runSubstage(name, operation) {
