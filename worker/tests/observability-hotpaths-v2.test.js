@@ -83,10 +83,11 @@ test('normal live ingest bypasses the D1 job ledger', async () => {
   let handlers;
   let inboxCalls = 0;
   const direct = [];
-  await consumeMinuteQueue({ messages: [] }, {
+  const env = {
     LIVE_DERIVE_DIRECT_QUEUE_ENABLED: true,
     LIVE_REVISION_MATERIALIZATION_ENABLED: false,
-  }, null, {
+  };
+  await consumeMinuteQueue({ messages: [] }, env, null, {
     consumeMinuteFactBatch: async (_batch, _env, value) => {
       handlers = value;
       return { received: 0 };
@@ -100,7 +101,7 @@ test('normal live ingest bypasses the D1 job ledger', async () => {
       return { enqueued: true, direct: true };
     },
   });
-  const result = await handlers.enqueue({}, payload, { jobKind: 'live' });
+  const result = await handlers.enqueue(env, payload, { jobKind: 'live' });
   assert.deepEqual(result, { enqueued: true, direct: true });
   assert.equal(inboxCalls, 0);
   assert.deepEqual(direct, [payload]);
