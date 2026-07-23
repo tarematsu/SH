@@ -96,6 +96,7 @@ SELECT 'global',
   MIN(CASE WHEN status='pending' THEN minute_at END),
   unixepoch()*1000
 FROM sh_minute_fact_jobs
+WHERE 1=1
 ON CONFLICT(id) DO UPDATE SET
   pending_count=excluded.pending_count,
   processing_count=excluded.processing_count,
