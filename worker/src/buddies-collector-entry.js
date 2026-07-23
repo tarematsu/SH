@@ -1,7 +1,7 @@
 import './fetch-guard.js';
 
 import { sanitizeFailureDetail } from './collector-failure.js';
-import ingestWorker from './ingest-channel-optimized-entry.js';
+import ingestWorker, { ingestRawCollection } from './ingest-channel-optimized-entry.js';
 import { collectRawChannel } from './raw-collector-entry.js';
 import { rawCollectorEnv } from './runtime-env.js';
 
@@ -30,10 +30,14 @@ export async function runBuddiesCollectorScheduled(
 
   const scheduledAt = Number(controller?.scheduledTime) || Date.now();
   const collect = dependencies.collectRawChannel || collectRawChannel;
+  const collectionDependencies = {
+    ...(dependencies.collection || EMPTY_DEPENDENCIES),
+    ingestRawCollection: dependencies.ingestRawCollection || ingestRawCollection,
+  };
   try {
     await collect(
       rawCollectorEnv(env),
-      dependencies.collection || EMPTY_DEPENDENCIES,
+      collectionDependencies,
     );
     return { collected: true, scheduled_at: scheduledAt };
   } catch (error) {
