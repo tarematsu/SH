@@ -4,6 +4,7 @@ import test from 'node:test';
 
 import {
   consumeMinuteFactBatch,
+  flushMinuteFactOutbox,
   handoffMinuteFactJob,
   MINUTE_FACT_POINTER_MESSAGE_TYPE,
   minuteFactQueueSourceMessage,
@@ -70,7 +71,12 @@ function pointerDb() {
           }
           if (sql.includes('attempts=attempts+1,last_attempt_at')) {
             const [lastAttemptAt, lastError, jobId] = this.params;
-            Object.assign(rows.get(jobId), { last_attempt_at: lastAttemptAt, last_error: lastError });
+            const row = rows.get(jobId);
+            Object.assign(row, {
+              attempts: row.attempts + 1,
+              last_attempt_at: lastAttemptAt,
+              last_error: lastError,
+            });
             return { meta: { changes: 1 } };
           }
           if (sql.includes('DELETE FROM sh_minute_fact_outbox')) return { meta: { changes: 0 } };
@@ -191,6 +197,61 @@ test('consumer resolves, completes, deletes, and deduplicates a pointer payload'
   });
   assert.deepEqual(duplicateResult, { received: 1, enqueued: 0, duplicates: 1, retried: 0, invalid: 0 });
   assert.deepEqual(duplicate.calls, [['ack']]);
+});
+
+test('persisted pointer retries rehydrate the source message before producer wrappers run', async () => {
+  const DB = pointerDb();
+  const R2 = r2Bucket();
+  const env = {
+    DB,
+    MINUTE_FACT_POINTER_QUEUE_ENABLED: true,
+    PAGES_RESPONSE_R2: R2,
+    MINUTE_FACT_QUEUE: { async send() { throw new Error('temporary Queue outage'); } },
+  };
+  const first = await handoffMinuteFactJob(env, input, {
+    readModel: { channel: { presentation: { description: 'retry source' } } },
+  });
+  assert.equal(first.enqueued, false);
+  const row = [...DB.rows.values()][0];
+  assert.equal(row.status, 'pending');
+  assert.equal(JSON.parse(row.payload_json).message_type, MINUTE_FACT_POINTER_MESSAGE_TYPE);
+
+  let source = null;
+  env.MINUTE_FACT_QUEUE = {
+    async send(pointer) {
+      source = minuteFactQueueSourceMessage(pointer);
+    },
+  };
+  const result = await flushMinuteFactOutbox(env, { limit: 1 });
+
+  assert.equal(result.sent, 1);
+  assert.equal(result.failed, 0);
+  assert.equal(source.message_type, 'minute-fact-job');
+  assert.equal(source.read_model.channel.presentation.description, 'retry source');
+  assert.equal(row.status, 'sent');
+});
+
+test('corrupt R2 pointer payloads retry instead of being acknowledged as invalid Queue messages', async () => {
+  const DB = pointerDb();
+  const R2 = r2Bucket();
+  let pointer = null;
+  const env = {
+    DB,
+    BUDDIES_DB: DB,
+    MINUTE_FACT_POINTER_QUEUE_ENABLED: true,
+    PAGES_RESPONSE_R2: R2,
+    MINUTE_FACT_QUEUE: { async send(value) { pointer = value; } },
+  };
+  await handoffMinuteFactJob(env, input);
+  R2.objects.get(pointer.storage_key).value = '{broken';
+
+  const message = queueMessage(pointer);
+  const result = await consumeMinuteFactBatch({ messages: [message] }, env, {
+    enqueue: async () => { throw new Error('corrupt payload must not be processed'); },
+  });
+
+  assert.deepEqual(result, { received: 1, enqueued: 0, duplicates: 0, retried: 1, invalid: 0 });
+  assert.deepEqual(message.calls, [['retry', { delaySeconds: 5 }]]);
 });
 
 test('collector and runtime enable pointer transport for minute facts', () => {
