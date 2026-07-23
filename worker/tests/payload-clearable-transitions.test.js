@@ -44,21 +44,23 @@ function database() {
   return db;
 }
 
-function insertDoneJob(db, id, payload) {
+function completeJob(db, id, payload) {
   db.prepare(`INSERT INTO sh_minute_fact_jobs(
       id,status,payload_json,payload_clearable,processed_at,lease_until,last_error,updated_at
-    ) VALUES(?,'done',?,0,100,NULL,NULL,100)`).run(id, payload);
+    ) VALUES(?,'processing',?,0,NULL,100,NULL,100)`).run(id, payload);
+  db.prepare(`UPDATE sh_minute_fact_jobs SET
+    status='done',processed_at=200,lease_until=NULL,updated_at=200 WHERE id=?`).run(id);
 }
 
 test('revision source reassignment repairs both the old and new job eligibility', () => {
   const db = database();
-  insertDoneJob(db, 1, 'old-owner');
-  insertDoneJob(db, 2, 'new-owner');
+  completeJob(db, 1, 'old-owner');
+  completeJob(db, 2, 'new-owner');
   db.exec(`INSERT INTO sh_queue_revisions
     VALUES(20,1,'pending',0,2,2);`);
 
   assert.equal(db.prepare('SELECT payload_clearable FROM sh_minute_fact_jobs WHERE id=1').get().payload_clearable, 0);
-  assert.equal(db.prepare('SELECT payload_clearable FROM sh_minute_fact_jobs WHERE id=2').get().payload_clearable, 0);
+  assert.equal(db.prepare('SELECT payload_clearable FROM sh_minute_fact_jobs WHERE id=2').get().payload_clearable, 1);
 
   db.exec('UPDATE sh_queue_revisions SET source_job_id=2 WHERE id=20;');
   assert.equal(db.prepare('SELECT payload_clearable FROM sh_minute_fact_jobs WHERE id=1').get().payload_clearable, 1);
@@ -71,7 +73,7 @@ test('revision source reassignment repairs both the old and new job eligibility'
 
 test('deleting the last blocking revision releases its source payload', () => {
   const db = database();
-  insertDoneJob(db, 3, 'delete-owner');
+  completeJob(db, 3, 'delete-owner');
   db.exec(`INSERT INTO sh_queue_revisions
     VALUES(30,3,'pending',0,1,1);`);
   assert.equal(db.prepare('SELECT payload_clearable FROM sh_minute_fact_jobs WHERE id=3').get().payload_clearable, 0);
@@ -82,7 +84,9 @@ test('deleting the last blocking revision releases its source payload', () => {
 
 test('a completed job leaving done state is no longer cleanup eligible', () => {
   const db = database();
-  insertDoneJob(db, 4, 'reopened');
+  completeJob(db, 4, 'reopened');
+  assert.equal(db.prepare('SELECT payload_clearable FROM sh_minute_fact_jobs WHERE id=4').get().payload_clearable, 1);
+
   db.exec("UPDATE sh_minute_fact_jobs SET status='processing' WHERE id=4;");
   assert.equal(db.prepare('SELECT payload_clearable FROM sh_minute_fact_jobs WHERE id=4').get().payload_clearable, 0);
 });
