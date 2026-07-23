@@ -62,6 +62,16 @@ export const MINUTE_FACT_INBOX_STATS_SQL = `SELECT
   WHERE id='global'
   LIMIT 1`;
 
+export const CLAIM_MINUTE_FACT_JOBS_SQL = `UPDATE sh_minute_fact_jobs SET
+    status='processing',attempts=attempts+1,lease_until=?,updated_at=?
+  WHERE id IN (
+    SELECT id FROM sh_minute_fact_jobs INDEXED BY idx_sh_minute_fact_jobs_pending_ready
+    WHERE status='pending' AND next_attempt_at<=?
+    ORDER BY next_attempt_at ASC,job_priority DESC,minute_at ASC,id ASC
+    LIMIT ?
+  )
+  RETURNING *`;
+
 function integer(value) {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? Math.trunc(parsed) : null;
@@ -159,15 +169,7 @@ export async function claimMinuteFactJobs(env, options = {}) {
   const leaseMs = positiveInteger(options.leaseMs, 60_000, 10 * 60_000);
   await releaseExpiredLeases(env, now);
 
-  const claimed = await env.MINUTE_DB.prepare(`UPDATE sh_minute_fact_jobs SET
-      status='processing',attempts=attempts+1,lease_until=?,updated_at=?
-    WHERE id IN (
-      SELECT id FROM sh_minute_fact_jobs
-      WHERE status='pending' AND next_attempt_at<=?
-      ORDER BY job_priority DESC,minute_at ASC,id ASC
-      LIMIT ?
-    )
-    RETURNING *`)
+  const claimed = await env.MINUTE_DB.prepare(CLAIM_MINUTE_FACT_JOBS_SQL)
     .bind(now + leaseMs, now, now, limit)
     .all();
   return claimed.results || [];
