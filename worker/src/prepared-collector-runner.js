@@ -40,6 +40,10 @@ export function preparedCollectorFactStage(result) {
   return result?.[PREPARED_COLLECTOR_FACT] || null;
 }
 
+function enabled(value) {
+  return value === true || value === 1 || /^(1|true|yes|on)$/i.test(String(value || ''));
+}
+
 function signalFrom(value) {
   if (value && typeof value.aborted === 'boolean') return value;
   return value?.__COLLECTION_ABORT_SIGNAL || null;
@@ -115,6 +119,17 @@ function activeEnvWithSignal(env) {
   return active;
 }
 
+function activeCollectorEnv(env) {
+  const active = activeEnvWithSignal(env);
+  if (!enabled(active?.COLLECTOR_INLINE_PIPELINE_ENABLED)) return active;
+  const scoped = Object.create(active || null);
+  Object.defineProperties(scoped, {
+    PERSIST_QUEUE: { value: null, enumerable: false, configurable: true },
+    INGEST_FINALIZE_QUEUE: { value: null, enumerable: false, configurable: true },
+  });
+  return scoped;
+}
+
 function preparedPayload(env, state, config, previousRunAt, observedAt, metadataRetry) {
   const prepared = env?.__shPreparedCollection;
   const snapshot = prepared?.snapshot;
@@ -165,7 +180,7 @@ export async function collectPreparedOnce(env, source = 'raw-collection-queue') 
   const observedAt = Date.now();
   let stage = 'collector_start';
   let state = null;
-  const activeEnv = activeEnvWithSignal(env);
+  const activeEnv = activeCollectorEnv(env);
 
   try {
     if (!activeEnv?.DB) throw new Error('DB binding is missing');
