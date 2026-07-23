@@ -108,7 +108,7 @@ jobs:
               changed_files="$(git diff --name-only "$BEFORE_SHA" "$HEAD_SHA")"
             fi
             printf '%s\n' "$changed_files" | tee changed-files.txt
-            if grep -Eq '^(database/facts-db\.json$|database/facts-migrations/|worker/scripts/(provision-facts-db|provision-current-facts-db|apply-facts-pr-schema)\.mjs$|\.github/workflows/(database|deploy-split-pipeline)\.yml$)' changed-files.txt; then
+            if grep -Eq '^(database/facts-db\.json$|database/facts-migrations/|worker/scripts/(provision-facts-db|provision-current-facts-db|apply-facts-pr-schema)\.mjs$|\.github/workflows/database\.yml$)' changed-files.txt; then
               minute_db=true
             fi
             if grep -Eq '^(site/(functions|public)/|site/wrangler\.jsonc$|site/package(-lock)?\.json$|packages/sh-shared/)' changed-files.txt; then
