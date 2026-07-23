@@ -15,6 +15,11 @@ const migrationPaths = [...new Set([
   ...configuredMigrations,
   descriptor.schema,
 ].filter(Boolean))];
+const deployChangedOnly = /^(1|true|yes)$/i.test(
+  String(process.env.FACTS_DEPLOY_CHANGED_ONLY || '').trim(),
+);
+const deployBaseSha = String(process.env.DEPLOY_BASE_SHA || '').trim();
+const deployHeadSha = String(process.env.DEPLOY_HEAD_SHA || 'HEAD').trim() || 'HEAD';
 
 if (!process.env.CLOUDFLARE_API_TOKEN) throw new Error('CLOUDFLARE_API_TOKEN is required');
 if (!databaseName) throw new Error('facts database name is missing');
@@ -60,9 +65,29 @@ function appleMusicCompatibilityPresent() {
   return changes;
 }
 
+function deploymentMigrations() {
+  if (!deployChangedOnly) {
+    return { migrations: migrationPaths, mode: 'ordered-migration-set' };
+  }
+  if (!deployBaseSha || /^0+$/.test(deployBaseSha)) {
+    return { migrations: [descriptor.schema], mode: 'schema-tip-fallback' };
+  }
+  const changedOutput = execFileSync(
+    'git',
+    ['diff', '--name-only', deployBaseSha, deployHeadSha, '--', 'database/facts-migrations'],
+    { cwd: repositoryRoot, env: process.env, encoding: 'utf8' },
+  );
+  const changed = new Set(String(changedOutput || '').split(/\r?\n/).filter(Boolean));
+  const selected = migrationPaths.filter((migration) => changed.has(migration));
+  return selected.length
+    ? { migrations: selected, mode: 'changed-migration-set' }
+    : { migrations: [descriptor.schema], mode: 'schema-tip-fallback' };
+}
+
+const deployment = deploymentMigrations();
 const applied = [];
 const skipped = [];
-for (const migration of migrationPaths) {
+for (const migration of deployment.migrations) {
   const migrationName = basename(migration);
   if (migrationName === '026_remove_apple_music_compatibility.sql'
       && !appleMusicCompatibilityPresent()) {
@@ -80,9 +105,10 @@ for (const migration of migrationPaths) {
 
 console.log(JSON.stringify({
   ok: true,
+  binding: descriptor.binding,
   database_name: databaseName,
   schema: descriptor.schema,
   migrations_applied: applied,
   migrations_skipped: skipped,
-  mode: 'ordered-migration-set',
+  mode: deployment.mode,
 }));
