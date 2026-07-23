@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
-"""Run the free-tier audit against account-wide included-usage meters."""
+"""Project account-wide partial-day Cloudflare usage to daily allowance periods."""
 
 from __future__ import annotations
 
+import datetime as dt
 import importlib.util
 import json
 import math
+import os
 import sys
-import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -20,6 +21,22 @@ SPEC.loader.exec_module(core)
 
 _ORIGINAL_AGGREGATE = core.aggregate
 _ACCOUNT_SCOPE = "account"
+_DAY_SECONDS = 24 * 60 * 60
+_PROJECTION_METHOD = "linear-from-utc-midnight"
+_DAILY_RATE_METRICS = (
+    "queueOperations",
+    "doRequests",
+    "doActiveGbSeconds",
+    "doRowsRead",
+    "doRowsWritten",
+    "kvReads",
+    "kvWrites",
+    "kvDeletes",
+    "kvLists",
+)
+_MONTHLY_OR_STATE_METRICS = tuple(
+    metric for metric in core.LIMITS if metric not in _DAILY_RATE_METRICS
+)
 
 
 def paginated(account: str, path: str) -> list[dict[str, Any]]:
@@ -40,7 +57,7 @@ def paginated(account: str, path: str) -> list[dict[str, Any]]:
 
 
 def graphql_document() -> str:
-    """Query the same account-wide meters that Cloudflare applies to allowances."""
+    """Query account-wide meters without unsupported resource dimensions."""
     return """query FreeTierBudget($account: string, $day: Date!, $now: Time!, $monthStart: Time!) {
       viewer { accounts(filter: {accountTag: $account}) {
         queues: queueMessageOperationsAdaptiveGroups(limit: 10000, filter: {date_geq: $day, date_leq: $day}) {
@@ -109,7 +126,6 @@ def _durable_object_duration_gb_seconds(groups: Any) -> float:
             active_microseconds += _metric(sums.get("activeTime"))
     if has_duration:
         return round(duration, 3)
-    # Backward-compatible fallback for fixtures and older API responses.
     return round(active_microseconds / 1_000_000 * 0.128, 3)
 
 
@@ -121,7 +137,7 @@ def aggregate(
     _kv_ids: set[str],
     _pipeline_ids: set[str],
 ) -> dict[str, Any]:
-    """Normalize account-wide groups into the existing validated aggregator."""
+    """Normalize account-wide groups into the retained validated aggregator."""
     normalized = dict(row)
     normalized["queues"] = _tag(row.get("queues"), "queueId")
     normalized["r2ops"] = _tag(row.get("r2ops"), "bucketName")
@@ -142,34 +158,49 @@ def aggregate(
         account,
         account,
     )
-    # The GraphQL duration field is already GB-s. The legacy core's activeTime
-    # path treats microseconds as milliseconds, so replace that derived value.
     usage["doActiveGbSeconds"] = _durable_object_duration_gb_seconds(
         row.get("doPeriodic")
     )
     return usage
 
 
-def annotate_account_scope(output_dir: Path | None = None) -> None:
-    """Make the account-wide budget scope explicit in machine and human reports."""
-    directory = output_dir or core.OUT
-    report_path = directory / "free-tier-usage.json"
-    if report_path.exists():
-        report = json.loads(report_path.read_text(encoding="utf-8"))
-        report["scope"] = _ACCOUNT_SCOPE
-        report["policy"] = (
-            "Account-wide usage capped at 80% of Cloudflare free/no-charge allowances"
-        )
-        report_path.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
+def projection_metadata(now: dt.datetime) -> dict[str, Any]:
+    start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    elapsed = max(1, min(_DAY_SECONDS, int((now - start).total_seconds())))
+    return {
+        "method": _PROJECTION_METHOD,
+        "periodSeconds": _DAY_SECONDS,
+        "elapsedSeconds": elapsed,
+        "factor": _DAY_SECONDS / elapsed,
+        "projectedMetrics": list(_DAILY_RATE_METRICS),
+    }
 
-    summary_path = directory / "summary.md"
-    if summary_path.exists():
-        summary = summary_path.read_text(encoding="utf-8")
-        heading = "## Cloudflare free-tier 80% budgets"
-        replacement = "## Account-wide Cloudflare free-tier 80% budgets"
-        if heading in summary:
-            summary = summary.replace(heading, replacement, 1)
-        summary_path.write_text(summary, encoding="utf-8")
+
+def project_daily_allowances(
+    actual: dict[str, Any],
+    projection: dict[str, Any],
+) -> dict[str, Any]:
+    projected = dict(actual)
+    factor = float(projection["factor"])
+    for key in _DAILY_RATE_METRICS:
+        value = _metric(actual.get(key))
+        if key == "doActiveGbSeconds":
+            projected[key] = round(value * factor, 3)
+        else:
+            projected[key] = math.ceil(value * factor)
+    return projected
+
+
+def format_factor(value: float) -> str:
+    return f"{value:.3f}".rstrip("0").rstrip(".")
+
+
+def usage_basis(metric: str) -> str:
+    if metric in _DAILY_RATE_METRICS:
+        return "24h projection"
+    if metric in {"r2ClassAOperations", "r2ClassBOperations", "pipelineTransformBytes", "pipelineSinkBytes"}:
+        return "month-to-date"
+    return "observed state"
 
 
 core.paginated = paginated
@@ -193,20 +224,12 @@ def self_test() -> int:
         core.api = original_api
 
     document = graphql_document()
-    for resource_identifier in (
-        "namespaceId",
-        "queueId",
-        "bucketName",
-        "pipelineId",
-    ):
+    for resource_identifier in ("namespaceId", "queueId", "bucketName", "pipelineId"):
         assert resource_identifier not in document
     assert "sum { duration rowsRead rowsWritten }" in document
     assert "activeTime" not in document
-    assert "dimensions { actionType }" in document
-    assert "dimensions { datetime }" in document
-    assert "dimensions { date }" in document
 
-    usage = aggregate({
+    actual = aggregate({
         "queues": [{"sum": {"billableOperations": 30}}],
         "r2ops": [
             {"dimensions": {"actionType": "PutObject"}, "sum": {"requests": 2}},
@@ -217,7 +240,7 @@ def self_test() -> int:
             "max": {"payloadSize": 100, "metadataSize": 5},
         }],
         "doInvocations": [{"sum": {"requests": 10}}],
-        "doPeriodic": [{"sum": {"duration": 206.651, "rowsRead": 2, "rowsWritten": 1}}],
+        "doPeriodic": [{"sum": {"duration": 2.5, "rowsRead": 2, "rowsWritten": 1}}],
         "doStorage": [{"max": {"storedBytes": 50}}],
         "kvOperations": [
             {"dimensions": {"actionType": "read"}, "sum": {"requests": 7}},
@@ -230,56 +253,141 @@ def self_test() -> int:
         "pipelineOperators": [{"sum": {"bytesIn": 300, "decodeErrors": 2}}],
         "pipelineSinks": [{"sum": {"uncompressedBytesWritten": 250}}],
     }, set(), set(), set(), set(), set())
-    assert usage["queueOperations"] == 30
-    assert usage["r2ClassAOperations"] == 2 and usage["r2ClassBOperations"] == 5
-    assert usage["r2StoredBytes"] == 105
-    assert usage["doRequests"] == 10
-    assert usage["doRowsRead"] == 2 and usage["doRowsWritten"] == 1
-    assert usage["doStoredBytes"] == 50 and usage["doActiveGbSeconds"] == 206.651
-    assert usage["kvReads"] == 7 and usage["kvWrites"] == 1
-    assert usage["kvStoredBytes"] == 200
-    assert usage["pipelineTransformBytes"] == 300
-    assert usage["pipelineSinkBytes"] == 250
-    assert usage["pipelineDecodeErrors"] == 2
+    projection = projection_metadata(
+        dt.datetime(2026, 7, 23, 6, 0, tzinfo=dt.timezone.utc)
+    )
+    projected = project_daily_allowances(actual, projection)
+    assert projection["factor"] == 4
+    assert projected["queueOperations"] == 120
+    assert projected["doRequests"] == 40
+    assert projected["doActiveGbSeconds"] == 10.0
+    assert projected["doRowsRead"] == 8 and projected["doRowsWritten"] == 4
+    assert projected["kvReads"] == 28 and projected["kvWrites"] == 4
+    for key in _MONTHLY_OR_STATE_METRICS:
+        assert projected[key] == actual[key], key
+    assert projected["r2ClassAOperations"] == 2
+    assert projected["pipelineTransformBytes"] == 300
     assert _durable_object_duration_gb_seconds([
         {"sum": {"activeTime": 1_000_000}},
     ]) == 0.128
 
-    with tempfile.TemporaryDirectory() as temporary:
-        directory = Path(temporary)
-        (directory / "free-tier-usage.json").write_text(
-            json.dumps({"policy": "legacy"}) + "\n",
-            encoding="utf-8",
-        )
-        (directory / "summary.md").write_text(
-            "## Cloudflare free-tier 80% budgets\n",
-            encoding="utf-8",
-        )
-        annotate_account_scope(directory)
-        report = json.loads((directory / "free-tier-usage.json").read_text(encoding="utf-8"))
-        assert report["scope"] == "account"
-        assert report["policy"].startswith("Account-wide usage")
-        assert (directory / "summary.md").read_text(encoding="utf-8").startswith(
-            "## Account-wide Cloudflare free-tier 80% budgets"
-        )
-
-    # The retained core self-test covers its legacy fixture independently.
     current_aggregate = core.aggregate
     try:
         core.aggregate = _ORIGINAL_AGGREGATE
         assert core.self_test() == 0
     finally:
         core.aggregate = current_aggregate
-    print("account-wide free-tier audit self-test passed")
+    print("account-wide projected free-tier audit self-test passed")
     return 0
 
 
 def main() -> int:
     if "--self-test" in sys.argv:
         return self_test()
-    result = core.main()
-    annotate_account_scope()
-    return result
+    if (
+        not core.TOKEN
+        or not core.CONFIGS
+        or not core.WORKER
+        or not core.KV_BINDINGS
+        or not core.DO_BINDINGS
+        or not core.PIPELINE_NAMES
+    ):
+        raise RuntimeError(
+            "Cloudflare credentials, runtime Worker, config globs, KV/DO bindings, and Pipeline names are required"
+        )
+
+    account = core.account_id()
+    queue_names, buckets = core.configured_resources()
+    queue_ids, namespace_ids, kv_ids, pipeline_ids = core.resource_ids(
+        account, queue_names
+    )
+    now = dt.datetime.now(dt.timezone.utc)
+    day_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    month_start = day_start.replace(day=1)
+    body = core.api(f"{core.API}/graphql", {
+        "query": graphql_document(),
+        "variables": {
+            "account": account,
+            "day": day_start.date().isoformat(),
+            "now": now.isoformat().replace("+00:00", "Z"),
+            "monthStart": month_start.isoformat().replace("+00:00", "Z"),
+        },
+    })
+    accounts = (((body.get("data") or {}).get("viewer") or {}).get("accounts") or [])
+    if len(accounts) != 1:
+        raise RuntimeError(f"Expected one GraphQL account row, got {len(accounts)}")
+
+    actual = aggregate(
+        accounts[0],
+        queue_ids,
+        namespace_ids,
+        buckets,
+        kv_ids,
+        pipeline_ids,
+    )
+    projection = projection_metadata(now)
+    usage = project_daily_allowances(actual, projection)
+    violations = core.evaluate(usage)
+    report = {
+        "generatedAt": now.isoformat().replace("+00:00", "Z"),
+        "worker": core.WORKER,
+        "scope": _ACCOUNT_SCOPE,
+        "usageKind": "mixed-daily-projection-and-period-actual",
+        "actualUsage": actual,
+        "usage": usage,
+        "projection": projection,
+        "resourceCounts": {
+            "queues": len(queue_ids),
+            "durableObjectNamespaces": len(namespace_ids),
+            "r2Buckets": len(buckets),
+            "kvNamespaces": len(kv_ids),
+            "pipelines": len(pipeline_ids),
+        },
+        "limits": core.LIMITS,
+        "violations": violations,
+        "policy": (
+            "Account-wide usage capped at 80% of Cloudflare free/no-charge allowances; "
+            "daily operation meters are linearly projected from UTC midnight while "
+            "monthly and stored-state meters remain unprojected"
+        ),
+    }
+    core.OUT.mkdir(parents=True, exist_ok=True)
+    (core.OUT / "free-tier-usage.json").write_text(
+        json.dumps(report, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+    lines = [
+        "## Account-wide Cloudflare free-tier 80% budgets",
+        "",
+        f"- Generated: `{report['generatedAt']}`",
+        f"- Elapsed UTC day: `{projection['elapsedSeconds']:,}` seconds",
+        f"- Daily 24-hour projection factor: `{format_factor(projection['factor'])}x`",
+        "- Daily meters: projected from 00:00 UTC to 24 hours",
+        "- Monthly and storage meters: unprojected observed values",
+        "",
+        "| Metric | Actual to date | Budget value | Basis | Limit | Status |",
+        "|---|---:|---:|---|---:|---|",
+    ]
+    for key, limit in core.LIMITS.items():
+        lines.append(
+            f"| {key} | {actual[key]:,} | {usage[key]:,} | {usage_basis(key)} | "
+            f"{limit:,} | {'VIOLATION' if key in violations else 'OK'} |"
+        )
+    summary = "\n".join(lines) + "\n"
+    (core.OUT / "summary.md").write_text(summary, encoding="utf-8")
+    if os.environ.get("GITHUB_STEP_SUMMARY"):
+        with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as output:
+            output.write(summary)
+
+    print("FREE_TIER_USAGE=" + json.dumps(report, separators=(",", ":")))
+    for key in violations:
+        print(
+            f"::error title=Cloudflare free-tier budget exceeded::"
+            f"{key} actual={actual[key]} budgetValue={usage[key]} "
+            f"basis={usage_basis(key)} limit={core.LIMITS[key]}"
+        )
+    return 1 if violations else 0
 
 
 if __name__ == "__main__":

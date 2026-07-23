@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
-"""Enforce UTC daily Worker request and D1 row budgets with one GraphQL query."""
+"""Project partial UTC-day Worker request and D1 usage to a 24-hour budget."""
 
 from __future__ import annotations
 
 import datetime as dt
 import glob
 import json
+import math
 import os
 import re
 import sys
@@ -27,6 +28,8 @@ LIMITS = {
 }
 OUT = Path(os.environ.get("DAILY_USAGE_OUTPUT_DIR", "daily-usage"))
 DB_RE = re.compile(r'"database_id"\s*:\s*"([0-9a-fA-F-]{36})"')
+DAY_SECONDS = 24 * 60 * 60
+PROJECTION_METHOD = "linear-from-utc-midnight"
 
 
 def api(url: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -108,8 +111,8 @@ def number(value: Any) -> int:
 
 
 def aggregate(row: dict[str, Any], workers: tuple[str, ...], dbs: set[str]) -> dict[str, Any]:
-    per_worker = {}
-    errors = {}
+    per_worker: dict[str, int] = {}
+    errors: dict[str, int] = {}
     for index, worker in enumerate(workers):
         groups = row.get(f"w{index}") or []
         per_worker[worker] = sum(number((x.get("sum") or {}).get("requests")) for x in groups)
@@ -142,15 +145,48 @@ def apply_request_reserve(usage: dict[str, Any], reserve: int) -> dict[str, Any]
     return result
 
 
+def projection_metadata(now: dt.datetime) -> dict[str, Any]:
+    start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    elapsed = max(1, min(DAY_SECONDS, int((now - start).total_seconds())))
+    return {
+        "method": PROJECTION_METHOD,
+        "periodSeconds": DAY_SECONDS,
+        "elapsedSeconds": elapsed,
+        "factor": DAY_SECONDS / elapsed,
+        "projectedMetrics": ["requests", "rowsRead", "rowsWritten"],
+    }
+
+
+def project_usage(actual: dict[str, Any], projection: dict[str, Any]) -> dict[str, Any]:
+    factor = float(projection["factor"])
+    projected = dict(actual)
+    projected_per_worker = {
+        worker: math.ceil(number(value) * factor)
+        for worker, value in (actual.get("perWorkerRequests") or {}).items()
+    }
+    projected_measured = sum(projected_per_worker.values())
+    projected["perWorkerRequests"] = projected_per_worker
+    projected["measuredRequests"] = projected_measured
+    projected["requestReserve"] = number(actual.get("requestReserve"))
+    projected["requests"] = projected_measured + projected["requestReserve"]
+    projected["rowsRead"] = math.ceil(number(actual.get("rowsRead")) * factor)
+    projected["rowsWritten"] = math.ceil(number(actual.get("rowsWritten")) * factor)
+    return projected
+
+
 def evaluate(usage: dict[str, Any], limits: dict[str, int]) -> list[str]:
     return [key for key in ("requests", "rowsRead", "rowsWritten") if usage[key] >= limits[key]]
+
+
+def format_factor(value: float) -> str:
+    return f"{value:.3f}".rstrip("0").rstrip(".")
 
 
 def self_test() -> int:
     text, variables = query(("a", "b"))
     assert text.count("workersInvocationsAdaptive") == 2
     assert variables == {"w0": "a", "w1": "b"}
-    usage = aggregate(
+    actual = apply_request_reserve(aggregate(
         {
             "w0": [{"sum": {"requests": 10, "errors": 1}}],
             "w1": [{"sum": {"requests": 20, "errors": 0}}],
@@ -161,12 +197,16 @@ def self_test() -> int:
         },
         ("a", "b"),
         {"x"},
-    )
-    usage = apply_request_reserve(usage, 5)
-    assert usage["measuredRequests"] == 30 and usage["requests"] == 35
-    assert usage["rowsRead"] == 50 and usage["rowsWritten"] == 2
-    assert evaluate(usage, {"requests": 36, "rowsRead": 51, "rowsWritten": 3}) == []
-    assert evaluate(usage, {"requests": 35, "rowsRead": 50, "rowsWritten": 2}) == [
+    ), 5)
+    projection = projection_metadata(dt.datetime(2026, 7, 23, 6, 0, tzinfo=dt.timezone.utc))
+    projected = project_usage(actual, projection)
+    assert projection["elapsedSeconds"] == 21_600 and projection["factor"] == 4
+    assert actual["measuredRequests"] == 30 and actual["requests"] == 35
+    assert projected["perWorkerRequests"] == {"a": 40, "b": 80}
+    assert projected["measuredRequests"] == 120 and projected["requests"] == 125
+    assert projected["rowsRead"] == 200 and projected["rowsWritten"] == 8
+    assert evaluate(projected, {"requests": 126, "rowsRead": 201, "rowsWritten": 9}) == []
+    assert evaluate(projected, {"requests": 125, "rowsRead": 200, "rowsWritten": 8}) == [
         "requests", "rowsRead", "rowsWritten"
     ]
     print("daily budget self-test passed")
@@ -201,32 +241,50 @@ def main() -> int:
     accounts = (((body.get("data") or {}).get("viewer") or {}).get("accounts") or [])
     if len(accounts) != 1:
         raise RuntimeError(f"Expected one GraphQL account row, got {len(accounts)}")
-    usage = apply_request_reserve(aggregate(accounts[0], WORKERS, dbs), REQUEST_RESERVE)
+
+    actual = apply_request_reserve(aggregate(accounts[0], WORKERS, dbs), REQUEST_RESERVE)
+    projection = projection_metadata(now)
+    usage = project_usage(actual, projection)
     violations = evaluate(usage, LIMITS)
     report = {
         "date": date,
         "generatedAt": now.isoformat().replace("+00:00", "Z"),
+        "usageKind": "projected-24h",
+        "actualUsage": actual,
         "usage": usage,
+        "projection": projection,
         "limits": LIMITS,
         "violations": violations,
-        "source": "one Cloudflare GraphQL request plus configured request reserve",
+        "source": "one Cloudflare GraphQL request, linearly projected from UTC midnight, plus configured request reserve",
     }
     OUT.mkdir(parents=True, exist_ok=True)
     (OUT / "daily-usage.json").write_text(json.dumps(report, indent=2) + "\n")
 
-    labels = {"requests": "Worker and Pages requests", "rowsRead": "D1 rows read", "rowsWritten": "D1 rows written"}
+    labels = {
+        "requests": "Worker and Pages requests",
+        "rowsRead": "D1 rows read",
+        "rowsWritten": "D1 rows written",
+    }
     lines = [
-        "## Cloudflare UTC daily budgets", "",
-        f"- Date: `{date}`", f"- D1 databases: `{len(dbs)}`", "- Collection: one GraphQL request",
-        f"- Measured Worker requests: `{usage['measuredRequests']:,}`",
-        f"- Additional request reserve: `{usage['requestReserve']:,}`", "",
-        "| Metric | Usage | Limit | Headroom | Status |", "|---|---:|---:|---:|---|",
+        "## Cloudflare projected UTC daily budgets",
+        "",
+        f"- Date: `{date}`",
+        f"- Generated: `{report['generatedAt']}`",
+        f"- D1 databases: `{len(dbs)}`",
+        "- Collection: one GraphQL request",
+        f"- Elapsed UTC day: `{projection['elapsedSeconds']:,}` seconds",
+        f"- 24-hour projection factor: `{format_factor(projection['factor'])}x`",
+        f"- Actual measured Worker requests: `{actual['measuredRequests']:,}`",
+        f"- Additional request reserve: `{actual['requestReserve']:,}`",
+        "",
+        "| Metric | Actual to date | 24h projection | Limit | Projected headroom | Status |",
+        "|---|---:|---:|---:|---:|---|",
     ]
     for key in ("requests", "rowsRead", "rowsWritten"):
-        actual, limit = usage[key], LIMITS[key]
+        observed, projected, limit = actual[key], usage[key], LIMITS[key]
         lines.append(
-            f"| {labels[key]} | {actual:,} | {limit:,} | {max(0, limit - actual):,} | "
-            f"{'VIOLATION' if key in violations else 'OK'} |"
+            f"| {labels[key]} | {observed:,} | {projected:,} | {limit:,} | "
+            f"{max(0, limit - projected):,} | {'VIOLATION' if key in violations else 'OK'} |"
         )
     summary = "\n".join(lines) + "\n"
     (OUT / "summary.md").write_text(summary)
@@ -235,7 +293,10 @@ def main() -> int:
             output.write(summary)
     print("DAILY_USAGE=" + json.dumps(report, separators=(",", ":")))
     for key in violations:
-        print(f"::error title=Cloudflare daily budget exceeded::{labels[key]}={usage[key]} limit={LIMITS[key]}")
+        print(
+            f"::error title=Cloudflare projected daily budget exceeded::"
+            f"{labels[key]} actual={actual[key]} projected24h={usage[key]} limit={LIMITS[key]}"
+        )
     return 1 if violations else 0
 
 
