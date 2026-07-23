@@ -10,6 +10,8 @@ let productionConsumeMinuteFactBatch = null;
 let productionEnqueueMinuteFactJob = null;
 let readModelModulePromise = null;
 let defaultSaveMinuteFactReadModels = null;
+let fastStoreModulePromise = null;
+let defaultSaveOptimizedMinuteFactWithinBudget = null;
 
 function noReceipt() {
   return false;
@@ -25,15 +27,76 @@ function enabled(value) {
   return value === true || value === 1 || /^(1|true|yes|on)$/i.test(String(value || ''));
 }
 
-function directLiveDeriveEnabled(env, payload, options = {}) {
-  const kind = String(options.jobKind || (payload?.rebuild ? 'rebuild' : 'live')).toLowerCase();
-  return enabled(env?.LIVE_DERIVE_DIRECT_QUEUE_ENABLED)
+function integer(value) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? Math.trunc(parsed) : null;
+}
+
+function liveJobKind(payload, options = {}) {
+  return String(options.jobKind || (payload?.rebuild ? 'rebuild' : 'live')).toLowerCase();
+}
+
+function inlineLiveDeriveEnabled(env, payload, options = {}) {
+  return enabled(env?.LIVE_DERIVE_INLINE_ENABLED)
     && !enabled(env?.LIVE_REVISION_MATERIALIZATION_ENABLED)
-    && kind === 'live'
+    && liveJobKind(payload, options) === 'live'
     && !payload?.rebuild;
 }
 
+function directLiveDeriveEnabled(env, payload, options = {}) {
+  return enabled(env?.LIVE_DERIVE_DIRECT_QUEUE_ENABLED)
+    && !enabled(env?.LIVE_REVISION_MATERIALIZATION_ENABLED)
+    && liveJobKind(payload, options) === 'live'
+    && !payload?.rebuild;
+}
+
+function inlineLiveEnv(env) {
+  const active = Object.create(env || null);
+  Object.defineProperty(active, 'MINUTE_ENRICHMENT_QUEUE', {
+    value: null,
+    enumerable: false,
+    configurable: true,
+  });
+  return active;
+}
+
+async function saveColdOptimizedMinuteFact(activeEnv, payload) {
+  const module = await (fastStoreModulePromise ||= import('./minute-facts-fast-store.js'));
+  defaultSaveOptimizedMinuteFactWithinBudget = module.saveOptimizedMinuteFactWithinBudget;
+  return defaultSaveOptimizedMinuteFactWithinBudget(activeEnv, payload);
+}
+
+function saveDefaultOptimizedMinuteFact(activeEnv, payload) {
+  if (defaultSaveOptimizedMinuteFactWithinBudget) {
+    return defaultSaveOptimizedMinuteFactWithinBudget(activeEnv, payload);
+  }
+  return saveColdOptimizedMinuteFact(activeEnv, payload);
+}
+
+async function runInlineLiveDerive(write, activeEnv, payload) {
+  const result = await write(inlineLiveEnv(activeEnv), payload);
+  if (result?.skipped) {
+    const error = new Error(`inline live derive skipped: ${String(result.reason || 'unknown')}`);
+    error.code = 'MINUTE_LIVE_INLINE_SKIPPED';
+    throw error;
+  }
+  const channelId = integer(payload?.snapshot?.channel_id);
+  const observedAt = integer(payload?.observedAt);
+  return {
+    enqueued: true,
+    direct: true,
+    inline: true,
+    channel_id: channelId,
+    minute_at: observedAt == null ? null : Math.floor(observedAt / 60_000) * 60_000,
+    job_kind: 'live',
+    job_priority: 100,
+  };
+}
+
 async function enqueueProductionMinute(activeEnv, payload, options) {
+  if (inlineLiveDeriveEnabled(activeEnv, payload, options)) {
+    return runInlineLiveDerive(saveDefaultOptimizedMinuteFact, activeEnv, payload);
+  }
   if (directLiveDeriveEnabled(activeEnv, payload, options)) {
     return enqueueDirectLiveMinuteDerive(activeEnv, payload);
   }
@@ -89,12 +152,16 @@ function injectedHandlers(
   enqueueMinuteFactJob,
   enqueueDerive,
   enqueueDirect,
+  saveInline,
 ) {
   return {
     hasReceipt: noReceipt,
     saveReceipt: ignoreReceipt,
     saveCommentTask: skipCommentTask,
     enqueue: async (activeEnv, payload, options) => {
+      if (inlineLiveDeriveEnabled(activeEnv, payload, options)) {
+        return runInlineLiveDerive(saveInline, activeEnv, payload);
+      }
       if (directLiveDeriveEnabled(activeEnv, payload, options)) {
         return enqueueDirect(activeEnv, payload);
       }
@@ -119,10 +186,12 @@ async function consumeInjectedMinuteQueue(batch, env, dependencies) {
   const enqueueMinuteFactJob = dependencies.enqueueMinuteFactJob || inboxModule.enqueueMinuteFactJob;
   const enqueueDerive = dependencies.enqueueMinuteDeriveTrigger || enqueueMinuteDeriveTrigger;
   const enqueueDirect = dependencies.enqueueDirectLiveMinuteDerive || enqueueDirectLiveMinuteDerive;
+  const saveInline = dependencies.saveOptimizedMinuteFactWithinBudget
+    || saveDefaultOptimizedMinuteFact;
   return consumeMinuteFactBatch(
     batch,
     env,
-    injectedHandlers(dependencies, enqueueMinuteFactJob, enqueueDerive, enqueueDirect),
+    injectedHandlers(dependencies, enqueueMinuteFactJob, enqueueDerive, enqueueDirect, saveInline),
   );
 }
 
