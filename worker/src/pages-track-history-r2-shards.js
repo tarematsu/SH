@@ -5,6 +5,11 @@ import {
 import { mergeTrackRows } from '../../site/functions/lib/track-history-merge.js';
 import { applyTrackPeriodCompleteness } from '../../site/functions/lib/period-completeness.js';
 import { attachCompactTrackLikes } from '../../site/functions/lib/track-likes.js';
+import {
+  trackHistoryResponsePrefix,
+  trackHistoryResponseSuffix,
+} from './pages-track-history-response.js';
+import { saveMaterializedR2Response } from './pages-response-r2.js';
 
 const DAY_MS = 86_400_000;
 const SHARD_MS = 3 * 60 * 60_000;
@@ -12,6 +17,8 @@ const TRACK_HISTORY_LIMIT = 40_000;
 const TRACK_HISTORY_QUEUE_LOOKBACK_MS = 2 * DAY_MS;
 const SHARD_PREFIX = 'track-history-shards/v1/';
 const SHARD_VERSION = 1;
+const DAY_MODEL_PREFIX = 'track-history-days/v1/';
+const DAY_MODEL_VERSION = 1;
 const RAW_QUEUE_STARTS_SQL = `WITH RECURSIVE queue_starts AS (
       SELECT DISTINCT station_id,start_time
       FROM sh_queue_items
@@ -42,6 +49,11 @@ function validTimestamp(value) {
 
 function dayText(timestamp) {
   return new Date(timestamp).toISOString().slice(0, 10);
+}
+
+function dayTimestamp(value) {
+  const timestamp = Date.parse(`${String(value || '')}T00:00:00Z`);
+  return Number.isFinite(timestamp) ? timestamp : null;
 }
 
 function trackRowKey(row) {
@@ -79,6 +91,12 @@ export function trackHistoryShardObjectKey(generation, range) {
   return `${SHARD_PREFIX}${generation}/${from}-${to}.json`;
 }
 
+export function trackHistoryDayObjectKey(day) {
+  const timestamp = dayTimestamp(day);
+  if (timestamp == null) throw new Error('invalid track-history day');
+  return `${DAY_MODEL_PREFIX}${dayText(timestamp)}.json`;
+}
+
 export function trackHistoryDayShardRanges(range) {
   const from = validTimestamp(range?.fromTs);
   const to = validTimestamp(range?.toTs);
@@ -107,13 +125,18 @@ async function saveShard(r2, generation, range, payload) {
   return key;
 }
 
+async function loadJsonObject(r2, key) {
+  const object = await r2.get(key);
+  if (!object) return null;
+  return typeof object.json === 'function'
+    ? object.json()
+    : JSON.parse(await object.text());
+}
+
 async function loadShard(r2, generation, range) {
   const key = trackHistoryShardObjectKey(generation, range);
-  const object = await r2.get(key);
-  if (!object) throw new Error(`track-history shard is missing: ${key}`);
-  const payload = typeof object.json === 'function'
-    ? await object.json()
-    : JSON.parse(await object.text());
+  const payload = await loadJsonObject(r2, key);
+  if (!payload) throw new Error(`track-history shard is missing: ${key}`);
   if (Number(payload?.version) !== SHARD_VERSION
       || Number(payload?.generation) !== Number(generation)
       || Number(payload?.from) !== Number(range.fromTs)
@@ -122,6 +145,111 @@ async function loadShard(r2, generation, range) {
     throw new Error(`track-history shard is invalid: ${key}`);
   }
   return { key, payload };
+}
+
+export async function saveTrackHistoryDayReadModel(r2, range, rows, metadata = {}) {
+  const from = validTimestamp(range?.fromTs);
+  const to = validTimestamp(range?.toTs);
+  if (from == null || to == null || to - from !== DAY_MS) {
+    throw new Error('track-history day read-model range is invalid');
+  }
+  const day = dayText(from);
+  const key = trackHistoryDayObjectKey(day);
+  const sortedRows = [...(rows || [])].sort((left, right) => (
+    Number(left?.first_played_at ?? left?.played_at ?? 0)
+      - Number(right?.first_played_at ?? right?.played_at ?? 0)
+      || trackRowKey(left).localeCompare(trackRowKey(right))
+  ));
+  await r2.put(key, JSON.stringify({
+    version: DAY_MODEL_VERSION,
+    day,
+    updated_at: validTimestamp(metadata.updated_at) ?? Date.now(),
+    rows: sortedRows,
+    source_row_count: Math.max(0, Number(metadata.source_row_count || 0)),
+    excluded_dates: Array.isArray(metadata.excluded_dates) ? metadata.excluded_dates : [],
+  }), {
+    httpMetadata: { contentType: 'application/json; charset=utf-8' },
+  });
+  return { key, day, rows: sortedRows.length };
+}
+
+export async function loadTrackHistoryDayReadModel(r2, day) {
+  const key = trackHistoryDayObjectKey(day);
+  const payload = await loadJsonObject(r2, key);
+  if (!payload) return null;
+  if (Number(payload?.version) !== DAY_MODEL_VERSION
+      || String(payload?.day || '') !== String(day)
+      || !Array.isArray(payload?.rows)) {
+    throw new Error(`track-history day read-model is invalid: ${key}`);
+  }
+  return { key, payload };
+}
+
+export async function bootstrapTrackHistoryDayReadModel(db, r2, day, now = Date.now()) {
+  const result = await db.prepare(`SELECT row_json,json_valid(row_json) AS row_json_valid
+    FROM sh_pages_track_history_read_model
+    WHERE play_date=?
+    ORDER BY COALESCE(first_played_at,-1) ASC,row_key ASC
+    LIMIT ?`).bind(day, TRACK_HISTORY_LIMIT + 1).all();
+  const rawRows = result.results || [];
+  if (rawRows.length > TRACK_HISTORY_LIMIT) {
+    throw new Error(`track-history day ${day} exceeded ${TRACK_HISTORY_LIMIT} rows`);
+  }
+  const rows = rawRows.map((row) => {
+    if (row.row_json_valid != null && Number(row.row_json_valid) !== 1) {
+      throw new Error(`track-history day ${day} contained invalid JSON`);
+    }
+    return JSON.parse(String(row.row_json || 'null'));
+  });
+  const fromTs = dayTimestamp(day);
+  return saveTrackHistoryDayReadModel(
+    r2,
+    { fromTs, toTs: fromTs + DAY_MS },
+    rows,
+    { updated_at: now },
+  );
+}
+
+export async function publishTrackHistoryResponseFromR2Days(
+  r2,
+  publication,
+  now,
+  cadenceSeconds,
+) {
+  const fromTs = dayTimestamp(publication?.from);
+  const toTs = dayTimestamp(publication?.to);
+  if (fromTs == null || toTs == null || toTs < fromTs) {
+    throw new Error('track-history publication date range is invalid');
+  }
+  const limit = Math.max(1, Number(publication?.limit || 10_000));
+  const rows = [];
+  let truncated = false;
+  for (let cursor = fromTs; cursor <= toTs; cursor += DAY_MS) {
+    const day = dayText(cursor);
+    const model = await loadTrackHistoryDayReadModel(r2, day);
+    if (!model) return { published: false, missing_day: day, rows: rows.length };
+    for (const row of model.payload.rows) {
+      if (rows.length >= limit) {
+        truncated = true;
+        break;
+      }
+      rows.push(row);
+    }
+    if (truncated) break;
+  }
+  const completedPublication = { ...publication, truncated };
+  const body = `${trackHistoryResponsePrefix(completedPublication)}${rows
+    .map((row) => JSON.stringify(row)).join(',')}${trackHistoryResponseSuffix(completedPublication)}`;
+  const saved = await saveMaterializedR2Response(
+    r2,
+    publication.model_key,
+    body,
+    200,
+    { 'content-type': 'application/json; charset=utf-8' },
+    now,
+    cadenceSeconds,
+  );
+  return { published: true, rows: rows.length, truncated, ...saved };
 }
 
 async function persistDayRows(targetDb, rows, range, generation) {
@@ -204,6 +332,18 @@ export async function materializeTrackHistoryRangeThroughR2(
   const shards = await Promise.all(dayRanges.map((item) => loadShard(r2, generation, item)));
   const dayRows = merge(shards.flatMap(({ payload }) => payload.rows));
   const dayRange = { fromTs: dayRanges[0].fromTs, toTs: dayRanges.at(-1).toTs };
+  const daySourceRowCount = shards.reduce(
+    (sum, { payload }) => sum + Number(payload.source_row_count || 0),
+    0,
+  );
+  const dayExcludedDates = [...new Set(
+    shards.flatMap(({ payload }) => payload.excluded_dates || []),
+  )].sort();
+  await saveTrackHistoryDayReadModel(r2, dayRange, dayRows, {
+    updated_at: generation,
+    source_row_count: daySourceRowCount,
+    excluded_dates: dayExcludedDates,
+  });
   await persistDayRows(targetDb, dayRows, dayRange, generation);
   return {
     from: dayText(dayRange.fromTs),
@@ -212,8 +352,8 @@ export async function materializeTrackHistoryRangeThroughR2(
     stagedRows: shards.reduce((sum, { payload }) => sum + payload.rows.length, 0),
     groupedRows: groupedRows.length,
     sourceRowCount,
-    excludedDates: [...new Set(shards.flatMap(({ payload }) => payload.excluded_dates || []))].sort(),
+    excludedDates: dayExcludedDates,
     cleanupDay: true,
-    storage: 'd1-day',
+    storage: 'r2-day+d1-day',
   };
 }
