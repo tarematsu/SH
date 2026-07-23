@@ -493,8 +493,8 @@ export async function flushMinuteFactOutbox(env, options = {}) {
           .run();
       } else {
         await env.DB.prepare(`UPDATE sh_minute_fact_outbox SET
-            status='sent',payload_json='{}',attempts=attempts+1,sent_at=?,last_attempt_at=?,last_error=NULL
-          WHERE job_id=? AND status='pending'`)
+          status='sent',payload_json='{}',attempts=attempts+1,sent_at=?,last_attempt_at=?,last_error=NULL
+        WHERE job_id=? AND status='pending'`)
           .bind(attemptedAt, attemptedAt, row.job_id)
           .run();
       }
