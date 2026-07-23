@@ -5,13 +5,35 @@ import {
 import { mergeTrackRows } from '../../site/functions/lib/track-history-merge.js';
 import { applyTrackPeriodCompleteness } from '../../site/functions/lib/period-completeness.js';
 import { attachCompactTrackLikes } from '../../site/functions/lib/track-likes.js';
-import { boundedTrackHistorySql } from './pages-track-history-stage.js';
 
 const DAY_MS = 86_400_000;
 const SHARD_MS = 3 * 60 * 60_000;
 const TRACK_HISTORY_LIMIT = 40_000;
+const TRACK_HISTORY_QUEUE_LOOKBACK_MS = 2 * DAY_MS;
 const SHARD_PREFIX = 'track-history-shards/v1/';
 const SHARD_VERSION = 1;
+const RAW_QUEUE_STARTS_SQL = `WITH RECURSIVE queue_starts AS (
+      SELECT DISTINCT station_id,start_time
+      FROM sh_queue_items
+      WHERE start_time IS NOT NULL AND start_time < ?
+    )`;
+const MATERIALIZED_QUEUE_STARTS_SQL = `WITH RECURSIVE queue_bounds AS (
+      SELECT ? AS range_end
+    ), queue_starts AS (
+      SELECT starts.station_id,starts.start_time
+      FROM sh_track_history_queue_starts starts
+      CROSS JOIN queue_bounds bounds
+      WHERE starts.start_time>=bounds.range_end-${TRACK_HISTORY_QUEUE_LOOKBACK_MS}
+        AND starts.start_time<bounds.range_end
+    )`;
+const MATERIALIZED_TRACK_HISTORY_SQL = TRACK_HISTORY_SQL.replace(
+  RAW_QUEUE_STARTS_SQL,
+  MATERIALIZED_QUEUE_STARTS_SQL,
+);
+
+if (MATERIALIZED_TRACK_HISTORY_SQL === TRACK_HISTORY_SQL) {
+  throw new Error('track-history materialized queue-start rewrite did not match');
+}
 
 function validTimestamp(value) {
   const timestamp = Number(value);
@@ -35,16 +57,19 @@ function trackRowKey(row) {
 }
 
 function boundedTrackHistoryDatabase(db) {
-  const boundedSql = boundedTrackHistorySql();
   return new Proxy(db, {
     get(target, property) {
       if (property === 'prepare') {
-        return (sql) => target.prepare(sql === TRACK_HISTORY_SQL ? boundedSql : sql);
+        return (sql) => target.prepare(sql === TRACK_HISTORY_SQL ? MATERIALIZED_TRACK_HISTORY_SQL : sql);
       }
       const value = Reflect.get(target, property, target);
       return typeof value === 'function' ? value.bind(target) : value;
     },
   });
+}
+
+export function materializedTrackHistorySql() {
+  return MATERIALIZED_TRACK_HISTORY_SQL;
 }
 
 export function trackHistoryShardObjectKey(generation, range) {
