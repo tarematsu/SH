@@ -41,6 +41,14 @@ export async function saveMaterializedResponse(
 ) {
   const key = pagesResponseKey(modelKey);
   if (!key) throw new Error('materialized response key is invalid');
+  if (response.headers.get('x-dashboard-facts-stale') === '1') {
+    const observedAt = Number(response.headers.get('x-dashboard-facts-observed-at'));
+    return {
+      skipped: true,
+      reason: 'facts-stale',
+      facts_latest_observed_at: Number.isFinite(observedAt) && observedAt > 0 ? observedAt : null,
+    };
+  }
   const body = await response.text();
   let payload;
   try {
