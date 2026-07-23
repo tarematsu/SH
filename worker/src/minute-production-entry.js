@@ -1,4 +1,7 @@
-import { enqueueMinuteDeriveTrigger } from './minute-derive-trigger.js';
+import {
+  enqueueDirectLiveMinuteDerive,
+  enqueueMinuteDeriveTrigger,
+} from './minute-derive-trigger.js';
 
 const EMPTY_DEPENDENCIES = Object.freeze({});
 const SKIPPED_COMMENT_TASK = Object.freeze({ created: false, skipped: true });
@@ -18,11 +21,24 @@ function skipCommentTask() {
   return SKIPPED_COMMENT_TASK;
 }
 
+function enabled(value) {
+  return value === true || value === 1 || /^(1|true|yes|on)$/i.test(String(value || ''));
+}
+
+function directLiveDeriveEnabled(env, payload, options = {}) {
+  const kind = String(options.jobKind || (payload?.rebuild ? 'rebuild' : 'live')).toLowerCase();
+  return enabled(env?.LIVE_DERIVE_DIRECT_QUEUE_ENABLED)
+    && !enabled(env?.LIVE_REVISION_MATERIALIZATION_ENABLED)
+    && kind === 'live'
+    && !payload?.rebuild;
+}
+
 async function enqueueProductionMinute(activeEnv, payload, options) {
+  if (directLiveDeriveEnabled(activeEnv, payload, options)) {
+    return enqueueDirectLiveMinuteDerive(activeEnv, payload);
+  }
   const accepted = await productionEnqueueMinuteFactJob(activeEnv, payload, options);
-  // Queue acceptance is the durable handoff to the one-job derive Worker.
-  // Send on duplicate inbox delivery too, so a retry heals a crash between
-  // the D1 insert and the original derive Queue send.
+  // Rebuild and sparse-revision work retain the D1 ledger for repair.
   await enqueueMinuteDeriveTrigger(activeEnv, accepted);
   return accepted;
 }
@@ -68,20 +84,28 @@ function consumeProductionMinuteQueue(batch, env) {
   return consumeColdProductionMinuteQueue(batch, env);
 }
 
-function injectedHandlers(dependencies, enqueueMinuteFactJob, enqueueDerive) {
+function injectedHandlers(
+  dependencies,
+  enqueueMinuteFactJob,
+  enqueueDerive,
+  enqueueDirect,
+) {
   return {
     hasReceipt: noReceipt,
     saveReceipt: ignoreReceipt,
     saveCommentTask: skipCommentTask,
     enqueue: async (activeEnv, payload, options) => {
+      if (directLiveDeriveEnabled(activeEnv, payload, options)) {
+        return enqueueDirect(activeEnv, payload);
+      }
       const accepted = await enqueueMinuteFactJob(activeEnv, payload, options);
       await enqueueDerive(activeEnv, accepted);
       return accepted;
     },
     saveReadModels: dependencies.saveMinuteFactReadModels
       ? async (activeEnv, readModel, jobId) => {
-        if (readModel) await dependencies.saveMinuteFactReadModels(activeEnv, readModel, jobId);
-      }
+          if (readModel) await dependencies.saveMinuteFactReadModels(activeEnv, readModel, jobId);
+        }
       : saveDefaultReadModels,
   };
 }
@@ -94,10 +118,11 @@ async function consumeInjectedMinuteQueue(batch, env, dependencies) {
   const consumeMinuteFactBatch = dependencies.consumeMinuteFactBatch || queueModule.consumeMinuteFactBatch;
   const enqueueMinuteFactJob = dependencies.enqueueMinuteFactJob || inboxModule.enqueueMinuteFactJob;
   const enqueueDerive = dependencies.enqueueMinuteDeriveTrigger || enqueueMinuteDeriveTrigger;
+  const enqueueDirect = dependencies.enqueueDirectLiveMinuteDerive || enqueueDirectLiveMinuteDerive;
   return consumeMinuteFactBatch(
     batch,
     env,
-    injectedHandlers(dependencies, enqueueMinuteFactJob, enqueueDerive),
+    injectedHandlers(dependencies, enqueueMinuteFactJob, enqueueDerive, enqueueDirect),
   );
 }
 
