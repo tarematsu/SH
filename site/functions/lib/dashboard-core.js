@@ -336,10 +336,29 @@ export async function onRequestGet(context) {
       includePrediction: !predictionState,
     });
     if (!factsAreFresh(facts.latest)) {
-      // The buddies Worker is the real-time source.  A delayed minute read
-      // model must not blank the dashboard while the collector is healthy.
-      // dashboard-legacy.mjs is only used here as a DB-backed live fallback;
-      // history APIs remain owned by MINUTE_DB.
+      const factsLatestObservedAt = Number(facts.latest?.observed_at || 0) || null;
+      if (!context.env?.DB) {
+        return new Response(JSON.stringify({
+          ok: false,
+          error: 'minute facts read model is stale; legacy DB fallback is disabled',
+          code: 'MINUTE_FACTS_STALE',
+          stale: true,
+          stale_reason: 'minute-facts-read-model-lag',
+          facts_latest_observed_at: factsLatestObservedAt,
+        }), {
+          status: 503,
+          headers: {
+            'content-type': 'application/json; charset=utf-8',
+            'cache-control': 'no-store',
+            'x-dashboard-facts-stale': '1',
+            ...(factsLatestObservedAt == null
+              ? {}
+              : { 'x-dashboard-facts-observed-at': String(factsLatestObservedAt) }),
+          },
+        });
+      }
+      // The buddies Worker is the real-time source. A delayed minute read model
+      // may use the legacy DB only when the caller explicitly provides it.
       const fallback = await dashboardFromBuddiesDb(context);
       if (!fallback.ok) return fallback;
       const fallbackPayload = await fallback.json();
@@ -348,7 +367,7 @@ export async function onRequestGet(context) {
         storage_source: 'buddies-db',
         stale: true,
         stale_reason: 'minute-facts-read-model-lag',
-        facts_latest_observed_at: Number(facts.latest?.observed_at || 0) || null,
+        facts_latest_observed_at: factsLatestObservedAt,
       }), {
         status: 200,
         headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' },
