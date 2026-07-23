@@ -16,20 +16,23 @@ test('retired Pages D1 migration path cannot race current database provisioning'
   assert.doesNotMatch(workflow, /site-migrations/);
   assert.doesNotMatch(workflow, /\bschedule:/);
   assert.doesNotMatch(workflow, /sleep\s+120/);
-  assert.match(workflow, /group: sh-database-operations/);
+  assert.match(workflow, /group: sh-database-operations-v2-/);
   assert.match(workflow, /cancel-in-progress: false/);
-  assert.match(workflow, /facts-db/);
+  assert.match(workflow, /minute-db/);
   assert.match(workflow, /other-db/);
   assert.match(workflow, /buddies-db/);
 });
 
-test('facts-db auto-apply on push stays narrowly scoped to main and its own migration files', () => {
+test('MINUTE_DB apply is reusable or manual while push paths stay narrowly scoped', () => {
   const pushBlock = workflow.match(/^on:\n([\s\S]*?)\n(?:permissions:)/m)?.[1] || '';
   assert.match(pushBlock, /push:/);
   assert.match(pushBlock, /branches:\s*\n\s*- main/);
   assert.match(pushBlock, /paths:\s*\n(\s*- '.*'\n)+/);
   assert.doesNotMatch(pushBlock, /'\*\*'\s*$/m, 'push paths must not match the whole repo');
-  assert.match(workflow, /if: github\.event_name == 'push' \|\| inputs\.operation == 'facts-db'/);
+  assert.doesNotMatch(pushBlock, /database\/facts-migrations/);
+  assert.match(workflow, /if: inputs\.operation == 'minute-db'/);
+  assert.doesNotMatch(workflow, /if: github\.event_name == 'push' \|\| inputs\.operation == 'minute-db'/);
+  assert.match(workflow, /FACTS_DEPLOY_CHANGED_ONLY: 'true'/);
 });
 
 test('unused queue Spotify index is removed', () => {
