@@ -69,6 +69,17 @@ export function pagesReadModelTask(now = Date.now()) {
   return pagesReadModelTaskAt(validTimestamp(now));
 }
 
+export function trackHistoryCompactEnv(env) {
+  if (env?.BUDDIES_DB === env?.MINUTE_DB) return env;
+  const compactEnv = Object.create(env || null);
+  Object.defineProperty(compactEnv, 'BUDDIES_DB', {
+    value: env?.MINUTE_DB,
+    enumerable: true,
+    configurable: true,
+  });
+  return compactEnv;
+}
+
 function compactTrackHistoryDependencies(env, dependencies) {
   if (dependencies.refreshDay || !env?.PAGES_RESPONSE_R2) return dependencies;
   return {
@@ -99,9 +110,7 @@ export async function runDispatchedPagesReadModelTask(env, now = Date.now(), dep
         throw new Error('Pages track-history task is missing D1 binding: MINUTE_DB');
       }
       const run = dependencies.runTrackHistoryStep || runSplitTrackHistoryCycleStep;
-      const compactEnv = env.BUDDIES_DB === env.MINUTE_DB
-        ? env
-        : { ...env, BUDDIES_DB: env.MINUTE_DB };
+      const compactEnv = trackHistoryCompactEnv(env);
       return run(
         compactEnv,
         timestamp,
