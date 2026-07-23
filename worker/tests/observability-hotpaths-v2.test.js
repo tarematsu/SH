@@ -107,6 +107,52 @@ test('normal live ingest bypasses the D1 job ledger', async () => {
   assert.deepEqual(direct, [payload]);
 });
 
+test('normal live ingest can finish inside the buddies-facts consumer', async () => {
+  let handlers;
+  let directCalls = 0;
+  const writes = [];
+  const enrichmentQueue = { send() { throw new Error('enrichment Queue must be bypassed'); } };
+  const env = {
+    LIVE_DERIVE_INLINE_ENABLED: true,
+    LIVE_DERIVE_DIRECT_QUEUE_ENABLED: true,
+    LIVE_REVISION_MATERIALIZATION_ENABLED: false,
+    MINUTE_ENRICHMENT_QUEUE: enrichmentQueue,
+  };
+  await consumeMinuteQueue({ messages: [] }, env, null, {
+    consumeMinuteFactBatch: async (_batch, _env, value) => {
+      handlers = value;
+      return { received: 0 };
+    },
+    enqueueMinuteFactJob: async () => {
+      throw new Error('D1 inbox must not be used');
+    },
+    enqueueDirectLiveMinuteDerive: async () => {
+      directCalls += 1;
+      throw new Error('live derive Queue must not be used');
+    },
+    saveOptimizedMinuteFactWithinBudget: async (activeEnv, value) => {
+      assert.equal(activeEnv.MINUTE_ENRICHMENT_QUEUE, null);
+      writes.push(value);
+      return { skipped: false };
+    },
+  });
+
+  const result = await handlers.enqueue(env, payload, { jobKind: 'live' });
+
+  assert.deepEqual(result, {
+    enqueued: true,
+    direct: true,
+    inline: true,
+    channel_id: 10,
+    minute_at: 180_000,
+    job_kind: 'live',
+    job_priority: 100,
+  });
+  assert.equal(directCalls, 0);
+  assert.deepEqual(writes, [payload]);
+  assert.strictEqual(env.MINUTE_ENRICHMENT_QUEUE, enrichmentQueue);
+});
+
 test('direct live Queue payload writes without claim or completion lifecycle calls', async () => {
   const body = minuteDirectLiveDeriveMessage(payload);
   assert.equal(parseDirectLiveMinuteDeriveMessage(body).payload, payload);
