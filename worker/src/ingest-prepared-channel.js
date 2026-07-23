@@ -20,6 +20,10 @@ function objectValue(value) {
   return value && typeof value === 'object' && !Array.isArray(value) ? value : null;
 }
 
+function enabled(value) {
+  return value === true || value === 1 || /^(1|true|yes|on)$/i.test(String(value || ''));
+}
+
 function preparedCollection(message) {
   if (message?.message_type !== 'stationhead-raw-channel'
       || integer(message?.message_version) !== 3) {
@@ -131,7 +135,9 @@ function readModelEnvelopeForMinuteFact(rawMessage, body, trusted = false) {
 
 function activeIngestEnv(env, message, collection, capture) {
   const active = Object.create(env || null);
+  const inlinePipeline = enabled(env?.COLLECTOR_INLINE_PIPELINE_ENABLED);
   const commentsQueue = env?.COMMENTS_QUEUE;
+  const destinationQueue = inlinePipeline ? env?.MINUTE_FACT_QUEUE : commentsQueue;
   const commentTask = {
     observed_at: integer(message?.observed_at),
     station_id: null,
@@ -147,18 +153,19 @@ function activeIngestEnv(env, message, collection, capture) {
     CHAT_LIMIT: { value: 0, enumerable: true },
     MINUTE_FACT_QUEUE: {
       enumerable: false,
-      value: commentsQueue?.send ? {
+      value: destinationQueue?.send ? {
         send(body, options) {
           if (body && typeof body === 'object') {
             const envelope = readModelEnvelopeForMinuteFact(message, body, true);
             capture.channelId = integer(body.channel_id);
             capture.minuteAt = integer(body.minute_at);
             capture.envelope = envelope;
+            if (inlinePipeline) return destinationQueue.send(body, options);
             return commentsQueue.send(commentsTaskForMinuteFact(commentTask, body), options);
           }
-          return commentsQueue.send(body, options);
+          return destinationQueue.send(body, options);
         },
-      } : commentsQueue,
+      } : destinationQueue,
     },
   });
   return active;
@@ -254,6 +261,7 @@ async function enqueueFinalize(env, identity, collectorState, envelope, dependen
 }
 
 async function finalizePreparedIngest(env, result, envelope) {
+  if (enabled(env?.COLLECTOR_INLINE_PIPELINE_ENABLED)) return false;
   if (!env?.INGEST_FINALIZE_QUEUE?.send) {
     await env.READ_MODEL_QUEUE.send(envelope, { contentType: 'json' });
     return false;
@@ -273,7 +281,10 @@ export async function ingestPreparedRawCollection(env, message) {
   const collection = preparedCollection(message);
   const capture = { channelId: null, minuteAt: null, envelope: null };
   const active = activeIngestEnv(env, message, collection, capture);
-  const result = await collectPreparedOnce(active, 'raw-collection-queue');
+  const source = enabled(env?.COLLECTOR_INLINE_PIPELINE_ENABLED)
+    ? 'scheduled-inline'
+    : 'raw-collection-queue';
+  const result = await collectPreparedOnce(active, source);
   const fact = preparedCollectorFactStage(result);
   if (fact) {
     await env.INGEST_FINALIZE_QUEUE.send({
