@@ -10,6 +10,7 @@ on:
     paths:
       - '.github/workflows/fetch-cloudflare-observability.yml'
       - '.github/scripts/audit-cloudflare-*.py'
+      - '.github/scripts/audit-deployed-cloudflare-telemetry.py'
       - '.github/scripts/audit-observability-budget-gates.py'
       - '.github/scripts/query-cloudflare-observability.py'
       - '.github/scripts/capture-cloudflare-live-tail.mjs'
