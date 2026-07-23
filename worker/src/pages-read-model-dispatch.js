@@ -1,4 +1,5 @@
 import { runSplitTrackHistoryCycleStep } from './pages-track-history-split-cycle.js';
+import { materializeTrackHistoryRangeThroughR2 } from './pages-track-history-r2-shards.js';
 
 const MINUTE_MS = 60_000;
 const PAGES_CYCLE_MINUTES = 24 * 60;
@@ -68,6 +69,25 @@ export function pagesReadModelTask(now = Date.now()) {
   return pagesReadModelTaskAt(validTimestamp(now));
 }
 
+function compactTrackHistoryDependencies(env, dependencies) {
+  if (dependencies.refreshDay || !env?.PAGES_RESPONSE_R2) return dependencies;
+  return {
+    ...dependencies,
+    refreshDay(sourceDb, targetDb, range, timestamp, stageOptions) {
+      return materializeTrackHistoryRangeThroughR2(
+        sourceDb,
+        targetDb,
+        range,
+        timestamp,
+        {
+          ...stageOptions,
+          r2: env.PAGES_RESPONSE_R2,
+        },
+      );
+    },
+  };
+}
+
 export async function runDispatchedPagesReadModelTask(env, now = Date.now(), dependencies = EMPTY_DEPENDENCIES) {
   const timestamp = validTimestamp(now);
   const cycleStart = Math.floor(timestamp / CYCLE_MS) * CYCLE_MS;
@@ -75,11 +95,18 @@ export async function runDispatchedPagesReadModelTask(env, now = Date.now(), dep
   const key = cycleSlotKey(cycleMinute);
   if (!key) {
     if (cycleMinute < TRACK_HISTORY_WINDOW_MINUTES) {
-      if (!env?.BUDDIES_DB || !env?.MINUTE_DB) {
-        throw new Error('Pages read-model task is missing D1 binding(s): BUDDIES_DB, MINUTE_DB');
+      if (!env?.MINUTE_DB) {
+        throw new Error('Pages track-history task is missing D1 binding: MINUTE_DB');
       }
       const run = dependencies.runTrackHistoryStep || runSplitTrackHistoryCycleStep;
-      return run(env, timestamp, dependencies);
+      const compactEnv = env.BUDDIES_DB === env.MINUTE_DB
+        ? env
+        : { ...env, BUDDIES_DB: env.MINUTE_DB };
+      return run(
+        compactEnv,
+        timestamp,
+        compactTrackHistoryDependencies(compactEnv, dependencies),
+      );
     }
     const task = backgroundTask(cycleMinute, cycleStart);
     return {
