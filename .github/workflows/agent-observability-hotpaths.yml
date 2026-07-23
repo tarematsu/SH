@@ -1,0 +1,798 @@
+name: Agent observability hot-path patch
+
+on:
+  push:
+    branches:
+      - optimize/observability-hotpaths-v2
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Apply architectural hot-path changes
+        shell: bash
+        run: |
+          python <<'PY'
+          from pathlib import Path
+          import json
+          import re
+
+          def read(path):
+              return Path(path).read_text()
+
+          def write(path, value):
+              Path(path).parent.mkdir(parents=True, exist_ok=True)
+              Path(path).write_text(value)
+
+          def replace_once(path, old, new):
+              value = read(path)
+              if value.count(old) != 1:
+                  raise SystemExit(f'{path}: expected one exact match, got {value.count(old)}')
+              write(path, value.replace(old, new, 1))
+
+          def regex_once(path, pattern, replacement):
+              value = read(path)
+              updated, count = re.subn(pattern, replacement, value, count=1, flags=re.S)
+              if count != 1:
+                  raise SystemExit(f'{path}: expected one regex match, got {count}')
+              write(path, updated)
+
+          # P0: materialized public API requests must fail closed. Never execute
+          # the Pages D1 handlers when the Service Binding or stored response fails.
+          regex_once(
+              'site/functions/_middleware.js',
+              r"async function serviceMaterializedResponse\(context, modelKey\) \{.*?\n\}\n\nfunction responseCacheTtl",
+              """async function serviceMaterializedResponse(context, modelKey) {
+            const service = context.env?.PAGES_READ_MODEL_SERVICE;
+            if (!SERVICE_MATERIALIZED_MODEL_KEYS.has(modelKey)) return null;
+            if (typeof service?.fetch !== 'function') {
+              throw new Error('PAGES_READ_MODEL_SERVICE binding is missing');
+            }
+            const url = new URL('https://pages-read-model.internal/_internal/pages-response');
+            url.searchParams.set('key', modelKey);
+            const response = await service.fetch(new Request(url, {
+              method: 'GET',
+              headers: { accept: 'application/json' },
+            }));
+            if (!response?.ok) {
+              throw new Error(`materialized ${modelKey} response returned HTTP ${response?.status || 503}`);
+            }
+            return response;
+          }
+
+          function responseCacheTtl""",
+          )
+          replace_once(
+              'site/functions/_middleware.js',
+              """  let prebuilt = null;
+            if (SERVICE_MATERIALIZED_MODEL_KEYS.has(modelKey)) {
+              prebuilt = await serviceMaterializedResponse(context, modelKey);
+            }
+            const origin = prebuilt || await context.next();
+          """,
+              """  let origin;
+            if (SERVICE_MATERIALIZED_MODEL_KEYS.has(modelKey)) {
+              try {
+                origin = await serviceMaterializedResponse(context, modelKey);
+              } catch (error) {
+                console.error(JSON.stringify({
+                  event: 'pages_materialized_response_unavailable',
+                  model_key: modelKey,
+                  error: String(error?.message || error).slice(0, 500),
+                }));
+                return new Response(JSON.stringify({
+                  ok: false,
+                  error: 'materialized response unavailable',
+                  model_key: modelKey,
+                }), {
+                  status: 503,
+                  headers: {
+                    'content-type': 'application/json; charset=utf-8',
+                    'cache-control': 'no-store',
+                    'x-materialized-required': '1',
+                  },
+                });
+              }
+            } else {
+              origin = await context.next();
+            }
+          """,
+          )
+
+          replace_once(
+              'site/functions/lib/dashboard-core.js',
+              """  publicLatest,
+            compactQueueStatus,
+            onRequestGet as dashboardFromBuddiesDb,
+          """,
+              """  publicLatest,
+            compactQueueStatus,
+          """,
+          )
+          regex_once(
+              'site/functions/lib/dashboard-core.js',
+              r"    if \(!factsAreFresh\(facts\.latest\)\) \{.*?\n    \}\n    const models",
+              """    if (!factsAreFresh(facts.latest)) {
+              return new Response(JSON.stringify({
+                ok: false,
+                error: 'minute facts read model is stale',
+                stale: true,
+                stale_reason: 'minute-facts-read-model-lag',
+                facts_latest_observed_at: Number(facts.latest?.observed_at || 0) || null,
+              }), {
+                status: 503,
+                headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' },
+              });
+            }
+            const models""",
+          )
+
+          # P1: Queue continuation is the primary sparse-revision recovery path.
+          # The D1 query remains as an hourly rescue scan and is forced onto a
+          # selective partial expression index.
+          replace_once(
+              'worker/src/minute-revision-recovery.js',
+              """function text(value) {
+            const parsed = String(value ?? '').trim();
+            return parsed || null;
+          }
+
+          export async function pendingSparseRevisionTasks""",
+              """function text(value) {
+            const parsed = String(value ?? '').trim();
+            return parsed || null;
+          }
+
+          const DEFAULT_RECOVERY_SCAN_INTERVAL_MS = 60 * 60_000;
+
+          export function sparseRevisionRecoveryScanDue(
+            now = Date.now(),
+            intervalMs = DEFAULT_RECOVERY_SCAN_INTERVAL_MS,
+          ) {
+            const current = Math.max(0, integer(now) ?? 0);
+            const interval = positiveInteger(intervalMs, DEFAULT_RECOVERY_SCAN_INTERVAL_MS, 24 * 60 * 60_000);
+            return Math.floor(current / interval) !== Math.floor(Math.max(0, current - 60_000) / interval);
+          }
+
+          export async function pendingSparseRevisionTasks""",
+          )
+          replace_once(
+              'worker/src/minute-revision-recovery.js',
+              '    FROM sh_queue_revisions r\n',
+              '    FROM sh_queue_revisions r INDEXED BY idx_sh_queue_revisions_sparse_recovery\n',
+          )
+          replace_once(
+              'worker/src/minute-maintenance-entry.js',
+              """import {
+            markSparseRevisionRecoveryDispatched,
+            pendingSparseRevisionTasks,
+          } from './minute-revision-recovery.js';""",
+              """import {
+            markSparseRevisionRecoveryDispatched,
+            pendingSparseRevisionTasks,
+            sparseRevisionRecoveryScanDue,
+          } from './minute-revision-recovery.js';""",
+          )
+          replace_once(
+              'worker/src/minute-maintenance-entry.js',
+              """  const startedAt = Number(dependencies.now) || Date.now();
+            const loadFacts = dependencies.load || pendingMinuteDeriveTriggers;
+            const loadRevisions = dependencies.loadRevisionRecovery || pendingSparseRevisionTasks;
+            const factLimit = positiveInteger(env.DERIVE_DISPATCH_LIMIT, 5, 20);
+            const recoveryLimit = positiveInteger(env.DERIVE_REVISION_RECOVERY_LIMIT, 1, 5);
+            const [triggers, revisionRecoveries] = await Promise.all([
+              loadFacts(env, { limit: factLimit }),
+              loadRevisions(env, { limit: recoveryLimit, now: startedAt }),
+            ]);
+          """,
+              """  const startedAt = Number(dependencies.now) || Date.now();
+            const loadFacts = dependencies.load || pendingMinuteDeriveTriggers;
+            const loadRevisions = dependencies.loadRevisionRecovery || pendingSparseRevisionTasks;
+            const factLimit = positiveInteger(env.DERIVE_DISPATCH_LIMIT, 5, 20);
+            const recoveryLimit = positiveInteger(env.DERIVE_REVISION_RECOVERY_LIMIT, 1, 5);
+            const recoveryScanDue = Boolean(dependencies.loadRevisionRecovery)
+              || sparseRevisionRecoveryScanDue(
+                startedAt,
+                env.DERIVE_REVISION_RECOVERY_SCAN_INTERVAL_MS,
+              );
+            const [triggers, revisionRecoveries] = await Promise.all([
+              loadFacts(env, { limit: factLimit }),
+              recoveryScanDue
+                ? loadRevisions(env, { limit: recoveryLimit, now: startedAt })
+                : Promise.resolve([]),
+            ]);
+          """,
+          )
+          replace_once(
+              'worker/src/minute-maintenance-entry.js',
+              """    recovery_limit: recoveryLimit,
+            };""",
+              """    recovery_limit: recoveryLimit,
+              recovery_scan_skipped: !recoveryScanDue,
+            };""",
+          )
+
+          # P1: materialize queue-instance identities incrementally when complete
+          # revisions arrive. Track-history no longer DISTINCT-scans sh_queue_items.
+          replace_once(
+              'site/functions/lib/track-history-restored-handler.js',
+              """      SELECT DISTINCT station_id,start_time
+                FROM sh_queue_items
+                WHERE start_time IS NOT NULL AND start_time < ?
+          """,
+              """      SELECT station_id,start_time
+                FROM sh_track_history_queue_starts
+                WHERE start_time < ?
+          """,
+          )
+          replace_once(
+              'worker/src/pages-track-history-stage.js',
+              """      SELECT DISTINCT station_id,start_time
+                FROM sh_queue_items
+                WHERE start_time IS NOT NULL AND start_time < ?
+          """,
+              """      SELECT station_id,start_time
+                FROM sh_track_history_queue_starts
+                WHERE start_time < ?
+          """,
+          )
+          replace_once(
+              'worker/src/pages-track-history-stage.js',
+              """      SELECT DISTINCT items.station_id,items.start_time
+                FROM sh_queue_items items
+                CROSS JOIN queue_bounds bounds
+                WHERE items.start_time IS NOT NULL
+                  AND items.start_time>=bounds.range_end-${TRACK_HISTORY_QUEUE_LOOKBACK_MS}
+          """,
+              """      SELECT items.station_id,items.start_time
+                FROM sh_track_history_queue_starts items
+                CROSS JOIN queue_bounds bounds
+                WHERE items.start_time>=bounds.range_end-${TRACK_HISTORY_QUEUE_LOOKBACK_MS}
+          """,
+          )
+
+          # P1: live facts already arrive in a durable Queue body. Send that body
+          # directly to the live derive Queue and reserve the D1 job ledger for
+          # rebuild and sparse-revision modes.
+          replace_once(
+              'worker/src/minute-derive-trigger.js',
+              """export const MINUTE_DERIVE_MESSAGE_TYPE = 'minute-fact-derive';
+          export const MINUTE_DERIVE_MESSAGE_VERSION = 1;
+          """,
+              """export const MINUTE_DERIVE_MESSAGE_TYPE = 'minute-fact-derive';
+          export const MINUTE_DERIVE_MESSAGE_VERSION = 1;
+          export const MINUTE_DIRECT_LIVE_DERIVE_MESSAGE_TYPE = 'minute-fact-live-direct';
+          export const MINUTE_DIRECT_LIVE_DERIVE_MESSAGE_VERSION = 1;
+          """,
+          )
+          replace_once(
+              'worker/src/minute-derive-trigger.js',
+              """function dispatchOrder(left, right) {""",
+              """export function minuteDirectLiveDeriveMessage(payload = {}) {
+            const channelId = integer(payload?.snapshot?.channel_id);
+            const observedAt = integer(payload?.observedAt);
+            if (channelId == null) throw invalidTrigger('direct live channel_id is required');
+            if (observedAt == null) throw invalidTrigger('direct live observedAt is required');
+            if (integer(payload?.payload_version) !== 1) {
+              throw invalidTrigger('direct live payload_version is unsupported');
+            }
+            const minuteAt = Math.floor(observedAt / 60_000) * 60_000;
+            const jobId = `minute-fact:${channelId}:${minuteAt}`;
+            return {
+              message_type: MINUTE_DIRECT_LIVE_DERIVE_MESSAGE_TYPE,
+              message_version: MINUTE_DIRECT_LIVE_DERIVE_MESSAGE_VERSION,
+              job_id: jobId,
+              idempotency_key: jobId,
+              channel_id: channelId,
+              minute_at: minuteAt,
+              payload,
+            };
+          }
+
+          export function parseDirectLiveMinuteDeriveMessage(body) {
+            if (!body || typeof body !== 'object' || Array.isArray(body)) {
+              throw invalidTrigger('direct live body must be an object');
+            }
+            if (body.message_type !== MINUTE_DIRECT_LIVE_DERIVE_MESSAGE_TYPE
+                || integer(body.message_version) !== MINUTE_DIRECT_LIVE_DERIVE_MESSAGE_VERSION) {
+              throw invalidTrigger('direct live message is unsupported');
+            }
+            const expected = minuteDirectLiveDeriveMessage(body.payload);
+            if (body.job_id !== expected.job_id
+                || body.idempotency_key !== expected.idempotency_key
+                || integer(body.channel_id) !== expected.channel_id
+                || integer(body.minute_at) !== expected.minute_at) {
+              throw invalidTrigger('direct live identity does not match payload');
+            }
+            return expected;
+          }
+
+          export async function enqueueDirectLiveMinuteDerive(env, payload) {
+            const queue = env?.MINUTE_LIVE_DERIVE_QUEUE || env?.MINUTE_DERIVE_QUEUE;
+            if (!queue?.send) throw new Error('minute live derive Queue binding is missing');
+            const message = minuteDirectLiveDeriveMessage(payload);
+            await queue.send(message, { contentType: 'json' });
+            return {
+              enqueued: true,
+              direct: true,
+              channel_id: message.channel_id,
+              minute_at: message.minute_at,
+              job_kind: 'live',
+              job_priority: 100,
+            };
+          }
+
+          function dispatchOrder(left, right) {""",
+          )
+
+          replace_once(
+              'worker/src/minute-production-entry.js',
+              "import { enqueueMinuteDeriveTrigger } from './minute-derive-trigger.js';",
+              """import {
+            enqueueDirectLiveMinuteDerive,
+            enqueueMinuteDeriveTrigger,
+          } from './minute-derive-trigger.js';""",
+          )
+          replace_once(
+              'worker/src/minute-production-entry.js',
+              """function skipCommentTask() {
+            return SKIPPED_COMMENT_TASK;
+          }
+
+          async function enqueueProductionMinute""",
+              """function skipCommentTask() {
+            return SKIPPED_COMMENT_TASK;
+          }
+
+          function enabled(value) {
+            return value === true || value === 1 || /^(1|true|yes|on)$/i.test(String(value || ''));
+          }
+
+          function directLiveDeriveEnabled(env, payload, options = {}) {
+            const kind = String(options.jobKind || (payload?.rebuild ? 'rebuild' : 'live')).toLowerCase();
+            return enabled(env?.LIVE_DERIVE_DIRECT_QUEUE_ENABLED)
+              && !enabled(env?.LIVE_REVISION_MATERIALIZATION_ENABLED)
+              && kind === 'live'
+              && !payload?.rebuild;
+          }
+
+          async function enqueueProductionMinute""",
+          )
+          replace_once(
+              'worker/src/minute-production-entry.js',
+              """async function enqueueProductionMinute(activeEnv, payload, options) {
+            const accepted = await productionEnqueueMinuteFactJob(activeEnv, payload, options);
+            // Queue acceptance is the durable handoff to the one-job derive Worker.
+            // Send on duplicate inbox delivery too, so a retry heals a crash between
+            // the D1 insert and the original derive Queue send.
+            await enqueueMinuteDeriveTrigger(activeEnv, accepted);
+            return accepted;
+          }
+          """,
+              """async function enqueueProductionMinute(activeEnv, payload, options) {
+            if (directLiveDeriveEnabled(activeEnv, payload, options)) {
+              return enqueueDirectLiveMinuteDerive(activeEnv, payload);
+            }
+            const accepted = await productionEnqueueMinuteFactJob(activeEnv, payload, options);
+            // Rebuild and sparse-revision work retain the D1 ledger for repair.
+            await enqueueMinuteDeriveTrigger(activeEnv, accepted);
+            return accepted;
+          }
+          """,
+          )
+          regex_once(
+              'worker/src/minute-production-entry.js',
+              r"function injectedHandlers\(dependencies, enqueueMinuteFactJob, enqueueDerive\) \{.*?\n\}\n\nasync function consumeInjectedMinuteQueue",
+              """function injectedHandlers(
+            dependencies,
+            enqueueMinuteFactJob,
+            enqueueDerive,
+            enqueueDirect,
+          ) {
+            return {
+              hasReceipt: noReceipt,
+              saveReceipt: ignoreReceipt,
+              saveCommentTask: skipCommentTask,
+              enqueue: async (activeEnv, payload, options) => {
+                if (directLiveDeriveEnabled(activeEnv, payload, options)) {
+                  return enqueueDirect(activeEnv, payload);
+                }
+                const accepted = await enqueueMinuteFactJob(activeEnv, payload, options);
+                await enqueueDerive(activeEnv, accepted);
+                return accepted;
+              },
+              saveReadModels: dependencies.saveMinuteFactReadModels
+                ? async (activeEnv, readModel, jobId) => {
+                    if (readModel) await dependencies.saveMinuteFactReadModels(activeEnv, readModel, jobId);
+                  }
+                : saveDefaultReadModels,
+            };
+          }
+
+          async function consumeInjectedMinuteQueue""",
+          )
+          replace_once(
+              'worker/src/minute-production-entry.js',
+              """  const enqueueDerive = dependencies.enqueueMinuteDeriveTrigger || enqueueMinuteDeriveTrigger;
+            return consumeMinuteFactBatch(
+              batch,
+              env,
+              injectedHandlers(dependencies, enqueueMinuteFactJob, enqueueDerive),
+            );""",
+              """  const enqueueDerive = dependencies.enqueueMinuteDeriveTrigger || enqueueMinuteDeriveTrigger;
+            const enqueueDirect = dependencies.enqueueDirectLiveMinuteDerive || enqueueDirectLiveMinuteDerive;
+            return consumeMinuteFactBatch(
+              batch,
+              env,
+              injectedHandlers(dependencies, enqueueMinuteFactJob, enqueueDerive, enqueueDirect),
+            );""",
+          )
+
+          replace_once(
+              'worker/src/minute-derive-router.js',
+              "import { integer } from './minute-facts-track-descriptor.js';",
+              """import { integer } from './minute-facts-track-descriptor.js';
+          import {
+            MINUTE_DIRECT_LIVE_DERIVE_MESSAGE_TYPE,
+            parseDirectLiveMinuteDeriveMessage,
+          } from './minute-derive-trigger.js';""",
+          )
+          replace_once(
+              'worker/src/minute-derive-router.js',
+              """export function processMinuteDeriveMessage(env, body, dependencies = EMPTY_DEPENDENCIES) {
+            if (body?.message_type !== 'minute-fact-derive-stage') {""",
+              """async function processDirectLiveMinuteDerive(env, body, dependencies = EMPTY_DEPENDENCIES) {
+            const message = parseDirectLiveMinuteDeriveMessage(body);
+            if (shouldMaterializeLiveRevision(env, message.payload)) {
+              throw new Error('direct live derive is incompatible with sparse revision materialization');
+            }
+            const write = dependencies.write || defaultWrite;
+            await write(env, message.payload);
+            return {
+              event: 'minute_fact_live_direct',
+              processed: 1,
+              processed_live: 1,
+              processed_rebuild: 0,
+              failed: 0,
+              direct: true,
+              job_id: message.job_id,
+            };
+          }
+
+          export function processMinuteDeriveMessage(env, body, dependencies = EMPTY_DEPENDENCIES) {
+            if (body?.message_type === MINUTE_DIRECT_LIVE_DERIVE_MESSAGE_TYPE) {
+              return processDirectLiveMinuteDerive(env, body, dependencies);
+            }
+            if (body?.message_type !== 'minute-fact-derive-stage') {""",
+          )
+
+          # Runtime rollout controls.
+          replace_once(
+              'worker/wrangler.runtime.jsonc',
+              '    "DERIVE_REVISION_RECOVERY_STALE_MS": 120000,\n',
+              '    "DERIVE_REVISION_RECOVERY_STALE_MS": 120000,\n    "DERIVE_REVISION_RECOVERY_SCAN_INTERVAL_MS": 3600000,\n',
+          )
+          replace_once(
+              'worker/wrangler.runtime.jsonc',
+              '    "LIVE_REVISION_MATERIALIZATION_ENABLED": false,\n',
+              '    "LIVE_REVISION_MATERIALIZATION_ENABLED": false,\n    "LIVE_DERIVE_DIRECT_QUEUE_ENABLED": true,\n',
+          )
+
+          migration_path = 'database/facts-migrations/031_observability_hotpaths.sql'
+          write(migration_path, """-- Eliminate periodic scans from the measured D1 hot paths.
+          -- Sparse revision recovery is an hourly rescue path; normal continuation is Queue-driven.
+
+          CREATE INDEX IF NOT EXISTS idx_sh_queue_revisions_sparse_recovery
+          ON sh_queue_revisions(
+            COALESCE(last_materialized_at,effective_at),
+            effective_at,
+            id
+          )
+          WHERE source_job_id IS NOT NULL
+            AND COALESCE(coverage_complete,0)=0
+            AND COALESCE(source_visible_count,0)>COALESCE(materialized_item_count,0);
+
+          -- Queue identities are maintained when a complete revision appears. Track-history
+          -- can seek a bounded start-time range without rebuilding DISTINCT queue_starts.
+          CREATE TABLE IF NOT EXISTS sh_track_history_queue_starts (
+            station_id INTEGER NOT NULL,
+            start_time INTEGER NOT NULL,
+            day_at INTEGER NOT NULL,
+            latest_revision_id INTEGER NOT NULL,
+            latest_effective_at INTEGER NOT NULL,
+            PRIMARY KEY(station_id,start_time)
+          ) WITHOUT ROWID;
+
+          CREATE INDEX IF NOT EXISTS idx_sh_track_history_queue_starts_time
+          ON sh_track_history_queue_starts(start_time,station_id);
+
+          CREATE INDEX IF NOT EXISTS idx_sh_track_history_queue_starts_day
+          ON sh_track_history_queue_starts(day_at,station_id,start_time);
+
+          INSERT INTO sh_track_history_queue_starts(
+            station_id,start_time,day_at,latest_revision_id,latest_effective_at
+          )
+          SELECT r.station_id,r.queue_start_time,
+            CAST(r.queue_start_time/86400000 AS INTEGER)*86400000,
+            r.id,r.effective_at
+          FROM sh_queue_revisions r
+          WHERE r.status='complete'
+            AND r.station_id IS NOT NULL
+            AND r.queue_start_time IS NOT NULL
+            AND r.id=(
+              SELECT latest.id
+              FROM sh_queue_revisions latest
+              WHERE latest.status='complete'
+                AND latest.queue_start_time=r.queue_start_time
+                AND latest.channel_id=r.channel_id
+                AND COALESCE(latest.station_id,-1)=COALESCE(r.station_id,-1)
+              ORDER BY latest.effective_at DESC,latest.id DESC
+              LIMIT 1
+            )
+          ON CONFLICT(station_id,start_time) DO UPDATE SET
+            day_at=excluded.day_at,
+            latest_revision_id=excluded.latest_revision_id,
+            latest_effective_at=excluded.latest_effective_at
+          WHERE excluded.latest_effective_at>sh_track_history_queue_starts.latest_effective_at
+             OR (excluded.latest_effective_at=sh_track_history_queue_starts.latest_effective_at
+                 AND excluded.latest_revision_id>sh_track_history_queue_starts.latest_revision_id);
+
+          DROP TRIGGER IF EXISTS trg_sh_track_history_queue_start_after_insert;
+          CREATE TRIGGER trg_sh_track_history_queue_start_after_insert
+          AFTER INSERT ON sh_queue_revisions
+          WHEN NEW.status='complete'
+            AND NEW.station_id IS NOT NULL
+            AND NEW.queue_start_time IS NOT NULL
+          BEGIN
+            INSERT INTO sh_track_history_queue_starts(
+              station_id,start_time,day_at,latest_revision_id,latest_effective_at
+            ) VALUES(
+              NEW.station_id,NEW.queue_start_time,
+              CAST(NEW.queue_start_time/86400000 AS INTEGER)*86400000,
+              NEW.id,NEW.effective_at
+            )
+            ON CONFLICT(station_id,start_time) DO UPDATE SET
+              day_at=excluded.day_at,
+              latest_revision_id=excluded.latest_revision_id,
+              latest_effective_at=excluded.latest_effective_at
+            WHERE excluded.latest_effective_at>sh_track_history_queue_starts.latest_effective_at
+               OR (excluded.latest_effective_at=sh_track_history_queue_starts.latest_effective_at
+                   AND excluded.latest_revision_id>sh_track_history_queue_starts.latest_revision_id);
+          END;
+
+          DROP TRIGGER IF EXISTS trg_sh_track_history_queue_start_after_update;
+          CREATE TRIGGER trg_sh_track_history_queue_start_after_update
+          AFTER UPDATE OF status,station_id,queue_start_time,effective_at ON sh_queue_revisions
+          WHEN NEW.status='complete'
+            AND NEW.station_id IS NOT NULL
+            AND NEW.queue_start_time IS NOT NULL
+          BEGIN
+            INSERT INTO sh_track_history_queue_starts(
+              station_id,start_time,day_at,latest_revision_id,latest_effective_at
+            ) VALUES(
+              NEW.station_id,NEW.queue_start_time,
+              CAST(NEW.queue_start_time/86400000 AS INTEGER)*86400000,
+              NEW.id,NEW.effective_at
+            )
+            ON CONFLICT(station_id,start_time) DO UPDATE SET
+              day_at=excluded.day_at,
+              latest_revision_id=excluded.latest_revision_id,
+              latest_effective_at=excluded.latest_effective_at
+            WHERE excluded.latest_effective_at>sh_track_history_queue_starts.latest_effective_at
+               OR (excluded.latest_effective_at=sh_track_history_queue_starts.latest_effective_at
+                   AND excluded.latest_revision_id>sh_track_history_queue_starts.latest_revision_id);
+          END;
+
+          ANALYZE sh_queue_revisions;
+          ANALYZE sh_track_history_queue_starts;
+          PRAGMA optimize;
+          """)
+
+          descriptor_path = Path('database/facts-db.json')
+          descriptor = json.loads(descriptor_path.read_text())
+          descriptor['schema'] = migration_path
+          if migration_path not in descriptor['migrations']:
+              descriptor['migrations'].append(migration_path)
+          descriptor_path.write_text(json.dumps(descriptor, indent=2) + '\n')
+
+          replace_once(
+              'tests/d1-budget-hotpath-index.test.mjs',
+              """const compactTrackHistoryMigration = readFileSync(
+            new URL('../database/facts-migrations/030_compact_track_history_source.sql', import.meta.url),
+            'utf8',
+          );""",
+              """const compactTrackHistoryMigration = readFileSync(
+            new URL('../database/facts-migrations/030_compact_track_history_source.sql', import.meta.url),
+            'utf8',
+          );
+          const observabilityHotpathMigration = readFileSync(
+            new URL('../database/facts-migrations/031_observability_hotpaths.sql', import.meta.url),
+            'utf8',
+          );""",
+          )
+          replace_once(
+              'tests/d1-budget-hotpath-index.test.mjs',
+              """  'database/facts-migrations/030_compact_track_history_source.sql',
+          ];""",
+              """  'database/facts-migrations/030_compact_track_history_source.sql',
+            'database/facts-migrations/031_observability_hotpaths.sql',
+          ];""",
+          )
+          replace_once(
+              'tests/d1-budget-hotpath-index.test.mjs',
+              """  assert.doesNotMatch(compactTrackHistoryMigration, /ROW_NUMBER\(\) OVER/);
+          });""",
+              """  assert.doesNotMatch(compactTrackHistoryMigration, /ROW_NUMBER\(\) OVER/);
+            assert.match(observabilityHotpathMigration, /idx_sh_queue_revisions_sparse_recovery/);
+            assert.match(observabilityHotpathMigration, /sh_track_history_queue_starts/);
+          });""",
+          )
+          replace_once(
+              'tests/track-ranking.test.mjs',
+              "'database/facts-migrations/030_compact_track_history_source.sql'",
+              "'database/facts-migrations/031_observability_hotpaths.sql'",
+          )
+          replace_once(
+              'worker/tests/total-listens-baseline-index.test.js',
+              "'database/facts-migrations/030_compact_track_history_source.sql'",
+              "'database/facts-migrations/031_observability_hotpaths.sql'",
+          )
+
+          write('tests/observability-hotpath-architecture.test.mjs', """import assert from 'node:assert/strict';
+          import { readFileSync } from 'node:fs';
+          import { DatabaseSync } from 'node:sqlite';
+          import test from 'node:test';
+
+          const middleware = readFileSync(new URL('../site/functions/_middleware.js', import.meta.url), 'utf8');
+          const dashboard = readFileSync(new URL('../site/functions/lib/dashboard-core.js', import.meta.url), 'utf8');
+          const recovery = readFileSync(new URL('../worker/src/minute-revision-recovery.js', import.meta.url), 'utf8');
+          const history = readFileSync(new URL('../site/functions/lib/track-history-restored-handler.js', import.meta.url), 'utf8');
+          const migration = readFileSync(new URL('../database/facts-migrations/031_observability_hotpaths.sql', import.meta.url), 'utf8');
+          const runtime = JSON.parse(readFileSync(new URL('../worker/wrangler.runtime.jsonc', import.meta.url), 'utf8'));
+
+          test('materialized Pages APIs fail closed instead of executing legacy D1 handlers', () => {
+            assert.match(middleware, /x-materialized-required/);
+            assert.doesNotMatch(middleware, /prebuilt \|\| await context\.next\(\)/);
+            assert.doesNotMatch(dashboard, /dashboardFromBuddiesDb/);
+            assert.match(dashboard, /minute facts read model is stale/);
+          });
+
+          test('sparse recovery and queue starts use selective materialized access paths', () => {
+            assert.match(recovery, /INDEXED BY idx_sh_queue_revisions_sparse_recovery/);
+            assert.match(history, /FROM sh_track_history_queue_starts/);
+            assert.doesNotMatch(history, /SELECT DISTINCT station_id,start_time\s+FROM sh_queue_items/);
+            assert.equal(runtime.vars.DERIVE_REVISION_RECOVERY_SCAN_INTERVAL_MS, 3_600_000);
+            assert.equal(runtime.vars.LIVE_DERIVE_DIRECT_QUEUE_ENABLED, true);
+          });
+
+          test('queue-start migration seeds and incrementally advances the latest complete revision', () => {
+            const db = new DatabaseSync(':memory:');
+            db.exec(`CREATE TABLE sh_queue_revisions(
+              id INTEGER PRIMARY KEY,
+              channel_id INTEGER NOT NULL,
+              station_id INTEGER,
+              queue_start_time INTEGER,
+              effective_at INTEGER NOT NULL,
+              status TEXT NOT NULL,
+              source_job_id INTEGER,
+              coverage_complete INTEGER,
+              source_visible_count INTEGER,
+              materialized_item_count INTEGER,
+              last_materialized_at INTEGER
+            );`);
+            db.exec(migration);
+            const start = Date.parse('2026-07-20T00:00:00Z');
+            db.prepare(`INSERT INTO sh_queue_revisions(
+              id,channel_id,station_id,queue_start_time,effective_at,status
+            ) VALUES(1,10,20,?,?, 'complete')`).run(start, start);
+            assert.equal(db.prepare('SELECT latest_revision_id FROM sh_track_history_queue_starts').get().latest_revision_id, 1);
+            db.prepare(`INSERT INTO sh_queue_revisions(
+              id,channel_id,station_id,queue_start_time,effective_at,status
+            ) VALUES(2,10,20,?,?, 'complete')`).run(start, start + 1);
+            assert.equal(db.prepare('SELECT latest_revision_id FROM sh_track_history_queue_starts').get().latest_revision_id, 2);
+          });
+          """)
+
+          write('worker/tests/minute-direct-live-derive.test.js', """import assert from 'node:assert/strict';
+          import test from 'node:test';
+
+          import { consumeMinuteQueue } from '../src/minute-production-entry.js';
+          import { processMinuteDeriveMessage } from '../src/minute-derive-router.js';
+          import {
+            minuteDirectLiveDeriveMessage,
+            parseDirectLiveMinuteDeriveMessage,
+          } from '../src/minute-derive-trigger.js';
+
+          const payload = {
+            payload_version: 1,
+            observedAt: 180_001,
+            snapshot: { channel_id: 10, listener_count: 20 },
+            queue: null,
+            comments: {},
+            rebuild: null,
+          };
+
+          test('direct live message is self-validating and retains the durable Queue payload', () => {
+            const message = minuteDirectLiveDeriveMessage(payload);
+            assert.equal(message.job_id, 'minute-fact:10:180000');
+            assert.equal(parseDirectLiveMinuteDeriveMessage(message).payload, payload);
+          });
+
+          test('production live ingest bypasses the D1 job ledger when direct Queue mode is enabled', async () => {
+            let handlers;
+            let inboxCalls = 0;
+            const direct = [];
+            await consumeMinuteQueue({ messages: [] }, {
+              LIVE_DERIVE_DIRECT_QUEUE_ENABLED: true,
+              LIVE_REVISION_MATERIALIZATION_ENABLED: false,
+            }, null, {
+              consumeMinuteFactBatch: async (_batch, _env, value) => {
+                handlers = value;
+                return { received: 0 };
+              },
+              enqueueMinuteFactJob: async () => {
+                inboxCalls += 1;
+                throw new Error('D1 inbox must not be used');
+              },
+              enqueueDirectLiveMinuteDerive: async (_env, value) => {
+                direct.push(value);
+                return { enqueued: true, direct: true };
+              },
+            });
+            const result = await handlers.enqueue({}, payload, { jobKind: 'live' });
+            assert.deepEqual(result, { enqueued: true, direct: true });
+            assert.equal(inboxCalls, 0);
+            assert.deepEqual(direct, [payload]);
+          });
+
+          test('direct live derive writes once without claim or completion lifecycle writes', async () => {
+            const writes = [];
+            const result = await processMinuteDeriveMessage(
+              { LIVE_REVISION_MATERIALIZATION_ENABLED: false },
+              minuteDirectLiveDeriveMessage(payload),
+              { write: async (_env, value) => writes.push(value) },
+            );
+            assert.equal(result.processed, 1);
+            assert.equal(result.direct, true);
+            assert.deepEqual(writes, [payload]);
+          });
+          """)
+          PY
+      - name: Validate focused hot paths
+        shell: bash
+        run: |
+          node --check site/functions/_middleware.js
+          node --check site/functions/lib/dashboard-core.js
+          node --check worker/src/minute-revision-recovery.js
+          node --check worker/src/minute-maintenance-entry.js
+          node --check worker/src/minute-derive-trigger.js
+          node --check worker/src/minute-production-entry.js
+          node --check worker/src/minute-derive-router.js
+          node --test \
+            tests/observability-hotpath-architecture.test.mjs \
+            tests/d1-budget-hotpath-index.test.mjs \
+            worker/tests/minute-direct-live-derive.test.js \
+            worker/tests/minute-maintenance-entry.test.js \
+            worker/tests/minute-revision-recovery.test.js \
+            worker/tests/minute-ingest-hot-path.test.js \
+            worker/tests/total-listens-baseline-index.test.js \
+            tests/track-ranking.test.mjs
+      - name: Commit patch
+        shell: bash
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add -A
+          git diff --cached --stat
+          git commit -m "Reduce observability D1 hot paths"
+          git push origin HEAD:optimize/observability-hotpaths-v2
