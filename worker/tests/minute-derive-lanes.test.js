@@ -59,7 +59,7 @@ test('new live facts prefer the empty live derive lane', async () => {
   }]);
 });
 
-test('maintenance recovery scans pending and expired leases through separate indexed queries', async () => {
+test('maintenance recovery seeks ready pending jobs and expired leases through separate indexes', async () => {
   const calls = [];
   const responses = [
     [
@@ -83,7 +83,10 @@ test('maintenance recovery scans pending and expired leases through separate ind
 
   const triggers = await pendingMinuteDeriveTriggers({ MINUTE_DB }, { now: 200_000, limit: 2 });
   assert.equal(calls.length, 2);
+  assert.match(calls[0].sql, /INDEXED BY idx_sh_minute_fact_jobs_pending_ready/);
   assert.match(calls[0].sql, /status='pending' AND next_attempt_at<=\?/);
+  assert.match(calls[0].sql, /ORDER BY next_attempt_at ASC,job_priority DESC,minute_at ASC,id ASC/);
+  assert.match(calls[1].sql, /INDEXED BY idx_sh_minute_fact_jobs_processing_lease/);
   assert.match(calls[1].sql, /status='processing' AND lease_until<\?/);
   assert.doesNotMatch(calls.map(({ sql }) => sql).join('\n'), /\sOR\s/);
   assert.deepEqual(calls.map(({ bindings }) => bindings), [[200_000, 2], [200_000, 2]]);
