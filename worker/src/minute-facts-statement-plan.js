@@ -53,6 +53,7 @@ export function dashboardHistoryRollupStatement(db, fact) {
       listener_count,online_member_count,total_member_count,total_listens,
       current_stream_count,comment_velocity
     FROM point
+    WHERE TRUE
     ON CONFLICT(channel_id,bucket_at) DO UPDATE SET
       fact_id=excluded.fact_id,
       minute_at=excluded.minute_at,
