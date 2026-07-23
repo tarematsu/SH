@@ -8,6 +8,7 @@ export const MINUTE_FACT_INBOX_SCHEMA_SQL = `CREATE TABLE IF NOT EXISTS sh_minut
   observed_at INTEGER NOT NULL,
   payload_version INTEGER NOT NULL DEFAULT 1,
   payload_json TEXT NOT NULL,
+  payload_clearable INTEGER NOT NULL DEFAULT 0,
   job_kind TEXT NOT NULL DEFAULT 'live',
   job_priority INTEGER NOT NULL DEFAULT 100,
   status TEXT NOT NULL DEFAULT 'pending',
@@ -25,7 +26,8 @@ export const MINUTE_FACT_INBOX_INDEX_SQL = `CREATE INDEX IF NOT EXISTS idx_sh_mi
   ON sh_minute_fact_jobs(status, job_priority DESC, next_attempt_at, minute_at)`;
 
 export const REQUEUE_DEAD_MINUTE_FACT_JOBS_SQL = `UPDATE sh_minute_fact_jobs SET
-    status='pending',attempts=0,next_attempt_at=0,lease_until=NULL,last_error=NULL,updated_at=?
+    status='pending',attempts=0,next_attempt_at=0,lease_until=NULL,last_error=NULL,
+    payload_clearable=0,updated_at=?
   WHERE id IN (
     SELECT jobs.id FROM sh_minute_fact_jobs jobs
     WHERE jobs.status='dead'
@@ -41,28 +43,14 @@ export const REQUEUE_DEAD_MINUTE_FACT_JOBS_SQL = `UPDATE sh_minute_fact_jobs SET
 
 export const COMPLETE_MINUTE_FACT_JOB_SQL = `UPDATE sh_minute_fact_jobs SET
     status='done',lease_until=NULL,processed_at=?,last_error=NULL,
-    payload_json=CASE WHEN EXISTS (
-      SELECT 1 FROM sh_queue_revisions revisions
-      WHERE revisions.source_job_id=sh_minute_fact_jobs.id
-        AND (revisions.status<>'complete'
-          OR COALESCE(revisions.materialized_item_count,0)
-            <COALESCE(revisions.source_visible_count,revisions.item_count,0))
-    ) THEN payload_json ELSE '{}' END,
-    updated_at=?
+    payload_clearable=0,updated_at=?
   WHERE id=? AND status='processing'`;
 
 export const CLEAR_COMPLETED_MINUTE_FACT_PAYLOADS_SQL = `UPDATE sh_minute_fact_jobs SET
-    payload_json='{}',updated_at=?
+    payload_json='{}',payload_clearable=0,updated_at=?
   WHERE id IN (
     SELECT jobs.id FROM sh_minute_fact_jobs jobs
-    WHERE jobs.status='done' AND LENGTH(jobs.payload_json)>2
-      AND NOT EXISTS (
-        SELECT 1 FROM sh_queue_revisions revisions
-        WHERE revisions.source_job_id=jobs.id
-          AND (revisions.status<>'complete'
-            OR COALESCE(revisions.materialized_item_count,0)
-              <COALESCE(revisions.source_visible_count,revisions.item_count,0))
-      )
+    WHERE jobs.payload_clearable=1 AND LENGTH(jobs.payload_json)>2
     ORDER BY COALESCE(jobs.processed_at,jobs.updated_at) ASC,jobs.id ASC LIMIT ?
   )
   RETURNING id`;
@@ -113,12 +101,13 @@ export async function enqueueMinuteFactJob(env, input = {}, options = {}) {
   const requeueCompleted = options.requeueCompleted === true ? 1 : 0;
   const forceRepair = options.forceRepair === true ? 1 : 0;
   const result = await env.MINUTE_DB.prepare(`INSERT INTO sh_minute_fact_jobs(
-      channel_id,minute_at,observed_at,payload_version,payload_json,job_kind,job_priority,
-      status,attempts,next_attempt_at,lease_until,processed_at,last_error,created_at,updated_at
-    ) VALUES(?,?,?,?,?,?,?,'pending',0,0,NULL,NULL,NULL,?,?)
+      channel_id,minute_at,observed_at,payload_version,payload_json,payload_clearable,
+      job_kind,job_priority,status,attempts,next_attempt_at,lease_until,processed_at,
+      last_error,created_at,updated_at
+    ) VALUES(?,?,?,?,?,0,?,?,'pending',0,0,NULL,NULL,NULL,?,?)
     ON CONFLICT(channel_id,minute_at) DO UPDATE SET
       observed_at=excluded.observed_at,payload_version=excluded.payload_version,
-      payload_json=excluded.payload_json,job_kind=excluded.job_kind,
+      payload_json=excluded.payload_json,payload_clearable=0,job_kind=excluded.job_kind,
       job_priority=excluded.job_priority,status='pending',attempts=0,next_attempt_at=0,
       lease_until=NULL,processed_at=NULL,last_error=NULL,updated_at=excluded.updated_at
     WHERE ?=1 AND (

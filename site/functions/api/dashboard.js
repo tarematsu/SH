@@ -12,10 +12,23 @@ async function dailySummaries(env, now) {
   }
 }
 
+function factsOnlyDashboardContext(context) {
+  const env = Object.create(context.env || null);
+  // dashboard-core still contains a rollout-era DB fallback. The public and
+  // materialization entry point deliberately masks that binding so stale facts
+  // fail closed instead of executing the legacy multi-million-row query.
+  Object.defineProperty(env, 'DB', {
+    value: null,
+    enumerable: true,
+    configurable: true,
+  });
+  return { ...context, env };
+}
+
 export async function onRequestGet(context) {
   const now = Date.now();
   const [response, summaries] = await Promise.all([
-    dashboardCore(context),
+    dashboardCore(factsOnlyDashboardContext(context)),
     dailySummaries(context.env, now),
   ]);
   if (!response.ok) return response;

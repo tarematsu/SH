@@ -29,19 +29,20 @@ function tagged(response, cacheState) {
 
 async function serviceMaterializedResponse(context, modelKey) {
   const service = context.env?.PAGES_READ_MODEL_SERVICE;
-  if (!SERVICE_MATERIALIZED_MODEL_KEYS.has(modelKey) || typeof service?.fetch !== 'function') return null;
-  try {
-    const url = new URL('https://pages-read-model.internal/_internal/pages-response');
-    url.searchParams.set('key', modelKey);
-    const response = await service.fetch(new Request(url, {
-      method: 'GET',
-      headers: { accept: 'application/json' },
-    }));
-    return response?.ok ? response : null;
-  } catch (error) {
-    console.error(error);
-    return null;
+  if (!SERVICE_MATERIALIZED_MODEL_KEYS.has(modelKey)) return null;
+  if (typeof service?.fetch !== 'function') {
+    throw new Error('PAGES_READ_MODEL_SERVICE binding is missing');
   }
+  const url = new URL('https://pages-read-model.internal/_internal/pages-response');
+  url.searchParams.set('key', modelKey);
+  const response = await service.fetch(new Request(url, {
+    method: 'GET',
+    headers: { accept: 'application/json' },
+  }));
+  if (!response?.ok) {
+    throw new Error(`materialized ${modelKey} response returned HTTP ${response?.status || 503}`);
+  }
+  return response;
 }
 
 function responseCacheTtl(origin, requestedTtl, modelKey, usedMaterialized, now) {
@@ -99,16 +100,37 @@ export async function onRequest(context) {
 
   const now = Date.now();
   const modelKey = materializedApiKey(new URL(request.url));
-  let prebuilt = null;
+  let origin;
   if (SERVICE_MATERIALIZED_MODEL_KEYS.has(modelKey)) {
-    prebuilt = await serviceMaterializedResponse(context, modelKey);
+    try {
+      origin = await serviceMaterializedResponse(context, modelKey);
+    } catch (error) {
+      console.error(JSON.stringify({
+        event: 'pages_materialized_response_unavailable',
+        model_key: modelKey,
+        error: String(error?.message || error).slice(0, 500),
+      }));
+      return new Response(JSON.stringify({
+        ok: false,
+        error: 'materialized response unavailable',
+        model_key: modelKey,
+      }), {
+        status: 503,
+        headers: {
+          'content-type': 'application/json; charset=utf-8',
+          'cache-control': 'no-store',
+          'x-materialized-required': '1',
+        },
+      });
+    }
+  } else {
+    origin = await context.next();
   }
-  const origin = prebuilt || await context.next();
   const ttlSeconds = responseCacheTtl(
     origin,
     apiCacheTtlSeconds(request),
     modelKey,
-    Boolean(prebuilt),
+    SERVICE_MATERIALIZED_MODEL_KEYS.has(modelKey),
     now,
   );
   const shared = sharedResponse(origin, ttlSeconds);

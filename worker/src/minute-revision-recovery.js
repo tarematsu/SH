@@ -1,5 +1,7 @@
 import { integer } from './minute-facts-track-descriptor.js';
 
+const DEFAULT_RECOVERY_SCAN_INTERVAL_MS = 60 * 60_000;
+
 function positiveInteger(value, fallback, maximum = Number.MAX_SAFE_INTEGER) {
   const parsed = integer(value);
   if (parsed == null || parsed <= 0) return fallback;
@@ -11,11 +13,36 @@ function text(value) {
   return parsed || null;
 }
 
+export function sparseRevisionRecoveryScanDue(
+  now = Date.now(),
+  intervalMs = DEFAULT_RECOVERY_SCAN_INTERVAL_MS,
+) {
+  const current = Math.max(0, integer(now) ?? 0);
+  const interval = positiveInteger(
+    intervalMs,
+    DEFAULT_RECOVERY_SCAN_INTERVAL_MS,
+    24 * 60 * 60_000,
+  );
+  return Math.floor(current / interval)
+    !== Math.floor(Math.max(0, current - 60_000) / interval);
+}
+
 export async function pendingSparseRevisionTasks(env, options = {}) {
   const db = env?.MINUTE_DB;
   if (!db?.prepare) return [];
   const limit = positiveInteger(options.limit, 1, 5);
   const now = integer(options.now) ?? Date.now();
+  // Explicit staleMs/force calls are diagnostics and tests. Production cron
+  // calls omit them and perform only the hourly indexed rescue scan; normal
+  // continuation is enqueued when the incomplete revision is created.
+  if (options.force !== true
+      && options.staleMs == null
+      && !sparseRevisionRecoveryScanDue(
+        now,
+        options.scanIntervalMs ?? env?.DERIVE_REVISION_RECOVERY_SCAN_INTERVAL_MS,
+      )) {
+    return [];
+  }
   const staleMs = positiveInteger(
     options.staleMs ?? env?.DERIVE_REVISION_RECOVERY_STALE_MS,
     2 * 60_000,
@@ -31,7 +58,7 @@ export async function pendingSparseRevisionTasks(env, options = {}) {
       json_extract(j.payload_json,'$.snapshot.broadcast_start_time') AS broadcast_start_time,
       json_extract(j.payload_json,'$.snapshot.is_broadcasting') AS is_broadcasting,
       json_extract(j.payload_json,'$.queue.is_paused') AS is_paused
-    FROM sh_queue_revisions r
+    FROM sh_queue_revisions r INDEXED BY idx_sh_queue_revisions_sparse_recovery
     JOIN sh_minute_fact_jobs j ON j.id=r.source_job_id
     WHERE r.source_job_id IS NOT NULL
       AND COALESCE(r.coverage_complete,0)=0

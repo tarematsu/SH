@@ -94,9 +94,10 @@ test('track-history reaches the read-model service so it can use R2 before D1', 
   }
 });
 
-test('private materialized responses bypass the shared Cache API', async () => {
+test('missing materialized service fails closed without invoking the D1 route', async () => {
   const originalCaches = globalThis.caches;
   let writes = 0;
+  let liveCalls = 0;
   globalThis.caches = {
     default: {
       async match() { return undefined; },
@@ -107,13 +108,16 @@ test('private materialized responses bypass the shared Cache API', async () => {
     const response = await onRequest({
       request: new Request('https://skrzk.test/api/history?mode=daily'),
       env: {},
-      next: async () => Response.json({ source: 'private' }, {
-        headers: { 'cache-control': 'private, no-store', vary: 'origin' },
-      }),
+      next: async () => {
+        liveCalls += 1;
+        return Response.json({ source: 'legacy-d1' });
+      },
       waitUntil() {},
     });
-    assert.equal(response.headers.get('x-edge-cache'), 'BYPASS');
-    assert.equal(response.headers.get('vary'), 'origin, accept-encoding');
+    assert.equal(response.status, 503);
+    assert.equal(response.headers.get('x-materialized-required'), '1');
+    assert.equal(response.headers.get('cache-control'), 'no-store');
+    assert.equal(liveCalls, 0);
     assert.equal(writes, 0);
   } finally {
     globalThis.caches = originalCaches;

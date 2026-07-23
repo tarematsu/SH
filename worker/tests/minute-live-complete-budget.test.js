@@ -61,7 +61,8 @@ test('live completion performs only the bounded job completion update', async ()
 
   assert.equal(result.meta.changes, 1);
   assert.match(calls[0][1], /UPDATE sh_minute_fact_jobs/);
-  assert.match(calls[0][1], /payload_json=CASE WHEN EXISTS/);
+  assert.match(calls[0][1], /payload_clearable=0/);
+  assert.doesNotMatch(calls[0][1], /sh_queue_revisions/);
   assert.deepEqual(calls[1], ['bind', [500, 500, 42]]);
   assert.deepEqual(calls[2], ['run']);
 });

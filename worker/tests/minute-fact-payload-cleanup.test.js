@@ -15,7 +15,7 @@ import {
 } from '../scripts/purge-completed-minute-fact-payloads.mjs';
 
 const migration = readFileSync(
-  new URL('../../database/facts-migrations/028_purge_completed_minute_fact_payloads.sql', import.meta.url),
+  new URL('../../database/facts-migrations/032_materialized_cleanup_ranking.sql', import.meta.url),
   'utf8',
 );
 const purgeScript = readFileSync(
@@ -45,7 +45,20 @@ function database() {
       materialized_item_count INTEGER NOT NULL DEFAULT 0,
       source_visible_count INTEGER,
       item_count INTEGER NOT NULL DEFAULT 0
+    );
+    CREATE TABLE sh_tracks(
+      id INTEGER PRIMARY KEY,title TEXT,artist TEXT,isrc TEXT,spotify_id TEXT
+    );
+    CREATE TABLE sh_track_counter_current(
+      occurrence_key TEXT PRIMARY KEY,observed_at INTEGER NOT NULL,
+      count_value INTEGER NOT NULL,track_key TEXT NOT NULL,track_id INTEGER,
+      isrc TEXT,spotify_id TEXT
     );`);
+  return db;
+}
+
+function applyMigration(db) {
+  db.exec(migration);
   return db;
 }
 
@@ -60,11 +73,13 @@ function response(result, options = {}) {
 }
 
 test('database workflow drains every eligible payload through batched D1 API requests', () => {
-  assert.doesNotMatch(migration, /UPDATE sh_minute_fact_jobs\s+SET payload_json='\{\}'\s+WHERE status='done'/);
+  assert.match(migration, /idx_sh_minute_fact_jobs_payload_clearable/);
+  assert.match(migration, /payload_clearable=CASE/);
   assert.match(purgeScript, /api\.cloudflare\.com\/client\/v4\/accounts/);
   assert.match(purgeScript, /payloadPurgeBatch/);
   assert.match(purgeScript, /statementsPerRequest/);
   assert.match(purgeScript, /minute_fact_payload_purge_retry/);
+  assert.match(purgeScript, /payload_clearable=1/);
   assert.doesNotMatch(purgeScript, /execFileSync|wranglerScript/);
   assert.doesNotMatch(purgeScript, /RETURNING id/);
   assert.doesNotMatch(purgeScript, /SUM\(LENGTH\(payload_json\)\)/);
@@ -79,11 +94,11 @@ test('database workflow drains every eligible payload through batched D1 API req
   assert.match(databaseWorkflow, /payload-purge:[\s\S]*?timeout-minutes: 120/);
 });
 
-test('payload purge request contains bounded updates and stops after a partial statement', () => {
+test('payload purge request contains bounded indexed updates', () => {
   const sql = payloadPurgeStatement(1000);
   assert.match(sql, /LIMIT 1000/);
-  assert.match(sql, /status='done'/);
-  assert.match(sql, /NOT EXISTS/);
+  assert.match(sql, /payload_clearable=1/);
+  assert.doesNotMatch(sql, /NOT EXISTS/);
   assert.doesNotMatch(sql, /RETURNING/);
 
   const payload = payloadPurgeBatch(1000, 3);
@@ -152,76 +167,70 @@ test('one purge invocation drains multiple statements and verifies completion', 
   });
 });
 
-test('bounded purge clears completed payloads and waits for incomplete revisions', () => {
+test('migration backfill marks only payloads without incomplete revisions', () => {
   const db = database();
-  db.exec(`INSERT INTO sh_minute_fact_jobs VALUES
+  db.exec(`INSERT INTO sh_minute_fact_jobs(
+      id,status,payload_json,processed_at,lease_until,last_error,updated_at
+    ) VALUES
       (1,'done','old-complete',100,NULL,NULL,100),
       (2,'done','revision-pending',100,NULL,NULL,100);
     INSERT INTO sh_queue_revisions VALUES(20,2,'pending',0,3,3);`);
+  applyMigration(db);
 
-  db.exec(migration);
+  assert.equal(db.prepare('SELECT payload_clearable FROM sh_minute_fact_jobs WHERE id=1').get().payload_clearable, 1);
+  assert.equal(db.prepare('SELECT payload_clearable FROM sh_minute_fact_jobs WHERE id=2').get().payload_clearable, 0);
   const cleared = db.prepare(CLEAR_COMPLETED_MINUTE_FACT_PAYLOADS_SQL).all(200, 1000);
   assert.deepEqual(cleared.map(({ id }) => id), [1]);
-  assert.equal(db.prepare('SELECT payload_json FROM sh_minute_fact_jobs WHERE id=1').get().payload_json, '{}');
-  assert.equal(
-    db.prepare('SELECT payload_json FROM sh_minute_fact_jobs WHERE id=2').get().payload_json,
-    'revision-pending',
-  );
 
   db.prepare(`UPDATE sh_queue_revisions SET
     status='complete',materialized_item_count=3 WHERE id=20`).run();
+  assert.equal(db.prepare('SELECT payload_clearable FROM sh_minute_fact_jobs WHERE id=2').get().payload_clearable, 1);
+  assert.equal(db.prepare('SELECT payload_json FROM sh_minute_fact_jobs WHERE id=2').get().payload_json, 'revision-pending');
+  db.prepare(CLEAR_COMPLETED_MINUTE_FACT_PAYLOADS_SQL).all(201, 1000);
   assert.equal(db.prepare('SELECT payload_json FROM sh_minute_fact_jobs WHERE id=2').get().payload_json, '{}');
 });
 
-test('bounded maintenance cleanup remains an idempotent fallback', () => {
-  const db = database();
-  db.exec(migration);
-  db.exec(`INSERT INTO sh_minute_fact_jobs VALUES
-      (6,'done','late-backlog',100,NULL,NULL,100);`);
+test('bounded maintenance cleanup remains idempotent', () => {
+  const db = applyMigration(database());
+  db.exec(`INSERT INTO sh_minute_fact_jobs(
+      id,status,payload_json,payload_clearable,processed_at,lease_until,last_error,updated_at
+    ) VALUES(6,'done','late-backlog',1,100,NULL,NULL,100);`);
   const cleared = db.prepare(CLEAR_COMPLETED_MINUTE_FACT_PAYLOADS_SQL).all(200, 1000);
   assert.deepEqual(cleared.map(({ id }) => id), [6]);
   assert.equal(db.prepare('SELECT payload_json FROM sh_minute_fact_jobs WHERE id=6').get().payload_json, '{}');
   assert.deepEqual(db.prepare(CLEAR_COMPLETED_MINUTE_FACT_PAYLOADS_SQL).all(201, 1000), []);
 });
 
-test('job completion clears immediately when its revision already finished', () => {
-  const db = database();
-  db.exec(migration);
-  db.exec(`INSERT INTO sh_minute_fact_jobs VALUES
-      (3,'processing','completion-last',NULL,999,NULL,100);
+test('job completion marks payload clearable when its revision already finished', () => {
+  const db = applyMigration(database());
+  db.exec(`INSERT INTO sh_minute_fact_jobs(
+      id,status,payload_json,payload_clearable,processed_at,lease_until,last_error,updated_at
+    ) VALUES(3,'processing','completion-last',0,NULL,999,NULL,100);
     INSERT INTO sh_queue_revisions VALUES(30,3,'complete',4,4,4);`);
 
   db.prepare(COMPLETE_MINUTE_FACT_JOB_SQL).run(200, 200, 3);
-  const row = db.prepare(`SELECT status,payload_json,processed_at,lease_until
+  const row = db.prepare(`SELECT status,payload_json,payload_clearable,processed_at,lease_until
     FROM sh_minute_fact_jobs WHERE id=3`).get();
   assert.deepEqual({ ...row }, {
     status: 'done',
-    payload_json: '{}',
+    payload_json: 'completion-last',
+    payload_clearable: 1,
     processed_at: 200,
     lease_until: null,
   });
 });
 
-test('database trigger also clears jobs completed outside the normal helper', () => {
-  const db = database();
-  db.exec(migration);
-  db.exec(`INSERT INTO sh_minute_fact_jobs VALUES
-      (5,'processing','trigger-completion',NULL,999,NULL,100);`);
-  db.exec(`UPDATE sh_minute_fact_jobs SET status='done',processed_at=200 WHERE id=5;`);
-  assert.equal(db.prepare('SELECT payload_json FROM sh_minute_fact_jobs WHERE id=5').get().payload_json, '{}');
-});
-
-test('one completed revision cannot clear a payload while another revision is pending', () => {
-  const db = database();
-  db.exec(migration);
-  db.exec(`INSERT INTO sh_minute_fact_jobs VALUES
-      (4,'done','two-revisions',100,NULL,NULL,100);
+test('one completed revision cannot mark a payload while another revision is pending', () => {
+  const db = applyMigration(database());
+  db.exec(`INSERT INTO sh_minute_fact_jobs(
+      id,status,payload_json,payload_clearable,processed_at,lease_until,last_error,updated_at
+    ) VALUES(4,'done','two-revisions',0,100,NULL,NULL,100);
     INSERT INTO sh_queue_revisions VALUES
       (40,4,'pending',0,2,2),
       (41,4,'pending',0,1,1);`);
 
   db.exec(`UPDATE sh_queue_revisions SET status='complete',materialized_item_count=2 WHERE id=40;`);
-  assert.equal(db.prepare('SELECT payload_json FROM sh_minute_fact_jobs WHERE id=4').get().payload_json, 'two-revisions');
+  assert.equal(db.prepare('SELECT payload_clearable FROM sh_minute_fact_jobs WHERE id=4').get().payload_clearable, 0);
   db.exec(`UPDATE sh_queue_revisions SET status='complete',materialized_item_count=1 WHERE id=41;`);
-  assert.equal(db.prepare('SELECT payload_json FROM sh_minute_fact_jobs WHERE id=4').get().payload_json, '{}');
+  assert.equal(db.prepare('SELECT payload_clearable FROM sh_minute_fact_jobs WHERE id=4').get().payload_clearable, 1);
 });

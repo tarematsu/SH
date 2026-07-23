@@ -1,20 +1,11 @@
+import { COMPLETE_MINUTE_FACT_JOB_SQL } from './minute-facts-inbox.js';
 import { budgetedLiveCompleteMessage } from './minute-live-complete-message.js';
 
 const RETRY_60_SECONDS = Object.freeze({ delaySeconds: 60 });
 
 export { budgetedLiveCompleteMessage };
 
-export const COMPLETE_LIVE_MINUTE_FACT_JOB_SQL = `UPDATE sh_minute_fact_jobs SET
-    status='done',lease_until=NULL,processed_at=?,last_error=NULL,
-    payload_json=CASE WHEN EXISTS (
-      SELECT 1 FROM sh_queue_revisions revisions
-      WHERE revisions.source_job_id=sh_minute_fact_jobs.id
-        AND (revisions.status<>'complete'
-          OR COALESCE(revisions.materialized_item_count,0)
-            <COALESCE(revisions.source_visible_count,revisions.item_count,0))
-    ) THEN payload_json ELSE '{}' END,
-    updated_at=?
-  WHERE id=? AND status='processing'`;
+export const COMPLETE_LIVE_MINUTE_FACT_JOB_SQL = COMPLETE_MINUTE_FACT_JOB_SQL;
 
 function integer(value) {
   const parsed = Number(value);

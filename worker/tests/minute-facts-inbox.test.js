@@ -32,22 +32,23 @@ test('minute fact inbox payload preserves raw capture input until generation com
 test('minute fact inbox schema is unique per channel minute and indexed for pending work', () => {
   assert.match(MINUTE_FACT_INBOX_SCHEMA_SQL, /UNIQUE\(channel_id, minute_at\)/);
   assert.match(MINUTE_FACT_INBOX_SCHEMA_SQL, /payload_json TEXT NOT NULL/);
+  assert.match(MINUTE_FACT_INBOX_SCHEMA_SQL, /payload_clearable INTEGER NOT NULL DEFAULT 0/);
   assert.match(MINUTE_FACT_INBOX_INDEX_SQL, /status, job_priority DESC, next_attempt_at, minute_at/);
 });
 
-test('job completion clears its payload only after dependent revisions are complete', () => {
+test('job completion delegates payload eligibility to update-time triggers', () => {
   assert.match(COMPLETE_MINUTE_FACT_JOB_SQL, /status='done'/);
-  assert.match(COMPLETE_MINUTE_FACT_JOB_SQL, /source_job_id=sh_minute_fact_jobs\.id/);
-  assert.match(COMPLETE_MINUTE_FACT_JOB_SQL, /revisions\.status<>'complete'/);
-  assert.match(COMPLETE_MINUTE_FACT_JOB_SQL, /materialized_item_count/);
-  assert.match(COMPLETE_MINUTE_FACT_JOB_SQL, /THEN payload_json ELSE '\{\}' END/);
+  assert.match(COMPLETE_MINUTE_FACT_JOB_SQL, /payload_clearable=0/);
+  assert.doesNotMatch(COMPLETE_MINUTE_FACT_JOB_SQL, /sh_queue_revisions/);
+  assert.doesNotMatch(COMPLETE_MINUTE_FACT_JOB_SQL, /payload_json=CASE/);
 });
 
-test('bounded fallback cleanup preserves payloads that an incomplete revision still needs', () => {
-  assert.match(CLEAR_COMPLETED_MINUTE_FACT_PAYLOADS_SQL, /jobs\.status='done'/);
+test('bounded cleanup seeks only precomputed clearable payloads', () => {
+  assert.match(CLEAR_COMPLETED_MINUTE_FACT_PAYLOADS_SQL, /jobs\.payload_clearable=1/);
   assert.match(CLEAR_COMPLETED_MINUTE_FACT_PAYLOADS_SQL, /LENGTH\(jobs\.payload_json\)>2/);
   assert.match(CLEAR_COMPLETED_MINUTE_FACT_PAYLOADS_SQL, /payload_json='\{\}'/);
-  assert.match(CLEAR_COMPLETED_MINUTE_FACT_PAYLOADS_SQL, /NOT EXISTS/);
+  assert.match(CLEAR_COMPLETED_MINUTE_FACT_PAYLOADS_SQL, /payload_clearable=0/);
+  assert.doesNotMatch(CLEAR_COMPLETED_MINUTE_FACT_PAYLOADS_SQL, /NOT EXISTS/);
   assert.match(CLEAR_COMPLETED_MINUTE_FACT_PAYLOADS_SQL, /LIMIT \?/);
   assert.match(CLEAR_COMPLETED_MINUTE_FACT_PAYLOADS_SQL, /RETURNING id/);
 });
