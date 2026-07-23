@@ -1,3 +1,4 @@
+import { sanitizeFailureDetail } from './collector-failure.js';
 import { saveMaterializedR2Response } from './pages-response-r2.js';
 
 const RESPONSE_KEY_PREFIX = 'pages-response:v1:';
@@ -24,6 +25,11 @@ function persistedHeaders(response) {
   return headers;
 }
 
+function responseFailureDetail(payload) {
+  const detail = sanitizeFailureDetail(payload?.error || payload?.message || '');
+  return detail ? `: ${detail}` : '';
+}
+
 export async function saveMaterializedResponse(
   _db,
   kv,
@@ -35,6 +41,14 @@ export async function saveMaterializedResponse(
 ) {
   const key = pagesResponseKey(modelKey);
   if (!key) throw new Error('materialized response key is invalid');
+  if (response.headers.get('x-dashboard-facts-stale') === '1') {
+    const observedAt = Number(response.headers.get('x-dashboard-facts-observed-at'));
+    return {
+      skipped: true,
+      reason: 'facts-stale',
+      facts_latest_observed_at: Number.isFinite(observedAt) && observedAt > 0 ? observedAt : null,
+    };
+  }
   const body = await response.text();
   let payload;
   try {
@@ -42,7 +56,9 @@ export async function saveMaterializedResponse(
   } catch {
     throw new Error(`${modelKey} did not return JSON`);
   }
-  if (!response.ok) throw new Error(`${modelKey} returned HTTP ${response.status}`);
+  if (!response.ok) {
+    throw new Error(`${modelKey} returned HTTP ${response.status}${responseFailureDetail(payload)}`);
+  }
   if (payload?.setup_required) throw new Error(`${modelKey} read model is not ready`);
 
   const headers = persistedHeaders(response);

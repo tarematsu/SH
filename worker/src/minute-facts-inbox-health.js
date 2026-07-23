@@ -1,5 +1,7 @@
-import { ensureMinuteFactInboxSchema } from './minute-facts-inbox.js';
+import { minuteFactInboxStats } from './minute-facts-inbox.js';
 
+// Kept for compatibility with diagnostics that identify the retired aggregate
+// shape. Runtime health reads must use sh_minute_fact_inbox_stats instead.
 export const MINUTE_FACT_INBOX_HEALTH_SQL = `SELECT
     pending.pending_count,
     processing.processing_count,
@@ -28,14 +30,5 @@ export const MINUTE_FACT_INBOX_HEALTH_SQL = `SELECT
   ) dead`;
 
 export async function minuteFactInboxHealth(env) {
-  await ensureMinuteFactInboxSchema(env);
-  const row = await env.MINUTE_DB.prepare(MINUTE_FACT_INBOX_HEALTH_SQL).first();
-  return {
-    pending_count: Number(row?.pending_count || 0),
-    processing_count: Number(row?.processing_count || 0),
-    dead_count: Number(row?.dead_count || 0),
-    rebuild_pending_count: Number(row?.rebuild_pending_count || 0),
-    live_pending_count: Number(row?.live_pending_count || 0),
-    oldest_pending_minute: row?.oldest_pending_minute == null ? null : Number(row.oldest_pending_minute),
-  };
+  return minuteFactInboxStats(env);
 }

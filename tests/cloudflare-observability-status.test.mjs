@@ -35,6 +35,7 @@ test('observability status body is stable, sanitized, and fail-closed', () => {
   const body = buildIssueBody({
     generatedAt: '2026-07-23T01:00:00.000Z',
     targetSha: 'abcdef123456',
+    mainSha: 'fedcba654321',
     runUrl: 'https://github.com/tarematsu/SH/actions/runs/123',
     trigger: 'schedule',
     outcomes: {
@@ -49,12 +50,29 @@ test('observability status body is stable, sanitized, and fail-closed', () => {
       daily: '## Daily usage\n\nD1 rows read: 10',
       freeTier: '## Included usage\n\nQueue operations: 20',
     },
+    activeDeployments: {
+      'sh-runtime-orchestrator': {
+        deployment_id: 'deployment-123',
+        version_ids: ['version-a'],
+        created_on: '2026-07-23T00:55:00Z',
+      },
+    },
+    recentMerges: [{
+      number: 591,
+      title: 'Deploy runtime after migrations',
+      merge_commit_sha: 'merge-sha-591',
+      merged_at: '2026-07-23T00:50:00Z',
+    }],
   });
 
   assert.match(body, new RegExp(STATUS_MARKER.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
   assert.match(body, /\*\*Overall:\*\* failure/);
   assert.match(body, /\| freeTier \| failure \|/);
-  assert.match(body, /abcdef123456/);
+  assert.match(body, /Workflow source commit:\*\* `abcdef123456`/);
+  assert.match(body, /Current main SHA:\*\* `fedcba654321`/);
+  assert.match(body, /deployment-123/);
+  assert.match(body, /version-a/);
+  assert.match(body, /#591 Deploy runtime after migrations/);
   assert.match(body, /Queue operations: 20/);
 });
 
@@ -71,9 +89,12 @@ test('observability workflow publishes retrievable commit statuses and issue sum
   assert.match(workflow, /^\s{2}statuses: write$/m);
   assert.match(workflow, /id: policy-self-test/);
   assert.match(workflow, /publish-cloudflare-observability-status\.mjs --self-test/);
+  assert.match(workflow, /ACTIVE_WORKER_DEPLOYMENTS_OUTPUT: active-worker-deployments\.json/);
+  assert.match(workflow, /active-worker-deployments\.json/);
   assert.match(workflow, /id: publish-status/);
   assert.match(workflow, /if: always\(\)/);
   assert.match(workflow, /OBSERVABILITY_TARGET_SHA:/);
+  assert.match(workflow, /OBSERVABILITY_MAIN_REF: main/);
   assert.match(workflow, /steps\.policy-self-test\.outcome/);
   assert.match(workflow, /steps\.publish-status\.outcome == 'failure'/);
   assert.match(workflow, /cloudflare-observability-report-sh-/);

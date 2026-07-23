@@ -41,18 +41,52 @@ async function readOptional(path) {
   }
 }
 
+async function readOptionalJson(path) {
+  const text = await readOptional(path);
+  if (!text) return {};
+  try {
+    const value = JSON.parse(text);
+    return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+  } catch {
+    return {};
+  }
+}
+
 function section(title, body) {
   if (!body) return '';
   return `\n<details>\n<summary>${title}</summary>\n\n${body}\n\n</details>\n`;
 }
 
+function deploymentSummary(activeDeployments) {
+  const entries = Object.entries(activeDeployments || {});
+  const rows = entries.length
+    ? entries.map(([worker, deployment]) => {
+      const versions = Array.isArray(deployment?.version_ids)
+        ? deployment.version_ids.join(', ')
+        : String(deployment?.version_ids || 'unknown');
+      return `| \`${worker}\` | \`${deployment?.deployment_id || 'unknown'}\` | \`${versions || 'unknown'}\` | ${deployment?.created_on || 'unknown'} |`;
+    }).join('\n')
+    : '| - | not captured | not captured | not captured |';
+  return `### Active Worker deployments\n\n| Worker | Deployment | Traffic-bearing versions | Deployed at |\n|---|---|---|---|\n${rows}`;
+}
+
+function recentMergeSummary(recentMerges) {
+  const rows = (Array.isArray(recentMerges) ? recentMerges : []).slice(0, 5).map((pull) => (
+    `- #${pull.number} ${String(pull.title || '').replace(/\s+/g, ' ').trim()} (\`${pull.merge_commit_sha || 'unknown'}\`, ${pull.merged_at || 'unknown'})`
+  ));
+  return rows.length ? `### Recent merged changes on main\n\n${rows.join('\n')}` : '';
+}
+
 export function buildIssueBody({
   generatedAt,
   targetSha,
+  mainSha = 'unknown',
   runUrl,
   trigger,
   outcomes,
   summaries = {},
+  activeDeployments = {},
+  recentMerges = [],
 }) {
   const overall = overallOutcome(outcomes);
   const rows = Object.entries(outcomes)
@@ -66,8 +100,13 @@ This issue is maintained automatically by the Cloudflare Observability workflow.
 - **Overall:** ${overall}
 - **Generated:** ${generatedAt}
 - **Trigger:** ${trigger}
-- **Commit:** \`${targetSha}\`
+- **Workflow source commit:** \`${targetSha}\`
+- **Current main SHA:** \`${mainSha}\`
 - **Workflow run:** ${runUrl}
+
+${deploymentSummary(activeDeployments)}
+
+${recentMergeSummary(recentMerges)}
 
 | Gate | Outcome |
 |---|---|
@@ -162,6 +201,33 @@ async function upsertStatusIssue(body) {
   });
 }
 
+async function currentMainSha() {
+  const mainRef = String(process.env.OBSERVABILITY_MAIN_REF || 'main').trim() || 'main';
+  try {
+    const commit = await githubRequest('GET', `/commits/${encodeURIComponent(mainRef)}`);
+    return String(commit?.sha || 'unknown');
+  } catch {
+    return 'unknown';
+  }
+}
+
+async function recentMergedPullRequests() {
+  try {
+    const pulls = await githubRequest('GET', '/pulls?state=closed&base=main&sort=updated&direction=desc&per_page=20');
+    return (Array.isArray(pulls) ? pulls : [])
+      .filter((pull) => pull?.merged_at)
+      .slice(0, 5)
+      .map((pull) => ({
+        number: pull.number,
+        title: pull.title,
+        merge_commit_sha: pull.merge_commit_sha,
+        merged_at: pull.merged_at,
+      }));
+  } catch {
+    return [];
+  }
+}
+
 export async function publishFromEnvironment() {
   const targetSha = requiredEnv('OBSERVABILITY_TARGET_SHA');
   const runUrl = requiredEnv('OBSERVABILITY_RUN_URL');
@@ -173,19 +239,25 @@ export async function publishFromEnvironment() {
     query: process.env.OBSERVABILITY_QUERY_OUTCOME,
     telemetry: process.env.TELEMETRY_POLICY_OUTCOME,
   };
-  const summaries = {
-    daily: await readOptional('daily-usage/summary.md'),
-    freeTier: await readOptional('free-tier-usage/summary.md'),
-    contract: await readOptional('observability-gate/summary.md'),
-    observability: await readOptional('observability-summary.md'),
-  };
+  const [mainSha, activeDeployments, recentMerges, daily, freeTier, contract, observability] = await Promise.all([
+    currentMainSha(),
+    readOptionalJson('active-worker-deployments.json'),
+    recentMergedPullRequests(),
+    readOptional('daily-usage/summary.md'),
+    readOptional('free-tier-usage/summary.md'),
+    readOptional('observability-gate/summary.md'),
+    readOptional('observability-summary.md'),
+  ]);
   const body = buildIssueBody({
     generatedAt: new Date().toISOString(),
     targetSha,
+    mainSha,
     runUrl,
     trigger: process.env.OBSERVABILITY_TRIGGER || 'unknown',
     outcomes,
-    summaries,
+    summaries: { daily, freeTier, contract, observability },
+    activeDeployments,
+    recentMerges,
   });
   await publishCommitStatuses(targetSha, runUrl, outcomes);
   const issue = await upsertStatusIssue(body);
@@ -200,14 +272,31 @@ function selfTest() {
   const body = buildIssueBody({
     generatedAt: '2026-07-23T00:00:00.000Z',
     targetSha: 'abc123',
+    mainSha: 'def456',
     runUrl: 'https://github.com/tarematsu/SH/actions/runs/1',
     trigger: 'workflow_run',
     outcomes: { policy: 'success', daily: 'failure' },
     summaries: { daily: '## Daily\n\n| Metric | Value |\n|---|---:|\n| D1 | 1 |' },
+    activeDeployments: {
+      worker: {
+        deployment_id: 'deployment-1',
+        version_ids: ['version-1'],
+        created_on: '2026-07-23T00:00:00Z',
+      },
+    },
+    recentMerges: [{
+      number: 591,
+      title: 'Deploy runtime after migrations',
+      merge_commit_sha: 'merge591',
+      merged_at: '2026-07-23T00:01:00Z',
+    }],
   });
   assert.match(body, /Cloudflare Observability Status/);
   assert.match(body, /\| daily \| failure \|/);
-  assert.match(body, /abc123/);
+  assert.match(body, /Workflow source commit:\*\* `abc123`/);
+  assert.match(body, /Current main SHA:\*\* `def456`/);
+  assert.match(body, /deployment-1/);
+  assert.match(body, /#591/);
   assert.match(body, /UTC daily request and D1 budgets/);
   console.log('observability status publisher self-test passed');
 }

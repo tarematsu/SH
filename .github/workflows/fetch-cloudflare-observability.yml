@@ -138,6 +138,7 @@ jobs:
         continue-on-error: true
         env:
           LIVE_TAIL_LOG: live-tail.log
+          ACTIVE_WORKER_DEPLOYMENTS_OUTPUT: active-worker-deployments.json
         shell: bash
         run: |
           set -o pipefail
@@ -150,6 +151,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
           OBSERVABILITY_TARGET_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+          OBSERVABILITY_MAIN_REF: main
           OBSERVABILITY_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           OBSERVABILITY_TRIGGER: ${{ github.event_name }}
           POLICY_OUTCOME: ${{ steps.policy-self-test.outcome }}
@@ -175,6 +177,7 @@ jobs:
             observability-summary.md
             observability-query.log
             telemetry-audit.log
+            active-worker-deployments.json
             live-tail.log
           if-no-files-found: warn
           retention-days: 1

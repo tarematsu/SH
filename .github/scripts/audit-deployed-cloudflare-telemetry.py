@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 import sys
 import urllib.parse
 from pathlib import Path
@@ -19,7 +20,7 @@ audit = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(audit)
 
 
-def deployment_versions(response: dict[str, Any]) -> tuple[str, set[str]]:
+def deployment_versions(response: dict[str, Any]) -> tuple[str, set[str], str]:
     result = response.get("result") if isinstance(response, dict) else None
     deployments = result.get("deployments") if isinstance(result, dict) else None
     if not isinstance(deployments, list) or not deployments:
@@ -36,21 +37,25 @@ def deployment_versions(response: dict[str, Any]) -> tuple[str, set[str]]:
     }
     if not active:
         raise RuntimeError("Cloudflare active Worker deployment has no traffic-bearing version")
-    return str(deployment.get("id") or ""), active
+    created_on = str(deployment.get("created_on") or deployment.get("created_at") or "")
+    return str(deployment.get("id") or ""), active, created_on
 
 
-def active_deployments(account: str) -> tuple[dict[str, set[str]], dict[str, str]]:
+def active_deployments(account: str) -> tuple[dict[str, set[str]], dict[str, dict[str, str]]]:
     versions: dict[str, set[str]] = {}
-    deployment_ids: dict[str, str] = {}
+    metadata: dict[str, dict[str, str]] = {}
     for worker in audit.WORKERS:
         encoded = urllib.parse.quote(worker, safe="")
         response = audit.request_json(
             f"{audit.API_BASE}/accounts/{account}/workers/scripts/{encoded}/deployments"
         )
-        deployment_id, active = deployment_versions(response)
+        deployment_id, active, created_on = deployment_versions(response)
         versions[worker] = active
-        deployment_ids[worker] = deployment_id
-    return versions, deployment_ids
+        metadata[worker] = {
+            "deployment_id": deployment_id,
+            "created_on": created_on,
+        }
+    return versions, metadata
 
 
 def deployed_current_events(
@@ -96,6 +101,7 @@ def self_test() -> int:
         "result": {
             "deployments": [{
                 "id": "deployment-1",
+                "created_on": "2026-07-23T12:34:56.000Z",
                 "versions": [
                     {"version_id": "v2", "percentage": 90},
                     {"version_id": "v3", "percentage": 10},
@@ -104,9 +110,10 @@ def self_test() -> int:
             }]
         }
     }
-    deployment_id, active = deployment_versions(response)
+    deployment_id, active, created_on = deployment_versions(response)
     assert deployment_id == "deployment-1"
     assert active == {"v2", "v3"}
+    assert created_on == "2026-07-23T12:34:56.000Z"
 
     old_late = {
         "timestamp": "2026-07-22T02:00:00Z",
@@ -156,14 +163,21 @@ def main() -> int:
     if not audit.TOKEN or not audit.WORKERS:
         raise RuntimeError("Cloudflare token and Worker list are required")
     account = audit.account_id()
-    active, deployment_ids = active_deployments(account)
-    print("ACTIVE_WORKER_DEPLOYMENTS=" + json.dumps({
+    active, deployment_metadata = active_deployments(account)
+    payload = {
         worker: {
-            "deployment_id": deployment_ids[worker],
+            "deployment_id": deployment_metadata[worker]["deployment_id"],
             "version_ids": sorted(active[worker]),
+            "created_on": deployment_metadata[worker]["created_on"],
         }
         for worker in audit.WORKERS
-    }, separators=(",", ":")))
+    }
+    output_path = str(os.environ.get("ACTIVE_WORKER_DEPLOYMENTS_OUTPUT") or "").strip()
+    if output_path:
+        target = Path(output_path)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(json.dumps(payload, separators=(",", ":")) + "\n", encoding="utf-8")
+    print("ACTIVE_WORKER_DEPLOYMENTS=" + json.dumps(payload, separators=(",", ":")))
     audit.current_events = lambda persisted, live: deployed_current_events(persisted, live, active)
     return audit.main()
 

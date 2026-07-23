@@ -5,10 +5,8 @@ import {
   deriveDispatchStateCheckpointDue,
   dispatchPendingMinuteFacts,
 } from '../src/minute-maintenance-entry.js';
-import {
-  MINUTE_FACT_INBOX_HEALTH_SQL,
-  minuteFactInboxHealth,
-} from '../src/minute-facts-inbox-health.js';
+import { minuteFactInboxHealth } from '../src/minute-facts-inbox-health.js';
+import { MINUTE_FACT_INBOX_STATS_SQL } from '../src/minute-facts-inbox.js';
 
 const MINUTE_MS = 60_000;
 
@@ -62,7 +60,7 @@ test('dispatched work refreshes health immediately outside the checkpoint slot',
   assert.equal(summary.pending_count, 1);
 });
 
-test('minute inbox health uses three partial-index probes and one pending scan', async () => {
+test('minute inbox health delegates to the single persisted counter row', async () => {
   let sql = '';
   const result = await minuteFactInboxHealth({
     MINUTE_DB: {
@@ -84,9 +82,7 @@ test('minute inbox health uses three partial-index probes and one pending scan',
     },
   });
   assert.equal(result.pending_count, 2);
-  assert.equal((sql.match(/WHERE status='pending'/g) || []).length, 1);
-  assert.equal((sql.match(/WHERE status='processing'/g) || []).length, 1);
-  assert.equal((sql.match(/WHERE status='dead'/g) || []).length, 1);
-  assert.match(sql, /COUNT\(\*\) FILTER \(WHERE job_kind='rebuild'\)/);
-  assert.equal(sql, MINUTE_FACT_INBOX_HEALTH_SQL);
+  assert.equal(sql, MINUTE_FACT_INBOX_STATS_SQL);
+  assert.match(sql, /FROM sh_minute_fact_inbox_stats/);
+  assert.doesNotMatch(sql, /COUNT\(\*\)|MIN\(minute_at\)/);
 });
