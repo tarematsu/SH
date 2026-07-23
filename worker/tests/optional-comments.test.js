@@ -36,16 +36,18 @@ test('zero CHAT_LIMIT disables optional comment collection', async () => {
   assert.equal(requests, 0);
 });
 
-test('consolidated core Worker disables inline comments and bounds the comments Queue lane', () => {
+test('dedicated collector disables inline comments and bounds the comments Queue lane', () => {
+  const collector = workerConfig('wrangler.buddies-collector.jsonc');
   const runtime = workerConfig('wrangler.runtime.jsonc');
   const entry = readFileSync(new URL('../src/ingest-channel-optimized-entry.js', import.meta.url), 'utf8');
-  const comments = runtime.queues.consumers.find(({ queue }) => queue === 'stationhead-comments');
+  const comments = collector.queues.consumers.find(({ queue }) => queue === 'stationhead-comments');
 
-  assert.equal(runtime.name, 'sh-runtime-orchestrator');
-  assert.equal(configFromEnv(runtime.vars).chatLimit, 0);
+  assert.equal(collector.name, 'sh-buddies-collector');
+  assert.equal(configFromEnv(collector.vars).chatLimit, 0);
   assert.equal(comments.max_batch_size, 1);
   assert.equal(comments.max_concurrency, 1);
-  assert.equal(runtime.vars.COMMENT_CHAIN_MAX_ATTEMPTS, 1);
+  assert.equal(collector.vars.COMMENT_CHAIN_MAX_ATTEMPTS, 1);
+  assert.equal(runtime.queues.consumers.some(({ queue }) => queue === 'stationhead-comments'), false);
   assert.match(entry, /CHAT_LIMIT: \{ value: 25/);
 });
 

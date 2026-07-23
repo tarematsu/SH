@@ -32,6 +32,7 @@ on:
           - pages
           - workers
           - sakurazaka46jp
+          - buddies-collector
           - runtime
 
 permissions:
@@ -87,6 +88,9 @@ jobs:
                 ;;
               sakurazaka46jp)
                 selection='{"workers":["sh-sakurazaka46jp"],"commands":["deploy:sakurazaka46jp"]}'
+                ;;
+              buddies-collector)
+                selection='{"workers":["sh-buddies-collector"],"commands":["deploy:buddies-collector"]}'
                 ;;
               runtime)
                 minute_db=true

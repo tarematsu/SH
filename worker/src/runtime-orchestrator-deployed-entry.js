@@ -95,6 +95,30 @@ export async function runFetchCoordinatedScheduled(controller, env, ctx, depende
   return result;
 }
 
+async function skipDedicatedRawCollection() {
+  return { skipped: true, reason: 'dedicated-buddies-collector' };
+}
+
+export async function runRuntimeOrchestratorScheduled(
+  controller,
+  env,
+  ctx,
+  dependencies = {},
+) {
+  const direct = dependencies.direct || {};
+  const runtime = direct.runtime || {};
+  return runFetchCoordinatedScheduled(controller, env, ctx, {
+    ...dependencies,
+    direct: {
+      ...direct,
+      runtime: {
+        ...runtime,
+        dispatchRawCollection: runtime.dispatchRawCollection || skipDedicatedRawCollection,
+      },
+    },
+  });
+}
+
 // Fetch-based Durable Object dispatch works with both legacy and current module
 // syntax and avoids invoking RPC methods on a class that does not extend the
 // special DurableObject base class.
@@ -122,5 +146,5 @@ export class RuntimeCoordinator extends StoredRuntimeCoordinator {
 export default {
   fetch: baseWorker.fetch,
   queue: baseWorker.queue,
-  scheduled: runFetchCoordinatedScheduled,
+  scheduled: runRuntimeOrchestratorScheduled,
 };
