@@ -3,6 +3,7 @@ import test from 'node:test';
 
 import { runDispatchedPagesReadModelTask } from '../src/pages-read-model-dispatch.js';
 import {
+  loadTrackHistoryDayReadModel,
   materializeTrackHistoryRangeThroughR2,
   trackHistoryDayShardRanges,
 } from '../src/pages-track-history-r2-shards.js';
@@ -25,7 +26,10 @@ class FakeR2 {
     this.gets += 1;
     const value = this.values.get(key);
     if (value == null) return null;
-    return { async json() { return JSON.parse(value); } };
+    return {
+      async json() { return JSON.parse(value); },
+      async text() { return value; },
+    };
   }
 }
 
@@ -93,23 +97,30 @@ function dependencies(range) {
   };
 }
 
-test('track-history aliases BUDDIES_DB to compact MINUTE_DB before running a shard', async () => {
+test('track-history env preserves non-enumerable Cloudflare bindings while aliasing BUDDIES_DB', async () => {
   const minuteDb = {};
+  const r2 = new FakeR2();
+  const env = { MINUTE_DB: minuteDb };
+  Object.defineProperty(env, 'PAGES_RESPONSE_R2', {
+    value: r2,
+    enumerable: false,
+  });
   let observedEnv;
-  await runDispatchedPagesReadModelTask({
-    MINUTE_DB: minuteDb,
-    PAGES_RESPONSE_R2: new FakeR2(),
-  }, DAY_START, {
-    async runTrackHistoryStep(env) {
-      observedEnv = env;
+  let observedDependencies;
+  await runDispatchedPagesReadModelTask(env, DAY_START, {
+    async runTrackHistoryStep(activeEnv, _timestamp, activeDependencies) {
+      observedEnv = activeEnv;
+      observedDependencies = activeDependencies;
       return { skipped: true };
     },
   });
   assert.equal(observedEnv.MINUTE_DB, minuteDb);
   assert.equal(observedEnv.BUDDIES_DB, minuteDb);
+  assert.equal(observedEnv.PAGES_RESPONSE_R2, r2);
+  assert.equal(typeof observedDependencies.refreshDay, 'function');
 });
 
-test('seven shards stay in R2 and only the final shard rewrites the canonical day', async () => {
+test('seven staging shards stay in R2 and the final shard writes a stable day model', async () => {
   const r2 = new FakeR2();
   const db = new FakeDb();
   const ranges = trackHistoryDayShardRanges({ fromTs: DAY_START, toTs: DAY_START + 3 * 60 * 60_000 });
@@ -133,14 +144,17 @@ test('seven shards stay in R2 and only the final shard rewrites the canonical da
       assert.equal(result.storage, 'r2-shard');
       assert.equal(db.batches.length, 0);
     } else {
-      assert.equal(result.storage, 'd1-day');
+      assert.equal(result.storage, 'r2-day+d1-day');
       assert.equal(result.rows, 1);
       assert.equal(result.stagedRows, 8);
     }
   }
 
-  assert.equal(r2.puts, 8);
-  assert.equal(r2.gets, 8);
+  const day = await loadTrackHistoryDayReadModel(r2, '2026-07-23');
+  assert.equal(day.payload.rows.length, 1);
+  assert.equal(day.payload.rows[0].play_count, 8);
+  assert.equal(r2.puts, 9);
+  assert.equal(r2.gets, 9);
   assert.equal(db.batches.length, 1);
   assert.equal(db.batches[0].length, 1);
   assert.equal(db.deletes.length, 1);
