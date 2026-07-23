@@ -2,6 +2,11 @@ import { withMinuteD1WriteThrottling } from './minute-d1-write-throttle.js';
 import {
   processMinuteDeriveMessage,
 } from './minute-derive-router.js';
+import { saveOptimizedMinuteFactWithinBudget } from './minute-facts-fast-store.js';
+import {
+  MINUTE_DIRECT_LIVE_DERIVE_MESSAGE_TYPE,
+  parseDirectLiveMinuteDeriveMessage,
+} from './minute-derive-trigger.js';
 
 export const LIVE_DERIVE_QUEUE_NAME = 'stationhead-minute-live-derive';
 export const REBUILD_DERIVE_QUEUE_NAME = 'stationhead-minute-derive';
@@ -104,6 +109,25 @@ function revisionMaterializationMessage(body) {
     && body?.stage === 'revision-materialize';
 }
 
+function directLiveMessage(body) {
+  return body?.message_type === MINUTE_DIRECT_LIVE_DERIVE_MESSAGE_TYPE;
+}
+
+async function processDirectLiveMessage(env, body, dependencies = {}) {
+  const message = parseDirectLiveMinuteDeriveMessage(body);
+  const write = dependencies.writeDirectLive || saveOptimizedMinuteFactWithinBudget;
+  await write(env, message.payload);
+  return {
+    event: 'minute_fact_live_direct',
+    processed: 1,
+    processed_live: 1,
+    processed_rebuild: 0,
+    failed: 0,
+    direct: true,
+    job_id: message.job_id,
+  };
+}
+
 function revisionSourceStartedAt(body) {
   return integer(body?.started_at)
     ?? integer(body?.revision?.enrichment?.observed_at)
@@ -144,7 +168,7 @@ export async function retireUnavailableRevisionSource(env, body, now = Date.now(
     .first();
   return integer(row?.source_job_id) === sourceJobId
     && String(row?.status || '') === 'complete'
-    && Math.max(0, integer(row?.source_visible_count) ?? 0)
+    && Math.max(0, integer(row?.source_visible_item_count) ?? integer(row?.source_visible_count) ?? 0)
       <= Math.max(0, integer(row?.materialized_item_count) ?? 0);
 }
 
@@ -188,7 +212,9 @@ async function processOneMinuteDeriveMessage(message, activeEnv, queueName, depe
   const refreshContinuation = dependencies.refreshContinuation || refreshSparseRevisionContinuation;
   const retireSource = dependencies.retireUnavailableSource || retireUnavailableRevisionSource;
   try {
-    const result = await processMessage(activeEnv, message.body);
+    const result = directLiveMessage(message.body)
+      ? await processDirectLiveMessage(activeEnv, message.body, dependencies)
+      : await processMessage(activeEnv, message.body);
     logMinuteDeriveResult(result, queueName);
     if (result?.failed && !result.terminal && result.retry_message !== false) {
       const retryDelayMs = result.retry_delay_ms;
