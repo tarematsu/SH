@@ -78,9 +78,9 @@ BEGIN
   WHERE id=NEW.source_job_id;
 END;
 
--- Resolve track identity once when the latest occurrence counter changes. Public
--- ranking reads then scan one compact row per identity instead of every current
--- queue occurrence.
+-- Resolve identity once when an occurrence counter changes. One compact row per
+-- occurrence preserves the old identity during updates so both the old and new
+-- identity winners can be repaired without rescanning the source tables.
 DROP VIEW IF EXISTS sh_track_ranking_candidates;
 CREATE VIEW sh_track_ranking_candidates AS
 SELECT resolved.*,
@@ -116,6 +116,23 @@ FROM (
 WHERE TRIM(COALESCE(resolved.artist,'')) LIKE '櫻坂%'
    OR UPPER(TRIM(COALESCE(resolved.isrc,''))) LIKE 'JP%';
 
+CREATE TABLE IF NOT EXISTS sh_track_ranking_occurrence (
+  occurrence_key TEXT PRIMARY KEY,
+  track_identity TEXT NOT NULL,
+  track_id INTEGER,
+  title TEXT,
+  artist TEXT,
+  isrc TEXT,
+  spotify_id TEXT,
+  latest_like_count INTEGER NOT NULL,
+  latest_observed_at INTEGER NOT NULL
+) WITHOUT ROWID;
+
+CREATE INDEX IF NOT EXISTS idx_sh_track_ranking_occurrence_identity
+ON sh_track_ranking_occurrence(
+  track_identity,latest_observed_at DESC,occurrence_key DESC
+);
+
 CREATE TABLE IF NOT EXISTS sh_track_ranking_current (
   track_identity TEXT PRIMARY KEY,
   track_id INTEGER,
@@ -135,48 +152,68 @@ ON sh_track_ranking_current(
 CREATE INDEX IF NOT EXISTS idx_sh_track_ranking_current_observed
 ON sh_track_ranking_current(latest_observed_at DESC,track_identity);
 
+DELETE FROM sh_track_ranking_occurrence;
+INSERT INTO sh_track_ranking_occurrence(
+  occurrence_key,track_identity,track_id,title,artist,isrc,spotify_id,
+  latest_like_count,latest_observed_at
+)
+SELECT occurrence_key,track_identity,resolved_track_id,title,artist,isrc,spotify_id,
+  count_value,observed_at
+FROM sh_track_ranking_candidates;
+
 DELETE FROM sh_track_ranking_current;
 INSERT INTO sh_track_ranking_current(
   track_identity,track_id,title,artist,isrc,spotify_id,
   latest_like_count,latest_observed_at,latest_occurrence_key
 )
-SELECT track_identity,resolved_track_id,title,artist,isrc,spotify_id,
-  count_value,observed_at,occurrence_key
+SELECT track_identity,track_id,title,artist,isrc,spotify_id,
+  latest_like_count,latest_observed_at,occurrence_key
 FROM (
-  SELECT candidates.*,
+  SELECT occurrences.*,
     ROW_NUMBER() OVER (
       PARTITION BY track_identity
-      ORDER BY observed_at DESC,occurrence_key DESC
+      ORDER BY latest_observed_at DESC,occurrence_key DESC
     ) AS identity_rank
-  FROM sh_track_ranking_candidates candidates
+  FROM sh_track_ranking_occurrence occurrences
 )
-WHERE identity_rank=1 AND count_value>0;
+WHERE identity_rank=1 AND latest_like_count>0;
 
 DROP TRIGGER IF EXISTS trg_sh_track_ranking_current_after_counter_insert;
 CREATE TRIGGER trg_sh_track_ranking_current_after_counter_insert
 AFTER INSERT ON sh_track_counter_current
 BEGIN
+  INSERT OR REPLACE INTO sh_track_ranking_occurrence(
+    occurrence_key,track_identity,track_id,title,artist,isrc,spotify_id,
+    latest_like_count,latest_observed_at
+  )
+  SELECT occurrence_key,track_identity,resolved_track_id,title,artist,isrc,spotify_id,
+    count_value,observed_at
+  FROM sh_track_ranking_candidates
+  WHERE occurrence_key=NEW.occurrence_key;
+
   DELETE FROM sh_track_ranking_current
-  WHERE latest_occurrence_key=NEW.occurrence_key
-     OR track_identity IN (
-       SELECT track_identity FROM sh_track_ranking_candidates
-       WHERE occurrence_key=NEW.occurrence_key
-     );
+  WHERE track_identity=(
+    SELECT track_identity FROM sh_track_ranking_occurrence
+    WHERE occurrence_key=NEW.occurrence_key
+  );
+
   INSERT OR REPLACE INTO sh_track_ranking_current(
     track_identity,track_id,title,artist,isrc,spotify_id,
     latest_like_count,latest_observed_at,latest_occurrence_key
   )
-  SELECT candidate.track_identity,candidate.resolved_track_id,
-    candidate.title,candidate.artist,candidate.isrc,candidate.spotify_id,
-    candidate.count_value,candidate.observed_at,candidate.occurrence_key
-  FROM sh_track_ranking_candidates candidate
-  WHERE candidate.count_value>0
-    AND candidate.track_identity=(
-      SELECT track_identity FROM sh_track_ranking_candidates
-      WHERE occurrence_key=NEW.occurrence_key LIMIT 1
+  SELECT track_identity,track_id,title,artist,isrc,spotify_id,
+    latest_like_count,latest_observed_at,occurrence_key
+  FROM (
+    SELECT occurrence.*
+    FROM sh_track_ranking_occurrence occurrence
+    WHERE occurrence.track_identity=(
+      SELECT track_identity FROM sh_track_ranking_occurrence
+      WHERE occurrence_key=NEW.occurrence_key
     )
-  ORDER BY candidate.observed_at DESC,candidate.occurrence_key DESC
-  LIMIT 1;
+    ORDER BY occurrence.latest_observed_at DESC,occurrence.occurrence_key DESC
+    LIMIT 1
+  ) latest
+  WHERE latest_like_count>0;
 END;
 
 DROP TRIGGER IF EXISTS trg_sh_track_ranking_current_after_counter_update;
@@ -184,75 +221,75 @@ CREATE TRIGGER trg_sh_track_ranking_current_after_counter_update
 AFTER UPDATE OF track_id,isrc,spotify_id,track_key,count_value,observed_at
 ON sh_track_counter_current
 BEGIN
+  -- Repair the previous identity while the occurrence map still contains OLD.
   DELETE FROM sh_track_ranking_current
-  WHERE latest_occurrence_key=NEW.occurrence_key
-     OR track_identity IN (
-       SELECT track_identity FROM sh_track_ranking_candidates
-       WHERE occurrence_key=NEW.occurrence_key
-     );
+  WHERE track_identity=(
+    SELECT track_identity FROM sh_track_ranking_occurrence
+    WHERE occurrence_key=NEW.occurrence_key
+  );
+
   INSERT OR REPLACE INTO sh_track_ranking_current(
     track_identity,track_id,title,artist,isrc,spotify_id,
     latest_like_count,latest_observed_at,latest_occurrence_key
   )
-  SELECT candidate.track_identity,candidate.resolved_track_id,
-    candidate.title,candidate.artist,candidate.isrc,candidate.spotify_id,
-    candidate.count_value,candidate.observed_at,candidate.occurrence_key
-  FROM sh_track_ranking_candidates candidate
-  WHERE candidate.count_value>0
-    AND candidate.track_identity=(
-      SELECT track_identity FROM sh_track_ranking_candidates
-      WHERE occurrence_key=NEW.occurrence_key LIMIT 1
+  SELECT track_identity,track_id,title,artist,isrc,spotify_id,
+    latest_like_count,latest_observed_at,occurrence_key
+  FROM (
+    SELECT occurrence.*
+    FROM sh_track_ranking_occurrence occurrence
+    WHERE occurrence.track_identity=(
+        SELECT track_identity FROM sh_track_ranking_occurrence
+        WHERE occurrence_key=NEW.occurrence_key
+      )
+      AND occurrence.occurrence_key<>NEW.occurrence_key
+    ORDER BY occurrence.latest_observed_at DESC,occurrence.occurrence_key DESC
+    LIMIT 1
+  ) latest
+  WHERE latest_like_count>0;
+
+  DELETE FROM sh_track_ranking_occurrence
+  WHERE occurrence_key=NEW.occurrence_key;
+
+  INSERT OR REPLACE INTO sh_track_ranking_occurrence(
+    occurrence_key,track_identity,track_id,title,artist,isrc,spotify_id,
+    latest_like_count,latest_observed_at
+  )
+  SELECT occurrence_key,track_identity,resolved_track_id,title,artist,isrc,spotify_id,
+    count_value,observed_at
+  FROM sh_track_ranking_candidates
+  WHERE occurrence_key=NEW.occurrence_key;
+
+  -- Repair the new identity. If NEW became ineligible there is no new map row.
+  DELETE FROM sh_track_ranking_current
+  WHERE track_identity=(
+    SELECT track_identity FROM sh_track_ranking_occurrence
+    WHERE occurrence_key=NEW.occurrence_key
+  );
+
+  INSERT OR REPLACE INTO sh_track_ranking_current(
+    track_identity,track_id,title,artist,isrc,spotify_id,
+    latest_like_count,latest_observed_at,latest_occurrence_key
+  )
+  SELECT track_identity,track_id,title,artist,isrc,spotify_id,
+    latest_like_count,latest_observed_at,occurrence_key
+  FROM (
+    SELECT occurrence.*
+    FROM sh_track_ranking_occurrence occurrence
+    WHERE occurrence.track_identity=(
+      SELECT track_identity FROM sh_track_ranking_occurrence
+      WHERE occurrence_key=NEW.occurrence_key
     )
-  ORDER BY candidate.observed_at DESC,candidate.occurrence_key DESC
-  LIMIT 1;
+    ORDER BY occurrence.latest_observed_at DESC,occurrence.occurrence_key DESC
+    LIMIT 1
+  ) latest
+  WHERE latest_like_count>0;
 END;
 
-DROP TRIGGER IF EXISTS trg_sh_track_ranking_current_after_track_insert;
-CREATE TRIGGER trg_sh_track_ranking_current_after_track_insert
-AFTER INSERT ON sh_tracks
-BEGIN
-  DELETE FROM sh_track_ranking_current
-  WHERE track_identity='track:'||CAST(NEW.id AS TEXT)
-     OR track_identity='isrc:'||UPPER(TRIM(COALESCE(NEW.isrc,'')))
-     OR track_identity='spotify:'||TRIM(COALESCE(NEW.spotify_id,''));
-  INSERT OR REPLACE INTO sh_track_ranking_current(
-    track_identity,track_id,title,artist,isrc,spotify_id,
-    latest_like_count,latest_observed_at,latest_occurrence_key
-  )
-  SELECT candidate.track_identity,candidate.resolved_track_id,
-    candidate.title,candidate.artist,candidate.isrc,candidate.spotify_id,
-    candidate.count_value,candidate.observed_at,candidate.occurrence_key
-  FROM sh_track_ranking_candidates candidate
-  WHERE candidate.resolved_track_id=NEW.id AND candidate.count_value>0
-  ORDER BY candidate.observed_at DESC,candidate.occurrence_key DESC
-  LIMIT 1;
-END;
-
-DROP TRIGGER IF EXISTS trg_sh_track_ranking_current_after_track_update;
-CREATE TRIGGER trg_sh_track_ranking_current_after_track_update
-AFTER UPDATE OF title,artist,isrc,spotify_id ON sh_tracks
-BEGIN
-  DELETE FROM sh_track_ranking_current
-  WHERE track_id=NEW.id
-     OR track_identity='track:'||CAST(NEW.id AS TEXT)
-     OR track_identity='isrc:'||UPPER(TRIM(COALESCE(OLD.isrc,'')))
-     OR track_identity='isrc:'||UPPER(TRIM(COALESCE(NEW.isrc,'')))
-     OR track_identity='spotify:'||TRIM(COALESCE(OLD.spotify_id,''))
-     OR track_identity='spotify:'||TRIM(COALESCE(NEW.spotify_id,''));
-  INSERT OR REPLACE INTO sh_track_ranking_current(
-    track_identity,track_id,title,artist,isrc,spotify_id,
-    latest_like_count,latest_observed_at,latest_occurrence_key
-  )
-  SELECT candidate.track_identity,candidate.resolved_track_id,
-    candidate.title,candidate.artist,candidate.isrc,candidate.spotify_id,
-    candidate.count_value,candidate.observed_at,candidate.occurrence_key
-  FROM sh_track_ranking_candidates candidate
-  WHERE candidate.resolved_track_id=NEW.id AND candidate.count_value>0
-  ORDER BY candidate.observed_at DESC,candidate.occurrence_key DESC
-  LIMIT 1;
-END;
+-- Track metadata changes are rare and are eventually reflected by the next
+-- counter update. Avoid a global counter scan on every dictionary write.
 
 ANALYZE sh_minute_fact_jobs;
 ANALYZE sh_queue_revisions;
+ANALYZE sh_track_ranking_occurrence;
 ANALYZE sh_track_ranking_current;
 PRAGMA optimize;
