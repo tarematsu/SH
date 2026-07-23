@@ -5,6 +5,7 @@ import test from 'node:test';
 
 const selector = fileURLToPath(new URL('../scripts/select-worker-deploys.mjs', import.meta.url));
 const SAKURAZAKA = 'sh-sakurazaka46jp';
+const COLLECTOR = 'sh-buddies-collector';
 const RUNTIME = 'sh-runtime-orchestrator';
 
 function select(paths = [], args = []) {
@@ -14,9 +15,9 @@ function select(paths = [], args = []) {
   }));
 }
 
-test('all non-Sakurazaka domain modules map to the consolidated runtime Worker', () => {
+test('domain modules select every Worker whose bundle imports them', () => {
+  assert.deepEqual(select(['worker/src/persist-channel-entry.js']).workers, [COLLECTOR, RUNTIME]);
   for (const path of [
-    'worker/src/persist-channel-entry.js',
     'worker/src/minute-enrichment-playback-stages.js',
     'worker/src/track-metadata-entry.js',
     'worker/src/pages-read-model-entry.js',
@@ -27,10 +28,17 @@ test('all non-Sakurazaka domain modules map to the consolidated runtime Worker',
   ]) {
     assert.deepEqual(select([path]).workers, [RUNTIME], path);
   }
+  assert.deepEqual(select(['worker/src/buddies-collector-entry.js']).workers, [COLLECTOR]);
   assert.deepEqual(select(['worker/src/sakurazaka-monitor.js']).workers, [SAKURAZAKA]);
 });
 
 test('deployment support changes select the owning Worker', () => {
+  assert.deepEqual(select(['worker/scripts/deploy-buddies-collector.mjs']), {
+    changed_paths: ['worker/scripts/deploy-buddies-collector.mjs'],
+    workers: [COLLECTOR],
+    commands: ['deploy:buddies-collector'],
+    diagnostics: [COLLECTOR],
+  });
   assert.deepEqual(select(['worker/scripts/deploy-runtime.mjs']), {
     changed_paths: ['worker/scripts/deploy-runtime.mjs'],
     workers: [RUNTIME],
@@ -55,7 +63,7 @@ test('MINUTE_DB schema changes deploy the runtime that consumes the schema', () 
   }
 });
 
-test('shared deployment infrastructure selects both Workers', () => {
+test('shared deployment infrastructure selects all three Workers', () => {
   for (const path of [
     'worker/package.json',
     'worker/package-lock.json',
@@ -66,12 +74,13 @@ test('shared deployment infrastructure selects both Workers', () => {
     'worker/scripts/select-worker-deploys.mjs',
     'worker/scripts/wrangler-command.mjs',
   ]) {
-    assert.equal(select([path]).workers.length, 2, path);
+    assert.equal(select([path]).workers.length, 3, path);
   }
 });
 
 test('Wrangler config changes map directly to their Worker', () => {
   assert.deepEqual(select(['worker/wrangler.sakurazaka46jp.jsonc']).workers, [SAKURAZAKA]);
+  assert.deepEqual(select(['worker/wrangler.buddies-collector.jsonc']).workers, [COLLECTOR]);
   assert.deepEqual(select(['worker/wrangler.runtime.jsonc']).workers, [RUNTIME]);
 });
 
@@ -84,16 +93,17 @@ test('tests and unrelated verification scripts do not deploy Workers', () => {
   assert.deepEqual(result.commands, []);
 });
 
-test('shared package and unresolved runtime source changes select both Workers', () => {
-  assert.equal(select(['packages/sh-shared/index.mjs']).workers.length, 2);
-  assert.equal(select(['worker/src/deleted-runtime-module.js']).workers.length, 2);
+test('shared package and unresolved Worker source changes select all Workers', () => {
+  assert.equal(select(['packages/sh-shared/index.mjs']).workers.length, 3);
+  assert.equal(select(['worker/src/deleted-runtime-module.js']).workers.length, 3);
 });
 
 test('manual selection preserves dependency order', () => {
   const result = select([], ['--all']);
-  assert.deepEqual(result.workers, [SAKURAZAKA, RUNTIME]);
+  assert.deepEqual(result.workers, [SAKURAZAKA, COLLECTOR, RUNTIME]);
   assert.deepEqual(result.commands, [
     'deploy:sakurazaka46jp',
+    'deploy:buddies-collector',
     'deploy:runtime',
   ]);
 });
