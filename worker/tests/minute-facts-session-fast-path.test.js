@@ -2,7 +2,10 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { DatabaseSync } from 'node:sqlite';
 
-import { resolveLiveSession } from '../src/minute-facts-legacy-resolve.js';
+import {
+  resolveLiveSession,
+  SESSION_HEARTBEAT_MS,
+} from '../src/minute-facts-legacy-resolve.js';
 
 function createDatabase() {
   const sqlite = new DatabaseSync(':memory:');
@@ -68,12 +71,36 @@ function insertActive(db, overrides = {}) {
     row.observedAt,
     row.observedAt,
   );
+  return row;
 }
 
-test('matching live session continues with one D1 statement', async () => {
+test('matching live session reuses its ID without a heartbeat write before twenty minutes', async () => {
   const db = createDatabase();
-  insertActive(db);
-  const observedAt = 1_700_000_120_000;
+  const active = insertActive(db);
+  const observedAt = active.observedAt + 60_000;
+
+  const sessionId = await resolveLiveSession(db, {
+    channelId: 318,
+    stationId: 10,
+    hostId: 20,
+    broadcastStartTime: 1_700_000_000,
+    isBroadcasting: true,
+    observedAt,
+  });
+
+  assert.equal(SESSION_HEARTBEAT_MS, 20 * 60_000);
+  assert.equal(sessionId, 1);
+  assert.equal(db.prepared.length, 1);
+  assert.match(db.prepared[0], /^SELECT \* FROM sh_broadcast_sessions/);
+  const row = db.sqlite.prepare('SELECT last_observed_at,status FROM sh_broadcast_sessions WHERE id=1').get();
+  assert.equal(row.last_observed_at, active.observedAt);
+  assert.equal(row.status, 'active');
+});
+
+test('matching live session checkpoints after twenty minutes', async () => {
+  const db = createDatabase();
+  const active = insertActive(db);
+  const observedAt = active.observedAt + SESSION_HEARTBEAT_MS;
 
   const sessionId = await resolveLiveSession(db, {
     channelId: 318,
@@ -85,18 +112,38 @@ test('matching live session continues with one D1 statement', async () => {
   });
 
   assert.equal(sessionId, 1);
-  assert.equal(db.prepared.length, 1);
-  assert.match(db.prepared[0], /^UPDATE sh_broadcast_sessions/);
-  assert.match(db.prepared[0], /RETURNING id/);
+  assert.equal(db.prepared.length, 2);
+  assert.match(db.prepared[1], /^UPDATE sh_broadcast_sessions/);
+  assert.match(db.prepared[1], /RETURNING id/);
   const row = db.sqlite.prepare('SELECT last_observed_at,status FROM sh_broadcast_sessions WHERE id=1').get();
   assert.equal(row.last_observed_at, observedAt);
   assert.equal(row.status, 'active');
 });
 
+test('missing session identity is filled immediately without waiting for the checkpoint', async () => {
+  const db = createDatabase();
+  const active = insertActive(db, { stationId: null });
+
+  const sessionId = await resolveLiveSession(db, {
+    channelId: 318,
+    stationId: 10,
+    hostId: 20,
+    broadcastStartTime: 1_700_000_000,
+    isBroadcasting: true,
+    observedAt: active.observedAt + 60_000,
+  });
+
+  assert.equal(sessionId, 1);
+  assert.equal(db.prepared.length, 2);
+  const row = db.sqlite.prepare('SELECT station_id,last_observed_at FROM sh_broadcast_sessions WHERE id=1').get();
+  assert.equal(row.station_id, 10);
+  assert.equal(row.last_observed_at, active.observedAt + 60_000);
+});
+
 test('session identity changes retain the end-and-create fallback', async () => {
   const db = createDatabase();
-  insertActive(db);
-  const observedAt = 1_700_000_120_000;
+  const active = insertActive(db);
+  const observedAt = active.observedAt + 60_000;
 
   const sessionId = await resolveLiveSession(db, {
     channelId: 318,
