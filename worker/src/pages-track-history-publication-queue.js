@@ -1,6 +1,7 @@
 import { materializedResponseCadenceSeconds } from '../../site/functions/lib/api-contract.js';
 import {
   advanceTrackHistoryPublication,
+  advanceTrackHistoryR2Publication,
   initializeTrackHistoryPublication,
 } from './pages-track-history-publication.js';
 import {
@@ -191,12 +192,26 @@ async function processPageStage(env, stage, generation, timestamp, dependencies)
   if (stage.published === true || stage.publication.phase === 'published') {
     return { skipped: true, reason: 'track-history-publication-already-published', generation };
   }
-  const advance = dependencies.advancePublication || advanceTrackHistoryPublication;
-  const result = await advance(env.MINUTE_DB, stage.publication, timestamp, dependencies);
+  const r2Days = stage.publication.phase === 'r2-days';
+  let result;
+  if (r2Days) {
+    const advanceR2 = dependencies.advanceR2Publication || advanceTrackHistoryR2Publication;
+    result = await advanceR2(
+      env.MINUTE_DB,
+      env.PAGES_RESPONSE_R2,
+      stage.publication,
+      timestamp,
+      materializedResponseCadenceSeconds(TRACK_HISTORY_MODEL_KEY),
+      dependencies,
+    );
+  } else {
+    const advance = dependencies.advancePublication || advanceTrackHistoryPublication;
+    result = await advance(env.MINUTE_DB, stage.publication, timestamp, dependencies);
+  }
   stage.publication = result.publication;
   stage.updated_at = timestamp;
   let promoted = null;
-  if (result.published && env?.PAGES_RESPONSE_R2) {
+  if (!r2Days && result.published && env?.PAGES_RESPONSE_R2) {
     const promote = dependencies.promoteResponse || promoteMaterializedD1ResponseToR2;
     promoted = await promote(
       env.MINUTE_DB,
@@ -229,8 +244,10 @@ async function processPageStage(env, stage, generation, timestamp, dependencies)
     rows: Number(result.rows || 0),
     rows_written: Number(stage.publication.rows_written || 0),
     chunks: Number(result.chunks || 0),
+    days: Number(result.days || 0),
+    bootstrapped_days: Number(result.bootstrapped || 0),
     published: result.published === true,
-    storage: promoted?.storage || (result.published ? 'd1' : null),
+    storage: result.storage || promoted?.storage || (result.published ? 'd1' : null),
   };
 }
 
