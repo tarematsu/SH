@@ -6,13 +6,6 @@ on:
       - main
     paths:
       - '.github/workflows/database.yml'
-      - 'database/facts-migrations/**'
-      - 'worker/scripts/provision-facts-db.mjs'
-      - 'worker/scripts/provision-current-facts-db.mjs'
-      - 'worker/scripts/apply-facts-pr-schema.mjs'
-      - 'worker/scripts/purge-completed-minute-fact-payloads.mjs'
-      - 'worker/scripts/verify-facts-live.mjs'
-      - 'worker/scripts/repair-july-stream-facts.mjs'
       - 'database/other-migrations/**'
       - 'worker/scripts/provision-other-db.mjs'
       - 'worker/scripts/consolidate-track-metadata.mjs'
@@ -21,6 +14,17 @@ on:
       - 'worker/scripts/buddies-db-tables.mjs'
       - 'worker/scripts/buddies-db-export.mjs'
       - 'worker/scripts/sync-buddies-db.mjs'
+  workflow_call:
+    inputs:
+      operation:
+        description: Database operation
+        required: true
+        type: string
+      drop_source_metadata:
+        description: Delete the legacy OTHER_DB metadata table after verification
+        required: false
+        default: false
+        type: boolean
   workflow_dispatch:
     inputs:
       operation:
@@ -49,7 +53,7 @@ concurrency:
 jobs:
   facts-db:
     name: Provision or update stationhead-minute
-    if: github.event_name == 'push' || inputs.operation == 'facts-db'
+    if: inputs.operation == 'facts-db'
     runs-on: ubuntu-latest
     timeout-minutes: 120
     defaults:
@@ -84,7 +88,7 @@ jobs:
 
   payload-purge:
     name: Drain existing stationhead-minute payload backlog
-    if: github.event_name == 'workflow_dispatch' && inputs.operation == 'payload-purge'
+    if: inputs.operation == 'payload-purge'
     runs-on: ubuntu-latest
     timeout-minutes: 120
     defaults:
