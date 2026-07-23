@@ -395,20 +395,22 @@ async function consumedPointerMarker(env, pointer) {
   }
 }
 
+async function duplicatePointerResult(pointer) {
+  return {
+    pointer,
+    duplicate: true,
+    job_id: pointer.job_id,
+    channel_id: pointer.channel_id,
+    minute_at: pointer.minute_at,
+  };
+}
+
 async function resolveMinuteFactQueueMessage(env, body) {
   if (!isPointerMessage(body)) return { ...parseMinuteFactQueueMessage(body), pointer: null, duplicate: false };
   const pointer = parseMinuteFactPointerMessage(body);
+  if (await consumedPointerMarker(env, pointer)) return duplicatePointerResult(pointer);
   const loaded = await loadMinuteFactPointerPayload(env, pointer);
   if (!loaded) {
-    if (await consumedPointerMarker(env, pointer)) {
-      return {
-        pointer,
-        duplicate: true,
-        job_id: pointer.job_id,
-        channel_id: pointer.channel_id,
-        minute_at: pointer.minute_at,
-      };
-    }
     const error = new Error(`minute fact pointer payload is missing: ${pointer.storage_key}`);
     error.code = 'MINUTE_FACT_POINTER_MISSING';
     throw error;
@@ -427,11 +429,18 @@ async function completeMinuteFactPointer(env, pointer) {
     storage_key: pointer.storage_key,
     payload_bytes: pointer.payload_bytes,
   });
-  const result = await db.prepare(`UPDATE sh_minute_fact_outbox SET
+  let result = await db.prepare(`UPDATE sh_minute_fact_outbox SET
       payload_json=?,last_attempt_at=?,last_error=NULL
     WHERE job_id=? AND status='sent'`)
     .bind(marker, consumedAt, pointer.job_id)
     .run();
+  if (Number(result?.meta?.changes ?? 1) === 0) {
+    result = await db.prepare(`UPDATE sh_minute_fact_outbox SET
+        status='sent',payload_json=?,sent_at=COALESCE(sent_at,?),last_attempt_at=?,last_error=NULL
+      WHERE job_id=? AND status='pending'`)
+      .bind(marker, consumedAt, consumedAt, pointer.job_id)
+      .run();
+  }
   if (Number(result?.meta?.changes ?? 1) === 0) {
     throw new Error(`minute fact pointer completion ledger is missing for ${pointer.job_id}`);
   }
