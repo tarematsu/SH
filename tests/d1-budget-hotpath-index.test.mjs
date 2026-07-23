@@ -22,6 +22,10 @@ const observabilityHotpathMigration = readFileSync(
   new URL('../database/facts-migrations/031_observability_hotpaths.sql', import.meta.url),
   'utf8',
 );
+const materializedCleanupRankingMigration = readFileSync(
+  new URL('../database/facts-migrations/032_materialized_cleanup_ranking.sql', import.meta.url),
+  'utf8',
+);
 const prSchema = readFileSync(
   new URL('../worker/scripts/apply-facts-pr-schema.mjs', import.meta.url),
   'utf8',
@@ -39,6 +43,7 @@ const expectedMigrations = [
   'database/facts-migrations/029_track_history_publication_cursor_index.sql',
   'database/facts-migrations/030_compact_track_history_source.sql',
   'database/facts-migrations/031_observability_hotpaths.sql',
+  'database/facts-migrations/032_materialized_cleanup_ranking.sql',
 ];
 
 test('PR deployment applies the ordered FACTS migration set through the current schema tip', () => {
@@ -62,6 +67,9 @@ test('PR deployment applies the ordered FACTS migration set through the current 
   assert.doesNotMatch(compactTrackHistoryMigration, /ROW_NUMBER\(\) OVER/);
   assert.match(observabilityHotpathMigration, /idx_sh_queue_revisions_sparse_recovery/);
   assert.match(observabilityHotpathMigration, /sh_track_history_queue_starts/);
+  assert.match(materializedCleanupRankingMigration, /idx_sh_minute_fact_jobs_payload_clearable/);
+  assert.match(materializedCleanupRankingMigration, /sh_track_ranking_current/);
+  assert.match(materializedCleanupRankingMigration, /trg_sh_track_ranking_current_after_counter_update/);
 });
 
 test('production keeps historical reconstruction serialized for measured daily budgets', () => {
@@ -72,6 +80,7 @@ test('production keeps historical reconstruction serialized for measured daily b
   assert.equal(runtime.vars.DERIVE_REVISION_RECOVERY_LIMIT, 1);
   assert.equal(runtime.vars.DERIVE_REVISION_RECOVERY_SCAN_INTERVAL_MS, 3_600_000);
   assert.equal(runtime.vars.LIVE_DERIVE_DIRECT_QUEUE_ENABLED, true);
+  assert.equal(runtime.vars.REVISION_PROGRESS_R2_ENABLED, true);
   assert.equal(runtime.vars.REBUILD_SOURCE_ROWS, 20);
   assert.equal(runtime.vars.REBUILD_MAX_JOBS, 4);
   const historical = runtime.queues.consumers.find(
