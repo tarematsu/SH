@@ -76,6 +76,7 @@ jobs:
           python3 .github/scripts/audit-observability-budget-gates.py --self-test
           python3 .github/scripts/audit-cloudflare-telemetry.py --self-test
           python3 .github/scripts/audit-deployed-cloudflare-telemetry.py --self-test
+          node .github/scripts/capture-cloudflare-live-tail.mjs --self-test
           node .github/scripts/publish-cloudflare-observability-status.mjs --self-test
 
       - name: Enforce UTC daily request and D1 budgets
