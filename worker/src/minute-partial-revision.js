@@ -8,14 +8,13 @@ import { integer } from './minute-facts-track-descriptor.js';
 import {
   batchRun,
   missingRevisionPositions,
-  resolveTracksBulk,
   timedStage,
 } from './minute-facts-track-resolution.js';
+import { resolveTracksAliasFirst } from './minute-track-resolution-optimized.js';
 
 async function findReusableRevision(db, input) {
   return db.prepare(`SELECT r.id,r.status,r.effective_at,r.item_count,
-      (SELECT COUNT(*) FROM sh_queue_revision_items i WHERE i.revision_id=r.id)
-        AS materialized_item_count
+      COALESCE(r.materialized_item_count,0) AS materialized_item_count
     FROM sh_queue_revisions r
     WHERE r.channel_id=? AND r.structural_hash=? AND r.session_id IS ? AND r.queue_start_time IS ?
       AND r.status IN ('complete','pending')
@@ -124,7 +123,9 @@ export async function createPartialRevision(db, oldDb, input) {
     'SELECT position FROM sh_queue_revision_items WHERE revision_id=?',
   ).bind(revisionId).all());
   const existingRows = existingResult.results || [];
-  const resolved = await resolveTracksBulk(db, oldDb, payload.tracks, observedAt, context);
+  const resolved = await timedStage('resolve_tracks_alias_first', context, () => (
+    resolveTracksAliasFirst(db, oldDb, payload.tracks, observedAt)
+  ));
   let offset = 0;
   let scheduleValid = true;
   const scheduled = resolved.map((track) => {
@@ -182,10 +183,7 @@ export async function createPartialRevision(db, oldDb, input) {
     await timedStage('write_revision_items', context, () => batchRun(db, statements));
   }
 
-  const count = await db.prepare('SELECT COUNT(*) AS item_count FROM sh_queue_revision_items WHERE revision_id=?')
-    .bind(revisionId)
-    .first();
-  const materializedCount = Number(count?.item_count || 0);
+  const materializedCount = existingRows.length + missing.length;
   if (materializedCount < visibleCount) {
     throw new Error(`partial queue revision ${revisionId} incomplete: ${materializedCount}/${visibleCount}`);
   }

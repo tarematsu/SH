@@ -65,6 +65,14 @@ function appleMusicCompatibilityPresent() {
   return changes;
 }
 
+let playbackPositionPresent;
+function playbackPositionColumnPresent() {
+  if (playbackPositionPresent === undefined) {
+    playbackPositionPresent = tableColumns('sh_minute_facts').has('queue_position_patch');
+  }
+  return playbackPositionPresent;
+}
+
 function deploymentMigrations() {
   if (!deployChangedOnly) {
     return { migrations: migrationPaths, mode: 'ordered-migration-set' };
@@ -84,13 +92,30 @@ function deploymentMigrations() {
     : { migrations: [descriptor.schema], mode: 'schema-tip-fallback' };
 }
 
-const deployment = deploymentMigrations();
+let deployment = deploymentMigrations();
+const playbackPositionMigration = migrationPaths.find(
+  (migration) => basename(migration) === '036_minute_fact_playback_position.sql',
+);
+if (playbackPositionMigration
+    && !deployment.migrations.includes(playbackPositionMigration)
+    && !playbackPositionColumnPresent()) {
+  deployment = {
+    ...deployment,
+    migrations: [playbackPositionMigration, ...deployment.migrations],
+  };
+}
+
 const applied = [];
 const skipped = [];
 for (const migration of deployment.migrations) {
   const migrationName = basename(migration);
   if (migrationName === '026_remove_apple_music_compatibility.sql'
       && !appleMusicCompatibilityPresent()) {
+    skipped.push(migration);
+    continue;
+  }
+  if (migrationName === '036_minute_fact_playback_position.sql'
+      && playbackPositionColumnPresent()) {
     skipped.push(migration);
     continue;
   }

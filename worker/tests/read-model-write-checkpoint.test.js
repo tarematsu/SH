@@ -73,7 +73,7 @@ function model(at, overrides = {}) {
   };
 }
 
-test('unchanged read models skip minute-only timestamp writes until the twenty-minute checkpoint', async () => {
+test('unchanged channel blobs never checkpoint while queue and collector retain twenty-minute heartbeats', async () => {
   const db = new D1Adapter();
   await writePreparedReadModel({ MINUTE_DB: db }, model(1_000));
   await writePreparedReadModel({ MINUTE_DB: db }, model(61_000));
@@ -81,7 +81,33 @@ test('unchanged read models skip minute-only timestamp writes until the twenty-m
 
   assert.deepEqual(db.changeSets[0], [1, 1, 1]);
   assert.deepEqual(db.changeSets[1], [0, 0, 0]);
-  assert.deepEqual(db.changeSets[2], [1, 1, 1]);
+  assert.deepEqual(db.changeSets[2], [0, 1, 1]);
+});
+
+test('volatile current stream count is excluded from the channel presentation blob', async () => {
+  const db = new D1Adapter();
+  const presentation = (currentStreamCount) => ({
+    title: 'Stable',
+    current_station: {
+      streaming_party: {
+        stream_goal: 1_000,
+        current_stream_count: currentStreamCount,
+      },
+    },
+  });
+  await writePreparedReadModel({ MINUTE_DB: db }, model(1_000, {
+    channel: { presentation: presentation(100) },
+  }));
+  await writePreparedReadModel({ MINUTE_DB: db }, model(61_000, {
+    channel: { presentation: presentation(101) },
+  }));
+
+  assert.equal(db.changeSets[1][0], 0);
+  const stored = JSON.parse(db.sqlite.prepare(
+    'SELECT presentation_json FROM sh_channel_read_model',
+  ).get().presentation_json);
+  assert.equal(stored.current_station.streaming_party.stream_goal, 1_000);
+  assert.equal(Object.hasOwn(stored.current_station.streaming_party, 'current_stream_count'), false);
 });
 
 test('payload, queue, pause, and collector error changes persist immediately', async () => {

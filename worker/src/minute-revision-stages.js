@@ -8,10 +8,8 @@ import {
   resolveLiveSession,
   timestampMs,
 } from './minute-facts-store.js';
-import {
-  batchRun,
-  resolveTracksBulk,
-} from './minute-facts-track-resolution.js';
+import { batchRun } from './minute-facts-track-resolution.js';
+import { resolveTracksAliasFirst } from './minute-track-resolution-optimized.js';
 
 const DEFAULT_STAGE_THRESHOLD = 12;
 const DEFAULT_CHUNK_TRACKS = 5;
@@ -48,21 +46,20 @@ async function findReusableRevision(db, input) {
 }
 
 async function revisionProgress(db, revisionId) {
-  const row = await db.prepare(`SELECT COUNT(*) AS item_count,MAX(position) AS max_position,
-      MAX(CASE WHEN schedule_valid=1 THEN playback_offset_ms+duration_ms END) AS playback_end,
-      MIN(schedule_valid) AS schedule_valid
-    FROM sh_queue_revision_items WHERE revision_id=?`)
+  const row = await db.prepare(`SELECT position,
+      CASE WHEN schedule_valid=1 THEN playback_offset_ms+duration_ms END AS playback_end,
+      schedule_valid
+    FROM sh_queue_revision_items
+    WHERE revision_id=?
+    ORDER BY position DESC
+    LIMIT 1`)
     .bind(revisionId)
     .first();
-  const count = Number(row?.item_count || 0);
-  const maxPosition = integer(row?.max_position);
-  if (count > 0 && maxPosition !== count - 1) {
-    throw new Error(`queue revision ${revisionId} has non-contiguous materialization: ${count}/${maxPosition}`);
-  }
+  const position = integer(row?.position);
   return {
-    cursor: count,
+    cursor: position == null ? 0 : position + 1,
     playbackOffset: integer(row?.playback_end) ?? 0,
-    scheduleValid: count === 0 || Number(row?.schedule_valid || 0) === 1,
+    scheduleValid: position == null || Number(row?.schedule_valid || 0) === 1,
   };
 }
 
@@ -187,13 +184,7 @@ export async function writeLiveRevisionChunk(env, payload, revisionState) {
   const structure = queueStructurePayload(queue);
   const end = Math.min(state.itemCount, state.cursor + chunkTracks(env));
   const sourceTracks = structure.tracks.slice(state.cursor, end);
-  const context = {
-    channelId: integer(payload?.snapshot?.channel_id),
-    minuteAt: Math.floor(observedAt / 60_000) * 60_000,
-    queueTracks: state.itemCount,
-    revisionId: state.revisionId,
-  };
-  const resolved = await resolveTracksBulk(db, env?.DB, sourceTracks, observedAt, context);
+  const resolved = await resolveTracksAliasFirst(db, env?.DB, sourceTracks, observedAt);
   let playbackOffset = state.playbackOffset;
   let scheduleValid = state.scheduleValid;
   const scheduled = resolved.map((track) => {
@@ -279,10 +270,7 @@ export async function completeLiveRevisionStage(env, payload, revisionState) {
   const db = env?.MINUTE_DB;
   if (!db) throw new Error('minute revision stage MINUTE_DB binding is missing');
   const state = validateRevisionState(revisionState, payload);
-  const count = await db.prepare(
-    'SELECT COUNT(*) AS item_count FROM sh_queue_revision_items WHERE revision_id=?',
-  ).bind(state.revisionId).first();
-  const materializedCount = Number(count?.item_count || 0);
+  const materializedCount = state.cursor;
   if (materializedCount < state.itemCount) {
     throw new Error(`queue revision ${state.revisionId} incomplete: ${materializedCount}/${state.itemCount}`);
   }

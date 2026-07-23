@@ -38,6 +38,14 @@ const dashboardRecoveryMigration = readFileSync(
   new URL('../database/facts-migrations/035_recover_dashboard_rollup_schema.sql', import.meta.url),
   'utf8',
 );
+const playbackPositionMigration = readFileSync(
+  new URL('../database/facts-migrations/036_minute_fact_playback_position.sql', import.meta.url),
+  'utf8',
+);
+const remainingHotpathsMigration = readFileSync(
+  new URL('../database/facts-migrations/037_remaining_d1_hotpaths.sql', import.meta.url),
+  'utf8',
+);
 const prSchema = readFileSync(
   new URL('../worker/scripts/apply-facts-pr-schema.mjs', import.meta.url),
   'utf8',
@@ -59,6 +67,8 @@ const expectedMigrations = [
   'database/facts-migrations/033_fix_payload_clearable_transitions.sql',
   'database/facts-migrations/034_dashboard_rollup_inbox_stats.sql',
   'database/facts-migrations/035_recover_dashboard_rollup_schema.sql',
+  'database/facts-migrations/036_minute_fact_playback_position.sql',
+  'database/facts-migrations/037_remaining_d1_hotpaths.sql',
 ];
 
 test('MINUTE_DB deployment selects changed migrations through the current schema tip', () => {
@@ -73,6 +83,8 @@ test('MINUTE_DB deployment selects changed migrations through the current schema
   assert.match(prSchema, /git[\s\S]*diff[\s\S]*database\/facts-migrations/);
   assert.match(prSchema, /026_remove_apple_music_compatibility\.sql/);
   assert.match(prSchema, /appleMusicCompatibilityPresent/);
+  assert.match(prSchema, /036_minute_fact_playback_position\.sql/);
+  assert.match(prSchema, /playbackPositionColumnPresent/);
   assert.match(
     migration,
     /ON sh_minute_facts\(\s*source_code,\s*minute_at DESC,\s*id DESC,\s*channel_id,\s*observed_at,\s*is_broadcasting\s*\)/s,
@@ -101,6 +113,11 @@ test('MINUTE_DB deployment selects changed migrations through the current schema
   assert.match(dashboardRecoveryMigration, /CREATE TRIGGER IF NOT EXISTS trg_sh_minute_fact_inbox_stats_update/);
   assert.doesNotMatch(dashboardRecoveryMigration, /FROM sh_minute_facts/);
   assert.doesNotMatch(dashboardRecoveryMigration, /ANALYZE|PRAGMA optimize/);
+  assert.match(playbackPositionMigration, /ALTER TABLE sh_minute_facts ADD COLUMN queue_position_patch/);
+  assert.match(remainingHotpathsMigration, /INSERT OR IGNORE INTO sh_track_aliases/);
+  assert.match(remainingHotpathsMigration, /idx_sh_minute_fact_jobs_pending_ready/);
+  assert.match(remainingHotpathsMigration, /COALESCE\(f\.queue_position_patch,v\.queue_position\)/);
+  assert.doesNotMatch(remainingHotpathsMigration, /ANALYZE|PRAGMA optimize/);
 });
 
 test('production keeps historical reconstruction serialized for measured daily budgets', () => {
