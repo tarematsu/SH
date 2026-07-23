@@ -96,5 +96,5 @@ test('FACTS schema publishes observed-time indexes, retired API cleanup, payload
   assert.match(purgeScript, /UPDATE sh_minute_fact_jobs SET payload_json='\{\}'/);
   assert.match(purgeScript, /remainingEligibleJobId != null/);
   assert.doesNotMatch(purgeScript, /SUM\(LENGTH\(payload_json\)\)/);
-  assert.equal(descriptor.schema, 'database/facts-migrations/030_compact_track_history_source.sql');
+  assert.equal(descriptor.schema, 'database/facts-migrations/031_observability_hotpaths.sql');
 });
