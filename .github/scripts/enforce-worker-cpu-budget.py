@@ -20,6 +20,7 @@ from typing import Any
 BUDGET_MS = 10.0
 ACTIVE_WORKERS = frozenset({
     "sh-sakurazaka46jp",
+    "sh-buddies-collector",
     "sh-runtime-orchestrator",
 })
 REBUILD_EVENT_MARKERS = (
