@@ -37,7 +37,7 @@ test('deployment support changes select the owning Worker', () => {
     changed_paths: ['worker/scripts/deploy-buddies-collector.mjs'],
     workers: [COLLECTOR],
     commands: ['deploy:buddies-collector'],
-    diagnostics: [COLLECTOR],
+    diagnostics: [],
   });
   assert.deepEqual(select(['worker/scripts/deploy-runtime.mjs']), {
     changed_paths: ['worker/scripts/deploy-runtime.mjs'],
