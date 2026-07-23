@@ -40,7 +40,7 @@ function recordingDb() {
 test('facts descriptor advances beyond the total-listens baseline index', () => {
   assert.equal(
     descriptor.schema,
-    'database/facts-migrations/037_remaining_d1_hotpaths.sql',
+    'database/facts-migrations/038_deploy_safe_remaining_hotpaths.sql',
   );
 });
 

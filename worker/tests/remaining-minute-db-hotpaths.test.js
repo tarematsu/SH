@@ -11,7 +11,7 @@ const stagedRevision = readFileSync(new URL('../src/minute-revision-stages.js', 
 const deriveTrigger = readFileSync(new URL('../src/minute-derive-trigger.js', import.meta.url), 'utf8');
 const readModel = readFileSync(new URL('../src/read-model-stages.js', import.meta.url), 'utf8');
 const migration = readFileSync(
-  new URL('../../database/facts-migrations/037_remaining_d1_hotpaths.sql', import.meta.url),
+  new URL('../../database/facts-migrations/038_deploy_safe_remaining_hotpaths.sql', import.meta.url),
   'utf8',
 );
 
@@ -110,6 +110,7 @@ test('derive recovery and channel read models use bounded semantic paths', () =>
   assert.match(deriveTrigger, /INDEXED BY idx_sh_minute_fact_jobs_pending_ready/);
   assert.match(deriveTrigger, /ORDER BY next_attempt_at ASC,job_priority DESC/);
   assert.match(migration, /ON sh_minute_fact_jobs\(next_attempt_at ASC,job_priority DESC,minute_at ASC,id ASC\)/);
+  assert.doesNotMatch(migration, /INSERT|FROM sh_tracks/);
   assert.match(readModel, /stableChannelPresentation/);
   assert.match(readModel, /current_stream_count: _ignored/);
   const channelWrite = readModel.match(/INSERT INTO sh_channel_read_model[\s\S]*?\.bind\(channelId, observedAt, presentationJson\)/)?.[0] || '';
