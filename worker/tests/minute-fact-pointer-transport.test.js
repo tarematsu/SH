@@ -24,8 +24,9 @@ function queueMessage(body, attempts = 1) {
 
 function pointerDb() {
   const rows = new Map();
-  return {
+  const db = {
     rows,
+    failSentTransitionOnce: false,
     prepare(sql) {
       const statement = {
         params: [],
@@ -57,9 +58,27 @@ function pointerDb() {
             Object.assign(row, { payload_json: payloadJson, last_attempt_at: lastAttemptAt, last_error: null });
             return { meta: { changes: 1 } };
           }
+          if (sql.includes('sent_at=COALESCE(sent_at,?)') && sql.includes("status='pending'")) {
+            const [payloadJson, sentAt, lastAttemptAt, jobId] = this.params;
+            const row = rows.get(jobId);
+            if (!row || row.status !== 'pending') return { meta: { changes: 0 } };
+            Object.assign(row, {
+              status: 'sent',
+              payload_json: payloadJson,
+              sent_at: row.sent_at ?? sentAt,
+              last_attempt_at: lastAttemptAt,
+              last_error: null,
+            });
+            return { meta: { changes: 1 } };
+          }
           if (sql.includes("status='sent'") && !sql.includes("payload_json='{}'")) {
+            if (db.failSentTransitionOnce) {
+              db.failSentTransitionOnce = false;
+              throw new Error('producer ledger update failed');
+            }
             const [sentAt, lastAttemptAt, jobId] = this.params;
             const row = rows.get(jobId);
+            if (!row || row.status !== 'pending') return { meta: { changes: 0 } };
             Object.assign(row, {
               status: 'sent',
               sent_at: sentAt,
@@ -110,18 +129,23 @@ function pointerDb() {
       return statement;
     },
   };
+  return db;
 }
 
 function r2Bucket() {
   const objects = new Map();
   return {
     objects,
+    failDelete: false,
     async put(key, value, options) { objects.set(key, { value: String(value), options }); },
     async get(key) {
       const stored = objects.get(key);
       return stored ? { async text() { return stored.value; } } : null;
     },
-    async delete(key) { objects.delete(key); },
+    async delete(key) {
+      if (this.failDelete) throw new Error('temporary R2 delete failure');
+      objects.delete(key);
+    },
   };
 }
 
@@ -252,6 +276,64 @@ test('corrupt R2 pointer payloads retry instead of being acknowledged as invalid
 
   assert.deepEqual(result, { received: 1, enqueued: 0, duplicates: 0, retried: 1, invalid: 0 });
   assert.deepEqual(message.calls, [['retry', { delaySeconds: 5 }]]);
+});
+
+test('consumed marker deduplicates a pointer even when R2 deletion failed', async () => {
+  const DB = pointerDb();
+  const R2 = r2Bucket();
+  let pointer = null;
+  const env = {
+    DB,
+    BUDDIES_DB: DB,
+    MINUTE_FACT_POINTER_QUEUE_ENABLED: true,
+    PAGES_RESPONSE_R2: R2,
+    MINUTE_FACT_QUEUE: { async send(value) { pointer = value; } },
+  };
+  await handoffMinuteFactJob(env, input);
+  R2.failDelete = true;
+
+  const first = queueMessage(pointer);
+  await consumeMinuteFactBatch({ messages: [first] }, env, {
+    enqueue: async () => ({ enqueued: true }),
+  });
+  assert.deepEqual(first.calls, [['ack']]);
+  assert.equal(R2.objects.has(pointer.storage_key), true);
+
+  const duplicate = queueMessage(pointer, 2);
+  const result = await consumeMinuteFactBatch({ messages: [duplicate] }, env, {
+    enqueue: async () => { throw new Error('consumed pointer must not be processed again'); },
+  });
+  assert.deepEqual(result, { received: 1, enqueued: 0, duplicates: 1, retried: 0, invalid: 0 });
+  assert.deepEqual(duplicate.calls, [['ack']]);
+});
+
+test('consumer closes a pending ledger row after Queue delivery outruns the producer status update', async () => {
+  const DB = pointerDb();
+  const R2 = r2Bucket();
+  let pointer = null;
+  DB.failSentTransitionOnce = true;
+  const env = {
+    DB,
+    BUDDIES_DB: DB,
+    MINUTE_FACT_POINTER_QUEUE_ENABLED: true,
+    PAGES_RESPONSE_R2: R2,
+    MINUTE_FACT_QUEUE: { async send(value) { pointer = value; } },
+  };
+  const handoff = await handoffMinuteFactJob(env, input);
+  const row = DB.rows.get(pointer.job_id);
+  assert.equal(handoff.enqueued, false);
+  assert.equal(row.status, 'pending');
+
+  const delivered = queueMessage(pointer);
+  const result = await consumeMinuteFactBatch({ messages: [delivered] }, env, {
+    enqueue: async () => ({ enqueued: true }),
+  });
+
+  assert.deepEqual(result, { received: 1, enqueued: 1, duplicates: 0, retried: 0, invalid: 0 });
+  assert.deepEqual(delivered.calls, [['ack']]);
+  assert.equal(row.status, 'sent');
+  assert.equal(JSON.parse(row.payload_json).consumed, true);
+  assert.equal(R2.objects.has(pointer.storage_key), false);
 });
 
 test('collector and runtime enable pointer transport for minute facts', () => {
