@@ -23,6 +23,7 @@ class Statement {
   }
 
   bind(...bindings) {
+    this.db.maxBindings = Math.max(this.db.maxBindings, bindings.length);
     return new Statement(this.db, this.sql, bindings);
   }
 
@@ -57,6 +58,7 @@ class AliasDb {
     this.metadataQueries = 0;
     this.identityQueries = 0;
     this.batches = 0;
+    this.maxBindings = 0;
   }
 
   prepare(sql) {
@@ -81,6 +83,28 @@ test('known queue tracks resolve through one combined alias query without metada
 
   assert.deepEqual(tracks.map(({ trackId }) => trackId), [11, 12]);
   assert.equal(db.aliasQueries, 1);
+  assert.equal(db.metadataQueries, 0);
+  assert.equal(db.identityQueries, 0);
+});
+
+test('alias-first lookup stays within the D1 100 binding limit', async () => {
+  const queue = Array.from({ length: 30 }, (_, index) => ({
+    position: index,
+    isrc: `JPTEST${String(index).padStart(6, '0')}`,
+    spotify_id: `spotify-${index}`,
+    stationhead_track_id: 10_000 + index,
+    legacy_track_id: 20_000 + index,
+    title: `Track ${index}`,
+    artist: `Artist ${index}`,
+    duration_ms: 180_000,
+  }));
+  const db = new AliasDb(queue.map((track, index) => [`isrc:${track.isrc}`, index + 1]));
+
+  const tracks = await resolveTracksAliasFirst(db, null, queue, 1_000);
+
+  assert.deepEqual(tracks.map(({ trackId }) => trackId), Array.from({ length: 30 }, (_, index) => index + 1));
+  assert.equal(db.aliasQueries, 3);
+  assert.equal(db.maxBindings, 100);
   assert.equal(db.metadataQueries, 0);
   assert.equal(db.identityQueries, 0);
 });
