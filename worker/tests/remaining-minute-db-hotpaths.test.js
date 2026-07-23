@@ -29,14 +29,15 @@ class Statement {
   }
 
   async all() {
-    if (this.sql.includes('JOIN sh_track_aliases')) {
+    if (this.sql.includes('FROM sh_track_aliases')) {
       this.db.aliasQueries += 1;
+      const aliasType = String(this.bindings[0]);
       const results = [];
-      for (let index = 0; index < this.bindings.length; index += 2) {
-        const aliasType = String(this.bindings[index]);
-        const aliasValue = String(this.bindings[index + 1]);
-        const trackId = this.db.aliases.get(`${aliasType}:${aliasValue}`);
-        if (trackId != null) results.push({ alias_type: aliasType, alias_value: aliasValue, track_id: trackId });
+      for (const aliasValue of this.bindings.slice(1)) {
+        const trackId = this.db.aliases.get(`${aliasType}:${String(aliasValue)}`);
+        if (trackId != null) {
+          results.push({ alias_type: aliasType, alias_value: String(aliasValue), track_id: trackId });
+        }
       }
       return { results };
     }
@@ -69,6 +70,7 @@ class AliasDb {
     this.identityQueries = 0;
     this.batches = 0;
     this.maxBindings = 0;
+    this.maxBatchStatements = 0;
   }
 
   prepare(sql) {
@@ -76,7 +78,9 @@ class AliasDb {
   }
 
   async batch(statements = []) {
+    assert.ok(statements.length <= 40, `D1 batch has ${statements.length} statements`);
     this.batches += 1;
+    this.maxBatchStatements = Math.max(this.maxBatchStatements, statements.length);
     for (const statement of statements) {
       if (!statement.sql.includes('INSERT OR IGNORE INTO sh_tracks')) continue;
       const [canonical_key, isrc, spotify_id, stationhead_track_id] = statement.bindings;
@@ -94,7 +98,7 @@ class AliasDb {
   }
 }
 
-test('known queue tracks resolve through one combined alias query without metadata or direct track scans', async () => {
+test('known queue tracks resolve through bounded indexed alias queries without metadata or direct track scans', async () => {
   const db = new AliasDb([
     ['isrc:JPTEST000001', 11],
     ['spotify_id:spotify-2', 12],
@@ -105,12 +109,12 @@ test('known queue tracks resolve through one combined alias query without metada
   ], 1_000);
 
   assert.deepEqual(tracks.map(({ trackId }) => trackId), [11, 12]);
-  assert.equal(db.aliasQueries, 1);
+  assert.equal(db.aliasQueries, 2);
   assert.equal(db.metadataQueries, 0);
   assert.equal(db.identityQueries, 0);
 });
 
-test('track alias and identity lookups reserve headroom below the D1 100-parameter limit', async () => {
+test('track resolution bounds individual statements and D1 batches', async () => {
   const db = new AliasDb([]);
   const input = Array.from({ length: 30 }, (_, index) => ({
     position: index,
@@ -127,10 +131,33 @@ test('track alias and identity lookups reserve headroom below the D1 100-paramet
 
   assert.equal(tracks.length, 30);
   assert.ok(tracks.every(({ trackId }) => trackId != null));
-  assert.equal(db.aliasQueries, 8);
+  assert.equal(db.aliasQueries, 10);
   assert.equal(db.metadataQueries, 1);
   assert.equal(db.identityQueries, 2);
   assert.equal(db.maxBindings, 80);
+  assert.equal(db.batches, 6);
+  assert.equal(db.maxBatchStatements, 40);
+});
+
+test('track resolution reports the failing D1 substage', async () => {
+  const db = {
+    prepare() {
+      return {
+        bind() {
+          return {
+            async all() {
+              throw new Error('D1_ERROR: Wrong number of parameter bindings for SQL query.');
+            },
+          };
+        },
+      };
+    },
+  };
+
+  await assert.rejects(
+    resolveTracksAliasFirst(db, null, [{ isrc: 'JPTEST000001' }], 1_000),
+    /load_alias_map_initial: D1_ERROR: Wrong number of parameter bindings/,
+  );
 });
 
 test('dashboard rollup seeks the current and previous minute rather than rescanning a bucket', () => {
