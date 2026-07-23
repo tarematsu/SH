@@ -23,7 +23,8 @@ class Statement {
   }
 
   bind(...bindings) {
-    assert.ok(bindings.length <= 100, `D1 query has ${bindings.length} bound parameters`);
+    assert.ok(bindings.length <= 80, `D1 query has ${bindings.length} bound parameters`);
+    this.db.maxBindings = Math.max(this.db.maxBindings, bindings.length);
     return new Statement(this.db, this.sql, bindings);
   }
 
@@ -67,6 +68,7 @@ class AliasDb {
     this.metadataQueries = 0;
     this.identityQueries = 0;
     this.batches = 0;
+    this.maxBindings = 0;
   }
 
   prepare(sql) {
@@ -108,7 +110,7 @@ test('known queue tracks resolve through one combined alias query without metada
   assert.equal(db.identityQueries, 0);
 });
 
-test('track alias and identity lookups stay within the D1 100-parameter query limit', async () => {
+test('track alias and identity lookups reserve headroom below the D1 100-parameter limit', async () => {
   const db = new AliasDb([]);
   const input = Array.from({ length: 30 }, (_, index) => ({
     position: index,
@@ -125,9 +127,10 @@ test('track alias and identity lookups stay within the D1 100-parameter query li
 
   assert.equal(tracks.length, 30);
   assert.ok(tracks.every(({ trackId }) => trackId != null));
-  assert.equal(db.aliasQueries, 6);
+  assert.equal(db.aliasQueries, 8);
   assert.equal(db.metadataQueries, 1);
   assert.equal(db.identityQueries, 2);
+  assert.equal(db.maxBindings, 80);
 });
 
 test('dashboard rollup seeks the current and previous minute rather than rescanning a bucket', () => {
