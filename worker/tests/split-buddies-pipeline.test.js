@@ -31,32 +31,48 @@ function commentsTask() {
   };
 }
 
-test('the core Worker has one owner per non-Sakurazaka Queue boundary', () => {
+test('collector and runtime have one exclusive owner per Queue boundary', () => {
+  const collector = config('wrangler.buddies-collector.jsonc');
   const runtime = config('wrangler.runtime.jsonc');
+  assert.equal(collector.main, 'src/buddies-collector-entry.js');
   assert.equal(runtime.main, 'src/runtime-orchestrator-deployed-entry.js');
-  assert.equal(runtime.queues.producers.find(({ binding }) => binding === 'RAW_COLLECTION_QUEUE').queue, 'stationhead-raw-collection');
+  assert.equal(
+    collector.queues.producers.find(({ binding }) => binding === 'RAW_COLLECTION_QUEUE').queue,
+    'stationhead-raw-collection',
+  );
 
-  const consumers = new Map(runtime.queues.consumers.map((consumer) => [consumer.queue, consumer]));
+  const collectorConsumers = new Map(
+    collector.queues.consumers.map((consumer) => [consumer.queue, consumer]),
+  );
+  const runtimeConsumers = new Map(runtime.queues.consumers.map((consumer) => [consumer.queue, consumer]));
   for (const queue of [
     'stationhead-raw-collection',
+    'stationhead-ingest-finalize',
     'stationhead-comments',
     'stationhead-buddies-persist',
+  ]) {
+    assert.equal(collectorConsumers.get(queue).max_batch_size, 1, queue);
+    assert.equal(runtimeConsumers.has(queue), false, queue);
+  }
+  for (const queue of [
     'stationhead-read-model',
     'stationhead-buddies-facts',
     'stationhead-minute-live-derive',
     'stationhead-minute-rebuild',
   ]) {
-    assert.equal(consumers.get(queue).max_batch_size, 1, queue);
+    assert.equal(runtimeConsumers.get(queue).max_batch_size, 1, queue);
+    assert.equal(collectorConsumers.has(queue), false, queue);
   }
+  assert.deepEqual(collector.d1_databases.map(({ binding }) => binding), ['BUDDIES_DB']);
   assert.deepEqual(runtime.d1_databases.map(({ binding }) => binding), [
     'BUDDIES_DB',
     'MINUTE_DB',
     'OTHER_DB',
   ]);
-  assert.equal(runtime.queues.producers.find(({ binding }) => binding === 'MINUTE_FACT_QUEUE').queue, 'stationhead-buddies-facts');
-  assert.equal(consumers.get('stationhead-buddies-facts').max_concurrency, 1);
-  assert.equal(consumers.get('stationhead-minute-live-derive').max_concurrency, 2);
-  assert.equal(consumers.get('stationhead-minute-rebuild').max_concurrency, 1);
+  assert.equal(collector.queues.producers.find(({ binding }) => binding === 'MINUTE_FACT_QUEUE').queue, 'stationhead-buddies-facts');
+  assert.equal(runtimeConsumers.get('stationhead-buddies-facts').max_concurrency, 1);
+  assert.equal(runtimeConsumers.get('stationhead-minute-live-derive').max_concurrency, 2);
+  assert.equal(runtimeConsumers.get('stationhead-minute-rebuild').max_concurrency, 1);
 });
 
 test('raw collector emits a compact prepared v3 message for the normal channel shape', async () => {

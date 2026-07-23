@@ -6,12 +6,14 @@
   "scripts": {
     "dev": "wrangler dev --config wrangler.runtime.jsonc --test-scheduled",
     "deploy": "node scripts/deploy-connected-worker.mjs",
+    "deploy:buddies-collector": "node scripts/deploy-buddies-collector.mjs",
     "deploy:sakurazaka46jp": "node scripts/deploy-sakurazaka46jp.mjs",
     "deploy:runtime": "node scripts/deploy-runtime.mjs",
     "tail": "wrangler tail --config wrangler.runtime.jsonc",
     "check": "npm run check:syntax && npm run check:bundle",
     "check:syntax": "node ../scripts/check-js-syntax.mjs worker/src worker/tests worker/scripts",
-    "check:bundle": "npm run check:sakurazaka46jp-bundle && npm run check:runtime-bundle",
+    "check:bundle": "npm run check:buddies-collector-bundle && npm run check:sakurazaka46jp-bundle && npm run check:runtime-bundle",
+    "check:buddies-collector-bundle": "wrangler deploy --config wrangler.buddies-collector.jsonc --dry-run --outdir=dist-buddies-collector-dry-run",
     "check:sakurazaka46jp-bundle": "wrangler deploy --config wrangler.sakurazaka46jp.jsonc --dry-run --outdir=dist-sakurazaka46jp-dry-run",
     "check:runtime-bundle": "wrangler deploy --config wrangler.runtime.jsonc --dry-run --outdir=dist-runtime-dry-run",
     "test": "node --test tests/*.test.js"
