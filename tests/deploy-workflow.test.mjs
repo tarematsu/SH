@@ -80,15 +80,15 @@ test('one GitHub Actions workflow owns automatic and manual production deploymen
   assert.doesNotMatch(deploymentWorkflow, /deploy:ingest/);
   assert.doesNotMatch(deploymentWorkflow, /deploy:minute-enrichment/);
 
-  assert.match(deploymentWorkflow, /name: Apply FACTS migrations before deployment/);
+  assert.match(deploymentWorkflow, /name: Apply MINUTE_DB migrations before deployment/);
   assert.match(deploymentWorkflow, /name: Deploy affected Workers/);
   assert.match(deploymentWorkflow, /name: Build and deploy Pages/);
   assert.match(deploymentWorkflow, /wrangler pages deploy public --project-name skrzk --branch main/);
-  assert.match(deploymentWorkflow, /needs: \[select, facts_db\]/);
-  assert.match(deploymentWorkflow, /needs: \[select, facts_db, workers\]/);
+  assert.match(deploymentWorkflow, /needs: \[select, minute_db\]/);
+  assert.match(deploymentWorkflow, /needs: \[select, minute_db, workers\]/);
   assert.match(
     deploymentWorkflow,
-    /needs\.facts_db\.result == 'success' \|\| needs\.facts_db\.result == 'skipped'/,
+    /needs\.minute_db\.result == 'success' \|\| needs\.minute_db\.result == 'skipped'/,
   );
   assert.match(deploymentWorkflow, /needs\.workers\.result == 'success' \|\| needs\.workers\.result == 'skipped'/);
 });
@@ -115,39 +115,40 @@ test('automatic production deploy selects affected Workers and Pages from change
   assert.doesNotMatch(deploymentWorkflow, /sync-cloudflare-build-watch-paths/);
 });
 
-test('FACTS migrations are a blocking reusable stage before Worker and Pages deployment', () => {
+test('MINUTE_DB migrations are a blocking reusable stage before Worker and Pages deployment', () => {
   assert.match(deploymentWorkflow, /database\/facts-db\.json/);
   assert.match(deploymentWorkflow, /database\/facts-migrations\/\*\*/);
   assert.match(deploymentWorkflow, /\.github\/workflows\/database\.yml/);
-  assert.match(deploymentWorkflow, /echo "facts_db=\$facts_db" >> "\$GITHUB_OUTPUT"/);
+  assert.match(deploymentWorkflow, /echo "minute_db=\$minute_db" >> "\$GITHUB_OUTPUT"/);
 
-  const facts = jobSection(deploymentWorkflow, 'facts_db', 'workers');
-  assert.match(facts, /uses: \.\/\.github\/workflows\/database\.yml/);
-  assert.match(facts, /operation: facts-db/);
-  assert.match(facts, /secrets: inherit/);
+  const minuteDb = jobSection(deploymentWorkflow, 'minute_db', 'workers');
+  assert.match(minuteDb, /uses: \.\/\.github\/workflows\/database\.yml/);
+  assert.match(minuteDb, /operation: minute-db/);
+  assert.match(minuteDb, /secrets: inherit/);
 
   const workers = jobSection(deploymentWorkflow, 'workers', 'pages');
-  assert.match(workers, /needs: \[select, facts_db\]/);
-  assert.match(workers, /needs\.facts_db\.result == 'success'/);
-  assert.match(workers, /needs\.facts_db\.result == 'skipped'/);
+  assert.match(workers, /needs: \[select, minute_db\]/);
+  assert.match(workers, /needs\.minute_db\.result == 'success'/);
+  assert.match(workers, /needs\.minute_db\.result == 'skipped'/);
 
   const pages = jobSection(deploymentWorkflow, 'pages');
-  assert.match(pages, /needs: \[select, facts_db, workers\]/);
-  assert.match(pages, /needs\.facts_db\.result == 'success'/);
-  assert.match(pages, /needs\.facts_db\.result == 'skipped'/);
+  assert.match(pages, /needs: \[select, minute_db, workers\]/);
+  assert.match(pages, /needs\.minute_db\.result == 'success'/);
+  assert.match(pages, /needs\.minute_db\.result == 'skipped'/);
 
   assert.match(databaseWorkflow, /^  workflow_call:$/m);
   assert.doesNotMatch(databaseWorkflow, /database\/facts-migrations\/\*\*/);
   assert.doesNotMatch(databaseWorkflow, /- '\.github\/workflows\/database\.yml'/);
-  const databaseFacts = jobSection(databaseWorkflow, 'facts-db', 'payload-purge');
-  assert.match(databaseFacts, /if: inputs\.operation == 'facts-db'/);
-  assert.doesNotMatch(databaseFacts, /github\.event_name == 'push'/);
-  assert.match(databaseFacts, /name: Apply stationhead-minute schema/);
-  assert.match(databaseFacts, /node scripts\/apply-facts-pr-schema\.mjs/);
-  assert.match(databaseFacts, /node scripts\/verify-facts-live\.mjs/);
-  assert.doesNotMatch(databaseFacts, /provision-current-facts-db/);
-  assert.doesNotMatch(databaseFacts, /purge-completed-minute-fact-payloads/);
-  assert.doesNotMatch(databaseFacts, /repair-july-stream-facts/);
+  const databaseMinute = jobSection(databaseWorkflow, 'minute-db', 'payload-purge');
+  assert.match(databaseMinute, /if: inputs\.operation == 'minute-db'/);
+  assert.doesNotMatch(databaseMinute, /github\.event_name == 'push'/);
+  assert.match(databaseMinute, /name: Apply MINUTE_DB schema/);
+  assert.match(databaseMinute, /name: Apply ordered MINUTE_DB migrations/);
+  assert.match(databaseMinute, /node scripts\/apply-facts-pr-schema\.mjs/);
+  assert.match(databaseMinute, /node scripts\/verify-facts-live\.mjs/);
+  assert.doesNotMatch(databaseMinute, /provision-current-facts-db/);
+  assert.doesNotMatch(databaseMinute, /purge-completed-minute-fact-payloads/);
+  assert.doesNotMatch(databaseMinute, /repair-july-stream-facts/);
 });
 
 test('Cloudflare Git build and PR production deployment files remain deleted', () => {
