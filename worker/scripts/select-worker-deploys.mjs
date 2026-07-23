@@ -10,7 +10,7 @@ const workerDefinitions = [
   { name: 'sh-runtime-orchestrator', config: 'worker/wrangler.runtime.jsonc', command: 'deploy:runtime' },
 ];
 
-const gitConnectedWorkers = new Set(['sh-buddies-collector', 'sh-runtime-orchestrator']);
+const gitConnectedWorkers = new Set(['sh-runtime-orchestrator']);
 const collectorWorker = 'sh-buddies-collector';
 const runtimeWorker = 'sh-runtime-orchestrator';
 
