@@ -2,6 +2,8 @@ import { historicalRebuildEnabled } from './historical-rebuild-policy.js';
 
 export const MINUTE_DERIVE_MESSAGE_TYPE = 'minute-fact-derive';
 export const MINUTE_DERIVE_MESSAGE_VERSION = 1;
+export const MINUTE_DIRECT_LIVE_DERIVE_MESSAGE_TYPE = 'minute-fact-live-direct';
+export const MINUTE_DIRECT_LIVE_DERIVE_MESSAGE_VERSION = 1;
 
 function integer(value) {
   const parsed = Number(value);
@@ -69,6 +71,60 @@ export async function enqueueMinuteDeriveTrigger(env, input) {
   const trigger = minuteDeriveTrigger({ ...input, job_kind: jobKind });
   await queue.send(trigger, { contentType: 'json' });
   return trigger;
+}
+
+export function minuteDirectLiveDeriveMessage(payload = {}) {
+  const channelId = integer(payload?.snapshot?.channel_id);
+  const observedAt = integer(payload?.observedAt);
+  if (channelId == null) throw invalidTrigger('direct live channel_id is required');
+  if (observedAt == null) throw invalidTrigger('direct live observedAt is required');
+  if (integer(payload?.payload_version) !== 1) {
+    throw invalidTrigger('direct live payload_version is unsupported');
+  }
+  const minuteAt = Math.floor(observedAt / 60_000) * 60_000;
+  const jobId = `minute-fact:${channelId}:${minuteAt}`;
+  return {
+    message_type: MINUTE_DIRECT_LIVE_DERIVE_MESSAGE_TYPE,
+    message_version: MINUTE_DIRECT_LIVE_DERIVE_MESSAGE_VERSION,
+    job_id: jobId,
+    idempotency_key: jobId,
+    channel_id: channelId,
+    minute_at: minuteAt,
+    payload,
+  };
+}
+
+export function parseDirectLiveMinuteDeriveMessage(body) {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) {
+    throw invalidTrigger('direct live body must be an object');
+  }
+  if (body.message_type !== MINUTE_DIRECT_LIVE_DERIVE_MESSAGE_TYPE
+      || integer(body.message_version) !== MINUTE_DIRECT_LIVE_DERIVE_MESSAGE_VERSION) {
+    throw invalidTrigger('direct live message is unsupported');
+  }
+  const expected = minuteDirectLiveDeriveMessage(body.payload);
+  if (body.job_id !== expected.job_id
+      || body.idempotency_key !== expected.idempotency_key
+      || integer(body.channel_id) !== expected.channel_id
+      || integer(body.minute_at) !== expected.minute_at) {
+    throw invalidTrigger('direct live identity does not match payload');
+  }
+  return expected;
+}
+
+export async function enqueueDirectLiveMinuteDerive(env, payload) {
+  const queue = env?.MINUTE_LIVE_DERIVE_QUEUE || env?.MINUTE_DERIVE_QUEUE;
+  if (!queue?.send) throw new Error('minute live derive Queue binding is missing');
+  const message = minuteDirectLiveDeriveMessage(payload);
+  await queue.send(message, { contentType: 'json' });
+  return {
+    enqueued: true,
+    direct: true,
+    channel_id: message.channel_id,
+    minute_at: message.minute_at,
+    job_kind: 'live',
+    job_priority: 100,
+  };
 }
 
 function dispatchOrder(left, right) {
