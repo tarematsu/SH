@@ -1,6 +1,7 @@
 import {
   flushMinuteFactOutbox,
   handoffMinuteFactJob,
+  minuteFactQueueSourceMessage,
   stageMinuteFactOutboxJob,
 } from './minute-facts-queue.js';
 
@@ -118,8 +119,11 @@ function activeFactEnv(env, fact, capture) {
     enumerable: false,
     value: commentsQueue?.send ? {
       send(body, options) {
-        if (body && typeof body === 'object') capture.envelope = readModelEnvelope(fact, body);
-        return commentsQueue.send(commentsTask(fact, body), options);
+        const sourceBody = minuteFactQueueSourceMessage(body);
+        if (sourceBody && typeof sourceBody === 'object') {
+          capture.envelope = readModelEnvelope(fact, sourceBody);
+        }
+        return commentsQueue.send(commentsTask(fact, sourceBody), options);
       },
     } : commentsQueue,
   });
