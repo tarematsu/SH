@@ -94,6 +94,7 @@ export async function ensureRevisionR2Progress(env, revision, sourceTracks, opti
       enabled: true,
       key: revisionProgressObjectKey(revisionId),
       materialized_item_count: existing.items.length,
+      committed: integer(existing.committed_at) != null,
     };
   }
   const materialized = Math.max(0, integer(options.materializedItemCount) ?? 0);
@@ -113,12 +114,14 @@ export async function ensureRevisionR2Progress(env, revision, sourceTracks, opti
     items: [],
     created_at: now,
     updated_at: now,
+    committed_at: null,
   };
   await saveProgressObject(r2, payload);
   return {
     enabled: true,
     key: revisionProgressObjectKey(revisionId),
     materialized_item_count: 0,
+    committed: false,
   };
 }
 
@@ -219,6 +222,30 @@ async function commitProgress(db, state, progress, now) {
     .run();
 }
 
+function resultFromProgress(state, progress, selected, storage) {
+  const materializedCount = progress.items.length;
+  const complete = materializedCount >= state.visible_item_count;
+  const coverageComplete = materializedCount >= state.total_item_count;
+  const preferredResolved = progress.items.some(
+    (item) => integer(item.position) === state.preferred_position,
+  );
+  const playbackTracks = complete && preferredResolved
+    ? progress.source_tracks.filter(
+        (track) => integer(track.position) === state.preferred_position,
+      )
+    : selected;
+  return {
+    ...state,
+    complete,
+    coverage_complete: coverageComplete,
+    materialized_item_count: materializedCount,
+    chunk_tracks: selected.length,
+    preferred_resolved: complete && preferredResolved,
+    source_tracks: playbackTracks,
+    storage,
+  };
+}
+
 export async function writeRevisionR2ProgressChunk(env, revisionState, dependencies = {}) {
   if (!revisionR2ProgressEnabled(env)) throw new Error('revision R2 progress binding is missing');
   const db = env?.MINUTE_DB;
@@ -239,6 +266,10 @@ export async function writeRevisionR2ProgressChunk(env, revisionState, dependenc
   };
   const progress = await loadProgressObject(env.PAGES_RESPONSE_R2, revisionId);
   if (!progress) throw new Error(`revision progress object is missing: ${revisionId}`);
+  if (integer(progress.committed_at) != null) {
+    return resultFromProgress(state, progress, [], 'r2-committed');
+  }
+
   const selected = nextSourceTracks(progress, chunkTracks(env));
   const observedAt = integer(state?.enrichment?.observed_at) ?? Date.now();
   const context = {
@@ -266,25 +297,11 @@ export async function writeRevisionR2ProgressChunk(env, revisionState, dependenc
   if (!selected.length && materializedCount < state.visible_item_count) {
     throw new Error(`revision ${revisionId} R2 source is incomplete: ${materializedCount}/${state.visible_item_count}`);
   }
-  const complete = materializedCount >= state.visible_item_count;
-  const coverageComplete = materializedCount >= state.total_item_count;
-  if (complete) await commitProgress(db, state, progress, progress.updated_at);
-  const preferredResolved = progress.items.some(
-    (item) => integer(item.position) === state.preferred_position,
-  );
-  const playbackTracks = complete && preferredResolved
-    ? progress.source_tracks.filter(
-        (track) => integer(track.position) === state.preferred_position,
-      )
-    : selected;
-  return {
-    ...state,
-    complete,
-    coverage_complete: coverageComplete,
-    materialized_item_count: materializedCount,
-    chunk_tracks: selected.length,
-    preferred_resolved: complete && preferredResolved,
-    source_tracks: playbackTracks,
-    storage: complete ? 'd1-final' : 'r2-progress',
-  };
+  if (materializedCount >= state.visible_item_count) {
+    await commitProgress(db, state, progress, progress.updated_at);
+    progress.committed_at = progress.updated_at;
+    await saveProgressObject(env.PAGES_RESPONSE_R2, progress);
+    return resultFromProgress(state, progress, selected, 'd1-final');
+  }
+  return resultFromProgress(state, progress, selected, 'r2-progress');
 }
