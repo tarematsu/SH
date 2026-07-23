@@ -5,6 +5,8 @@ export const TRACK_HISTORY_RESPONSE_LIMIT = 10_000;
 
 const DEFAULT_PAGE_ROWS = 100;
 const MAX_PAGE_ROWS = 500;
+const DEFAULT_PAGE_DAYS = 30;
+const MAX_PAGE_DAYS = 90;
 
 function integer(value) {
   const parsed = Number(value);
@@ -22,14 +24,19 @@ function dayText(timestamp) {
 
 export function createTrackHistoryPublication(stage, status, now = Date.now(), env = {}) {
   const generatedAt = integer(status?.generated_at) ?? integer(now) ?? Date.now();
+  const from = '2024-05-01';
+  const r2Days = Boolean(env?.PAGES_RESPONSE_R2?.get && env?.PAGES_RESPONSE_R2?.put);
   return {
     model_key: TRACK_HISTORY_MODEL_KEY,
     generation: `${integer(stage?.generation) ?? generatedAt}:track-history:${generatedAt}`,
-    phase: 'rows',
-    from: '2024-05-01',
+    phase: r2Days ? 'r2-days' : 'rows',
+    from,
     to: dayText(generatedAt),
     limit: TRACK_HISTORY_RESPONSE_LIMIT,
     page_rows: positiveInteger(env?.PAGES_TRACK_HISTORY_ROWS_PER_STEP, DEFAULT_PAGE_ROWS, MAX_PAGE_ROWS),
+    page_days: positiveInteger(env?.PAGES_TRACK_HISTORY_DAYS_PER_STEP, DEFAULT_PAGE_DAYS, MAX_PAGE_DAYS),
+    day_cursor: r2Days ? from : null,
+    days_written: 0,
     rows_written: 0,
     next_chunk_index: 1,
     cursor: null,
