@@ -31,7 +31,7 @@ on:
         required: true
         type: choice
         options:
-          - facts-db
+          - minute-db
           - payload-purge
           - other-db
           - buddies-db
@@ -50,9 +50,9 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  facts-db:
-    name: Apply stationhead-minute schema
-    if: inputs.operation == 'facts-db'
+  minute-db:
+    name: Apply MINUTE_DB schema
+    if: inputs.operation == 'minute-db'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     defaults:
@@ -72,7 +72,7 @@ jobs:
           cache: npm
           cache-dependency-path: worker/package-lock.json
       - run: npm ci --no-audit --no-fund
-      - name: Apply ordered FACTS migrations
+      - name: Apply ordered MINUTE_DB migrations
         run: node scripts/apply-facts-pr-schema.mjs
       - name: Verify live data
         run: node scripts/verify-facts-live.mjs
