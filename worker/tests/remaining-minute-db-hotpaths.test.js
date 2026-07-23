@@ -72,6 +72,7 @@ class AliasDb {
     this.maxBindings = 0;
     this.maxBatchStatements = 0;
     this.maxBatchBindings = 0;
+    this.trackUpdateStatements = [];
   }
 
   prepare(sql) {
@@ -85,6 +86,9 @@ class AliasDb {
     this.maxBatchStatements = Math.max(this.maxBatchStatements, statements.length);
     this.maxBatchBindings = Math.max(this.maxBatchBindings, batchBindings);
     for (const statement of statements) {
+      if (statement.sql.includes('UPDATE sh_tracks SET')) {
+        this.trackUpdateStatements.push(statement);
+      }
       if (!statement.sql.includes('INSERT OR IGNORE INTO sh_tracks')) continue;
       const [canonical_key, isrc, spotify_id, stationhead_track_id] = statement.bindings;
       if (this.identityRows.some((row) => row.canonical_key === canonical_key)) continue;
@@ -117,7 +121,7 @@ test('known queue tracks resolve through bounded indexed alias queries without m
   assert.equal(db.identityQueries, 0);
 });
 
-test('track resolution bounds individual statements and aggregate batch bindings', async () => {
+test('track resolution bounds batches and uses eight-bind refresh updates', async () => {
   const db = new AliasDb([]);
   const input = Array.from({ length: 30 }, (_, index) => ({
     position: index,
@@ -138,9 +142,12 @@ test('track resolution bounds individual statements and aggregate batch bindings
   assert.equal(db.metadataQueries, 1);
   assert.equal(db.identityQueries, 2);
   assert.equal(db.maxBindings, 80);
-  assert.equal(db.batches, 20);
+  assert.equal(db.batches, 18);
   assert.equal(db.maxBatchStatements, 13);
   assert.equal(db.maxBatchBindings, 80);
+  assert.equal(db.trackUpdateStatements.length, 30);
+  assert.ok(db.trackUpdateStatements.every(({ bindings }) => bindings.length === 8));
+  assert.ok(db.trackUpdateStatements.every(({ sql }) => !sql.includes('? IS NOT NULL')));
 });
 
 test('track resolution reports the failing D1 substage', async () => {
