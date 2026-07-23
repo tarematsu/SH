@@ -4,7 +4,7 @@ import test from 'node:test';
 
 import { minuteFactInboxStats } from '../src/minute-facts-inbox.js';
 
-test('minute inbox health uses targeted status probes instead of a full conditional aggregate', async () => {
+test('minute inbox health reads one persisted counter row', async () => {
   let sql = '';
   const MINUTE_DB = {
     prepare(value) {
@@ -25,9 +25,9 @@ test('minute inbox health uses targeted status probes instead of a full conditio
   };
   const result = await minuteFactInboxStats({ MINUTE_DB });
   assert.equal(result.pending_count, 2);
-  assert.match(sql, /SELECT COUNT\(\*\) FROM sh_minute_fact_jobs WHERE status='pending'/);
-  assert.match(sql, /SELECT MIN\(minute_at\) FROM sh_minute_fact_jobs WHERE status='pending'/);
-  assert.doesNotMatch(sql, /SUM\(CASE WHEN/);
+  assert.match(sql, /FROM sh_minute_fact_inbox_stats/);
+  assert.match(sql, /WHERE id='global'/);
+  assert.doesNotMatch(sql, /COUNT\(\*\)|MIN\(minute_at\)|SUM\(CASE WHEN/);
 });
 
 test('facts migration installs partial dispatch indexes without indexing completed jobs', () => {
