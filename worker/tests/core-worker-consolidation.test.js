@@ -248,24 +248,36 @@ test('internal Pages fetch is delegated without exposing another Worker', async 
   assert.equal(await response.text(), 'ok');
 });
 
-test('runtime config contains all core bindings while only two Workers stay active', () => {
-  const config = JSON.parse(readFileSync(new URL('../wrangler.runtime.jsonc', import.meta.url), 'utf8'));
+test('runtime and collector configs preserve domain isolation across three active Workers', () => {
+  const collector = JSON.parse(readFileSync(
+    new URL('../wrangler.buddies-collector.jsonc', import.meta.url),
+    'utf8',
+  ));
+  const runtime = JSON.parse(readFileSync(new URL('../wrangler.runtime.jsonc', import.meta.url), 'utf8'));
   const packageJson = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
   const pagesConfig = JSON.parse(readFileSync(new URL('../../site/wrangler.jsonc', import.meta.url), 'utf8'));
   const workers = readFileSync(new URL('../scripts/cloudflare-workers.mjs', import.meta.url), 'utf8');
-  const consumers = new Set(config.queues.consumers.map(({ queue }) => queue));
+  const collectorConsumers = new Set(collector.queues.consumers.map(({ queue }) => queue));
+  const runtimeConsumers = new Set(runtime.queues.consumers.map(({ queue }) => queue));
   for (const queue of [
     'stationhead-raw-collection',
     'stationhead-comments',
+    'stationhead-buddies-persist',
+  ]) {
+    assert.equal(collectorConsumers.has(queue), true, queue);
+    assert.equal(runtimeConsumers.has(queue), false, queue);
+  }
+  for (const queue of [
     'stationhead-minute-enrichment',
     'stationhead-track-metadata',
     'stationhead-pages-read-model-publication',
     'stationhead-host-monitor',
     'stationhead-minute-live-derive',
   ]) {
-    assert.equal(consumers.has(queue), true, queue);
+    assert.equal(runtimeConsumers.has(queue), true, queue);
+    assert.equal(collectorConsumers.has(queue), false, queue);
   }
-  assert.equal('deploy:ingest' in packageJson.scripts, false);
+  assert.equal(packageJson.scripts['deploy:buddies-collector'], 'node scripts/deploy-buddies-collector.mjs');
   assert.equal('deploy:minute-enrichment' in packageJson.scripts, false);
   assert.equal(packageJson.scripts['deploy:runtime'], 'node scripts/deploy-runtime.mjs');
   assert.deepEqual(pagesConfig.services, [{
@@ -278,6 +290,6 @@ test('runtime config contains all core bindings while only two Workers stay acti
   );
   assert.deepEqual(
     [...activeBlock.matchAll(/'([^']+)'/g)].map((match) => match[1]),
-    ['sh-sakurazaka46jp', 'sh-runtime-orchestrator'],
+    ['sh-sakurazaka46jp', 'sh-buddies-collector', 'sh-runtime-orchestrator'],
   );
 });
