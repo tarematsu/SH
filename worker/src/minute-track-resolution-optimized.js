@@ -8,12 +8,12 @@ import {
 } from './minute-facts-track-descriptor.js';
 
 const D1_SAFE_BOUND_PARAMETERS = 80;
-const ALIAS_BINDINGS_PER_PAIR = 2;
 const IDENTITY_BINDINGS_PER_DESCRIPTOR = 4;
-const ALIAS_CHUNK_SIZE = Math.floor(D1_SAFE_BOUND_PARAMETERS / ALIAS_BINDINGS_PER_PAIR);
+const ALIAS_VALUE_CHUNK_SIZE = D1_SAFE_BOUND_PARAMETERS - 1;
 const IDENTITY_DESCRIPTOR_CHUNK_SIZE = Math.floor(
   D1_SAFE_BOUND_PARAMETERS / IDENTITY_BINDINGS_PER_DESCRIPTOR,
 );
+const BATCH_STATEMENT_LIMIT = 40;
 const TRACK_SEEN_CHECKPOINT_MS = 24 * 60 * 60_000;
 
 function normalizedIsrc(value) {
@@ -85,27 +85,28 @@ function aliasPairs(descriptors) {
   return pairs;
 }
 
+function aliasValuesByType(descriptors) {
+  const grouped = new Map();
+  for (const alias of aliasPairs(descriptors)) {
+    const values = grouped.get(alias.type) || [];
+    values.push(alias.value);
+    grouped.set(alias.type, values);
+  }
+  return grouped;
+}
+
 async function loadAliasMap(db, descriptors) {
-  const pairs = aliasPairs(descriptors);
   const result = new Map();
-  for (let offset = 0; offset < pairs.length; offset += ALIAS_CHUNK_SIZE) {
-    const part = pairs.slice(offset, offset + ALIAS_CHUNK_SIZE);
-    const bindings = [];
-    const values = part.map((alias) => {
-      bindings.push(alias.type, alias.value);
-      return '(?,?)';
-    });
-    const rows = await db.prepare(`WITH wanted(alias_type,alias_value) AS (
-        VALUES ${values.join(',')}
-      )
-      SELECT wanted.alias_type,wanted.alias_value,aliases.track_id
-      FROM wanted
-      JOIN sh_track_aliases aliases
-        ON aliases.alias_type=wanted.alias_type
-        AND aliases.alias_value=wanted.alias_value`)
-      .bind(...bindings).all();
-    for (const row of rows.results || []) {
-      result.set(aliasKey(row.alias_type, row.alias_value), integer(row.track_id));
+  for (const [aliasType, values] of aliasValuesByType(descriptors)) {
+    for (const part of chunks(values, ALIAS_VALUE_CHUNK_SIZE)) {
+      const placeholders = part.map(() => '?').join(',');
+      const rows = await db.prepare(`SELECT alias_type,alias_value,track_id
+        FROM sh_track_aliases
+        WHERE alias_type=? AND alias_value IN (${placeholders})`)
+        .bind(aliasType, ...part).all();
+      for (const row of rows.results || []) {
+        result.set(aliasKey(row.alias_type, row.alias_value), integer(row.track_id));
+      }
     }
   }
   return result;
@@ -186,6 +187,12 @@ function assignTrackRows(descriptors, identities) {
   }
 }
 
+async function runStatementBatches(db, statements) {
+  for (const part of chunks(statements, BATCH_STATEMENT_LIMIT)) {
+    if (part.length) await db.batch(part);
+  }
+}
+
 async function insertTracks(db, descriptors, observedAt) {
   const statements = descriptors
     .filter((descriptor) => descriptor.trackId == null && descriptor.canonicalKey)
@@ -202,7 +209,7 @@ async function insertTracks(db, descriptors, observedAt) {
         observedAt,
         observedAt,
       ));
-  if (statements.length) await db.batch(statements);
+  await runStatementBatches(db, statements);
 }
 
 async function persistTrackAliases(db, descriptors, observedAt) {
@@ -258,13 +265,26 @@ async function persistTrackAliases(db, descriptors, observedAt) {
         ));
     }
   }
-  if (statements.length) await db.batch(statements);
+  await runStatementBatches(db, statements);
+}
+
+async function runSubstage(name, operation) {
+  try {
+    return await operation();
+  } catch (error) {
+    const wrapped = new Error(`${name}: ${String(error?.message || error)}`);
+    wrapped.cause = error;
+    throw wrapped;
+  }
 }
 
 export async function resolveTracksAliasFirst(db, fallbackDb, tracks, observedAt) {
   if (!Array.isArray(tracks) || !tracks.length) return [];
   let descriptors = tracks.map((track, index) => buildTrackDescriptor(track, {}, index));
-  assignAliases(descriptors, await loadAliasMap(db, descriptors));
+  assignAliases(descriptors, await runSubstage(
+    'load_alias_map_initial',
+    () => loadAliasMap(db, descriptors),
+  ));
 
   const unresolvedIndexes = [];
   for (let index = 0; index < descriptors.length; index += 1) {
@@ -272,25 +292,35 @@ export async function resolveTracksAliasFirst(db, fallbackDb, tracks, observedAt
   }
   if (unresolvedIndexes.length) {
     const unresolved = unresolvedIndexes.map((index) => descriptors[index]);
-    const metadata = await loadUnresolvedMetadata(db, fallbackDb, unresolved);
+    const metadata = await runSubstage(
+      'load_unresolved_metadata',
+      () => loadUnresolvedMetadata(db, fallbackDb, unresolved),
+    );
     descriptors = descriptors.map((descriptor, index) => {
       if (!unresolvedIndexes.includes(index)) return descriptor;
       const spotifyId = text(tracks[index]?.spotify_id);
       return buildTrackDescriptor(tracks[index], spotifyId ? metadata.get(spotifyId) : {}, index);
     });
     const enrichedUnresolved = descriptors.filter((descriptor) => descriptor.trackId == null);
-    assignAliases(enrichedUnresolved, await loadAliasMap(db, enrichedUnresolved));
+    assignAliases(enrichedUnresolved, await runSubstage(
+      'load_alias_map_enriched',
+      () => loadAliasMap(db, enrichedUnresolved),
+    ));
   }
 
   const stillMissing = descriptors.filter((descriptor) => descriptor.trackId == null);
   if (stillMissing.length) {
-    await insertTracks(db, stillMissing, observedAt);
-    assignTrackRows(stillMissing, await loadTrackIdentityMap(db, stillMissing));
+    await runSubstage('insert_tracks', () => insertTracks(db, stillMissing, observedAt));
+    const identities = await runSubstage(
+      'load_track_identity_map',
+      () => loadTrackIdentityMap(db, stillMissing),
+    );
+    assignTrackRows(stillMissing, identities);
   }
   const unresolved = descriptors.filter((descriptor) => descriptor.trackId == null);
   if (unresolved.length) {
     throw new Error(`failed to resolve ${unresolved.length} queue track identities`);
   }
-  await persistTrackAliases(db, descriptors, observedAt);
+  await runSubstage('persist_track_aliases', () => persistTrackAliases(db, descriptors, observedAt));
   return descriptors;
 }
