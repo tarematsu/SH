@@ -15,9 +15,10 @@
 The active Worker configurations are:
 
 - `worker/wrangler.sakurazaka46jp.jsonc`
+- `worker/wrangler.buddies-collector.jsonc`
 - `worker/wrangler.runtime.jsonc`
 
-`sh-runtime-orchestrator` owns every non-Sakurazaka Queue, scheduled task, storage binding, and internal Pages read-model endpoint. `sh-sakurazaka46jp` remains isolated for Sakurazaka monitoring.
+`sh-buddies-collector` owns Stationhead `buddies` acquisition and the Queue lanes that persist source data into `BUDDIES_DB`: raw collection, ingest finalization, comments, and buddies persistence. `sh-runtime-orchestrator` owns downstream minute processing, enrichment, read models, maintenance, and the internal Pages read-model endpoint. `sh-sakurazaka46jp` remains isolated for Sakurazaka monitoring.
 
 Derive Worker names, D1 database names, Queue names, and bindings from those files at the current branch or commit. Treat any Worker or database name absent from the active configurations as foreign to this repository unless the user explicitly requests a cross-repository comparison.
 
@@ -25,6 +26,7 @@ Derive Worker names, D1 database names, Queue names, and bindings from those fil
 
 - GitHub Actions is the only supported build and deployment path for production Workers and Pages.
 - Automatic and manual production deployments are owned by `.github/workflows/deploy-split-pipeline.yml`.
+- The buddies collector must be deployed through `worker/scripts/deploy-buddies-collector.mjs` so Queue ownership is paused, migrated, verified, and rolled back safely on failure.
 - Pull requests may run local checks and dry-run bundles, but must not deploy to production Cloudflare resources.
 - Do not add Cloudflare Git build polling, Cloudflare-managed automatic deployments, or repository-connected build workflows.
 - Keep Cloudflare Pages automatic production and preview deployments disabled when using Wrangler from GitHub Actions.
