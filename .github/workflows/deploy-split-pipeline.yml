@@ -39,7 +39,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: deploy-production-minute-db-v2
+  group: deploy-production-minute-db-v2-generation-3
   cancel-in-progress: false
 
 jobs:
