@@ -65,6 +65,10 @@ function appleMusicCompatibilityPresent() {
   return changes;
 }
 
+function playbackPositionColumnPresent() {
+  return tableColumns('sh_minute_facts').has('queue_position_patch');
+}
+
 function deploymentMigrations() {
   if (!deployChangedOnly) {
     return { migrations: migrationPaths, mode: 'ordered-migration-set' };
@@ -91,6 +95,11 @@ for (const migration of deployment.migrations) {
   const migrationName = basename(migration);
   if (migrationName === '026_remove_apple_music_compatibility.sql'
       && !appleMusicCompatibilityPresent()) {
+    skipped.push(migration);
+    continue;
+  }
+  if (migrationName === '036_minute_fact_playback_position.sql'
+      && playbackPositionColumnPresent()) {
     skipped.push(migration);
     continue;
   }
