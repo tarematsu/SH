@@ -28,7 +28,8 @@ test('Pages track history reads materialized rows and integrated ranking status'
 });
 
 test('track-history generation and publication remain routed inside the core Worker', () => {
-  assert.match(ranking, /FROM sh_track_counter_current/);
+  assert.match(ranking, /FROM sh_track_ranking_current/);
+  assert.doesNotMatch(ranking, /FROM sh_track_counter_current/);
   assert.match(trackStage, /loadTrackRanking/);
   assert.match(trackStage, /ranking_summary/);
   assert.match(trackStage, /sh_pages_track_history_read_model/);
