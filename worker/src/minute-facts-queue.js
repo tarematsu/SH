@@ -40,6 +40,12 @@ function invalidMessage(detail) {
   return error;
 }
 
+function pointerPayloadMismatch(detail) {
+  const error = new Error(`minute fact pointer payload mismatch: ${detail}`);
+  error.code = 'MINUTE_FACT_POINTER_MISMATCH';
+  return error;
+}
+
 function serializedByteLength(serialized) {
   return messageEncoder.encode(serialized).byteLength;
 }
@@ -58,6 +64,10 @@ function pointerPayloadBucket(env) {
 
 function pointerStorageKey(message) {
   return `queue-payloads/minute-facts/${message.channel_id}/${message.minute_at}/${message.job_id}.json`;
+}
+
+function expectedPointerStorageKey(pointer) {
+  return `queue-payloads/minute-facts/${pointer.channel_id}/${pointer.minute_at}/${pointer.job_id}.json`;
 }
 
 function payloadSizeBucket(bytes) {
@@ -194,6 +204,9 @@ export function minuteFactPointerMessage(message, storageKey, payloadBytes) {
   }
   if (pointer.payload_version !== 1) throw invalidMessage('pointer payload_version is unsupported');
   if (!pointer.storage_key) throw invalidMessage('pointer storage_key is required');
+  if (pointer.storage_key !== expectedPointerStorageKey(pointer)) {
+    throw invalidMessage('pointer storage_key does not match identity');
+  }
   if (pointer.payload_bytes == null || pointer.payload_bytes <= 0) {
     throw invalidMessage('pointer payload_bytes is invalid');
   }
@@ -230,6 +243,9 @@ export function parseMinuteFactPointerMessage(body) {
   }
   if (pointer.payload_version !== 1) throw invalidMessage('pointer payload_version is unsupported');
   if (!pointer.storage_key) throw invalidMessage('pointer storage_key is required');
+  if (pointer.storage_key !== expectedPointerStorageKey(pointer)) {
+    throw invalidMessage('pointer storage_key does not match identity');
+  }
   if (pointer.payload_bytes == null || pointer.payload_bytes <= 0) {
     throw invalidMessage('pointer payload_bytes is invalid');
   }
@@ -279,8 +295,55 @@ export function parseMinuteFactQueueMessage(body) {
   };
 }
 
+async function loadMinuteFactPointerPayload(env, pointer) {
+  const bucket = pointerPayloadBucket(env);
+  if (!bucket?.get) throw new Error('minute fact payload R2 binding is missing');
+  const stored = await bucket.get(pointer.storage_key);
+  if (!stored) return null;
+  const serialized = await stored.text();
+  const actualBytes = serializedByteLength(serialized);
+  if (actualBytes !== pointer.payload_bytes) {
+    throw pointerPayloadMismatch(`expected ${pointer.payload_bytes} bytes, got ${actualBytes}`);
+  }
+  let fullMessage;
+  try {
+    fullMessage = JSON.parse(serialized);
+  } catch {
+    throw pointerPayloadMismatch('stored body is not valid JSON');
+  }
+  let parsed;
+  try {
+    parsed = parseMinuteFactQueueMessage(fullMessage);
+  } catch (error) {
+    if (error?.code === 'MINUTE_FACT_QUEUE_INVALID_MESSAGE') {
+      throw pointerPayloadMismatch(error.message);
+    }
+    throw error;
+  }
+  if (parsed.job_id !== pointer.job_id
+      || parsed.channel_id !== pointer.channel_id
+      || parsed.minute_at !== pointer.minute_at
+      || integer(parsed.payload?.payload_version) !== pointer.payload_version) {
+    throw pointerPayloadMismatch('pointer identity does not match stored payload');
+  }
+  return { fullMessage, parsed };
+}
+
 async function ensureMinuteFactPointerTransport(env, message) {
-  if (isPointerMessage(message) || !enabled(env?.MINUTE_FACT_POINTER_QUEUE_ENABLED)) return message;
+  if (isPointerMessage(message)) {
+    const pointer = parseMinuteFactPointerMessage(message);
+    if (!pointerSourceMessages.has(message)) {
+      const loaded = await loadMinuteFactPointerPayload(env, pointer);
+      if (!loaded) {
+        const error = new Error(`minute fact pointer payload is missing: ${pointer.storage_key}`);
+        error.code = 'MINUTE_FACT_POINTER_MISSING';
+        throw error;
+      }
+      pointerSourceMessages.set(message, loaded.fullMessage);
+    }
+    return message;
+  }
+  if (!enabled(env?.MINUTE_FACT_POINTER_QUEUE_ENABLED)) return message;
   const bucket = pointerPayloadBucket(env);
   if (!bucket?.put) throw new Error('minute fact payload R2 binding is missing');
   const serialized = serializedMessages.get(message) || JSON.stringify(message);
@@ -335,10 +398,8 @@ async function consumedPointerMarker(env, pointer) {
 async function resolveMinuteFactQueueMessage(env, body) {
   if (!isPointerMessage(body)) return { ...parseMinuteFactQueueMessage(body), pointer: null, duplicate: false };
   const pointer = parseMinuteFactPointerMessage(body);
-  const bucket = pointerPayloadBucket(env);
-  if (!bucket?.get) throw new Error('minute fact payload R2 binding is missing');
-  const stored = await bucket.get(pointer.storage_key);
-  if (!stored) {
+  const loaded = await loadMinuteFactPointerPayload(env, pointer);
+  if (!loaded) {
     if (await consumedPointerMarker(env, pointer)) {
       return {
         pointer,
@@ -352,27 +413,7 @@ async function resolveMinuteFactQueueMessage(env, body) {
     error.code = 'MINUTE_FACT_POINTER_MISSING';
     throw error;
   }
-  const serialized = await stored.text();
-  const actualBytes = serializedByteLength(serialized);
-  if (actualBytes !== pointer.payload_bytes) {
-    const error = new Error(`minute fact pointer payload size mismatch: expected ${pointer.payload_bytes}, got ${actualBytes}`);
-    error.code = 'MINUTE_FACT_POINTER_MISMATCH';
-    throw error;
-  }
-  let fullMessage;
-  try {
-    fullMessage = JSON.parse(serialized);
-  } catch {
-    throw invalidMessage('pointer payload is not valid JSON');
-  }
-  const parsed = parseMinuteFactQueueMessage(fullMessage);
-  if (parsed.job_id !== pointer.job_id
-      || parsed.channel_id !== pointer.channel_id
-      || parsed.minute_at !== pointer.minute_at
-      || integer(parsed.payload?.payload_version) !== pointer.payload_version) {
-    throw invalidMessage('pointer identity does not match stored payload');
-  }
-  return { ...parsed, pointer, duplicate: false };
+  return { ...loaded.parsed, pointer, duplicate: false };
 }
 
 async function completeMinuteFactPointer(env, pointer) {
