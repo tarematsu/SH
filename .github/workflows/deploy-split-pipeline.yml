@@ -145,7 +145,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
-      CLOUDFLARE_API_TOKEN: ${{ secrets['CLOUDFLARE_BUILDS_API_TOKEN'] || secrets['CLOUDFLARE_API_TOKEN'] || secrets['CF_API_TOKEN'] }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets['CLOUDFLARE_API_TOKEN'] || secrets['CF_API_TOKEN'] || secrets['CLOUDFLARE_BUILDS_API_TOKEN'] }}
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets['CLOUDFLARE_ACCOUNT_ID'] || secrets['CF_ACCOUNT_ID'] || '0500f25c2f74e7e76c94a8bcb6c7008b' }}
       DEPLOY_COMMANDS: ${{ needs.select.outputs.commands }}
     steps:
@@ -209,7 +209,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
-      CLOUDFLARE_API_TOKEN: ${{ secrets['CLOUDFLARE_BUILDS_API_TOKEN'] || secrets['CLOUDFLARE_API_TOKEN'] || secrets['CF_API_TOKEN'] }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets['CLOUDFLARE_API_TOKEN'] || secrets['CF_API_TOKEN'] || secrets['CLOUDFLARE_BUILDS_API_TOKEN'] }}
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets['CLOUDFLARE_ACCOUNT_ID'] || secrets['CF_ACCOUNT_ID'] || '0500f25c2f74e7e76c94a8bcb6c7008b' }}
     steps:
       - uses: actions/checkout@v4
@@ -225,7 +225,7 @@ jobs:
           path: site/node_modules
           key: ${{ runner.os }}-node22-pages-deploy-${{ hashFiles('site/package-lock.json') }}
       - name: Install Pages dependencies
-        if: steps.pages-modules.outputs.cache-hit != 'true'
+        if: steps.worker-modules.outputs.cache-hit != 'true'
         run: npm ci --prefer-offline --no-audit --no-fund
         working-directory: site
       - name: Check Pages source
