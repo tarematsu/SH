@@ -54,6 +54,14 @@ const retiredCoreDeployFiles = [
   '../worker/scripts/deploy-minute-enrichment.mjs',
 ];
 
+function jobSection(source, name, nextName) {
+  const start = source.indexOf(`  ${name}:\n`);
+  assert.notEqual(start, -1, `${name} job must exist`);
+  const end = nextName ? source.indexOf(`  ${nextName}:\n`, start + 1) : source.length;
+  assert.notEqual(end, -1, `${nextName} job must exist after ${name}`);
+  return source.slice(start, end);
+}
+
 test('one GitHub Actions workflow owns automatic and manual production deployments', () => {
   assert.match(deploymentWorkflow, /^name: Deploy production$/m);
   assert.match(deploymentWorkflow, /^  push:$/m);
@@ -72,10 +80,16 @@ test('one GitHub Actions workflow owns automatic and manual production deploymen
   assert.doesNotMatch(deploymentWorkflow, /deploy:ingest/);
   assert.doesNotMatch(deploymentWorkflow, /deploy:minute-enrichment/);
 
+  assert.match(deploymentWorkflow, /name: Apply FACTS migrations before deployment/);
   assert.match(deploymentWorkflow, /name: Deploy affected Workers/);
   assert.match(deploymentWorkflow, /name: Build and deploy Pages/);
   assert.match(deploymentWorkflow, /wrangler pages deploy public --project-name skrzk --branch main/);
-  assert.match(deploymentWorkflow, /needs: \[select, workers\]/);
+  assert.match(deploymentWorkflow, /needs: \[select, facts_db\]/);
+  assert.match(deploymentWorkflow, /needs: \[select, facts_db, workers\]/);
+  assert.match(
+    deploymentWorkflow,
+    /needs\.facts_db\.result == 'success' \|\| needs\.facts_db\.result == 'skipped'/,
+  );
   assert.match(deploymentWorkflow, /needs\.workers\.result == 'success' \|\| needs\.workers\.result == 'skipped'/);
 });
 
@@ -99,6 +113,35 @@ test('automatic production deploy selects affected Workers and Pages from change
   assert.match(deploymentWorkflow, /npm run "\$command"/);
   assert.match(deploymentWorkflow, /select-worker-deploys\.mjs --all/);
   assert.doesNotMatch(deploymentWorkflow, /sync-cloudflare-build-watch-paths/);
+});
+
+test('FACTS migrations are a blocking reusable stage before Worker and Pages deployment', () => {
+  assert.match(deploymentWorkflow, /database\/facts-db\.json/);
+  assert.match(deploymentWorkflow, /database\/facts-migrations\/\*\*/);
+  assert.match(deploymentWorkflow, /\.github\/workflows\/database\.yml/);
+  assert.match(deploymentWorkflow, /echo "facts_db=\$facts_db" >> "\$GITHUB_OUTPUT"/);
+
+  const facts = jobSection(deploymentWorkflow, 'facts_db', 'workers');
+  assert.match(facts, /uses: \.\/\.github\/workflows\/database\.yml/);
+  assert.match(facts, /operation: facts-db/);
+  assert.match(facts, /secrets: inherit/);
+
+  const workers = jobSection(deploymentWorkflow, 'workers', 'pages');
+  assert.match(workers, /needs: \[select, facts_db\]/);
+  assert.match(workers, /needs\.facts_db\.result == 'success'/);
+  assert.match(workers, /needs\.facts_db\.result == 'skipped'/);
+
+  const pages = jobSection(deploymentWorkflow, 'pages');
+  assert.match(pages, /needs: \[select, facts_db, workers\]/);
+  assert.match(pages, /needs\.facts_db\.result == 'success'/);
+  assert.match(pages, /needs\.facts_db\.result == 'skipped'/);
+
+  assert.match(databaseWorkflow, /^  workflow_call:$/m);
+  assert.doesNotMatch(databaseWorkflow, /database\/facts-migrations\/\*\*/);
+  const databaseFacts = jobSection(databaseWorkflow, 'facts-db', 'payload-purge');
+  assert.match(databaseFacts, /if: inputs\.operation == 'facts-db'/);
+  assert.doesNotMatch(databaseFacts, /github\.event_name == 'push'/);
+  assert.match(databaseFacts, /node scripts\/provision-current-facts-db\.mjs/);
 });
 
 test('Cloudflare Git build and PR production deployment files remain deleted', () => {
