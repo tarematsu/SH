@@ -7,7 +7,8 @@ import {
 const DEFAULT_BATCH_SIZE = 100;
 const MAX_BATCH_SIZE = 500;
 const DEFAULT_SOURCE_LAG_MS = 5 * 60_000;
-const SYNC_KEYS = Object.freeze(['track-likes', 'track-metadata']);
+const DEFAULT_SYNC_KEYS = Object.freeze(['track-metadata']);
+const LEGACY_TRACK_LIKES_SYNC_KEY = 'track-likes';
 
 function integer(value) {
   const parsed = Number(value);
@@ -20,10 +21,19 @@ function text(value) {
   return result || null;
 }
 
+function enabled(value) {
+  return value === true || value === 1 || /^(1|true|yes|on)$/i.test(String(value || ''));
+}
+
 function positive(value, fallback, maximum) {
   const parsed = integer(value);
   if (parsed == null || parsed <= 0) return fallback;
   return Math.min(parsed, maximum);
+}
+
+function syncKeys(env) {
+  if (!enabled(env?.BUDDIES_SYNC_TRACK_LIKES_ENABLED)) return DEFAULT_SYNC_KEYS;
+  return Object.freeze([LEGACY_TRACK_LIKES_SYNC_KEY, ...DEFAULT_SYNC_KEYS]);
 }
 
 function sourceCutoff(now, env) {
@@ -143,7 +153,7 @@ async function syncOne(env, syncKey, now, limit) {
   }
   const statements = new Array(rows.length + 1);
   for (let index = 0; index < rows.length; index += 1) {
-    statements[index] = syncKey === 'track-likes'
+    statements[index] = syncKey === LEGACY_TRACK_LIKES_SYNC_KEY
       ? likeStatement(minuteDb, rows[index])
       : metadataStatement(minuteDb, rows[index]);
   }
@@ -244,8 +254,10 @@ export async function repairPlaybackReadModels(env) {
 export async function runBuddiesFactsSync(env, options = {}) {
   const now = integer(options.now) || Date.now();
   const limit = positive(options.limit ?? env?.BUDDIES_SYNC_BATCH_SIZE, DEFAULT_BATCH_SIZE, MAX_BATCH_SIZE);
+  const activeSyncKeys = syncKeys(env);
+  const legacyTrackLikesEnabled = activeSyncKeys.includes(LEGACY_TRACK_LIKES_SYNC_KEY);
   const results = await Promise.all(
-    SYNC_KEYS.map((syncKey) => syncOneSafely(env, syncKey, now, limit)),
+    activeSyncKeys.map((syncKey) => syncOneSafely(env, syncKey, now, limit)),
   );
   let playbackRepair;
   try {
@@ -253,12 +265,24 @@ export async function runBuddiesFactsSync(env, options = {}) {
   } catch (error) {
     playbackRepair = { repaired: 0, skipped: true, reason: 'repair-error', error: sanitizeFailureDetail(error) };
   }
-  return {
+  const legacyRows = results.find(({ syncKey }) => syncKey === LEGACY_TRACK_LIKES_SYNC_KEY)?.rows || 0;
+  const summary = {
     skipped: results.every((result) => result.skipped && result.reason === 'db-binding-missing'),
     failed: results.some((result) => result.reason === 'sync-error') || playbackRepair.reason === 'repair-error',
     error: results.find((result) => result.reason === 'sync-error')?.error || playbackRepair.error || null,
     results,
     playbackRepair,
     rows: results.reduce((sum, result) => sum + Number(result.rows || 0), 0),
+    legacy_track_likes_enabled: legacyTrackLikesEnabled,
+    legacy_rows: Number(legacyRows || 0),
   };
+  console.log(JSON.stringify({
+    event: 'buddies_facts_sync_summary',
+    sync_keys: activeSyncKeys,
+    legacy_track_likes_enabled: summary.legacy_track_likes_enabled,
+    legacy_rows: summary.legacy_rows,
+    rows: summary.rows,
+    failed: summary.failed,
+  }));
+  return summary;
 }
