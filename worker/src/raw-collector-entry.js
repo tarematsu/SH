@@ -12,6 +12,10 @@ function positive(value, fallback) {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 }
 
+function enabled(value) {
+  return value === true || value === 1 || /^(1|true|yes|on)$/i.test(String(value || ''));
+}
+
 function authConfig(env) {
   return {
     requestTimeoutMs: Math.min(positive(env.REQUEST_TIMEOUT_MS, 8_000), 30_000),
@@ -207,13 +211,18 @@ async function directPreparedMessage(base, body, config, env) {
 }
 
 export async function collectRawChannel(env, dependencies = {}) {
+  const inlinePipeline = enabled(env?.COLLECTOR_INLINE_PIPELINE_ENABLED);
   const rawCollectionQueue = env?.RAW_COLLECTION_QUEUE;
-  if (typeof rawCollectionQueue?.send !== 'function') {
+  const ingestInline = dependencies.ingestRawCollection;
+  if (inlinePipeline && typeof ingestInline !== 'function') {
+    throw new Error('inline raw collection ingest handler is missing');
+  }
+  if (!inlinePipeline && typeof rawCollectionQueue?.send !== 'function') {
     throw new Error('RAW_COLLECTION_QUEUE binding is missing');
   }
 
   const state = await (dependencies.ensureSession || ensureSession)(env);
-  const inlinePreparation = !env.DB && dependencies.inlinePreparation !== false;
+  const inlinePreparation = inlinePipeline || (!env.DB && dependencies.inlinePreparation !== false);
   const config = inlinePreparation ? configFromEnv(env) : collectorRequestConfig(env);
   const observedAt = Date.now();
   const response = await (dependencies.fetch || fetch)(
@@ -253,7 +262,8 @@ export async function collectRawChannel(env, dependencies = {}) {
   const message = inlinePreparation
     ? await directPreparedMessage(base, body, config, env)
     : rawMessage(base, body);
-  await rawCollectionQueue.send(message, RAW_COLLECTION_QUEUE_OPTIONS);
+  if (inlinePipeline) await ingestInline(env, message, { inline: true });
+  else await rawCollectionQueue.send(message, RAW_COLLECTION_QUEUE_OPTIONS);
   rememberSession(env, {
     ...state,
     authToken: activeToken,
@@ -272,13 +282,19 @@ export async function collectRawChannel(env, dependencies = {}) {
     queueTotalTracks = Number(queue?.total_track_count || trackCount);
     queueMaterializedTracks = Number(queue?.materialized_track_count || trackCount);
   }
+  const event = inlinePipeline ? 'raw_collection_completed_inline' : 'raw_collection_enqueued';
   console.log(JSON.stringify({
-    event: 'raw_collection_enqueued',
+    event,
     observed_at: observedAt,
     payload_chars: body.length,
     queue_total_tracks: queueTotalTracks,
     queue_materialized_tracks: queueMaterializedTracks,
   }));
+  return {
+    inline: inlinePipeline,
+    message_version: Number(message.message_version || 0),
+    observed_at: observedAt,
+  };
 }
 
 export function resetRawCollectorSessionCacheForTests() {
