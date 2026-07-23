@@ -39,6 +39,36 @@ function queueValueFromJson(value) {
   }
 }
 
+function objectValue(value) {
+  return value && typeof value === 'object' && !Array.isArray(value) ? value : null;
+}
+
+// current_stream_count is a minute fact and changes on nearly every collection.
+// Persisting it inside the presentation blob caused an otherwise static channel
+// row to be rewritten each minute. The dashboard overlays the canonical fact
+// value, so retain stream_goal but strip only the volatile counter.
+export function stableChannelPresentation(value) {
+  const presentation = objectValue(value) || {};
+  let changed = false;
+  let result = presentation;
+  const stripStreaming = (container, key) => {
+    const owner = objectValue(container);
+    const streaming = objectValue(owner?.[key]);
+    if (!owner || !streaming || !Object.hasOwn(streaming, 'current_stream_count')) return owner;
+    const { current_stream_count: _ignored, ...stable } = streaming;
+    changed = true;
+    return { ...owner, [key]: stable };
+  };
+
+  const topLevel = stripStreaming(result, 'streaming_party');
+  if (topLevel !== result) result = topLevel;
+  const currentStation = stripStreaming(result.current_station, 'streaming_party');
+  if (currentStation !== result.current_station) {
+    result = { ...result, current_station: currentStation };
+  }
+  return changed ? result : presentation;
+}
+
 const TRACK_METADATA_KEY_LIMIT = 80;
 
 function incompleteTrackMetadataKeys(tracks) {
@@ -119,16 +149,15 @@ export async function writePreparedReadModel(env, readModel) {
   if (channelId == null || observedAt == null) throw new Error('channel read model identity is missing');
   const collectorId = String(collector.collector_id || '').trim();
   if (!collectorId) throw new Error('collector read model identity is missing');
+  const presentationJson = JSON.stringify(stableChannelPresentation(channel.presentation));
 
   await env.MINUTE_DB.batch([
     env.MINUTE_DB.prepare(`INSERT INTO sh_channel_read_model(channel_id,observed_at,presentation_json)
       VALUES(?,?,?) ON CONFLICT(channel_id) DO UPDATE SET
         observed_at=excluded.observed_at,presentation_json=excluded.presentation_json
-      WHERE excluded.observed_at>=sh_channel_read_model.observed_at AND (
-        excluded.presentation_json IS NOT sh_channel_read_model.presentation_json
-        OR excluded.observed_at-sh_channel_read_model.observed_at>=${READ_MODEL_CHECKPOINT_MS}
-      )`)
-      .bind(channelId, observedAt, JSON.stringify(channel.presentation || {})),
+      WHERE excluded.observed_at>=sh_channel_read_model.observed_at
+        AND excluded.presentation_json IS NOT sh_channel_read_model.presentation_json`)
+      .bind(channelId, observedAt, presentationJson),
     env.MINUTE_DB.prepare(`INSERT INTO sh_queue_read_model_current(
         channel_id,observed_at,station_id,queue_id,start_time,is_paused,queue_json
       ) VALUES(?,?,?,?,?,?,?) ON CONFLICT(channel_id) DO UPDATE SET
