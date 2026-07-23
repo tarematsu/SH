@@ -138,10 +138,16 @@ test('FACTS migrations are a blocking reusable stage before Worker and Pages dep
 
   assert.match(databaseWorkflow, /^  workflow_call:$/m);
   assert.doesNotMatch(databaseWorkflow, /database\/facts-migrations\/\*\*/);
+  assert.doesNotMatch(databaseWorkflow, /- '\.github\/workflows\/database\.yml'/);
   const databaseFacts = jobSection(databaseWorkflow, 'facts-db', 'payload-purge');
   assert.match(databaseFacts, /if: inputs\.operation == 'facts-db'/);
   assert.doesNotMatch(databaseFacts, /github\.event_name == 'push'/);
-  assert.match(databaseFacts, /node scripts\/provision-current-facts-db\.mjs/);
+  assert.match(databaseFacts, /name: Apply stationhead-minute schema/);
+  assert.match(databaseFacts, /node scripts\/apply-facts-pr-schema\.mjs/);
+  assert.match(databaseFacts, /node scripts\/verify-facts-live\.mjs/);
+  assert.doesNotMatch(databaseFacts, /provision-current-facts-db/);
+  assert.doesNotMatch(databaseFacts, /purge-completed-minute-fact-payloads/);
+  assert.doesNotMatch(databaseFacts, /repair-july-stream-facts/);
 });
 
 test('Cloudflare Git build and PR production deployment files remain deleted', () => {
