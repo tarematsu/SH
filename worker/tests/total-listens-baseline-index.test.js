@@ -40,7 +40,7 @@ function recordingDb() {
 test('facts descriptor advances beyond the total-listens baseline index', () => {
   assert.equal(
     descriptor.schema,
-    'database/facts-migrations/029_track_history_publication_cursor_index.sql',
+    'database/facts-migrations/030_compact_track_history_source.sql',
   );
 });
 

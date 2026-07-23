@@ -14,6 +14,10 @@ const publicationCursorMigration = readFileSync(
   new URL('../database/facts-migrations/029_track_history_publication_cursor_index.sql', import.meta.url),
   'utf8',
 );
+const compactTrackHistoryMigration = readFileSync(
+  new URL('../database/facts-migrations/030_compact_track_history_source.sql', import.meta.url),
+  'utf8',
+);
 const prSchema = readFileSync(
   new URL('../worker/scripts/apply-facts-pr-schema.mjs', import.meta.url),
   'utf8',
@@ -29,6 +33,7 @@ const expectedMigrations = [
   'database/facts-migrations/027_purge_retired_api_read_models.sql',
   'database/facts-migrations/028_purge_completed_minute_fact_payloads.sql',
   'database/facts-migrations/029_track_history_publication_cursor_index.sql',
+  'database/facts-migrations/030_compact_track_history_source.sql',
 ];
 
 test('PR deployment applies the ordered FACTS migration set through the current schema tip', () => {
@@ -47,6 +52,9 @@ test('PR deployment applies the ordered FACTS migration set through the current 
     publicationCursorMigration,
     /ON sh_pages_track_history_read_model\(\s*play_date,\s*COALESCE\(first_played_at,-1\),\s*row_key\s*\)/s,
   );
+  assert.match(compactTrackHistoryMigration, /idx_sh_queue_revisions_track_history_latest/);
+  assert.match(compactTrackHistoryMigration, /sh_minute_fact_context_v2/);
+  assert.doesNotMatch(compactTrackHistoryMigration, /ROW_NUMBER\(\) OVER/);
 });
 
 test('production keeps historical reconstruction serialized for measured daily budgets', () => {

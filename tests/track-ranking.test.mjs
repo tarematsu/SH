@@ -56,7 +56,7 @@ test('track history ranking keeps only the latest count for each eligible track'
   assert.ok(!Object.hasOwn(rows[0], 'average_like_count'));
 });
 
-test('FACTS schema publishes observed-time indexes, retired API cleanup, and payload purge', () => {
+test('FACTS schema publishes observed-time indexes, retired API cleanup, payload purge, and compact history views', () => {
   const indexMigration = readFileSync(
     new URL('../database/facts-migrations/012_counter_current_read_index.sql', import.meta.url),
     'utf8',
@@ -71,6 +71,10 @@ test('FACTS schema publishes observed-time indexes, retired API cleanup, and pay
   );
   const publicationIndexMigration = readFileSync(
     new URL('../database/facts-migrations/029_track_history_publication_cursor_index.sql', import.meta.url),
+    'utf8',
+  );
+  const compactHistoryMigration = readFileSync(
+    new URL('../database/facts-migrations/030_compact_track_history_source.sql', import.meta.url),
     'utf8',
   );
   const purgeScript = readFileSync(
@@ -88,8 +92,9 @@ test('FACTS schema publishes observed-time indexes, retired API cleanup, and pay
   assert.match(payloadMigration, /trg_sh_minute_fact_payload_after_job_done/);
   assert.match(payloadMigration, /SET payload_json='\{\}'/);
   assert.match(publicationIndexMigration, /idx_sh_pages_track_history_publication_cursor/);
+  assert.match(compactHistoryMigration, /idx_sh_queue_revisions_track_history_latest/);
   assert.match(purgeScript, /UPDATE sh_minute_fact_jobs SET payload_json='\{\}'/);
   assert.match(purgeScript, /remainingEligibleJobId != null/);
   assert.doesNotMatch(purgeScript, /SUM\(LENGTH\(payload_json\)\)/);
-  assert.equal(descriptor.schema, 'database/facts-migrations/029_track_history_publication_cursor_index.sql');
+  assert.equal(descriptor.schema, 'database/facts-migrations/030_compact_track_history_source.sql');
 });
