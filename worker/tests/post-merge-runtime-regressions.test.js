@@ -51,12 +51,15 @@ test('consolidated Pages route handles minute read-model messages even when batc
   assert.deepEqual(events, ['metadata', 'ack']);
 });
 
-test('optional comments are bounded inside the core Worker ingest route', () => {
+test('optional comments are bounded inside the dedicated collector ingest route', () => {
+  const collector = config('wrangler.buddies-collector.jsonc');
   const runtime = config('wrangler.runtime.jsonc');
   const entry = readFileSync(new URL('../src/ingest-channel-optimized-entry.js', import.meta.url), 'utf8');
-  const comments = runtime.queues.consumers.find(({ queue }) => queue === 'stationhead-comments');
-  assert.equal(runtime.vars.COMMENT_CHAIN_MAX_ATTEMPTS, 1);
+  const comments = collector.queues.consumers.find(({ queue }) => queue === 'stationhead-comments');
+  assert.equal(collector.vars.COMMENT_CHAIN_MAX_ATTEMPTS, 1);
   assert.equal(comments.max_batch_size, 1);
+  assert.equal(comments.max_concurrency, 1);
+  assert.equal(runtime.queues.consumers.some(({ queue }) => queue === 'stationhead-comments'), false);
   assert.match(entry, /CHAT_LIMIT: \{ value: 25/);
 });
 
@@ -67,8 +70,8 @@ test('ingest persists operational snapshots once per twenty-minute slot', () => 
   assert.equal(snapshotPersistenceDue(env, boundary + MINUTE), false);
   assert.equal(snapshotPersistenceDue({}, boundary + MINUTE), true);
 
-  const runtime = config('wrangler.runtime.jsonc');
-  assert.equal(runtime.vars.SNAPSHOT_PERSIST_INTERVAL_MS, 20 * MINUTE);
+  const collector = config('wrangler.buddies-collector.jsonc');
+  assert.equal(collector.vars.SNAPSHOT_PERSIST_INTERVAL_MS, 20 * MINUTE);
 });
 
 test('ingest drops duplicate collected metadata when the dedicated pipeline owns hydration', () => {
