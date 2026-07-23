@@ -14,7 +14,10 @@ const TRACK_UPDATE = `UPDATE sh_tracks SET
   isrc=COALESCE(isrc,?),spotify_id=COALESCE(spotify_id,?),
   stationhead_track_id=COALESCE(stationhead_track_id,?),
   title=COALESCE(title,?),artist=COALESCE(artist,?),last_seen_at=MAX(last_seen_at,?)
-WHERE id=?`;
+WHERE id=? AND (
+  title IS NULL
+  OR last_seen_at<=?
+)`;
 
 const TRACK_ALIAS = `INSERT INTO sh_track_aliases(
   alias_type,alias_value,track_id,first_seen_at,last_seen_at
@@ -29,13 +32,12 @@ const HISTORICAL_SESSION = `SELECT id FROM sh_broadcast_sessions
   WHERE channel_id=? AND broadcast_start_time=?
   ORDER BY ABS(first_observed_at-?) ASC,id ASC LIMIT 1`;
 
-test('track identity updates fill missing values immediately and checkpoint last_seen every twenty minutes', () => {
+test('track refresh SQL keeps caller-owned placeholders and checkpoint semantics', () => {
   resetMinuteD1WriteRewriteCacheForTests();
   const sql = rewriteMinuteD1WriteSql(TRACK_UPDATE);
-  assert.match(sql, /isrc=COALESCE\(isrc,\?1\)/);
-  assert.match(sql, /\?6-COALESCE\(last_seen_at,0\)>=1200000/);
-  assert.match(sql, /\(\?4 IS NOT NULL AND title IS NULL\)/);
-  assert.equal((sql.match(/\?7/g) || []).length, 1);
+  assert.equal(sql, TRACK_UPDATE);
+  assert.equal((sql.match(/\?/g) || []).length, 8);
+  assert.doesNotMatch(sql, /\?\d/);
 
   const db = new DatabaseSync(':memory:');
   db.exec(`CREATE TABLE sh_tracks(
@@ -43,13 +45,13 @@ test('track identity updates fill missing values immediately and checkpoint last
       title TEXT,artist TEXT,last_seen_at INTEGER NOT NULL
     );
     INSERT INTO sh_tracks VALUES
-      (1,NULL,NULL,NULL,'Song','Artist',0),
-      (2,NULL,NULL,NULL,NULL,'Artist',1200000);`);
+      (1,NULL,NULL,NULL,'Song','Artist',100),
+      (2,NULL,NULL,NULL,NULL,'Artist',100);`);
   const update = db.prepare(sql);
-  assert.equal(update.run(null, null, null, null, null, 1199999, 1).changes, 0);
-  assert.equal(update.run(null, null, null, null, null, 1200000, 1).changes, 1);
-  assert.equal(update.run(null, null, null, 'Recovered title', null, 1200001, 2).changes, 1);
+  assert.equal(update.run(null, null, null, 'Recovered title', null, 200, 1, 99).changes, 0);
+  assert.equal(update.run(null, null, null, 'Recovered title', null, 200, 2, 99).changes, 1);
   assert.equal(db.prepare('SELECT title FROM sh_tracks WHERE id=2').get().title, 'Recovered title');
+  assert.equal(update.run(null, null, null, null, null, 300, 1, 100).changes, 1);
 });
 
 test('track and host aliases checkpoint timestamp-only conflict updates every twenty minutes', () => {
@@ -97,7 +99,7 @@ test('historical session lookup probes one row on each side of the observation',
   assert.equal(searches.length, 2);
 });
 
-test('wrapped batches pass original bound statements to D1', async () => {
+test('wrapped batches pass original bound alias statements to D1', async () => {
   const prepared = [];
   const batches = [];
   const db = {
@@ -118,6 +120,32 @@ test('wrapped batches pass original bound statements to D1', async () => {
   await active.MINUTE_DB.batch([statement]);
   assert.match(prepared[0], /excluded\.last_seen_at-COALESCE/);
   assert.deepEqual(batches[0][0].binds, ['isrc', 'A', 1, 1, 1]);
+});
+
+test('wrapped track refresh preserves SQL and all eight bindings', async () => {
+  const prepared = [];
+  const batches = [];
+  const db = {
+    prepare(sql) {
+      prepared.push(sql);
+      return {
+        sql,
+        bind(...binds) { return { sql, binds }; },
+      };
+    },
+    async batch(statements) {
+      batches.push(statements);
+      return [];
+    },
+  };
+  const values = ['ISRC', 'spotify', 7, 'Title', 'Artist', 200, 11, 100];
+  const active = withMinuteD1WriteThrottling({ MINUTE_DB: db });
+  const statement = active.MINUTE_DB.prepare(TRACK_UPDATE).bind(...values);
+  await active.MINUTE_DB.batch([statement]);
+
+  assert.equal(prepared[0], TRACK_UPDATE);
+  assert.equal(batches[0][0].sql, TRACK_UPDATE);
+  assert.deepEqual(batches[0][0].binds, values);
 });
 
 test('wrapped session lookup retains its original three binds', async () => {
