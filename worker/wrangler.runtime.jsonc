@@ -69,6 +69,7 @@
     "OTHER_CRON_STALE_MS": 720000,
     "PUBLIC_HEALTH_CACHE_MS": 60000,
     "REQUEST_TIMEOUT_MS": 8000,
+    "RAW_COLLECTION_ENABLED": false,
     "RAW_COLLECTION_FALLBACK_INTERVAL_MINUTES": 5,
     "CRON_STAGGER_OTHER_MS": 25000,
     "COLLECTOR_PRIORITY_WAIT_MS": 15000,
@@ -101,10 +102,6 @@
   ],
   "queues": {
     "consumers": [
-      { "queue": "stationhead-raw-collection", "max_batch_size": 1, "max_batch_timeout": 1, "max_retries": 8, "dead_letter_queue": "stationhead-raw-collection-dlq" },
-      { "queue": "stationhead-ingest-finalize", "max_batch_size": 1, "max_batch_timeout": 1, "max_retries": 8, "dead_letter_queue": "stationhead-ingest-finalize-dlq", "max_concurrency": 1 },
-      { "queue": "stationhead-comments", "max_batch_size": 1, "max_batch_timeout": 1, "max_retries": 8, "dead_letter_queue": "stationhead-comments-dlq", "max_concurrency": 1 },
-      { "queue": "stationhead-buddies-persist", "max_batch_size": 1, "max_batch_timeout": 1, "max_retries": 8, "dead_letter_queue": "stationhead-buddies-persist-dlq", "max_concurrency": 1 },
       { "queue": "stationhead-minute-enrichment", "max_batch_size": 1, "max_batch_timeout": 1, "max_retries": 8, "dead_letter_queue": "stationhead-minute-enrichment-dlq", "max_concurrency": 1 },
       { "queue": "stationhead-track-metadata", "max_batch_size": 1, "max_batch_timeout": 1, "max_retries": 8, "dead_letter_queue": "stationhead-track-metadata-dlq", "max_concurrency": 1 },
       { "queue": "stationhead-pages-read-model-publication", "max_batch_size": 1, "max_batch_timeout": 1, "max_retries": 8, "dead_letter_queue": "stationhead-pages-read-model-publication-dlq", "max_concurrency": 1 },
@@ -116,11 +113,7 @@
       { "queue": "stationhead-minute-rebuild", "max_batch_size": 1, "max_batch_timeout": 1, "max_retries": 8, "dead_letter_queue": "stationhead-minute-rebuild-dlq", "max_concurrency": 1 }
     ],
     "producers": [
-      { "binding": "RAW_COLLECTION_QUEUE", "queue": "stationhead-raw-collection" },
       { "binding": "HOST_MONITOR_QUEUE", "queue": "stationhead-host-monitor" },
-      { "binding": "PERSIST_QUEUE", "queue": "stationhead-buddies-persist" },
-      { "binding": "INGEST_FINALIZE_QUEUE", "queue": "stationhead-ingest-finalize" },
-      { "binding": "COMMENTS_QUEUE", "queue": "stationhead-comments" },
       { "binding": "MINUTE_FACT_QUEUE", "queue": "stationhead-buddies-facts" },
       { "binding": "MINUTE_DERIVE_QUEUE", "queue": "stationhead-minute-derive" },
       { "binding": "MINUTE_LIVE_DERIVE_QUEUE", "queue": "stationhead-minute-live-derive" },
