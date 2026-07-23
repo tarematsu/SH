@@ -52,6 +52,14 @@ test('collector and runtime Wrangler configurations own disjoint pipeline stages
   ));
   const runtime = JSON.parse(readFileSync(new URL('../wrangler.runtime.jsonc', import.meta.url), 'utf8'));
   const source = readFileSync(new URL('../src/raw-collector-entry.js', import.meta.url), 'utf8');
+  const preparedCollector = readFileSync(
+    new URL('../src/prepared-collector-runner.js', import.meta.url),
+    'utf8',
+  );
+  const minuteProduction = readFileSync(
+    new URL('../src/minute-production-entry.js', import.meta.url),
+    'utf8',
+  );
 
   assert.equal(collector.main, 'src/buddies-collector-entry.js');
   assert.equal(runtime.main, 'src/runtime-orchestrator-deployed-entry.js');
@@ -87,6 +95,13 @@ test('collector and runtime Wrangler configurations own disjoint pipeline stages
   assert.equal(runtime.queues.consumers.length, 9);
   const collectorQueues = new Set(collector.queues.consumers.map(({ queue }) => queue));
   assert.equal(runtime.queues.consumers.some(({ queue }) => collectorQueues.has(queue)), false);
+  assert.equal(collector.vars.COLLECTOR_INLINE_PIPELINE_ENABLED, true);
+  assert.equal(runtime.vars.LIVE_DERIVE_INLINE_ENABLED, true);
+  assert.equal(runtime.vars.MINUTE_FACT_TIMEOUT_MS, 18_000);
+  assert.match(preparedCollector, /PERSIST_QUEUE: \{ value: null/);
+  assert.match(preparedCollector, /INGEST_FINALIZE_QUEUE: \{ value: null/);
+  assert.match(minuteProduction, /MINUTE_ENRICHMENT_QUEUE/);
+  assert.match(minuteProduction, /runInlineLiveDerive/);
   assert.equal(runtime.vars.RAW_COLLECTION_ENABLED, false);
   assert.equal(runtime.kv_namespaces[0].binding, 'PAGES_RESPONSE_KV');
   assert.equal(runtime.r2_buckets[0].binding, 'PAGES_RESPONSE_R2');
