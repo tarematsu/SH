@@ -36,6 +36,7 @@ const liveTailScript = readFileSync(
 );
 const wranglerFiles = [
   'wrangler.sakurazaka46jp.jsonc',
+  'wrangler.buddies-collector.jsonc',
   'wrangler.runtime.jsonc',
 ].map((name) => ({
   name,
@@ -52,7 +53,7 @@ test('observability uses measured budgets and post-deploy Cloudflare API diagnos
   assert.doesNotMatch(workflow, /^      - '(?:worker|site|packages)\//m);
   assert.match(workflow, /^  schedule:\n/m);
   assert.doesNotMatch(workflow, /^  pull_request:\n/m);
-  assert.match(workflow, /CLOUDFLARE_WORKERS: sh-sakurazaka46jp,sh-runtime-orchestrator/);
+  assert.match(workflow, /CLOUDFLARE_WORKERS: sh-sakurazaka46jp,sh-buddies-collector,sh-runtime-orchestrator/);
   assert.doesNotMatch(workflow, /CLOUDFLARE_WORKERS:.*sh-buddies-ingest/);
   assert.doesNotMatch(workflow, /CLOUDFLARE_WORKERS:.*sh-minute-enrichment/);
   assert.match(workflow, /secrets\.CLOUDFLARE_BUILDS_API_TOKEN/);
