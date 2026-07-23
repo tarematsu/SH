@@ -65,8 +65,12 @@ function appleMusicCompatibilityPresent() {
   return changes;
 }
 
+let playbackPositionPresent;
 function playbackPositionColumnPresent() {
-  return tableColumns('sh_minute_facts').has('queue_position_patch');
+  if (playbackPositionPresent === undefined) {
+    playbackPositionPresent = tableColumns('sh_minute_facts').has('queue_position_patch');
+  }
+  return playbackPositionPresent;
 }
 
 function deploymentMigrations() {
@@ -88,7 +92,19 @@ function deploymentMigrations() {
     : { migrations: [descriptor.schema], mode: 'schema-tip-fallback' };
 }
 
-const deployment = deploymentMigrations();
+let deployment = deploymentMigrations();
+const playbackPositionMigration = migrationPaths.find(
+  (migration) => basename(migration) === '036_minute_fact_playback_position.sql',
+);
+if (playbackPositionMigration
+    && !deployment.migrations.includes(playbackPositionMigration)
+    && !playbackPositionColumnPresent()) {
+  deployment = {
+    ...deployment,
+    migrations: [playbackPositionMigration, ...deployment.migrations],
+  };
+}
+
 const applied = [];
 const skipped = [];
 for (const migration of deployment.migrations) {
