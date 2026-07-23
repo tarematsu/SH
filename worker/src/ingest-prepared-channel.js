@@ -8,6 +8,7 @@ import {
   preparedCollectorFinalizeState,
 } from './prepared-collector-runner.js';
 import {
+  minuteFactQueueSourceMessage,
   parseMinuteFactQueueMessage,
 } from './minute-facts-queue.js';
 
@@ -156,12 +157,13 @@ function activeIngestEnv(env, message, collection, capture) {
       value: destinationQueue?.send ? {
         send(body, options) {
           if (body && typeof body === 'object') {
-            const envelope = readModelEnvelopeForMinuteFact(message, body, true);
-            capture.channelId = integer(body.channel_id);
-            capture.minuteAt = integer(body.minute_at);
+            const sourceBody = minuteFactQueueSourceMessage(body);
+            const envelope = readModelEnvelopeForMinuteFact(message, sourceBody, true);
+            capture.channelId = integer(sourceBody.channel_id);
+            capture.minuteAt = integer(sourceBody.minute_at);
             capture.envelope = envelope;
             if (inlinePipeline) return destinationQueue.send(body, options);
-            return commentsQueue.send(commentsTaskForMinuteFact(commentTask, body), options);
+            return commentsQueue.send(commentsTaskForMinuteFact(commentTask, sourceBody), options);
           }
           return destinationQueue.send(body, options);
         },
