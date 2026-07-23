@@ -225,7 +225,7 @@ jobs:
           path: site/node_modules
           key: ${{ runner.os }}-node22-pages-deploy-${{ hashFiles('site/package-lock.json') }}
       - name: Install Pages dependencies
-        if: steps.worker-modules.outputs.cache-hit != 'true'
+        if: steps.pages-modules.outputs.cache-hit != 'true'
         run: npm ci --prefer-offline --no-audit --no-fund
         working-directory: site
       - name: Check Pages source
