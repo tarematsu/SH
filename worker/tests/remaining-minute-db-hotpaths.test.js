@@ -23,6 +23,7 @@ class Statement {
   }
 
   bind(...bindings) {
+    assert.ok(bindings.length <= 100, `D1 query has ${bindings.length} bound parameters`);
     return new Statement(this.db, this.sql, bindings);
   }
 
@@ -44,7 +45,14 @@ class Statement {
     }
     if (this.sql.includes('FROM sh_tracks')) {
       this.db.identityQueries += 1;
-      return { results: [] };
+      return {
+        results: this.db.identityRows.filter((row) => (
+          this.bindings.includes(row.canonical_key)
+          || this.bindings.includes(row.isrc)
+          || this.bindings.includes(row.spotify_id)
+          || this.bindings.includes(row.stationhead_track_id)
+        )),
+      };
     }
     return { results: [] };
   }
@@ -53,6 +61,8 @@ class Statement {
 class AliasDb {
   constructor(aliases) {
     this.aliases = new Map(aliases);
+    this.identityRows = [];
+    this.nextTrackId = 1_000;
     this.aliasQueries = 0;
     this.metadataQueries = 0;
     this.identityQueries = 0;
@@ -63,8 +73,21 @@ class AliasDb {
     return new Statement(this, sql);
   }
 
-  async batch() {
+  async batch(statements = []) {
     this.batches += 1;
+    for (const statement of statements) {
+      if (!statement.sql.includes('INSERT OR IGNORE INTO sh_tracks')) continue;
+      const [canonical_key, isrc, spotify_id, stationhead_track_id] = statement.bindings;
+      if (this.identityRows.some((row) => row.canonical_key === canonical_key)) continue;
+      this.identityRows.push({
+        id: this.nextTrackId,
+        canonical_key,
+        isrc,
+        spotify_id,
+        stationhead_track_id,
+      });
+      this.nextTrackId += 1;
+    }
     return [];
   }
 }
@@ -83,6 +106,28 @@ test('known queue tracks resolve through one combined alias query without metada
   assert.equal(db.aliasQueries, 1);
   assert.equal(db.metadataQueries, 0);
   assert.equal(db.identityQueries, 0);
+});
+
+test('track alias and identity lookups stay within the D1 100-parameter query limit', async () => {
+  const db = new AliasDb([]);
+  const input = Array.from({ length: 30 }, (_, index) => ({
+    position: index,
+    isrc: `JPTEST${String(index + 1).padStart(6, '0')}`,
+    spotify_id: `spotify-${index + 1}`,
+    stationhead_track_id: 10_000 + index,
+    legacy_track_id: 20_000 + index,
+    title: `Title ${index + 1}`,
+    artist: `Artist ${index + 1}`,
+    duration_ms: 180_000,
+  }));
+
+  const tracks = await resolveTracksAliasFirst(db, null, input, 1_000);
+
+  assert.equal(tracks.length, 30);
+  assert.ok(tracks.every(({ trackId }) => trackId != null));
+  assert.equal(db.aliasQueries, 6);
+  assert.equal(db.metadataQueries, 1);
+  assert.equal(db.identityQueries, 2);
 });
 
 test('dashboard rollup seeks the current and previous minute rather than rescanning a bucket', () => {

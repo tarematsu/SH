@@ -7,7 +7,13 @@ import {
   unique,
 } from './minute-facts-track-descriptor.js';
 
-const ALIAS_CHUNK_SIZE = 120;
+const D1_MAX_BOUND_PARAMETERS = 100;
+const ALIAS_BINDINGS_PER_PAIR = 2;
+const IDENTITY_BINDINGS_PER_DESCRIPTOR = 4;
+const ALIAS_CHUNK_SIZE = Math.floor(D1_MAX_BOUND_PARAMETERS / ALIAS_BINDINGS_PER_PAIR);
+const IDENTITY_DESCRIPTOR_CHUNK_SIZE = Math.floor(
+  D1_MAX_BOUND_PARAMETERS / IDENTITY_BINDINGS_PER_DESCRIPTOR,
+);
 const TRACK_SEEN_CHECKPOINT_MS = 24 * 60 * 60_000;
 
 function normalizedIsrc(value) {
@@ -137,14 +143,8 @@ function identityQuery(descriptors) {
   return clauses.length ? { clauses, bindings } : null;
 }
 
-async function loadTrackIdentityMap(db, descriptors) {
-  const query = identityQuery(descriptors);
-  const map = new Map();
-  if (!query) return map;
-  const result = await db.prepare(`SELECT id,canonical_key,isrc,spotify_id,stationhead_track_id
-    FROM sh_tracks WHERE ${query.clauses.join(' OR ')}`)
-    .bind(...query.bindings).all();
-  for (const row of result.results || []) {
+function addTrackIdentityRows(map, rows) {
+  for (const row of rows || []) {
     const id = integer(row.id);
     if (id == null) continue;
     if (row.canonical_key) map.set(`canonical:${row.canonical_key}`, id);
@@ -154,6 +154,18 @@ async function loadTrackIdentityMap(db, descriptors) {
     if (spotifyId) map.set(aliasKey('spotify_id', spotifyId), id);
     const stationheadId = integer(row.stationhead_track_id);
     if (stationheadId != null) map.set(aliasKey('stationhead_track_id', String(stationheadId)), id);
+  }
+}
+
+async function loadTrackIdentityMap(db, descriptors) {
+  const map = new Map();
+  for (const part of chunks(descriptors, IDENTITY_DESCRIPTOR_CHUNK_SIZE)) {
+    const query = identityQuery(part);
+    if (!query) continue;
+    const result = await db.prepare(`SELECT id,canonical_key,isrc,spotify_id,stationhead_track_id
+      FROM sh_tracks WHERE ${query.clauses.join(' OR ')}`)
+      .bind(...query.bindings).all();
+    addTrackIdentityRows(map, result.results);
   }
   return map;
 }
