@@ -10,7 +10,7 @@ import {
 const D1_SAFE_BOUND_PARAMETERS = 80;
 const IDENTITY_BINDINGS_PER_DESCRIPTOR = 4;
 const TRACK_INSERT_BINDINGS = 8;
-const TRACK_UPDATE_BINDINGS = 13;
+const TRACK_UPDATE_BINDINGS = 8;
 const ALIAS_UPSERT_BINDINGS = 6;
 const ALIAS_VALUE_CHUNK_SIZE = D1_SAFE_BOUND_PARAMETERS - 1;
 const IDENTITY_DESCRIPTOR_CHUNK_SIZE = Math.floor(
@@ -217,6 +217,17 @@ async function insertTracks(db, descriptors, observedAt) {
   await runStatementBatches(db, statements, TRACK_INSERT_BATCH_LIMIT);
 }
 
+function trackRefreshConditions(descriptor) {
+  const conditions = [];
+  if (descriptor.isrc != null) conditions.push('isrc IS NULL');
+  if (descriptor.spotify_id != null) conditions.push('spotify_id IS NULL');
+  if (descriptor.stationhead_track_id != null) conditions.push('stationhead_track_id IS NULL');
+  if (descriptor.title != null) conditions.push('title IS NULL');
+  if (descriptor.artist != null) conditions.push('artist IS NULL');
+  conditions.push('last_seen_at<=?');
+  return conditions.join('\n        OR ');
+}
+
 async function persistTrackAliases(db, descriptors, observedAt) {
   const uniqueTracks = new Map();
   for (const descriptor of descriptors) {
@@ -232,12 +243,7 @@ async function persistTrackAliases(db, descriptors, observedAt) {
         stationhead_track_id=COALESCE(stationhead_track_id,?),
         title=COALESCE(title,?),artist=COALESCE(artist,?),last_seen_at=MAX(last_seen_at,?)
       WHERE id=? AND (
-        (isrc IS NULL AND ? IS NOT NULL)
-        OR (spotify_id IS NULL AND ? IS NOT NULL)
-        OR (stationhead_track_id IS NULL AND ? IS NOT NULL)
-        OR (title IS NULL AND ? IS NOT NULL)
-        OR (artist IS NULL AND ? IS NOT NULL)
-        OR last_seen_at<=?
+        ${trackRefreshConditions(descriptor)}
       )`)
       .bind(
         descriptor.isrc,
@@ -247,11 +253,6 @@ async function persistTrackAliases(db, descriptors, observedAt) {
         descriptor.artist,
         observedAt,
         descriptor.trackId,
-        descriptor.isrc,
-        descriptor.spotify_id,
-        descriptor.stationhead_track_id,
-        descriptor.title,
-        descriptor.artist,
         observedAt - TRACK_SEEN_CHECKPOINT_MS,
       ));
     for (const alias of descriptor.aliases || []) {
