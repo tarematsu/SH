@@ -1,5 +1,7 @@
 #!/usr/bin/env node
 
+import assert from 'node:assert/strict';
+
 const API_BASE = 'https://api.cloudflare.com/client/v4';
 const token = process.env.CLOUDFLARE_API_TOKEN?.trim();
 const worker = process.env.LIVE_TAIL_WORKER?.trim();
@@ -8,6 +10,35 @@ const probes = (process.env.LIVE_TAIL_PROBES || '')
   .split(',')
   .map((value) => value.trim())
   .filter(Boolean);
+const OK_OUTCOMES = new Set(['', 'ok', 'success', 'canceled', 'cancelled']);
+const ERROR_OUTCOMES = new Set(['error', 'failed', 'failure', 'exception']);
+
+export function isErrorLike(value) {
+  const workers = value?.$workers && typeof value.$workers === 'object' ? value.$workers : {};
+  const metadata = value?.$metadata && typeof value.$metadata === 'object' ? value.$metadata : {};
+  const source = value?.source && typeof value.source === 'object' ? value.source : {};
+  const workerOutcome = String(workers.outcome || '').toLowerCase();
+  if (workerOutcome && !OK_OUTCOMES.has(workerOutcome)) return true;
+  const level = String(metadata.level || source.level || '').toLowerCase();
+  if (level === 'error' || level === 'fatal') return true;
+  const sourceOutcome = String(source.outcome || '').toLowerCase();
+  return Boolean(metadata.error || source.error || ERROR_OUTCOMES.has(sourceOutcome));
+}
+
+function selfTest() {
+  assert.equal(isErrorLike({ $workers: { outcome: 'ok' } }), false);
+  assert.equal(isErrorLike({ source: { outcome: 'success' } }), false);
+  assert.equal(isErrorLike({ $workers: { outcome: 'exception' } }), true);
+  assert.equal(isErrorLike({ source: { outcome: 'failure' } }), true);
+  assert.equal(isErrorLike({ $metadata: { level: 'error' } }), true);
+  assert.equal(isErrorLike({ source: { error: 'D1_ERROR' } }), true);
+  console.log('live-tail outcome classification self-test passed');
+}
+
+if (process.argv.includes('--self-test')) {
+  selfTest();
+  process.exit(0);
+}
 
 if (!token || !worker) throw new Error('CLOUDFLARE_API_TOKEN and LIVE_TAIL_WORKER are required');
 
@@ -128,16 +159,15 @@ const finished = new Promise((resolve, reject) => {
     timer = setTimeout(() => socket.close(1000, 'diagnostic complete'), durationMs);
   });
   socket.addEventListener('message', async (message) => {
-    let text = typeof message.data === 'string' ? message.data : await message.data.text();
+    const text = typeof message.data === 'string' ? message.data : await message.data.text();
     let parsed;
     try { parsed = JSON.parse(text); } catch { parsed = { raw: text.slice(0, 1000) }; }
     const safe = sanitize(parsed);
     const cpu = findNumbers(safe);
     for (const [, value] of cpu) maxCpu = maxCpu === null ? value : Math.max(maxCpu, value);
-    const compact = JSON.stringify(safe);
-    if (/"outcome":"(?!ok|canceled|cancelled)/i.test(compact) || /exception|error/i.test(compact)) errors += 1;
+    if (isErrorLike(safe)) errors += 1;
     events += 1;
-    console.log(`LIVE_TAIL_EVENT=${compact}`);
+    console.log(`LIVE_TAIL_EVENT=${JSON.stringify(safe)}`);
     if (cpu.length) console.log(`LIVE_TAIL_CPU=${JSON.stringify(cpu)}`);
   });
   socket.addEventListener('error', (event) => reject(new Error(`Live tail WebSocket error: ${event.message || 'unknown'}`)));
