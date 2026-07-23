@@ -5,7 +5,6 @@ on:
     branches:
       - main
     paths:
-      - '.github/workflows/database.yml'
       - 'database/other-migrations/**'
       - 'worker/scripts/provision-other-db.mjs'
       - 'worker/scripts/consolidate-track-metadata.mjs'
@@ -52,10 +51,10 @@ concurrency:
 
 jobs:
   facts-db:
-    name: Provision or update stationhead-minute
+    name: Apply stationhead-minute schema
     if: inputs.operation == 'facts-db'
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    timeout-minutes: 30
     defaults:
       run:
         working-directory: worker
@@ -65,10 +64,6 @@ jobs:
       FACTS_DATABASE_NAME: stationhead-minute
       FACTS_VERIFY_ATTEMPTS: '5'
       FACTS_VERIFY_DELAY_MS: '20000'
-      MINUTE_FACT_PAYLOAD_PURGE_BATCH_SIZE: '1000'
-      MINUTE_FACT_PAYLOAD_PURGE_STATEMENTS_PER_REQUEST: '20'
-      MINUTE_FACT_PAYLOAD_PURGE_MAX_BATCHES: '10000'
-      MINUTE_FACT_PAYLOAD_PURGE_MAX_ATTEMPTS: '6'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -77,12 +72,8 @@ jobs:
           cache: npm
           cache-dependency-path: worker/package-lock.json
       - run: npm ci --no-audit --no-fund
-      - name: Create or update database
-        run: node scripts/provision-current-facts-db.mjs
-      - name: Purge completed minute fact payloads
-        run: node scripts/purge-completed-minute-fact-payloads.mjs
-      - name: Repair contaminated July stream facts
-        run: node scripts/repair-july-stream-facts.mjs
+      - name: Apply ordered FACTS migrations
+        run: node scripts/apply-facts-pr-schema.mjs
       - name: Verify live data
         run: node scripts/verify-facts-live.mjs
 
