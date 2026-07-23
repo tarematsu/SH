@@ -142,12 +142,12 @@ export async function pendingMinuteDeriveTriggers(env, options = {}) {
   const kindFilter = historicalRebuildEnabled(env) ? '' : " AND job_kind!='rebuild'";
   const [pending, expired] = await Promise.all([
     env.MINUTE_DB.prepare(`SELECT id,channel_id,minute_at,job_kind,job_priority
-      FROM sh_minute_fact_jobs
+      FROM sh_minute_fact_jobs INDEXED BY idx_sh_minute_fact_jobs_pending_ready
       WHERE status='pending' AND next_attempt_at<=?${kindFilter}
-      ORDER BY job_priority DESC,minute_at ASC,id ASC
+      ORDER BY next_attempt_at ASC,job_priority DESC,minute_at ASC,id ASC
       LIMIT ?`).bind(now, limit).all(),
     env.MINUTE_DB.prepare(`SELECT id,channel_id,minute_at,job_kind,job_priority
-      FROM sh_minute_fact_jobs
+      FROM sh_minute_fact_jobs INDEXED BY idx_sh_minute_fact_jobs_processing_lease
       WHERE status='processing' AND lease_until<?${kindFilter}
       ORDER BY lease_until ASC,id ASC
       LIMIT ?`).bind(now, limit).all(),
