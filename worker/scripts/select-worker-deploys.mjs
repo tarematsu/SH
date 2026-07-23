@@ -23,6 +23,7 @@ const deployScriptWorkers = new Map([
 ]);
 
 const allWorkerDeployScripts = new Set([
+  '.github/workflows/deploy-split-pipeline.yml',
   'worker/scripts/cloudflare-build-config.mjs',
   'worker/scripts/cloudflare-queues.mjs',
   'worker/scripts/cloudflare-workers.mjs',
