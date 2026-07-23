@@ -9,19 +9,6 @@ const rewriteCache = new Map();
 const wrappedDatabases = new WeakMap();
 const revisionProgressCaches = new WeakMap();
 
-const TRACK_UPDATE = `UPDATE sh_tracks SET
-      isrc=COALESCE(isrc,?1),spotify_id=COALESCE(spotify_id,?2),
-      stationhead_track_id=COALESCE(stationhead_track_id,?3),
-      title=COALESCE(title,?4),artist=COALESCE(artist,?5),last_seen_at=MAX(last_seen_at,?6)
-    WHERE id=?7 AND (
-      (?1 IS NOT NULL AND isrc IS NULL)
-      OR (?2 IS NOT NULL AND spotify_id IS NULL)
-      OR (?3 IS NOT NULL AND stationhead_track_id IS NULL)
-      OR (?4 IS NOT NULL AND title IS NULL)
-      OR (?5 IS NOT NULL AND artist IS NULL)
-      OR ?6-COALESCE(last_seen_at,0)>=${CHECKPOINT_MS}
-    )`;
-
 const HISTORICAL_SESSION_SEEK = `WITH before_match AS (
       SELECT id,first_observed_at FROM sh_broadcast_sessions
       WHERE channel_id=?1 AND broadcast_start_time=?2 AND first_observed_at<=?3
@@ -40,14 +27,6 @@ const HISTORICAL_SESSION_SEEK = `WITH before_match AS (
 
 function compact(value) {
   return String(value || '').replace(/\s+/g, ' ').trim().toLowerCase();
-}
-
-function isTrackIdentityUpdate(sql) {
-  const text = compact(sql);
-  return text.startsWith('update sh_tracks set isrc=coalesce(isrc,?),spotify_id=coalesce(spotify_id,?),')
-    && text.includes('stationhead_track_id=coalesce(stationhead_track_id,?)')
-    && text.includes('title=coalesce(title,?),artist=coalesce(artist,?)')
-    && text.includes('last_seen_at=max(last_seen_at,?) where id=?');
 }
 
 function throttleAliasUpsert(sql, table) {
@@ -78,8 +57,7 @@ export function rewriteMinuteD1WriteSql(value) {
   if (cached !== undefined) return cached;
 
   let rewritten = original;
-  if (isTrackIdentityUpdate(original)) rewritten = TRACK_UPDATE;
-  else if (compact(original).startsWith('insert into sh_track_aliases(')) {
+  if (compact(original).startsWith('insert into sh_track_aliases(')) {
     rewritten = throttleAliasUpsert(original, 'sh_track_aliases');
   } else if (compact(original).startsWith('insert into sh_host_aliases(')) {
     rewritten = throttleAliasUpsert(original, 'sh_host_aliases');
