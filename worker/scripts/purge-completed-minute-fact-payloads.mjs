@@ -11,24 +11,18 @@ function positiveInteger(value, fallback, maximum) {
   return Math.min(parsed, maximum);
 }
 
-function incompleteRevisionPredicate(alias = 'jobs') {
-  return `EXISTS (
-    SELECT 1 FROM sh_queue_revisions revisions
-    WHERE revisions.source_job_id=${alias}.id
-      AND (revisions.status<>'complete'
-        OR COALESCE(revisions.materialized_item_count,0)
-          <COALESCE(revisions.source_visible_count,revisions.item_count,0))
-  )`;
+function eligiblePredicate(alias = 'jobs') {
+  return `${alias}.payload_clearable=1 AND LENGTH(${alias}.payload_json)>2`;
 }
 
-function eligiblePredicate(alias = 'jobs') {
-  return `${alias}.status='done' AND LENGTH(${alias}.payload_json)>2
-    AND NOT ${incompleteRevisionPredicate(alias)}`;
+function blockedPredicate(alias = 'jobs') {
+  return `${alias}.status='done' AND ${alias}.payload_clearable=0
+    AND LENGTH(${alias}.payload_json)>2`;
 }
 
 export function payloadPurgeStatement(batchSize) {
   const limit = positiveInteger(batchSize, 1_000, 5_000);
-  return `UPDATE sh_minute_fact_jobs SET payload_json='{}'
+  return `UPDATE sh_minute_fact_jobs SET payload_json='{}',payload_clearable=0
     WHERE id IN (
       SELECT jobs.id FROM sh_minute_fact_jobs jobs
       WHERE ${eligiblePredicate('jobs')}
@@ -214,8 +208,7 @@ export async function purgeCompletedMinuteFactPayloads(options = {}) {
         },
         {
           sql: `SELECT jobs.id FROM sh_minute_fact_jobs jobs
-            WHERE jobs.status='done' AND LENGTH(jobs.payload_json)>2
-              AND ${incompleteRevisionPredicate('jobs')}
+            WHERE ${blockedPredicate('jobs')}
             ORDER BY COALESCE(jobs.processed_at,jobs.updated_at) ASC,jobs.id ASC
             LIMIT 1`,
         },
