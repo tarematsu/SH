@@ -46,7 +46,7 @@ jobs:
     name: Select deployment targets
     runs-on: ubuntu-latest
     outputs:
-      facts_db: ${{ steps.targets.outputs.facts_db }}
+      minute_db: ${{ steps.targets.outputs.minute_db }}
       pages: ${{ steps.targets.outputs.pages }}
       workers: ${{ steps.targets.outputs.workers }}
       commands: ${{ steps.targets.outputs.commands }}
@@ -67,13 +67,13 @@ jobs:
           HEAD_SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
-          facts_db=false
+          minute_db=false
           pages=false
 
           if [[ "$EVENT_NAME" == 'workflow_dispatch' ]]; then
             case "$TARGET" in
               all)
-                facts_db=true
+                minute_db=true
                 pages=true
                 selection="$(node worker/scripts/select-worker-deploys.mjs --all)"
                 ;;
@@ -82,14 +82,14 @@ jobs:
                 selection='{"workers":[],"commands":[]}'
                 ;;
               workers)
-                facts_db=true
+                minute_db=true
                 selection="$(node worker/scripts/select-worker-deploys.mjs --all)"
                 ;;
               sakurazaka46jp)
                 selection='{"workers":["sh-sakurazaka46jp"],"commands":["deploy:sakurazaka46jp"]}'
                 ;;
               runtime)
-                facts_db=true
+                minute_db=true
                 selection='{"workers":["sh-runtime-orchestrator"],"commands":["deploy:runtime"]}'
                 ;;
               *)
@@ -105,7 +105,7 @@ jobs:
             fi
             printf '%s\n' "$changed_files" | tee changed-files.txt
             if grep -Eq '^(database/facts-db\.json$|database/facts-migrations/|worker/scripts/(provision-facts-db|provision-current-facts-db|apply-facts-pr-schema)\.mjs$|\.github/workflows/(database|deploy-split-pipeline)\.yml$)' changed-files.txt; then
-              facts_db=true
+              minute_db=true
             fi
             if grep -Eq '^(site/(functions|public)/|site/wrangler\.jsonc$|site/package(-lock)?\.json$|packages/sh-shared/)' changed-files.txt; then
               pages=true
@@ -114,27 +114,27 @@ jobs:
           fi
 
           echo "$selection" | jq .
-          echo "facts_db=$facts_db" >> "$GITHUB_OUTPUT"
+          echo "minute_db=$minute_db" >> "$GITHUB_OUTPUT"
           echo "pages=$pages" >> "$GITHUB_OUTPUT"
           echo "workers=$(jq -c '.workers' <<<"$selection")" >> "$GITHUB_OUTPUT"
           echo "commands=$(jq -c '.commands' <<<"$selection")" >> "$GITHUB_OUTPUT"
 
-  facts_db:
-    name: Apply FACTS migrations before deployment
+  minute_db:
+    name: Apply MINUTE_DB migrations before deployment
     needs: select
-    if: needs.select.outputs.facts_db == 'true'
+    if: needs.select.outputs.minute_db == 'true'
     uses: ./.github/workflows/database.yml
     with:
-      operation: facts-db
+      operation: minute-db
     secrets: inherit
 
   workers:
     name: Deploy affected Workers
-    needs: [select, facts_db]
+    needs: [select, minute_db]
     if: >-
       always()
       && needs.select.result == 'success'
-      && (needs.facts_db.result == 'success' || needs.facts_db.result == 'skipped')
+      && (needs.minute_db.result == 'success' || needs.minute_db.result == 'skipped')
       && needs.select.outputs.workers != '[]'
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -193,11 +193,11 @@ jobs:
 
   pages:
     name: Build and deploy Pages
-    needs: [select, facts_db, workers]
+    needs: [select, minute_db, workers]
     if: >-
       always()
       && needs.select.result == 'success'
-      && (needs.facts_db.result == 'success' || needs.facts_db.result == 'skipped')
+      && (needs.minute_db.result == 'success' || needs.minute_db.result == 'skipped')
       && needs.select.outputs.pages == 'true'
       && (needs.workers.result == 'success' || needs.workers.result == 'skipped')
     runs-on: ubuntu-latest
