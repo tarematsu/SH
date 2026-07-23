@@ -44,6 +44,17 @@ test('deployment support changes select the owning Worker', () => {
   assert.deepEqual(select(['worker/scripts/deploy-sakurazaka46jp.mjs']).workers, [SAKURAZAKA]);
 });
 
+test('MINUTE_DB schema changes deploy the runtime that consumes the schema', () => {
+  for (const path of [
+    'database/facts-db.json',
+    'database/facts-migrations/038_deploy_safe_remaining_hotpaths.sql',
+  ]) {
+    assert.deepEqual(select([path]).workers, [RUNTIME], path);
+    assert.deepEqual(select([path]).commands, ['deploy:runtime'], path);
+    assert.deepEqual(select([path]).diagnostics, [RUNTIME], path);
+  }
+});
+
 test('shared deployment infrastructure selects both Workers', () => {
   for (const path of [
     'worker/package.json',
@@ -52,6 +63,7 @@ test('shared deployment infrastructure selects both Workers', () => {
     'worker/scripts/cloudflare-queues.mjs',
     'worker/scripts/cloudflare-workers.mjs',
     'worker/scripts/deploy-connected-worker.mjs',
+    'worker/scripts/select-worker-deploys.mjs',
     'worker/scripts/wrangler-command.mjs',
   ]) {
     assert.equal(select([path]).workers.length, 2, path);

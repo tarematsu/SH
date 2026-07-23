@@ -10,11 +10,12 @@ const workerDefinitions = [
 ];
 
 const gitConnectedWorkers = new Set(['sh-runtime-orchestrator']);
+const runtimeWorker = 'sh-runtime-orchestrator';
 
 const deployScriptWorkers = new Map([
-  ['worker/scripts/deploy-runtime.mjs', 'sh-runtime-orchestrator'],
-  ['worker/scripts/pages-response-kv-namespace.mjs', 'sh-runtime-orchestrator'],
-  ['worker/scripts/provision-runtime-analytics-pipeline.mjs', 'sh-runtime-orchestrator'],
+  ['worker/scripts/deploy-runtime.mjs', runtimeWorker],
+  ['worker/scripts/pages-response-kv-namespace.mjs', runtimeWorker],
+  ['worker/scripts/provision-runtime-analytics-pipeline.mjs', runtimeWorker],
   ['worker/scripts/deploy-sakurazaka46jp.mjs', 'sh-sakurazaka46jp'],
 ]);
 
@@ -23,6 +24,7 @@ const allWorkerDeployScripts = new Set([
   'worker/scripts/cloudflare-queues.mjs',
   'worker/scripts/cloudflare-workers.mjs',
   'worker/scripts/deploy-connected-worker.mjs',
+  'worker/scripts/select-worker-deploys.mjs',
   'worker/scripts/wrangler-command.mjs',
   'worker/package.json',
 ]);
@@ -99,13 +101,18 @@ function readChangedPaths() {
 
 function affectedByPath(definition, changedPath) {
   if (changedPath === definition.config) return true;
-  if (definition.name === 'sh-runtime-orchestrator' && changedPath.startsWith('worker/pipelines/')) {
+  if (definition.name === runtimeWorker && changedPath.startsWith('worker/pipelines/')) {
     return true;
   }
   if (changedPath.startsWith('packages/sh-shared/')) {
     return [...definition.dependencies].some((dependency) => dependency.startsWith('packages/sh-shared/'));
   }
   return definition.dependencies.has(changedPath);
+}
+
+function changesMinuteDbSchema(changedPath) {
+  return changedPath === 'database/facts-db.json'
+    || changedPath.startsWith('database/facts-migrations/');
 }
 
 const changed = readChangedPaths();
@@ -117,6 +124,11 @@ if (changed.all) {
   for (const changedPath of changed.paths) {
     if (changedPath === 'worker/package-lock.json' || allWorkerDeployScripts.has(changedPath)) {
       for (const definition of definitions) selected.add(definition.name);
+      continue;
+    }
+
+    if (changesMinuteDbSchema(changedPath)) {
+      selected.add(runtimeWorker);
       continue;
     }
 
