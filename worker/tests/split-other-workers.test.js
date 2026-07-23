@@ -33,21 +33,28 @@ function queueMessage(body, events, prefix = '') {
   };
 }
 
-test('runtime Worker config owns every non-Sakurazaka Queue boundary', () => {
-  const worker = config('wrangler.runtime.jsonc');
-  assert.equal(worker.name, 'sh-runtime-orchestrator');
-  assert.equal(worker.main, 'src/runtime-orchestrator-deployed-entry.js');
-  assert.deepEqual(worker.triggers.crons, [RUNTIME_CRON]);
-  assert.deepEqual(worker.d1_databases.map(({ binding }) => binding), [
+test('collector and runtime Worker configs own disjoint Queue boundaries', () => {
+  const collector = config('wrangler.buddies-collector.jsonc');
+  const runtime = config('wrangler.runtime.jsonc');
+  assert.equal(collector.name, 'sh-buddies-collector');
+  assert.equal(collector.main, 'src/buddies-collector-entry.js');
+  assert.equal(runtime.name, 'sh-runtime-orchestrator');
+  assert.equal(runtime.main, 'src/runtime-orchestrator-deployed-entry.js');
+  assert.deepEqual(collector.triggers.crons, [RUNTIME_CRON]);
+  assert.deepEqual(runtime.triggers.crons, [RUNTIME_CRON]);
+  assert.deepEqual(collector.d1_databases.map(({ binding }) => binding), ['BUDDIES_DB']);
+  assert.deepEqual(runtime.d1_databases.map(({ binding }) => binding), [
     'BUDDIES_DB',
     'MINUTE_DB',
     'OTHER_DB',
   ]);
-  assert.deepEqual(worker.queues.consumers.map(({ queue }) => queue), [
+  assert.deepEqual(collector.queues.consumers.map(({ queue }) => queue), [
     'stationhead-raw-collection',
     'stationhead-ingest-finalize',
     'stationhead-comments',
     'stationhead-buddies-persist',
+  ]);
+  assert.deepEqual(runtime.queues.consumers.map(({ queue }) => queue), [
     'stationhead-minute-enrichment',
     'stationhead-track-metadata',
     'stationhead-pages-read-model-publication',
@@ -58,11 +65,14 @@ test('runtime Worker config owns every non-Sakurazaka Queue boundary', () => {
     'stationhead-buddies-facts',
     'stationhead-minute-rebuild',
   ]);
-  assert.equal(worker.queues.consumers.some(({ queue }) => queue === 'stationhead-buddy-playback'), false);
-  assert.equal(worker.queues.producers.some(({ binding }) => binding === 'BUDDY_PLAYBACK_QUEUE'), false);
-  assert.equal(worker.queues.producers.some(({ binding }) => binding === 'MINUTE_ENRICHMENT_QUEUE'), true);
-  assert.equal(worker.queues.producers.some(({ binding }) => binding === 'PAGES_READ_MODEL_QUEUE'), true);
-  assert.equal(worker.vars.SNAPSHOT_RETENTION_ENABLED, true);
+  const collectorQueues = new Set(collector.queues.consumers.map(({ queue }) => queue));
+  assert.equal(runtime.queues.consumers.some(({ queue }) => collectorQueues.has(queue)), false);
+  assert.equal(runtime.queues.consumers.some(({ queue }) => queue === 'stationhead-buddy-playback'), false);
+  assert.equal(runtime.queues.producers.some(({ binding }) => binding === 'BUDDY_PLAYBACK_QUEUE'), false);
+  assert.equal(runtime.queues.producers.some(({ binding }) => binding === 'MINUTE_ENRICHMENT_QUEUE'), true);
+  assert.equal(runtime.queues.producers.some(({ binding }) => binding === 'PAGES_READ_MODEL_QUEUE'), true);
+  assert.equal(runtime.vars.RAW_COLLECTION_ENABLED, false);
+  assert.equal(runtime.vars.SNAPSHOT_RETENTION_ENABLED, true);
 });
 
 test('runtime Cron queues rollup and prediction only in their assigned slots', async () => {
