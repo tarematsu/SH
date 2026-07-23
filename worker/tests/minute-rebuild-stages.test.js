@@ -214,13 +214,13 @@ test('gap commit dispatches at most the first prepared candidate per invocation'
   assert.deepEqual(sent.map((body) => body.minute_at), [60_000]);
 });
 
-test('thirty-day reconstruction stays enabled with D1-budgeted recovery throughput', () => {
+test('historical reconstruction remains configured but paused for Queue budget recovery', () => {
   const runtime = JSON.parse(readFileSync(new URL('../wrangler.runtime.jsonc', import.meta.url), 'utf8'));
   const entry = readFileSync(new URL('../src/minute-rebuild-entry.js', import.meta.url), 'utf8');
   const rebuild = runtime.queues.consumers.find(({ queue }) => queue === 'stationhead-minute-rebuild');
 
-  assert.equal(runtime.vars.HISTORICAL_REBUILD_ENABLED, true);
-  assert.equal(runtime.vars.REBUILD_HISTORICAL_BACKFILL_ENABLED, true);
+  assert.equal(runtime.vars.HISTORICAL_REBUILD_ENABLED, false);
+  assert.equal(runtime.vars.REBUILD_HISTORICAL_BACKFILL_ENABLED, false);
   assert.equal(runtime.vars.REBUILD_HISTORICAL_BACKFILL_INTERVAL_MS, 3_600_000);
   assert.equal(runtime.vars.DERIVE_DISPATCH_LIMIT, 2);
   assert.equal(runtime.vars.DERIVE_REVISION_RECOVERY_LIMIT, 1);
