@@ -5,7 +5,10 @@ import { minuteBucket } from './minute-facts-store.js';
 
 export const MINUTE_FACT_QUEUE_MESSAGE_TYPE = 'minute-fact-job';
 export const MINUTE_FACT_QUEUE_MESSAGE_VERSION = 1;
+export const MINUTE_FACT_POINTER_MESSAGE_TYPE = 'minute-fact-pointer';
+export const MINUTE_FACT_POINTER_MESSAGE_VERSION = 1;
 export const MINUTE_FACT_QUEUE_MAX_MESSAGE_BYTES = 120 * 1024;
+export const MINUTE_FACT_POINTER_MAX_MESSAGE_BYTES = 8 * 1024;
 export const MINUTE_FACT_OUTBOX_SCHEMA_SQL = `CREATE TABLE IF NOT EXISTS sh_minute_fact_outbox (
   job_id TEXT PRIMARY KEY,
   payload_json TEXT NOT NULL,
@@ -18,6 +21,7 @@ export const MINUTE_FACT_OUTBOX_SCHEMA_SQL = `CREATE TABLE IF NOT EXISTS sh_minu
 )`;
 
 const serializedMessages = new WeakMap();
+const pointerSourceMessages = new WeakMap();
 const messageEncoder = new TextEncoder();
 let lastOutboxCleanupMinute = null;
 
@@ -26,18 +30,56 @@ function integer(value) {
   return Number.isFinite(parsed) ? Math.trunc(parsed) : null;
 }
 
+function enabled(value) {
+  return value === true || value === 1 || /^(1|true|yes|on)$/i.test(String(value || ''));
+}
+
 function invalidMessage(detail) {
   const error = new Error(`invalid minute fact queue message: ${detail}`);
   error.code = 'MINUTE_FACT_QUEUE_INVALID_MESSAGE';
   return error;
 }
 
-function serializedMessageFits(serialized) {
+function pointerPayloadMismatch(detail) {
+  const error = new Error(`minute fact pointer payload mismatch: ${detail}`);
+  error.code = 'MINUTE_FACT_POINTER_MISMATCH';
+  return error;
+}
+
+function serializedByteLength(serialized) {
+  return messageEncoder.encode(serialized).byteLength;
+}
+
+function serializedMessageFits(serialized, limit = MINUTE_FACT_QUEUE_MAX_MESSAGE_BYTES) {
   // Three UTF-8 bytes per UTF-16 code unit is a safe upper bound for a
   // JSON.stringify result. Avoid a second full payload traversal for the
   // normal, comfortably-under-limit message.
-  if (serialized.length * 3 <= MINUTE_FACT_QUEUE_MAX_MESSAGE_BYTES) return true;
-  return messageEncoder.encode(serialized).byteLength <= MINUTE_FACT_QUEUE_MAX_MESSAGE_BYTES;
+  if (serialized.length * 3 <= limit) return true;
+  return serializedByteLength(serialized) <= limit;
+}
+
+function pointerPayloadBucket(env) {
+  return env?.MINUTE_FACT_PAYLOAD_R2 || env?.PAGES_RESPONSE_R2 || null;
+}
+
+function pointerStorageKey(message) {
+  return `queue-payloads/minute-facts/${message.channel_id}/${message.minute_at}/${message.job_id}.json`;
+}
+
+function expectedPointerStorageKey(pointer) {
+  return `queue-payloads/minute-facts/${pointer.channel_id}/${pointer.minute_at}/${pointer.job_id}.json`;
+}
+
+function payloadSizeBucket(bytes) {
+  if (bytes < 16 * 1024) return 'lt16k';
+  if (bytes < 32 * 1024) return '16k-32k';
+  if (bytes < 64 * 1024) return '32k-64k';
+  if (bytes < 96 * 1024) return '64k-96k';
+  return '96k-120k';
+}
+
+function isPointerMessage(value) {
+  return value?.message_type === MINUTE_FACT_POINTER_MESSAGE_TYPE;
 }
 
 async function hydrateMinuteFactComments(env, payload) {
@@ -143,6 +185,77 @@ export function minuteFactQueueMessage(input = {}, options = {}) {
   return message;
 }
 
+export function minuteFactPointerMessage(message, storageKey, payloadBytes) {
+  const pointer = {
+    message_type: MINUTE_FACT_POINTER_MESSAGE_TYPE,
+    message_version: MINUTE_FACT_POINTER_MESSAGE_VERSION,
+    job_id: String(message?.job_id || ''),
+    channel_id: integer(message?.channel_id),
+    minute_at: integer(message?.minute_at),
+    payload_version: integer(message?.payload?.payload_version),
+    storage_key: String(storageKey || ''),
+    payload_bytes: integer(payloadBytes),
+  };
+  if (!pointer.job_id || pointer.channel_id == null || pointer.minute_at == null) {
+    throw invalidMessage('pointer identity is required');
+  }
+  if (pointer.job_id !== `minute-fact:${pointer.channel_id}:${pointer.minute_at}`) {
+    throw invalidMessage('pointer job_id does not match identity');
+  }
+  if (pointer.payload_version !== 1) throw invalidMessage('pointer payload_version is unsupported');
+  if (!pointer.storage_key) throw invalidMessage('pointer storage_key is required');
+  if (pointer.storage_key !== expectedPointerStorageKey(pointer)) {
+    throw invalidMessage('pointer storage_key does not match identity');
+  }
+  if (pointer.payload_bytes == null || pointer.payload_bytes <= 0) {
+    throw invalidMessage('pointer payload_bytes is invalid');
+  }
+  const serialized = JSON.stringify(pointer);
+  if (!serializedMessageFits(serialized, MINUTE_FACT_POINTER_MAX_MESSAGE_BYTES)) {
+    throw invalidMessage(`pointer exceeds ${MINUTE_FACT_POINTER_MAX_MESSAGE_BYTES} bytes`);
+  }
+  return pointer;
+}
+
+export function parseMinuteFactPointerMessage(body) {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) {
+    throw invalidMessage('pointer body must be an object');
+  }
+  if (body.message_type !== MINUTE_FACT_POINTER_MESSAGE_TYPE
+      || integer(body.message_version) !== MINUTE_FACT_POINTER_MESSAGE_VERSION) {
+    throw invalidMessage('pointer message is unsupported');
+  }
+  const pointer = {
+    message_type: MINUTE_FACT_POINTER_MESSAGE_TYPE,
+    message_version: MINUTE_FACT_POINTER_MESSAGE_VERSION,
+    job_id: String(body.job_id || ''),
+    channel_id: integer(body.channel_id),
+    minute_at: integer(body.minute_at),
+    payload_version: integer(body.payload_version),
+    storage_key: String(body.storage_key || ''),
+    payload_bytes: integer(body.payload_bytes),
+  };
+  if (!pointer.job_id || pointer.channel_id == null || pointer.minute_at == null) {
+    throw invalidMessage('pointer identity is required');
+  }
+  if (pointer.job_id !== `minute-fact:${pointer.channel_id}:${pointer.minute_at}`) {
+    throw invalidMessage('pointer job_id does not match identity');
+  }
+  if (pointer.payload_version !== 1) throw invalidMessage('pointer payload_version is unsupported');
+  if (!pointer.storage_key) throw invalidMessage('pointer storage_key is required');
+  if (pointer.storage_key !== expectedPointerStorageKey(pointer)) {
+    throw invalidMessage('pointer storage_key does not match identity');
+  }
+  if (pointer.payload_bytes == null || pointer.payload_bytes <= 0) {
+    throw invalidMessage('pointer payload_bytes is invalid');
+  }
+  return pointer;
+}
+
+export function minuteFactQueueSourceMessage(body) {
+  return pointerSourceMessages.get(body) || body;
+}
+
 export function parseMinuteFactQueueMessage(body) {
   if (!body || typeof body !== 'object' || Array.isArray(body)) {
     throw invalidMessage('body must be an object');
@@ -180,6 +293,169 @@ export function parseMinuteFactQueueMessage(body) {
     channel_id: channelId,
     minute_at: minuteAt,
   };
+}
+
+async function loadMinuteFactPointerPayload(env, pointer) {
+  const bucket = pointerPayloadBucket(env);
+  if (!bucket?.get) throw new Error('minute fact payload R2 binding is missing');
+  const stored = await bucket.get(pointer.storage_key);
+  if (!stored) return null;
+  const serialized = await stored.text();
+  const actualBytes = serializedByteLength(serialized);
+  if (actualBytes !== pointer.payload_bytes) {
+    throw pointerPayloadMismatch(`expected ${pointer.payload_bytes} bytes, got ${actualBytes}`);
+  }
+  let fullMessage;
+  try {
+    fullMessage = JSON.parse(serialized);
+  } catch {
+    throw pointerPayloadMismatch('stored body is not valid JSON');
+  }
+  let parsed;
+  try {
+    parsed = parseMinuteFactQueueMessage(fullMessage);
+  } catch (error) {
+    if (error?.code === 'MINUTE_FACT_QUEUE_INVALID_MESSAGE') {
+      throw pointerPayloadMismatch(error.message);
+    }
+    throw error;
+  }
+  if (parsed.job_id !== pointer.job_id
+      || parsed.channel_id !== pointer.channel_id
+      || parsed.minute_at !== pointer.minute_at
+      || integer(parsed.payload?.payload_version) !== pointer.payload_version) {
+    throw pointerPayloadMismatch('pointer identity does not match stored payload');
+  }
+  return { fullMessage, parsed };
+}
+
+async function ensureMinuteFactPointerTransport(env, message) {
+  if (isPointerMessage(message)) {
+    const pointer = parseMinuteFactPointerMessage(message);
+    if (!pointerSourceMessages.has(message)) {
+      const loaded = await loadMinuteFactPointerPayload(env, pointer);
+      if (!loaded) {
+        const error = new Error(`minute fact pointer payload is missing: ${pointer.storage_key}`);
+        error.code = 'MINUTE_FACT_POINTER_MISSING';
+        throw error;
+      }
+      pointerSourceMessages.set(message, loaded.fullMessage);
+    }
+    return message;
+  }
+  if (!enabled(env?.MINUTE_FACT_POINTER_QUEUE_ENABLED)) return message;
+  const bucket = pointerPayloadBucket(env);
+  if (!bucket?.put) throw new Error('minute fact payload R2 binding is missing');
+  const serialized = serializedMessages.get(message) || JSON.stringify(message);
+  const payloadBytes = serializedByteLength(serialized);
+  const storageKey = pointerStorageKey(message);
+  const pointer = minuteFactPointerMessage(message, storageKey, payloadBytes);
+  const pointerJson = JSON.stringify(pointer);
+  await bucket.put(storageKey, serialized, {
+    httpMetadata: { contentType: 'application/json' },
+    customMetadata: {
+      job_id: message.job_id,
+      channel_id: String(message.channel_id),
+      minute_at: String(message.minute_at),
+      payload_bytes: String(payloadBytes),
+    },
+  });
+  const updated = await env.DB.prepare(`UPDATE sh_minute_fact_outbox SET payload_json=?
+    WHERE job_id=? AND status='pending'`)
+    .bind(pointerJson, message.job_id)
+    .run();
+  if (Number(updated?.meta?.changes ?? 1) === 0) {
+    throw new Error(`minute fact outbox pointer transition lost for ${message.job_id}`);
+  }
+  pointerSourceMessages.set(pointer, message);
+  console.log(JSON.stringify({
+    event: 'minute_fact_queue_pointer_staged',
+    job_id: message.job_id,
+    channel_id: message.channel_id,
+    minute_at: message.minute_at,
+    storage_key: storageKey,
+    payload_bytes: payloadBytes,
+    payload_size_bucket: payloadSizeBucket(payloadBytes),
+    pointer_bytes: serializedByteLength(pointerJson),
+  }));
+  return pointer;
+}
+
+async function consumedPointerMarker(env, pointer) {
+  const db = env?.BUDDIES_DB || env?.DB;
+  if (!db?.prepare) return false;
+  const row = await db.prepare(`SELECT status,payload_json FROM sh_minute_fact_outbox
+    WHERE job_id=? LIMIT 1`).bind(pointer.job_id).first();
+  if (row?.status !== 'sent') return false;
+  try {
+    const marker = JSON.parse(String(row.payload_json || ''));
+    return marker?.consumed === true && marker.storage_key === pointer.storage_key;
+  } catch {
+    return false;
+  }
+}
+
+async function duplicatePointerResult(pointer) {
+  return {
+    pointer,
+    duplicate: true,
+    job_id: pointer.job_id,
+    channel_id: pointer.channel_id,
+    minute_at: pointer.minute_at,
+  };
+}
+
+async function resolveMinuteFactQueueMessage(env, body) {
+  if (!isPointerMessage(body)) return { ...parseMinuteFactQueueMessage(body), pointer: null, duplicate: false };
+  const pointer = parseMinuteFactPointerMessage(body);
+  if (await consumedPointerMarker(env, pointer)) return duplicatePointerResult(pointer);
+  const loaded = await loadMinuteFactPointerPayload(env, pointer);
+  if (!loaded) {
+    const error = new Error(`minute fact pointer payload is missing: ${pointer.storage_key}`);
+    error.code = 'MINUTE_FACT_POINTER_MISSING';
+    throw error;
+  }
+  return { ...loaded.parsed, pointer, duplicate: false };
+}
+
+async function completeMinuteFactPointer(env, pointer) {
+  if (!pointer) return false;
+  const db = env?.BUDDIES_DB || env?.DB;
+  if (!db?.prepare) throw new Error('minute fact outbox DB binding is missing for pointer completion');
+  const consumedAt = Date.now();
+  const marker = JSON.stringify({
+    consumed: true,
+    consumed_at: consumedAt,
+    storage_key: pointer.storage_key,
+    payload_bytes: pointer.payload_bytes,
+  });
+  let result = await db.prepare(`UPDATE sh_minute_fact_outbox SET
+      payload_json=?,last_attempt_at=?,last_error=NULL
+    WHERE job_id=? AND status='sent'`)
+    .bind(marker, consumedAt, pointer.job_id)
+    .run();
+  if (Number(result?.meta?.changes ?? 1) === 0) {
+    result = await db.prepare(`UPDATE sh_minute_fact_outbox SET
+        status='sent',payload_json=?,sent_at=COALESCE(sent_at,?),last_attempt_at=?,last_error=NULL
+      WHERE job_id=? AND status='pending'`)
+      .bind(marker, consumedAt, consumedAt, pointer.job_id)
+      .run();
+  }
+  if (Number(result?.meta?.changes ?? 1) === 0) {
+    throw new Error(`minute fact pointer completion ledger is missing for ${pointer.job_id}`);
+  }
+  const bucket = pointerPayloadBucket(env);
+  if (bucket?.delete) {
+    await bucket.delete(pointer.storage_key).catch((error) => {
+      console.warn(JSON.stringify({
+        event: 'minute_fact_pointer_delete_failed',
+        job_id: pointer.job_id,
+        storage_key: pointer.storage_key,
+        error: sanitizeFailureDetail(error?.message || error),
+      }));
+    });
+  }
+  return true;
 }
 
 export async function sendMinuteFactJob(env, input = {}, options = {}) {
@@ -251,18 +527,27 @@ export async function flushMinuteFactOutbox(env, options = {}) {
     try {
       const isCurrent = row.job_id === options.currentJobId;
       if (isCurrent) currentAttempted = true;
-      const message = isCurrent && options.currentMessage
+      let message = isCurrent && options.currentMessage
         ? options.currentMessage
         : JSON.parse(String(row.payload_json || ''));
+      message = await ensureMinuteFactPointerTransport(env, message);
       // Queue.send resolves only after the message has been persisted. The
       // status update happens afterwards, so a crash can only cause a safe
       // duplicate delivery, never a lost handoff.
       await env.MINUTE_FACT_QUEUE.send(message, { contentType: 'json' });
-      await env.DB.prepare(`UPDATE sh_minute_fact_outbox SET
+      if (isPointerMessage(message)) {
+        await env.DB.prepare(`UPDATE sh_minute_fact_outbox SET
+            status='sent',attempts=attempts+1,sent_at=?,last_attempt_at=?,last_error=NULL
+          WHERE job_id=? AND status='pending'`)
+          .bind(attemptedAt, attemptedAt, row.job_id)
+          .run();
+      } else {
+        await env.DB.prepare(`UPDATE sh_minute_fact_outbox SET
           status='sent',payload_json='{}',attempts=attempts+1,sent_at=?,last_attempt_at=?,last_error=NULL
         WHERE job_id=? AND status='pending'`)
-        .bind(attemptedAt, attemptedAt, row.job_id)
-        .run();
+          .bind(attemptedAt, attemptedAt, row.job_id)
+          .run();
+      }
       summary.sent += 1;
       if (isCurrent) summary.current_sent = true;
     } catch (error) {
@@ -317,7 +602,9 @@ export async function handoffMinuteFactJob(env, input = {}, options = {}) {
     lastOutboxCleanupMinute = cleanupMinute;
     await env.DB.prepare(`DELETE FROM sh_minute_fact_outbox WHERE job_id IN (
         SELECT job_id FROM sh_minute_fact_outbox
-        WHERE status='sent' AND sent_at<? ORDER BY sent_at ASC LIMIT 20
+        WHERE status='sent' AND sent_at<?
+          AND (payload_json='{}' OR payload_json LIKE '%"consumed":true%')
+        ORDER BY sent_at ASC LIMIT 20
       )`).bind(now - 7 * 24 * 60 * 60_000).run().catch(() => {});
   }
   return {
@@ -346,8 +633,14 @@ export async function consumeMinuteFactBatch(batch, env, dependencies = {}) {
   for (const message of batch?.messages || []) {
     summary.received += 1;
     try {
-      const parsed = parseMinuteFactQueueMessage(message.body);
+      const parsed = await resolveMinuteFactQueueMessage(env, message.body);
+      if (parsed.duplicate) {
+        summary.duplicates += 1;
+        message.ack();
+        continue;
+      }
       if (await hasReceipt(env, parsed.job_id)) {
+        await completeMinuteFactPointer(env, parsed.pointer);
         summary.duplicates += 1;
         message.ack();
         continue;
@@ -363,6 +656,7 @@ export async function consumeMinuteFactBatch(batch, env, dependencies = {}) {
         });
       }
       await saveReceipt(env, parsed.job_id);
+      await completeMinuteFactPointer(env, parsed.pointer);
       if (result?.enqueued) summary.enqueued += 1;
       else summary.duplicates += 1;
       message.ack();

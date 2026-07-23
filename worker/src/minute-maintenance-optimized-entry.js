@@ -5,16 +5,21 @@ import {
 
 const MINUTE_DERIVE_DISPATCH_CRON = '* * * * *';
 const EMPTY_DEPENDENCIES = Object.freeze({});
-const JSON_QUEUE_SEND_OPTIONS = Object.freeze({ contentType: 'json' });
-const DEFAULT_STAGGER_MS = 12_000;
-const MAX_STAGGER_MS = 45_000;
 let maintenanceEntryPromise = null;
+let rebuildMaintenanceEntryPromise = null;
 
 function loadMaintenanceEntry() {
   if (!maintenanceEntryPromise) {
     maintenanceEntryPromise = import('./minute-maintenance-entry.js');
   }
   return maintenanceEntryPromise;
+}
+
+function loadRebuildMaintenanceEntry() {
+  if (!rebuildMaintenanceEntryPromise) {
+    rebuildMaintenanceEntryPromise = import('./minute-rebuild-maintenance-entry.js');
+  }
+  return rebuildMaintenanceEntryPromise;
 }
 
 function scheduledTimestamp(controller) {
@@ -30,20 +35,6 @@ function isDeriveDispatchCron(controller) {
   const value = controller?.cron;
   return value === MINUTE_DERIVE_DISPATCH_CRON
     || String(value || '') === MINUTE_DERIVE_DISPATCH_CRON;
-}
-
-function staggerEnabled(env) {
-  const value = env?.CRON_STAGGER_ENABLED;
-  if (value == null || value === '') return true;
-  const normalized = String(value).trim().toLowerCase();
-  return normalized !== '0' && normalized !== 'false' && normalized !== 'no' && normalized !== 'off';
-}
-
-function maintenanceDelaySeconds(env) {
-  if (!staggerEnabled(env)) return 0;
-  const configured = Number(env?.CRON_STAGGER_MINUTE_MS);
-  const delayMs = Number.isFinite(configured) && configured >= 0 ? configured : DEFAULT_STAGGER_MS;
-  return Math.ceil(Math.min(MAX_STAGGER_MS, delayMs) / 1000);
 }
 
 export async function dispatchMinuteMaintenanceGate(controller, env, task, ctx = null) {
@@ -63,18 +54,19 @@ export async function dispatchMinuteMaintenanceGate(controller, env, task, ctx =
     cron,
     attempt: 0,
   };
-  const delaySeconds = maintenanceDelaySeconds(env);
-  const options = delaySeconds > 0
-    ? { contentType: 'json', delaySeconds }
-    : JSON_QUEUE_SEND_OPTIONS;
-  await env.MINUTE_REBUILD_QUEUE.send(message, options);
-  const result = {
-    event: 'minute_maintenance_gate_dispatched',
+  const maintenance = await loadRebuildMaintenanceEntry();
+  const result = await maintenance.processMinuteMaintenanceGate(env, message);
+  console.log(JSON.stringify({
+    event: 'minute_maintenance_gate_inlined',
     task,
     run_id: runId,
-    delay_seconds: delaySeconds,
-  };
-  console.log(JSON.stringify(result));
+    pending: result?.pending === true,
+    skipped: result?.skipped === true,
+    reason: result?.reason,
+    requeued: result?.requeued === true,
+    dispatched_stage: result?.dispatched_stage,
+    historical_backfill_due: result?.historical_backfill_due,
+  }));
   return result;
 }
 

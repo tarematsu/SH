@@ -127,9 +127,9 @@ test('MINUTE_DB deployment selects changed migrations through the current schema
   assert.doesNotMatch(deploySafeHotpathsMigration, /INSERT|FROM sh_tracks|ANALYZE|PRAGMA optimize/);
 });
 
-test('production keeps historical reconstruction serialized for measured daily budgets', () => {
-  assert.equal(runtime.vars.HISTORICAL_REBUILD_ENABLED, true);
-  assert.equal(runtime.vars.REBUILD_HISTORICAL_BACKFILL_ENABLED, true);
+test('production pauses historical reconstruction while Queue usage exceeds budget', () => {
+  assert.equal(runtime.vars.HISTORICAL_REBUILD_ENABLED, false);
+  assert.equal(runtime.vars.REBUILD_HISTORICAL_BACKFILL_ENABLED, false);
   assert.equal(runtime.vars.REBUILD_HISTORICAL_BACKFILL_INTERVAL_MS, 3_600_000);
   assert.equal(runtime.vars.DERIVE_DISPATCH_LIMIT, 2);
   assert.equal(runtime.vars.DERIVE_REVISION_RECOVERY_LIMIT, 1);

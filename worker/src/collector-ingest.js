@@ -19,6 +19,18 @@ export function snapshotPersistenceDue(env, observedAt) {
   return Math.floor(timestamp / interval) !== Math.floor((timestamp - MINUTE_MS) / interval);
 }
 
+function skippedSnapshotPersistence(type) {
+  return {
+    ok: true,
+    type,
+    accepted: true,
+    deferred: false,
+    inserted: false,
+    skipped: true,
+    reason: 'snapshot-persistence-not-due',
+  };
+}
+
 async function resolveIngestResult(result, type, options) {
   const directResult = await result;
   if (!directResult) throw new Error(`Direct D1 ingest is unavailable for type=${type}`);
@@ -28,15 +40,7 @@ async function resolveIngestResult(result, type, options) {
 async function deferPersistence(env, type, data, observedAt, options = null) {
   if (!env?.PERSIST_QUEUE?.send || !['snapshot', 'queue'].includes(type)) return null;
   if (type === 'snapshot' && !snapshotPersistenceDue(env, observedAt)) {
-    return {
-      ok: true,
-      type,
-      accepted: true,
-      deferred: false,
-      inserted: false,
-      skipped: true,
-      reason: 'snapshot-persistence-not-due',
-    };
+    return skippedSnapshotPersistence(type);
   }
   const collectorId = env?.COLLECTOR_ID || 'cloudflare-worker';
   let analysis = null;
@@ -69,6 +73,9 @@ async function deferPersistence(env, type, data, observedAt, options = null) {
 }
 
 async function optimizedIngest(env, type, data, observedAt, options = null) {
+  if (type === 'snapshot' && !snapshotPersistenceDue(env, observedAt)) {
+    return skippedSnapshotPersistence(type);
+  }
   const deferred = await deferPersistence(env, type, data, observedAt, options);
   if (deferred) return deferred;
   if (type === 'snapshot' && env?.DB) {

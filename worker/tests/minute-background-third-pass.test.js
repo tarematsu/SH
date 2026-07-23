@@ -26,24 +26,24 @@ function gateBody(task = 'rebuild', attempt = 0, scheduledAt = BASE) {
   };
 }
 
-test('maintenance Cron publishes a delayed gate instead of polling inside the scheduled Invocation', async () => {
+test('maintenance Cron checks readiness inline and publishes the final stage', async () => {
   const sent = [];
   const scheduledAt = BASE + 9 * 60_000;
   const result = await runMinuteMaintenanceScheduled({
     cron: MAINTENANCE_CRON,
     scheduledTime: scheduledAt,
   }, {
-    CRON_STAGGER_MINUTE_MS: 12_000,
     MINUTE_REBUILD_QUEUE: {
       async send(body, options) { sent.push({ body, options }); },
     },
   }, {});
 
   assert.equal(result.task, 'sync');
+  assert.equal(result.dispatched_stage, 'maintenance-run');
   assert.equal(sent.length, 1);
-  assert.equal(sent[0].body.stage, 'maintenance-gate');
+  assert.equal(sent[0].body.stage, 'maintenance-run');
   assert.equal(sent[0].body.maintenance_task, 'sync');
-  assert.equal(sent[0].options.delaySeconds, 12);
+  assert.deepEqual(sent[0].options, { contentType: 'json' });
 });
 
 test('maintenance gate performs one collector check and requeues without an in-Invocation polling loop', async () => {

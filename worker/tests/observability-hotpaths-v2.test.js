@@ -107,6 +107,98 @@ test('normal live ingest bypasses the D1 job ledger', async () => {
   assert.deepEqual(direct, [payload]);
 });
 
+test('normal live ingest can finish inside the buddies-facts consumer', async () => {
+  let handlers;
+  let directCalls = 0;
+  const writes = [];
+  const enrichmentQueue = { send() { throw new Error('enrichment Queue must be bypassed'); } };
+  const env = {
+    LIVE_DERIVE_INLINE_ENABLED: true,
+    LIVE_DERIVE_DIRECT_QUEUE_ENABLED: true,
+    LIVE_REVISION_MATERIALIZATION_ENABLED: false,
+    MINUTE_ENRICHMENT_QUEUE: enrichmentQueue,
+  };
+  await consumeMinuteQueue({ messages: [] }, env, null, {
+    consumeMinuteFactBatch: async (_batch, _env, value) => {
+      handlers = value;
+      return { received: 0 };
+    },
+    enqueueMinuteFactJob: async () => {
+      throw new Error('D1 inbox must not be used');
+    },
+    enqueueDirectLiveMinuteDerive: async () => {
+      directCalls += 1;
+      throw new Error('live derive Queue must not be used');
+    },
+    saveOptimizedMinuteFactWithinBudget: async (activeEnv, value) => {
+      assert.equal(activeEnv.MINUTE_ENRICHMENT_QUEUE, null);
+      writes.push(value);
+      return { skipped: false };
+    },
+  });
+
+  const result = await handlers.enqueue(env, payload, { jobKind: 'live' });
+
+  assert.deepEqual(result, {
+    enqueued: true,
+    direct: true,
+    inline: true,
+    channel_id: 10,
+    minute_at: 180_000,
+    job_kind: 'live',
+    job_priority: 100,
+  });
+  assert.equal(directCalls, 0);
+  assert.deepEqual(writes, [payload]);
+  assert.strictEqual(env.MINUTE_ENRICHMENT_QUEUE, enrichmentQueue);
+});
+
+test('deterministic inline D1 failures are quarantined without downstream read-model writes', async () => {
+  let handlers;
+  const objects = [];
+  const readModels = [];
+  const env = {
+    LIVE_DERIVE_INLINE_ENABLED: true,
+    LIVE_REVISION_MATERIALIZATION_ENABLED: false,
+    PAGES_RESPONSE_R2: {
+      async put(key, body, options) {
+        objects.push({ key, value: JSON.parse(body), options });
+      },
+    },
+  };
+  await consumeMinuteQueue({ messages: [] }, env, null, {
+    consumeMinuteFactBatch: async (_batch, _env, value) => {
+      handlers = value;
+      return { received: 0 };
+    },
+    saveOptimizedMinuteFactWithinBudget: async () => {
+      throw new Error('D1_ERROR: Wrong number of parameter bindings for SQL query.');
+    },
+    saveMinuteFactReadModels: async (...args) => readModels.push(args),
+  });
+
+  const result = await handlers.enqueue(env, payload, { jobKind: 'live' });
+  await handlers.saveReadModels(env, { channel: {} }, 'minute-fact:10:180000');
+
+  assert.deepEqual(result, {
+    enqueued: true,
+    direct: true,
+    inline: true,
+    quarantined: true,
+    terminal: true,
+    channel_id: 10,
+    minute_at: 180_000,
+    job_kind: 'live',
+    job_priority: 100,
+  });
+  assert.equal(readModels.length, 0);
+  assert.equal(objects.length, 1);
+  assert.equal(objects[0].key, 'queue-quarantine/minute-live/minute-fact:10:180000.json');
+  assert.equal(objects[0].value.reason, 'deterministic-d1-binding-error');
+  assert.deepEqual(objects[0].value.payload, payload);
+  assert.equal(objects[0].options.httpMetadata.contentType, 'application/json');
+});
+
 test('direct live Queue payload writes without claim or completion lifecycle calls', async () => {
   const body = minuteDirectLiveDeriveMessage(payload);
   assert.equal(parseDirectLiveMinuteDeriveMessage(body).payload, payload);
