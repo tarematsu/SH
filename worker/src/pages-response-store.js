@@ -1,3 +1,4 @@
+import { sanitizeFailureDetail } from './collector-failure.js';
 import { saveMaterializedR2Response } from './pages-response-r2.js';
 
 const RESPONSE_KEY_PREFIX = 'pages-response:v1:';
@@ -24,6 +25,11 @@ function persistedHeaders(response) {
   return headers;
 }
 
+function responseFailureDetail(payload) {
+  const detail = sanitizeFailureDetail(payload?.error || payload?.message || '');
+  return detail ? `: ${detail}` : '';
+}
+
 export async function saveMaterializedResponse(
   _db,
   kv,
@@ -42,7 +48,9 @@ export async function saveMaterializedResponse(
   } catch {
     throw new Error(`${modelKey} did not return JSON`);
   }
-  if (!response.ok) throw new Error(`${modelKey} returned HTTP ${response.status}`);
+  if (!response.ok) {
+    throw new Error(`${modelKey} returned HTTP ${response.status}${responseFailureDetail(payload)}`);
+  }
   if (payload?.setup_required) throw new Error(`${modelKey} read model is not ready`);
 
   const headers = persistedHeaders(response);
