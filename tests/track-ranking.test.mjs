@@ -3,11 +3,24 @@ import { readFileSync } from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
 import test from 'node:test';
 
-import { TRACK_RANKING_SQL } from '../site/functions/lib/track-ranking.js';
+import { loadTrackRanking } from '../site/functions/lib/track-ranking.js';
+
+const materializedMigration = readFileSync(
+  new URL('../database/facts-migrations/032_materialized_cleanup_ranking.sql', import.meta.url),
+  'utf8',
+);
 
 function rankingDatabase() {
   const db = new DatabaseSync(':memory:');
   db.exec(`
+    CREATE TABLE sh_minute_fact_jobs(
+      id INTEGER PRIMARY KEY,status TEXT NOT NULL,payload_json TEXT NOT NULL,
+      processed_at INTEGER,updated_at INTEGER NOT NULL
+    );
+    CREATE TABLE sh_queue_revisions(
+      id INTEGER PRIMARY KEY,source_job_id INTEGER,status TEXT NOT NULL,
+      materialized_item_count INTEGER,source_visible_count INTEGER,item_count INTEGER
+    );
     CREATE TABLE sh_tracks(
       id INTEGER PRIMARY KEY,
       stationhead_track_id INTEGER,
@@ -39,44 +52,47 @@ function rankingDatabase() {
       ('occ-3','isrc:JPTEST2',2,'JPTEST2','sp2',5,2100),
       ('occ-4','isrc:USTEST3',3,'USTEST3','sp3',99,2600);
   `);
+  db.exec(materializedMigration);
   return db;
 }
 
-test('track history ranking keeps only the latest count for each eligible track', () => {
+function d1Adapter(db) {
+  return {
+    prepare(sql) {
+      const statement = db.prepare(sql);
+      return {
+        bind(...args) {
+          return {
+            async all() { return { results: statement.all(...args) }; },
+            async first() { return statement.get(...args) || null; },
+          };
+        },
+        async first() { return statement.get() || null; },
+      };
+    },
+  };
+}
+
+test('track ranking is seeded and maintained at counter update time', async () => {
   const db = rankingDatabase();
-  const rows = db.prepare(TRACK_RANKING_SQL).all(500);
-  assert.equal(rows[0].latest_like_count, 25);
-  assert.equal(rows[0].latest_observed_at, 2500);
-  assert.equal(rows[1].latest_like_count, 5);
-  assert.equal(rows[1].latest_observed_at, 2100);
-  assert.equal(rows[0].ranking_track_count, 2);
-  assert.equal(rows[0].ranking_max_like_count, 25);
-  assert.equal(rows[0].ranking_latest_observed_at, 2500);
-  assert.ok(!Object.hasOwn(rows[0], 'total_like_count'));
-  assert.ok(!Object.hasOwn(rows[0], 'average_like_count'));
+  const initial = await loadTrackRanking(d1Adapter(db), { limit: 500 });
+  assert.equal(initial.rows[0].latest_like_count, 25);
+  assert.equal(initial.rows[0].latest_observed_at, 2500);
+  assert.equal(initial.rows[1].latest_like_count, 5);
+  assert.equal(initial.summary.track_count, 2);
+  assert.equal(initial.summary.max_like_count, 25);
+  assert.equal(initial.summary.latest_observed_at, 2500);
+
+  db.prepare(`UPDATE sh_track_counter_current
+    SET count_value=30,observed_at=3000 WHERE occurrence_key='occ-3'`).run();
+  const updated = await loadTrackRanking(d1Adapter(db), { limit: 500 });
+  assert.equal(updated.rows[0].latest_occurrence_key, 'occ-3');
+  assert.equal(updated.rows[0].latest_like_count, 30);
+  assert.equal(updated.rows[0].rank, 1);
+  assert.equal(updated.summary.max_like_count, 30);
 });
 
-test('FACTS schema publishes observed-time indexes, retired API cleanup, payload purge, and compact history views', () => {
-  const indexMigration = readFileSync(
-    new URL('../database/facts-migrations/012_counter_current_read_index.sql', import.meta.url),
-    'utf8',
-  );
-  const cleanupMigration = readFileSync(
-    new URL('../database/facts-migrations/027_purge_retired_api_read_models.sql', import.meta.url),
-    'utf8',
-  );
-  const payloadMigration = readFileSync(
-    new URL('../database/facts-migrations/028_purge_completed_minute_fact_payloads.sql', import.meta.url),
-    'utf8',
-  );
-  const publicationIndexMigration = readFileSync(
-    new URL('../database/facts-migrations/029_track_history_publication_cursor_index.sql', import.meta.url),
-    'utf8',
-  );
-  const compactHistoryMigration = readFileSync(
-    new URL('../database/facts-migrations/030_compact_track_history_source.sql', import.meta.url),
-    'utf8',
-  );
+test('FACTS schema publishes materialized cleanup and ranking state', () => {
   const purgeScript = readFileSync(
     new URL('../worker/scripts/purge-completed-minute-fact-payloads.mjs', import.meta.url),
     'utf8',
@@ -85,16 +101,11 @@ test('FACTS schema publishes observed-time indexes, retired API cleanup, payload
     new URL('../database/facts-db.json', import.meta.url),
     'utf8',
   ));
-  assert.match(indexMigration, /idx_sh_counter_current_observed_count/);
-  assert.match(indexMigration, /sh_track_counter_current\(observed_at DESC,count_value DESC\)/);
-  assert.match(cleanupMigration, /dashboard-daily-changes/);
-  assert.match(cleanupMigration, /playback:buddies/);
-  assert.match(payloadMigration, /trg_sh_minute_fact_payload_after_job_done/);
-  assert.match(payloadMigration, /SET payload_json='\{\}'/);
-  assert.match(publicationIndexMigration, /idx_sh_pages_track_history_publication_cursor/);
-  assert.match(compactHistoryMigration, /idx_sh_queue_revisions_track_history_latest/);
-  assert.match(purgeScript, /UPDATE sh_minute_fact_jobs SET payload_json='\{\}'/);
+  assert.match(materializedMigration, /idx_sh_minute_fact_jobs_payload_clearable/);
+  assert.match(materializedMigration, /CREATE TABLE IF NOT EXISTS sh_track_ranking_current/);
+  assert.match(materializedMigration, /trg_sh_track_ranking_current_after_counter_update/);
+  assert.match(purgeScript, /payload_clearable=1/);
   assert.match(purgeScript, /remainingEligibleJobId != null/);
-  assert.doesNotMatch(purgeScript, /SUM\(LENGTH\(payload_json\)\)/);
-  assert.equal(descriptor.schema, 'database/facts-migrations/031_observability_hotpaths.sql');
+  assert.doesNotMatch(purgeScript, /NOT EXISTS \(\s*SELECT 1 FROM sh_queue_revisions/);
+  assert.equal(descriptor.schema, 'database/facts-migrations/032_materialized_cleanup_ranking.sql');
 });
