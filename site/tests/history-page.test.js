@@ -137,8 +137,8 @@ test('likes page reads integrated ranking and weekly plays from one track-histor
   assert.match(likesClient, /result\.data\.ranking_summary/);
   assert.match(trackHistoryApi, /ranking_summary/);
   assert.match(trackHistoryApi, /ranking_scope/);
-  assert.match(rankingLibrary, /FROM sh_track_counter_current/);
-  assert.match(rankingLibrary, /LIKE '櫻坂%'/);
+  assert.match(rankingLibrary, /FROM sh_track_ranking_current/);
+  assert.doesNotMatch(rankingLibrary, /FROM sh_track_counter_current/);
 });
 
 test('Sakurazaka endpoint and comparison client share one canonical name', () => {
