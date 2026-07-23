@@ -11,6 +11,10 @@ import {
   prepareSparseRebuildRevision,
   shouldMaterializeRebuildRevision,
 } from './minute-rebuild-revision.js';
+import {
+  ensureRevisionR2Progress,
+  writeRevisionR2ProgressChunk,
+} from './minute-revision-r2-progress.js';
 import { integer } from './minute-facts-track-descriptor.js';
 
 const SPARSE_STAGE = 'revision-materialize';
@@ -109,11 +113,32 @@ async function preferredPositionExists(env, revision, dependencies = EMPTY_DEPEN
   return Boolean(row);
 }
 
+async function attachR2Progress(env, revision, payload, dependencies = EMPTY_DEPENDENCIES) {
+  if (!revision?.staged || revision?.r2_progress === true) return revision;
+  const ensure = dependencies.ensureRevisionR2Progress || ensureRevisionR2Progress;
+  const progress = await ensure(
+    env,
+    revision,
+    payload?.queue?.tracks,
+    {
+      materializedItemCount: revision.materialized_item_count,
+      now: integer(payload?.observedAt) ?? Date.now(),
+    },
+  );
+  if (!progress?.enabled) return revision;
+  return {
+    ...revision,
+    r2_progress: true,
+    materialized_item_count: Number(progress.materialized_item_count || 0),
+  };
+}
+
 async function processSparseLiveStart(env, body, dependencies = EMPTY_DEPENDENCIES) {
   const prepare = dependencies.prepareSparseLiveRevision || prepareSparseLiveRevision;
-  const revision = await prepare(env, body.payload, {
+  let revision = await prepare(env, body.payload, {
     sourceJobId: body?.job?.id,
   }, dependencies.materializer || EMPTY_DEPENDENCIES);
+  revision = await attachR2Progress(env, revision, body.payload, dependencies);
   if (integer(revision?.revision_id) == null) {
     const write = dependencies.write || defaultWrite;
     const writeDependencies = dependencies === EMPTY_DEPENDENCIES
@@ -222,16 +247,20 @@ async function processSparseLiveWrite(env, body, dependencies = EMPTY_DEPENDENCI
 
 async function processSparseRebuildStart(env, body, dependencies = EMPTY_DEPENDENCIES) {
   const prepare = dependencies.prepareSparseRebuildRevision || prepareSparseRebuildRevision;
-  const revision = await prepare(env, body.payload, {
+  let revision = await prepare(env, body.payload, {
     sourceJobId: body?.job?.id,
   }, dependencies.materializer || EMPTY_DEPENDENCIES);
+  revision = await attachR2Progress(env, revision, body.payload, dependencies);
   if (integer(revision?.revision_id) == null) {
     throw new Error('sparse rebuild revision preparation failed');
   }
-  const needsPreferred = integer(revision.fact_position) != null
+  const needsPreferred = revision.r2_progress !== true
+    && integer(revision.fact_position) != null
     && revision.preferred_materialized !== true;
   await sendStage(env, {
-    stage: needsPreferred ? REBUILD_PREFERRED_STAGE : REBUILD_WRITE_STAGE,
+    stage: revision.r2_progress === true
+      ? SPARSE_STAGE
+      : needsPreferred ? REBUILD_PREFERRED_STAGE : REBUILD_WRITE_STAGE,
     job: compactJob(body.job),
     revision,
     started_at: integer(body.started_at) ?? Date.now(),
@@ -246,6 +275,7 @@ async function processSparseRebuildStart(env, body, dependencies = EMPTY_DEPENDE
     preferred_pending: needsPreferred,
     materialized_item_count: revision.materialized_item_count,
     visible_item_count: revision.visible_item_count,
+    progress_storage: revision.r2_progress === true ? 'r2' : 'd1',
   };
 }
 
@@ -373,7 +403,9 @@ async function refreshPreferredPlayback(env, revision, result, dependencies = EM
 }
 
 async function processSparseChunk(env, body, dependencies = EMPTY_DEPENDENCIES) {
-  const writeChunk = dependencies.writeSparseRevisionChunk || writeSparseLiveRevisionChunk;
+  const writeChunk = body.revision?.r2_progress === true
+    ? dependencies.writeRevisionR2ProgressChunk || writeRevisionR2ProgressChunk
+    : dependencies.writeSparseRevisionChunk || writeSparseLiveRevisionChunk;
   const result = await writeChunk(env, body.revision, dependencies.materializer || EMPTY_DEPENDENCIES);
   const playbackRefreshEnqueued = await refreshPreferredPlayback(
     env,
@@ -381,6 +413,12 @@ async function processSparseChunk(env, body, dependencies = EMPTY_DEPENDENCIES) 
     result,
     dependencies,
   );
+  const revision = {
+    ...body.revision,
+    materialized_item_count: result.materialized_item_count,
+    coverage_complete: result.coverage_complete,
+  };
+  let continuationPending = false;
   if (!result.complete) {
     const configured = body.revision?.rebuild === true
       ? integer(env?.DERIVE_REBUILD_REVISION_INTERVAL_SECONDS) ?? 1
@@ -389,18 +427,24 @@ async function processSparseChunk(env, body, dependencies = EMPTY_DEPENDENCIES) 
     await sendStage(env, {
       stage: SPARSE_STAGE,
       job: compactJob(body.job),
-      revision: {
-        ...body.revision,
-        materialized_item_count: result.materialized_item_count,
-      },
+      revision,
       started_at: integer(body.started_at) ?? Date.now(),
     }, dependencies, { delaySeconds });
+    continuationPending = true;
+  } else if (body.revision?.rebuild === true && body.revision?.r2_progress === true) {
+    await sendStage(env, {
+      stage: REBUILD_WRITE_STAGE,
+      job: compactJob(body.job),
+      revision,
+      started_at: integer(body.started_at) ?? Date.now(),
+    }, dependencies);
+    continuationPending = true;
   }
   return {
     event: 'minute_fact_revision_materialized',
-    processed: result.complete ? 1 : 0,
+    processed: result.complete && !continuationPending ? 1 : 0,
     failed: 0,
-    pending: !result.complete,
+    pending: continuationPending,
     job_id: integer(body?.job?.id),
     revision_id: result.revision_id,
     chunk_tracks: result.chunk_tracks,
@@ -408,6 +452,7 @@ async function processSparseChunk(env, body, dependencies = EMPTY_DEPENDENCIES) 
     visible_item_count: result.visible_item_count,
     total_item_count: result.total_item_count,
     coverage_complete: result.coverage_complete,
+    progress_storage: result.storage || (body.revision?.r2_progress ? 'r2' : 'd1'),
     playback_refresh_enqueued: playbackRefreshEnqueued,
   };
 }
