@@ -1,4 +1,9 @@
 import {
+  bootstrapTrackHistoryDayReadModel,
+  loadTrackHistoryDayReadModel,
+  publishTrackHistoryResponseFromR2Days,
+} from './pages-track-history-r2-shards.js';
+import {
   splitTrackHistoryPublicationRows,
   TRACK_HISTORY_MODEL_KEY,
   TRACK_HISTORY_RESPONSE_LIMIT,
@@ -7,6 +12,7 @@ import {
   trackHistoryResponseSuffix,
 } from './pages-track-history-response.js';
 
+const DAY_MS = 86_400_000;
 const RESPONSE_HEADERS = Object.freeze({
   'content-type': 'application/json; charset=utf-8',
 });
@@ -41,6 +47,15 @@ function positiveInteger(value, fallback, maximum = Number.MAX_SAFE_INTEGER) {
   return parsed != null && parsed > 0 ? Math.min(parsed, maximum) : fallback;
 }
 
+function dayTimestamp(value) {
+  const timestamp = Date.parse(`${String(value || '')}T00:00:00Z`);
+  return Number.isFinite(timestamp) ? timestamp : null;
+}
+
+function dayText(timestamp) {
+  return new Date(timestamp).toISOString().slice(0, 10);
+}
+
 async function ensureResponseSchema(db) {
   await db.batch(RESPONSE_SCHEMA_SQL.map((sql) => db.prepare(sql)));
 }
@@ -58,6 +73,7 @@ async function resetGeneration(db, publication) {
 }
 
 export async function initializeTrackHistoryPublication(db, publication, dependencies = {}) {
+  if (publication.phase === 'r2-days') return { ...publication };
   const ensureSchema = dependencies.ensureSchema || ensureResponseSchema;
   const reset = dependencies.resetGeneration || resetGeneration;
   await ensureSchema(db);
@@ -142,6 +158,86 @@ async function publishManifest(db, publication, now) {
       .bind(TRACK_HISTORY_MODEL_KEY, publication.generation),
   ]);
   return { chunks: chunkCount };
+}
+
+export async function advanceTrackHistoryR2Publication(
+  db,
+  r2,
+  value,
+  now = Date.now(),
+  cadenceSeconds = 0,
+  dependencies = {},
+) {
+  const publication = { ...value };
+  if (publication.phase === 'published') {
+    return { publication, action: 'already-published', published: true, rows: 0, chunks: 0 };
+  }
+  if (!r2?.get || !r2?.put) throw new Error('track-history R2 publication binding is missing');
+  const fromTs = dayTimestamp(publication.from);
+  const toTs = dayTimestamp(publication.to);
+  let cursor = dayTimestamp(publication.day_cursor || publication.from);
+  if (fromTs == null || toTs == null || cursor == null || toTs < fromTs) {
+    throw new Error('track-history R2 publication cursor is invalid');
+  }
+  cursor = Math.max(cursor, fromTs);
+  const pageDays = positiveInteger(publication.page_days, 30, 90);
+  const loadDay = dependencies.loadDay || loadTrackHistoryDayReadModel;
+  const bootstrapDay = dependencies.bootstrapDay || bootstrapTrackHistoryDayReadModel;
+  let processed = 0;
+  let bootstrapped = 0;
+  while (cursor <= toTs && processed < pageDays) {
+    const day = dayText(cursor);
+    const existing = await loadDay(r2, day);
+    if (!existing) {
+      await bootstrapDay(db, r2, day, now);
+      bootstrapped += 1;
+    }
+    cursor += DAY_MS;
+    processed += 1;
+  }
+  publication.days_written = Number(publication.days_written || 0) + processed;
+  publication.day_cursor = dayText(cursor);
+  publication.updated_at = integer(now) ?? Date.now();
+  if (cursor <= toTs) {
+    return {
+      publication,
+      action: 'r2-days',
+      published: false,
+      rows: 0,
+      chunks: 0,
+      days: processed,
+      bootstrapped,
+    };
+  }
+
+  const publish = dependencies.publishR2 || publishTrackHistoryResponseFromR2Days;
+  const result = await publish(r2, publication, now, cadenceSeconds);
+  if (!result?.published) {
+    publication.day_cursor = result?.missing_day || publication.from;
+    return {
+      publication,
+      action: 'r2-day-repair',
+      published: false,
+      rows: 0,
+      chunks: 0,
+      days: processed,
+      bootstrapped,
+    };
+  }
+  publication.phase = 'published';
+  publication.rows_written = Number(result.rows || 0);
+  publication.truncated = result.truncated === true;
+  publication.updated_at = integer(now) ?? Date.now();
+  return {
+    publication,
+    action: 'publish-r2-days',
+    published: true,
+    rows: Number(result.rows || 0),
+    chunks: Number(result.chunks || 1),
+    days: processed,
+    bootstrapped,
+    storage: result.storage || 'r2',
+  };
 }
 
 export async function advanceTrackHistoryPublication(db, value, now = Date.now(), dependencies = {}) {

@@ -10,6 +10,7 @@ import {
 } from './minute-facts-normalize.js';
 
 const SESSION_GAP_MS = 6 * 60 * 60_000;
+export const SESSION_HEARTBEAT_MS = 20 * 60_000;
 
 async function findAlias(db, table, idColumn, aliases) {
   for (const alias of aliases) {
@@ -154,34 +155,41 @@ async function activeSession(db, channelId) {
     ORDER BY last_observed_at DESC,id DESC LIMIT 1`).bind(channelId).first();
 }
 
-async function continueLiveSession(db, input) {
+function sessionFieldCompatible(stored, incoming) {
+  return incoming == null || stored == null || Number(stored) === Number(incoming);
+}
+
+export function compatibleLiveSession(active, input) {
+  if (!active?.id) return false;
+  const lastObservedAt = Number(active.last_observed_at || 0);
+  if (Number(input.observedAt) - lastObservedAt > SESSION_GAP_MS) return false;
+  return sessionFieldCompatible(active.station_id, input.stationId)
+    && sessionFieldCompatible(active.host_id, input.hostId)
+    && sessionFieldCompatible(active.broadcast_start_time, input.broadcastStart);
+}
+
+export function liveSessionCheckpointDue(active, input) {
+  if (!active?.id) return false;
+  if ((active.station_id == null && input.stationId != null)
+      || (active.host_id == null && input.hostId != null)
+      || (active.broadcast_start_time == null && input.broadcastStart != null)) {
+    return true;
+  }
+  return Number(input.observedAt) - Number(active.last_observed_at || 0) >= SESSION_HEARTBEAT_MS;
+}
+
+async function checkpointLiveSession(db, active, input) {
   return db.prepare(`UPDATE sh_broadcast_sessions SET
       station_id=COALESCE(station_id,?),host_id=COALESCE(host_id,?),
       broadcast_start_time=COALESCE(broadcast_start_time,?),
       last_observed_at=MAX(last_observed_at,?)
-    WHERE id=(
-      SELECT id FROM sh_broadcast_sessions
-      WHERE channel_id=? AND status='active' AND source='live_collector'
-      ORDER BY last_observed_at DESC,id DESC LIMIT 1
-    )
-      AND (? IS NULL OR station_id IS NULL OR station_id=?)
-      AND (? IS NULL OR host_id IS NULL OR host_id=?)
-      AND (? IS NULL OR broadcast_start_time IS NULL OR broadcast_start_time=?)
-      AND ?-COALESCE(last_observed_at,0)<=?
+    WHERE id=? AND status='active' AND source='live_collector'
     RETURNING id`).bind(
     input.stationId,
     input.hostId,
     input.broadcastStart,
     input.observedAt,
-    input.channelId,
-    input.stationId,
-    input.stationId,
-    input.hostId,
-    input.hostId,
-    input.broadcastStart,
-    input.broadcastStart,
-    input.observedAt,
-    SESSION_GAP_MS,
+    active.id,
   ).first();
 }
 
@@ -200,19 +208,24 @@ export async function resolveLiveSession(db, input) {
   const stationId = integer(input.stationId);
   const hostId = integer(input.hostId);
   const broadcastStart = timestampMs(input.broadcastStartTime);
-
-  if (broadcasting !== 0) {
-    const continued = await continueLiveSession(db, {
-      channelId,
-      stationId,
-      hostId,
-      broadcastStart,
-      observedAt,
-    });
-    if (continued?.id != null) return Number(continued.id);
-  }
+  const identity = {
+    channelId,
+    stationId,
+    hostId,
+    broadcastStart,
+    observedAt,
+  };
 
   const active = await activeSession(db, channelId);
+  if (broadcasting !== 0 && compatibleLiveSession(active, identity)) {
+    if (liveSessionCheckpointDue(active, identity)) {
+      const checkpointed = await checkpointLiveSession(db, active, identity);
+      if (checkpointed?.id != null) return Number(checkpointed.id);
+    } else {
+      return Number(active.id);
+    }
+  }
+
   if (broadcasting === 0) {
     await endSession(db, active?.id, observedAt);
     return null;

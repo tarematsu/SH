@@ -25,16 +25,15 @@ test('facts dashboard SQL preserves the unified dashboard response contract', ()
   assert.match(FACTS_LATEST_SQL, /LEFT JOIN sh_minute_fact_context_v2/);
   assert.doesNotMatch(FACTS_LATEST_SQL, /LEFT JOIN sh_minute_fact_context AS/);
   assert.match(FACTS_LATEST_SQL, /WHERE f\.source_code=1/);
-  assert.match(FACTS_HISTORY_24H_SQL, /PARTITION BY CAST\(minute_at\/300000 AS INTEGER\)/);
-  assert.match(FACTS_HISTORY_24H_SQL, /RANGE BETWEEN 60000 PRECEDING AND CURRENT ROW/);
-  assert.match(FACTS_HISTORY_24H_SQL, /d\.daily_rank=1/);
-  assert.match(FACTS_HISTORY_24H_SQL, /WHERE f\.source_code=1/);
-  assert.doesNotMatch(FACTS_HISTORY_24H_SQL, /SELECT SUM\(recent\.comment_count\)/);
-  assert.doesNotMatch(FACTS_HISTORY_24H_SQL, /SELECT d\.last_total_member_count/);
-  assert.match(FACTS_HISTORY_SINCE_SQL, /SUM\(recent\.comment_count\)/);
-  assert.match(FACTS_HISTORY_SINCE_SQL, /SELECT d\.last_total_member_count/);
-  assert.match(FACTS_PREDICTION_24H_SQL, /reported_current_stream_count/);
-  assert.match(FACTS_PREDICTION_24H_SQL, /WHERE source_code=1/);
+  assert.match(FACTS_HISTORY_24H_SQL, /FROM sh_dashboard_history_5m r/);
+  assert.match(FACTS_HISTORY_24H_SQL, /r\.bucket_at>=unixepoch\('now','-24 hours'\)\*1000/);
+  assert.match(FACTS_HISTORY_24H_SQL, /SELECT d\.last_total_member_count/);
+  assert.doesNotMatch(FACTS_HISTORY_24H_SQL, /ROW_NUMBER\(\) OVER|RANGE BETWEEN 60000/);
+  assert.match(FACTS_HISTORY_SINCE_SQL, /FROM sh_dashboard_history_5m r/);
+  assert.match(FACTS_HISTORY_SINCE_SQL, /r\.observed_at>\?/);
+  assert.match(FACTS_PREDICTION_24H_SQL, /FROM sh_dashboard_history_5m r/);
+  assert.match(FACTS_PREDICTION_24H_SQL, /r\.current_stream_count/);
+  assert.doesNotMatch(FACTS_PREDICTION_24H_SQL, /reported_current_stream_count/);
   assert.doesNotMatch(FACTS_HISTORY_24H_SQL, /sh_channel_snapshots/);
 });
 
@@ -77,7 +76,7 @@ test('persisted prediction state suppresses the per-request aggregate scan', asy
     includePrediction: false,
   });
 
-  assert.equal(db.callsMatching(/PARTITION BY CAST\(minute_at\/300000/).length, 0);
+  assert.equal(db.callsMatching(/FROM sh_dashboard_history_5m r/).length, 0);
   assert.equal(db.callsMatching(/reported_current_stream_count AS current_stream_count/).length, 1);
 });
 

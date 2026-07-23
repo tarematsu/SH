@@ -55,6 +55,13 @@ export const CLEAR_COMPLETED_MINUTE_FACT_PAYLOADS_SQL = `UPDATE sh_minute_fact_j
   )
   RETURNING id`;
 
+export const MINUTE_FACT_INBOX_STATS_SQL = `SELECT
+    pending_count,processing_count,dead_count,
+    rebuild_pending_count,live_pending_count,oldest_pending_minute
+  FROM sh_minute_fact_inbox_stats
+  WHERE id='global'
+  LIMIT 1`;
+
 function integer(value) {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? Math.trunc(parsed) : null;
@@ -230,13 +237,7 @@ export async function requeueDeadMinuteFactJobs(env, options = {}) {
 
 export async function minuteFactInboxStats(env) {
   await ensureMinuteFactInboxSchema(env);
-  const row = await env.MINUTE_DB.prepare(`SELECT
-      (SELECT COUNT(*) FROM sh_minute_fact_jobs WHERE status='pending') AS pending_count,
-      (SELECT COUNT(*) FROM sh_minute_fact_jobs WHERE status='processing') AS processing_count,
-      (SELECT COUNT(*) FROM sh_minute_fact_jobs WHERE status='dead') AS dead_count,
-      (SELECT COUNT(*) FROM sh_minute_fact_jobs WHERE status='pending' AND job_kind='rebuild') AS rebuild_pending_count,
-      (SELECT COUNT(*) FROM sh_minute_fact_jobs WHERE status='pending' AND job_kind='live') AS live_pending_count,
-      (SELECT MIN(minute_at) FROM sh_minute_fact_jobs WHERE status='pending') AS oldest_pending_minute`).first();
+  const row = await env.MINUTE_DB.prepare(MINUTE_FACT_INBOX_STATS_SQL).first();
   return {
     pending_count: Number(row?.pending_count || 0),
     processing_count: Number(row?.processing_count || 0),
