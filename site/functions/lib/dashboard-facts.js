@@ -44,7 +44,7 @@ LIMIT 1`;
 
 function rollupHistorySql(whereClause) {
   return `WITH latest_channel AS (
-    SELECT channel_id FROM sh_minute_facts
+    SELECT channel_id FROM sh_minute_facts INDEXED BY idx_sh_minute_facts_live_minute
     WHERE source_code=1 ORDER BY minute_at DESC,id DESC LIMIT 1
   )
   SELECT r.observed_at,r.listener_count,r.online_member_count,
@@ -70,7 +70,7 @@ export const FACTS_HISTORY_24H_SQL = rollupHistorySql(
 export const FACTS_HISTORY_SINCE_SQL = rollupHistorySql('r.observed_at>?');
 
 export const FACTS_PREDICTION_24H_SQL = `WITH latest_channel AS (
-  SELECT channel_id FROM sh_minute_facts
+  SELECT channel_id FROM sh_minute_facts INDEXED BY idx_sh_minute_facts_live_minute
   WHERE source_code=1 ORDER BY minute_at DESC,id DESC LIMIT 1
 ), points AS (
   SELECT r.bucket_at AS observed_at,CAST(r.current_stream_count AS REAL) AS y,
@@ -89,7 +89,7 @@ FROM points`;
 
 const FACTS_LATEST_CHANNEL_CTE = `latest_channel AS (
   SELECT channel_id
-  FROM sh_minute_facts
+  FROM sh_minute_facts INDEXED BY idx_sh_minute_facts_live_minute
   WHERE source_code=1
   ORDER BY minute_at DESC,id DESC
   LIMIT 1
