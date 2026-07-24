@@ -336,7 +336,7 @@ test('consumer closes a pending ledger row after Queue delivery outruns the prod
   assert.equal(R2.objects.has(pointer.storage_key), false);
 });
 
-test('collector and runtime enable pointer transport for minute facts', () => {
+test('collector and runtime disable pointer staging for normal minute facts', () => {
   const collector = JSON.parse(readFileSync(
     new URL('../wrangler.buddies-collector.jsonc', import.meta.url),
     'utf8',
@@ -345,8 +345,8 @@ test('collector and runtime enable pointer transport for minute facts', () => {
     new URL('../wrangler.runtime.jsonc', import.meta.url),
     'utf8',
   ));
-  assert.equal(collector.vars.MINUTE_FACT_POINTER_QUEUE_ENABLED, true);
-  assert.equal(runtime.vars.MINUTE_FACT_POINTER_QUEUE_ENABLED, true);
+  assert.equal(collector.vars.MINUTE_FACT_POINTER_QUEUE_ENABLED, false);
+  assert.equal(runtime.vars.MINUTE_FACT_POINTER_QUEUE_ENABLED, false);
   assert.equal(collector.r2_buckets.some(({ binding }) => binding === 'PAGES_RESPONSE_R2'), true);
   assert.equal(runtime.r2_buckets.some(({ binding }) => binding === 'PAGES_RESPONSE_R2'), true);
 });
