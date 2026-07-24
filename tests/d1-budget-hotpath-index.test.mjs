@@ -50,6 +50,10 @@ const deploySafeHotpathsMigration = readFileSync(
   new URL('../database/facts-migrations/038_deploy_safe_remaining_hotpaths.sql', import.meta.url),
   'utf8',
 );
+const writeAmplificationMigration = readFileSync(
+  new URL('../database/facts-migrations/039_reduce_fact_write_amplification.sql', import.meta.url),
+  'utf8',
+);
 const prSchema = readFileSync(
   new URL('../worker/scripts/apply-facts-pr-schema.mjs', import.meta.url),
   'utf8',
@@ -74,6 +78,7 @@ const expectedMigrations = [
   'database/facts-migrations/036_minute_fact_playback_position.sql',
   'database/facts-migrations/037_remaining_d1_hotpaths.sql',
   'database/facts-migrations/038_deploy_safe_remaining_hotpaths.sql',
+  'database/facts-migrations/039_reduce_fact_write_amplification.sql',
 ];
 
 test('MINUTE_DB deployment selects changed migrations through the current schema tip', () => {
@@ -125,6 +130,9 @@ test('MINUTE_DB deployment selects changed migrations through the current schema
   assert.match(deploySafeHotpathsMigration, /idx_sh_minute_fact_jobs_pending_ready/);
   assert.match(deploySafeHotpathsMigration, /COALESCE\(f\.queue_position_patch,v\.queue_position\)/);
   assert.doesNotMatch(deploySafeHotpathsMigration, /INSERT|FROM sh_tracks|ANALYZE|PRAGMA optimize/);
+  assert.match(writeAmplificationMigration, /DROP INDEX IF EXISTS idx_sh_minute_facts_source_minute_desc/);
+  assert.match(writeAmplificationMigration, /DROP INDEX IF EXISTS idx_sh_minute_facts_total_listens_baseline/);
+  assert.doesNotMatch(writeAmplificationMigration, /CREATE INDEX|INSERT|UPDATE|DELETE|ANALYZE|PRAGMA optimize/);
 });
 
 test('production pauses historical reconstruction while Queue usage exceeds budget', () => {
