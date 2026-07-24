@@ -18,6 +18,31 @@ import {
   saveTrackHistoryStage,
 } from './pages-track-history-stage.js';
 
+function disabled(value) {
+  return value === false
+    || value === 0
+    || /^(0|false|no|off)$/i.test(String(value ?? '').trim());
+}
+
+export function trackHistoryCycleEnabled(env) {
+  return !disabled(env?.PAGES_TRACK_HISTORY_CYCLE_ENABLED);
+}
+
+function disabledResult(timestamp) {
+  return {
+    skipped: true,
+    reason: 'track-history-cycle-disabled',
+    generated_at: timestamp,
+    task: {
+      kind: 'track-history-idle',
+      key: TRACK_HISTORY_STAGE_KEY,
+      disabled_by: 'PAGES_TRACK_HISTORY_CYCLE_ENABLED',
+    },
+    responses: [],
+    failed: 0,
+  };
+}
+
 function responseBase(timestamp, stage) {
   return {
     skipped: false,
@@ -115,6 +140,7 @@ function waitResult(timestamp, stage, reason) {
 
 export async function runSplitTrackHistoryCycleStep(env, now = Date.now(), dependencies = {}) {
   const timestamp = Number(now);
+  if (!trackHistoryCycleEnabled(env)) return disabledResult(timestamp);
   if (!env?.BUDDIES_DB || !env?.MINUTE_DB) {
     throw new Error('track-history cycle step is missing BUDDIES_DB or MINUTE_DB');
   }
