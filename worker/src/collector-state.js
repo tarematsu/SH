@@ -1,5 +1,11 @@
 import { jwtExpiryMs, normalizeBearer } from './shared.js';
 
+const COLLECTOR_STATE_CHECKPOINT_MS = 20 * 60_000;
+
+function identity(value) {
+  return Number(value || 0) || null;
+}
+
 function collectorState(value, persistCredentials = true) {
   Object.defineProperties(value, {
     persistCredentials: {
@@ -11,6 +17,18 @@ function collectorState(value, persistCredentials = true) {
       value: Boolean(value.lastError),
       enumerable: false,
       writable: true,
+    },
+    persistedLastRunAt: {
+      value: Number(value.lastRunAt || 0),
+      enumerable: false,
+    },
+    persistedChannelId: {
+      value: identity(value.channelId),
+      enumerable: false,
+    },
+    persistedStationId: {
+      value: identity(value.stationId),
+      enumerable: false,
     },
   });
   return value;
@@ -121,6 +139,15 @@ function successfulCollectorStateStatement(db, state) {
     : collectorStateStatement(db, state);
 }
 
+export function successfulCollectorStatePersistenceDue(state) {
+  if (state.persistCredentials !== false || state.clearFailureOnSuccess === true) return true;
+  if (identity(state.channelId) !== state.persistedChannelId
+      || identity(state.stationId) !== state.persistedStationId) return true;
+  const previous = Number(state.persistedLastRunAt || 0);
+  const current = Number(state.lastRunAt || 0);
+  return previous <= 0 || (Number.isFinite(current) && current - previous >= COLLECTOR_STATE_CHECKPOINT_MS);
+}
+
 async function saveSuccessfulCollectorState(db, state) {
   const result = await successfulCollectorStateStatement(db, state).run();
   if (state.persistCredentials === false && Number(result?.meta?.changes || 0) === 0) {
@@ -145,6 +172,7 @@ async function clearFailureBestEffort(db) {
 // failure remains visible until the successful state is durable.
 export async function saveCollectorStateAndClearFailure(env, state, patch = {}) {
   Object.assign(state, patch);
+  if (!successfulCollectorStatePersistenceDue(state)) return;
   if (state.clearFailureOnSuccess !== true) {
     await saveSuccessfulCollectorState(env.DB, state);
     return;

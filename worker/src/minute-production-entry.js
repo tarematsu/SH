@@ -173,16 +173,19 @@ async function enqueueProductionMinute(activeEnv, payload, options) {
   return accepted;
 }
 
-async function saveColdDefaultReadModels(activeEnv, readModel, jobId) {
-  const module = await (readModelModulePromise ||= import('./minute-facts-read-model.js'));
-  defaultSaveMinuteFactReadModels = module.saveMinuteFactReadModels;
-  return defaultSaveMinuteFactReadModels(activeEnv, readModel, jobId);
+async function saveColdDefaultReadModels(activeEnv, readModel, _jobId) {
+  const module = await (readModelModulePromise ||= import('./read-model-stages.js'));
+  defaultSaveMinuteFactReadModels = async (env, model) => {
+    const prepared = await module.prepareReadModelForWrite(env, model);
+    return module.writePreparedReadModel(env, prepared);
+  };
+  return defaultSaveMinuteFactReadModels(activeEnv, readModel);
 }
 
 function saveDefaultReadModels(activeEnv, readModel, jobId) {
   if (consumeQuarantinedJob(jobId) || !readModel) return undefined;
   if (defaultSaveMinuteFactReadModels) {
-    return defaultSaveMinuteFactReadModels(activeEnv, readModel, jobId);
+    return defaultSaveMinuteFactReadModels(activeEnv, readModel);
   }
   return saveColdDefaultReadModels(activeEnv, readModel, jobId);
 }
