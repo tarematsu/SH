@@ -15,7 +15,8 @@ const FIVE_MINUTE_BUCKETS_PER_DAY = MINUTES_PER_DAY / 5;
 test('steady-state write reductions cover the measured daily overage', () => {
   assert.doesNotMatch(dailyState, /CHECKPOINT/);
   assert.match(dailyState, /excluded\.last_total_member_count IS NOT/);
-  assert.match(statementPlan, /minuteAt % DASHBOARD_BUCKET_MS !== 0/);
+  assert.match(statementPlan, /Math\.floor\(minuteAt \/ DASHBOARD_BUCKET_MS\)/);
+  assert.match(statementPlan, /ON CONFLICT\(channel_id,bucket_at\) DO UPDATE/);
   assert.match(migration, /idx_sh_minute_facts_source_minute_desc/);
   assert.match(migration, /idx_sh_minute_facts_total_listens_baseline/);
 
