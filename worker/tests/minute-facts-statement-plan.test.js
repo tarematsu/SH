@@ -9,7 +9,8 @@ function fakeDb() {
     prepare(sql) {
       const statement = {
         sql: String(sql),
-        bind() { return this; },
+        params: [],
+        bind(...params) { this.params = params; return this; },
       };
       this.prepared.push(statement);
       return statement;
@@ -20,8 +21,8 @@ function fakeDb() {
 function fact(overrides = {}) {
   return {
     channel_id: 318,
-    minute_at: 1_700_000_000_000,
-    observed_at: 1_700_000_001_000,
+    minute_at: 1_700_000_100_000,
+    observed_at: 1_700_000_101_000,
     source_code: 1,
     source_priority: 100,
     quality_score: 1,
@@ -33,26 +34,30 @@ function fact(overrides = {}) {
   };
 }
 
-test('minute fact plan includes rollup and only the active context upsert', () => {
+test('boundary minute plan finalizes one dashboard bucket and uses the active context upsert', () => {
   const db = fakeDb();
   const statements = minuteFactStatements(db, fact({
     queue_revision_id: 44,
     queue_available: 1,
     queue_position: 3,
   }));
+  const rollup = statements.find(({ sql }) => sql.includes('INSERT INTO sh_dashboard_history_5m'));
 
   assert.equal(statements.length, 4);
-  assert.equal(statements.some(({ sql }) => sql.includes('INSERT INTO sh_dashboard_history_5m')), true);
+  assert.ok(rollup);
+  assert.deepEqual(rollup.params.slice(1), [1_699_999_800_000, 1_700_000_100_000, 1_699_999_800_000]);
   assert.equal(statements.some(({ sql }) => sql.includes('INSERT INTO sh_minute_fact_context_v2')), true);
   assert.equal(statements.some(({ sql }) => sql.includes('DELETE FROM sh_minute_fact_context_v2')), false);
 });
 
-test('minute fact plan includes rollup and only the active context delete', () => {
+test('non-boundary minute retries the same completed bucket for catch-up without changing context ownership', () => {
   const db = fakeDb();
-  const statements = minuteFactStatements(db, fact());
+  const statements = minuteFactStatements(db, fact({ minute_at: 1_700_000_160_000 }));
+  const rollup = statements.find(({ sql }) => sql.includes('INSERT INTO sh_dashboard_history_5m'));
 
   assert.equal(statements.length, 4);
-  assert.equal(statements.some(({ sql }) => sql.includes('INSERT INTO sh_dashboard_history_5m')), true);
+  assert.ok(rollup);
+  assert.deepEqual(rollup.params.slice(1), [1_699_999_800_000, 1_700_000_100_000, 1_699_999_800_000]);
   assert.equal(statements.some(({ sql }) => sql.includes('INSERT INTO sh_minute_fact_context_v2')), false);
   assert.equal(statements.some(({ sql }) => sql.includes('DELETE FROM sh_minute_fact_context_v2')), true);
 });

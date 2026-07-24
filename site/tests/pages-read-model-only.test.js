@@ -12,6 +12,8 @@ const dispatch = readFileSync(new URL('../../worker/src/pages-read-model-dispatc
 const entry = readFileSync(new URL('../../worker/src/runtime-orchestrator-entry.js', import.meta.url), 'utf8');
 const workers = readFileSync(new URL('../../worker/scripts/cloudflare-workers.mjs', import.meta.url), 'utf8');
 
+// Pages remains read-only. The production Worker topology is now split into the
+// Sakurazaka monitor, buddies collector, and runtime orchestrator.
 test('dashboard composes completed daily summaries through a focused loader', () => {
   assert.match(dashboard, /loadDashboardDailySummaries/);
   assert.match(dashboard, /daily_summaries/);
@@ -27,7 +29,7 @@ test('Pages track history reads materialized rows and integrated ranking status'
   assert.match(tracks, /worker_materialized_read_model/);
 });
 
-test('track-history generation and publication remain routed inside the core Worker', () => {
+test('track-history generation and publication remain routed inside the runtime Worker', () => {
   assert.match(ranking, /FROM sh_track_ranking_current/);
   assert.doesNotMatch(ranking, /FROM sh_track_counter_current/);
   assert.match(trackStage, /loadTrackRanking/);
@@ -39,7 +41,10 @@ test('track-history generation and publication remain routed inside the core Wor
   assert.match(entry, /pages-read-model-entry/);
 });
 
-test('only the core and Sakurazaka Workers remain active', () => {
+test('only the three split production Workers remain active', () => {
   const activeBlock = workers.slice(workers.indexOf('ACTIVE_WORKER_NAMES'), workers.indexOf('RETIRED_WORKER_NAMES'));
-  assert.equal((activeBlock.match(/'sh-/g) || []).length, 2);
+  assert.equal((activeBlock.match(/'sh-/g) || []).length, 3);
+  assert.match(activeBlock, /'sh-sakurazaka46jp'/);
+  assert.match(activeBlock, /'sh-buddies-collector'/);
+  assert.match(activeBlock, /'sh-runtime-orchestrator'/);
 });

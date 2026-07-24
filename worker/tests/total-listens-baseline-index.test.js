@@ -13,7 +13,7 @@ const descriptor = JSON.parse(readFileSync(
   'utf8',
 ));
 const migration = readFileSync(
-  new URL('../../database/facts-migrations/022_total_listens_baseline_index.sql', import.meta.url),
+  new URL('../../database/facts-migrations/039_reduce_fact_write_amplification.sql', import.meta.url),
   'utf8',
 );
 
@@ -37,23 +37,23 @@ function recordingDb() {
   };
 }
 
-test('facts descriptor advances beyond the total-listens baseline index', () => {
+test('facts descriptor advances through the write-amplification migration', () => {
   assert.equal(
     descriptor.schema,
-    'database/facts-migrations/038_deploy_safe_remaining_hotpaths.sql',
+    'database/facts-migrations/039_reduce_fact_write_amplification.sql',
   );
 });
 
-test('the baseline migration replaces the ineffective observed-time-first index', () => {
+test('total-listens baselines reuse the existing source-channel-minute index', () => {
   assert.match(migration, /DROP INDEX IF EXISTS idx_sh_minute_facts_total_listens_baseline/);
-  assert.match(migration, /CREATE INDEX idx_sh_minute_facts_total_listens_baseline/);
+  assert.match(migration, /DROP INDEX IF EXISTS idx_sh_minute_facts_source_minute_desc/);
   assert.match(
-    migration,
-    /channel_id,\s*minute_at DESC,\s*id DESC,\s*observed_at,\s*reported_total_listens/s,
+    FACTS_TOTAL_LISTENS_BASELINE_SQL,
+    /INDEXED BY idx_sh_minute_facts_source_channel_minute_desc/,
   );
   assert.match(
-    migration,
-    /WHERE source_code=1 AND reported_total_listens IS NOT NULL/,
+    FACTS_TOTAL_LISTENS_HOST_BASELINE_SQL,
+    /INDEXED BY idx_sh_minute_facts_source_channel_minute_desc/,
   );
   assert.match(
     FACTS_TOTAL_LISTENS_BASELINE_SQL,

@@ -171,8 +171,9 @@ test('track resolution reports the failing D1 substage', async () => {
   );
 });
 
-test('dashboard rollup seeks the current and previous minute rather than rescanning a bucket', () => {
-  assert.match(rollup, /current_fact/);
+test('dashboard rollup scans one completed five-minute bucket only at its boundary', () => {
+  assert.match(rollup, /completedDashboardBucket/);
+  assert.match(rollup, /bucket_facts/);
   assert.match(rollup, /previous\.minute_at>=f\.minute_at-60000/);
   assert.match(rollup, /INDEXED BY idx_sh_minute_facts_source_channel_minute_desc/);
   assert.doesNotMatch(rollup, /RANGE BETWEEN|ROW_NUMBER\(\)|MAX\(comment_velocity\) OVER/);

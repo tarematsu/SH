@@ -5,12 +5,16 @@ import test from 'node:test';
 
 import { FACTS_TOTAL_LISTENS_BASELINE_SQL } from '../../site/functions/lib/dashboard-facts.js';
 
-const migration = readFileSync(
+const baselineMigration = readFileSync(
   new URL('../../database/facts-migrations/022_total_listens_baseline_index.sql', import.meta.url),
   'utf8',
 );
+const reductionMigration = readFileSync(
+  new URL('../../database/facts-migrations/039_reduce_fact_write_amplification.sql', import.meta.url),
+  'utf8',
+);
 
-test('SQLite range-seeks the current channel baseline through migration 022', () => {
+test('SQLite range-seeks the current channel baseline through retained indexes', () => {
   const db = new DatabaseSync(':memory:');
   db.exec(`
     CREATE TABLE sh_minute_facts (
@@ -21,9 +25,14 @@ test('SQLite range-seeks the current channel baseline through migration 022', ()
       source_code INTEGER NOT NULL,
       reported_total_listens INTEGER
     );
-    CREATE INDEX idx_sh_minute_facts_time
-      ON sh_minute_facts(minute_at ASC,id ASC);
-    ${migration}
+    CREATE INDEX idx_sh_minute_facts_source_channel_minute_desc
+      ON sh_minute_facts(source_code,channel_id,minute_at DESC,id DESC);
+    CREATE INDEX idx_sh_minute_facts_source_minute_desc
+      ON sh_minute_facts(source_code,minute_at DESC,id DESC,channel_id,observed_at);
+    CREATE INDEX idx_sh_minute_facts_live_minute
+      ON sh_minute_facts(source_code,minute_at DESC,id DESC,channel_id,observed_at);
+    ${baselineMigration}
+    ${reductionMigration}
     INSERT INTO sh_minute_facts VALUES
       (1,7,150,151,1,700),
       (2,7,180,181,1,800),
@@ -41,9 +50,15 @@ test('SQLite range-seeks the current channel baseline through migration 022', ()
 
   assert.ok(
     plan.some((detail) => detail.includes(
-      'SEARCH f USING COVERING INDEX idx_sh_minute_facts_total_listens_baseline (channel_id=? AND minute_at>? AND minute_at<?)',
+      'SEARCH f USING INDEX idx_sh_minute_facts_source_channel_minute_desc (source_code=? AND channel_id=? AND minute_at>? AND minute_at<?)',
     )),
     `expected a channel and minute range seek: ${plan.join(' | ')}`,
+  );
+  assert.ok(
+    plan.some((detail) => detail.includes(
+      'SEARCH sh_minute_facts USING COVERING INDEX idx_sh_minute_facts_live_minute (source_code=?)',
+    )),
+    `expected the latest-channel seek to use the live index: ${plan.join(' | ')}`,
   );
   assert.ok(
     plan.every((detail) => !detail.includes('sh_minute_fact_context')),

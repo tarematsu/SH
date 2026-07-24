@@ -1,9 +1,13 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { dispatchMinuteMaintenanceGate } from '../src/minute-maintenance-optimized-entry.js';
+import {
+  dispatchMinuteMaintenanceGate,
+  runMinuteMaintenanceScheduled,
+} from '../src/minute-maintenance-optimized-entry.js';
 
 const SCHEDULED_AT = Date.UTC(2026, 0, 1, 0, 7, 0);
+const SYNC_SCHEDULED_AT = Date.UTC(2026, 0, 1, 0, 9, 0);
 const CRON = '5,7,9,15,17,19,25,27,29,35,37,39,45,47,49,55,57,59 * * * *';
 
 function collectorDb(row) {
@@ -52,27 +56,34 @@ test('ready rebuild maintenance skips the gate message and dispatches gap-scan d
   assert.deepEqual(capture.sends[0].options, { contentType: 'json' });
 });
 
-test('ready sync maintenance dispatches the final run stage directly', async () => {
+test('scheduled sync maintenance runs inline without a minute-rebuild Queue message', async () => {
   const capture = queueCapture();
-  const env = {
-    BUDDIES_DB: collectorDb({
-      last_run_at: SCHEDULED_AT,
-      last_success_at: SCHEDULED_AT,
-      last_error: null,
-    }),
-    MINUTE_REBUILD_QUEUE: capture.queue,
-  };
-
-  const result = await dispatchMinuteMaintenanceGate(
-    { cron: CRON, scheduledTime: SCHEDULED_AT },
-    env,
-    'sync',
+  const calls = [];
+  const result = await runMinuteMaintenanceScheduled(
+    { cron: CRON, scheduledTime: SYNC_SCHEDULED_AT },
+    { MINUTE_REBUILD_QUEUE: capture.queue },
+    null,
+    {
+      async processMinuteMaintenanceSync(_env, body, dependencies) {
+        calls.push(body.stage);
+        assert.equal(body.maintenance_task, 'sync');
+        assert.equal(typeof dependencies.runScheduled, 'function');
+        return {
+          stage: 'maintenance-run',
+          task: 'sync',
+          run_id: body.run_id,
+          pending: false,
+          payload_cleanup: { cleared: 0 },
+          result: { skipped: false },
+        };
+      },
+    },
   );
 
-  assert.equal(result.dispatched_stage, 'maintenance-run');
-  assert.equal(capture.sends.length, 1);
-  assert.equal(capture.sends[0].body.stage, 'maintenance-run');
-  assert.equal(capture.sends[0].body.maintenance_task, 'sync');
+  assert.deepEqual(calls, ['maintenance-run']);
+  assert.equal(result.inline, true);
+  assert.equal(result.pending, false);
+  assert.deepEqual(capture.sends, []);
 });
 
 test('collector-not-ready maintenance retains one bounded gate retry', async () => {
