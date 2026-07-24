@@ -1,9 +1,9 @@
-import {
-  minuteFactContextDeleteStatement,
-  minuteFactContextUpsertStatement,
-  minuteFactStatement,
-} from './minute-facts-normalize.js';
+import { minuteFactContextDeleteStatement } from './minute-facts-normalize.js';
 import { totalMemberDailyChangeStatement } from './minute-facts-daily-state.js';
+import {
+  guardedMinuteFactContextUpsertStatement,
+  guardedMinuteFactStatement,
+} from './minute-facts-write-guards.js';
 
 const DASHBOARD_BUCKET_MS = 5 * 60_000;
 
@@ -92,11 +92,11 @@ export function dashboardHistoryRollupStatement(db, fact) {
 
 export function minuteFactStatements(db, fact) {
   return [
-    minuteFactStatement(db, fact),
+    guardedMinuteFactStatement(db, fact),
     dashboardHistoryRollupStatement(db, fact),
     totalMemberDailyChangeStatement(db, fact),
     contextPresent(fact)
-      ? minuteFactContextUpsertStatement(db, fact)
+      ? guardedMinuteFactContextUpsertStatement(db, fact)
       : minuteFactContextDeleteStatement(db, fact),
   ];
 }
