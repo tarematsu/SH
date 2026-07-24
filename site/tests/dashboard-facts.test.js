@@ -20,9 +20,9 @@ test('facts dashboard SQL preserves the unified dashboard response contract', ()
   assert.match(FACTS_LATEST_SQL, /FROM sh_minute_facts AS f/);
   assert.match(FACTS_LATEST_SQL, /INDEXED BY idx_sh_minute_facts_live_minute/);
   assert.match(FACTS_LATEST_SQL, /recent INDEXED BY idx_sh_minute_facts_source_channel_minute_desc/);
-  assert.match(FACTS_LATEST_SQL, /previous\.reported_total_listens[\s\S]*AS total_listens/);
-  assert.match(FACTS_LATEST_SQL, /previous\.reported_current_stream_count[\s\S]*AS current_stream_count/);
-  assert.match(FACTS_LATEST_SQL, /previous\.comment_count/);
+  assert.match(FACTS_LATEST_SQL, /reported_total_listens AS total_listens/);
+  assert.match(FACTS_LATEST_SQL, /reported_current_stream_count AS current_stream_count/);
+  assert.doesNotMatch(FACTS_LATEST_SQL, /previous\./);
   assert.match(FACTS_LATEST_SQL, /LEFT JOIN sh_minute_fact_context_v2/);
   assert.doesNotMatch(FACTS_LATEST_SQL, /LEFT JOIN sh_minute_fact_context AS/);
   assert.match(FACTS_LATEST_SQL, /WHERE f\.source_code=1/);
@@ -78,7 +78,7 @@ test('persisted prediction state suppresses the per-request aggregate scan', asy
   });
 
   assert.equal(db.callsMatching(/FROM sh_dashboard_history_5m r/).length, 0);
-  assert.equal(db.callsMatching(/AS current_stream_count/).length, 1);
+  assert.equal(db.callsMatching(/reported_current_stream_count AS current_stream_count/).length, 1);
 });
 
 test('unified dashboard includes facts, history and completed daily summaries', async () => {
@@ -131,7 +131,7 @@ test('unified dashboard includes facts, history and completed daily summaries', 
       observed_at: now - 86_400_000,
       total_member_count: 30_500,
     })
-    .route('first', 'AS total_listens\nFROM sh_minute_facts AS f', {
+    .route('first', 'f.reported_total_listens AS total_listens', {
       observed_at: now - 86_400_000,
       total_listens: 790_000,
     });
