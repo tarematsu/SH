@@ -20,6 +20,7 @@ import {
   resetQueueStructureCacheForTests,
 } from './minute-facts-queue-cache.js';
 import { minuteFactStatements } from './minute-facts-statement-plan.js';
+import { prepareSparseLiveMinuteFact } from './minute-facts-sparse-values.js';
 import { resolveHost, resolveLiveSession, resolveTrack } from './minute-facts-legacy-resolve.js';
 import { createRevision, updatePlaybackState, writeCurrentBite } from './minute-facts-legacy-revision.js';
 
@@ -185,6 +186,8 @@ export async function saveLiveMinuteFact(env, input) {
     quality_score: qualityScore(flags),
     quality_flags: flags,
   };
-  await upsertMinuteFact(db, fact);
+  const prepared = await prepareSparseLiveMinuteFact(db, fact);
+  await upsertMinuteFact(db, prepared.fact);
+  prepared.commit();
   return { skipped: false, fact, sessionId, revisionId };
 }
