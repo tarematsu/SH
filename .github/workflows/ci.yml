@@ -12,6 +12,7 @@ on:
       - 'package.json'
       - '.github/workflows/**'
       - '.github/actions/**'
+      - '.github/scripts/**'
   workflow_dispatch:
 
 permissions:
