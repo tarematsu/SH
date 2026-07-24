@@ -35,6 +35,8 @@ function database() {
     );
     CREATE INDEX idx_sh_minute_facts_source_channel_minute_desc
       ON sh_minute_facts(source_code,channel_id,minute_at DESC,id DESC);
+    CREATE INDEX idx_sh_minute_facts_live_minute
+      ON sh_minute_facts(source_code,minute_at DESC,id DESC,channel_id,observed_at);
     CREATE TABLE sh_total_member_daily(
       channel_id INTEGER NOT NULL,
       day_at INTEGER NOT NULL,
@@ -67,6 +69,10 @@ function d1Adapter(sqlite) {
             async first() { return statement.get(...params) || null; },
             async all() { return { results: statement.all(...params) }; },
           };
+        },
+        async run() {
+          const result = statement.run();
+          return { meta: { changes: Number(result.changes || 0) } };
         },
         async first() { return statement.get() || null; },
         async all() { return { results: statement.all() }; },
@@ -129,7 +135,6 @@ test('five-minute rollup finalizes the completed bucket once with its latest fac
 
 test('24-hour prediction aggregate reads the rollup rather than raw minute facts', async () => {
   const sqlite = database();
-  const db = d1Adapter(sqlite);
   const base = Math.floor((Date.now() - 30 * 60_000) / 300_000) * 300_000;
   for (let index = 0; index < 5; index += 1) {
     const minuteAt = base + index * 300_000;
