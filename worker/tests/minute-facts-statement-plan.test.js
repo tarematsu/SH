@@ -9,7 +9,8 @@ function fakeDb() {
     prepare(sql) {
       const statement = {
         sql: String(sql),
-        bind() { return this; },
+        params: [],
+        bind(...params) { this.params = params; return this; },
       };
       this.prepared.push(statement);
       return statement;
@@ -40,19 +41,23 @@ test('boundary minute plan finalizes one dashboard bucket and uses the active co
     queue_available: 1,
     queue_position: 3,
   }));
+  const rollup = statements.find(({ sql }) => sql.includes('INSERT INTO sh_dashboard_history_5m'));
 
   assert.equal(statements.length, 4);
-  assert.equal(statements.some(({ sql }) => sql.includes('INSERT INTO sh_dashboard_history_5m')), true);
+  assert.ok(rollup);
+  assert.deepEqual(rollup.params.slice(1), [1_699_999_800_000, 1_700_000_100_000, 1_699_999_800_000]);
   assert.equal(statements.some(({ sql }) => sql.includes('INSERT INTO sh_minute_fact_context_v2')), true);
   assert.equal(statements.some(({ sql }) => sql.includes('DELETE FROM sh_minute_fact_context_v2')), false);
 });
 
-test('non-boundary minute skips the dashboard rollup and uses the active context delete', () => {
+test('non-boundary minute retries the same completed bucket for catch-up without changing context ownership', () => {
   const db = fakeDb();
   const statements = minuteFactStatements(db, fact({ minute_at: 1_700_000_160_000 }));
+  const rollup = statements.find(({ sql }) => sql.includes('INSERT INTO sh_dashboard_history_5m'));
 
   assert.equal(statements.length, 4);
-  assert.equal(statements.some(({ sql }) => sql.includes('INSERT INTO sh_dashboard_history_5m')), false);
+  assert.ok(rollup);
+  assert.deepEqual(rollup.params.slice(1), [1_699_999_800_000, 1_700_000_100_000, 1_699_999_800_000]);
   assert.equal(statements.some(({ sql }) => sql.includes('INSERT INTO sh_minute_fact_context_v2')), false);
   assert.equal(statements.some(({ sql }) => sql.includes('DELETE FROM sh_minute_fact_context_v2')), true);
 });
