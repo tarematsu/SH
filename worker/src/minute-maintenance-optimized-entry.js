@@ -37,29 +37,32 @@ function isDeriveDispatchCron(controller) {
     || String(value || '') === MINUTE_DERIVE_DISPATCH_CRON;
 }
 
-export async function dispatchMinuteMaintenanceGate(controller, env, task, ctx = null) {
-  if (!env?.MINUTE_REBUILD_QUEUE?.send) {
-    return runMinuteScheduledWithCollectorPriority(controller, env, ctx, EMPTY_DEPENDENCIES);
-  }
+function maintenanceMessage(controller, task) {
   const scheduledAt = scheduledTimestamp(controller);
   const cron = typeof controller?.cron === 'string' ? controller.cron : String(controller?.cron || '');
-  const runId = `minute-maintenance:${task}:${scheduledAt}`;
-  const message = {
+  return {
     message_type: 'minute-rebuild-stage',
     message_version: 1,
-    run_id: runId,
+    run_id: `minute-maintenance:${task}:${scheduledAt}`,
     stage: 'maintenance-gate',
     maintenance_task: task,
     scheduled_at: scheduledAt,
     cron,
     attempt: 0,
   };
+}
+
+export async function dispatchMinuteMaintenanceGate(controller, env, task, ctx = null) {
+  if (!env?.MINUTE_REBUILD_QUEUE?.send) {
+    return runMinuteScheduledWithCollectorPriority(controller, env, ctx, EMPTY_DEPENDENCIES);
+  }
+  const message = maintenanceMessage(controller, task);
   const maintenance = await loadRebuildMaintenanceEntry();
   const result = await maintenance.processMinuteMaintenanceGate(env, message);
   console.log(JSON.stringify({
     event: 'minute_maintenance_gate_inlined',
     task,
-    run_id: runId,
+    run_id: message.run_id,
     pending: result?.pending === true,
     skipped: result?.skipped === true,
     reason: result?.reason,
@@ -70,13 +73,54 @@ export async function dispatchMinuteMaintenanceGate(controller, env, task, ctx =
   return result;
 }
 
-export async function runMinuteMaintenanceScheduled(controller, env, ctx) {
+export async function runMinuteMaintenanceSyncInline(
+  controller,
+  env,
+  ctx = null,
+  dependencies = EMPTY_DEPENDENCIES,
+) {
+  const message = { ...maintenanceMessage(controller, 'sync'), stage: 'maintenance-run' };
+  const maintenance = dependencies.maintenance || await loadRebuildMaintenanceEntry();
+  const processSync = dependencies.processMinuteMaintenanceSync
+    || maintenance.processMinuteMaintenanceSync;
+  const runScheduled = dependencies.runScheduled
+    || ((scheduledController, activeEnv) => runMinuteScheduledWithCollectorPriority(
+      scheduledController,
+      activeEnv,
+      ctx,
+      EMPTY_DEPENDENCIES,
+    ));
+  const result = await processSync(env, message, {
+    clearCompletedPayloads: dependencies.clearCompletedPayloads,
+    runScheduled,
+  });
+  console.log(JSON.stringify({
+    event: 'minute_maintenance_sync_inlined',
+    task: 'sync',
+    run_id: message.run_id,
+    pending: result?.pending === true,
+    skipped: result?.result?.skipped === true,
+    reason: result?.result?.reason,
+    payloads_cleared: result?.payload_cleanup?.cleared,
+  }));
+  return { ...result, inline: true };
+}
+
+export async function runMinuteMaintenanceScheduled(
+  controller,
+  env,
+  ctx,
+  dependencies = EMPTY_DEPENDENCIES,
+) {
   if (isDeriveDispatchCron(controller)) {
     const entry = await loadMaintenanceEntry();
     return entry.dispatchPendingMinuteFacts(env, EMPTY_DEPENDENCIES, ctx);
   }
   const task = minuteMaintenanceTask(controller);
-  if (task === 'rebuild' || task === 'sync') {
+  if (task === 'sync') {
+    return runMinuteMaintenanceSyncInline(controller, env, ctx, dependencies);
+  }
+  if (task === 'rebuild') {
     return dispatchMinuteMaintenanceGate(controller, env, task, ctx);
   }
   return runMinuteScheduledWithCollectorPriority(controller, env, ctx, EMPTY_DEPENDENCIES);
