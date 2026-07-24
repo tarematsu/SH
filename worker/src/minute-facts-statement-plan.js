@@ -2,8 +2,8 @@ import {
   minuteFactContextDeleteStatement,
   minuteFactContextUpsertStatement,
   minuteFactStatement,
-  totalMemberDailyStatement,
 } from './minute-facts-normalize.js';
+import { totalMemberDailyCheckpointStatement } from './minute-facts-daily-state.js';
 
 const DASHBOARD_BUCKET_MS = 5 * 60_000;
 
@@ -82,7 +82,7 @@ export function minuteFactStatements(db, fact) {
   return [
     minuteFactStatement(db, fact),
     dashboardHistoryRollupStatement(db, fact),
-    totalMemberDailyStatement(db, fact),
+    totalMemberDailyCheckpointStatement(db, fact),
     contextPresent(fact)
       ? minuteFactContextUpsertStatement(db, fact)
       : minuteFactContextDeleteStatement(db, fact),
