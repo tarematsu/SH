@@ -83,28 +83,45 @@ function insertFact(sqlite, values) {
     ) VALUES(?,?,?,?,?,?,?,?,?,?)`).run(...values);
 }
 
-test('five-minute rollup keeps the latest fact and maximum one-minute comment velocity', async () => {
+test('five-minute rollup finalizes the completed bucket once with its latest fact and peak velocity', async () => {
   const sqlite = database();
   const db = d1Adapter(sqlite);
-  const now = Date.now();
-  const bucket = Math.floor(now / 300_000) * 300_000;
-  insertFact(sqlite, [318, bucket, bucket + 1_000, 1, 10, 20, 30, 40, 100, 5]);
-  await dashboardHistoryRollupStatement(db, {
+  const nextBucket = Math.floor(Date.now() / 300_000) * 300_000;
+  const bucket = nextBucket - 300_000;
+  const comments = [5, 7, 2, 1, 0];
+  for (let index = 0; index < 5; index += 1) {
+    const minuteAt = bucket + index * 60_000;
+    insertFact(sqlite, [
+      318,
+      minuteAt,
+      minuteAt + 1_000,
+      1,
+      10 + index,
+      20 + index,
+      30 + index,
+      40 + index,
+      100 + index * 5,
+      comments[index],
+    ]);
+  }
+
+  const result = await dashboardHistoryRollupStatement(db, {
     source_code: 1,
     channel_id: 318,
-    minute_at: bucket,
+    minute_at: nextBucket,
   }).run();
-  insertFact(sqlite, [318, bucket + 60_000, bucket + 61_000, 1, 11, 21, 31, 41, 105, 7]);
-  await dashboardHistoryRollupStatement(db, {
+  const skipped = await dashboardHistoryRollupStatement(db, {
     source_code: 1,
     channel_id: 318,
-    minute_at: bucket + 60_000,
+    minute_at: nextBucket + 60_000,
   }).run();
 
   const rows = sqlite.prepare(FACTS_HISTORY_24H_SQL).all();
+  assert.equal(result.meta.changes, 1);
+  assert.equal(skipped.meta.changes, 0);
   assert.equal(rows.length, 1);
-  assert.equal(rows[0].listener_count, 11);
-  assert.equal(rows[0].total_listens, 41);
+  assert.equal(rows[0].listener_count, 14);
+  assert.equal(rows[0].total_listens, 44);
   assert.equal(rows[0].comment_velocity, 12);
   assert.doesNotMatch(FACTS_HISTORY_24H_SQL, /FROM sh_minute_facts AS f\s+WHERE f\.source_code=1[\s\S]*RANGE BETWEEN/);
   assert.match(FACTS_HISTORY_24H_SQL, /FROM sh_dashboard_history_5m r/);
@@ -117,11 +134,10 @@ test('24-hour prediction aggregate reads the rollup rather than raw minute facts
   for (let index = 0; index < 5; index += 1) {
     const minuteAt = base + index * 300_000;
     insertFact(sqlite, [318, minuteAt, minuteAt + 1_000, 1, null, null, null, null, 100 + index * 5, 0]);
-    await dashboardHistoryRollupStatement(db, {
-      source_code: 1,
-      channel_id: 318,
-      minute_at: minuteAt,
-    }).run();
+    sqlite.prepare(`INSERT INTO sh_dashboard_history_5m(
+      channel_id,bucket_at,fact_id,minute_at,observed_at,current_stream_count,comment_velocity
+    ) SELECT channel_id,?,id,minute_at,observed_at,reported_current_stream_count,0
+      FROM sh_minute_facts WHERE channel_id=? AND minute_at=?`).run(minuteAt, 318, minuteAt);
   }
 
   const aggregate = sqlite.prepare(FACTS_PREDICTION_24H_SQL).get();
@@ -134,8 +150,8 @@ test('persisted inbox counters follow insert, claim, completion, retry, and dele
   const sqlite = database();
   const db = d1Adapter(sqlite);
   const insert = sqlite.prepare(`INSERT INTO sh_minute_fact_jobs(
-    id,minute_at,job_kind,status,updated_at
-  ) VALUES(?,?,?,?,?)`);
+      id,minute_at,job_kind,status,updated_at
+    ) VALUES(?,?,?,?,?)`);
   insert.run(1, 100, 'live', 'pending', 1000);
   insert.run(2, 50, 'rebuild', 'pending', 1000);
   insert.run(3, 200, 'live', 'dead', 1000);
