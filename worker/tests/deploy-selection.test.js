@@ -55,7 +55,7 @@ test('deployment support changes select the owning Worker', () => {
 test('MINUTE_DB schema changes deploy the runtime that consumes the schema', () => {
   for (const path of [
     'database/facts-db.json',
-    'database/facts-migrations/038_deploy_safe_remaining_hotpaths.sql',
+    'database/facts-migrations/039_reduce_fact_write_amplification.sql',
   ]) {
     assert.deepEqual(select([path]).workers, [RUNTIME], path);
     assert.deepEqual(select([path]).commands, ['deploy:runtime'], path);
