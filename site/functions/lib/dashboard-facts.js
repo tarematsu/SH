@@ -5,24 +5,9 @@
 // collector.
 export const FACTS_FRESH_MS = 10 * 60 * 1000;
 
-function carriedMetricSql(column, alias = 'f') {
-  return `COALESCE(${alias}.${column},(
-    SELECT previous.${column}
-    FROM sh_minute_facts AS previous
-      INDEXED BY idx_sh_minute_facts_source_channel_minute_desc
-    WHERE previous.source_code=${alias}.source_code
-      AND previous.channel_id=${alias}.channel_id
-      AND (previous.minute_at<${alias}.minute_at
-        OR (previous.minute_at=${alias}.minute_at AND previous.id<${alias}.id))
-      AND previous.${column} IS NOT NULL
-    ORDER BY previous.minute_at DESC,previous.id DESC
-    LIMIT 1
-  ))`;
-}
-
 function commentVelocitySql(alias = 'f') {
   return `COALESCE((
-    SELECT SUM(${carriedMetricSql('comment_count', 'recent')})
+    SELECT SUM(recent.comment_count)
     FROM sh_minute_facts AS recent INDEXED BY idx_sh_minute_facts_source_channel_minute_desc
     WHERE recent.source_code=1
       AND recent.channel_id=${alias}.channel_id
@@ -33,17 +18,14 @@ function commentVelocitySql(alias = 'f') {
 
 export const FACTS_LATEST_SQL = `SELECT
   f.id,f.minute_at,f.observed_at,f.channel_id,
-  ${carriedMetricSql('is_broadcasting')} AS is_broadcasting,
-  ${carriedMetricSql('listener_count')} AS listener_count,
-  ${carriedMetricSql('online_member_count')} AS online_member_count,
+  f.is_broadcasting,f.listener_count,f.online_member_count,
   COALESCE((SELECT d.last_total_member_count FROM sh_total_member_daily d
     WHERE d.channel_id=f.channel_id AND d.day_at=(f.observed_at/86400000)*86400000
       AND d.host_key IN (0,COALESCE(v.host_id_override,s.host_id,0))
     ORDER BY d.host_key DESC,d.last_observed_at DESC LIMIT 1),f.total_member_count)
-    AS total_member_count,
-  ${carriedMetricSql('guest_count')} AS guest_count,
-  ${carriedMetricSql('reported_total_listens')} AS total_listens,
-  ${carriedMetricSql('reported_current_stream_count')} AS current_stream_count,
+    AS total_member_count,f.guest_count,
+  f.reported_total_listens AS total_listens,
+  f.reported_current_stream_count AS current_stream_count,
   f.is_paused,${commentVelocitySql('f')} AS comment_velocity,
   COALESCE(v.station_id_override,s.station_id) AS station_id,
   COALESCE(v.host_id_override,s.host_id) AS host_id,
@@ -114,21 +96,23 @@ const FACTS_LATEST_CHANNEL_CTE = `latest_channel AS (
 )`;
 
 export const FACTS_TOTAL_LISTENS_BASELINE_SQL = `WITH ${FACTS_LATEST_CHANNEL_CTE}
-SELECT f.observed_at,${carriedMetricSql('reported_total_listens')} AS total_listens
+SELECT f.observed_at,f.reported_total_listens AS total_listens
 FROM sh_minute_facts AS f INDEXED BY idx_sh_minute_facts_source_channel_minute_desc
 WHERE f.channel_id=(SELECT channel_id FROM latest_channel)
   AND f.minute_at>=? AND f.minute_at<?
   AND f.source_code=1
+  AND f.reported_total_listens IS NOT NULL
 ORDER BY f.minute_at DESC,f.id DESC
 LIMIT 1`;
 
 export const FACTS_TOTAL_LISTENS_HOST_BASELINE_SQL = `WITH ${FACTS_LATEST_CHANNEL_CTE}
-SELECT f.observed_at,${carriedMetricSql('reported_total_listens')} AS total_listens
+SELECT f.observed_at,f.reported_total_listens AS total_listens
 FROM sh_minute_facts AS f INDEXED BY idx_sh_minute_facts_source_channel_minute_desc
 JOIN sh_minute_fact_context AS c ON c.fact_id=f.id
 WHERE f.channel_id=(SELECT channel_id FROM latest_channel)
   AND f.minute_at>=? AND f.minute_at<?
   AND f.source_code=1
+  AND f.reported_total_listens IS NOT NULL
   AND c.host_id=?
 ORDER BY f.minute_at DESC,f.id DESC
 LIMIT 1`;
