@@ -23,6 +23,11 @@ test('observability policy scripts pass offline self-tests', () => {
   runSelfTest('.github/scripts/audit-deployed-cloudflare-telemetry.py');
 });
 
+test('observability script changes are covered by pull-request CI', async () => {
+  const ci = await readFile(new URL('.github/workflows/ci.yml', root), 'utf8');
+  assert.match(ci, /^\s{6}- '\.github\/scripts\/\*\*'$/m);
+});
+
 test('observability uses post-deploy, diagnostic-change, and daily complete budget checks', async () => {
   const workflow = await readFile(new URL('.github/workflows/fetch-cloudflare-observability.yml', root), 'utf8');
   const dailyAudit = await readFile(
