@@ -1,12 +1,10 @@
 import { integer, scoreCode } from './minute-facts-normalize.js';
 
-export const TOTAL_MEMBER_DAILY_CHECKPOINT_MS = 20 * 60_000;
-
 function compactScoreCode(fact) {
   return integer(fact.quality_score_code) ?? scoreCode(fact.quality_score, 100);
 }
 
-export function totalMemberDailyCheckpointStatement(db, fact) {
+export function totalMemberDailyChangeStatement(db, fact) {
   const count = integer(fact.total_member_count);
   if (count == null || count < 0) return db.prepare('SELECT 1 WHERE 0');
   const observedAt = integer(fact.observed_at);
@@ -37,14 +35,7 @@ export function totalMemberDailyCheckpointStatement(db, fact) {
     WHERE excluded.first_observed_at<sh_total_member_daily.first_observed_at
       OR excluded.min_total_member_count<sh_total_member_daily.min_total_member_count
       OR excluded.max_total_member_count>sh_total_member_daily.max_total_member_count
-      OR (excluded.last_observed_at>sh_total_member_daily.last_observed_at AND (
-        excluded.last_total_member_count IS NOT sh_total_member_daily.last_total_member_count
-        OR excluded.last_observed_at>=sh_total_member_daily.last_observed_at+?
-        OR excluded.source_priority>sh_total_member_daily.source_priority
-        OR (excluded.source_priority=sh_total_member_daily.source_priority
-          AND excluded.quality_score_code>sh_total_member_daily.quality_score_code)
-      ))
-      OR (excluded.last_observed_at=sh_total_member_daily.last_observed_at AND (
+      OR (excluded.last_observed_at>=sh_total_member_daily.last_observed_at AND (
         excluded.last_total_member_count IS NOT sh_total_member_daily.last_total_member_count
         OR excluded.source_priority>sh_total_member_daily.source_priority
         OR (excluded.source_priority=sh_total_member_daily.source_priority
@@ -52,6 +43,6 @@ export function totalMemberDailyCheckpointStatement(db, fact) {
       ))`).bind(
     fact.channel_id, dayAt, hostKey, hostId, observedAt, observedAt,
     count, count, count, count, fact.source_code, fact.source_priority,
-    compactScoreCode(fact), TOTAL_MEMBER_DAILY_CHECKPOINT_MS,
+    compactScoreCode(fact),
   );
 }
