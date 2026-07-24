@@ -9,6 +9,8 @@ const JSON_QUEUE_SEND_OPTIONS = Object.freeze({ contentType: 'json' });
 const RETRY_60_SECONDS = Object.freeze({ delaySeconds: 60 });
 const GATE_RETRY_SECONDS = 4;
 const GATE_MAX_ATTEMPTS = 3;
+const COLLECTOR_STATE_CHECKPOINT_MS = 20 * 60_000;
+const COLLECTOR_READY_GRACE_MS = 2 * 60_000;
 const REBUILD_SLOT_MS = 10 * 60_000;
 const HISTORICAL_BACKFILL_DUE_WINDOW_MS = 60_000;
 const DEFAULT_HISTORICAL_BACKFILL_INTERVAL_MS = 24 * 60 * 60_000;
@@ -83,14 +85,20 @@ async function collectorReady(env, scheduledAt) {
   const db = env?.BUDDIES_DB;
   if (!db?.prepare) return { ready: true, reason: 'buddies-db-binding-missing' };
   const targetMinute = Math.floor(scheduledAt / 60_000) * 60_000;
+  const freshnessFloor = targetMinute - COLLECTOR_STATE_CHECKPOINT_MS - COLLECTOR_READY_GRACE_MS;
   try {
     const row = await db.prepare(`SELECT last_run_at,last_success_at,last_error
       FROM sh_worker_collector_state WHERE id='stationhead' LIMIT 1`).first();
+    const lastRunAt = Number(row?.last_run_at || 0);
+    const lastSuccessAt = Number(row?.last_success_at || 0);
     return {
-      ready: Number(row?.last_run_at || 0) >= targetMinute
-        && Number(row?.last_success_at || 0) >= targetMinute
+      ready: lastRunAt >= freshnessFloor
+        && lastSuccessAt >= freshnessFloor
         && !row?.last_error,
       targetMinute,
+      freshnessFloor,
+      lastRunAt,
+      lastSuccessAt,
     };
   } catch (error) {
     if (/no such table|no such column/i.test(String(error?.message || error))) {
