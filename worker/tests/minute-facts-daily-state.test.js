@@ -2,10 +2,7 @@ import assert from 'node:assert/strict';
 import { DatabaseSync } from 'node:sqlite';
 import test from 'node:test';
 
-import {
-  TOTAL_MEMBER_DAILY_CHECKPOINT_MS,
-  totalMemberDailyCheckpointStatement,
-} from '../src/minute-facts-daily-state.js';
+import { totalMemberDailyChangeStatement } from '../src/minute-facts-daily-state.js';
 
 function database() {
   const sqlite = new DatabaseSync(':memory:');
@@ -50,7 +47,7 @@ function d1Adapter(sqlite) {
   };
 }
 
-function fact(observedAt, count) {
+function fact(observedAt, count, overrides = {}) {
   return {
     channel_id: 318,
     observed_at: observedAt,
@@ -59,44 +56,58 @@ function fact(observedAt, count) {
     source_code: 1,
     source_priority: 100,
     quality_score: 1,
+    ...overrides,
   };
 }
 
-test('unchanged total-member state writes only at the twenty-minute checkpoint', async () => {
+test('unchanged total-member state remains a no-op for the rest of the day', async () => {
   const sqlite = database();
   const db = d1Adapter(sqlite);
   const start = Date.UTC(2026, 0, 1, 0, 0, 0);
 
-  const inserted = await totalMemberDailyCheckpointStatement(db, fact(start, 100)).run();
-  const unchanged = await totalMemberDailyCheckpointStatement(db, fact(start + 60_000, 100)).run();
-  const changed = await totalMemberDailyCheckpointStatement(db, fact(start + 2 * 60_000, 101)).run();
-  const beforeCheckpoint = await totalMemberDailyCheckpointStatement(
+  const inserted = await totalMemberDailyChangeStatement(db, fact(start, 100)).run();
+  const unchanged = await totalMemberDailyChangeStatement(db, fact(start + 60_000, 100)).run();
+  const changed = await totalMemberDailyChangeStatement(db, fact(start + 2 * 60_000, 101)).run();
+  const unchangedHoursLater = await totalMemberDailyChangeStatement(
     db,
-    fact(start + 2 * 60_000 + TOTAL_MEMBER_DAILY_CHECKPOINT_MS - 1, 101),
-  ).run();
-  const checkpoint = await totalMemberDailyCheckpointStatement(
-    db,
-    fact(start + 2 * 60_000 + TOTAL_MEMBER_DAILY_CHECKPOINT_MS, 101),
+    fact(start + 20 * 60 * 60_000, 101),
   ).run();
 
   assert.equal(inserted.meta.changes, 1);
   assert.equal(unchanged.meta.changes, 0);
   assert.equal(changed.meta.changes, 1);
-  assert.equal(beforeCheckpoint.meta.changes, 0);
-  assert.equal(checkpoint.meta.changes, 1);
+  assert.equal(unchangedHoursLater.meta.changes, 0);
 
   const row = sqlite.prepare(`SELECT last_observed_at,last_total_member_count,
     min_total_member_count,max_total_member_count FROM sh_total_member_daily`).get();
-  assert.equal(row.last_observed_at, start + 2 * 60_000 + TOTAL_MEMBER_DAILY_CHECKPOINT_MS);
+  assert.equal(row.last_observed_at, start + 2 * 60_000);
   assert.equal(row.last_total_member_count, 101);
   assert.equal(row.min_total_member_count, 100);
   assert.equal(row.max_total_member_count, 101);
 });
 
+test('higher-quality state can replace the same observed value', async () => {
+  const sqlite = database();
+  const db = d1Adapter(sqlite);
+  const start = Date.UTC(2026, 0, 1, 0, 0, 0);
+
+  await totalMemberDailyChangeStatement(db, fact(start, 100, {
+    source_priority: 50,
+    quality_score: 0.8,
+  })).run();
+  const upgraded = await totalMemberDailyChangeStatement(db, fact(start + 60_000, 100)).run();
+
+  assert.equal(upgraded.meta.changes, 1);
+  const row = sqlite.prepare(`SELECT source_priority,quality_score_code
+    FROM sh_total_member_daily`).get();
+  assert.equal(row.source_priority, 100);
+  assert.equal(row.quality_score_code, 100);
+});
+
 test('missing total-member values remain a no-op', async () => {
   const sqlite = database();
   const db = d1Adapter(sqlite);
-  const result = await totalMemberDailyCheckpointStatement(db, fact(Date.now(), null)).run();
+  const result = await totalMemberDailyChangeStatement(db, fact(Date.now(), null)).run();
   assert.equal(result.meta.changes, 0);
   assert.equal(sqlite.prepare('SELECT COUNT(*) AS count FROM sh_total_member_daily').get().count, 0);
 });
