@@ -97,7 +97,7 @@ const FACTS_LATEST_CHANNEL_CTE = `latest_channel AS (
 
 export const FACTS_TOTAL_LISTENS_BASELINE_SQL = `WITH ${FACTS_LATEST_CHANNEL_CTE}
 SELECT f.observed_at,f.reported_total_listens AS total_listens
-FROM sh_minute_facts AS f
+FROM sh_minute_facts AS f INDEXED BY idx_sh_minute_facts_source_channel_minute_desc
 WHERE f.channel_id=(SELECT channel_id FROM latest_channel)
   AND f.minute_at>=? AND f.minute_at<?
   AND f.source_code=1
@@ -107,7 +107,7 @@ LIMIT 1`;
 
 export const FACTS_TOTAL_LISTENS_HOST_BASELINE_SQL = `WITH ${FACTS_LATEST_CHANNEL_CTE}
 SELECT f.observed_at,f.reported_total_listens AS total_listens
-FROM sh_minute_facts AS f
+FROM sh_minute_facts AS f INDEXED BY idx_sh_minute_facts_source_channel_minute_desc
 JOIN sh_minute_fact_context AS c ON c.fact_id=f.id
 WHERE f.channel_id=(SELECT channel_id FROM latest_channel)
   AND f.minute_at>=? AND f.minute_at<?
