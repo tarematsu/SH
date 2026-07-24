@@ -89,7 +89,7 @@ function insertFact(sqlite, values) {
     ) VALUES(?,?,?,?,?,?,?,?,?,?)`).run(...values);
 }
 
-test('five-minute rollup finalizes the completed bucket once with its latest fact and peak velocity', async () => {
+test('five-minute rollup catches up a completed bucket once after a missed boundary', async () => {
   const sqlite = database();
   const db = d1Adapter(sqlite);
   const nextBucket = Math.floor(Date.now() / 300_000) * 300_000;
@@ -114,12 +114,12 @@ test('five-minute rollup finalizes the completed bucket once with its latest fac
   const result = await dashboardHistoryRollupStatement(db, {
     source_code: 1,
     channel_id: 318,
-    minute_at: nextBucket,
+    minute_at: nextBucket + 60_000,
   }).run();
   await dashboardHistoryRollupStatement(db, {
     source_code: 1,
     channel_id: 318,
-    minute_at: nextBucket + 60_000,
+    minute_at: nextBucket + 120_000,
   }).run();
 
   const rows = sqlite.prepare(FACTS_HISTORY_24H_SQL).all();
