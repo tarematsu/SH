@@ -19,6 +19,21 @@ function completedDashboardBucket(minuteAt) {
   return Math.floor(minuteAt / DASHBOARD_BUCKET_MS) * DASHBOARD_BUCKET_MS - DASHBOARD_BUCKET_MS;
 }
 
+function carriedMetricSql(column, alias = 'f') {
+  return `COALESCE(${alias}.${column},(
+    SELECT previous.${column}
+    FROM sh_minute_facts AS previous
+      INDEXED BY idx_sh_minute_facts_source_channel_minute_desc
+    WHERE previous.source_code=${alias}.source_code
+      AND previous.channel_id=${alias}.channel_id
+      AND (previous.minute_at<${alias}.minute_at
+        OR (previous.minute_at=${alias}.minute_at AND previous.id<${alias}.id))
+      AND previous.${column} IS NOT NULL
+    ORDER BY previous.minute_at DESC,previous.id DESC
+    LIMIT 1
+  ))`;
+}
+
 export function dashboardHistoryRollupStatement(db, fact) {
   if (Number(fact?.source_code) !== 1) return db.prepare('SELECT 1 WHERE 0');
   const bucketAt = completedDashboardBucket(Number(fact?.minute_at));
@@ -26,10 +41,12 @@ export function dashboardHistoryRollupStatement(db, fact) {
   const bucketEnd = bucketAt + DASHBOARD_BUCKET_MS;
   return db.prepare(`WITH bucket_facts AS (
       SELECT f.id,f.channel_id,f.minute_at,f.observed_at,
-        f.listener_count,f.online_member_count,f.total_member_count,
-        f.reported_total_listens AS total_listens,
-        f.reported_current_stream_count AS current_stream_count,
-        COALESCE(f.comment_count,0) AS comment_count
+        ${carriedMetricSql('listener_count')} AS listener_count,
+        ${carriedMetricSql('online_member_count')} AS online_member_count,
+        f.total_member_count,
+        ${carriedMetricSql('reported_total_listens')} AS total_listens,
+        ${carriedMetricSql('reported_current_stream_count')} AS current_stream_count,
+        ${carriedMetricSql('comment_count')} AS comment_count
       FROM sh_minute_facts AS f
         INDEXED BY idx_sh_minute_facts_source_channel_minute_desc
       WHERE f.source_code=1 AND f.channel_id=?
@@ -42,13 +59,13 @@ export function dashboardHistoryRollupStatement(db, fact) {
       SELECT latest.*,
         COALESCE((
           SELECT MAX(f.comment_count+COALESCE((
-            SELECT COALESCE(previous.comment_count,0)
+            SELECT previous.comment_count
             FROM sh_minute_facts AS previous
               INDEXED BY idx_sh_minute_facts_source_channel_minute_desc
             WHERE previous.source_code=1
               AND previous.channel_id=f.channel_id
               AND previous.minute_at<f.minute_at
-              AND previous.minute_at>=f.minute_at-60000
+              AND previous.comment_count IS NOT NULL
             ORDER BY previous.minute_at DESC,previous.id DESC
             LIMIT 1
           ),0))
