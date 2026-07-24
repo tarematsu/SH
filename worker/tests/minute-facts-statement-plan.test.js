@@ -20,8 +20,8 @@ function fakeDb() {
 function fact(overrides = {}) {
   return {
     channel_id: 318,
-    minute_at: 1_700_000_000_000,
-    observed_at: 1_700_000_001_000,
+    minute_at: 1_700_000_100_000,
+    observed_at: 1_700_000_101_000,
     source_code: 1,
     source_priority: 100,
     quality_score: 1,
@@ -33,7 +33,7 @@ function fact(overrides = {}) {
   };
 }
 
-test('minute fact plan includes rollup and only the active context upsert', () => {
+test('boundary minute plan finalizes one dashboard bucket and uses the active context upsert', () => {
   const db = fakeDb();
   const statements = minuteFactStatements(db, fact({
     queue_revision_id: 44,
@@ -47,12 +47,12 @@ test('minute fact plan includes rollup and only the active context upsert', () =
   assert.equal(statements.some(({ sql }) => sql.includes('DELETE FROM sh_minute_fact_context_v2')), false);
 });
 
-test('minute fact plan includes rollup and only the active context delete', () => {
+test('non-boundary minute skips the dashboard rollup and uses the active context delete', () => {
   const db = fakeDb();
-  const statements = minuteFactStatements(db, fact());
+  const statements = minuteFactStatements(db, fact({ minute_at: 1_700_000_160_000 }));
 
   assert.equal(statements.length, 4);
-  assert.equal(statements.some(({ sql }) => sql.includes('INSERT INTO sh_dashboard_history_5m')), true);
+  assert.equal(statements.some(({ sql }) => sql.includes('INSERT INTO sh_dashboard_history_5m')), false);
   assert.equal(statements.some(({ sql }) => sql.includes('INSERT INTO sh_minute_fact_context_v2')), false);
   assert.equal(statements.some(({ sql }) => sql.includes('DELETE FROM sh_minute_fact_context_v2')), true);
 });
