@@ -26,8 +26,9 @@ function gateBody(task = 'rebuild', attempt = 0, scheduledAt = BASE) {
   };
 }
 
-test('maintenance Cron checks readiness inline and publishes the final stage', async () => {
+test('maintenance Cron completes sync work inline without publishing a Queue stage', async () => {
   const sent = [];
+  const calls = [];
   const scheduledAt = BASE + 9 * 60_000;
   const result = await runMinuteMaintenanceScheduled({
     cron: MAINTENANCE_CRON,
@@ -36,14 +37,25 @@ test('maintenance Cron checks readiness inline and publishes the final stage', a
     MINUTE_REBUILD_QUEUE: {
       async send(body, options) { sent.push({ body, options }); },
     },
-  }, {});
+  }, {}, {
+    async processMinuteMaintenanceSync(_env, body) {
+      calls.push(body.stage);
+      return {
+        stage: 'maintenance-run',
+        task: 'sync',
+        run_id: body.run_id,
+        pending: false,
+        payload_cleanup: { cleared: 0 },
+        result: { event: 'sync-complete' },
+      };
+    },
+  });
 
+  assert.deepEqual(calls, ['maintenance-run']);
   assert.equal(result.task, 'sync');
-  assert.equal(result.dispatched_stage, 'maintenance-run');
-  assert.equal(sent.length, 1);
-  assert.equal(sent[0].body.stage, 'maintenance-run');
-  assert.equal(sent[0].body.maintenance_task, 'sync');
-  assert.deepEqual(sent[0].options, { contentType: 'json' });
+  assert.equal(result.inline, true);
+  assert.equal(result.pending, false);
+  assert.deepEqual(sent, []);
 });
 
 test('maintenance gate performs one collector check and requeues without an in-Invocation polling loop', async () => {
