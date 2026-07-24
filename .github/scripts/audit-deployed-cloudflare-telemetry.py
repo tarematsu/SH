@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import datetime as dt
 import importlib.util
 import json
 import os
@@ -18,6 +19,11 @@ if SPEC is None or SPEC.loader is None:
     raise RuntimeError(f"Could not load telemetry audit from {AUDIT_PATH}")
 audit = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(audit)
+
+DEPLOYMENT_COVERAGE_GRACE_SECONDS = max(
+    0,
+    int(os.environ.get("DEPLOYMENT_COVERAGE_GRACE_SECONDS", "180")),
+)
 
 
 def deployment_versions(response: dict[str, Any]) -> tuple[str, set[str], str]:
@@ -140,6 +146,51 @@ def deployed_current_events(
     )
 
 
+def deployment_time(value: str) -> dt.datetime | None:
+    if not value:
+        return None
+    try:
+        parsed = dt.datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=dt.timezone.utc)
+    return parsed.astimezone(dt.timezone.utc)
+
+
+def coverage_grace_workers(
+    metadata: dict[str, dict[str, str]],
+    now: dt.datetime | None = None,
+    grace_seconds: int = DEPLOYMENT_COVERAGE_GRACE_SECONDS,
+) -> set[str]:
+    if grace_seconds <= 0:
+        return set()
+    current = now or dt.datetime.now(dt.timezone.utc)
+    if current.tzinfo is None:
+        current = current.replace(tzinfo=dt.timezone.utc)
+    current = current.astimezone(dt.timezone.utc)
+    pending: set[str] = set()
+    for worker in audit.WORKERS:
+        created = deployment_time(str((metadata.get(worker) or {}).get("created_on") or ""))
+        if created is None:
+            continue
+        age = (current - created).total_seconds()
+        if 0 <= age < grace_seconds:
+            pending.add(worker)
+    return pending
+
+
+def coverage_after_grace(
+    missing: Iterable[str],
+    truncated: bool,
+    grace_workers: set[str],
+) -> tuple[list[str], list[str], bool]:
+    missing_set = set(missing)
+    pending = sorted(missing_set & grace_workers)
+    remaining = sorted(missing_set - grace_workers)
+    return remaining, pending, not truncated and not remaining
+
+
 def self_test() -> int:
     response = {
         "result": {
@@ -232,6 +283,17 @@ def self_test() -> int:
         assert not violations and not errors
         assert samples["a"] == [4.0, 5.0, 6.0]
         assert missing == ["missing"] and not coverage
+
+        now = dt.datetime(2026, 7, 24, 2, 48, 12, tzinfo=dt.timezone.utc)
+        grace = coverage_grace_workers({
+            "a": {"created_on": "2026-07-24T02:47:51Z"},
+            "missing": {"created_on": "2026-07-24T02:40:00Z"},
+        }, now, 180)
+        assert grace == {"a"}
+        remaining, pending, coverage = coverage_after_grace(["a"], False, grace)
+        assert remaining == [] and pending == ["a"] and coverage
+        remaining, pending, coverage = coverage_after_grace(["missing"], False, grace)
+        assert remaining == ["missing"] and pending == [] and not coverage
     finally:
         audit.WORKERS = original
     print("deployed telemetry audit self-test passed")
@@ -257,8 +319,37 @@ def main() -> int:
             "::error title=Cloudflare Worker deployment unavailable::"
             f"worker={worker} detail={detail}"
         )
+
+    grace_workers = coverage_grace_workers(deployment_metadata)
+    original_evaluate = audit.evaluate
+
+    def evaluate_with_deployment_grace(
+        events: list[dict[str, Any]],
+        truncated: bool,
+    ) -> tuple[
+        list[dict[str, Any]],
+        list[dict[str, Any]],
+        list[dict[str, Any]],
+        dict[str, list[float]],
+        list[str],
+        bool,
+    ]:
+        violations, exempted, errors, samples, missing, _coverage = original_evaluate(events, truncated)
+        remaining, pending, coverage = coverage_after_grace(missing, truncated, grace_workers)
+        if pending:
+            print(
+                "CPU_COVERAGE_GRACE "
+                f"workers={','.join(pending)} "
+                f"grace_seconds={DEPLOYMENT_COVERAGE_GRACE_SECONDS}"
+            )
+        return violations, exempted, errors, samples, remaining, coverage
+
     audit.current_events = lambda persisted, live: deployed_current_events(persisted, live, active)
-    audit_result = audit.main()
+    audit.evaluate = evaluate_with_deployment_grace
+    try:
+        audit_result = audit.main()
+    finally:
+        audit.evaluate = original_evaluate
     return 1 if deployment_failures or audit_result else 0
 
 
