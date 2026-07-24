@@ -15,15 +15,15 @@ function contextPresent(fact) {
 }
 
 function completedDashboardBucket(minuteAt) {
-  if (!Number.isFinite(minuteAt) || minuteAt % DASHBOARD_BUCKET_MS !== 0) return null;
-  return minuteAt - DASHBOARD_BUCKET_MS;
+  if (!Number.isFinite(minuteAt)) return null;
+  return Math.floor(minuteAt / DASHBOARD_BUCKET_MS) * DASHBOARD_BUCKET_MS - DASHBOARD_BUCKET_MS;
 }
 
 export function dashboardHistoryRollupStatement(db, fact) {
   if (Number(fact?.source_code) !== 1) return db.prepare('SELECT 1 WHERE 0');
-  const minuteAt = Number(fact?.minute_at);
-  const bucketAt = completedDashboardBucket(minuteAt);
+  const bucketAt = completedDashboardBucket(Number(fact?.minute_at));
   if (bucketAt == null) return db.prepare('SELECT 1 WHERE 0');
+  const bucketEnd = bucketAt + DASHBOARD_BUCKET_MS;
   return db.prepare(`WITH bucket_facts AS (
       SELECT f.id,f.channel_id,f.minute_at,f.observed_at,
         f.listener_count,f.online_member_count,f.total_member_count,
@@ -87,7 +87,7 @@ export function dashboardHistoryRollupStatement(db, fact) {
         OR excluded.current_stream_count IS NOT sh_dashboard_history_5m.current_stream_count
         OR excluded.comment_velocity>sh_dashboard_history_5m.comment_velocity
       ))`)
-    .bind(fact.channel_id, bucketAt, minuteAt, bucketAt);
+    .bind(fact.channel_id, bucketAt, bucketEnd, bucketAt);
 }
 
 export function minuteFactStatements(db, fact) {
