@@ -59,13 +59,24 @@ export function dashboardHistoryRollupStatement(db, fact) {
       SELECT latest.*,
         COALESCE((
           SELECT MAX(f.comment_count+COALESCE((
-            SELECT previous.comment_count
+            SELECT COALESCE(previous.comment_count,(
+              SELECT earlier.comment_count
+              FROM sh_minute_facts AS earlier
+                INDEXED BY idx_sh_minute_facts_source_channel_minute_desc
+              WHERE earlier.source_code=previous.source_code
+                AND earlier.channel_id=previous.channel_id
+                AND (earlier.minute_at<previous.minute_at
+                  OR (earlier.minute_at=previous.minute_at AND earlier.id<previous.id))
+                AND earlier.comment_count IS NOT NULL
+              ORDER BY earlier.minute_at DESC,earlier.id DESC
+              LIMIT 1
+            ))
             FROM sh_minute_facts AS previous
               INDEXED BY idx_sh_minute_facts_source_channel_minute_desc
             WHERE previous.source_code=1
               AND previous.channel_id=f.channel_id
               AND previous.minute_at<f.minute_at
-              AND previous.comment_count IS NOT NULL
+              AND previous.minute_at>=f.minute_at-60000
             ORDER BY previous.minute_at DESC,previous.id DESC
             LIMIT 1
           ),0))
