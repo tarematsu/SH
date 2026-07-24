@@ -6,6 +6,7 @@ import {
   runMinuteMaintenanceScheduled,
 } from '../src/minute-maintenance-optimized-entry.js';
 
+const MINUTE = 60_000;
 const SCHEDULED_AT = Date.UTC(2026, 0, 1, 0, 7, 0);
 const SYNC_SCHEDULED_AT = Date.UTC(2026, 0, 1, 0, 9, 0);
 const CRON = '5,7,9,15,17,19,25,27,29,35,37,39,45,47,49,55,57,59 * * * *';
@@ -86,12 +87,37 @@ test('scheduled sync maintenance runs inline without a minute-rebuild Queue mess
   assert.deepEqual(capture.sends, []);
 });
 
-test('collector-not-ready maintenance retains one bounded gate retry', async () => {
+test('checkpoint-fresh collector state dispatches maintenance without gate retries', async () => {
   const capture = queueCapture();
   const env = {
     BUDDIES_DB: collectorDb({
-      last_run_at: SCHEDULED_AT - 60_000,
-      last_success_at: SCHEDULED_AT - 60_000,
+      last_run_at: SCHEDULED_AT - 19 * MINUTE,
+      last_success_at: SCHEDULED_AT - 19 * MINUTE,
+      last_error: null,
+    }),
+    MINUTE_REBUILD_QUEUE: capture.queue,
+  };
+
+  const result = await dispatchMinuteMaintenanceGate(
+    { cron: CRON, scheduledTime: SCHEDULED_AT },
+    env,
+    'sync',
+  );
+
+  assert.equal(result.requeued, undefined);
+  assert.equal(result.dispatched_stage, 'maintenance-run');
+  assert.equal(capture.sends.length, 1);
+  assert.equal(capture.sends[0].body.stage, 'maintenance-run');
+  assert.equal(capture.sends[0].body.attempt, 0);
+  assert.deepEqual(capture.sends[0].options, { contentType: 'json' });
+});
+
+test('stale collector state retains one bounded gate retry', async () => {
+  const capture = queueCapture();
+  const env = {
+    BUDDIES_DB: collectorDb({
+      last_run_at: SCHEDULED_AT - 23 * MINUTE,
+      last_success_at: SCHEDULED_AT - 23 * MINUTE,
       last_error: null,
     }),
     MINUTE_REBUILD_QUEUE: capture.queue,
@@ -109,6 +135,27 @@ test('collector-not-ready maintenance retains one bounded gate retry', async () 
   assert.equal(capture.sends[0].body.stage, 'maintenance-gate');
   assert.equal(capture.sends[0].body.attempt, 1);
   assert.deepEqual(capture.sends[0].options, { contentType: 'json', delaySeconds: 4 });
+});
+
+test('collector errors still block maintenance immediately', async () => {
+  const capture = queueCapture();
+  const env = {
+    BUDDIES_DB: collectorDb({
+      last_run_at: SCHEDULED_AT - MINUTE,
+      last_success_at: SCHEDULED_AT - MINUTE,
+      last_error: 'collector failed',
+    }),
+    MINUTE_REBUILD_QUEUE: capture.queue,
+  };
+
+  const result = await dispatchMinuteMaintenanceGate(
+    { cron: CRON, scheduledTime: SCHEDULED_AT },
+    env,
+    'sync',
+  );
+
+  assert.equal(result.requeued, true);
+  assert.equal(capture.sends[0].body.stage, 'maintenance-gate');
 });
 
 test('disabled historical rebuild does not enqueue gap work', async () => {
