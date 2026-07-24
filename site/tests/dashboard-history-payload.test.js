@@ -18,7 +18,7 @@ test('dashboard history omits playback counters that are no longer charted', () 
 });
 
 test('latest metrics and goal prediction retain playback counters', () => {
-  assert.match(FACTS_LATEST_SQL, /reported_current_stream_count AS current_stream_count/);
+  assert.match(FACTS_LATEST_SQL, /previous\.reported_current_stream_count[\s\S]*AS current_stream_count/);
   assert.match(FACTS_PREDICTION_24H_SQL, /r\.current_stream_count/);
   assert.match(FACTS_PREDICTION_24H_SQL, /FROM sh_dashboard_history_5m r/);
   assert.doesNotMatch(FACTS_PREDICTION_24H_SQL, /reported_current_stream_count/);
