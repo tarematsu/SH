@@ -27,9 +27,17 @@ LIMITS = {
     "rowsWritten": int(os.environ.get("DAILY_D1_WRITE_BUDGET", "0")),
 }
 OUT = Path(os.environ.get("DAILY_USAGE_OUTPUT_DIR", "daily-usage"))
-DB_RE = re.compile(r'"database_id"\s*:\s*"([0-9a-fA-F-]{36})"')
+DB_OBJECT_RE = re.compile(
+    r'\{[^{}]*?"database_name"\s*:\s*"([^"]+)"[^{}]*?'
+    r'"database_id"\s*:\s*"([0-9a-fA-F-]{36})"[^{}]*?\}',
+    re.DOTALL,
+)
 DAY_SECONDS = 24 * 60 * 60
 PROJECTION_METHOD = "linear-from-utc-midnight"
+SCOPE_NOTE = (
+    "Account usage accumulated since 00:00 UTC; values include every deployment "
+    "that served traffic earlier in the same UTC day."
+)
 
 
 def api(url: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -66,18 +74,27 @@ def account_id() -> str:
     return str(rows[0]["id"])
 
 
-def database_ids() -> set[str]:
-    ids: set[str] = set()
+def databases() -> dict[str, str]:
+    configured: dict[str, str] = {}
     files = 0
     for pattern in CONFIGS:
         for name in glob.glob(pattern, recursive=True):
             path = Path(name)
-            if path.is_file():
-                files += 1
-                ids.update(match.group(1).lower() for match in DB_RE.finditer(path.read_text(errors="replace")))
-    if not files or not ids:
-        raise RuntimeError("D1_CONFIG_GLOBS did not resolve any database_id")
-    return ids
+            if not path.is_file():
+                continue
+            files += 1
+            text = path.read_text(errors="replace")
+            for database_name, database_id in DB_OBJECT_RE.findall(text):
+                key = database_id.lower()
+                existing = configured.get(key)
+                if existing and existing != database_name:
+                    raise RuntimeError(
+                        f"D1 database_id {key} has conflicting names: {existing}, {database_name}"
+                    )
+                configured[key] = database_name
+    if not files or not configured:
+        raise RuntimeError("D1_CONFIG_GLOBS did not resolve any named database_id")
+    return configured
 
 
 def query(workers: tuple[str, ...]) -> tuple[str, dict[str, str]]:
@@ -110,21 +127,36 @@ def number(value: Any) -> int:
         return 0
 
 
-def aggregate(row: dict[str, Any], workers: tuple[str, ...], dbs: set[str]) -> dict[str, Any]:
+def aggregate(
+    row: dict[str, Any],
+    workers: tuple[str, ...],
+    dbs: dict[str, str],
+) -> dict[str, Any]:
     per_worker: dict[str, int] = {}
     errors: dict[str, int] = {}
     for index, worker in enumerate(workers):
         groups = row.get(f"w{index}") or []
         per_worker[worker] = sum(number((x.get("sum") or {}).get("requests")) for x in groups)
         errors[worker] = sum(number((x.get("sum") or {}).get("errors")) for x in groups)
-    reads = writes = 0
+    per_database = {
+        database_id: {
+            "databaseId": database_id,
+            "databaseName": database_name,
+            "rowsRead": 0,
+            "rowsWritten": 0,
+        }
+        for database_id, database_name in dbs.items()
+    }
     for group in row.get("d1") or []:
         dimensions = group.get("dimensions") or {}
-        if str(dimensions.get("databaseId") or "").lower() not in dbs:
+        database_id = str(dimensions.get("databaseId") or "").lower()
+        if database_id not in per_database:
             continue
         sums = group.get("sum") or {}
-        reads += number(sums.get("rowsRead"))
-        writes += number(sums.get("rowsWritten"))
+        per_database[database_id]["rowsRead"] += number(sums.get("rowsRead"))
+        per_database[database_id]["rowsWritten"] += number(sums.get("rowsWritten"))
+    reads = sum(item["rowsRead"] for item in per_database.values())
+    writes = sum(item["rowsWritten"] for item in per_database.values())
     measured = sum(per_worker.values())
     return {
         "requests": measured,
@@ -134,6 +166,10 @@ def aggregate(row: dict[str, Any], workers: tuple[str, ...], dbs: set[str]) -> d
         "rowsWritten": writes,
         "perWorkerRequests": per_worker,
         "perWorkerErrors": errors,
+        "perDatabaseUsage": sorted(
+            per_database.values(),
+            key=lambda item: (-item["rowsRead"], -item["rowsWritten"], item["databaseName"]),
+        ),
         "databaseCount": len(dbs),
     }
 
@@ -182,6 +218,10 @@ def format_factor(value: float) -> str:
     return f"{value:.3f}".rstrip("0").rstrip(".")
 
 
+def short_database_id(value: str) -> str:
+    return value if len(value) <= 12 else f"{value[:8]}…{value[-4:]}"
+
+
 def self_test() -> int:
     text, variables = query(("a", "b"))
     assert text.count("workersInvocationsAdaptive") == 2
@@ -196,12 +236,18 @@ def self_test() -> int:
             ],
         },
         ("a", "b"),
-        {"x"},
+        {"x": "primary"},
     ), 5)
     projection = projection_metadata(dt.datetime(2026, 7, 23, 6, 0, tzinfo=dt.timezone.utc))
     projected = project_usage(actual, projection)
     assert projection["elapsedSeconds"] == 21_600 and projection["factor"] == 4
     assert actual["measuredRequests"] == 30 and actual["requests"] == 35
+    assert actual["perDatabaseUsage"] == [{
+        "databaseId": "x",
+        "databaseName": "primary",
+        "rowsRead": 50,
+        "rowsWritten": 2,
+    }]
     assert projected["perWorkerRequests"] == {"a": 40, "b": 80}
     assert projected["measuredRequests"] == 120 and projected["requests"] == 125
     assert projected["rowsRead"] == 200 and projected["rowsWritten"] == 8
@@ -209,6 +255,7 @@ def self_test() -> int:
     assert evaluate(projected, {"requests": 125, "rowsRead": 200, "rowsWritten": 8}) == [
         "requests", "rowsRead", "rowsWritten"
     ]
+    assert short_database_id("12345678-1234-1234-1234-123456789abc") == "12345678…9abc"
     print("daily budget self-test passed")
     return 0
 
@@ -220,7 +267,7 @@ def main() -> int:
         raise RuntimeError("Cloudflare credentials, Workers, D1 config globs and positive budgets are required")
 
     account = account_id()
-    dbs = database_ids()
+    dbs = databases()
     now = dt.datetime.now(dt.timezone.utc)
     start = now.replace(hour=0, minute=0, second=0, microsecond=0)
     date = start.date().isoformat()
@@ -255,6 +302,7 @@ def main() -> int:
         "projection": projection,
         "limits": LIMITS,
         "violations": violations,
+        "scopeNote": SCOPE_NOTE,
         "source": "one Cloudflare GraphQL request, linearly projected from UTC midnight, plus configured request reserve",
     }
     OUT.mkdir(parents=True, exist_ok=True)
@@ -272,6 +320,7 @@ def main() -> int:
         f"- Generated: `{report['generatedAt']}`",
         f"- D1 databases: `{len(dbs)}`",
         "- Collection: one GraphQL request",
+        f"- Scope: {SCOPE_NOTE}",
         f"- Elapsed UTC day: `{projection['elapsedSeconds']:,}` seconds",
         f"- 24-hour projection factor: `{format_factor(projection['factor'])}x`",
         f"- Actual measured Worker requests: `{actual['measuredRequests']:,}`",
@@ -285,6 +334,18 @@ def main() -> int:
         lines.append(
             f"| {labels[key]} | {observed:,} | {projected:,} | {limit:,} | "
             f"{max(0, limit - projected):,} | {'VIOLATION' if key in violations else 'OK'} |"
+        )
+    lines.extend([
+        "",
+        "### D1 database breakdown (UTC day actual)",
+        "",
+        "| Database | Database ID | Rows read | Rows written |",
+        "|---|---|---:|---:|",
+    ])
+    for item in actual.get("perDatabaseUsage") or []:
+        lines.append(
+            f"| `{item['databaseName']}` | `{short_database_id(item['databaseId'])}` | "
+            f"{item['rowsRead']:,} | {item['rowsWritten']:,} |"
         )
     summary = "\n".join(lines) + "\n"
     (OUT / "summary.md").write_text(summary)
