@@ -49,6 +49,7 @@ test('observability status body is stable, sanitized, and fail-closed', () => {
     summaries: {
       daily: '## Daily usage\n\nD1 rows read: 10',
       freeTier: '## Included usage\n\nQueue operations: 20',
+      telemetry: 'TELEMETRY_AUDIT={"violations":0,"errors":0}',
     },
     activeDeployments: {
       'sh-runtime-orchestrator': {
@@ -74,11 +75,17 @@ test('observability status body is stable, sanitized, and fail-closed', () => {
   assert.match(body, /version-a/);
   assert.match(body, /#591 Deploy runtime after migrations/);
   assert.match(body, /Queue operations: 20/);
+  assert.match(body, /Current-deployment telemetry policy/);
+  assert.match(body, /TELEMETRY_AUDIT/);
 });
 
 test('observability workflow publishes retrievable commit statuses and issue summary', async () => {
   const workflow = await readFile(
     new URL('.github/workflows/fetch-cloudflare-observability.yml', root),
+    'utf8',
+  );
+  const publisher = await readFile(
+    new URL('.github/scripts/publish-cloudflare-observability-status.mjs', root),
     'utf8',
   );
 
@@ -91,6 +98,9 @@ test('observability workflow publishes retrievable commit statuses and issue sum
   assert.match(workflow, /publish-cloudflare-observability-status\.mjs --self-test/);
   assert.match(workflow, /ACTIVE_WORKER_DEPLOYMENTS_OUTPUT: active-worker-deployments\.json/);
   assert.match(workflow, /active-worker-deployments\.json/);
+  assert.match(workflow, /telemetry-audit\.log/);
+  assert.match(publisher, /readOptional\('telemetry-audit\.log'\)/);
+  assert.match(publisher, /Current-deployment telemetry policy/);
   assert.match(workflow, /id: publish-status/);
   assert.match(workflow, /if: always\(\)/);
   assert.match(workflow, /OBSERVABILITY_TARGET_SHA:/);

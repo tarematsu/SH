@@ -115,6 +115,7 @@ ${section('UTC daily request and D1 budgets', summaries.daily)}
 ${section('DO, Queues, R2, KV, and Pipelines budgets', summaries.freeTier)}
 ${section('Budget contract', summaries.contract)}
 ${section('Cloudflare metrics and live diagnostics', summaries.observability)}
+${section('Current-deployment telemetry policy', summaries.telemetry)}
 `;
   return clipped(body, MAX_ISSUE_BODY_CHARS);
 }
@@ -239,7 +240,16 @@ export async function publishFromEnvironment() {
     query: process.env.OBSERVABILITY_QUERY_OUTCOME,
     telemetry: process.env.TELEMETRY_POLICY_OUTCOME,
   };
-  const [mainSha, activeDeployments, recentMerges, daily, freeTier, contract, observability] = await Promise.all([
+  const [
+    mainSha,
+    activeDeployments,
+    recentMerges,
+    daily,
+    freeTier,
+    contract,
+    observability,
+    telemetry,
+  ] = await Promise.all([
     currentMainSha(),
     readOptionalJson('active-worker-deployments.json'),
     recentMergedPullRequests(),
@@ -247,6 +257,7 @@ export async function publishFromEnvironment() {
     readOptional('free-tier-usage/summary.md'),
     readOptional('observability-gate/summary.md'),
     readOptional('observability-summary.md'),
+    readOptional('telemetry-audit.log'),
   ]);
   const body = buildIssueBody({
     generatedAt: new Date().toISOString(),
@@ -255,7 +266,7 @@ export async function publishFromEnvironment() {
     runUrl,
     trigger: process.env.OBSERVABILITY_TRIGGER || 'unknown',
     outcomes,
-    summaries: { daily, freeTier, contract, observability },
+    summaries: { daily, freeTier, contract, observability, telemetry },
     activeDeployments,
     recentMerges,
   });
@@ -276,7 +287,10 @@ function selfTest() {
     runUrl: 'https://github.com/tarematsu/SH/actions/runs/1',
     trigger: 'workflow_run',
     outcomes: { policy: 'success', daily: 'failure' },
-    summaries: { daily: '## Daily\n\n| Metric | Value |\n|---|---:|\n| D1 | 1 |' },
+    summaries: {
+      daily: '## Daily\n\n| Metric | Value |\n|---|---:|\n| D1 | 1 |',
+      telemetry: 'TELEMETRY_AUDIT={"violations":0,"errors":0}',
+    },
     activeDeployments: {
       worker: {
         deployment_id: 'deployment-1',
@@ -298,6 +312,8 @@ function selfTest() {
   assert.match(body, /deployment-1/);
   assert.match(body, /#591/);
   assert.match(body, /UTC daily request and D1 budgets/);
+  assert.match(body, /Current-deployment telemetry policy/);
+  assert.match(body, /TELEMETRY_AUDIT/);
   console.log('observability status publisher self-test passed');
 }
 
