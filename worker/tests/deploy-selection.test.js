@@ -56,6 +56,7 @@ test('MINUTE_DB schema changes deploy the runtime that consumes the schema', () 
   for (const path of [
     'database/facts-db.json',
     'database/facts-migrations/039_reduce_fact_write_amplification.sql',
+    'database/facts-migrations/040_sparse_live_metric_values.sql',
   ]) {
     assert.deepEqual(select([path]).workers, [RUNTIME], path);
     assert.deepEqual(select([path]).commands, ['deploy:runtime'], path);
