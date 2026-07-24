@@ -116,7 +116,7 @@ test('five-minute rollup finalizes the completed bucket once with its latest fac
     channel_id: 318,
     minute_at: nextBucket,
   }).run();
-  const skipped = await dashboardHistoryRollupStatement(db, {
+  await dashboardHistoryRollupStatement(db, {
     source_code: 1,
     channel_id: 318,
     minute_at: nextBucket + 60_000,
@@ -124,8 +124,8 @@ test('five-minute rollup finalizes the completed bucket once with its latest fac
 
   const rows = sqlite.prepare(FACTS_HISTORY_24H_SQL).all();
   assert.equal(result.meta.changes, 1);
-  assert.equal(skipped.meta.changes, 0);
   assert.equal(rows.length, 1);
+  assert.equal(sqlite.prepare('SELECT COUNT(*) AS count FROM sh_dashboard_history_5m').get().count, 1);
   assert.equal(rows[0].listener_count, 14);
   assert.equal(rows[0].total_listens, 44);
   assert.equal(rows[0].comment_velocity, 12);
