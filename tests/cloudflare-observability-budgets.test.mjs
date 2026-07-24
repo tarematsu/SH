@@ -25,6 +25,10 @@ test('observability policy scripts pass offline self-tests', () => {
 
 test('observability uses post-deploy, diagnostic-change, and daily complete budget checks', async () => {
   const workflow = await readFile(new URL('.github/workflows/fetch-cloudflare-observability.yml', root), 'utf8');
+  const dailyAudit = await readFile(
+    new URL('.github/scripts/audit-cloudflare-daily-usage.py', root),
+    'utf8',
+  );
   const freeTierAudit = [
     await readFile(new URL('.github/scripts/audit-cloudflare-free-tier.py', root), 'utf8'),
     await readFile(new URL('.github/scripts/audit-cloudflare-free-tier-core.py', root), 'utf8'),
@@ -49,6 +53,10 @@ test('observability uses post-deploy, diagnostic-change, and daily complete budg
   assert.match(workflow, /audit-observability-budget-gates\.py --self-test/);
   assert.match(workflow, /audit-deployed-cloudflare-telemetry\.py --self-test/);
   assert.match(workflow, /publish-cloudflare-observability-status\.mjs --self-test/);
+  assert.match(dailyAudit, /def databases\(\)/);
+  assert.match(dailyAudit, /perDatabaseUsage/);
+  assert.match(dailyAudit, /D1 database breakdown \(UTC day actual\)/);
+  assert.match(dailyAudit, /include every deployment/);
   assert.match(freeTierAudit, /def durable_object_namespace_ids\(/);
   assert.match(freeTierAudit, /if script != worker:/);
   assert.match(freeTierAudit, /per_page=50/);
