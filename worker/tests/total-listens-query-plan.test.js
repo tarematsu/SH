@@ -14,7 +14,7 @@ const reductionMigration = readFileSync(
   'utf8',
 );
 
-test('SQLite range-seeks the current channel baseline through the shared channel-minute index', () => {
+test('SQLite range-seeks the current channel baseline through retained indexes', () => {
   const db = new DatabaseSync(':memory:');
   db.exec(`
     CREATE TABLE sh_minute_facts (
@@ -28,6 +28,8 @@ test('SQLite range-seeks the current channel baseline through the shared channel
     CREATE INDEX idx_sh_minute_facts_source_channel_minute_desc
       ON sh_minute_facts(source_code,channel_id,minute_at DESC,id DESC);
     CREATE INDEX idx_sh_minute_facts_source_minute_desc
+      ON sh_minute_facts(source_code,minute_at DESC,id DESC,channel_id,observed_at);
+    CREATE INDEX idx_sh_minute_facts_live_minute
       ON sh_minute_facts(source_code,minute_at DESC,id DESC,channel_id,observed_at);
     ${baselineMigration}
     ${reductionMigration}
@@ -51,6 +53,12 @@ test('SQLite range-seeks the current channel baseline through the shared channel
       'SEARCH f USING INDEX idx_sh_minute_facts_source_channel_minute_desc (source_code=? AND channel_id=? AND minute_at>? AND minute_at<?)',
     )),
     `expected a channel and minute range seek: ${plan.join(' | ')}`,
+  );
+  assert.ok(
+    plan.some((detail) => detail.includes(
+      'SEARCH sh_minute_facts USING COVERING INDEX idx_sh_minute_facts_live_minute (source_code=?)',
+    )),
+    `expected the latest-channel seek to use the live index: ${plan.join(' | ')}`,
   );
   assert.ok(
     plan.every((detail) => !detail.includes('sh_minute_fact_context')),
