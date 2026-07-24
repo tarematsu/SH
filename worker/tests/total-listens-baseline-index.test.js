@@ -37,10 +37,10 @@ function recordingDb() {
   };
 }
 
-test('facts descriptor advances through the write-amplification migration', () => {
+test('facts descriptor advances through the sparse live metric migration', () => {
   assert.equal(
     descriptor.schema,
-    'database/facts-migrations/039_reduce_fact_write_amplification.sql',
+    'database/facts-migrations/040_sparse_live_metric_values.sql',
   );
 });
 
@@ -59,6 +59,7 @@ test('total-listens baselines reuse the existing source-channel-minute index', (
     FACTS_TOTAL_LISTENS_BASELINE_SQL,
     /ORDER BY f\.minute_at DESC,f\.id DESC\s*LIMIT 1/,
   );
+  assert.match(FACTS_TOTAL_LISTENS_BASELINE_SQL, /previous\.reported_total_listens/);
 });
 
 test('hostless total-listens baselines stay on the latest channel and avoid a context join', async () => {
